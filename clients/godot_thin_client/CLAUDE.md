@@ -1301,8 +1301,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
     `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition),
     plus the live-forecast states `herd_hunt_forecast_viable` / `herd_hunt_forecast_not_viable` /
-    `herd_hunt_forecast_surplus` (the SAME herd as not_viable, on Surplus: reads ≈6 turns off the
-    EXPEDITION ceiling — the regression test for the band-vs-expedition ceiling mixup) /
+    `herd_hunt_forecast_surplus` (the SAME herd as not_viable, on Surplus: reads ≈6 turns out of the
+    sim's `hunt_trip_estimates` row — the regression test against re-deriving an expedition's trip
+    from the BAND's flow ceiling) /
     `herd_hunt_forecast_never_fills` / `herd_hunt_forecast_eradicate` (expedition branch: cyan line +
     primary button; amber "Send Anyway (≈54 turns)"; red collapsed-herd "Send Anyway — party returns
     empty"; amber denial "Send (delivers no food)"), the BLOCKED set `herd_hunt_impossible` (disabled +
@@ -1855,9 +1856,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
     `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
     `_local_hunt_preview_bbcode`) — but it must still never re-derive the ecology/MSY model.
-  Plus the global levers echoed on every cohort (`expeditionPerWorkerCarry` /
-  `huntPerWorkerProvisions` / `expeditionViabilityWarnTurns`, same idiom as `maxExpeditionPartySize`,
-  decoded + flowed onto the MapView unit marker + covered by `marker_field_guard`). Missing estimate /
+  Plus the global levers echoed on every cohort (same idiom as `maxExpeditionPartySize`, decoded +
+  flowed onto the MapView unit marker + covered by `marker_field_guard`). **None of them is an input
+  to an expedition's trip length** — that is the lookup above, and the client must NEVER divide a
+  carry cap by a take rate. Their real jobs: `expeditionPerWorkerCarry` = the **pack size** (carry cap
+  = party × this; display only — no client code reads it today, see the `marker_field_guard` note),
+  `expeditionViabilityWarnTurns` = the **viable/not-viable threshold** applied to `turnsToFill`, and
+  `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
+  client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
+  that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
   levers (older snapshot) → no forecast line, banner unchanged.
   `SEND_HUNT_POLICY_HINTS["sustain"]` was rewritten when Sustain became the MSY *flow* (it used to
   promise "one conservative harvest"). ui_preview states `hunt_forecast_viable` /

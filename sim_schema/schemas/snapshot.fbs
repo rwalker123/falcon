@@ -877,20 +877,29 @@ table PopulationDemographicsState {
 }
 
 // One take policy's per-turn BAND / local-hunt ceiling for a herd, in PROVISIONS (already converted
-// from biomass by the sim). Worker-INDEPENDENT: the ecology's MSY *flow* ceiling on the take at this
-// herd's CURRENT state, before any party-throughput cap. `0` = no take is possible under this policy
-// (a collapsing sub-Allee herd yields nothing under Sustain/Surplus). `policy` is free-form
-// (`sustain|surplus|market|eradicate`), like `species`, so a new policy needs no schema change.
+// from biomass by the sim). Worker-INDEPENDENT: the policy's cap on the take at this herd's CURRENT
+// state, before any party-throughput cap, clamped to the herd's remaining biomass. `0` = no take is
+// possible under this policy (a collapsing sub-Allee herd yields nothing under Sustain/Surplus).
+// `policy` is free-form (`sustain|surplus|market|eradicate|corral`), like `species`, so a new policy
+// needs no schema change.
 //
-// Consumer: the resident-band local-hunt yield preview,
+// THE ROWS ARE NOT ALL THE SAME KIND OF QUANTITY — which is exactly why nothing may divide by them:
+// Sustain is a per-turn FLOW (MSY), Surplus that flow × a multiplier, Corral a fraction of it (the
+// pen-building dip), while Market/Eradicate are shares of standing STOCK that shrink as the herd is
+// drawn down.
+//
+// Consumer: the resident-band local-hunt yield preview, for ONE turn at the herd's current state,
 //   min(workers × huntPerWorkerProvisions, provisionsPerTurn) × outputMultiplier
-// A hunting EXPEDITION must not forecast from this (or any) rate: a Sustain expedition takes the
-// shared MSY *flow* ceiling, while Surplus/Market/Eradicate take *stock* headroom down to the
-// collapse floor — and either way `cap / rate` is wrong, because the herd's state moves under the
-// party. An expedition's trip length comes from HuntTripEstimate, which the sim forward-simulates.
+// That single-turn arithmetic is legitimate; projecting it across turns is not.
+// A hunting EXPEDITION must not forecast a trip from this (or any) rate: `cap / rate` is wrong for
+// every policy, because the herd's state moves under the party. An expedition's trip length comes
+// from HuntTripEstimate, which the sim forward-simulates.
 table HuntPolicyCeiling {
   policy:string;
-  // BAND / local-hunt ceiling (fauna::hunt_policy_ceiling — the MSY *flow* ceiling).
+  // BAND / local-hunt ceiling in provisions/turn. Produced by projecting the herd's
+  // `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — the per-policy
+  // biomass ceiling (`fauna::hunt_policy_ceiling`) converted by `fauna::hunt_provisions`, the same
+  // helpers the take path pays with (forecast == actual). Never re-derive it.
   provisionsPerTurn:float = 0;
 }
 

@@ -3850,13 +3850,24 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "max_expedition_party_size",
         cohort.maxExpeditionPartySize() as i64,
     );
-    // Pre-launch hunt-expedition forecast levers — global expedition/labor config echoed onto EVERY
-    // cohort (same idiom as `max_expedition_party_size`). With a herd's `hunt_policy_ceilings` the
-    // HUD computes, for a chosen (workers, herd, policy):
-    //     rate  = min(workers × hunt_per_worker_provisions, ceiling_for(policy))
-    //     turns = ceil(workers × expedition_per_worker_carry / rate)   // rate <= 0 -> never fills
-    //     viable = turns <= expedition_viability_warn_turns
-    // which is exactly the sim's `hunt_trip_forecast` (pinned by core_sim/tests/expedition_hunt.rs).
+    // Global expedition/labor config echoed onto EVERY cohort (same idiom as
+    // `max_expedition_party_size`). These are DISPLAY levers only — none of them is an input to an
+    // expedition trip length. An expedition's turns-to-fill comes from the herd's
+    // `hunt_trip_estimates` (decoded in `herds_to_array` above) and NOTHING ELSE: the sim
+    // forward-simulates the trip (`hunt_trip_forecast`) and exports the ANSWER per (policy, party
+    // size), so the client performs a PURE TABLE LOOKUP and does ZERO arithmetic for an expedition.
+    // It must NEVER divide a carry cap by a take rate: the herd's state moves under the party and
+    // its stock exhausts mid-trip, so any closed form drifts from the take the sim actually
+    // performs. Pinned by core_sim/tests/expedition_hunt.rs.
+    // What each lever is actually FOR:
+    //   expedition_per_worker_carry     — pack size (carry cap = party × this), shown as "Carried X / cap"
+    //   expedition_viability_warn_turns — the viable/not-viable threshold applied to `turns_to_fill`
+    //   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the RESIDENT-BAND
+    //     local-hunt preview, which genuinely IS arithmetic:
+    //         min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier
+    //     over the herd's `hunt_policy_ceilings` (a renewable FLOW), pinned by
+    //     `exported_snapshot_fields_reproduce_band_hunt_take`.
+    // Band = flow arithmetic; expedition = lookup.
     let _ = dict.insert(
         "expedition_per_worker_carry",
         f64::from(cohort.expeditionPerWorkerCarry()),

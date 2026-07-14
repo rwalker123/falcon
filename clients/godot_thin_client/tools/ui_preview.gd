@@ -589,19 +589,21 @@ func _ready() -> void:
 	# into a hunting expedition (herd-first): the herd is beyond the band's hunt_reach, so the panel
 	# composes party + policy and sends immediately — no targeting step, so the banner's forecast never
 	# appears. The forecast therefore renders LIVE above the button (the block re-renders on every
-	# stepper tick / policy click) from the SAME helpers the banner uses, reading the herd's EXPEDITION
-	# ceiling (a party takes stock headroom, not the band's renewable flow). Party 4:
-	#   3k viable      — Sustain on a Thunder Mammoth, expedition ceiling 2.7 → ceil(4×4.0 / 2.7) = 6
-	#                    turns → cyan line, normal primary "Send Hunting Expedition" button.
-	#   3l not viable  — Sustain on Red Deer, ceiling 0.30 → 54 turns > warn 20 → amber line + the button
-	#                    itself goes "armed" and names the cost: "Send Anyway (≈54 turns)".
-	#   3m surplus     — the SAME Red Deer on Surplus: the expedition eats 3.0/turn of stock headroom →
-	#                    6 turns, VIABLE. (The old bug quoted the band's flow ceiling here and scared the
-	#                    player off a perfectly good trip.)
-	#   3n never fills — a collapsing Wild Fowl flock, every ceiling 0 → red line + armed "Send Anyway —
-	#                    party returns empty" (the HERD has nothing left to give).
-	#   3o eradicate   — a healthy Red Deer on Eradicate: expedition ceiling is a deliberate 0 → amber
-	#                    DENIAL line + "Send (delivers no food)". Must read as intent, not failure.
+	# stepper tick / policy click) from the SAME helpers the banner uses: a PURE LOOKUP into the herd's
+	# `hunt_trip_estimates` cell for (policy, party size). The client does no arithmetic here — the sim
+	# forward-simulated each trip and exported the turns. Party 4:
+	#   3k viable      — Sustain on a Thunder Mammoth: the sim's cell says 6 turns → cyan line, normal
+	#                    primary "Send Hunting Expedition" button.
+	#   3l not viable  — Sustain on Red Deer: 54 turns > warn 20 → amber line + the button itself goes
+	#                    "armed" and names the cost: "Send Anyway (≈54 turns)".
+	#   3m surplus     — the SAME Red Deer on Surplus: a Surplus party strips the herd's stock headroom
+	#                    rather than living off its renewable flow, so the sim's cell says ~6 turns —
+	#                    VIABLE. (The old bug re-derived the trip from the band's flow ceiling and scared
+	#                    the player off a perfectly good trip; only the sim's own row knows.)
+	#   3n never fills — a collapsing Wild Fowl flock: every cell is `turns_to_fill = 0` → red line +
+	#                    armed "Send Anyway — party returns empty" (the HERD has nothing left to give).
+	#   3o eradicate   — a healthy Red Deer on Eradicate: the sim marks the cell `delivers_food = false`
+	#                    → amber DENIAL line + "Send (delivers no food)". Intent, not failure.
 	# Never disabled, never a confirm dialog: the player can always send; this is a price tag, not a gate.
 	_hud._player_bands = [_hunt_preview_far_band()]
 	_hud._player_band = _hud._player_bands[0]
@@ -700,7 +702,9 @@ func _ready() -> void:
 	#                           green "· renewable", no flag.
 	#   3o Market,  6 hunters — min(4.8, 0.60) × 0.9 = +0.54 /turn > sustainable 0.27 → WARN-amber with
 	#                           the same ⚠ the allocation rows use: "overdraws the herd".
-	# (The expedition headroom rides along but is IGNORED here — a local hunt reads the band ceilings.)
+	# (The herd's `hunt_trip_estimates` ride along but are IGNORED here — a trip table answers an
+	# EXPEDITION's question; a local hunt is arithmetic over the band's flow ceilings. Band = flow
+	# arithmetic; expedition = lookup.)
 	var local_herd := _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
 		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
 	_hud._player_bands = [_hunt_preview_local_band()]
@@ -752,11 +756,12 @@ func _ready() -> void:
 
 	# States 4a–4c — the PRE-LAUNCH HUNT FORECAST. A hunt expedition is armed (4 workers, Sustain);
 	# the player is now hovering a herd, and the banner's second line says what the trip would cost
-	# BEFORE the click commits. Sustain is the herd's maximum sustainable yield — a small per-turn
-	# flow — so the turns-to-fill is entirely herd-dependent. Same party, three herds:
-	#   4a viable      — Thunder Mammoth, ceiling 2.7 → rate min(4×0.8, 2.7) = 2.7 → ceil(16/2.7) = 6
-	#   4b not viable  — Red Deer,        ceiling 0.30 → rate 0.30 → ceil(16/0.30) = 54 > warn 20
-	#   4c never fills — a collapsing Wild Fowl flock, ceiling 0 → the party would return empty
+	# BEFORE the click commits. The turns are LOOKED UP in the hovered herd's `hunt_trip_estimates`
+	# (the sim forward-simulated the trip; the client divides nothing). Under Sustain the party lives
+	# off a small renewable flow, so the answer is entirely herd-dependent. Same party, three herds:
+	#   4a viable      — Thunder Mammoth: the sim's cell says 6 turns → within the 20-turn warn line
+	#   4b not viable  — Red Deer:        the sim's cell says 54 turns → past the warn line
+	#   4c never fills — a collapsing Wild Fowl flock: `turns_to_fill = 0` → the party would return empty
 	for state: Dictionary in _hunt_forecast_states():
 		_hud.show_unit_selection(_band_fixture())
 		_hud._on_send_hunt_expedition_pressed(_band_fixture(), HUNT_FORECAST_PARTY, "sustain")
@@ -1041,9 +1046,15 @@ func _band_fixture() -> Dictionary:
 		# Server's hard party-size cap (expedition config, default 8) — the outfit stepper maxes at
 		# min(idle, this).
 		"max_expedition_party_size": 8,
-		# Pre-launch hunt-trip forecast levers (global config, echoed on every cohort). With a target
-		# herd's `hunt_policy_ceilings` these give the targeting banner its turns-to-fill line:
-		# rate = min(workers × 0.8, ceiling); turns = ceil(workers × 4.0 / rate); viable = turns <= 20.
+		# Global config levers echoed on every cohort. They are DISPLAY levers — none of them computes
+		# a trip length. The targeting banner's turns-to-fill is a PURE LOOKUP into the target herd's
+		# `hunt_trip_estimates` (the sim forward-simulates the trip and exports the answer); the client
+		# does ZERO arithmetic for an expedition and never divides a carry cap by a rate.
+		#   expedition_per_worker_carry     — pack size, for the "Carried X / cap" readout.
+		#   expedition_viability_warn_turns — the viable/not-viable threshold applied to turns_to_fill.
+		#   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the resident-band
+		#     LOCAL hunt preview, which IS arithmetic: min(workers × 0.8, band_ceiling) × output_mult.
+		# Band = flow arithmetic; expedition = lookup.
 		"expedition_per_worker_carry": 4.0,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
@@ -1378,8 +1389,9 @@ func _plain_herd_tile_info() -> Dictionary:
 	}
 
 ## The herd-panel EXPEDITION forecast states (herd beyond hunt_reach), each also naming the composed
-## POLICY — because the policy is what selects which expedition ceiling the forecast reads, and reading
-## the BAND's ceiling for a Surplus trip was the bug this covers.
+## POLICY — because the policy is half the key (`"<policy>:<party_workers>"`) the forecast looks up in
+## the herd's `hunt_trip_estimates`. Re-deriving a Surplus trip from the BAND's flow ceiling instead of
+## reading the sim's row was the bug these cover.
 func _hunt_assign_forecast_states() -> Array:
 	return [
 		{
@@ -1395,9 +1407,10 @@ func _hunt_assign_forecast_states() -> Array:
 				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS),
 		},
 		{
-			# THE FIX, on the same Red Deer that reads 54 turns on Sustain: a Surplus party eats stock
-			# headroom (3.0/turn), not the herd's 1.2/turn flow, so it fills in ~6 turns and reads
-			# VIABLE. Quoting the band's flow ceiling here is what used to scare the player off it.
+			# THE FIX, on the same Red Deer that reads 54 turns on Sustain: a Surplus party strips the
+			# herd's stock headroom instead of living off its renewable flow, so the sim's simulated
+			# row says ~6 turns — VIABLE. Re-deriving the trip from the band's flow ceiling is what
+			# used to scare the player off it.
 			"name": "herd_hunt_forecast_surplus",
 			"policy": "surplus",
 			"herd": _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
@@ -1410,8 +1423,9 @@ func _hunt_assign_forecast_states() -> Array:
 				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS),
 		},
 		{
-			# Eradicate: the expedition ceiling is a deliberate 0 — a DENIAL mission delivers no food.
-			# Must NOT read like the collapsed herd above (which is the herd having nothing left to give).
+			# Eradicate: the sim marks the row `delivers_food = false` — a DENIAL mission delivers no
+			# food BY DESIGN (the client never infers that from the policy string). Must NOT read like
+			# the collapsed herd above (which is the herd having nothing left to give).
 			"name": "herd_hunt_forecast_eradicate",
 			"policy": "eradicate",
 			"herd": _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
@@ -1501,8 +1515,9 @@ func _food_tile_fixture() -> Dictionary:
 	}
 
 ## The three pre-launch hunt-forecast states, each a hovered hex carrying one huntable herd whose
-## exported `hunt_policy_ceilings` (provisions/turn, worker-independent) put the same 4-worker Sustain
-## party in a different place: comfortably viable, viable-but-a-trap, and impossible.
+## exported `hunt_trip_estimates` row (the sim's forward-simulated turns-to-fill, which the banner
+## LOOKS UP — it computes nothing) puts the same 4-worker Sustain party in a different place:
+## comfortably viable, viable-but-a-trap, and never fills.
 func _hunt_forecast_states() -> Array:
 	return [
 		{
