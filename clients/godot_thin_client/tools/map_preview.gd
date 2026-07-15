@@ -104,6 +104,13 @@ const SWIM_CROP_RADII := 2.4  # crop half-size = this × hex_radius → a couple
 const PASTURE_OVERLAY_KEY := "pasture"     # mirrors MapView.PASTURE_OVERLAY_KEY / the decoder's channel key
 const PASTURE_GRID_W := 26
 const PASTURE_GRID_H := 18
+# The big-game herd parked mid-prairie for the "herd range over pasture" state (Grazing Phase 2b-iii):
+# col 9 / row 7 sits inside the prairie block (rows 5–10, cols 6–12), so its radius-1 grazing range
+# (7 tiles) lands entirely on the rich reference pasture — the ring-over-graze the state exists to show.
+const PASTURE_HERD_ID := "game_deer_09"
+const PASTURE_HERD_COL := 9
+const PASTURE_HERD_ROW := 7
+const PASTURE_HERD_RANGE_RADIUS := 1
 # MapView is COVER-fit, so a grid whose aspect differs from the window's is CROPPED at the fit zoom —
 # and a pasture distribution you can only see two thirds of is exactly the frame this state exists to
 # avoid. The pointy-top odd-r extents of this grid are ≈ (W + 0.5)·√3 × (1.5·H + 0.5) hex radii, i.e.
@@ -683,6 +690,19 @@ func _ready() -> void:
 	# and this harness has no HUD to draw them into — print them so they can be checked against the map.
 	print("map_preview: pasture legend = ", _map._legend_for_current_view())
 
+	# State "pasture herd range" — the herd's grazing RANGE ring OVER the pasture overlay (Grazing Phase
+	# 2b-iii). The same earthlike frame with a big-game herd parked mid-prairie (its range-1 disc of 7
+	# tiles sits entirely on the rich prairie steppe) and SELECTED: the warm graze-amber ring must read
+	# clearly over the straw/green pasture ramp — that ring-over-graze is the whole point (the player sees
+	# the exact ground the sim derives the herd's carrying capacity from).
+	_map.display_snapshot(_snapshot_pasture_herd())
+	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
+	_map.selected_herd_id = PASTURE_HERD_ID
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_pasture_herd_range")
+	_map.selected_herd_id = ""
+
 	# State "forage" — THE HUMAN-FOOD DISTRIBUTION, the twin of "pasture". Same earthlike shape, the
 	# OTHER food web: it must look VISIBLY DIFFERENT from the pasture frame (that divergence is the whole
 	# point of the two-table split). Read against map_pasture.png:
@@ -940,6 +960,26 @@ func _snapshot_pasture() -> Dictionary:
 		"populations": [],
 		"herds": [],
 	}
+
+## The pasture snapshot with a big-game herd parked mid-prairie and selectable — for the range-ring
+## state. Reuses `_snapshot_pasture()` verbatim (so the overlay/legend are identical) and only injects
+## the herd into the empty `herds` array; MapView draws its grazing-range ring for the selected herd.
+func _snapshot_pasture_herd() -> Dictionary:
+	var snapshot := _snapshot_pasture()
+	snapshot["herds"] = [{
+		"id": PASTURE_HERD_ID,
+		"label": "Red Deer (%s)" % PASTURE_HERD_ID,
+		"species": "Red Deer",
+		"size_class": "big",
+		"huntable": true,
+		"ecology_phase": "thriving",
+		"x": PASTURE_HERD_COL,
+		"y": PASTURE_HERD_ROW,
+		"biomass": 1480.0,
+		"carrying_capacity": 2150.0,
+		"graze_range_radius": PASTURE_HERD_RANGE_RADIUS,
+	}]
+	return snapshot
 
 ## The forage snapshot: the SAME earthlike terrain as pasture, painted by the `forage` overlay channel
 ## off the HUMAN-food table. Each tile carries `forage_capacity` (which MapView caches into `tile_forage`

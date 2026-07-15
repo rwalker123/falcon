@@ -1792,6 +1792,38 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
   / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
   is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
+- **Herd grazing range + carrying capacity** (Grazing Phase 2b-iii; `docs/plan_grazing_2b.md` §8,
+  `core_sim` Phase 2b-ii — K becomes ecological): make the ecological carrying-capacity model
+  *visible*, so the player sees WHY a herd is the size it is. Two wire fields on `HerdTelemetryState`
+  (appended after `penFedFraction`), decoded in `native/src/lib.rs herds_to_array` (both snapshot +
+  delta share it): **`carryingCapacity`** → `carrying_capacity` (the herd's CURRENT derived K, what it
+  caps at on its range) and **`grazeRangeRadius`** → `graze_range_radius` (the hex radius of its
+  grazing range: small game 0, big game 1, migratory = its loiter_radius). Surfaced two ways:
+  - **Herd drawer rows** (`Hud._herd_summary_lines`, beside Biomass): a **`Range: N tiles`** row (the
+    hex-disk count `1 + 3r(r+1)` via `_graze_range_label` — radius 0 → "Range: 1 tile" singular, 1 → 7,
+    2 → 19; the SAME count the map ring draws) and a **`Carrying cap: ~K`** row (`carrying_capacity`
+    rounded — keys stay ≤ 16 chars so `_split_detail_kv` aligns them as table rows beside Biomass;
+    "Carrying capacity" is 17). Biomass + Carrying cap read together: here's how many animals, here's
+    the ceiling the land sets. When `biomass > carrying_capacity × (1 + OVERGRAZE_EPSILON)` a WARN-amber
+    full-width **`⚠ Overgrazing — range can't sustain this herd`** row appears (a `_format_detail_bbcode`
+    branch tinting the sentence with the shared `HudStyle.WARN_HEX` — NOT a parallel styling path). This
+    is a **trivial honest comparison of two sim-provided numbers**, never a re-derivation of the ecology
+    model (K and graze flow are the sim's). **Guards:** `carrying_capacity <= 0` (older snapshot / a
+    penned herd's frozen value) renders the Carrying cap row plainly and suppresses the overgrazing
+    test; a **corralled** herd (doesn't roam-graze a range) suppresses the Range row + overgrazing test
+    entirely (its K is a frozen pen-time value), keeping only the plain Carrying cap row.
+  - **Map range ring** (`MapView._draw_herd_range_highlights`, drawn from `_draw` when a herd is
+    selected, under the herd markers): the tiles within `graze_range_radius` of the herd — the EXACT
+    ring the sim grazes / derives K over — as a warm graze-amber FILLED region + gold tile outlines
+    (`HERD_RANGE_FILL` / `HERD_RANGE_OUTLINE`), deliberately DISTINCT from the band work-range ring's
+    faint cyan (a herd's range is a different thing, and both can be on at once) and readable over the
+    Pasture overlay (so the ring sits on the actual graze). Reuses the band ring's odd-r `_hex_distance`
+    / `_band_effective_col` (seam-wrapped) / `_fill_hex` / `_outline_hex` primitives. `graze_range_radius
+    == 0` (small game) → the herd's own single tile. A **corralled** herd draws nothing. Fog-gated via
+    `_is_tile_visible` like the herd marker.
+  - Verify: ui_preview `herd_grazing_healthy` (Range + Carrying cap pair, no warning) /
+    `herd_overgrazing` (biomass > K → the ⚠ row) / `herd_grazing_small_game` (radius 0 → "Range: 1
+    tile"); map_preview `map_pasture_herd_range` (the gold ring over the Pasture overlay).
 - **Clear-all / move-band** (`Hud.gd`, Early-Game Labor slice 3b): the single-task
   Scout/Cancel affordance + its optimistic `_pending_transition_bands` machinery were
   **retired** with the labor-allocation model. There is no longer a band-global task to

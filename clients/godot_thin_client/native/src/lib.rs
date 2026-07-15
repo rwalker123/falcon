@@ -3208,6 +3208,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // MapView's herd marker (a starving pen's glyph tints DANGER).
         let _ = dict.insert("pen_upkeep", herd.penUpkeep());
         let _ = dict.insert("pen_fed_fraction", herd.penFedFraction());
+        // Ecological carrying capacity + grazing range (Grazing Phase 2b-iii). `carrying_capacity` is
+        // the herd's CURRENT derived K (what it caps at on its range); `graze_range_radius` is the hex
+        // radius of that range (small game 0, big game 1, migratory = its loiter_radius). The herd
+        // drawer reads them for the "Carrying capacity" / "Range" rows + the honest overgrazing test
+        // (`biomass > carrying_capacity`), and MapView draws the EXACT ring the sim grazes over.
+        let _ = dict.insert("carrying_capacity", herd.carryingCapacity());
+        let _ = dict.insert("graze_range_radius", herd.grazeRangeRadius() as i64);
         array.push(&dict.to_variant());
     }
     array

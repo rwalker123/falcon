@@ -401,6 +401,19 @@ const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
+# Herd drawer ecological carrying capacity + grazing range (Grazing Phase 2b-iii): the two numbers that
+# explain WHY a herd is the size it is. `Range` is the ground it grazes (tile count of its hex range,
+# so it pairs with the map ring); `Carrying cap` is the K that ground can support (paired with Biomass:
+# here's how many animals, here's the ceiling the land sets). Keys stay ≤ 16 chars so `_split_detail_kv`
+# renders them as aligned table rows beside Biomass ("Carrying capacity" is 17 — hence the abbreviation).
+const HERD_RANGE_ROW := "Range"
+const HERD_CAPACITY_ROW := "Carrying cap"
+# Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
+# range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
+# of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
+# from flickering the warning. WARN-tinted via `_format_detail_bbcode` (the Ecology/Corral rows' path).
+const OVERGRAZE_EPSILON := 0.05
+const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
 # The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
@@ -4909,6 +4922,21 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)
+    # The range + its derived carrying capacity — WHY the herd is this size (Grazing Phase 2b-iii). K is
+    # derived each turn from the graze on the herd's range; `biomass > K` is the honest overgrazing test
+    # (both numbers sim-provided — the client compares, it does NOT re-derive the ecology). A CORRALLED
+    # herd doesn't roam-graze a range, so the range row + overgrazing test are meaningless for it (its K
+    # is a frozen pen-time value); the Carrying capacity row still renders, plainly.
+    var corralled := bool(herd_data.get("corralled", false))
+    var carrying_capacity := float(herd_data.get("carrying_capacity", 0.0))
+    if not corralled:
+        var range_radius := int(herd_data.get("graze_range_radius", 0))
+        lines.append("%s: %s" % [HERD_RANGE_ROW, _graze_range_label(range_radius)])
+    if carrying_capacity > 0.0:
+        lines.append("%s: ~%d" % [HERD_CAPACITY_ROW, int(round(carrying_capacity))])
+        # Guard: K <= 0 (older snapshot / a penned herd's frozen value) can't be compared against.
+        if not corralled and biomass > carrying_capacity * (1.0 + OVERGRAZE_EPSILON):
+            lines.append(OVERGRAZING_WARNING)
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
@@ -4965,6 +4993,15 @@ func _ecology_value_hex(value: String) -> String:
     if normalized.contains("stress"):
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
+
+## Tile-count label for a herd's grazing range from its hex radius — "the ground this herd grazes".
+## The hex-disk count `1 + 3r(r+1)`: radius 0 → 1 tile (small game, its own hex), 1 → 7, 2 → 19. Same
+## count the map ring draws, so the readout and the ring can never disagree. Singular for a lone tile.
+func _graze_range_label(range_radius: int) -> String:
+    var tiles := 1 + 3 * range_radius * (range_radius + 1)
+    if tiles == 1:
+        return "1 tile"
+    return "%d tiles" % tiles
 
 ## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows
 ## a livestock glyph; in-progress shows the percentage. `_format_detail_bbcode` tints a
@@ -5066,6 +5103,14 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = false
             var row_hex := HudStyle.HEALTHY_HEX if line.contains(MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
+            continue
+        # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
+        # WARN_HEX the Ecology/Corral value rows use — not a parallel styling path, just the shared color.
+        if line == OVERGRAZING_WARNING:
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.WARN_HEX, line]
             continue
         var kv := _split_detail_kv(line)
         if kv.is_empty():

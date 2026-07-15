@@ -577,6 +577,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_collapsing")
 
+	# State 3b-graze — the ecological carrying-capacity readout (Grazing Phase 2b-iii). A HEALTHY herd:
+	# the drawer shows "Range: 7 tiles" + "Carrying cap: ~2150" beside "Biomass: 1480" — how many animals
+	# vs the ceiling the land sets — with NO overgrazing warning (biomass ≤ K).
+	_hud.show_herd_selection(_grazing_healthy_herd_fixture())
+	await _settle()
+	await _save("herd_grazing_healthy")
+
+	# State 3b-overgraze — the same rows, but biomass (2100) > K (1352): the WARN-amber
+	# "⚠ Overgrazing — range can't sustain this herd" row appears under Carrying cap. It shows ONLY when
+	# biomass exceeds K — the honest sim-number comparison, not a re-derived ecology model.
+	_hud.show_herd_selection(_overgrazing_herd_fixture())
+	await _settle()
+	await _save("herd_overgrazing")
+
+	# State 3b-smallgame — a radius-0 herd (small game grazes only its own tile): "Range: 1 tile"
+	# (singular), and the map draws a single-hex highlight rather than a ring.
+	_hud.show_herd_selection(_small_game_herd_fixture())
+	await _settle()
+	await _save("herd_grazing_small_game")
+
 	# State 3c — a domesticated + corralled herd: the drawer shows "Husbandry 🐄 Domesticated"
 	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder — plus the
 	# amber "Pen feed -1.74 /turn" row, the running cost a penned (non-grazing) herd costs its keeper.
@@ -1876,6 +1896,12 @@ func _herd_fixture() -> Dictionary:
 		"domestication": 0.4,
 		"x": 66, "y": 10,
 		"biomass": 820.0,
+		# Ecological carrying capacity + grazing range (Grazing Phase 2b-iii): the numbers that explain
+		# the herd's size. Big game roams a radius-1 range (7 tiles); on good steppe it caps ~2150, well
+		# above this herd's 820 biomass, so the drawer reads the healthy "Range / Carrying cap" pair with
+		# no overgrazing warning. The dedicated grazing states below dial in overgrazed / small-game.
+		"carrying_capacity": 2150.0,
+		"graze_range_radius": 1,
 		"route_length": 3,
 		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
 		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
@@ -1947,6 +1973,58 @@ func _collapsing_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 96.0
 	fixture["ecology_phase"] = "collapsing"
 	fixture["domestication"] = 0.0
+	return fixture
+
+## A compact NON-food tile_info (like the corral fixtures) so the Tile card stays short and the herd
+## drawer's Biomass / Range / Carrying cap (+ overgrazing) rows land in-frame rather than below the fold.
+func _compact_herd_tile() -> Dictionary:
+	return {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
+
+## A HEALTHY grazing herd (Grazing Phase 2b-iii): big game (radius-1 range → "Range: 7 tiles") whose
+## biomass sits below the K its range supports, so the drawer reads the "Range / Carrying cap" pair
+## beside Biomass with NO overgrazing warning. domestication 0 keeps the frame focused on the new rows.
+func _grazing_healthy_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["domestication"] = 0.0
+	fixture["biomass"] = 1480.0
+	fixture["carrying_capacity"] = 2150.0
+	fixture["graze_range_radius"] = 1
+	fixture["tile_info"] = _compact_herd_tile()
+	return fixture
+
+## An OVERGRAZING herd: biomass (2100) exceeds the K (1352) its range can sustainably feed, so the
+## drawer adds the WARN-amber "⚠ Overgrazing — range can't sustain this herd" row under Carrying cap.
+## The herd is drawing its range down and will shrink — the honest biomass > K comparison, both numbers
+## sim-provided.
+func _overgrazing_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["domestication"] = 0.0
+	fixture["biomass"] = 2100.0
+	fixture["carrying_capacity"] = 1352.0
+	fixture["graze_range_radius"] = 1
+	fixture["tile_info"] = _compact_herd_tile()
+	return fixture
+
+## A SMALL-GAME herd (radius-0 range): it grazes only its own tile, so the drawer reads "Range: 1 tile"
+## (singular) and the map draws a single-hex highlight. Biomass below its small K → no overgrazing.
+func _small_game_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["id"] = "game_rabbit_03"
+	fixture["label"] = "Rabbit Warren (game_rabbit_03)"
+	fixture["species"] = "Rabbit Warren"
+	fixture["size_class"] = "small"
+	fixture["domestication"] = 0.0
+	fixture["biomass"] = 140.0
+	fixture["carrying_capacity"] = 190.0
+	fixture["graze_range_radius"] = 0
+	fixture["tile_info"] = _compact_herd_tile()
 	return fixture
 
 ## A still-WILD herd (domestication 0.4) on the same compact tile as the corral-ready one: the Corral
