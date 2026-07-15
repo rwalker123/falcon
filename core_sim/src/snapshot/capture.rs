@@ -1870,6 +1870,11 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             temperature: Scalar::from_raw(tile_state.temperature),
             terrain: tile_state.terrain,
             terrain_tags: tile_state.terrain_tags,
+            // The wire carries `resource_terrain()` (the real ground). It only *means* a preserved
+            // underlying biome on a navigable hex; elsewhere it equals `terrain`, so reconstruct the
+            // `Option` from the navigability signal to keep "Some only on NavigableRiver" true.
+            underlying_terrain: (tile_state.terrain == sim_runtime::TerrainType::NavigableRiver)
+                .then_some(tile_state.underlying_terrain),
             mountain: mountain_metadata_from_state(
                 tile_state.mountain_kind,
                 tile_state.mountain_relief,

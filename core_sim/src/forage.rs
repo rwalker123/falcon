@@ -238,6 +238,21 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
     }
 }
 
+/// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,
+/// so a navigable hex's seeded patch and its exported `forage_capacity` can never drift.
+///
+/// A `NavigableRiver` hex reads its **underlying** biome (`resource_terrain()`) plus the river
+/// fishing bonus (`navigable_forage_capacity`, always `> 0` — a navigable river is always a fishery,
+/// so it always seeds a patch even over a barren biome). Every other tile reads its own biome
+/// (`resource_terrain()` == `terrain` there).
+pub fn tile_forage_capacity(forage: &ForageLaborConfig, tile: &Tile) -> f32 {
+    if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
+        forage.navigable_forage_capacity(tile.resource_terrain())
+    } else {
+        forage.capacity_for(tile.resource_terrain())
+    }
+}
+
 /// Seed a full patch on every `FoodModuleTag` tile at Startup (idempotent — a world that already
 /// carries patches, e.g. after a rollback restore, is skipped). Runs in the Startup chain after
 /// `spawn_initial_world` has stamped the food-module tags. Mirrors `spawn_initial_herds`.
@@ -260,7 +275,7 @@ pub fn spawn_initial_forage(
     let labor = labor_config.get();
     let forage = &labor.forage;
     for (tile, _module) in tiles.iter() {
-        let capacity = forage.capacity_for(tile.terrain);
+        let capacity = tile_forage_capacity(forage, tile);
         if capacity <= NO_FORAGE_CAPACITY {
             continue;
         }
@@ -541,6 +556,59 @@ mod tests {
     /// (the mechanics are cap-relative); `AlluvialPlain` is the richest common human ground and the
     /// one a `RiverineDelta` food module actually sits on.
     const TEST_BIOME: TerrainType = TerrainType::AlluvialPlain;
+
+    /// A navigable river keeps the valley it cut: it stays mechanically `NavigableRiver`, but its
+    /// RESOURCE reads route through the preserved underlying biome (`resource_terrain`), and it is
+    /// always a fishery (forage gets the river bonus on top of the underlying; graze gets the plain
+    /// underlying value — you don't pasture on the channel).
+    #[test]
+    fn navigable_hex_reads_underlying_biome_plus_river_forage_bonus() {
+        use crate::fauna_config::FaunaConfig;
+        use sim_runtime::{TerrainTags, TerrainType};
+
+        let forage = test_forage_config();
+        let graze = FaunaConfig::builtin().graze.clone();
+
+        // A navigable hex cut through fertile grassland: mechanically water, underlying preserved.
+        let underlying = TerrainType::PrairieSteppe;
+        let navigable = Tile {
+            terrain: TerrainType::NavigableRiver,
+            terrain_tags: TerrainTags::WATER | TerrainTags::FRESHWATER,
+            underlying_terrain: Some(underlying),
+            ..Default::default()
+        };
+
+        // Terrain stays NavigableRiver (movement/naval unchanged); resources read the valley.
+        assert_eq!(navigable.terrain, TerrainType::NavigableRiver);
+        assert_eq!(navigable.resource_terrain(), underlying);
+
+        // Forage = underlying + river fishing bonus (the seeded patch cap, via the SHARED helper).
+        let expected_forage = forage.capacity_for(underlying) + forage.navigable_river_forage_bonus;
+        assert_eq!(tile_forage_capacity(&forage, &navigable), expected_forage);
+        assert!(expected_forage > forage.capacity_for(underlying)); // strictly richer than dry land
+
+        // Graze = the underlying biome's pasture, no bonus.
+        assert_eq!(
+            graze.capacity_for(navigable.resource_terrain()),
+            graze.capacity_for(underlying)
+        );
+        assert!(graze.capacity_for(navigable.resource_terrain()) > 0.0); // grassland grazes
+
+        // Even over an otherwise-barren biome (no human food), a navigable hex STILL seeds a patch —
+        // a navigable river is always a fishery — at just the bonus.
+        let barren = TerrainType::Glacier;
+        assert_eq!(forage.capacity_for(barren), NO_FORAGE_CAPACITY);
+        let navigable_over_barren = Tile {
+            terrain: TerrainType::NavigableRiver,
+            underlying_terrain: Some(barren),
+            ..Default::default()
+        };
+        assert_eq!(
+            tile_forage_capacity(&forage, &navigable_over_barren),
+            forage.navigable_river_forage_bonus
+        );
+        assert!(tile_forage_capacity(&forage, &navigable_over_barren) > NO_FORAGE_CAPACITY);
+    }
 
     #[test]
     fn sustain_on_full_patch_yields_msy_and_draws_to_half_cap() {

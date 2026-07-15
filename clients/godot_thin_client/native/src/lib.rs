@@ -4326,6 +4326,11 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     // temperature (>=0; bigger = harsher). Bucketed into a Habitability rating in Hud.
     let _ = dict.insert("habitability", fixed64_to_f64(tile.habitability()));
     let _ = dict.insert("terrain", tile.terrain().0 as i64);
+    // The "real ground" biome: equals `terrain` on ordinary tiles, and the preserved VALLEY biome on a
+    // navigable hex (which stamps NavigableRiver over the ground the river cut). MapView packs it into the
+    // shader's navigable_underlying_map so a navigable hex renders its valley as the base with only a slim
+    // bank skirt hugging the channel, instead of a whole-hex bank hiding the land.
+    let _ = dict.insert("underlying_terrain", tile.underlyingTerrain().0 as i64);
     let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
     // Minor/Major rivers ride the tile's EDGES, not its center: a 12-bit mask, 2 bits per odd-r
     // direction (class = (river_edges >> (2*dir)) & 0b11; 0 none / 1 Minor / 2 Major, 3 reserved).

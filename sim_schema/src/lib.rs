@@ -1341,9 +1341,18 @@ pub struct TileState {
     /// that carry no patch. Unlike graze this is **non-zero on fishery water** (`ContinentalShelf` /
     /// `CoralShelf` / `InlandSea`) — a fishery is a food module on water. Only a *stated-zero* biome
     /// (deep ocean, glacier, lava, salt flat) reads `0`. Derived at capture from
-    /// `ForageLaborConfig::capacity_for(tile.terrain)` — see `docs/plan_grazing_foundation.md` §1.1.
+    /// `forage::tile_forage_capacity`, which keys off `resource_terrain()` (the underlying valley
+    /// biome on a navigable hex, the tile's own terrain elsewhere); a `NavigableRiver` hex additionally
+    /// earns the navigable fishing bonus — see `docs/plan_grazing_foundation.md` §1.1.
     #[serde(default)]
     pub forage_capacity: f32,
+    /// The tile's **real ground** for resource reads. Equals `terrain` on every ordinary tile; on a
+    /// `NavigableRiver` hex it is the biome the channel was cut through (the valley it yields, not
+    /// open water). The client consults this **only** when `terrain == NavigableRiver` — elsewhere it
+    /// is identical to `terrain` — so it is always meaningful even read unconditionally. Written from
+    /// `Tile::resource_terrain()`.
+    #[serde(default)]
+    pub underlying_terrain: TerrainType,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
@@ -3583,6 +3592,7 @@ fn create_tiles<'a>(
                     grazeCapacity: tile.graze_capacity,
                     grazeEcologyPhase: tile.graze_ecology_phase,
                     forageCapacity: tile.forage_capacity,
+                    underlyingTerrain: to_fb_terrain_type(tile.underlying_terrain),
                     riverEdges: tile.river_edges,
                     riverInflow: tile.river_inflow,
                     riverChannel: tile.river_channel,

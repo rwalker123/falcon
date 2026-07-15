@@ -458,6 +458,12 @@ table TileState {
   // overlay. Unlike graze, this is NON-ZERO on fishery water (ContinentalShelf/CoralShelf/InlandSea):
   // a fishery is a food module on water. Only a stated-zero biome (deep ocean, glacier, lava) reads 0.
   forageCapacity:float = 0;
+  // REAL GROUND for resource reads. Equals `terrain` on ordinary tiles; on a NavigableRiver hex it is
+  // the biome the channel was cut through (the valley it yields — forage/graze — not open water). The
+  // client should consult this ONLY when `terrain == NavigableRiver`; elsewhere it is identical to
+  // `terrain`. Navigability is still signaled by `terrain == NavigableRiver` (unchanged). Appended
+  // after all shipped fields (append-only) — default matches enum default so old readers are unaffected.
+  underlyingTerrain:TerrainType;
 }
 
 table LogisticsLinkState {

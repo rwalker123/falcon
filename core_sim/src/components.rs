@@ -26,6 +26,15 @@ pub struct Tile {
     pub temperature: Scalar,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
+    /// The biome this tile's RESOURCE yields are read from when it is not `terrain` itself.
+    ///
+    /// Set **only** on a `NavigableRiver` hex, at the hydrology stamp, to the biome the channel was
+    /// cut through (`hydrology.rs`). A navigable river stays *mechanically* water — impassable to
+    /// land, sailable, bisecting — but a giant river running through a valley still yields the
+    /// valley's forage/graze, not open water. `None` everywhere else (the tile just is its
+    /// `terrain`). Read through [`Tile::resource_terrain`]; movement/logistics/attrition keep
+    /// keying on `terrain`.
+    pub underlying_terrain: Option<TerrainType>,
     pub mountain: Option<MountainMetadata>,
     /// Packed per-side river classes — 2 bits per odd-r direction (see `RiverClass`). Populated
     /// by `generate_hydrology` for **both** hexes flanking every traced river edge, so a hex
@@ -62,6 +71,12 @@ pub struct Tile {
 }
 
 impl Tile {
+    /// Terrain that drives this tile's RESOURCE yields. A navigable river yields the
+    /// valley it cut, not open water; everywhere else it is just `terrain`.
+    pub fn resource_terrain(&self) -> TerrainType {
+        self.underlying_terrain.unwrap_or(self.terrain)
+    }
+
     /// The class of river running along side `dir` (odd-r direction, `0..6`). An out-of-range
     /// direction reads `None` — this is a lookup, not an assertion site.
     pub fn river_class_on_side(&self, dir: u8) -> RiverClass {
@@ -1161,6 +1176,7 @@ impl Default for Tile {
             temperature: scalar_zero(),
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
+            underlying_terrain: None,
             mountain: None,
             river_edges: 0,
             river_inflow: 0,

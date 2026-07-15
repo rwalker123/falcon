@@ -327,6 +327,8 @@ pub fn spawn_initial_world(
             ),
             terrain: proto.terrain,
             terrain_tags: proto.tags,
+            // Captured by `generate_hydrology` when it stamps a navigable channel over this biome.
+            underlying_terrain: None,
             mountain: proto.mountain,
             // Populated by `generate_hydrology`, which runs after the world is spawned.
             river_edges: 0,
@@ -3124,6 +3126,7 @@ mod terrain_tag_tests {
                     temperature: scalar_from_f32(0.5),
                     terrain,
                     terrain_tags: tags,
+                    underlying_terrain: None,
                     mountain,
                     river_edges: 0,
                     river_inflow: 0,
@@ -3234,6 +3237,7 @@ mod terrain_tag_tests {
                         temperature: scalar_from_f32(0.5),
                         terrain,
                         terrain_tags: def.tags,
+                        underlying_terrain: None,
                         mountain: None,
                         river_edges: 0,
                         river_inflow: 0,

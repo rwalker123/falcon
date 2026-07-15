@@ -2086,7 +2086,11 @@ pub fn generate_hydrology(world: &mut World) {
 
         if navigable_set.contains(&idx) && tile.terrain != TerrainType::NavigableRiver {
             // A navigable river IS the hex — take the terrain's own tags wholesale rather than
-            // OR-ing water onto whatever biome was there.
+            // OR-ing water onto whatever biome was there. But PRESERVE the biome it was cut through:
+            // the channel yields the valley's forage/graze, not open water (read via
+            // `Tile::resource_terrain`). Captured before the overwrite, only on tiles that actually
+            // become navigable.
+            tile.underlying_terrain = Some(tile.terrain);
             tile.terrain = TerrainType::NavigableRiver;
             tile.terrain_tags = navigable_tags;
             navigable_tiles_applied += 1;
@@ -3045,6 +3049,7 @@ mod tests {
                         temperature: scalar_zero(),
                         terrain,
                         terrain_tags: terrain_definition(terrain).tags,
+                        underlying_terrain: None,
                         mountain: None,
                         river_edges: 0,
                         river_inflow: 0,

@@ -242,6 +242,68 @@ and no threshold fixes that — it is blocked on fluvial erosion in the heightfi
 `docs/plan_rivers_drainage_network.md` → "As built" and `core_sim/CLAUDE.md` → Rivers → "Known
 limitation".
 
+## A navigable hex is a valley with a river in it — not a hex of water
+
+An earlier build stamped a navigable hex by **overwriting** `terrain` with `NavigableRiver` and
+throwing the underlying biome away. That made the hex read, both mechanically and visually, as a
+full hex of water: the client's *base* texture for a navigable hex was a whole-hex silty-bank image
+(`37_navigable_river.png`), and every resource read (`forage`, `graze`) keyed off the swapped
+terrain — so a great river running through fertile floodplain grazed and foraged like open water,
+and the whole hex was drawn as bank with a thin channel painted on top.
+
+That is backwards. A one-hex-wide navigable river is a **channel through a valley**: most of the
+hex is still the land the river cut, and that land is *more* productive for the water, not less
+(the Nile through desert is the canonical case). So the model splits what the hex **is
+mechanically** from what it **yields** and **looks like**:
+
+- **Mechanically it stays a `NavigableRiver`.** `terrain` and `terrain_tags` remain the water
+  terrain, so it is impassable to land movement, sailable, and it **still bisects the continent** —
+  the whole point of the previous section. Every invariant that keys on `terrain == NavigableRiver`
+  (tag-solver water protection, palette must-have anchoring, shelf reconciliation) is untouched.
+- **The underlying biome is preserved, not discarded.** A new per-tile field records the land the
+  channel was stamped over:
+
+  ```rust
+  // Tile
+  pub underlying_terrain: Option<TerrainType>,  // Some(biome) on a navigable hex; None elsewhere
+  ```
+
+  It is set at the stamp site (`hydrology.rs`) *from the pre-stamp `terrain`*, immediately before
+  the terrain is overwritten. A helper `Tile::resource_terrain()` returns the underlying biome on a
+  navigable hex and `terrain` everywhere else — a single funnel for every resource read.
+
+- **Resources are underlying *plus* a river benefit.** Forage and graze both read
+  `resource_terrain()` (so the hex yields whatever the *valley* yields), and a navigable hex
+  additionally, *always*, earns a fishing bonus — even over a biome that is normally barren, because
+  a navigable river is a freshwater fishery and a trade highway regardless of what it runs through.
+  Graze takes no river bonus (you do not pasture animals on the channel). The transport/logistics
+  benefit is already carried by the `NavigableRiver` movement profile and needs no new lever.
+
+  - Lever `forage.navigable_river_forage_bonus` (`labor_config.json`) — additive human-food
+    capacity on any navigable hex, on top of the underlying biome's forage. The old fixed
+    `NavigableRiver` forage-table value (130) becomes vestigial; the bonus starts conservative and
+    is tuned in JSON, not code.
+
+- **The render draws the underlying terrain as the base, with a slim bank flanking the channel.**
+  Nothing about the channel geometry changes — the arms, inflow spurs, head-taper, and orphan-blob
+  fallback all still ride the `river_channel` / `river_inflow` masks. What changes is what fills the
+  rest of the hex: instead of whole-hex bank gravel, the base samples the **underlying** biome, and
+  the bank shrinks to a **thin annulus hugging the water**, keyed off the same channel signed-distance
+  field the water already uses:
+
+  - `dist < navigable_width` → channel water (unchanged),
+  - `navigable_width ≤ dist < navigable_width + navigable_bank_width` → bank gravel skirt,
+  - `dist ≥ that` → underlying biome.
+
+  - Lever `rivers.navigable_bank_width` (`terrain_config.json`) — bank half-width beyond the channel,
+    default a slim ~10 % of hex radius, tuned in the client.
+
+**Wire.** One append-only field: `TileState.underlyingTerrain:TerrainType`. Navigability itself is
+still signaled by `terrain == NavigableRiver` (the client keeps `own_navigable = own_layer ==
+river_navigable_terrain_id`); `underlyingTerrain` only tells the shader **which base layer to sample**
+and the sim **which biome to yield**. A small R8 `navigable_underlying_map` carries it to the shader
+alongside the existing river maps.
+
 ## See also
 
 - **`docs/plan_rivers_drainage_network.md`** — the follow-up arc that replaced the routing and

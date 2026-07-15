@@ -507,6 +507,7 @@ mod power_tests {
                             temperature: ambient_temperature,
                             terrain: TerrainType::AlluvialPlain,
                             terrain_tags: TerrainTags::empty(),
+                            underlying_terrain: None,
                             mountain: None,
                             river_edges: 0,
                             river_inflow: 0,
