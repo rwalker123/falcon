@@ -631,6 +631,67 @@ const SURF_FAR_GRID_W := 36                # a bigger grid → _fit_map_to_view 
 const SURF_FAR_GRID_H := 23
 const SURF_FAR_HEX_RADIUS := 30.0          # still well above EDGE_BLEND_MIN_RADIUS, so the shore pass runs
 
+# --- state 17 (BANK): the NavigableRiver BANK CORRIDOR, at the game's r ≈ 75 -----------------------------
+# The report: a navigable river "runs through the land as a corridor of grey HEXAGONS, not a river valley".
+# The bank (37) is NOT a water hex — its blend_class is deliberately `flat` and it renders as silty ground
+# with the channel painted on top — so the flat↔flat interlock IS eligible on every one of its land edges,
+# and a shader probe confirmed it FIRES (the mix factor ramps exactly as it does at any biome seam). The seam
+# is hard for a look reason, not a gate reason: the global ecotone (blend_width 0.25 → a visible ramp of only
+# ~0.35·r, wobbled by a fraction of that, so still essentially the straight hex polyline) is tuned for biome
+# pairs a few brightness points apart that share a hue. The bank is grey low-contrast gravel (mean luma 89)
+# and every neighbour a river corridor actually has is far from it in BOTH tone and hue — which is why this
+# state renders the corridor crossing BOTH ENDS of that range in ONE frame:
+#   · the WEST half of the field is FLOODPLAIN (9, mean luma 58) — the DARK neighbour. Floodplain and
+#     alluvial plain are river-adjacent by worldgen design, so this is the common case, not a corner case; a
+#     fix tuned only against prairie fails here (the bank is BRIGHTER than this neighbour, not darker).
+#   · the EAST half is PRAIRIE (11, mean luma 112) — the bright neighbour from the report's frame.
+# Both isolated-bank crops are the mandatory SHRED check (a straight corridor seam cannot show a torn hex
+# interior — see state 2): an isolated bank hex is given an E|W channel so it still draws as a bank with water
+# through it rather than a degenerate orphan blob.
+const BANK_GRID_W := 14
+const BANK_GRID_H := 10
+const BANK_HEX_RADIUS := 75.0
+const BANK_ID := 37                  # navigable_river — the silty BANK ground (the channel is painted on it)
+const BANK_DARK_FIELD_ID := 9        # floodplain — the DARK neighbour (luma 58): the bank is brighter
+const BANK_BRIGHT_FIELD_ID := 11     # prairie — the BRIGHT neighbour (luma 112): the bank is darker
+const BANK_FIELD_SPLIT_COL := 7      # cols < this are the dark field, the rest bright
+# The corridor: a walk in the SIM's odd-r direction order (see RIVER_DIR_OFFSETS), so it turns corners like a
+# real chain instead of running straight down one row (a straight run never exercises a bent seam).
+const BANK_START := Vector2i(0, 5)
+const BANK_WALK := [0, 5, 0, 0, 1, 0, 0, 5, 0, 0, 1, 0, 0, 0]   # E NE E E SE E E NE E E SE E E E
+# odd-r neighbour offsets, SIM order (core_sim grid_utils HEX_NEIGHBOR_OFFSETS, clockwise from E) — the order
+# river_channel's bits are indexed by. (dx_even, dx_odd, dy). Mirrors map_preview's RIVER_DIR_OFFSETS.
+const BANK_DIR_OFFSETS := [
+	[1, 1, 0],    # 0 E
+	[0, 1, 1],    # 1 SE
+	[-1, 0, 1],   # 2 SW
+	[-1, -1, 0],  # 3 W
+	[-1, 0, -1],  # 4 NW
+	[0, 1, -1],   # 5 NE
+]
+# Isolated bank hexes (all six neighbours are field) — one in each field, so the shred check runs at both ends
+# of the brightness range. Their channel is E|W so they still render as a bank with water through it.
+# Kept in the TOP rows, clear of the corridor (rows 4–5) AND of the bottom-right corner: MapView's minimap
+# CanvasLayer is not hidden in this harness, so a crop down there captures the MINIMAP, not the hex.
+const BANK_ISO_DARK := Vector2i(2, 1)
+const BANK_ISO_BRIGHT := Vector2i(11, 1)
+const BANK_ISO_CHANNEL := (1 << 0) | (1 << 3)   # exits E and W
+# Crops: one corridor hex per field (the seam under test) + each isolated hex (the shred check).
+const BANK_CROP_RADII := 1.7
+const BANK_DARK_CROP := Vector2i(3, 4)      # a corridor hex sitting in the floodplain field
+const BANK_BRIGHT_CROP := Vector2i(10, 5)   # a corridor hex sitting in the prairie field
+# The sweep. width_scale = the ecotone's REACH (×blend_width), noise_scale = the boundary wobble's AMPLITUDE
+# (×blend_noise_amount), noise_cell_scale = its WAVELENGTH (×blend_noise_scale). BANK_OFF is the NEUTRAL
+# profile — i.e. exactly the shipped global levers, so it is the BEFORE frame the fix is judged against, in
+# the same camera. Amplitude without wavelength is a fringe on a straight line, so the two noise axes move
+# together.
+const BANK_VARIANTS := [
+	{"name": "BANK_off", "width_scale": 1.0, "noise_scale": 1.0, "noise_cell_scale": 1.0},
+	{"name": "BANK_v1", "width_scale": 1.8, "noise_scale": 1.6, "noise_cell_scale": 2.0},
+	{"name": "BANK_v2", "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6},
+	{"name": "BANK_v3", "width_scale": 3.4, "noise_scale": 2.8, "noise_cell_scale": 3.2},
+]
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
@@ -638,6 +699,8 @@ var _map: Node2D
 # Each swept water terrain's `shore_profile` as SHIPPED in terrain_config (terrain id → profile), captured
 # before any sweep overrides it so `_restore_shore_profiles` can put the shipped coast back.
 var _shipped_shore_profiles: Dictionary = {}
+# Same, for the `blend_profile` blocks state 17 sweeps (terrain id → profile as shipped).
+var _shipped_blend_profiles: Dictionary = {}
 # Optional state filter, from the cmdline (`godot … res://tools/blend_probe.tscn -- --only=G`): the harness is
 # 60+ frames, and a diagnosis loop re-renders ONE state many times. Empty = render everything (the default, so
 # CI/regression runs are unaffected).
@@ -824,6 +887,10 @@ func _ready() -> void:
 	if _want("16/SURF"):
 		# --- state 16 (SURF): the bright white shoreline outline (see the SURF_* const block) ---
 		await _render_surf_state()
+
+	if _want("17/BANK"):
+		# --- state 17 (BANK): the NavigableRiver BANK corridor reads as a CHAIN OF HEXAGONS ---
+		await _render_bank_state()
 
 	get_tree().quit()
 
@@ -1409,6 +1476,126 @@ func _render_lake_variant(variant: Dictionary) -> void:
 	# Re-settle: a second get_image() in the same frame as the full-frame save reads back a stale viewport.
 	await _settle()
 	await _save_crop(name, LAKE_CROP_COL, LAKE_CROP_ROW, LAKE_CROP_RADII)
+
+
+func _render_bank_state() -> void:
+	## State 17 (BANK): the NavigableRiver bank corridor, crossing a DARK (floodplain) and a BRIGHT (prairie)
+	## field in one frame, at the game's r ≈ 75. One camera across the whole sweep, so the four variants (and
+	## BANK_off — the neutral profile, i.e. the BEFORE) are directly comparable. See the BANK_* const block.
+	_map.display_snapshot(_snapshot_bank())
+	await _refit(BANK_HEX_RADIUS)
+	for variant: Dictionary in BANK_VARIANTS:
+		await _render_bank_variant(variant)
+	_restore_blend_profiles()
+	# …and the SHIPPED terrain_config profile, last, so the frame the call is actually made on is config's.
+	await _settle()
+	await _save("BANK_shipped")
+	await _save_bank_crops("BANK_shipped")
+
+
+func _render_bank_variant(variant: Dictionary) -> void:
+	## Override the bank terrain's `blend_profile` in the live config, rebuild layer_blend_map (updated in
+	## place, so MapView's binding survives), and dump the full frame + the four native-res crops.
+	_set_blend_profile(BANK_ID, {
+		"width_scale": float(variant["width_scale"]),
+		"noise_scale": float(variant["noise_scale"]),
+		"noise_cell_scale": float(variant["noise_cell_scale"]),
+	})
+	var name: String = String(variant["name"])
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	await _save_bank_crops(name)
+
+
+func _save_bank_crops(name: String) -> void:
+	## The four native-res crops the bank is judged on: the corridor seam in each field (the look call) and
+	## each isolated bank hex (the mandatory shred check — a corridor seam cannot show a torn interior).
+	for crop: Array in [
+		["dark", BANK_DARK_CROP], ["bright", BANK_BRIGHT_CROP],
+		["iso_dark", BANK_ISO_DARK], ["iso_bright", BANK_ISO_BRIGHT],
+	]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("%s_%s" % [name, String(crop[0])], hex.x, hex.y, BANK_CROP_RADII)
+
+
+func _set_blend_profile(terrain_id: int, profile: Dictionary) -> void:
+	## Override ONE terrain's `blend_profile` in the live config and rebuild the shader's layer_blend_map. The
+	## shipped block is stashed on first touch, so `_restore_blend_profiles` can undo it. The twin of
+	## `_set_shore_profile`.
+	var entry: Dictionary = _terrain_entry(terrain_id)
+	if entry.is_empty():
+		push_warning("blend_probe: terrain id %d missing from terrain_config" % terrain_id)
+		return
+	if not _shipped_blend_profiles.has(terrain_id):
+		_shipped_blend_profiles[terrain_id] = (
+			(entry.get("blend_profile", {}) as Dictionary).duplicate(true)
+		)
+	entry["blend_profile"] = profile
+	TerrainTextureManager.rebuild_layer_blend_map()
+
+
+func _restore_blend_profiles() -> void:
+	## Put every SHIPPED blend profile back, so any frame rendered after a sweep is judged on config.
+	for terrain_id: int in _shipped_blend_profiles.keys():
+		_terrain_entry(terrain_id)["blend_profile"] = _shipped_blend_profiles[terrain_id]
+	TerrainTextureManager.rebuild_layer_blend_map()
+
+
+func _snapshot_bank() -> Dictionary:
+	## A navigable-river BANK corridor walking west→east across a field that is DARK floodplain in its west
+	## half and BRIGHT prairie in its east — so one frame carries both ends of the brightness range the bank
+	## has to blend against — plus one ISOLATED bank hex in each field (the shred check).
+	var arr: Array = []
+	arr.resize(BANK_GRID_W * BANK_GRID_H)
+	for y in range(BANK_GRID_H):
+		for x in range(BANK_GRID_W):
+			arr[y * BANK_GRID_W + x] = (
+				BANK_DARK_FIELD_ID if x < BANK_FIELD_SPLIT_COL else BANK_BRIGHT_FIELD_ID
+			)
+
+	# The chain, and its river_channel exits. A hex's bit `dir` is set toward its upstream AND its downstream
+	# neighbour — the sim authors this mask; the shader arms ONLY the set bits (never the neighbouring
+	# terrain), which is what keeps adjacent chain hexes from cross-linking into a web.
+	var channel: Dictionary = {}
+	var hex: Vector2i = BANK_START
+	var chain: Array[Vector2i] = [hex]
+	for dir: int in BANK_WALK:
+		var nb: Vector2i = _bank_neighbor(hex, dir)
+		if nb.x < 0 or nb.x >= BANK_GRID_W or nb.y < 0 or nb.y >= BANK_GRID_H:
+			break
+		channel[hex] = int(channel.get(hex, 0)) | (1 << dir)
+		channel[nb] = int(channel.get(nb, 0)) | (1 << ((dir + 3) % 6))
+		hex = nb
+		chain.append(hex)
+	for cell: Vector2i in chain:
+		arr[cell.y * BANK_GRID_W + cell.x] = BANK_ID
+	for iso: Vector2i in [BANK_ISO_DARK, BANK_ISO_BRIGHT]:
+		arr[iso.y * BANK_GRID_W + iso.x] = BANK_ID
+		channel[iso] = BANK_ISO_CHANNEL
+
+	var tiles: Array = []
+	for cell: Vector2i in channel:
+		tiles.append({
+			"entity": cell.y * BANK_GRID_W + cell.x,
+			"x": cell.x,
+			"y": cell.y,
+			"river_edges": 0,
+			"river_inflow": 0,
+			"river_channel": int(channel[cell]),
+		})
+	var snap: Dictionary = _snapshot(arr, BANK_GRID_W, BANK_GRID_H)
+	snap["tiles"] = tiles
+	return snap
+
+
+func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
+	## The odd-r neighbour of `hex` in the sim's direction `dir` (see BANK_DIR_OFFSETS).
+	var off: Array = BANK_DIR_OFFSETS[dir]
+	var dx: int = int(off[1] if (hex.y % 2) != 0 else off[0])
+	return Vector2i(hex.x + dx, hex.y + int(off[2]))
 
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:

@@ -3,10 +3,14 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
-use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, TerrainType};
+use sim_runtime::{
+    KnownTechFragment as ContractKnowledgeFragment, RiverChannel, RiverClass, TerrainTags,
+    TerrainType,
+};
 
 use crate::{
     generations::GenerationId,
+    grid_utils::{HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
@@ -23,6 +27,119 @@ pub struct Tile {
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
     pub mountain: Option<MountainMetadata>,
+    /// Packed per-side river classes — 2 bits per odd-r direction (see `RiverClass`). Populated
+    /// by `generate_hydrology` for **both** hexes flanking every traced river edge, so a hex
+    /// always agrees with its neighbour about the river between them.
+    ///
+    /// This is the gameplay primitive a future movement system reads: entering this hex across
+    /// direction `d` crosses `river_class_on_side(d)`. Nothing consumes it yet — by design.
+    pub river_edges: u16,
+    /// Packed per-**corner** river inflow — the same 2-bits-per-slot layout as `river_edges`, but
+    /// keyed by hex *corner* (`grid_utils::HEX_CORNER_COUNT`, the client's screen-space vertex
+    /// order) instead of by side.
+    ///
+    /// `generate_hydrology` sets it on the **first hex of a `NavigableRiver` chain** only, at the
+    /// corner where the edge-river chain terminated, with the class of the last edge that chain
+    /// emitted. An edge river runs corner-to-corner *along* a side, so it ends at a **vertex** —
+    /// this field is that vertex. `river_edges` records which sides carry a river and cannot say
+    /// this: a trunk hex can flank three river edges, which have two candidate chain-ends between
+    /// them, so the renderer would be guessing where the tributary actually arrives.
+    ///
+    /// Zero on every other tile, and zero for a river that was navigable from its first step (no
+    /// edge chain, so no inflow to name).
+    pub river_inflow: u16,
+    /// Packed per-side **channel exits** — 1 bit per odd-r direction (see `RiverChannel`): does
+    /// this hex's navigable channel flow out through side `dir`?
+    ///
+    /// A navigable river is a chain of water hexes, and a chain is a **path**: a hex connects to its
+    /// upstream and downstream neighbours and to nothing else. Terrain alone cannot say which those
+    /// are — a renderer that arms every navigable/water neighbour cross-links adjacent chains into a
+    /// **web**. Only the tracer knows the chain, so `generate_hydrology` writes it here, symmetric
+    /// across each shared side (both hexes of a consecutive pair agree), plus one exit on the final
+    /// hex pointing at the water body/delta the river drains into — otherwise the drawn river stops
+    /// one hex short of the sea. A confluence hex carries the **union** of the chains through it.
+    pub river_channel: u8,
+}
+
+impl Tile {
+    /// The class of river running along side `dir` (odd-r direction, `0..6`). An out-of-range
+    /// direction reads `None` — this is a lookup, not an assertion site.
+    pub fn river_class_on_side(&self, dir: u8) -> RiverClass {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return RiverClass::None;
+        }
+        RiverClass::from_bits(self.river_edges >> (u32::from(dir) * RiverClass::BITS_PER_DIR))
+    }
+
+    /// Set the class of river running along side `dir`. Out-of-range directions are ignored.
+    pub fn set_river_class_on_side(&mut self, dir: u8, class: RiverClass) {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return;
+        }
+        let shift = u32::from(dir) * RiverClass::BITS_PER_DIR;
+        self.river_edges &= !(RiverClass::SLOT_MASK << shift);
+        self.river_edges |= class.bits() << shift;
+    }
+
+    /// Whether any of the six sides carries a river.
+    pub fn has_any_river_edge(&self) -> bool {
+        self.river_edges != 0
+    }
+
+    /// The class of the edge river arriving at hex corner `corner` (`0..6`, see
+    /// `grid_utils::HEX_CORNER_COUNT`). An out-of-range corner reads `None` — this is a lookup,
+    /// not an assertion site.
+    pub fn river_class_at_corner(&self, corner: u8) -> RiverClass {
+        if usize::from(corner) >= HEX_CORNER_COUNT {
+            return RiverClass::None;
+        }
+        RiverClass::from_bits(
+            self.river_inflow >> (u32::from(corner) * RiverClass::BITS_PER_CORNER),
+        )
+    }
+
+    /// Set the class of the edge river arriving at hex corner `corner`. Out-of-range corners are
+    /// ignored.
+    pub fn set_river_class_at_corner(&mut self, corner: u8, class: RiverClass) {
+        if usize::from(corner) >= HEX_CORNER_COUNT {
+            return;
+        }
+        let shift = u32::from(corner) * RiverClass::BITS_PER_CORNER;
+        self.river_inflow &= !(RiverClass::SLOT_MASK << shift);
+        self.river_inflow |= class.bits() << shift;
+    }
+
+    /// Whether any of the six corners takes an edge river's inflow.
+    pub fn has_any_river_inflow(&self) -> bool {
+        self.river_inflow != 0
+    }
+
+    /// Whether this hex's navigable channel flows out through side `dir` (odd-r direction, `0..6`).
+    /// An out-of-range direction reads `false` — this is a lookup, not an assertion site.
+    pub fn channel_exits(&self, dir: u8) -> bool {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return false;
+        }
+        (self.river_channel >> (u32::from(dir) * RiverChannel::BITS_PER_DIR))
+            & RiverChannel::SLOT_MASK
+            != 0
+    }
+
+    /// Record a channel exit through side `dir`. Out-of-range directions are ignored. Bits are
+    /// **OR-ed**: a hex where two chains meet carries the union of their exits, never the last one
+    /// written.
+    pub fn set_channel_exit(&mut self, dir: u8) {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return;
+        }
+        self.river_channel |=
+            RiverChannel::SLOT_MASK << (u32::from(dir) * RiverChannel::BITS_PER_DIR);
+    }
+
+    /// Whether this hex carries a navigable channel at all.
+    pub fn has_any_channel_exit(&self) -> bool {
+        self.river_channel != 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1034,6 +1151,9 @@ impl Default for Tile {
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
             mountain: None,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
         }
     }
 }

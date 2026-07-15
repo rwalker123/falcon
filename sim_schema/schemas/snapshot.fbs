@@ -94,7 +94,8 @@ enum TerrainType : ushort {
   ImpactCraterField,
   KarstCavernMouth,
   SinkholeField,
-  AquiferCeiling
+  AquiferCeiling,
+  NavigableRiver
 }
 
 enum KnowledgeField : ubyte {
@@ -434,6 +435,29 @@ table TileState {
   // overlay. Unlike graze, this is NON-ZERO on fishery water (ContinentalShelf/CoralShelf/InlandSea):
   // a fishery is a food module on water. Only a stated-zero biome (deep ocean, glacier, lava) reads 0.
   forageCapacity:float = 0;
+  // Packed per-side river classes: 2 bits per odd-r direction (0=E,1=SE,2=SW,3=W,4=NW,5=NE),
+  // decoded via RiverClass (0=None, 1=Minor, 2=Major; 3 reserved). Both hexes flanking a river
+  // edge carry it on their own side. With TerrainType.NavigableRiver this fully determines the
+  // river render — there is no separate polyline overlay.
+  riverEdges:ushort = 0;
+  // Packed per-CORNER river inflow: 2 bits per hex corner (0=lower-right, 1=bottom, 2=lower-left,
+  // 3=upper-left, 4=top, 5=upper-right — screen space, +y down; corner i at angle 60*i + 30),
+  // decoded via RiverClass exactly like riverEdges. Set only on the FIRST hex of a NavigableRiver
+  // chain, at the corner where the edge-river chain terminates and hands its water to the trunk,
+  // carrying the class of the last edge it emitted. An edge river ends at a vertex, never mid-side,
+  // so this is the point the renderer joins the tributary to the trunk hex. 0 everywhere else.
+  riverInflow:ushort = 0;
+  // Packed per-side CHANNEL EXITS of a navigable river: 1 bit per odd-r direction (same direction
+  // order as riverEdges), set when this hex's navigable channel flows out through that side.
+  // A navigable river is a chain of water hexes, and a chain is a PATH: a hex connects only to its
+  // upstream and downstream neighbours. Terrain alone cannot say which those are, so a renderer
+  // that arms every navigable/water neighbour cross-links adjacent chains into a WEB. Draw the
+  // trunk by arming ONLY the sides whose bit is set: `exits(dir) = (riverChannel >> dir) & 1`.
+  // Symmetric across a shared side (both hexes of a consecutive pair agree), except at the mouth,
+  // where the final hex also exits toward the ocean / inland sea / RiverDelta it drains into (that
+  // water carries no channel of its own, so the bit is not mirrored back). A confluence hex carries
+  // the union of the chains through it. 0 on every hex with no navigable channel.
+  riverChannel:ubyte = 0;
 }
 
 table LogisticsLinkState {
@@ -1174,7 +1198,6 @@ table WorldSnapshot {
   foragePatches:[ForagePatchState];
   intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
-  hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
@@ -1237,7 +1260,6 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
-  hydrologyOverlay:HydrologyOverlay;
   elevationOverlay:ElevationOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -1250,20 +1272,6 @@ table WorldDelta {
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
   visibilityRaster:ScalarRaster;
-}
-
-// Hydrology overlay types
-table HydrologyPoint { x:uint; y:uint; }
-
-table RiverSegment {
-  id:uint;
-  order:ubyte;
-  width:ubyte;
-  points:[HydrologyPoint];
-}
-
-table HydrologyOverlay {
-  rivers:[RiverSegment];
 }
 
 union SnapshotPayload {

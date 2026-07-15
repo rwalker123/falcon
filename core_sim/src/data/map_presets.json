@@ -22,8 +22,10 @@
       "river_source_percentile": 0.45,
       "river_source_sea_buffer": 0.05,
       "river_min_spacing": 4.0,
-      "river_uphill_step_limit": 3,
       "river_uphill_gain_pct": 0.08,
+      "river_class_major_min_discharge": 16,
+      "river_class_navigable_min_discharge": 32,
+      "river_navigable_enabled": true,
       "lake_chance": 0.15,
       "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "jitter": 0.18 },
       "shelf": { "width_tiles": 2, "slope_width_tiles": 3, "width_frac": 0.040, "width_exp": 0.4, "min_width_tiles": 1.0, "coast_height_threshold": 0.10 },
@@ -118,7 +120,6 @@
       },
       "postprocess": {
         "adjacency_weight": 0.6,
-        "river_wetland_jitter": 0.5,
         "floodplain_spread": 0.4
       },
       "tolerance": 0.02,
@@ -129,7 +130,7 @@
         "small_map_tiles": 2016,
         "large_map_tiles": 10240,
         "niches": {
-          "Ocean":          { "k_small": 2, "k_large": 4 },
+          "Ocean":          { "k_small": 2, "k_large": 6 },
           "CoastWetland":   { "k_small": 1, "k_large": 4 },
           "FertileLowland": { "k_small": 4, "k_large": 5 },
           "AridLowland":    { "k_small": 1, "k_large": 4 },
@@ -166,8 +167,10 @@
       "river_source_percentile": 0.62,
       "river_source_sea_buffer": 0.05,
       "river_min_spacing": 8.0,
-      "river_uphill_step_limit": 3,
       "river_uphill_gain_pct": 0.08,
+      "river_class_major_min_discharge": 16,
+      "river_class_navigable_min_discharge": 32,
+      "river_navigable_enabled": true,
       "lake_chance": 0.2,
       "macro_land": { "continents": 4, "min_area": 220, "target_land_pct": 0.42, "jitter": 0.24 },
       "shelf": { "width_tiles": 3, "slope_width_tiles": 3 },
@@ -262,7 +265,6 @@
       },
       "postprocess": {
         "adjacency_weight": 0.6,
-        "river_wetland_jitter": 0.55,
         "floodplain_spread": 0.45
       },
       "tolerance": 0.02

@@ -213,10 +213,11 @@ fn cross_niche_fallback(niche: BiomeNiche) -> BiomeNiche {
 }
 
 /// Canonical remap-target priority for a niche (§10). Most-generic anchor first.
-/// **`RiverDelta` is deliberately excluded** as a remap target: it is stamped only at
-/// river mouths by the hydrology pass, so remapping arbitrary wetland tiles onto it would
-/// scatter deltas with no river attached (real deltas are always on-palette via
-/// `must_have`, so they pass through `remap` unchanged).
+/// **`RiverDelta` and `NavigableRiver` are deliberately excluded** as remap targets: both are
+/// stamped only by the hydrology pass (river mouths / the navigable tail of a big river), so
+/// remapping arbitrary wetland or ocean tiles onto them would scatter deltas and inland waterways
+/// with no river attached. Both are `must_have`, so the *real* ones are always on-palette and pass
+/// through `remap` unchanged.
 fn niche_remap_priority(niche: BiomeNiche) -> &'static [TerrainType] {
     use TerrainType::*;
     match niche {
@@ -346,6 +347,7 @@ mod tests {
             TerrainType::Tundra,
             TerrainType::RiverDelta,
             TerrainType::Glacier,
+            TerrainType::NavigableRiver,
         ] {
             assert!(palette.contains(t), "missing must-have {t:?}");
         }

@@ -73,7 +73,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 5. **Coastal smoothing** - Blend shoreline tiles via 3×3 blur
 6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; inland seas. See "Continental shelf width" below — the shelf is a continuous ≥1-tile ring off gentle coasts, gated to deep water at steep/cliff coasts. A **final reconciliation post-pass** (`reconcile_coastal_shelf`, Startup chain after hydrology + tag solver + palette clamp) restamps the shelf so no Deep Ocean touches gentle land on the *final* map, covering coasts created later by deltas/marshes/solver tundra.
 7. **Climate** - Assign `climate_band` using latitude + elevation + moisture
-8. **Hydrology** - D8 flow direction, river polylines, `Floodplain`/`FreshwaterMarsh` marking. `RiverDelta` is stamped **only here**, at the last land tile of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth tile must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's reduction passes so genuine river mouths survive.
+8. **Hydrology** - Rivers on hex **edges** + navigable rivers as water **hexes**. See "Rivers" below. `RiverDelta` is stamped **only here**, at the last **gentle-coast** land hex of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth hex must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's reduction passes so genuine river mouths survive.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
 10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass
 11. **Resources** - Surface deposits biased by `TerrainDefinition.resource_bias`
@@ -82,8 +82,189 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 
 ### Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `flow_dir: u8`, `flow_accum: u16`, `game_density: u8`
-- **Vectors**: `rivers: [RiverSegment]` with polylines and edge tracking
-- **Tiles**: `hydrology_id`, `substrate_material`, `terrain_type`, `TerrainTags`
+- **Vectors**: `rivers: [RiverSegment]` — per-edge `RiverEdge { hex, dir, class, discharge }` chains + a navigable hex tail (see "Rivers")
+- **Tiles**: `hydrology_id`, `substrate_material`, `terrain_type`, `TerrainTags`, `river_edges: u16`
+
+### Rivers — hex EDGES, with a class that grows downstream (`hydrology.rs`)
+
+A river is **not** a polyline through hex centers. Minor/Major rivers run **along hex edges** (so a
+future movement system can charge a crossing penalty on exactly the side the river is on), and a
+river that outgrows the edge model becomes **water terrain**.
+
+- **The corner graph.** The dual of "flow along edges" is "route between corners": every
+  corner→corner step traverses exactly one hex edge. On a pointy-top odd-r grid each corner is
+  shared by exactly 3 hexes, so `V = 6F/3 = 2F` — **two corners per hex**, indexed `(hex_x, hex_y,
+  slot)` with `slot ∈ {TOP, BOTTOM}`. Each corner has 3 neighbour corners. A **border corner** (its
+  3 hexes are not all on the map) is excluded from routing. Every hex step goes through
+  `grid_utils::hex_neighbor`, so horizontal wrap is honored. Corner **elevation is the mean** of its
+  3 hexes (not the min — the mean puts a corner low in the *trough* between two low hexes, so rivers
+  settle into valleys); a corner is a **sea corner** (sink) if any of its 3 hexes is water.
+- **Canonical edges.** An edge `(H, d)` has two representations — `(H, d)` and `(neighbor,
+  opposite(d))`. The canonical one is whichever has `dir ∈ {E, SE, SW}` (`canonical_edge`), so an
+  edge has a single key regardless of which hex traced it. An edge exists only if **both** its hexes
+  are on the map.
+- **The trace.** Priority-flood cost field from all sea corners → corner flow accumulation (seed 1,
+  sum downstream) → walk downhill from each accepted source, recording the edge crossed at each step.
+  Source selection (`SourceCategory` glacier/lake-outlet/runoff/fallback), min-spacing rejection,
+  min-length gates, the multi-pass acceptance loop, `TerminationClass` policy, and Strahler order all
+  still ride the **hex** flow field and are unchanged.
+- **Class is PER-EDGE and grows downstream.** `RiverEdge.discharge` = the corner accumulation at the
+  edge's **upstream** corner, which is monotonically non-decreasing downstream — so a river is
+  `Minor` at its headwater and `Major` in its lower course, never uniformly wide. `RiverClass`
+  (`sim_runtime`) is `None = 0 | Minor = 1 | Major = 2`; **value 3 is reserved** — "navigable" is
+  deliberately *not* a class (see below).
+- **Navigable rivers are WATER TERRAIN, not edges.** Once discharge crosses
+  `river_class_navigable_min_discharge` the river stops emitting edges: the lower of the two hexes
+  flanking the **last emitted edge** becomes the first hex of a `TerrainType::NavigableRiver` chain,
+  traced to the termination on the hex flow field (`RiverSegment.navigable_hexes`). A giant river is
+  a body of water you need a boat to enter, so it reuses every existing water mechanic.
+  `NavigableRiver` mirrors `InlandSea` exactly (`WATER | FRESHWATER`, same movement/logistics/
+  attrition profile), is in the biome palette's `must_have` set, and is protected from the tag
+  solver's water-reduction pass — like `RiverDelta`, otherwise the solver would erase real rivers.
+  - **The join invariant: the edge chain and the hex chain share an EDGE, never a bare corner.**
+    The hand-off anchors on the last **emitted** edge, *not* on the un-emitted edge whose discharge
+    crossed the threshold. Both are incident to the same corner and **three hexes meet at a corner**,
+    so anchoring on the un-emitted one could pick the third hex — one the edge chain never touches.
+    The chains then met only at a point, the first navigable hex carried **no `river_edges` bits at
+    all**, and a tributary visibly dead-ended at the trunk in the client. Anchoring on the last
+    emitted edge makes the shared edge true by construction, so the first navigable hex always
+    carries that edge's class in its mask. Guarded by
+    `hydrology_earthlike::navigable_chain_joins_the_edge_chain_on_a_shared_edge` (asserts the shared
+    edge *and* the resulting tile mask across a 6-seed sweep) and the
+    `the_navigable_handoff_anchors_on_the_last_emitted_edge` unit test. A river that goes navigable
+    on its very first step has emitted nothing to anchor to, so it falls back to the edge it stopped
+    at.
+  - The legacy hex trace is **square-8-connected**, so its path can contain hex-diagonal jumps;
+    `hex_contiguous_chain` bridges those with the lowest common hex-neighbour, because a waterway
+    whose hexes don't touch is not a waterway.
+  - **Rivers MERGE ON CONTACT — a navigable river is a path, not a blob** (`truncate_at_existing_channel`).
+    Because the flow accumulation barely concentrates (the "Known limitation" note below), a drainage's
+    branches do **not** join into one trunk upstream: several of them independently cross
+    `river_class_navigable_min_discharge` in the same flat coastal basin, and each used to trace its
+    own hex chain to the *same* sink. The chains ran side by side and packed together into a **2–4 hex
+    wide blob** of `NavigableRiver` water (a reported 80×52 map had 28 navigable tiles, 13 of them with
+    3+ navigable neighbours, in one 21-hex mass) — which is a lake, not a river, and a movement system
+    would have read it as a wall of impassable terrain. So a chain now **ends when it reaches water that
+    is already flowing to the sea**: while tracing, the first hex that is an *already-accepted* chain's
+    hex **or adjacent to one** terminates the chain **on that trunk hex** (contact is adjacency, not
+    identity — two water hexes that touch are one body of water; identity alone let parallel chains
+    slide past each other one hex apart). The chain ends *on* the trunk, never beside it, so the
+    confluence is a genuine shared chain hex and both chains' `river_channel` bits meet there. Segments
+    are accepted in a stable source order, so the merge is deterministic. Measured on the reported map:
+    **28 navigable tiles / 13 with 3+ neighbours → 24 tiles / 1** (that one is a real confluence).
+    Guarded by `hydrology_earthlike::navigable_rivers_are_paths_not_blobs`, which carries that map as
+    `BLOB_REGRESSION_SEED` under the **shipped** config (the `CENSUS_SEEDS` maps are nearly barren of
+    navigable rivers, so they never exercised it) and asserts **no navigable hex has 4+ navigable
+    neighbours** — a path hex has 2, an end has 1, a confluence 3; 4+ has no hydrological reading.
+  - **The remaining weakness is upstream of all this.** Merging channels on contact fixes the
+    *rendered/traversable* shape, but the reason parallel trunks form at all is the un-concentrated
+    flow accumulation. A real drainage-network rework (elevation-dominated cost, or true D8 basins)
+    would make tributaries merge *before* they go navigable, and is the proper fix — see the "Known
+    limitation" note below.
+  - The chain's **mouth is a `RiverDelta`**, not open water — a river deposits its load where it
+    meets the sea — so the delta contract is unchanged.
+- **The gameplay primitive: `Tile.river_edges: u16`** — 2 bits per odd-r direction
+  (`class = (river_edges >> (2 * dir)) & 0b11`), populated for **both** hexes flanking every river
+  edge, so a hex and its neighbour always agree about the river between them. Helpers:
+  `river_class_on_side(dir)` / `set_river_class_on_side(dir, class)` / `has_any_river_edge()`. This
+  is what a movement system will read: *entering hex H across direction d crosses
+  `H.river_class_on_side(d)`*. **Nothing consumes it yet — that is expected**; movement and fertility
+  effects are a follow-up. Exported on the wire as `TileState.riverEdges:ushort`.
+- **Where the tributary meets the trunk: `Tile.river_inflow: u16`** — the same 2-bits-per-slot
+  packing as `river_edges`, but keyed by hex **CORNER** instead of by side. An edge river runs
+  *along* a side, corner to corner, so it does not end mid-edge — **it ends at a vertex**, and that
+  vertex is where the water enters the navigable hex. The edge mask cannot say where: a trunk hex
+  can flank three river edges (the tributary ran along three of its sides before going navigable),
+  which leaves two candidate chain-ends, so the client would be guessing and would draw an arm per
+  edge. So the sim states it.
+  - **Corner index convention (a wire contract).** Corner `i` is the vertex at screen angle
+    `60*i + 30`, **+y down** — matching the client's `MapView._hex_points`: `0` lower-right,
+    `1` bottom, `2` lower-left, `3` upper-left, `4` top, `5` upper-right. Mapped onto the sim's
+    `(hex, TOP|BOTTOM)` corner model by `HEX_CORNER_LAYOUT` /
+    `HexGrid::local_corner_index(hex, corner)` (`hydrology.rs`): `0 = TOP(SE(H))`, `1 = BOTTOM(H)`,
+    `2 = TOP(SW(H))`, `3 = BOTTOM(NW(H))`, `4 = TOP(H)`, `5 = BOTTOM(NE(H))`. Side `dir` spans
+    corners `{dir - 1, dir}` (`grid_utils::hex_edge_corner_indices`).
+  - **Both tables are pinned ABSOLUTELY to the client's geometry, not merely to themselves.**
+    `local_corner_index_is_a_bijection_on_every_hex` / `hex_edge_corner_indices_match_the_corner_model`
+    only prove *internal consistency* (six distinct corners that round-trip) — **a table rotated by one
+    position passes both happily** while putting every tributary on the wrong vertex. So
+    `hex_corner_layout_matches_the_clients_corner_geometry` and
+    `hex_edge_corner_indices_are_the_shared_edges_endpoints` (`hydrology.rs` tests) compute each
+    corner's **world position** twice — once through the sim's `(hex, TOP|BOTTOM)` model (centre at
+    `x = √3·R·(col + 0.5·(row&1))`, `y = 1.5·R·row`; `TOP = centre + (0,−R)`, `BOTTOM = centre +
+    (0,+R)`, +y down) and once through the client's `corner i at angle 60i + 30` circle — and assert
+    the two land on the same point. That is what makes the convention a *contract* rather than a
+    convention.
+  - **Populated on the first navigable hex only**, at the corner the edge chain terminated at, with
+    the class of the **last emitted edge** (the tributary's own width). A river that is navigable
+    from its first step emitted no edges, has no tributary, and reports `0` — no invented inflow.
+  - **Widest-wins on collision.** Three hexes meet at a corner, so two tributaries running down
+    either bank can terminate at the *same* vertex of the same trunk hex (a confluence at a corner —
+    seed 4 of the census has one). One slot holds one class, so `widen_tile_river_class` keeps the
+    wider (`Major` > `Minor`), which is also trace-order independent.
+  - Helpers: `river_class_at_corner(corner)` / `set_river_class_at_corner(corner, class)` /
+    `has_any_river_inflow()`. Exported as `TileState.riverInflow:ushort`. Guarded by
+    `hydrology_earthlike::the_first_navigable_hex_reports_the_edge_chains_terminal_corner` (the
+    tile's inflow corners are exactly the chain-ends arriving there, at the widest arriving class,
+    each an endpoint of its river's last emitted edge; census over `CENSUS_SEEDS`: 6 trunk hexes,
+    5 Major + 1 Minor corners, 2 shared-corner confluences).
+- **The trunk channel is a PATH: `Tile.river_channel: u8`** — **1 bit per odd-r direction**
+  (`exits(dir) = (river_channel >> dir) & 1`, `RiverChannel::{BITS_PER_DIR, SLOT_MASK}` in
+  `sim_schema`): does this hex's navigable channel flow out through side `dir`? Helpers:
+  `channel_exits(dir)` / `set_channel_exit(dir)` / `has_any_channel_exit()`.
+  - **Why it must exist.** A navigable river is a chain of water *hexes*, and a chain is a **path** —
+    a hex links to its upstream and downstream neighbours and to nothing else. **Terrain cannot say
+    which those are.** The client used to arm an arm from each navigable hex's centre to *every*
+    neighbour that was navigable/water/`RiverDelta`, so wherever two chains ran adjacent (which,
+    before merge-on-contact, was everywhere) or a chain doubled back, every hex cross-linked to every
+    navigable neighbour and the trunk rendered as a **web with triangular holes** instead of a river.
+    Only the tracer knows chain membership, so the sim states it. (Merge-on-contact removes most
+    adjacent chains, but the mask is still the right primitive: two *legitimate* parallel rivers, or a
+    bending chain, would cross-link without it.)
+  - **Populated from each `RiverSegment.navigable_hexes` chain** in `generate_hydrology`, in two
+    passes so the result is independent of trace order. **Pass 1 — the chain:** for each consecutive
+    pair, the exit bit is set on **both** hexes facing each other (hex `A` → dir toward `B`, hex `B` →
+    the opposite dir), symmetric exactly like `river_edges`. **Pass 2 — the mouth:** a chain's final
+    hex also exits toward the water it drains into (the ocean, an inland sea, or the `RiverDelta` at
+    its own mouth), or the drawn river would stop one hex short of the sea. That mouth bit is the one
+    **asymmetric** bit in the mask — open water carries no channel of its own, so it is not mirrored
+    back. Only a genuine **dead end** earns it: a tributary that merged into a trunk also *ends* on its
+    last hex, but that hex is a confluence the water already flows on through, and a second exit there
+    would draw a spurious arm off the side of the trunk ("has no exit but the one back upstream" is
+    the test, and it does not depend on segment order).
+  - The **head** needs no exit toward its tributary — the inflow SPUR (`river_inflow`) already draws
+    that; double-encoding it would put two arms on one vertex. A hex on two chains (a confluence)
+    accumulates the **union** of the bits (OR-ed, never overwritten).
+  - Exported as `TileState.riverChannel:ubyte`. Guarded by
+    `hydrology_earthlike::navigable_channel_exits_are_the_chain_and_only_the_chain`: symmetry,
+    end-to-end chain connectivity, every chain reaching its water, and the **anti-web invariant** — *no
+    navigable hex exits toward a navigable hex that no chain actually runs between*.
+- **Wire format.** The `HydrologyOverlay` / `RiverSegment` / `HydrologyPoint` polyline tables are
+  **deleted** from the snapshot and delta. The per-tile `riverEdges` + `riverInflow` + `riverChannel`
+  masks plus the `NavigableRiver` terrain fully determine the render, so a parallel polyline overlay
+  would be duplicated state. The client draws the trunk channel from **`riverChannel`** (arming *only*
+  the sides whose bit is set — never inferring links from terrain), the edge rivers from `riverEdges`,
+  and joins a tributary to its trunk hex at the `riverInflow` **corner** — never at a side midpoint,
+  and never one arm per flanked edge.
+- **Delta placement is gentle-coast gated.** A delta is a depositional fan, so it only forms where
+  the river meets the water across low ground — reusing the shelf's own
+  `ShelfConfig.coast_height_threshold` rather than inventing a second threshold. A river that meets
+  the sea at a cliff has no delta (it is an estuary). This also keeps `reconcile_coastal_shelf`'s
+  "no DeepOcean touches gentle land" invariant coherent: every delta is gentle land, so every delta
+  gets a shelf seaward of it.
+- **Config** (`hydrology` block of `simulation_config.json` → `HydrologyOverrides`, overriding the
+  per-preset `river_*` keys in `map_presets.json`): `river_class_major_min_discharge` (**16**),
+  `river_class_navigable_min_discharge` (**32**), `river_navigable_enabled` (**true**, a kill
+  switch). Measured on the default 80×52 earthlike map across seeds: **74–94% of river edges Minor**,
+  a Major mid-section on every map, and **0–2 navigable rivers** (0–11 hexes) — navigable rivers
+  bisect landmasses, so they are deliberately rare.
+  > **Known limitation (follow-up).** The flow accumulation is inherited from the legacy priority
+  > flood, whose cost is dominated by *distance to the nearest coast*, so the drainage tree is close
+  > to a distance transform and barely concentrates: peak discharge on an 80×52 map is only ~20–70
+  > (hex `flow_accum` peaks at ~39 for the same reason). That is why the class thresholds are small
+  > absolute numbers and why navigable rivers are short. A cost field that actually concentrates
+  > drainage (elevation-dominated, or true D8 basins) would widen the dynamic range and let these
+  > thresholds be tuned on a physical scale.
 
 ### Tile Temperature — latitude + elevation climate model
 `Tile.temperature` is a real climate, **not** the old `(x+y)%4` element checkerboard. The single
@@ -153,8 +334,12 @@ the `bias_terrain_for_preset` seam and again in the post-solver `apply_biome_pal
 (inserted in the Startup chain right after `apply_tag_budget_solver`), any off-palette biome is
 replaced by an allowed member of the same niche — polar tiles only remap to POLAR-tagged members, so
 the palette never stamps temperate plains/marshes at the poles; `RiverDelta` is `must_have` so real
-river mouths pass through. **Must-have set** (`biome_must_have`, 8): DeepOcean, ContinentalShelf,
-InlandSea, AlluvialPlain, PrairieSteppe, Tundra, RiverDelta, Glacier. `must_have` is reserved for a
+river mouths pass through. **Must-have set** (`biome_must_have`, 9): DeepOcean, ContinentalShelf,
+InlandSea, AlluvialPlain, PrairieSteppe, Tundra, RiverDelta, Glacier, **NavigableRiver** (the last
+for the same reason as `RiverDelta` — it is hydrology-placed, and off-palette it would remap to
+`DeepOcean` and cut the continent in half with open sea; adding it gave the Ocean niche a **fourth**
+must-have, so earthlike's Ocean `k_large` was widened 4 → 6 to keep the two *interchangeable* ocean
+flavours, CoralShelf and HydrothermalVentField, reachable at all). `must_have` is reserved for a
 single *physically-gated* member inside an otherwise-thinnable niche: `InlandSea` in Ocean (else
 off-palette inland water renders as DeepOcean) and `Glacier` in PolarLowland (else a tall polar peak
 remaps down to flat Tundra — it's the polar analog of AlpineMountain, placed only where relief clears

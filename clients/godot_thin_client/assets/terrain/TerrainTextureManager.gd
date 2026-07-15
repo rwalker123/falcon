@@ -23,6 +23,13 @@ var canopy_layer_by_id: Dictionary = {}
 # fixed count to keep in sync here.
 var peak_textures: Texture2DArray = null
 var peak_layer_by_id: Dictionary = {}
+# River water: flowing-water bands (RGBA, fully opaque), a FOURTH Texture2DArray sampled by the blend
+# shader's river passes. Unlike the canopy/peak arrays this one is NOT keyed by terrain id — a river is not
+# a biome — so the layer index is the file's numeric prefix: `00_minor.png` → 0 and `01_major.png` → 1 are
+# the hex-EDGE classes (layer = river CLASS - 1), and `02_navigable.png` → 2 is the CHANNEL water the
+# navigable pass paints over a NavigableRiver hex's bank floor (that terrain's own base texture is the
+# BANK ground, not water — see terrain_blend.gdshader's navigable pass).
+var river_textures: Texture2DArray = null
 var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
@@ -64,6 +71,38 @@ const SHORE_PROFILE_DEFAULT_WISP_SCALE := 1.0
 # the shipped (ocean-tuned) profile.
 const SHORE_PROFILE_MAX_SCALE := 2.0
 
+# PER-TERRAIN BLEND PROFILE (R = width_scale, G = noise_scale, B = noise_cell_scale), one texel per terrain id
+# — the same 1×N by-layer-index lookup table as layer_shore_texture, and the flat↔flat seam's analog of it.
+# The global blend levers (blend_width / blend_noise_amount / blend_noise_scale) are ONE ecotone, tuned for the
+# biome pairs that actually border each other on the map: neighbours a few brightness points apart, sharing a
+# hue. Against a pair that is far apart in BOTH tone and hue the very same ecotone reads as a blurred hex edge
+# — the boundary is only ~0.35·r wide and, because the wobble's displacement is a fraction of that, near
+# STRAIGHT, so the eye locks onto the hexagon. The NavigableRiver BANK (id 37, a grey low-contrast gravel at
+# mean luma 89) is exactly that pair against every neighbour a river corridor actually has: prairie/scrub at
+# 112–127 on one side, floodplain/alluvial at 55–58 on the other. So a terrain may widen and roughen the seam
+# it is ON, without touching anybody else's:
+#   width_scale      — multiplies blend_band (the ecotone's REACH). The lever that turns a blurred edge into a
+#                      transition you read as a valley floor merging into the land.
+#   noise_scale      — multiplies blend_noise_amount (the boundary wobble's AMPLITUDE), so the boundary leaves
+#                      the hexagon polyline instead of tracing it.
+#   noise_cell_scale — multiplies blend_noise_cell (the wobble's WAVELENGTH). Amplitude without wavelength is a
+#                      fine fringe along a straight line, not a meander: the lobes must be a fair fraction of
+#                      the (now wider) band to read as organic.
+# A terrain with no `blend_profile` block gets the NEUTRAL default (1, 1, 1) — bit-identical to before this
+# table existed. Read by the shader as `layer_blend_map` and combined across an edge with **max()**, which is
+# COMMUTATIVE: both hexes flanking a seam derive the same three scales, so the seam weight, the wobble and its
+# cell are identical from both frames and the boundary stays continuous by construction (the same cross-edge
+# agreement discipline the shore profile's water-side keying buys). A seam between two unprofiled terrains is
+# max(1,1) = 1 on every axis — every one of main's biome seams is untouched.
+var layer_blend_texture: ImageTexture = null
+
+const BLEND_PROFILE_DEFAULT_WIDTH_SCALE := 1.0
+const BLEND_PROFILE_DEFAULT_NOISE_SCALE := 1.0
+const BLEND_PROFILE_DEFAULT_NOISE_CELL_SCALE := 1.0
+# Guard rail: the band is a fraction of the hex radius and the apothem is 0.866·r, so a reach past ~4× the
+# shipped 0.25·r would let one seam's ecotone cross the hex and collide with the opposite one.
+const BLEND_PROFILE_MAX_SCALE := 4.0
+
 # Mean luminance is measured on a downscaled copy of each layer (Lanczos ≈ area-average) instead of walking
 # every texel of a 512² image ×37 layers — same mean to well within the blend's sensitivity, ~1000× fewer
 # get_pixel calls.
@@ -84,6 +123,7 @@ func _ready() -> void:
 	_load_config()
 	_build_blend_class_map()
 	rebuild_layer_shore_map()
+	rebuild_layer_blend_map()
 	_load_textures()
 
 
@@ -135,6 +175,8 @@ func _load_textures() -> void:
 		canopy_textures = _build_canopy_texture_array()
 		# Build the companion peak array (transparent mountain relief) — only for biomes with a peak asset.
 		peak_textures = _build_peak_texture_array()
+		# Build the companion river array (flowing water bands) for the shader's hex-edge river pass.
+		river_textures = _build_river_texture_array()
 
 
 func _build_terrain_texture_array() -> Texture2DArray:
@@ -258,6 +300,51 @@ func _shore_scale(profile: Dictionary, key: String, fallback: float) -> float:
 	## One `shore_profile` scale, defaulted and guard-railed. A missing key is NEUTRAL (the water keeps the
 	## global profile on that axis), so a partial block is legal.
 	return clampf(float(profile.get(key, fallback)), 0.0, SHORE_PROFILE_MAX_SCALE)
+
+
+func rebuild_layer_blend_map() -> void:
+	## Pack each terrain's optional `blend_profile` block into a 1×N RGBA float texture the shader fetches by
+	## layer index — the flat↔flat seam's twin of rebuild_layer_shore_map (same construction, same in-place
+	## ImageTexture update so MapView's one-time `layer_blend_map` binding survives a rebuild, same PUBLIC
+	## reason: the blend probe sweeps profiles by mutating the live config and calling this).
+	## Terrains with no block get the neutral (1, 1, 1) — a bit-exact no-op on their seams.
+	var terrain_count: int = TerrainDefinitions.get_terrain_count()
+	if terrain_count <= 0:
+		return
+	var neutral := Color(
+		BLEND_PROFILE_DEFAULT_WIDTH_SCALE,
+		BLEND_PROFILE_DEFAULT_NOISE_SCALE,
+		BLEND_PROFILE_DEFAULT_NOISE_CELL_SCALE,
+		1.0
+	)
+	var blend_img := Image.create(terrain_count, 1, false, Image.FORMAT_RGBAF)
+	for terrain_id: int in range(terrain_count):
+		blend_img.set_pixel(terrain_id, 0, neutral)
+	for entry: Variant in terrain_config.get("terrains", []):
+		if not (entry is Dictionary):
+			continue
+		var tid: int = int(entry.get("id", -1))
+		if tid < 0 or tid >= terrain_count:
+			continue
+		var profile: Variant = entry.get("blend_profile", null)
+		if not (profile is Dictionary):
+			continue
+		blend_img.set_pixel(tid, 0, Color(
+			_blend_scale(profile, "width_scale", BLEND_PROFILE_DEFAULT_WIDTH_SCALE),
+			_blend_scale(profile, "noise_scale", BLEND_PROFILE_DEFAULT_NOISE_SCALE),
+			_blend_scale(profile, "noise_cell_scale", BLEND_PROFILE_DEFAULT_NOISE_CELL_SCALE),
+			1.0
+		))
+	if layer_blend_texture == null:
+		layer_blend_texture = ImageTexture.create_from_image(blend_img)
+	else:
+		layer_blend_texture.update(blend_img)
+
+
+func _blend_scale(profile: Dictionary, key: String, fallback: float) -> float:
+	## One `blend_profile` scale, defaulted and guard-railed. A missing key is NEUTRAL (the terrain keeps the
+	## global lever on that axis), so a partial block is legal.
+	return clampf(float(profile.get(key, fallback)), 0.0, BLEND_PROFILE_MAX_SCALE)
 
 
 func _mean_luma(img: Image) -> float:
@@ -384,6 +471,81 @@ func _build_peak_texture_array() -> Texture2DArray:
 func peak_layer_for(terrain_id: int) -> int:
 	## Peak array layer for a terrain, or -1 when the biome has no peak overlay.
 	return int(peak_layer_by_id.get(terrain_id, -1))
+
+
+func _build_river_texture_array() -> Texture2DArray:
+	## Build the river Texture2DArray from `textures/rivers/NN_class.png` (flowing water, RGBA/opaque) for
+	## the blend shader's river passes. Mirrors the canopy/peak builds (once-only Image.load_from_file +
+	## mipmaps, so the trilinear river sampler averages a thin band into a stable line at far zoom instead
+	## of shimmering) with ONE difference: a river is not a biome, so the layer is keyed by the file's
+	## numeric prefix, not by terrain id — 0 = Minor / 1 = Major (the hex-EDGE classes, layer = class - 1)
+	## and 2 = the navigable CHANNEL water. **Layer 0 (Minor) is REQUIRED** — it anchors the `class - 1`
+	## indexing, so without it every class would sample the wrong water; higher layers may be densified
+	## from layer 0. Returns null when no river asset exists, or when layer 0 is missing (shader runs
+	## river-disabled).
+	const RIVER_PATH := "res://assets/terrain/textures/rivers/"
+	# Layers 0/1 are the 2-bit edge mask's Minor/Major (class 3 is reserved and never drawn); layer 2 is the
+	# navigable channel. A river file's prefix must land in [0, RIVER_MAX_LAYERS).
+	const RIVER_MAX_LAYERS := 3
+	var by_layer: Dictionary = {}   # layer index (class - 1) -> Image
+	var dir := DirAccess.open(RIVER_PATH)
+	if dir == null:
+		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
+		return null
+	var first_size: Vector2i = Vector2i.ZERO
+	for filename: String in dir.get_files():
+		if not filename.ends_with(".png"):
+			continue
+		var prefix: String = filename.split("_")[0]
+		if not prefix.is_valid_int():
+			push_warning("[TerrainTextureManager] River texture '%s' has no NN_ layer prefix — skipped" % filename)
+			continue
+		var layer := int(prefix)
+		if layer < 0 or layer >= RIVER_MAX_LAYERS:
+			push_warning("[TerrainTextureManager] River texture '%s' layer %d out of range — skipped" % [filename, layer])
+			continue
+		var img: Image = Image.load_from_file(ProjectSettings.globalize_path(RIVER_PATH + filename))
+		if img == null:
+			continue
+		if first_size == Vector2i.ZERO:
+			first_size = Vector2i(img.get_width(), img.get_height())
+		elif Vector2i(img.get_width(), img.get_height()) != first_size:
+			img.resize(first_size.x, first_size.y)
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
+		img.generate_mipmaps()
+		by_layer[layer] = img
+
+	if by_layer.is_empty():
+		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
+		return null
+
+	# The shader indexes the array by (class - 1), so layer 0 IS Minor and the layers must be dense from
+	# 0. Without layer 0 the indexing premise is void — every class would sample the wrong water (Minor
+	# would render as Major) — so bail like the empty-directory case rather than densify a lie.
+	const RIVER_ANCHOR_LAYER := 0
+	if not by_layer.has(RIVER_ANCHOR_LAYER):
+		push_warning("[TerrainTextureManager] River layer %d (Minor) missing — the array is indexed by (river class - 1), so without it every class would sample the wrong water. River overlay disabled." % RIVER_ANCHOR_LAYER)
+		return null
+
+	# Any remaining hole is densified from the anchor (never from "the lowest present layer").
+	var layers: Array = by_layer.keys()
+	layers.sort()
+	var images: Array[Image] = []
+	for layer: int in range(int(layers[layers.size() - 1]) + 1):
+		if by_layer.has(layer):
+			images.append(by_layer[layer])
+		else:
+			push_warning("[TerrainTextureManager] River layer %d missing — reusing layer %d" % [layer, RIVER_ANCHOR_LAYER])
+			images.append(by_layer[RIVER_ANCHOR_LAYER])
+
+	var array_tex := Texture2DArray.new()
+	var err := array_tex.create_from_images(images)
+	if err != OK:
+		push_error("[TerrainTextureManager] Failed to create river Texture2DArray: %d" % err)
+		return null
+	print("[TerrainTextureManager] Loaded river textures: %d layers" % images.size())
+	return array_tex
 
 
 func get_config_value(key: String, default: Variant = null) -> Variant:

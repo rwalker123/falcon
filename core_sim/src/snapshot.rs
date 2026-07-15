@@ -22,12 +22,12 @@ use sim_runtime::{
     ForagePatchState, ForageState, GenerationState, GrazeState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
     HerdState, HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState,
-    HydrologyOverlayState, InfluentialIndividualState, IntensificationKnowledgeState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    InfluentialIndividualState, IntensificationKnowledgeState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
+    MountainKind, PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
+    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
@@ -65,7 +65,6 @@ use crate::{
         GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
-    hydrology::HydrologyState,
     influencers::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
@@ -143,7 +142,6 @@ pub struct SnapshotContext<'w> {
     /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
     pub graze_registry: Res<'w, GrazeRegistry>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
-    pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
     #[allow(dead_code)]
@@ -264,7 +262,6 @@ pub struct SnapshotHistory {
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
     moisture_raster: FloatRasterState,
-    hydrology_overlay: HydrologyOverlayState,
     elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
     victory: VictorySnapshotState,
@@ -329,7 +326,6 @@ impl SnapshotHistory {
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             moisture_raster: FloatRasterState::default(),
-            hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
             victory: VictorySnapshotState::default(),
@@ -449,12 +445,6 @@ impl SnapshotHistory {
             Some(terrain_state.clone())
         };
 
-        let hydrology_state = snapshot.hydrology_overlay.clone();
-        let hydrology_delta = if self.hydrology_overlay == hydrology_state {
-            None
-        } else {
-            Some(hydrology_state.clone())
-        };
         let moisture_state = snapshot.moisture_raster.clone();
         let moisture_delta = if self.moisture_raster == moisture_state {
             None
@@ -711,7 +701,6 @@ impl SnapshotHistory {
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
             moisture_raster: moisture_delta.clone(),
-            hydrology_overlay: hydrology_delta.clone(),
             elevation_overlay: elevation_delta.clone(),
             start_marker: start_marker_delta.clone(),
             axis_bias: axis_bias_delta,
@@ -760,7 +749,6 @@ impl SnapshotHistory {
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
-        self.hydrology_overlay = hydrology_state;
         self.elevation_overlay = elevation_state;
         self.start_marker = start_marker_state;
         self.logistics_raster = logistics_raster_state;
@@ -895,7 +883,6 @@ impl SnapshotHistory {
         self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
         self.crisis_telemetry = entry.snapshot.crisis_telemetry.clone();
         self.crisis_overlay = entry.snapshot.crisis_overlay.clone();
-        self.hydrology_overlay = entry.snapshot.hydrology_overlay.clone();
         self.elevation_overlay = entry.snapshot.elevation_overlay.clone();
         self.start_marker = entry.snapshot.start_marker.clone();
         self.capability_flags = entry.snapshot.capability_flags;
@@ -964,7 +951,6 @@ impl SnapshotHistory {
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
-            hydrology_overlay: None,
             elevation_overlay: None,
             start_marker: None,
             axis_bias: Some(bias.clone()),
@@ -1144,7 +1130,6 @@ impl SnapshotHistory {
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
-            hydrology_overlay: None,
             elevation_overlay: None,
             start_marker: None,
             axis_bias: None,
@@ -1254,7 +1239,6 @@ impl SnapshotHistory {
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
-            hydrology_overlay: None,
             elevation_overlay: None,
             start_marker: None,
             axis_bias: None,
@@ -1362,7 +1346,6 @@ pub fn capture_snapshot(
         herd_registry,
         forage_registry,
         graze_registry,
-        hydrology,
         fog_reveals,
         elevation,
         moisture,
@@ -1751,23 +1734,6 @@ pub fn capture_snapshot(
         header.campaign_label = Some(label.to_snapshot());
     }
 
-    let hydrology_overlay_state = HydrologyOverlayState {
-        rivers: hydrology
-            .rivers
-            .iter()
-            .map(|r| sim_runtime::RiverSegmentState {
-                id: r.id,
-                order: r.order,
-                width: r.width,
-                points: r
-                    .path
-                    .iter()
-                    .map(|p| sim_runtime::HydrologyPointState { x: p.x, y: p.y })
-                    .collect(),
-            })
-            .collect(),
-    };
-
     let start_marker_state = start_location
         .position()
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
@@ -1831,7 +1797,6 @@ pub fn capture_snapshot(
         military_raster: military_raster.clone(),
         visibility_raster: visibility_raster.clone(),
         moisture_raster: moisture_overlay_state.clone(),
-        hydrology_overlay: hydrology_overlay_state,
         elevation_overlay: elevation_overlay_state.clone(),
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
@@ -2031,6 +1996,9 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
                 tile_state.mountain_kind,
                 tile_state.mountain_relief,
             ),
+            river_edges: tile_state.river_edges,
+            river_inflow: tile_state.river_inflow,
+            river_channel: tile_state.river_channel,
         });
 
         if let Some(power_state) = power_lookup.get(&tile_state.entity) {
@@ -3724,6 +3692,9 @@ fn tile_state(
         // equals the patch's `carrying_capacity` — no drift between potential and realized. Non-zero
         // on fishery water (shelf/coral/inland sea); only a stated-zero biome reads 0.
         forage_capacity: forage.capacity_for(tile.terrain),
+        river_edges: tile.river_edges,
+        river_inflow: tile.river_inflow,
+        river_channel: tile.river_channel,
     }
 }
 
@@ -4800,6 +4771,9 @@ mod tests {
             graze_capacity: 0.0,
             graze_ecology_phase: GRAZE_PHASE_NONE,
             forage_capacity: 0.0,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
         }
     }
 
@@ -4826,6 +4800,9 @@ mod tests {
             terrain,
             terrain_tags: TerrainTags::empty(),
             mountain: None,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
         };
         let entity = Entity::from_raw(1);
         let capture = |terrain: TerrainType, graze: Option<&GrazePatch>| {
@@ -4897,7 +4874,6 @@ mod tests {
             intensification_knowledge: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
-            hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             start_marker: None,
             logistics_raster: ScalarRasterState::default(),
@@ -4959,7 +4935,6 @@ mod tests {
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
-            hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
@@ -5017,7 +4992,6 @@ mod tests {
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
-            hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
@@ -5317,6 +5291,9 @@ mod tests {
             graze_capacity: 0.0,
             graze_ecology_phase: GRAZE_PHASE_NONE,
             forage_capacity: 0.0,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,
