@@ -37,7 +37,7 @@
 
 09_floodplain: Seamless tileable floodplain texture, top-down view, fertile silty soil, seasonal water marks, rich brown earth, painterly style, 512x512 game asset
 
-10_alluvial_plain: Seamless tileable alluvial plain texture, top-down view, layered sediment deposits, fertile farmland soil, muted earth tones, painterly style, 512x512 game asset
+10_alluvial_plain: Seamless tileable alluvial plain texture, top-down view, fine-grained fertile loam soil, freshly tilled dark rich brown earth, smooth even crumbly texture, uniform fine silt with tiny soil aggregates, no large rocks, no stones, no pebbles, low contrast, soft even flat lighting, muted dark earth tones, painterly style, 512x512 game asset
 
 # Temperate (11-14)
 11_prairie_steppe: Seamless tileable prairie steppe texture, top-down view, tall golden grass, windswept patterns, painterly style, warm yellows and tans, 512x512 game asset
