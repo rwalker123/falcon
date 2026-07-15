@@ -102,29 +102,13 @@ var _server_build: String = "?"
 var tooltip_panel: PanelContainer
 var tooltip_label: Label
 
-const LEGEND_SWATCH_FRACTION := 0.75
-const LEGEND_MIN_ROW_HEIGHT := 20.0
-const LEGEND_ROW_PADDING := 6.0
-const LEGEND_MAX_HEIGHT := 640.0
-# Terrain-legend sort control (terrain key only). The panel holds a sort mode —
-# field ∈ {name, count} × a per-field direction — and re-applies it whenever a
-# new terrain legend arrives, so the user's chosen order sticks across map regen.
-const LEGEND_KEY_TERRAIN := "terrain"
-const LEGEND_SORT_FIELD_NAME := "name"
-const LEGEND_SORT_FIELD_COUNT := "count"
-const LEGEND_SORT_ARROW_ASC := "▲"
-const LEGEND_SORT_ARROW_DESC := "▼"
-const LEGEND_SORT_LABEL := "Sort"
-const LEGEND_SORT_ROW_SEPARATION := 6
+# The legend card + its terrain-only Name/Count sort header now live in
+# ui/hud/LegendController.gd; the command feed card in ui/hud/CommandFeedController.gd.
+# These two aliases keep `HudLayer.LEGEND_SORT_FIELD_*` resolvable for external
+# callers (e.g. tools/ui_preview.gd) with the controller as the single source of truth.
+const LEGEND_SORT_FIELD_NAME := LegendController.SORT_FIELD_NAME
+const LEGEND_SORT_FIELD_COUNT := LegendController.SORT_FIELD_COUNT
 const STACK_ADDITIONAL_MARGIN := 16.0
-const COMMAND_FEED_LIMIT := 6
-# The feed grows to fit its entries, but never past the space left in the dock
-# below the panels above it: past that it scrolls internally instead of pushing
-# the whole dock to scroll. Genuinely short content still shrinks to fit (no
-# empty box). MIN_HEIGHT is a floor on that available-space limit only, so a
-# cramped dock still leaves the feed usable rather than collapsing it to nothing.
-const COMMAND_FEED_MIN_HEIGHT := 72.0
-const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
 # Turn-orb attention contract (see TurnOrb.gd). The folded-in Alerts panel became
 # three producers here: starving (critical), losing_population (warn), idle_workers (warn) —
@@ -257,25 +241,13 @@ const FOOD_UNLIMITED_GLYPH := "∞"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
-var overlay_legend: Dictionary = {}
-var legend_suppressed: bool = false
-# Terrain-legend sort mode (display-only, persisted across legend pushes).
-# Default: Count, descending — most common biome first, a sensible read of a
-# map's composition. Direction is remembered per field so toggling is intuitive.
-var _legend_sort_field: String = LEGEND_SORT_FIELD_COUNT
-var _legend_sort_ascending: Dictionary = {
-	LEGEND_SORT_FIELD_NAME: true,
-	LEGEND_SORT_FIELD_COUNT: false,
-}
-# Runtime-built sort header (Name/Count toggles), lazily created, terrain-only.
-var _legend_sort_row: HBoxContainer = null
-var _legend_sort_name_button: Button = null
-var _legend_sort_count_button: Button = null
+# The legend card (rows + sort header + suppress state) is owned by _legend; the
+# command feed card by _command_feed. Hud delegates to both.
+var _legend: LegendController = null
+var _command_feed: CommandFeedController = null
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
-var _command_feed_entries: Array = []
-var _command_feed_signatures: Dictionary = {}
 # Previous per-band size (entity id -> size) so we can detect population loss
 # across snapshots for the "losing population" alert.
 var _prev_band_sizes: Dictionary = {}
@@ -955,15 +927,16 @@ var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
 
 func _ready() -> void:
+    _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
+    _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
     _setup_tooltip()
-    _refresh_existing_legend_rows()
-    _resize_legend_panel(_legend_list_size())
+    _legend.refresh_rows()
     _refresh_campaign_label()
     _refresh_victory_status()
-    _render_command_feed()
+    _command_feed.render()
     _connect_selection_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
@@ -3443,72 +3416,8 @@ func quick_assign_hunters(herd_id: String) -> void:
     _emit_assign_labor(band, LABOR_KIND_HUNT, idle,
         int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id, DEFAULT_HUNT_POLICY)
 
-
 func update_overlay_legend(legend: Dictionary) -> void:
-    # print("[HUD] update_overlay_legend: ", legend.keys())  # Commented out to reduce log spam
-    overlay_legend = legend.duplicate(true) if legend is Dictionary else {}
-    if legend_suppressed:
-        _hide_legend_panel()
-        return
-    for child in terrain_legend_list.get_children():
-        child.queue_free()
-    if overlay_legend.is_empty():
-        _hide_legend_panel()
-        return
-    terrain_legend_panel.visible = true
-    var title := String(overlay_legend.get("title", "Map Legend"))
-    terrain_legend_panel.set_card_title(title)
-    var description := String(overlay_legend.get("description", "")).strip_edges()
-    if description == "":
-        terrain_legend_description.visible = false
-        terrain_legend_description.text = ""
-    else:
-        terrain_legend_description.visible = true
-        terrain_legend_description.text = description
-    var rows: Array = overlay_legend.get("rows", [])
-    if rows.is_empty():
-        terrain_legend_panel.visible = false
-        terrain_legend_description.visible = false
-        terrain_legend_description.text = ""
-        _set_legend_sort_visible(false)
-        return
-    # The sort control applies to the base terrain legend only; scalar-overlay
-    # and tag legends have a meaningful intrinsic order and render unchanged.
-    var is_terrain := String(overlay_legend.get("key", "")) == LEGEND_KEY_TERRAIN
-    _set_legend_sort_visible(is_terrain)
-    if is_terrain:
-        rows = _sorted_terrain_rows(rows)
-    var row_height := _legend_row_height()
-    var swatch_size := _legend_swatch_size(row_height)
-    for entry in rows:
-        if typeof(entry) != TYPE_DICTIONARY:
-            continue
-        var row := HBoxContainer.new()
-        row.custom_minimum_size = Vector2(0, row_height)
-        row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-        var swatch := ColorRect.new()
-        swatch.custom_minimum_size = swatch_size
-        swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-        swatch.color = entry.get("color", Color.WHITE)
-        row.add_child(swatch)
-
-        var label := Label.new()
-        var label_text := str(entry.get("label", ""))
-        var value_text := str(entry.get("value_text", "")).strip_edges()
-        if value_text != "":
-            if label_text == "":
-                label.text = value_text
-            else:
-                label.text = "%s — %s" % [label_text, value_text]
-        else:
-            label.text = label_text
-        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        row.add_child(label)
-
-        terrain_legend_list.add_child(row)
-    _resize_legend_panel(_legend_list_size())
-
+    _legend.update(legend)
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0
     for label in [campaign_title_label, campaign_subtitle_label, turn_label, metrics_label, victory_status_label]:
@@ -3558,26 +3467,6 @@ func _recompute_insets() -> void:
                 _inset_right += size
             SIDE_BOTTOM:
                 _inset_bottom += size
-
-func _legend_row_height() -> float:
-    return LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING
-
-func _legend_swatch_size(row_height: float) -> Vector2:
-    var side: float = max(row_height * LEGEND_SWATCH_FRACTION, LEGEND_MIN_ROW_HEIGHT * 0.6)
-    return Vector2(side, side)
-
-func _refresh_existing_legend_rows() -> void:
-    var row_height := _legend_row_height()
-    var swatch_size := _legend_swatch_size(row_height)
-    for child in terrain_legend_list.get_children():
-        if child is HBoxContainer:
-            var row := child as HBoxContainer
-            row.custom_minimum_size = Vector2(0, row_height)
-            for grandchild in row.get_children():
-                if grandchild is ColorRect:
-                    (grandchild as ColorRect).custom_minimum_size = swatch_size
-    _resize_legend_panel(_legend_list_size())
-
 func _refresh_campaign_label() -> void:
     if campaign_title_label == null or campaign_subtitle_label == null:
         return
@@ -3591,10 +3480,7 @@ func _refresh_campaign_label() -> void:
     campaign_subtitle_label.text = subtitle_text if has_subtitle else ""
 
 func reset_command_feed() -> void:
-    _command_feed_entries.clear()
-    _command_feed_signatures.clear()
-    _render_command_feed()
-
+    _command_feed.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
     _selected_tile_info = tile_info.duplicate(true) if tile_info is Dictionary else {}
     _selected_unit.clear()
@@ -5288,29 +5174,7 @@ func _load_ui_balance_config() -> void:
             travel_preview_turn_cap = cap_value
 
 func ingest_command_events(events_variant: Variant) -> void:
-    if command_feed_label == null or not (events_variant is Array):
-        return
-    var events_array: Array = events_variant
-    for entry_variant in events_array:
-        if not (entry_variant is Dictionary):
-            continue
-        var entry: Dictionary = entry_variant
-        var tick: int = int(entry.get("tick", -1))
-        var kind: String = String(entry.get("kind", "")).strip_edges()
-        var label: String = String(entry.get("label", "")).strip_edges()
-        var detail: String = String(entry.get("detail", "")).strip_edges()
-        var signature := "%d|%s|%s|%s" % [tick, kind, label, detail]
-        if _command_feed_signatures.has(signature):
-            continue
-        _command_feed_signatures[signature] = true
-        _append_command_feed_entry(tick, kind, label, detail)
-    _render_command_feed()
-
-## Rebuild the actionable-alerts list from the player faction's bands each
-## snapshot. Alerts are (band, type) deduped by construction — each band yields at
-## most one of each type — and cleared automatically when the condition resolves
-## (the list is rebuilt from scratch). Population loss is detected against the
-## per-band sizes remembered from the previous snapshot.
+    _command_feed.ingest_events(events_variant)
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return
@@ -5440,56 +5304,8 @@ func _decline_reason(days: float, morale: float, morale_cause: int, last_emigrat
 func _band_display_name(_entry: Dictionary, index: int) -> String:
     return "Band %d" % index
 
-## Post a short local note to the command feed (no server round-trip) — used when a
-## client-side shortcut can't act (e.g. quick-hunt with no idle workers) so it never
-## silently no-ops.
 func _note_command_feed(label: String, detail: String) -> void:
-    _append_command_feed_entry(-1, "", label, detail)
-    _render_command_feed()
-
-func _append_command_feed_entry(tick: int, kind: String, label: String, detail: String) -> void:
-    var prefix := kind.capitalize() if kind != "" else "Command"
-    var summary := label if label != "" else prefix
-    var turn_fragment := ""
-    if tick >= 0:
-        turn_fragment = "[color=#8fd4ff]Turn %d[/color]  " % tick
-    var message := "%s[b]%s[/b]" % [turn_fragment, prefix]
-    if summary != "" and summary != prefix:
-        message += " — %s" % summary
-    if detail != "":
-        message += "\n[i]%s[/i]" % detail
-    _command_feed_entries.append(message)
-    while _command_feed_entries.size() > COMMAND_FEED_LIMIT:
-        _command_feed_entries.pop_front()
-
-func _render_command_feed() -> void:
-    if command_feed_panel == null or command_feed_label == null:
-        return
-    command_feed_panel.visible = true
-    if _command_feed_entries.is_empty():
-        command_feed_label.text = "[i]No command activity yet.[/i]"
-    else:
-        command_feed_label.text = "\n\n".join(_command_feed_entries)
-    # The feed grows to fit but stays within the dock so only it scrolls, not the
-    # whole stack; the label needs a frame to re-lay out before its content height
-    # and position are accurate.
-    call_deferred("_resize_command_feed")
-
-## Grow the feed's scroll region to fit its entries, capped to the space
-## remaining in the dock below the panels above it (so the feed scrolls
-## internally rather than dragging the fixed panels through the dock scroll),
-## then scroll to the newest (bottom) entry.
-func _resize_command_feed() -> void:
-    if command_feed_scroll == null or command_feed_label == null:
-        return
-    var cap: float = command_feed_label.get_content_height()
-    if left_dock_scroll != null and left_dock_scroll.size.y > 0.0:
-        var top_in_dock: float = command_feed_scroll.global_position.y - left_dock_scroll.global_position.y
-        var available: float = left_dock_scroll.size.y - top_in_dock - COMMAND_FEED_BOTTOM_MARGIN
-        cap = min(cap, max(available, COMMAND_FEED_MIN_HEIGHT))
-    command_feed_scroll.custom_minimum_size.y = max(cap, 0.0)
-    command_feed_scroll.set_deferred("scroll_vertical", 1000000)
-
+    _command_feed.note(label, detail)
 func _refresh_victory_status() -> void:
     if victory_status_label == null:
         return
@@ -5560,130 +5376,11 @@ func _resolve_localized_field(field: String) -> String:
             return localized
     return text
 
-func _legend_list_size() -> Vector2:
-    if terrain_legend_list == null:
-        return Vector2.ZERO
-    return terrain_legend_list.get_combined_minimum_size()
-
-## Cap the legend's inner scroll so a long list scrolls internally instead of
-## stretching the whole right dock. Width and placement come from the PanelCard
-## + dock; this only bounds the row list's height.
-func _resize_legend_panel(_list_size: Vector2) -> void:
-    if terrain_legend_scroll == null or terrain_legend_list == null:
-        return
-    var list_height: float = terrain_legend_list.get_combined_minimum_size().y
-    var clamped_height: float = clamp(list_height, LEGEND_MIN_ROW_HEIGHT, LEGEND_MAX_HEIGHT)
-    terrain_legend_scroll.custom_minimum_size.y = clamped_height
-    terrain_legend_scroll.scroll_vertical = 0
-
-## Sort the terrain legend rows by the active field/direction. Display-only —
-## MapView always sends its natural order; the panel owns the preference.
-func _sorted_terrain_rows(rows: Array) -> Array:
-    var sorted_rows: Array = rows.duplicate()
-    var field := _legend_sort_field
-    var ascending := bool(_legend_sort_ascending.get(field, true))
-    sorted_rows.sort_custom(func(a, b): return _legend_row_less(a, b, field, ascending))
-    return sorted_rows
-
-func _legend_row_less(a, b, field: String, ascending: bool) -> bool:
-    # Descending reuses the strict comparator with swapped arguments rather than
-    # negating it: `not less` would return true for equal rows in both directions,
-    # violating the strict-weak-ordering `sort_custom` requires. Swapping args keeps
-    # equality false either way (and preserves the alphabetical tie-break inside).
-    if ascending:
-        return _legend_strict_less(a, b, field)
-    return _legend_strict_less(b, a, field)
-
-func _legend_strict_less(a, b, field: String) -> bool:
-    if field == LEGEND_SORT_FIELD_COUNT:
-        var count_a := int(a.get("count", 0))
-        var count_b := int(b.get("count", 0))
-        if count_a == count_b:
-            # Ties read best alphabetically rather than in arbitrary order.
-            return str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
-        return count_a < count_b
-    return str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
-
-## Build the Name/Count sort header once and insert it above the row list.
-func _ensure_legend_sort_row() -> void:
-    if _legend_sort_row != null:
-        return
-    if terrain_legend_scroll == null:
-        return
-    var content: Node = terrain_legend_scroll.get_parent()
-    if content == null:
-        return
-    _legend_sort_row = HBoxContainer.new()
-    _legend_sort_row.add_theme_constant_override("separation", LEGEND_SORT_ROW_SEPARATION)
-    _legend_sort_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-    var caption := Label.new()
-    caption.text = LEGEND_SORT_LABEL
-    caption.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    _legend_sort_row.add_child(caption)
-
-    _legend_sort_name_button = Button.new()
-    _legend_sort_name_button.pressed.connect(_on_legend_sort_pressed.bind(LEGEND_SORT_FIELD_NAME))
-    _legend_sort_row.add_child(_legend_sort_name_button)
-
-    _legend_sort_count_button = Button.new()
-    _legend_sort_count_button.pressed.connect(_on_legend_sort_pressed.bind(LEGEND_SORT_FIELD_COUNT))
-    _legend_sort_row.add_child(_legend_sort_count_button)
-
-    content.add_child(_legend_sort_row)
-    # Sit directly above the row list (below the card header + description).
-    content.move_child(_legend_sort_row, terrain_legend_scroll.get_index())
-
-func _set_legend_sort_visible(should_show: bool) -> void:
-    if should_show:
-        _ensure_legend_sort_row()
-        _update_legend_sort_buttons()
-    if _legend_sort_row != null:
-        _legend_sort_row.visible = should_show
-
-func _update_legend_sort_buttons() -> void:
-    if _legend_sort_name_button == null or _legend_sort_count_button == null:
-        return
-    _legend_sort_name_button.text = _legend_sort_button_text("Name", LEGEND_SORT_FIELD_NAME)
-    _legend_sort_count_button.text = _legend_sort_button_text("Count", LEGEND_SORT_FIELD_COUNT)
-    # The active field reads as the "primary" cyan treatment; the other is ghost.
-    HudStyle.apply_button(_legend_sort_name_button, _legend_sort_variant(LEGEND_SORT_FIELD_NAME))
-    HudStyle.apply_button(_legend_sort_count_button, _legend_sort_variant(LEGEND_SORT_FIELD_COUNT))
-
-func _legend_sort_button_text(label: String, field: String) -> String:
-    if field != _legend_sort_field:
-        return label
-    var arrow := LEGEND_SORT_ARROW_ASC if bool(_legend_sort_ascending.get(field, true)) else LEGEND_SORT_ARROW_DESC
-    return "%s %s" % [label, arrow]
-
-func _legend_sort_variant(field: String) -> String:
-    return "primary" if field == _legend_sort_field else "ghost"
-
 func _on_legend_sort_pressed(field: String) -> void:
-    if field == _legend_sort_field:
-        # Re-clicking the active field flips its direction (A→Z↔Z→A, high↔low).
-        _legend_sort_ascending[field] = not bool(_legend_sort_ascending.get(field, true))
-    else:
-        _legend_sort_field = field
-    _update_legend_sort_buttons()
-    # Re-render the current legend so the new order lands immediately.
-    update_overlay_legend(overlay_legend)
+    _legend.on_sort_pressed(field)
 
 func toggle_legend() -> void:
-    legend_suppressed = not legend_suppressed
-    if legend_suppressed:
-        _hide_legend_panel()
-    else:
-        update_overlay_legend(overlay_legend)
-
-func _hide_legend_panel() -> void:
-    if terrain_legend_panel != null:
-        terrain_legend_panel.visible = false
-    if terrain_legend_description != null:
-        terrain_legend_description.visible = false
-        terrain_legend_description.text = ""
-
+    _legend.toggle_suppressed()
 func _setup_tooltip() -> void:
     tooltip_panel = PanelContainer.new()
     tooltip_panel.visible = false

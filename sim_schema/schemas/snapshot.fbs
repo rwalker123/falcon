@@ -1188,14 +1188,51 @@ table GreatDiscoveryDefinition {
   requirements:[GreatDiscoveryRequirementDefinition];
 }
 
-table WorldSnapshot {
-  header:SnapshotHeader;
+// ---------------------------------------------------------------------------
+// Domain section tables (docs/plan_snapshot_and_systems_decomposition.md §1).
+// The two roots (WorldSnapshot / WorldDelta) nest one section table per
+// subsystem so concurrent arcs append fields to DIFFERENT tables and never
+// collide on a single table's positional slot order. ONE set of section tables
+// serves both roots: the snapshot builder leaves the delta-only `removed*`
+// lists (and delta-omitted fields) unset; the delta builder populates them.
+// Append discipline still holds WITHIN each section: new fields go strictly
+// after the shipped ones.
+// ---------------------------------------------------------------------------
+
+table MapSection {
   tiles:[TileState];
+  terrainOverlay:TerrainOverlay;
+  elevationOverlay:ElevationOverlay;
+  moistureRaster:FloatRaster;
+  removedTiles:[ulong];        // delta-only
+}
+
+table EconomySection {
   logistics:[LogisticsLinkState];
   tradeLinks:[TradeLinkState];
+  logisticsRaster:ScalarRaster;
+  factionInventory:[FactionInventoryState];
+  removedLogistics:[ulong];    // delta-only
+  removedTradeLinks:[ulong];   // delta-only
+}
+
+table PopulationSection {
   populations:[PopulationCohortState];
-  power:[PowerNodeState];
-  powerMetrics:PowerTelemetryState;
+  demographics:[PopulationDemographicsState];
+  generations:[GenerationState];
+  removedPopulations:[ulong];  // delta-only
+  removedGenerations:[ushort]; // delta-only
+}
+
+table SubsistenceSection {
+  herds:[HerdTelemetryState];
+  foragePatches:[ForagePatchState];
+  sedentarization:[SedentarizationState];
+  intensificationKnowledge:[IntensificationKnowledgeState];
+  foodModules:[FoodModuleState];
+}
+
+table KnowledgeSection {
   greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
   greatDiscoveries:[GreatDiscoveryState];
   greatDiscoveryProgress:[GreatDiscoveryProgressState];
@@ -1203,95 +1240,71 @@ table WorldSnapshot {
   knowledgeLedger:[KnowledgeLedgerState];
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
-  victory:VictoryState;
-  capabilityFlags:uint;
+  discoveredSites:[DiscoveredSitesState];
+  discoveryProgress:[DiscoveryProgressEntry];
+  removedKnowledgeLedger:[ulong]; // delta-only
+}
+
+table GovernanceSection {
+  power:[PowerNodeState];
+  powerMetrics:PowerTelemetryState;
+  corruption:CorruptionLedger;
+  corruptionRaster:ScalarRaster;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
-  campaignProfiles:[CampaignProfile];
-  commandEvents:[CommandEventState];
-  herds:[HerdTelemetryState];
-  foodModules:[FoodModuleState];
-  factionInventory:[FactionInventoryState];
-  sedentarization:[SedentarizationState];
-  discoveredSites:[DiscoveredSitesState];
-  demographics:[PopulationDemographicsState];
-  foragePatches:[ForagePatchState];
-  intensificationKnowledge:[IntensificationKnowledgeState];
-  moistureRaster:FloatRaster;
-  elevationOverlay:ElevationOverlay;
-  terrainOverlay:TerrainOverlay;
-  logisticsRaster:ScalarRaster;
-  sentimentRaster:ScalarRaster;
-  corruptionRaster:ScalarRaster;
-  fogRaster:ScalarRaster;
-  cultureRaster:ScalarRaster;
-  militaryRaster:ScalarRaster;
-  axisBias:AxisBiasState;
-  sentiment:SentimentTelemetryState;
-  generations:[GenerationState];
-  corruption:CorruptionLedger;
-  influencers:[InfluentialIndividualState];
+  removedPower:[ulong];        // delta-only
+}
+
+table CultureSection {
   cultureLayers:[CultureLayerState];
   cultureTensions:[CultureTensionState];
-  discoveryProgress:[DiscoveryProgressEntry];
+  cultureRaster:ScalarRaster;
+  influencers:[InfluentialIndividualState];
+  axisBias:AxisBiasState;
+  sentiment:SentimentTelemetryState;
+  sentimentRaster:ScalarRaster;
+  removedInfluencers:[uint];    // delta-only
+  removedCultureLayers:[uint];  // delta-only
+}
+
+table VisionSection {
+  fogRaster:ScalarRaster;
   visibilityRaster:ScalarRaster;
+  militaryRaster:ScalarRaster;
+}
+
+table CampaignSection {
+  campaignProfiles:[CampaignProfile]; // snapshot-only
+  commandEvents:[CommandEventState];
+  victory:VictoryState;
+}
+
+table WorldSnapshot {
+  header:SnapshotHeader;
+  capabilityFlags:uint;
+  map:MapSection;
+  economy:EconomySection;
+  population:PopulationSection;
+  subsistence:SubsistenceSection;
+  knowledge:KnowledgeSection;
+  governance:GovernanceSection;
+  culture:CultureSection;
+  vision:VisionSection;
+  campaign:CampaignSection;
 }
 
 table WorldDelta {
   header:SnapshotHeader;
-  tiles:[TileState];
-  removedTiles:[ulong];
-  logistics:[LogisticsLinkState];
-  removedLogistics:[ulong];
-  tradeLinks:[TradeLinkState];
-  removedTradeLinks:[ulong];
-  populations:[PopulationCohortState];
-  removedPopulations:[ulong];
-  power:[PowerNodeState];
-  removedPower:[ulong];
-  powerMetrics:PowerTelemetryState;
-  greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
-  greatDiscoveries:[GreatDiscoveryState];
-  greatDiscoveryProgress:[GreatDiscoveryProgressState];
-  greatDiscoveryTelemetry:GreatDiscoveryTelemetryState;
-  knowledgeLedger:[KnowledgeLedgerState];
-  removedKnowledgeLedger:[ulong];
-  knowledgeTimeline:[KnowledgeTimelineEventState];
-  knowledgeMetrics:KnowledgeMetricsState;
-  victory:VictoryState;
   capabilityFlags:uint;
-  crisisTelemetry:CrisisTelemetryState;
-  crisisOverlay:CrisisOverlayState;
-  commandEvents:[CommandEventState];
-  herds:[HerdTelemetryState];
-  foodModules:[FoodModuleState];
-  factionInventory:[FactionInventoryState];
-  sedentarization:[SedentarizationState];
-  discoveredSites:[DiscoveredSitesState];
-  demographics:[PopulationDemographicsState];
-  foragePatches:[ForagePatchState];
-  intensificationKnowledge:[IntensificationKnowledgeState];
-  moistureRaster:FloatRaster;
-  axisBias:AxisBiasState;
-  sentiment:SentimentTelemetryState;
-  generations:[GenerationState];
-  removedGenerations:[ushort];
-  corruption:CorruptionLedger;
-  influencers:[InfluentialIndividualState];
-  removedInfluencers:[uint];
-  terrainOverlay:TerrainOverlay;
-  elevationOverlay:ElevationOverlay;
-  logisticsRaster:ScalarRaster;
-  sentimentRaster:ScalarRaster;
-  corruptionRaster:ScalarRaster;
-  fogRaster:ScalarRaster;
-  cultureRaster:ScalarRaster;
-  militaryRaster:ScalarRaster;
-  cultureLayers:[CultureLayerState];
-  removedCultureLayers:[uint];
-  cultureTensions:[CultureTensionState];
-  discoveryProgress:[DiscoveryProgressEntry];
-  visibilityRaster:ScalarRaster;
+  map:MapSection;
+  economy:EconomySection;
+  population:PopulationSection;
+  subsistence:SubsistenceSection;
+  knowledge:KnowledgeSection;
+  governance:GovernanceSection;
+  culture:CultureSection;
+  vision:VisionSection;
+  campaign:CampaignSection;
 }
 
 union SnapshotPayload {

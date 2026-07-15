@@ -2410,111 +2410,30 @@ fn build_snapshot_flatbuffer<'a>(
         },
     );
 
-    let tiles_vec = create_tiles(builder, &snapshot.tiles);
-    let logistics_vec = create_logistics(builder, &snapshot.logistics);
-    let trade_links_vec = create_trade_links(builder, &snapshot.trade_links);
-    let populations_vec = create_populations(builder, &snapshot.populations);
-    let power_vec = create_power(builder, &snapshot.power);
-    let power_metrics = create_power_metrics(builder, &snapshot.power_metrics);
-    let great_discovery_definitions_vec =
-        create_great_discovery_definitions(builder, &snapshot.great_discovery_definitions);
-    let great_discoveries_vec = create_great_discoveries(builder, &snapshot.great_discoveries);
-    let great_discovery_progress_vec =
-        create_great_discovery_progress(builder, &snapshot.great_discovery_progress);
-    let great_discovery_telemetry =
-        create_great_discovery_telemetry(builder, &snapshot.great_discovery_telemetry);
-    let knowledge_ledger_vec = create_knowledge_ledger(builder, &snapshot.knowledge_ledger);
-    let knowledge_timeline_vec = create_knowledge_timeline(builder, &snapshot.knowledge_timeline);
-    let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
-    let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
-    let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
-    let campaign_profiles_vec = create_campaign_profiles(builder, &snapshot.campaign_profiles);
-    let command_events_vec = create_command_events(builder, &snapshot.command_events);
-    let herds_vec = create_herds(builder, &snapshot.herds);
-    let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
-    let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
-    let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
-    let discovered_sites_vec = create_discovered_sites(builder, &snapshot.discovered_sites);
-    let demographics_vec = create_demographics(builder, &snapshot.demographics);
-    let forage_patches_vec = create_forage_patches(builder, &snapshot.forage_patches);
-    let intensification_knowledge_vec =
-        create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
-    let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
-    let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
-    let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
-    let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
-    let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
-    let corruption_raster = create_scalar_raster(builder, &snapshot.corruption_raster);
-    let fog_raster = create_scalar_raster(builder, &snapshot.fog_raster);
-    let culture_raster = create_scalar_raster(builder, &snapshot.culture_raster);
-    let military_raster = create_scalar_raster(builder, &snapshot.military_raster);
-    let visibility_raster = create_scalar_raster(builder, &snapshot.visibility_raster);
-    let axis_bias = fb::AxisBiasState::create(
-        builder,
-        &fb::AxisBiasStateArgs {
-            knowledge: snapshot.axis_bias.knowledge,
-            trust: snapshot.axis_bias.trust,
-            equity: snapshot.axis_bias.equity,
-            agency: snapshot.axis_bias.agency,
-        },
-    );
-    let sentiment = create_sentiment(builder, &snapshot.sentiment);
-    let generations_vec = create_generations(builder, &snapshot.generations);
-    let corruption = create_corruption(builder, &snapshot.corruption);
-    let influencers_vec = create_influencers(builder, &snapshot.influencers);
-    let culture_layers_vec = create_culture_layers(builder, &snapshot.culture_layers);
-    let culture_tensions_vec = create_culture_tensions(builder, &snapshot.culture_tensions);
-    let discovery_progress_vec = create_discovery_progress(builder, &snapshot.discovery_progress);
+    let map = serialize_map_section(builder, snapshot);
+    let economy = serialize_economy_section(builder, snapshot);
+    let population = serialize_population_section(builder, snapshot);
+    let subsistence = serialize_subsistence_section(builder, snapshot);
+    let knowledge = serialize_knowledge_section(builder, snapshot);
+    let governance = serialize_governance_section(builder, snapshot);
+    let culture = serialize_culture_section(builder, snapshot);
+    let vision = serialize_vision_section(builder, snapshot);
+    let campaign = serialize_campaign_section(builder, snapshot, victory_state);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
         &fb::WorldSnapshotArgs {
             header: Some(header),
-            tiles: Some(tiles_vec),
-            logistics: Some(logistics_vec),
-            tradeLinks: Some(trade_links_vec),
-            populations: Some(populations_vec),
-            power: Some(power_vec),
-            powerMetrics: Some(power_metrics),
-            greatDiscoveryDefinitions: Some(great_discovery_definitions_vec),
-            greatDiscoveries: Some(great_discoveries_vec),
-            greatDiscoveryProgress: Some(great_discovery_progress_vec),
-            greatDiscoveryTelemetry: Some(great_discovery_telemetry),
-            knowledgeLedger: Some(knowledge_ledger_vec),
-            knowledgeTimeline: Some(knowledge_timeline_vec),
-            knowledgeMetrics: Some(knowledge_metrics),
-            crisisTelemetry: Some(crisis_telemetry),
-            crisisOverlay: Some(crisis_overlay),
-            victory: Some(victory_state),
             capabilityFlags: snapshot.capability_flags,
-            campaignProfiles: Some(campaign_profiles_vec),
-            commandEvents: Some(command_events_vec),
-            herds: Some(herds_vec),
-            foodModules: Some(food_modules_vec),
-            factionInventory: Some(faction_inventory_vec),
-            sedentarization: Some(sedentarization_vec),
-            discoveredSites: Some(discovered_sites_vec),
-            demographics: Some(demographics_vec),
-            foragePatches: Some(forage_patches_vec),
-            intensificationKnowledge: Some(intensification_knowledge_vec),
-            moistureRaster: Some(moisture_raster),
-            elevationOverlay: Some(elevation_overlay),
-            terrainOverlay: Some(terrain_overlay),
-            logisticsRaster: Some(logistics_raster),
-            sentimentRaster: Some(sentiment_raster),
-            corruptionRaster: Some(corruption_raster),
-            fogRaster: Some(fog_raster),
-            cultureRaster: Some(culture_raster),
-            militaryRaster: Some(military_raster),
-            axisBias: Some(axis_bias),
-            sentiment: Some(sentiment),
-            generations: Some(generations_vec),
-            corruption: Some(corruption),
-            influencers: Some(influencers_vec),
-            cultureLayers: Some(culture_layers_vec),
-            cultureTensions: Some(culture_tensions_vec),
-            discoveryProgress: Some(discovery_progress_vec),
-            visibilityRaster: Some(visibility_raster),
+            map: Some(map),
+            economy: Some(economy),
+            population: Some(population),
+            subsistence: Some(subsistence),
+            knowledge: Some(knowledge),
+            governance: Some(governance),
+            culture: Some(culture),
+            vision: Some(vision),
+            campaign: Some(campaign),
         },
     );
 
@@ -2540,42 +2459,6 @@ fn build_delta_flatbuffer<'a>(
         .victory
         .as_ref()
         .map(|state| create_victory_state(builder, state));
-    let herds = delta
-        .herds
-        .as_ref()
-        .map(|entries| create_herds(builder, entries));
-    let faction_inventory = delta
-        .faction_inventory
-        .as_ref()
-        .map(|entries| create_faction_inventory(builder, entries));
-    let sedentarization = delta
-        .sedentarization
-        .as_ref()
-        .map(|entries| create_sedentarization(builder, entries));
-    let discovered_sites = delta
-        .discovered_sites
-        .as_ref()
-        .map(|entries| create_discovered_sites(builder, entries));
-    let demographics = delta
-        .demographics
-        .as_ref()
-        .map(|entries| create_demographics(builder, entries));
-    let forage_patches = delta
-        .forage_patches
-        .as_ref()
-        .map(|entries| create_forage_patches(builder, entries));
-    let intensification_knowledge = delta
-        .intensification_knowledge
-        .as_ref()
-        .map(|entries| create_intensification_knowledge(builder, entries));
-    let command_events = delta
-        .command_events
-        .as_ref()
-        .map(|entries| create_command_events(builder, entries));
-    let food_modules = delta
-        .food_modules
-        .as_ref()
-        .map(|entries| create_food_modules(builder, entries));
 
     // Deltas fire every turn and only full snapshots populate server_build, so omit the
     // field (leave it None) when empty instead of serializing an empty string each delta.
@@ -2599,38 +2482,441 @@ fn build_delta_flatbuffer<'a>(
         },
     );
 
-    let tiles_vec = create_tiles(builder, &delta.tiles);
-    let removed_tiles_vec = builder.create_vector(&delta.removed_tiles);
-    let logistics_vec = create_logistics(builder, &delta.logistics);
-    let removed_logistics_vec = builder.create_vector(&delta.removed_logistics);
-    let trade_links_vec = create_trade_links(builder, &delta.trade_links);
-    let removed_trade_links_vec = builder.create_vector(&delta.removed_trade_links);
-    let populations_vec = create_populations(builder, &delta.populations);
-    let removed_populations_vec = builder.create_vector(&delta.removed_populations);
-    let power_vec = create_power(builder, &delta.power);
-    let removed_power_vec = builder.create_vector(&delta.removed_power);
-    let power_metrics = delta
-        .power_metrics
+    let map = serialize_map_section_delta(builder, delta);
+    let economy = serialize_economy_section_delta(builder, delta);
+    let population = serialize_population_section_delta(builder, delta);
+    let subsistence = serialize_subsistence_section_delta(builder, delta);
+    let knowledge = serialize_knowledge_section_delta(builder, delta);
+    let governance = serialize_governance_section_delta(builder, delta);
+    let culture = serialize_culture_section_delta(builder, delta);
+    let vision = serialize_vision_section_delta(builder, delta);
+    let campaign = serialize_campaign_section_delta(builder, delta, victory_state);
+
+    let delta_table = fb::WorldDelta::create(
+        builder,
+        &fb::WorldDeltaArgs {
+            header: Some(header),
+            capabilityFlags: delta.capability_flags.unwrap_or(0),
+            map: Some(map),
+            economy: Some(economy),
+            population: Some(population),
+            subsistence: Some(subsistence),
+            knowledge: Some(knowledge),
+            governance: Some(governance),
+            culture: Some(culture),
+            vision: Some(vision),
+            campaign: Some(campaign),
+        },
+    );
+
+    fb::Envelope::create(
+        builder,
+        &fb::EnvelopeArgs {
+            payload_type: fb::SnapshotPayload::delta,
+            payload: Some(delta_table.as_union_value()),
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Per-section FlatBuffers serializers (docs/plan_snapshot_and_systems_decomposition.md §1).
+// Each root nests one section table per subsystem; one helper per section per
+// root builds its child offsets then the section table, so a future field
+// addition to a section localizes to a single helper instead of the mega
+// `build_*_flatbuffer` bodies. The delta variants preserve the exact per-field
+// Option/empty-vector handling the flat delta used; `removed*` lists and
+// snapshot-only fields are left unset on the side that does not carry them.
+// ---------------------------------------------------------------------------
+
+fn serialize_map_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::MapSection<'a>> {
+    let tiles = create_tiles(builder, &snapshot.tiles);
+    let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
+    let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
+    let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
+    fb::MapSection::create(
+        builder,
+        &fb::MapSectionArgs {
+            tiles: Some(tiles),
+            terrainOverlay: Some(terrain_overlay),
+            elevationOverlay: Some(elevation_overlay),
+            moistureRaster: Some(moisture_raster),
+            removedTiles: None,
+        },
+    )
+}
+
+fn serialize_economy_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::EconomySection<'a>> {
+    let logistics = create_logistics(builder, &snapshot.logistics);
+    let trade_links = create_trade_links(builder, &snapshot.trade_links);
+    let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
+    let faction_inventory = create_faction_inventory(builder, &snapshot.faction_inventory);
+    fb::EconomySection::create(
+        builder,
+        &fb::EconomySectionArgs {
+            logistics: Some(logistics),
+            tradeLinks: Some(trade_links),
+            logisticsRaster: Some(logistics_raster),
+            factionInventory: Some(faction_inventory),
+            removedLogistics: None,
+            removedTradeLinks: None,
+        },
+    )
+}
+
+fn serialize_population_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::PopulationSection<'a>> {
+    let populations = create_populations(builder, &snapshot.populations);
+    let demographics = create_demographics(builder, &snapshot.demographics);
+    let generations = create_generations(builder, &snapshot.generations);
+    fb::PopulationSection::create(
+        builder,
+        &fb::PopulationSectionArgs {
+            populations: Some(populations),
+            demographics: Some(demographics),
+            generations: Some(generations),
+            removedPopulations: None,
+            removedGenerations: None,
+        },
+    )
+}
+
+fn serialize_subsistence_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::SubsistenceSection<'a>> {
+    let herds = create_herds(builder, &snapshot.herds);
+    let forage_patches = create_forage_patches(builder, &snapshot.forage_patches);
+    let sedentarization = create_sedentarization(builder, &snapshot.sedentarization);
+    let intensification_knowledge =
+        create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
+    let food_modules = create_food_modules(builder, &snapshot.food_modules);
+    fb::SubsistenceSection::create(
+        builder,
+        &fb::SubsistenceSectionArgs {
+            herds: Some(herds),
+            foragePatches: Some(forage_patches),
+            sedentarization: Some(sedentarization),
+            intensificationKnowledge: Some(intensification_knowledge),
+            foodModules: Some(food_modules),
+        },
+    )
+}
+
+fn serialize_knowledge_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::KnowledgeSection<'a>> {
+    let great_discovery_definitions =
+        create_great_discovery_definitions(builder, &snapshot.great_discovery_definitions);
+    let great_discoveries = create_great_discoveries(builder, &snapshot.great_discoveries);
+    let great_discovery_progress =
+        create_great_discovery_progress(builder, &snapshot.great_discovery_progress);
+    let great_discovery_telemetry =
+        create_great_discovery_telemetry(builder, &snapshot.great_discovery_telemetry);
+    let knowledge_ledger = create_knowledge_ledger(builder, &snapshot.knowledge_ledger);
+    let knowledge_timeline = create_knowledge_timeline(builder, &snapshot.knowledge_timeline);
+    let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
+    let discovered_sites = create_discovered_sites(builder, &snapshot.discovered_sites);
+    let discovery_progress = create_discovery_progress(builder, &snapshot.discovery_progress);
+    fb::KnowledgeSection::create(
+        builder,
+        &fb::KnowledgeSectionArgs {
+            greatDiscoveryDefinitions: Some(great_discovery_definitions),
+            greatDiscoveries: Some(great_discoveries),
+            greatDiscoveryProgress: Some(great_discovery_progress),
+            greatDiscoveryTelemetry: Some(great_discovery_telemetry),
+            knowledgeLedger: Some(knowledge_ledger),
+            knowledgeTimeline: Some(knowledge_timeline),
+            knowledgeMetrics: Some(knowledge_metrics),
+            discoveredSites: Some(discovered_sites),
+            discoveryProgress: Some(discovery_progress),
+            removedKnowledgeLedger: None,
+        },
+    )
+}
+
+fn serialize_governance_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::GovernanceSection<'a>> {
+    let power = create_power(builder, &snapshot.power);
+    let power_metrics = create_power_metrics(builder, &snapshot.power_metrics);
+    let corruption = create_corruption(builder, &snapshot.corruption);
+    let corruption_raster = create_scalar_raster(builder, &snapshot.corruption_raster);
+    let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
+    let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
+    fb::GovernanceSection::create(
+        builder,
+        &fb::GovernanceSectionArgs {
+            power: Some(power),
+            powerMetrics: Some(power_metrics),
+            corruption: Some(corruption),
+            corruptionRaster: Some(corruption_raster),
+            crisisTelemetry: Some(crisis_telemetry),
+            crisisOverlay: Some(crisis_overlay),
+            removedPower: None,
+        },
+    )
+}
+
+fn serialize_culture_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::CultureSection<'a>> {
+    let culture_layers = create_culture_layers(builder, &snapshot.culture_layers);
+    let culture_tensions = create_culture_tensions(builder, &snapshot.culture_tensions);
+    let culture_raster = create_scalar_raster(builder, &snapshot.culture_raster);
+    let influencers = create_influencers(builder, &snapshot.influencers);
+    let axis_bias = fb::AxisBiasState::create(
+        builder,
+        &fb::AxisBiasStateArgs {
+            knowledge: snapshot.axis_bias.knowledge,
+            trust: snapshot.axis_bias.trust,
+            equity: snapshot.axis_bias.equity,
+            agency: snapshot.axis_bias.agency,
+        },
+    );
+    let sentiment = create_sentiment(builder, &snapshot.sentiment);
+    let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
+    fb::CultureSection::create(
+        builder,
+        &fb::CultureSectionArgs {
+            cultureLayers: Some(culture_layers),
+            cultureTensions: Some(culture_tensions),
+            cultureRaster: Some(culture_raster),
+            influencers: Some(influencers),
+            axisBias: Some(axis_bias),
+            sentiment: Some(sentiment),
+            sentimentRaster: Some(sentiment_raster),
+            removedInfluencers: None,
+            removedCultureLayers: None,
+        },
+    )
+}
+
+fn serialize_vision_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+) -> WIPOffset<fb::VisionSection<'a>> {
+    let fog_raster = create_scalar_raster(builder, &snapshot.fog_raster);
+    let visibility_raster = create_scalar_raster(builder, &snapshot.visibility_raster);
+    let military_raster = create_scalar_raster(builder, &snapshot.military_raster);
+    fb::VisionSection::create(
+        builder,
+        &fb::VisionSectionArgs {
+            fogRaster: Some(fog_raster),
+            visibilityRaster: Some(visibility_raster),
+            militaryRaster: Some(military_raster),
+        },
+    )
+}
+
+fn serialize_campaign_section<'a>(
+    builder: &mut FbBuilder<'a>,
+    snapshot: &WorldSnapshot,
+    victory_state: WIPOffset<fb::VictoryState<'a>>,
+) -> WIPOffset<fb::CampaignSection<'a>> {
+    let campaign_profiles = create_campaign_profiles(builder, &snapshot.campaign_profiles);
+    let command_events = create_command_events(builder, &snapshot.command_events);
+    fb::CampaignSection::create(
+        builder,
+        &fb::CampaignSectionArgs {
+            campaignProfiles: Some(campaign_profiles),
+            commandEvents: Some(command_events),
+            victory: Some(victory_state),
+        },
+    )
+}
+
+fn serialize_map_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::MapSection<'a>> {
+    let tiles = create_tiles(builder, &delta.tiles);
+    let removed_tiles = builder.create_vector(&delta.removed_tiles);
+    let terrain_overlay = delta
+        .terrain
         .as_ref()
-        .map(|metrics| create_power_metrics(builder, metrics));
-    let great_discovery_definitions_vec = delta
+        .map(|overlay| create_terrain_overlay(builder, overlay));
+    let elevation_overlay = delta
+        .elevation_overlay
+        .as_ref()
+        .map(|overlay| create_elevation_overlay(builder, overlay));
+    let moisture_raster = delta
+        .moisture_raster
+        .as_ref()
+        .map(|raster| create_float_raster(builder, raster));
+    fb::MapSection::create(
+        builder,
+        &fb::MapSectionArgs {
+            tiles: Some(tiles),
+            terrainOverlay: terrain_overlay,
+            elevationOverlay: elevation_overlay,
+            moistureRaster: moisture_raster,
+            removedTiles: Some(removed_tiles),
+        },
+    )
+}
+
+fn serialize_economy_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::EconomySection<'a>> {
+    let logistics = create_logistics(builder, &delta.logistics);
+    let removed_logistics = builder.create_vector(&delta.removed_logistics);
+    let trade_links = create_trade_links(builder, &delta.trade_links);
+    let removed_trade_links = builder.create_vector(&delta.removed_trade_links);
+    let logistics_raster = delta
+        .logistics_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    let faction_inventory = delta
+        .faction_inventory
+        .as_ref()
+        .map(|entries| create_faction_inventory(builder, entries));
+    fb::EconomySection::create(
+        builder,
+        &fb::EconomySectionArgs {
+            logistics: Some(logistics),
+            tradeLinks: Some(trade_links),
+            logisticsRaster: logistics_raster,
+            factionInventory: faction_inventory,
+            removedLogistics: Some(removed_logistics),
+            removedTradeLinks: Some(removed_trade_links),
+        },
+    )
+}
+
+fn serialize_population_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::PopulationSection<'a>> {
+    let populations = create_populations(builder, &delta.populations);
+    let removed_populations = builder.create_vector(&delta.removed_populations);
+    let demographics = delta
+        .demographics
+        .as_ref()
+        .map(|entries| create_demographics(builder, entries));
+    let generations = create_generations(builder, &delta.generations);
+    let removed_generations = builder.create_vector(&delta.removed_generations);
+    fb::PopulationSection::create(
+        builder,
+        &fb::PopulationSectionArgs {
+            populations: Some(populations),
+            demographics,
+            generations: Some(generations),
+            removedPopulations: Some(removed_populations),
+            removedGenerations: Some(removed_generations),
+        },
+    )
+}
+
+fn serialize_subsistence_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::SubsistenceSection<'a>> {
+    let herds = delta
+        .herds
+        .as_ref()
+        .map(|entries| create_herds(builder, entries));
+    let forage_patches = delta
+        .forage_patches
+        .as_ref()
+        .map(|entries| create_forage_patches(builder, entries));
+    let sedentarization = delta
+        .sedentarization
+        .as_ref()
+        .map(|entries| create_sedentarization(builder, entries));
+    let intensification_knowledge = delta
+        .intensification_knowledge
+        .as_ref()
+        .map(|entries| create_intensification_knowledge(builder, entries));
+    let food_modules = delta
+        .food_modules
+        .as_ref()
+        .map(|entries| create_food_modules(builder, entries));
+    fb::SubsistenceSection::create(
+        builder,
+        &fb::SubsistenceSectionArgs {
+            herds,
+            foragePatches: forage_patches,
+            sedentarization,
+            intensificationKnowledge: intensification_knowledge,
+            foodModules: food_modules,
+        },
+    )
+}
+
+fn serialize_knowledge_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::KnowledgeSection<'a>> {
+    let great_discovery_definitions = delta
         .great_discovery_definitions
         .as_ref()
         .map(|definitions| create_great_discovery_definitions(builder, definitions));
-    let great_discoveries_vec = create_great_discoveries(builder, &delta.great_discoveries);
-    let great_discovery_progress_vec =
+    let great_discoveries = create_great_discoveries(builder, &delta.great_discoveries);
+    let great_discovery_progress =
         create_great_discovery_progress(builder, &delta.great_discovery_progress);
     let great_discovery_telemetry = delta
         .great_discovery_telemetry
         .as_ref()
         .map(|telemetry| create_great_discovery_telemetry(builder, telemetry));
-    let knowledge_ledger_vec = create_knowledge_ledger(builder, &delta.knowledge_ledger);
-    let removed_knowledge_vec = builder.create_vector(&delta.removed_knowledge_ledger);
-    let knowledge_timeline_vec = create_knowledge_timeline(builder, &delta.knowledge_timeline);
+    let knowledge_ledger = create_knowledge_ledger(builder, &delta.knowledge_ledger);
+    let removed_knowledge_ledger = builder.create_vector(&delta.removed_knowledge_ledger);
+    let knowledge_timeline = create_knowledge_timeline(builder, &delta.knowledge_timeline);
     let knowledge_metrics = delta
         .knowledge_metrics
         .as_ref()
         .map(|metrics| create_knowledge_metrics(builder, metrics));
+    let discovered_sites = delta
+        .discovered_sites
+        .as_ref()
+        .map(|entries| create_discovered_sites(builder, entries));
+    let discovery_progress = create_discovery_progress(builder, &delta.discovery_progress);
+    fb::KnowledgeSection::create(
+        builder,
+        &fb::KnowledgeSectionArgs {
+            greatDiscoveryDefinitions: great_discovery_definitions,
+            greatDiscoveries: Some(great_discoveries),
+            greatDiscoveryProgress: Some(great_discovery_progress),
+            greatDiscoveryTelemetry: great_discovery_telemetry,
+            knowledgeLedger: Some(knowledge_ledger),
+            knowledgeTimeline: Some(knowledge_timeline),
+            knowledgeMetrics: knowledge_metrics,
+            discoveredSites: discovered_sites,
+            discoveryProgress: Some(discovery_progress),
+            removedKnowledgeLedger: Some(removed_knowledge_ledger),
+        },
+    )
+}
+
+fn serialize_governance_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::GovernanceSection<'a>> {
+    let power = create_power(builder, &delta.power);
+    let removed_power = builder.create_vector(&delta.removed_power);
+    let power_metrics = delta
+        .power_metrics
+        .as_ref()
+        .map(|metrics| create_power_metrics(builder, metrics));
+    let corruption = delta
+        .corruption
+        .as_ref()
+        .map(|c| create_corruption(builder, c));
+    let corruption_raster = delta
+        .corruption_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
     let crisis_telemetry = delta
         .crisis_telemetry
         .as_ref()
@@ -2639,46 +2925,33 @@ fn build_delta_flatbuffer<'a>(
         .crisis_overlay
         .as_ref()
         .map(|overlay| create_crisis_overlay(builder, overlay));
-    let moisture_raster = delta
-        .moisture_raster
-        .as_ref()
-        .map(|raster| create_float_raster(builder, raster));
-    let elevation_overlay = delta
-        .elevation_overlay
-        .as_ref()
-        .map(|overlay| create_elevation_overlay(builder, overlay));
-    let terrain_overlay = delta
-        .terrain
-        .as_ref()
-        .map(|overlay| create_terrain_overlay(builder, overlay));
-    let logistics_raster = delta
-        .logistics_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
-    let sentiment_raster = delta
-        .sentiment_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
-    let corruption_raster = delta
-        .corruption_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
-    let fog_raster = delta
-        .fog_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
+    fb::GovernanceSection::create(
+        builder,
+        &fb::GovernanceSectionArgs {
+            power: Some(power),
+            powerMetrics: power_metrics,
+            corruption,
+            corruptionRaster: corruption_raster,
+            crisisTelemetry: crisis_telemetry,
+            crisisOverlay: crisis_overlay,
+            removedPower: Some(removed_power),
+        },
+    )
+}
+
+fn serialize_culture_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::CultureSection<'a>> {
+    let culture_layers = create_culture_layers(builder, &delta.culture_layers);
+    let removed_culture_layers = builder.create_vector(&delta.removed_culture_layers);
+    let culture_tensions = create_culture_tensions(builder, &delta.culture_tensions);
     let culture_raster = delta
         .culture_raster
         .as_ref()
         .map(|raster| create_scalar_raster(builder, raster));
-    let military_raster = delta
-        .military_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
-    let visibility_raster = delta
-        .visibility_raster
-        .as_ref()
-        .map(|raster| create_scalar_raster(builder, raster));
+    let influencers = create_influencers(builder, &delta.influencers);
+    let removed_influencers = builder.create_vector(&delta.removed_influencers);
     let axis_bias = delta.axis_bias.as_ref().map(|axis| {
         fb::AxisBiasState::create(
             builder,
@@ -2694,84 +2967,67 @@ fn build_delta_flatbuffer<'a>(
         .sentiment
         .as_ref()
         .map(|s| create_sentiment(builder, s));
-    let generations_vec = create_generations(builder, &delta.generations);
-    let removed_generations_vec = builder.create_vector(&delta.removed_generations);
-    let corruption = delta
-        .corruption
+    let sentiment_raster = delta
+        .sentiment_raster
         .as_ref()
-        .map(|c| create_corruption(builder, c));
-    let influencers_vec = create_influencers(builder, &delta.influencers);
-    let removed_influencers_vec = builder.create_vector(&delta.removed_influencers);
-    let culture_layers_vec = create_culture_layers(builder, &delta.culture_layers);
-    let removed_culture_layers_vec = builder.create_vector(&delta.removed_culture_layers);
-    let culture_tensions_vec = create_culture_tensions(builder, &delta.culture_tensions);
-    let discovery_progress_vec = create_discovery_progress(builder, &delta.discovery_progress);
-
-    let delta_table = fb::WorldDelta::create(
+        .map(|raster| create_scalar_raster(builder, raster));
+    fb::CultureSection::create(
         builder,
-        &fb::WorldDeltaArgs {
-            header: Some(header),
-            tiles: Some(tiles_vec),
-            removedTiles: Some(removed_tiles_vec),
-            logistics: Some(logistics_vec),
-            removedLogistics: Some(removed_logistics_vec),
-            tradeLinks: Some(trade_links_vec),
-            removedTradeLinks: Some(removed_trade_links_vec),
-            populations: Some(populations_vec),
-            removedPopulations: Some(removed_populations_vec),
-            power: Some(power_vec),
-            removedPower: Some(removed_power_vec),
-            powerMetrics: power_metrics,
-            greatDiscoveryDefinitions: great_discovery_definitions_vec,
-            greatDiscoveries: Some(great_discoveries_vec),
-            greatDiscoveryProgress: Some(great_discovery_progress_vec),
-            greatDiscoveryTelemetry: great_discovery_telemetry,
-            knowledgeLedger: Some(knowledge_ledger_vec),
-            removedKnowledgeLedger: Some(removed_knowledge_vec),
-            knowledgeTimeline: Some(knowledge_timeline_vec),
-            knowledgeMetrics: knowledge_metrics,
-            victory: victory_state,
-            capabilityFlags: delta.capability_flags.unwrap_or(0),
-            commandEvents: command_events,
-            crisisTelemetry: crisis_telemetry,
-            crisisOverlay: crisis_overlay,
-            herds,
-            foodModules: food_modules,
-            factionInventory: faction_inventory,
-            sedentarization,
-            discoveredSites: discovered_sites,
-            demographics,
-            foragePatches: forage_patches,
-            intensificationKnowledge: intensification_knowledge,
-            moistureRaster: moisture_raster,
-            elevationOverlay: elevation_overlay,
+        &fb::CultureSectionArgs {
+            cultureLayers: Some(culture_layers),
+            cultureTensions: Some(culture_tensions),
+            cultureRaster: culture_raster,
+            influencers: Some(influencers),
             axisBias: axis_bias,
             sentiment,
-            generations: Some(generations_vec),
-            removedGenerations: Some(removed_generations_vec),
-            corruption,
-            influencers: Some(influencers_vec),
-            removedInfluencers: Some(removed_influencers_vec),
-            terrainOverlay: terrain_overlay,
-            logisticsRaster: logistics_raster,
             sentimentRaster: sentiment_raster,
-            corruptionRaster: corruption_raster,
-            fogRaster: fog_raster,
-            cultureRaster: culture_raster,
-            militaryRaster: military_raster,
-            cultureLayers: Some(culture_layers_vec),
-            removedCultureLayers: Some(removed_culture_layers_vec),
-            cultureTensions: Some(culture_tensions_vec),
-            discoveryProgress: Some(discovery_progress_vec),
-            visibilityRaster: visibility_raster,
+            removedInfluencers: Some(removed_influencers),
+            removedCultureLayers: Some(removed_culture_layers),
         },
-    );
+    )
+}
 
-    fb::Envelope::create(
+fn serialize_vision_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+) -> WIPOffset<fb::VisionSection<'a>> {
+    let fog_raster = delta
+        .fog_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    let visibility_raster = delta
+        .visibility_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    let military_raster = delta
+        .military_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    fb::VisionSection::create(
         builder,
-        &fb::EnvelopeArgs {
-            payload_type: fb::SnapshotPayload::delta,
-            payload: Some(delta_table.as_union_value()),
+        &fb::VisionSectionArgs {
+            fogRaster: fog_raster,
+            visibilityRaster: visibility_raster,
+            militaryRaster: military_raster,
+        },
+    )
+}
+
+fn serialize_campaign_section_delta<'a>(
+    builder: &mut FbBuilder<'a>,
+    delta: &WorldDelta,
+    victory_state: Option<WIPOffset<fb::VictoryState<'a>>>,
+) -> WIPOffset<fb::CampaignSection<'a>> {
+    let command_events = delta
+        .command_events
+        .as_ref()
+        .map(|entries| create_command_events(builder, entries));
+    fb::CampaignSection::create(
+        builder,
+        &fb::CampaignSectionArgs {
+            campaignProfiles: None,
+            commandEvents: command_events,
+            victory: victory_state,
         },
     )
 }
@@ -4781,6 +5037,8 @@ mod tests {
         let herd = envelope
             .payload_as_snapshot()
             .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
             .herds()
             .expect("herds present")
             .get(0);
@@ -4804,6 +5062,8 @@ mod tests {
         let herd = envelope
             .payload_as_snapshot()
             .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
             .herds()
             .expect("herds present")
             .get(0);

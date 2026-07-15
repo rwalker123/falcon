@@ -837,10 +837,6 @@ var zoom_factor: float = 1.0
 # Cached hex point offsets (pre-computed trig values for hex corners)
 var _cached_hex_offsets: PackedVector2Array = PackedVector2Array()
 var _cached_hex_radius: float = -1.0
-# Reused StyleBoxFlat for the band nameplate banner — lazily created once, then only its
-# per-call properties (bg_color, corner radius) are updated in `_draw_band_banner`, so the
-# draw path allocates no StyleBox per primary tile per frame.
-var _band_banner_box: StyleBoxFlat = null
 # Visible column/row range from last render (for minimap indicator)
 var _last_visible_col_start: float = 0.0
 var _last_visible_col_end: float = 0.0
@@ -876,10 +872,6 @@ var selected_herd_id: String = ""
 # re-clicking the selected tile; reset to 0 (top card) on a fresh tile; synced from a
 # roster selection via select_occupant so map cycling + roster stay coherent.
 var cycle_index: int = 0
-# Per-frame SECONDARY marker slot assignments (rebuilt in _compute_secondary_slots):
-# entry-key(String) -> edge slot index (int, -1 = overflowed/hidden); tile -> overflow count.
-var _secondary_slot_lookup: Dictionary = {}
-var _secondary_overflow: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
@@ -899,14 +891,12 @@ var _fow_fog_fill_color: Color = DEFAULT_FOW_FOG_FILL_COLOR
 var _fow_softness: float = FOW_DEFAULT_SOFTNESS
 var _fow_noise_amount: float = FOW_DEFAULT_NOISE_AMOUNT
 
-# 2D Minimap (uses shared MinimapPanel component)
-const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
-var _minimap_2d: Node = null  # MinimapPanel instance
-var _minimap_2d_image: Image = null
-var _minimap_2d_last_grid_size: Vector2i = Vector2i.ZERO
-var _minimap_2d_data_version: int = 0  # Incremented when terrain/visibility changes
-var _minimap_2d_last_data_version: int = -1  # Last version used for rebuild
-var _minimap_2d_last_fow_enabled: bool = false  # Track FoW state changes
+# 2D Minimap (owned by MinimapController — see ui/MinimapController.gd)
+var _minimap: MinimapController = null
+# Primary player-band markers (owned by BandMarkerRenderer — see ui/BandMarkerRenderer.gd)
+var _band_markers: BandMarkerRenderer = null
+# Secondary markers — herds/food/sites (owned by SecondaryMarkerRenderer — see ui/SecondaryMarkerRenderer.gd)
+var _secondary_markers: SecondaryMarkerRenderer = null
 var _hud_layer: Node = null  # HudLayer reference, set via set_hud_reference() for embedded minimap
 var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area at unit radius (scaled in _clamp_pan_offset)
 
@@ -936,7 +926,10 @@ func _ready() -> void:
 	_ensure_input_actions()
 	_init_terrain_rendering()
 	_setup_map_cache()
-	# Note: _setup_2d_minimap() is now called lazily from _update_2d_minimap()
+	_minimap = MinimapController.new(self)
+	_band_markers = BandMarkerRenderer.new(self)
+	_secondary_markers = SecondaryMarkerRenderer.new(self)
+	# Note: the MinimapPanel node is created lazily from _minimap.update()
 	# This allows Main.gd to set_hud_reference() before the minimap is created
 
 
@@ -1076,7 +1069,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_terrain_grid_height = grid_height
 	_update_biome_color_buffer()
 	# Increment minimap data version to trigger rebuild on terrain/visibility changes
-	_minimap_2d_data_version += 1
+	_minimap.bump_data_version()
 	# Invalidate map cache when terrain data changes
 	_invalidate_map_cache()
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
@@ -1268,7 +1261,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_clamp_pan_offset()
 	queue_redraw()
 	_emit_overlay_legend()
-	_update_2d_minimap()
+	_minimap.update()
 
 	return {
 		"unit_count": units.size(),
@@ -1435,19 +1428,19 @@ func _draw() -> void:
 	_draw_herd_range_highlights(radius, origin)
 
 	_draw_supply_links(radius, origin)
-	_draw_primary_bands(radius, origin)
+	_band_markers.draw_primary_bands(radius, origin)
 
-	_compute_secondary_slots()
+	_secondary_markers.compute_slots()
 	for herd in herds:
-		_draw_herd(herd, radius, origin)
+		_secondary_markers.draw_herd(herd, radius, origin)
 	for site in food_sites:
-		_draw_food_site(site, radius, origin)
+		_secondary_markers.draw_food_site(site, radius, origin)
 	for wsite in discovered_sites:
-		_draw_discovered_site(wsite, radius, origin)
-	_draw_secondary_overflow(radius, origin)
+		_secondary_markers.draw_discovered_site(wsite, radius, origin)
+	_secondary_markers.draw_secondary_overflow(radius, origin)
 
-	_draw_harvest_markers(radius, origin)
-	_draw_scout_markers(radius, origin)
+	_secondary_markers.draw_harvest_markers(radius, origin)
+	_secondary_markers.draw_scout_markers(radius, origin)
 
 	for order in routes:
 		_draw_route(order, radius, origin)
@@ -1646,7 +1639,7 @@ func set_fow_enabled(enabled: bool) -> void:
 	_invalidate_map_cache()  # FoW changes require fresh cache render
 	queue_redraw()
 	_emit_overlay_legend()
-	_update_2d_minimap()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
+	_minimap.update()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
 	_clamp_pan_offset()  # Clamp pan to explored bounds when FoW enabled
 
 func is_fow_enabled() -> bool:
@@ -1898,201 +1891,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not is_zero_approx(amount):
 			_apply_zoom(amount, get_local_mouse_position())
 			_mark_input_handled()
-
-## PRIMARY marker pass: draw player-band tokens as center card-stacks, one per
-## occupied tile. Co-located bands fan up-right (back cards darkened/shrunk); the active band
-## (selected, else first) is the opaque, full-brightness top card. There is NO per-token ring —
-## the active band reads by brightness alone; selection is the hex-shape outline. Beyond
-## BAND_STACK_MAX_CARDS a `×N` count badge notes the hidden bands.
-func _draw_primary_bands(radius: float, origin: Vector2) -> void:
-	# Group units by tile, preserving snapshot order (deterministic stack order).
-	var by_tile: Dictionary = {}   # Vector2i -> Array[Dictionary]
-	var order: Array = []          # tiles in first-seen order
-	for unit in units:
-		# Fog: a FOREIGN band on a hex you can't currently see isn't drawn (it used to render straight
-		# through the fog). Your OWN bands always draw — see `_unit_hidden_by_fog`.
-		if _unit_hidden_by_fog(unit):
-			continue
-		var pos: Array = Array(unit.get("pos", []))
-		if pos.size() != 2:
-			continue
-		var tile := Vector2i(int(pos[0]), int(pos[1]))
-		if not by_tile.has(tile):
-			by_tile[tile] = []
-			order.append(tile)
-		by_tile[tile].append(unit)
-	for tile in order:
-		_draw_band_stack(by_tile[tile], radius, origin)
-
-func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
-	var count := group.size()
-	if count == 0:
-		return
-	var first: Dictionary = group[0]
-	var pos: Array = Array(first.get("pos", []))
-	var group_tile := Vector2i(int(pos[0]), int(pos[1]))
-	var center: Vector2 = _hex_center_wrapped(group_tile.x, group_tile.y, radius, origin)
-	# Active band = the selected one on this tile (selected_unit_id is the cycle target),
-	# else the first. selected_unit_id already tracks the cycled/roster-picked band.
-	var active_idx := 0
-	for i in range(count):
-		if int((group[i] as Dictionary).get("entity", -1)) == selected_unit_id:
-			active_idx = i
-			break
-	var token_radius := radius * BAND_TOKEN_RADIUS_FACTOR
-	# Back cards = every non-active band (decorative depth), active drawn last on top.
-	var back_bands: Array = []
-	for i in range(count):
-		if i != active_idx:
-			back_bands.append(group[i])
-	var back_to_draw := mini(count, BAND_STACK_MAX_CARDS) - 1
-	var back_radius := token_radius * BAND_STACK_BEHIND_SCALE   # shrink back cards for depth
-	for j in range(back_to_draw):
-		var depth := back_to_draw - j   # furthest (largest offset) drawn first
-		var offset := BAND_STACK_CARD_STEP * radius * float(depth)
-		_draw_band_token(back_bands[j], center + offset, back_radius, true)
-	# Active top card at base position.
-	var active: Dictionary = group[active_idx]
-	_draw_band_token(active, center, token_radius, false)
-	# Faction nameplate banner under the active (primary) card only. Far-zoom LOD-gated with the
-	# same threshold that suppresses secondary icons/chips. Returns its rect so the count pill
-	# can cap its right end.
-	# Expeditions carry their faction on the flag-disc ring, not a settlement nameplate, so skip
-	# the banner for them (and thus the banner-anchored count pill falls back to the offset).
-	var active_is_expedition := bool(active.get("is_expedition", false))
-	var show_banner := radius >= ICON_MIN_DETAIL_RADIUS and not active_is_expedition
-	var banner_rect := Rect2()
-	if show_banner:
-		banner_rect = _draw_band_banner(center, token_radius, _band_faction_color(active))
-	# Active band reads by brightness alone now (full-color top card over darkened back cards);
-	# the hex selection outline still marks the selected tile. No per-token ring.
-	# Decorations on the active band only (expeditions show provisions in their drawer, not a dot).
-	if _is_player_unit(active) and not active_is_expedition:
-		_draw_band_status(active, center, token_radius)
-	_draw_band_task_arrow(active, center, radius, origin)
-	# Count badge for hidden bands beyond the visible cap (suppressed at far zoom). Folded onto
-	# the right end of the banner (nameplate-with-count look); falls back to the old bottom-right
-	# offset only if the banner is LOD-suppressed (which shares the same zoom gate, so in practice
-	# it always caps the banner).
-	if count > BAND_STACK_MAX_CARDS and radius >= ICON_MIN_DETAIL_RADIUS:
-		var pill_center := center + BAND_COUNT_BADGE_OFFSET * radius
-		if show_banner:
-			pill_center = Vector2(banner_rect.position.x + banner_rect.size.x, banner_rect.position.y + banner_rect.size.y * 0.5)
-		_draw_count_pill(pill_center, "×%d" % count)
-
-func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, dim: bool) -> void:
-	if bool(unit.get("is_expedition", false)):
-		# A detached scouting party keeps its distinct hollow flag disc + awaiting-orders pulse
-		# (not a settlement glyph). Faction reads off the ring, so no nameplate banner is drawn
-		# (guarded in _draw_band_stack). Expeditions are lone on their tile, so `dim` is unused.
-		_draw_expedition_body(unit, center, token_radius, _band_faction_color(unit))
-		return
-	var stage_icon := String(unit.get("settlement_stage_icon", ""))
-	if stage_icon == "":
-		# Fallback: pre-stage / missing snapshot — a small neutral, NON-circular placeholder
-		# square (never a faction disc). Ownership is still carried by the banner below.
-		var marker_color := BAND_FALLBACK_MARKER_COLOR
-		var outline := BAND_TOKEN_OUTLINE_COLOR
-		if dim:
-			marker_color *= BAND_STACK_BEHIND_TINT
-			outline *= BAND_STACK_BEHIND_TINT
-		var side := token_radius * BAND_FALLBACK_MARKER_SIZE_FACTOR
-		var square := Rect2(center.x - side * 0.5, center.y - side * 0.5, side, side)
-		draw_rect(square, marker_color)
-		draw_rect(square, outline, false, BAND_TOKEN_OUTLINE_WIDTH)
-		return
-	# Stage glyph token: just the shadowed glyph — ownership is carried by the banner, not a ring.
-	var glyph_color := BAND_STAGE_GLYPH_COLOR
-	if dim:
-		glyph_color *= BAND_STACK_BEHIND_TINT
-	var glyph_size := int(maxf(SECONDARY_ICON_MIN_SIZE, token_radius * BAND_STAGE_GLYPH_SIZE_FACTOR))
-	_draw_marker_glyph(center, stage_icon, glyph_size, glyph_color)
-
-## Faction color lookup for a band token, with a neutral fallback for unknown factions.
-func _band_faction_color(unit: Dictionary) -> Color:
-	return faction_colors.get(unit.get("faction", ""), BAND_FACTION_FALLBACK_COLOR)
-
-## Faction-colored nameplate banner drawn under the PRIMARY band token (caller draws it for the
-## active top card only — never the dimmed back cards). Ownership reads off the fill color, so no
-## ring/disc is needed. The bar is sized to later host an optional faction/band NAME LABEL drawn
-## on top of it (this bar is the substrate); keep it wide/structured enough for that. Returns the
-## bar Rect2 so the caller can anchor the `×N` count pill to its right end.
-func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color) -> Rect2:
-	var width := token_radius * BAND_BANNER_WIDTH_FACTOR
-	var height := token_radius * BAND_BANNER_HEIGHT_FACTOR
-	var top := center.y + token_radius + token_radius * BAND_BANNER_GAP_FACTOR
-	var rect := Rect2(center.x - width * 0.5, top, width, height)
-	if _band_banner_box == null:
-		# Constant chrome (border) set once; per-call fields updated below.
-		_band_banner_box = StyleBoxFlat.new()
-		_band_banner_box.border_color = BAND_BANNER_OUTLINE_COLOR
-		_band_banner_box.set_border_width_all(int(BAND_BANNER_OUTLINE_WIDTH))
-	_band_banner_box.bg_color = faction_color
-	_band_banner_box.set_corner_radius_all(int(maxf(0.0, height * BAND_BANNER_CORNER_RADIUS_FACTOR)))
-	draw_style_box(_band_banner_box, rect)
-	return rect
-
-## Travel/task destination arrow for a band, extracted so the stack draws it for the
-## active card only. Skips the arrow when the band is already at its destination or the
-## line would span the wrap seam.
-func _draw_band_task_arrow(unit: Dictionary, center: Vector2, radius: float, origin: Vector2) -> void:
-	var pos: Array = Array(unit.get("pos", []))
-	if pos.size() != 2:
-		return
-	var dest_x: int = int(unit.get("dest_x", -1))
-	var dest_y: int = int(unit.get("dest_y", -1))
-	if dest_x < 0 or dest_y < 0:
-		return
-	if int(pos[0]) == dest_x and int(pos[1]) == dest_y:
-		return
-	var dest_center: Vector2 = _hex_center_wrapped(dest_x, dest_y, radius, origin)
-	if abs(center.x - dest_center.x) > last_map_size.x * 0.4:
-		return
-	var arrow_color: Color = _travel_arrow_color(String(unit.get("travel_task_kind", "")))
-	draw_line(center, dest_center, arrow_color, BAND_TASK_ARROW_WIDTH)
-	_draw_arrowhead(center, dest_center, arrow_color)
-
-## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
-## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
-## glyph (scout = ⚑ flag, hunt = 🏹 bow). Phase decorations: a scout `awaiting` party pulses an
-## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
-## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
-func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
-	var is_hunt := String(unit.get("expedition_mission", "")) == EXPEDITION_HUNT_MISSION
-	var glyph := EXPEDITION_HUNT_GLYPH if is_hunt else EXPEDITION_GLYPH
-	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
-	draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, EXPEDITION_DISC_ALPHA))
-	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.
-	draw_arc(center, marker_radius * EXPEDITION_RING_FACTOR, 0, TAU, 24, color, EXPEDITION_RING_WIDTH)
-	# Mission glyph at the center.
-	var font: Font = ThemeDB.fallback_font
-	if font != null:
-		var glyph_size: int = int(maxf(12.0, marker_radius * EXPEDITION_GLYPH_SIZE_FACTOR * 2.0))
-		var text_size: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
-		var pos := Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
-		draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, EXPEDITION_GLYPH_COLOR)
-
-	# Hunt phase decoration: hauling a haul home (delivering/returning) → a solid green food pip;
-	# gathering at the herd (hunting) → a small red "working" cue ring. Mutually exclusive phases.
-	if is_hunt:
-		var hphase := String(unit.get("expedition_phase", ""))
-		if hphase == EXPEDITION_PHASE_DELIVERING or hphase == EXPEDITION_PHASE_RETURNING:
-			var pip_center := center + Vector2(marker_radius, marker_radius) * EXPEDITION_DELIVER_PIP_OFFSET
-			var pip_radius := marker_radius * EXPEDITION_DELIVER_PIP_FACTOR
-			draw_circle(pip_center, pip_radius, HudStyle.HEALTHY)
-			draw_arc(pip_center, pip_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
-		elif hphase == EXPEDITION_PHASE_HUNTING:
-			var cue_center := center + Vector2(marker_radius, marker_radius) * EXPEDITION_GATHER_CUE_OFFSET
-			var cue_radius := marker_radius * EXPEDITION_GATHER_CUE_FACTOR
-			draw_arc(cue_center, cue_radius, 0, TAU, 12, HudStyle.DANGER, EXPEDITION_GATHER_CUE_WIDTH)
-
-	# Awaiting-orders idle indicator (scout): a pulsing amber ring (needs a command).
-	if String(unit.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
-		var pulse: float = 0.5 + 0.5 * sin(_expedition_time * EXPEDITION_AWAITING_PULSE_SPEED)
-		var ring_radius: float = marker_radius * (EXPEDITION_AWAITING_RING_FACTOR + EXPEDITION_AWAITING_PULSE_AMPLITUDE * pulse)
-		var ring_color := Color(HudStyle.WARN.r, HudStyle.WARN.g, HudStyle.WARN.b, 0.45 + 0.4 * pulse)
-		draw_arc(center, ring_radius, 0, TAU, 28, ring_color, EXPEDITION_AWAITING_RING_WIDTH)
-
 ## Faint links between the player's bands that share a supply network (bands
 ## auto-share goods by reach, grouped server-side by `supply_network_id`). Drawn
 ## as a simple chain through each network's members so the player can see who is
@@ -2125,17 +1923,6 @@ func _draw_supply_links(radius: float, origin: Vector2) -> void:
 			if abs(a.x - b.x) > last_map_size.x * 0.4:
 				continue
 			draw_line(a, b, SUPPLY_LINK_COLOR, SUPPLY_LINK_WIDTH)
-
-## One decoration on a player band marker: a food-days dot (green/amber/red by
-## the shared BandFoodStatus thresholds) up-and-right of the marker.
-func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
-	var days: float = float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-	var dot_color := BandFoodStatus.color_for_days(days)
-	var dot_radius: float = marker_radius * BAND_FOOD_DOT_RADIUS_FACTOR
-	var dot_center := center + Vector2(marker_radius, -marker_radius) * BAND_FOOD_DOT_OFFSET_FACTOR
-	draw_circle(dot_center, dot_radius, dot_color)
-	draw_arc(dot_center, dot_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
-
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - work-range ring: outline every tile within `work_range` of the band = the assignable
 ##    forage area. Replicates the sim's true **odd-r hex distance** EXACTLY (offset→axial cube
@@ -2450,88 +2237,10 @@ func _draw_tile_selection_highlight(radius: float, origin: Vector2) -> void:
 		_outline_hex(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
 	if _hovered_tile.x >= 0 and _hovered_tile.y >= 0 and _hovered_tile != selected_tile:
 		_outline_hex(_hovered_tile.x, _hovered_tile.y, radius, origin, HOVER_HEX_OUTLINE_COLOR, HOVER_HEX_OUTLINE_WIDTH)
-
-func _travel_arrow_color(task_kind: String) -> Color:
-	match task_kind:
-		"harvest":
-			return Color(0.3, 0.8, 0.3, 0.85)  # Green
-		"hunt":
-			return Color(0.8, 0.3, 0.3, 0.85)  # Red
-		"scout":
-			return Color(0.3, 0.6, 0.9, 0.85)  # Blue
-		_:
-			return Color(0.7, 0.7, 0.7, 0.85)  # Gray
-
 func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, color: Color) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
 		draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, max_width, font_size, color)
-
-# ---------------------------------------------------------------------------
-# SECONDARY markers (herds / food sites / wondrous sites) — fixed edge-slot icons.
-# ---------------------------------------------------------------------------
-
-## Assign each SECONDARY marker a fixed edge slot on its hex, once per frame. Priority
-## order wonder → food → herd, sequential fill, so a tile's icons never jump between
-## frames. Beyond SECONDARY_VISIBLE_CAP the extras collapse into a `+N` overflow chip
-## (drawn in the next slot). Visibility gating matches each category's own rule
-## (herds/food Active-only; wonders any explored tile). Skipped entirely at far zoom.
-func _compute_secondary_slots() -> void:
-	_secondary_slot_lookup.clear()
-	_secondary_overflow.clear()
-	if last_hex_radius < ICON_MIN_DETAIL_RADIUS:
-		return
-	var per_tile: Dictionary = {}   # Vector2i -> Array[String] of entry keys, priority order
-	for wsite in discovered_sites:
-		var wx := int((wsite as Dictionary).get("x", -1))
-		var wy := int((wsite as Dictionary).get("y", -1))
-		if wx < 0 or wy < 0:
-			continue
-		if _visibility_state_at(wx, wy) == "unexplored":
-			continue
-		if String((wsite as Dictionary).get("glyph", "")) == "":
-			continue
-		_append_secondary(per_tile, Vector2i(wx, wy), _wonder_key(wsite))
-	for site in food_sites:
-		var fx := int((site as Dictionary).get("x", -1))
-		var fy := int((site as Dictionary).get("y", -1))
-		if fx < 0 or fy < 0 or not _is_tile_visible(fx, fy):
-			continue
-		_append_secondary(per_tile, Vector2i(fx, fy), _food_key(fx, fy))
-	for herd in herds:
-		var hx := int((herd as Dictionary).get("x", -1))
-		var hy := int((herd as Dictionary).get("y", -1))
-		if hx < 0 or hy < 0 or not _is_tile_visible(hx, hy):
-			continue
-		_append_secondary(per_tile, Vector2i(hx, hy), _herd_key(String((herd as Dictionary).get("id", ""))))
-	for tile in per_tile:
-		var keys: Array = per_tile[tile]
-		for i in range(keys.size()):
-			_secondary_slot_lookup[keys[i]] = i if i < SECONDARY_VISIBLE_CAP else -1
-		if keys.size() > SECONDARY_VISIBLE_CAP:
-			_secondary_overflow[tile] = keys.size() - SECONDARY_VISIBLE_CAP
-
-func _append_secondary(per_tile: Dictionary, tile: Vector2i, key: String) -> void:
-	var list: Array = per_tile.get(tile, [])
-	list.append(key)
-	per_tile[tile] = list
-
-func _wonder_key(wsite: Dictionary) -> String:
-	var fallback := "%d,%d" % [int(wsite.get("x", -1)), int(wsite.get("y", -1))]
-	return "wonder:%s" % String(wsite.get("site_id", fallback))
-
-func _food_key(x: int, y: int) -> String:
-	return "food:%d,%d" % [x, y]
-
-func _herd_key(herd_id: String) -> String:
-	return "herd:%s" % herd_id
-
-func _secondary_icon_size(radius: float) -> int:
-	return int(maxf(SECONDARY_ICON_MIN_SIZE, radius * SECONDARY_ICON_SIZE_FACTOR))
-
-func _secondary_slot_center(tile_center: Vector2, slot: int, radius: float) -> Vector2:
-	return tile_center + SECONDARY_SLOT_OFFSETS[slot] * radius
-
 ## Draw a marker glyph with a subtle drop shadow (replaces the old dark backing disc):
 ## the glyph once offset in near-black, then again on top, centered on `center`.
 func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color) -> void:
@@ -2542,28 +2251,6 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	var baseline := Vector2(center.x - text_size.x * 0.5, center.y + size * 0.34)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
-
-## The starving-pen distress badge: a filled DANGER disc with a dark rim and a HAND-DRAWN white "!",
-## pinned to the upper-right of a marker glyph. Hand-drawn for the same reason `MagnifierButton` is —
-## a font ⚠/❗ renders as an emoji blob at this size — and geometric so it reads OVER the full-color
-## emoji it annotates. Sized off `icon_size`, so it shrinks with the marker at far zoom (and the
-## caller is already LOD-gated by the secondary-slot system).
-func _draw_distress_badge(icon_center: Vector2, icon_size: int) -> void:
-	var badge_r: float = float(icon_size) * HERD_DISTRESS_BADGE_RADIUS_FACTOR
-	var center := icon_center + HERD_DISTRESS_BADGE_OFFSET_FACTOR * float(icon_size)
-	draw_circle(center, badge_r, HERD_DISTRESS_COLOR)
-	draw_arc(center, badge_r, 0, TAU, HERD_DISTRESS_BADGE_SEGMENTS,
-		HERD_DISTRESS_BADGE_RIM_COLOR, HERD_DISTRESS_BADGE_RIM_WIDTH)
-	# The "!": a stem (a rect, so it stays crisp at small sizes) over a dot.
-	var stem_w: float = badge_r * HERD_DISTRESS_BANG_STEM_WIDTH
-	var stem_top: float = badge_r * HERD_DISTRESS_BANG_STEM_TOP
-	var stem_bottom: float = badge_r * HERD_DISTRESS_BANG_STEM_BOTTOM
-	draw_rect(Rect2(
-		center + Vector2(-stem_w * 0.5, stem_top),
-		Vector2(stem_w, stem_bottom - stem_top)), HERD_DISTRESS_BANG_COLOR)
-	draw_circle(center + Vector2(0.0, badge_r * HERD_DISTRESS_BANG_DOT_Y),
-		badge_r * HERD_DISTRESS_BANG_DOT_RADIUS, HERD_DISTRESS_BANG_COLOR)
-
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
@@ -2637,146 +2324,6 @@ func _draw_count_pill(center: Vector2, text: String) -> void:
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
 	_draw_pill_plate(center, text_size, MARKER_BADGE_PAD_X, MARKER_BADGE_BG)
 	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
-
-## Per-tile `+N` overflow chip pass (secondaries beyond SECONDARY_VISIBLE_CAP).
-func _draw_secondary_overflow(radius: float, origin: Vector2) -> void:
-	if SECONDARY_VISIBLE_CAP >= SECONDARY_SLOT_OFFSETS.size():
-		return
-	for tile in _secondary_overflow:
-		var tile_center: Vector2 = _hex_center_wrapped(tile.x, tile.y, radius, origin)
-		var chip_center := _secondary_slot_center(tile_center, SECONDARY_VISIBLE_CAP, radius)
-		_draw_count_pill(chip_center, "+%d" % int(_secondary_overflow[tile]))
-
-func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
-	var herd_id := String(herd.get("id", ""))
-	var x: int = int(herd.get("x", -1))
-	var y: int = int(herd.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	if not _is_tile_visible(x, y):
-		return
-	var slot: int = _secondary_slot_lookup.get(_herd_key(herd_id), -1)
-	if slot < 0:
-		return   # far-zoom LOD or overflowed into the +N chip
-	# Herd trail stays centered on the hex path (a route, not a marker), but only
-	# when the herd icon itself draws — no orphaned trail for an LOD-suppressed or
-	# overflowed herd (its slot is gone).
-	_draw_herd_trail(herd_id, radius, origin)
-	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
-	var icon_size := _secondary_icon_size(radius)
-	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
-	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
-	# full-color emoji, so `modulate` just yields a slightly-darker brown animal (rendered, looked at,
-	# reverted). The distress read has to be geometry the emoji cannot swallow.
-	var starving := PenStatus.herd_is_starving(herd)
-	if starving:
-		draw_arc(icon_center, radius * HERD_DISTRESS_RING_FACTOR, 0, TAU, HERD_DISTRESS_RING_SEGMENTS,
-			HERD_DISTRESS_COLOR, HERD_DISTRESS_RING_WIDTH)
-	_draw_marker_glyph(icon_center, herd_icon, icon_size, SECONDARY_ICON_COLOR)
-	if starving:
-		_draw_distress_badge(icon_center, icon_size)
-
-	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
-	var tile := Vector2i(x, y)
-	if tile == _hovered_tile or tile == selected_tile:
-		var next_x := int(herd.get("next_x", -1))
-		var next_y := int(herd.get("next_y", -1))
-		if next_x >= 0 and next_y >= 0:
-			var next_center := _hex_center_wrapped(next_x, next_y, radius, origin)
-			var line_too_long: bool = abs(tile_center.x - next_center.x) > last_map_size.x * 0.4
-			if not line_too_long:
-				draw_line(tile_center, next_center, HERD_MIGRATION_ARROW_COLOR, HERD_MIGRATION_ARROW_WIDTH)
-				_draw_arrowhead(tile_center, next_center, HERD_MIGRATION_ARROW_COLOR)
-
-func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
-	var x: int = int(site.get("x", -1))
-	var y: int = int(site.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	if not _is_tile_visible(x, y):
-		return
-	var slot: int = _secondary_slot_lookup.get(_food_key(x, y), -1)
-	if slot < 0:
-		return
-	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	var module_key := String(site.get("module", ""))
-	var kind := String(site.get("kind", ""))
-	var is_hunt := kind == "game_trail"
-	var icon := FoodIcons.for_site(module_key, is_hunt)
-	if _food_harvest_active(x, y):
-		draw_arc(icon_center, radius * FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), FOOD_HARVEST_RING_WIDTH)
-	_draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
-
-func _draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> void:
-	var x: int = int(site.get("x", -1))
-	var y: int = int(site.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	# A discovered site is permanent geographic knowledge, not current-state info — unlike a
-	# herd (moves) or food site (Active-only). Persist its marker on any known/remembered tile
-	# (Discovered or Active), not only Active, so it stays visible once found even under fog.
-	if _visibility_state_at(x, y) == "unexplored":
-		return
-	var slot: int = _secondary_slot_lookup.get(_wonder_key(site), -1)
-	if slot < 0:
-		return
-	var glyph := String(site.get("glyph", ""))
-	if glyph == "":
-		return
-	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	_draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
-
-func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
-	if harvest_sites.is_empty():
-		return
-	for key in harvest_sites.keys():
-		var entries_variant: Variant = harvest_sites.get(key, null)
-		if not (entries_variant is Array):
-			continue
-		var entries: Array = entries_variant
-		if entries.is_empty():
-			continue
-		var center := _hex_center_wrapped(key.x, key.y, radius, origin)
-		var module_key := String((entries[0] as Dictionary).get("module", ""))
-		var style: Dictionary = FOOD_SITE_STYLE_DEFAULT
-		var base_site: Variant = food_site_lookup.get(key, null)
-		if base_site is Dictionary:
-			var kind := String((base_site as Dictionary).get("kind", ""))
-			style = FOOD_SITE_STYLES.get(kind, FOOD_SITE_STYLE_DEFAULT)
-		var color: Color = style.get("color", FOOD_SITE_STYLE_DEFAULT["color"])
-		var glow_color := color
-		glow_color.a = 0.25
-		draw_circle(center, radius * 0.65, glow_color)
-		var stroke_color := color
-		stroke_color.a = 0.95
-		draw_arc(center, radius * 0.55, 0, TAU, 32, stroke_color, 3.0)
-		if entries.size() > 1:
-			var label := "x%d" % entries.size()
-			_draw_label(center + Vector2(-radius * 0.25, radius * 0.05), label, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
-		if not (base_site is Dictionary) and _selected_tile_matches_food(key.x, key.y, module_key):
-			var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
-			draw_arc(center, radius * 0.45, 0, TAU, 32, highlight_color, 2.5)
-
-func _draw_scout_markers(radius: float, origin: Vector2) -> void:
-	if scout_sites.is_empty():
-		return
-	for key in scout_sites.keys():
-		var entries_variant: Variant = scout_sites.get(key, null)
-		if not (entries_variant is Array):
-			continue
-		var entries: Array = entries_variant
-		if entries.is_empty():
-			continue
-		var center := _hex_center_wrapped(key.x, key.y, radius, origin)
-		var base_color := Color(0.8, 0.92, 1.0, 0.4)
-		draw_circle(center, radius * 0.4, base_color)
-		var stroke_color := Color(0.9, 0.97, 1.0, 0.95)
-		draw_arc(center, radius * 0.5, 0, TAU, 24, stroke_color, 2.0)
-
 func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	var path: Array = order.get("path", [])
 	if path.is_empty():
@@ -4766,8 +4313,7 @@ func _apply_pan(delta: Vector2) -> void:
 			_invalidate_map_cache()
 
 	queue_redraw()
-	if _minimap_2d != null:
-		_minimap_2d.queue_indicator_redraw()
+	_minimap.queue_indicator_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	if is_zero_approx(delta_zoom):
@@ -4788,8 +4334,7 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	_update_layout_metrics()
 	_invalidate_map_cache()  # Zoom changes require fresh cache render
 	queue_redraw()
-	if _minimap_2d != null:
-		_minimap_2d.queue_indicator_redraw()
+	_minimap.queue_indicator_redraw()
 	# Reaching here means the factor actually changed (the no-op / clamped-equal
 	# cases early-returned above), so the readout only updates on a real change.
 	emit_signal("zoom_changed", zoom_factor)
@@ -4858,8 +4403,7 @@ func _fit_map_to_view() -> void:
 	# markers redraw at the new radius (also fixes the `C` hotkey's stale-icon gap).
 	_invalidate_map_cache()
 	queue_redraw()
-	if _minimap_2d != null:
-		_minimap_2d.queue_indicator_redraw()
+	_minimap.queue_indicator_redraw()
 	emit_signal("zoom_changed", zoom_factor)
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
@@ -5488,7 +5032,8 @@ func _draw_hex_grid_overlay(radius: float, origin: Vector2, col_start: int, col_
 # --- 2D Minimap System (uses shared MinimapPanel) ---
 
 ## Set reference to HUD layer for minimap integration.
-## Must be called before _ready() or _setup_2d_minimap() for embedded mode to work.
+## Must be called before the minimap is first created (lazily on the first
+## _minimap.update()) for embedded mode to work.
 func set_hud_reference(hud: Node) -> void:
 	_hud_layer = hud
 
@@ -5535,8 +5080,7 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
 	_clamp_pan_offset()
 	_invalidate_map_cache()
 	queue_redraw()
-	if _minimap_2d != null and _minimap_2d.has_method("queue_indicator_redraw"):
-		_minimap_2d.queue_indicator_redraw()
+	_minimap.queue_indicator_redraw()
 
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:
@@ -5555,281 +5099,6 @@ func _recompute_insets() -> void:
 				_inset_right += size
 			SIDE_BOTTOM:
 				_inset_bottom += size
-
-func _setup_2d_minimap() -> void:
-	_minimap_2d = MinimapPanelScript.new()
-	add_child(_minimap_2d)
-
-	# Prefer embedded mode if HUD reference is available
-	var embedded := false
-	if _hud_layer != null and _hud_layer.has_method("get_minimap_container"):
-		var container: Control = _hud_layer.get_minimap_container()
-		if container != null:
-			_minimap_2d.setup_embedded(container)
-			embedded = true
-
-	if not embedded:
-		# Fallback to floating mode (legacy behavior)
-		_minimap_2d.setup(self, MinimapPanelScript.MINIMAP_CANVAS_LAYER)
-
-	_minimap_2d.pan_requested.connect(_on_minimap_2d_pan_requested)
-	_minimap_2d.connect_indicator_draw(_draw_minimap_viewport_indicator)
-
-func _update_2d_minimap() -> void:
-	if grid_width == 0 or grid_height == 0:
-		return
-
-	# Lazy initialization: set up minimap on first call (after Main.gd has a chance to set HUD reference)
-	if _minimap_2d == null:
-		_setup_2d_minimap()
-
-	_minimap_2d.set_visible(true)
-
-	# Check if we need to regenerate the minimap image
-	var current_size := Vector2i(grid_width, grid_height)
-	var size_changed := _minimap_2d_last_grid_size != current_size
-	var data_changed := _minimap_2d_last_data_version != _minimap_2d_data_version
-	var fow_changed := _minimap_2d_last_fow_enabled != _fow_enabled
-	var needs_rebuild := _minimap_2d_image == null or size_changed or data_changed or fow_changed
-
-	if needs_rebuild:
-		_minimap_2d_last_grid_size = current_size
-		_minimap_2d_last_data_version = _minimap_2d_data_version
-		_minimap_2d_last_fow_enabled = _fow_enabled
-		_rebuild_minimap_2d_image()
-
-	# Update viewport indicator
-	_minimap_2d.queue_indicator_redraw()
-
-func _rebuild_minimap_2d_image() -> void:
-	if grid_width == 0 or grid_height == 0:
-		return
-
-	# Cache terrain colors lookup for faster access
-	var colors := _get_terrain_colors()
-	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
-	var fog_color := _fow_fog_fill_color  # Dark color for unexplored
-	var mist_color := _fow_mist_color  # Light gray-blue mist for explored-but-not-visible
-
-	# Get visibility data for FoW (if enabled)
-	var visibility_data: PackedFloat32Array = PackedFloat32Array()
-	if _fow_enabled:
-		visibility_data = _visibility_array()
-
-	# The minimap always renders the FULL grid so its shape/aspect ratio stays
-	# constant whether FoW is on or off; unexplored tiles are painted as fog in
-	# the pixel loop below (standard 4X behaviour — no unseen terrain is revealed).
-	# Explored bounds are still computed when FoW is on so that panning stays
-	# clamped to discovered space (see _clamp_pan_offset).
-	var img_width := grid_width
-	var img_height := grid_height
-
-	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
-	var pixel_count := img_width * img_height
-	var data := PackedByteArray()
-	data.resize(pixel_count * 3)
-
-	# Track the bounding box of explored tiles while painting (FoW only), so pan
-	# clamping can use it without a second full pass over the visibility array.
-	# Gate fog on _fow_enabled alone (not on visibility_data being populated): when
-	# FoW is on but the visibility channel hasn't streamed yet, the per-tile lookup
-	# below falls back to vis == 0.0, so every tile paints as fog rather than leaking
-	# the unexplored map as full terrain. Explored bounds simply stay empty.
-	var min_col := grid_width
-	var max_col := -1
-	var min_row := grid_height
-	var max_row := -1
-
-	# Fill byte array with terrain colors
-	var byte_index := 0
-	for grid_row in range(img_height):
-		for grid_col in range(img_width):
-			var grid_index := grid_row * grid_width + grid_col
-
-			var terrain_id := int(terrain_overlay[grid_index]) if grid_index < terrain_overlay.size() else -1
-			var color: Color = colors.get(terrain_id, fallback_color)
-
-			# Apply Fog of War visibility
-			if _fow_enabled:
-				var vis: float = visibility_data[grid_index] if grid_index < visibility_data.size() else 0.0
-				if vis <= 0.0:
-					# Unexplored - show dark fog
-					color = fog_color
-				else:
-					# Explored (discovered or active) - grow the explored bounds
-					min_col = mini(min_col, grid_col)
-					max_col = maxi(max_col, grid_col)
-					min_row = mini(min_row, grid_row)
-					max_row = maxi(max_row, grid_row)
-					if vis <= FOW_VISIBLE_THRESHOLD:
-						# Explored but not currently visible - show terrain with light mist overlay
-						# Desaturate slightly and blend with mist to show "remembered" state
-						color = color.lerp(mist_color, _fow_mist_blend)
-					# else: vis > FOW_VISIBLE_THRESHOLD - fully visible, use terrain color as-is
-
-			# Convert Color (0-1 floats) to RGB bytes (0-255)
-			data[byte_index] = int(color.r * 255.0)
-			data[byte_index + 1] = int(color.g * 255.0)
-			data[byte_index + 2] = int(color.b * 255.0)
-			byte_index += 3
-
-	# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset).
-	# Cleared when FoW is off (full map) or nothing is explored yet.
-	if _fow_enabled and max_col >= 0:
-		var explored := Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
-		_explored_bounds_world = _compute_explored_bounds_world(explored, 1.0)
-	else:
-		_explored_bounds_world = Rect2()
-
-	# Create image from byte array
-	_minimap_2d_image = Image.create_from_data(img_width, img_height, false, Image.FORMAT_RGB8, data)
-
-	# Create texture from image and update panel
-	var tex := ImageTexture.create_from_image(_minimap_2d_image)
-	_minimap_2d.set_texture(tex)
-	_minimap_2d.set_grid_size(img_width, img_height)
-
-## Draw the viewport indicator rectangle on the 2D minimap.
-##
-## This shows which portion of the map is currently visible in the main view.
-## The coordinate transformation uses the same axial hex math as _point_to_offset:
-##
-## Screen-to-Hex Coordinate Conversion (pointy-top hexes):
-##   1. Subtract origin and divide by hex radius to get relative position
-##   2. Convert to axial coordinates (q, r) using pointy-top hex formulas:
-##      q = (sqrt(3)/3 * x - 1/3 * y)
-##      r = (2/3 * y)
-##   3. Round to nearest hex using cube coordinate rounding
-##   4. Convert axial (q, r) to offset (col, row) coordinates
-##
-## The resulting hex coordinates are then normalized to [0,1] range and
-## mapped to pixel positions within the minimap texture display area.
-func _draw_minimap_viewport_indicator() -> void:
-	if _minimap_2d == null or grid_width == 0 or grid_height == 0:
-		return
-	if last_hex_radius <= 0:
-		return
-
-	var viewport_size := _get_adjusted_viewport_size()
-	if viewport_size.x <= 0 or viewport_size.y <= 0:
-		return
-
-	var radius: float = max(last_hex_radius, 0.0001)
-
-	# Use the visible column/row range stored during the last render
-	# This ensures the indicator matches exactly what's being drawn
-	var tl_col_f: float = _last_visible_col_start
-	var tl_row_f: float = _last_visible_row_start
-	var br_col_f: float = _last_visible_col_end
-	var br_row_f: float = _last_visible_row_end
-
-	# Normalize hex coordinates to [0,1] range for minimap positioning.
-	# The minimap image spans the full grid (FoW or not), so normalize against it.
-	var view_left: float
-	var view_right: float
-	var view_top: float
-	var view_bottom: float
-
-	if _wrap_horizontal:
-		# When wrapping, don't clamp X - allow values outside [0,1] to indicate wrap
-		view_left = tl_col_f / float(grid_width)
-		view_right = br_col_f / float(grid_width)
-		view_top = clampf(tl_row_f / float(grid_height), 0.0, 1.0)
-		view_bottom = clampf(br_row_f / float(grid_height), 0.0, 1.0)
-	else:
-		# Full grid normalization with clamping
-		view_left = clampf(tl_col_f / float(grid_width), 0.0, 1.0)
-		view_right = clampf(br_col_f / float(grid_width), 0.0, 1.0)
-		view_top = clampf(tl_row_f / float(grid_height), 0.0, 1.0)
-		view_bottom = clampf(br_row_f / float(grid_height), 0.0, 1.0)
-
-	# Map normalized coords to pixel positions within minimap texture display area
-	var texture_display_rect: Rect2 = _minimap_2d.get_texture_display_rect()
-	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
-
-	# Calculate viewport width in normalized coords
-	var viewport_width_norm := view_right - view_left
-
-	# When wrapping is enabled and viewport spans the wrap boundary, may need split rectangles
-	# But if viewport shows >= entire map width, draw full-width indicator instead
-	if _wrap_horizontal and (view_left < 0.0 or view_right > 1.0):
-		if viewport_width_norm >= 1.0:
-			# Viewport shows entire map width or more - draw full-width indicator
-			var rect := Rect2(
-				texture_display_rect.position.x,
-				texture_display_rect.position.y + view_top * texture_display_rect.size.y,
-				texture_display_rect.size.x,
-				(view_bottom - view_top) * texture_display_rect.size.y
-			)
-			_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
-		else:
-			# Wrap the normalized coordinates to [0,1] range
-			var wrapped_left := fposmod(view_left, 1.0)
-			var wrapped_right := fposmod(view_right, 1.0)
-
-			# If viewport spans wrap, wrapped_right < wrapped_left
-			if wrapped_right < wrapped_left:
-				# Draw left portion (from wrapped_left to right edge)
-				var rect_left := Rect2(
-					texture_display_rect.position.x + wrapped_left * texture_display_rect.size.x,
-					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
-					(1.0 - wrapped_left) * texture_display_rect.size.x,
-					(view_bottom - view_top) * texture_display_rect.size.y
-				)
-				_minimap_2d.viewport_indicator.draw_rect(rect_left, indicator_color, false, 2.0)
-
-				# Draw right portion (from left edge to wrapped_right)
-				var rect_right := Rect2(
-					texture_display_rect.position.x,
-					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
-					wrapped_right * texture_display_rect.size.x,
-					(view_bottom - view_top) * texture_display_rect.size.y
-				)
-				_minimap_2d.viewport_indicator.draw_rect(rect_right, indicator_color, false, 2.0)
-			else:
-				# Viewport doesn't span wrap, just draw single rectangle at wrapped position
-				var rect := Rect2(
-					texture_display_rect.position.x + wrapped_left * texture_display_rect.size.x,
-					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
-					(wrapped_right - wrapped_left) * texture_display_rect.size.x,
-					(view_bottom - view_top) * texture_display_rect.size.y
-				)
-				_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
-	else:
-		# Standard non-wrapping case
-		var rect := Rect2(
-			texture_display_rect.position.x + view_left * texture_display_rect.size.x,
-			texture_display_rect.position.y + view_top * texture_display_rect.size.y,
-			(view_right - view_left) * texture_display_rect.size.x,
-			(view_bottom - view_top) * texture_display_rect.size.y
-		)
-		_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
-
-## Handle minimap click/drag to pan the main view.
-##
-## Converts the normalized minimap position (0-1) to hex grid coordinates,
-## then calculates the pan_offset needed to center that hex in the viewport.
-##
-## normalized_pos: Position within minimap texture, (0,0)=top-left, (1,1)=bottom-right
-func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
-	if grid_width == 0 or grid_height == 0:
-		return
-	if last_hex_radius <= 0:
-		return
-
-	# Convert normalized [0,1] position to hex grid coordinates (col, row).
-	# The minimap image spans the full grid, so denormalize against it directly;
-	# _clamp_pan_offset() still confines the resulting pan to explored space.
-	# normalized_pos is clamped to [0,1], so x/y == 1.0 must map to the LAST
-	# column/row; clamp the source index here so the wrap branch's posmod() below
-	# doesn't turn a right-edge click (col == grid_width) into column 0.
-	var target_col := mini(int(normalized_pos.x * float(grid_width)), grid_width - 1)
-	var target_row := mini(int(normalized_pos.y * float(grid_height)), grid_height - 1)
-	focus_on_tile(target_col, target_row)
-
-## Center the main view on a hex, reusing the minimap's centering + wrap-nearest
-## machinery. Public so the HUD (e.g. clicking a band alert) can pan to a band's
-## tile. Silently no-ops before the first layout pass.
 func focus_on_tile(col: int, row: int) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
@@ -5877,7 +5146,7 @@ func focus_on_tile(col: int, row: int) -> void:
 	queue_redraw()
 	# Panning only moves the viewport; the minimap image is unchanged, so just
 	# refresh the indicator instead of running the full rebuild-check path.
-	_minimap_2d.queue_indicator_redraw()
+	_minimap.queue_indicator_redraw()
 
 ## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
 ## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
