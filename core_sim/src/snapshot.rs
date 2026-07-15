@@ -4138,6 +4138,7 @@ fn population_state(
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
+        expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
     }
 }
 

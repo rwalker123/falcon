@@ -4038,6 +4038,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_viability_warn_turns",
         cohort.expeditionViabilityWarnTurns() as i64,
     );
+    // Per-worker carry the pack fills to: an expedition delivers `party_workers ×
+    // expeditionPerWorkerCarry` food when it fills. This IS a display number the client may multiply
+    // by the party size (the same blessed party×lever arithmetic as the band ceiling — NOT the
+    // ecology/turns-to-fill lookup the expedition discipline protects), used to show the pre-launch
+    // HAUL beside the turns-to-fill forecast. 0 when absent.
+    let _ = dict.insert(
+        "expedition_per_worker_carry",
+        f64::from(cohort.expeditionPerWorkerCarry()),
+    );
 
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();

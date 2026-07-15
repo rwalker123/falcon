@@ -1219,6 +1219,9 @@ func _band_fixture() -> Dictionary:
 		# Band = flow arithmetic; expedition = lookup.
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		# Per-worker carry (shipped 4.0): the forecast shows the HAUL a filled pack delivers as
+		# party × this (blessed party×lever arithmetic, NOT the turns-to-fill lookup).
+		"expedition_per_worker_carry": 4.0,
 		"work_range": 2,
 		# Hunt reach (work_range + hunt leash) — large enough here that BOTH the reference herd_fixture
 		# (9 tiles from this band's pos) and the occupied-hex herd (16 tiles) stay WITHIN reach, so those
@@ -1653,6 +1656,8 @@ func _hunt_preview_far_band() -> Dictionary:
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		# Per-worker carry (shipped 4.0) → the forecast's HAUL = party × this.
+		"expedition_per_worker_carry": 4.0,
 		"activity": "forage", "labor_assignments": [],
 	}
 

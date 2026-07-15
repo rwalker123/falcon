@@ -3022,6 +3022,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				# rate, which IS arithmetic. Band = flow arithmetic; expedition = lookup.
 				"hunt_per_worker_provisions": float(entry.get("hunt_per_worker_provisions", 0.0)),
 				"expedition_viability_warn_turns": int(entry.get("expedition_viability_warn_turns", 0)),
+				# Per-worker carry: the pre-launch forecast shows the HAUL a filled pack delivers as
+				# party × this lever (the same blessed party×lever arithmetic as the band ceiling, NOT
+				# the turns-to-fill lookup). 0 when absent → no haul rendered.
+				"expedition_per_worker_carry": float(entry.get("expedition_per_worker_carry", 0.0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})

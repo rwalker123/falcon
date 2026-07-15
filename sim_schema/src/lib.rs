@@ -1661,6 +1661,15 @@ pub struct PopulationCohortState {
     /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
     #[serde(default)]
     pub pen_feed_upkeep: f32,
+    /// One worker's carry contribution to a hunt expedition's haul
+    /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
+    /// [`Self::max_expedition_party_size`] / `expedition_viability_warn_turns` /
+    /// `hunt_per_worker_provisions`), populated for **every** cohort since the outfit UI lives on the
+    /// resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
+    /// `party_workers × expedition_per_worker_carry` (the carry cap the pack fills to before
+    /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
+    #[serde(default)]
+    pub expedition_per_worker_carry: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -3643,6 +3652,7 @@ fn create_populations<'a>(
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
+                    expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                 },
             )
         })

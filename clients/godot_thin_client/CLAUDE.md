@@ -2260,6 +2260,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `forecast_horizon_turns` (`turns_to_fill == 0`) — a "can't fill" verdict, **not** a collapsed herd: a
   thriving herd whose yield is too slow for this party's packs lands here too. The click still commits
   (information, not a gate).
+  **The forecast also shows the HAUL — the food a filled pack delivers** (`HUNT_FORECAST_HAUL_FORMAT`,
+  ` · ~%d food`): the whole point of the party stepper is a tradeoff (a bigger party climbs the turns
+  AND the food it brings home), and turns-only hid the upside. The haul = `party_workers ×
+  expedition_per_worker_carry` — the same **blessed party×lever arithmetic as the band ceiling**, NOT
+  the ecology/turns-to-fill lookup the expedition discipline protects. It is computed in
+  `_hunt_trip_forecast` (which already has band + party) and rides the returned dict as `haul`, so the
+  shared `_hunt_forecast_line_bbcode` renders it identically at **both** entry points (banner + herd
+  panel). Shown ONLY when the pack **fills** (viable → `≈6 turns to fill · ~16 food`; too-slow →
+  `⚠ … ≈54 turns to fill · ~16 food — too slow to be worth sending`); **omitted** on the won't-fill and
+  denial states — those packs never reach the cap, so a haul there would be a lie. `expedition_per_worker_carry`
+  (`PopulationCohortState.expeditionPerWorkerCarry`, shipped 4.0) is decoded in `native/src/lib.rs`
+  beside the other expedition levers and flowed onto the MapView unit marker / covered by
+  `marker_field_guard`; **absent/0 → no `haul` key → the turns line renders alone** (live guard, no divide).
   **The client does ZERO arithmetic for an expedition's trip — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),

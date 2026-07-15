@@ -721,6 +721,12 @@ const HUNT_ESTIMATE_KEY_SEPARATOR := ":"
 # over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
 # pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
 const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
+# The HAUL a filled pack delivers, appended to the turns line so the party-size tradeoff reads BOTH
+# ways: a bigger party climbs the turns AND the food it brings home. The haul = party_workers ×
+# expedition_per_worker_carry (blessed party×lever arithmetic, NOT the ecology lookup turns comes
+# from). Shown ONLY when the pack fills (viable OR too-slow); a won't-fill / denial trip never reaches
+# the cap, so quoting a haul there would be a lie. Absent/0 per-worker-carry → no suffix (live guard).
+const HUNT_FORECAST_HAUL_FORMAT := " · ~%d food"
 # Above the config's viability threshold the trip still launches (this is information, not a block) —
 # but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
 const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
@@ -1181,10 +1187,13 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
         ]
     var turns := int(forecast.get("turns", 0))
     var text: String = HUNT_FORECAST_TURNS_FORMAT % [herd_name, turns]
+    # The pack fills here (viable OR too-slow), so the haul is a real delivery, not a lie — append it.
+    # No `haul` key = the snapshot didn't carry the per-worker-carry lever → render turns only.
+    var haul: String = HUNT_FORECAST_HAUL_FORMAT % int(forecast["haul"]) if forecast.has("haul") else ""
     if bool(forecast.get("viable", true)):
-        return "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, text]
-    return "[color=#%s]%s%s%s[/color]" % [
-        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
+        return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, haul]
+    return "[color=#%s]%s%s%s%s[/color]" % [
+        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, haul, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
     ]
 
 ## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. A PURE TABLE
@@ -1221,7 +1230,15 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     # A warn threshold of 0 means the server sent none — report the turns, judge nothing.
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
     var viable: bool = warn_turns <= 0 or turns <= warn_turns
-    return {"available": true, "fills": true, "turns": turns, "viable": viable}
+    var result := {"available": true, "fills": true, "turns": turns, "viable": viable}
+    # The haul a filled pack delivers: party_workers × the per-worker carry lever — blessed party×lever
+    # arithmetic (the same kind as the band ceiling), NOT the ecology/turns-to-fill lookup. Only set
+    # when the lever is present (> 0), so the renderer can guard on the key's absence rather than a fake
+    # zero. Withheld from the denial / won't-fill branches above: those packs never reach the cap.
+    var per_worker_carry := float(band.get("expedition_per_worker_carry", 0.0))
+    if per_worker_carry > 0.0:
+        result["haul"] = int(round(float(workers) * per_worker_carry))
+    return result
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
 ## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.

@@ -620,6 +620,14 @@ table PopulationCohortState {
   // Derived per-turn, not persisted (a rehydrated cohort reads 0 until the next tick), same as
   // foodIncome. Appended (append-only schema discipline).
   penFeedUpkeep:float = 0;
+  // Hunt expedition lever: one worker's carry contribution = expedition_config.hunt.per_worker_carry.
+  // Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`,
+  // `expeditionViabilityWarnTurns`, `huntPerWorkerProvisions` — the outfit UI lives on the
+  // resident-band panel, so it rides every cohort). The client computes a hypothetical party's HAUL
+  // pre-launch as `party_workers × expeditionPerWorkerCarry` (the carry cap the pack fills to before
+  // auto-Delivering; the launched-party echo is `expeditionCarryCap`). Appended last (append-only
+  // schema discipline).
+  expeditionPerWorkerCarry:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

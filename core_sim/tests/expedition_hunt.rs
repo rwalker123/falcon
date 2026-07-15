@@ -704,6 +704,10 @@ fn exported_hunt_trip_estimates_match_a_real_party_run() {
         cohort.expedition_viability_warn_turns, cfg.hunt.viability_warn_turns,
         "the exported viability threshold must be the config lever the sim warns on"
     );
+    assert_eq!(
+        cohort.expedition_per_worker_carry, cfg.hunt.per_worker_carry,
+        "the exported per-worker carry must be the config lever the client multiplies for the pre-launch HAUL"
+    );
 
     // Snapshot every herd's pre-trip state up front: a real party run advances the ecology of EVERY
     // herd (and despawns the collapsing one), so a baseline read lazily mid-sweep would be stale — or
