@@ -522,3 +522,107 @@ fn mix_seed(base: u32, seed: u64, salt: u32) -> u32 {
     let seed_high = (seed >> 32) as u32;
     base ^ seed_low.rotate_left(7) ^ seed_high.rotate_left(11) ^ salt
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map_preset::MapPresets;
+
+    /// `anchor_contour_to_sea_level` is the safety property the whole erosion placement rests on:
+    /// it reshapes the field *before* `generate_land_mask`, and it is only safe because it is a
+    /// strictly monotone rescale, so it cannot reorder the field and therefore cannot change which
+    /// tiles the mask ranks as land. If it ever stopped being monotone (e.g. a plateau at the
+    /// contour breakpoint), the land mask would silently shift. Nothing else pins this.
+    #[test]
+    fn anchor_contour_to_sea_level_is_strictly_monotone_and_pinned() {
+        // A field spanning [0, 1] with the two pin points (0.0, the contour, 1.0) explicitly present,
+        // plus dense samples straddling the breakpoint where a discontinuity would hide.
+        let contour = 0.55f32;
+        let sea_level = 0.6f32;
+        let mut values: Vec<f32> = (0..=1000).map(|i| i as f32 / 1000.0).collect();
+        // Deterministic non-monotone input order, so the test checks value-ordering, not slot-order.
+        values.rotate_left(337);
+        let before = values.clone();
+
+        anchor_contour_to_sea_level(&mut values, contour, sea_level);
+
+        // (a) Order-preserving: for every pair, the mapped values keep the same strict ordering as
+        // the inputs — the exact property that keeps the land-mask rank cut unchanged. A single
+        // reordering (or a plateau collapsing two distinct inputs to equal outputs) fails this.
+        for i in 0..before.len() {
+            for j in (i + 1)..before.len() {
+                let ord_in = before[i].total_cmp(&before[j]);
+                let ord_out = values[i].total_cmp(&values[j]);
+                assert_eq!(
+                    ord_in, ord_out,
+                    "reordered {}->{} vs {}->{}",
+                    before[i], values[i], before[j], values[j]
+                );
+            }
+        }
+
+        // (b) Pinned at all three anchor points.
+        let map = |v: f32| {
+            let mut a = [v];
+            anchor_contour_to_sea_level(&mut a, contour, sea_level);
+            a[0]
+        };
+        assert!((map(0.0) - 0.0).abs() < 1e-6, "phi(0) != 0");
+        assert!(
+            (map(contour) - sea_level).abs() < 1e-6,
+            "phi(contour) != sea_level"
+        );
+        assert!((map(1.0) - 1.0).abs() < 1e-6, "phi(1) != 1");
+    }
+
+    /// The erosion kill switch is also the A/B control the census leans on: `enabled = false` must
+    /// leave the field completely untouched, *regardless of the other erosion knobs*. This pins that
+    /// the disabled path short-circuits before reading any other lever or mutating a single cell —
+    /// and, so the test can't pass vacuously, that `enabled = true` genuinely changes the field.
+    #[test]
+    fn erosion_disabled_is_inert_to_every_other_lever() {
+        let presets = MapPresets::builtin();
+        let preset = presets.get("earthlike").expect("earthlike preset");
+        let seed = 0xC0FF_EE01u64; // any fixed seed; erosion is deterministic
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+
+        let build = |erosion: ErosionConfig| {
+            let mut p = preset.clone();
+            p.erosion = erosion;
+            build_elevation_field(&config, Some(&p), seed)
+                .values
+                .to_vec()
+        };
+
+        // Two disabled configs whose *other* levers are wildly different.
+        let off_tame = build(ErosionConfig {
+            enabled: false,
+            iterations: 1,
+            erodibility: 0.0,
+            diffusivity: 0.0,
+            ..preset.erosion.clone()
+        });
+        let off_extreme = build(ErosionConfig {
+            enabled: false,
+            iterations: 250,
+            erodibility: 5.0,
+            diffusivity: 5.0,
+            ..preset.erosion.clone()
+        });
+        assert_eq!(
+            off_tame, off_extreme,
+            "enabled=false is not inert: other erosion levers perturbed the field"
+        );
+
+        // And the switch is not a global no-op: enabling erosion actually moves the field.
+        let on = build(ErosionConfig {
+            enabled: true,
+            ..preset.erosion.clone()
+        });
+        assert_ne!(
+            off_tame, on,
+            "enabled=true left the field identical to disabled — erosion did nothing"
+        );
+    }
+}

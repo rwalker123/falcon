@@ -957,7 +957,7 @@ impl StemEmitter<'_> {
         let mut run: Vec<(usize, CornerStep)> = Vec::new();
         for (from, step) in steps {
             if self.edge_is_submerged(&step) {
-                if let Some(river) = self.emit_run(&run, existing_navigable) {
+                if let Some(river) = self.emit_run(&run, stem.terminus, existing_navigable) {
                     rivers.push(river);
                 }
                 run.clear();
@@ -965,7 +965,7 @@ impl StemEmitter<'_> {
             }
             run.push((from, step));
         }
-        if let Some(river) = self.emit_run(&run, existing_navigable) {
+        if let Some(river) = self.emit_run(&run, stem.terminus, existing_navigable) {
             rivers.push(river);
         }
         rivers
@@ -1001,6 +1001,7 @@ impl StemEmitter<'_> {
     fn emit_run(
         &self,
         run: &[(usize, CornerStep)],
+        terminus: usize,
         existing_navigable: &HashSet<usize>,
     ) -> Option<TracedRiver> {
         if run.is_empty() {
@@ -1108,12 +1109,16 @@ impl StemEmitter<'_> {
         let end_corner = run
             .last()
             .map(|(from, step)| {
-                // The run's most downstream channel corner: the corner the last step lands on if it
-                // is still a channel corner, else the corner it left.
-                if self.field.is_routable(step.corner) && !self.field.sink[step.corner] {
-                    step.corner
-                } else {
+                // The run's most downstream corner **that belongs to this river** — the one whose
+                // Strahler order is this segment's own. The last step lands on our own corner unless
+                // it is the stem's `terminus`, which is either a sink (no order) or a **foreign trunk
+                // corner** carrying the *trunk's* order, not ours. Comparing against the terminus
+                // directly is exact; the earlier `!sink` test missed the foreign-trunk case and made
+                // a tributary report the order of the trunk it joined.
+                if step.corner == terminus {
                     *from
+                } else {
+                    step.corner
                 }
             })
             .unwrap_or(0);
