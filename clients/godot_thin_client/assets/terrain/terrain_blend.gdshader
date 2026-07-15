@@ -62,6 +62,8 @@ uniform bool rivers_lod_enabled;   // river LOD gate — DECOUPLED from blend_en
 uniform bool river_navigable_enabled; // false when the river array has no navigable layer → skip that pass
 uniform int river_navigable_terrain_id; // terrain id of NavigableRiver (from terrain_config, by NAME)
 uniform float river_navigable_half_width; // navigable CHANNEL half-width, in px (navigable_width * radius)
+uniform float river_navigable_bank_half_width; // slim silty-bank skirt BEYOND the channel, in px
+                                               // (navigable_bank_width * radius) — hugs the channel's distance field
 uniform float river_minor_half_width; // Minor half-band half-width, in px (minor_width * radius)
 uniform float river_major_half_width; // Major half-band half-width, in px (major_width * radius)
 uniform float river_head_taper_curve; // exponent on the head taper's smoothstep: on the FIRST hex of a
@@ -98,6 +100,10 @@ uniform sampler2D river_map : filter_nearest;
 // itself) into a WEB of triangles. A chain is a PATH — only the sim's tracer knows which two neighbours
 // are its upstream and downstream — so arm ONLY the set bits. Do not "simplify" this back to terrain.
 uniform sampler2D river_channel_map : filter_nearest;
+// navigable-UNDERLYING splatmap, R8 — the per-tile UNDERLYING (valley) terrain id. Read ONLY on a navigable
+// hex, where the base biome is swapped from terrain id 37 (the navigability signal, kept on the id_map) to
+// this valley biome the river cut. Non-navigable texels are don't-care.
+uniform sampler2D navigable_underlying_map : filter_nearest;
 // Per-base-layer MEAN LUMINANCE, a 1×N single-channel texture fetched by layer index (N = terrain count,
 // so the layer count is never baked into this shader as a fixed array size). Height blending uses each
 // texture's per-pixel luminance as a pseudo-height (we have no height maps); subtracting the layer's mean
@@ -693,7 +699,14 @@ void fragment() {
 		// per-hex identical repeat (the diagonal-seam grid on detailed textures) disappears. Uses v_map
 		// (pan/zoom-anchored) so terrain tracks the grid on pan/zoom. repeat_enable tiles it.
 		vec2 base_uv = v_map / (2.0 * hex_radius) * base_scale;
-		vec3 result = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
+		// A navigable hex is a VALLEY with a river in it, not a hex of bank: its base renders the UNDERLYING
+		// biome the river cut (the id_map keeps terrain id 37 as the navigability signal, so the underlying id
+		// rides its own map). Everywhere else base_layer == own_layer, so this is a no-op. The slim silty bank
+		// is composited only as a skirt hugging the channel, in the navigable pass below.
+		bool own_navigable_base = own_layer == river_navigable_terrain_id;
+		int underlying_layer = int(texture(navigable_underlying_map, id_uv).r * 255.0 + 0.5);
+		int base_layer = own_navigable_base ? underlying_layer : own_layer;
+		vec3 result = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
 
 		// ELIGIBILITY: the base rule is SAME-CLASS — a hex blends only with a neighbour of its OWN blend_class
 		// and a different terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into
@@ -899,18 +912,34 @@ void fragment() {
 					prof_w += w;
 				}
 				if (own_water == nb_water) { continue; } // the COAST edge: exactly one side must be water
-				// …EXCEPT where a NAVIGABLE river is on either side of it. A RIVER MEETING THE SEA IS NOT A
-				// COAST: a navigable hex is a bank with a channel through it, so a shore treatment there is a lie
-				// in both directions — a beach on the bank at the river's mouth, and a surf line drawn ACROSS
-				// that mouth, visibly walling the river off from the sea it drains into (it read as a lake).
-				// This has to be an EDGE-LEVEL exclusion, not a shore_profile entry: the profile field is keyed
-				// on the WATER side (only a CLASS_WATER hex contributes one — see (a) above), and a navigable
-				// hex is land-class by construction, so it can never supply a profile. The profile that WOULD
-				// apply at the mouth is the SEA's, and that sea's coast elsewhere must keep it.
-				// Dropping the edge here removes the whole chain at once (profile, waterline cross-fade, sand,
-				// surf, wisp all live under `best_d > -1e8`), and symmetrically from BOTH hexes' frames — so no
-				// half-drawn coast can survive on one side of it.
-				if (own_navigable || nb_navigable) { continue; }
+				// …EXCEPT a TRUE RIVER MOUTH — the one navigable edge where the channel actually flows out INTO
+				// this water. A RIVER MEETING THE SEA IS NOT A COAST: the mouth would take a beach on the bank
+				// and a surf line drawn ACROSS the channel, walling the river off from the sea it drains into.
+				// But this must fire ONLY on a mouth, not on every navigable↔water adjacency: a navigable river
+				// merely running ALONGSIDE a lake (its channel exits point elsewhere, never into the lake) is a
+				// normal coast — the lake keeps its shore ring and the valley/bank gets its beach — and dropping
+				// those edges ate the lake's ring and left a hard seam (now that the bank renders the valley
+				// terrain, not neutral gravel). A mouth = the navigable hex's `river_channel` EXITS through THIS
+				// edge toward the water (the same sim-authored R8 mask the channel pass arms its arms from — the
+				// shore loop's `dir` is already sim odd-r order, matching the channel bit index). By the time we
+				// reach here exactly one side is navigable (flat/land-class) and the other is genuine water:
+				// read the channel from whichever side is the navigable hex, toward the water.
+				//   • own is the navigable hex → its exit bit for THIS dir.
+				//   • the neighbour is navigable (own is water) → its exit bit toward US is dir (dir+3)%6.
+				// Everywhere else (alongside, no exit here) falls through to the normal coast (best_d below). The
+				// exclusion stays EDGE-LEVEL, not a shore_profile entry: the profile is keyed on the WATER side
+				// (only a CLASS_WATER hex contributes one), and a navigable hex is land-class, so it can never
+				// supply one; the profile that applies is the sea's/lake's, which must keep its coast elsewhere.
+				bool is_mouth = false;
+				if (own_navigable) {
+					int own_channel = int(texture(river_channel_map, id_uv).r * 255.0 + 0.5);
+					is_mouth = ((own_channel >> dir) & 1) == 1;
+				} else if (nb_navigable) {
+					int nb_channel = int(texture(river_channel_map, nuv).r * 255.0 + 0.5);
+					int back = (dir + 3) % 6;
+					is_mouth = ((nb_channel >> back) & 1) == 1;
+				}
+				if (is_mouth) { continue; } // a true mouth: drop the coast so no surf walls the river off
 				if (d > best_d) { best_d = d; }           // nearest qualifying edge → the coast coordinate
 			}
 			if (best_d > -1e8) {
@@ -1250,7 +1279,54 @@ void fragment() {
 			float cov_trunk = -1e9;         // coverage = half_width - distance; > 0 inside the water
 			float cov_spur = -1e9;          // best INFLOW spur, tracked apart so the two can crossfade
 			float spur_layer = 0.0;         // river-array layer of the winning spur (class - 1)
+			float head_class_mix = -1.0;    // >= 0 => a head-inflow DIRECT segment set the art crossfade itself
 			vec2 best_tangent = vec2(1.0, 0.0);
+			// A CHAIN HEAD FED BY A TRIBUTARY flows STRAIGHT from the inflow corner to its single exit — NOT
+			// via the hex centre. The generic routing below draws the inflow as a centre→corner spur and the
+			// exit as a centre→edge-midpoint arm; when the inflow corner and the exit side sit on the same
+			// side of the centre, that union is inflow_corner → centre → exit_mid, which DOUBLES BACK and
+			// leaves a NOTCH / inverted-V at the corner (reads as "the tributary connects at the wrong
+			// corner"). Here there is exactly ONE exit, so the whole channel is one tapered segment per inflow
+			// corner: inflow_corner → exit-midpoint, narrow (the tributary's own width) at the corner and
+			// swelling to the full navigable width at the exit edge — the head taper, laid along the true flow
+			// line. It RIDES THE SAME best_cov the bank annulus reads, so the slim bank follows it for free.
+			bool is_head_with_inflow = (exits == 1) && (inflow != 0);
+			if (is_head_with_inflow) {
+				// Resolve the single exit's shared-edge midpoint (exits == 1, so the first set bit is it).
+				vec2 exit_mid = own_c;
+				for (int dir = 0; dir < 6; dir++) {
+					if (((channel >> dir) & 1) == 0) { continue; }
+					ivec2 off = neighbor_offset(row, dir);
+					exit_mid = (own_c + hex_center(col + off.x, row + off.y)) * 0.5;
+					break;
+				}
+				for (int c = 0; c < 6; c++) {
+					int cls = (inflow >> (2 * c)) & 3;
+					if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 none, 3 reserved
+					float ang = RIVER_CORNER_ANGLE_STEP * float(c) + RIVER_CORNER_ANGLE_OFFSET;
+					vec2 corner_pt = own_c + vec2(cos(ang), sin(ang)) * hex_radius; // the inflow VERTEX
+					vec2 seg = exit_mid - corner_pt;               // the flow line: corner → exit midpoint
+					float seg_len2 = max(dot(seg, seg), 1e-6);
+					float t = clamp(dot(rp - corner_pt, seg) / seg_len2, 0.0, 1.0);
+					// t_head from the UNWARPED point, exactly as the arm loop does and for the same reason:
+					// the exit edge must land on precisely river_navigable_half_width so the downstream hex
+					// (which draws its own half-channel at that constant width) meets it with no step.
+					float t_head = clamp(dot(v_world - corner_pt, seg) / seg_len2, 0.0, 1.0);
+					float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 0 corner→1 exit
+					float trib_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
+					// Narrow (the tributary's own width, never wider than the trunk) at the corner, swelling
+					// to full navigable width at the exit. Same organic width_mod/width_px on top as the arm.
+					float base_w = mix(min(trib_w, river_navigable_half_width), river_navigable_half_width, swell);
+					float w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+					float cov = w - distance(rp, corner_pt + seg * t);
+					if (cov > cov_trunk) {
+						cov_trunk = cov;
+						best_tangent = normalize(seg);
+						spur_layer = float(cls - RIVER_CLASS_MINOR); // tributary art at the corner end
+						head_class_mix = swell;                      // → navigable art by the exit
+					}
+				}
+			} else {
 			for (int dir = 0; dir < 6; dir++) {
 				// The exit bit IS the arm rule — no neighbour fetch, and none possible: the mask is
 				// asymmetric at the mouth, so the neighbour's opinion is not a substitute for the own hex's.
@@ -1289,7 +1365,9 @@ void fragment() {
 				}
 			}
 			// INFLOW SPURS — centre → the named CORNER, at the arriving tributary's width (the same
-			// river_minor/major_half_width the edge pass uses, so it keeps its identity as it enters).
+			// river_minor/major_half_width the edge pass uses, so it keeps its identity as it enters). This
+			// runs for the MID-CHAIN junction case (>= 2 exits with an inflow) — a head with an inflow took
+			// the direct-segment branch above and never reaches here.
 			for (int c = 0; c < 6; c++) {
 				int cls = (inflow >> (2 * c)) & 3;
 				if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
@@ -1305,12 +1383,28 @@ void fragment() {
 					if (cov > cov_trunk) { best_tangent = normalize(ab); }
 				}
 			}
+			}
 			float best_cov = max(cov_trunk, cov_spur);
 			if (exits == 0) {
 				// Degenerate — a navigable hex the river never leaves (a tributary may still feed it: an
 				// inflow spur is not an arm). The sim should never emit one (MapView push_warnings if it
 				// does); draw a blob at the centre rather than a hex of bare bank with no water in it.
 				best_cov = max(best_cov, half_w * RIVER_NAVIGABLE_ORPHAN_BLOB - distance(rp, own_c));
+			}
+			// --- SLIM BANK SKIRT ---
+			// The base already renders the UNDERLYING valley biome; the silty bank is now just a thin band
+			// hugging the channel, not the whole hex. It RIDES THE SAME distance field as the water (best_cov,
+			// the max-coverage over every arm / inflow spur), so it follows every arm, taper, turn and mouth
+			// for free — an ANNULUS out to river_navigable_bank_half_width beyond the channel edge. Adding the
+			// bank half-width to the coverage shifts the whole field outward: bank_cov > 0 across water ∪ bank,
+			// fading to nothing at the outer edge. The bank texture is biome_array layer 37 (the same id the
+			// navigability signal uses — resolved by name, never hard-coded), sampled at the same world UV as
+			// the base. Composited OVER the underlying base; the water channel then paints OVER the bank below.
+			float bank_cov = best_cov + river_navigable_bank_half_width;
+			if (bank_cov > -river_softness) {
+				float bank_alpha = smoothstep(-river_softness, river_softness, bank_cov);
+				vec3 bank = texture(biome_array, vec3(base_uv, float(river_navigable_terrain_id))).rgb;
+				result = mix(result, bank, bank_alpha);
 			}
 			if (best_cov > -river_softness) {
 				float alpha = smoothstep(-river_softness, river_softness, best_cov);
@@ -1322,7 +1416,11 @@ void fragment() {
 				// river_class_blend px — the same crossfade the edge pass runs at a Minor→Major change, for
 				// the same reason: the join must read as one river growing, not two waterways spliced. With
 				// no spur, cov_spur stays at -1e9 → class_mix == 1 → pure channel, exactly as before.
-				float class_mix = smoothstep(-river_class_blend, river_class_blend, cov_trunk - cov_spur);
+				// A head-with-inflow drew ONE direct segment (no separate spur), so it hands the crossfade in
+				// explicitly via head_class_mix (0 = tributary art at the corner → 1 = navigable at the exit).
+				float class_mix = (head_class_mix >= 0.0)
+					? head_class_mix
+					: smoothstep(-river_class_blend, river_class_blend, cov_trunk - cov_spur);
 				vec3 water = mix(texture(river_tex, vec3(ruv, spur_layer)).rgb,
 					texture(river_tex, vec3(ruv, RIVER_NAVIGABLE_LAYER)).rgb, class_mix);
 				// Harmonized like the edge classes (shared hue / depth pivot, luma order preserved), so the

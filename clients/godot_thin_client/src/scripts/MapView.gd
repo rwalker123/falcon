@@ -357,6 +357,12 @@ const RIVER_DEFAULT_MAJOR_WIDTH := 0.09
 # great RIVER, not a flood: only somewhat wider than Major (0.09). Far wider and the hex stops being a bank
 # with a channel through it and becomes a puddle again, which is the read this whole pass exists to kill.
 const RIVER_DEFAULT_NAVIGABLE_WIDTH := 0.14
+# BANK SKIRT — a navigable hex now renders its UNDERLYING biome (the valley the river cut), not a
+# whole-hex bank. The silty bank is only a slim skirt hugging the channel: this is its half-width BEYOND
+# the channel (hex-radius fraction), so across the hex you read water (< navigable half-width) → thin bank
+# gravel (out to navigable + this) → the underlying terrain. A slim ~10% skirt per side reads as a river
+# in a valley, not a hex of gravel.
+const RIVER_DEFAULT_NAVIGABLE_BANK_WIDTH := 0.10
 # HEAD TAPER — on the FIRST hex of a navigable chain (the hex whose river_channel names at most ONE exit,
 # i.e. it has a downstream link but no upstream one — NOT "the hex with a nonzero river_inflow", which
 # since the drainage network is true of any navigable hex a tributary joins, mid-chain ones included) the
@@ -786,6 +792,12 @@ var tile_river_inflow: Dictionary = {}
 # (on the last hex only) its exit into the sea/delta. Feeds the R8 river-channel splatmap; the shader arms
 # the trunk from it and from nothing else. See RIVER_CHANNEL_MASK for why the terrain cannot answer this.
 var tile_river_channel: Dictionary = {}
+# Per-tile UNDERLYING terrain id (the "real ground" biome), keyed by Vector2i(x, y). Equals the tile's own
+# terrain on ordinary tiles, and the preserved VALLEY biome on a navigable hex (which stamps NavigableRiver
+# over the ground the river cut). Feeds the shader's navigable_underlying_map so a navigable hex renders its
+# valley as the base, with only a slim bank skirt hugging the channel — the shader reads it on navigable
+# hexes only, so non-navigable values are don't-care.
+var tile_underlying_terrain: Dictionary = {}
 # Debug toggle (Map tab): tint rivers hard so they pop. Pushed to the shader as `river_highlight`.
 var highlight_rivers: bool = false
 
@@ -812,6 +824,9 @@ var _terrain_river_map_tex: ImageTexture = null # RGBA8: the 12-bit river-EDGE m
                                                 # + the 12-bit river-INFLOW mask (B = low 8, A = high 4)
 var _terrain_river_channel_map_tex: ImageTexture = null # R8: the 6-bit river-CHANNEL exit mask (1 bit per
                                                 # odd-r direction) — its own texture; the RGBA8 above is full
+var _terrain_navigable_underlying_map_tex: ImageTexture = null # R8: the per-hex UNDERLYING terrain id (the
+                                                # valley biome on a navigable hex). Shader reads it on navigable
+                                                # hexes only, so non-navigable texels are don't-care.
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
@@ -1182,6 +1197,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	tile_river_edges.clear()
 	tile_river_inflow.clear()
 	tile_river_channel.clear()
+	tile_underlying_terrain.clear()
 	if grid_width > 0 and grid_height > 0:
 		var total: int = grid_width * grid_height
 		culture_layer_grid = PackedInt32Array()
@@ -1231,6 +1247,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 				var channel_mask: int = int(tile_dict.get("river_channel", 0))
 				if channel_mask != 0:
 					tile_river_channel[Vector2i(x, y)] = channel_mask
+				# The valley biome the river cut (== terrain on ordinary tiles). Only the shader's navigable
+				# pass reads it, but store every tile that carries it so the navigable_underlying_map fills.
+				if tile_dict.has("underlying_terrain"):
+					tile_underlying_terrain[Vector2i(x, y)] = int(tile_dict["underlying_terrain"])
 				if culture_layer_grid.size() > 0:
 					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
 						var index: int = y * grid_width + x
@@ -4813,6 +4833,7 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	var minor_frac: float = clampf(float(rivers.get("minor_width", RIVER_DEFAULT_MINOR_WIDTH)), 0.01, 1.0)
 	var major_frac: float = clampf(float(rivers.get("major_width", RIVER_DEFAULT_MAJOR_WIDTH)), 0.01, 1.0)
 	var navigable_frac: float = clampf(float(rivers.get("navigable_width", RIVER_DEFAULT_NAVIGABLE_WIDTH)), 0.01, 1.0)
+	var navigable_bank_frac: float = clampf(float(rivers.get("navigable_bank_width", RIVER_DEFAULT_NAVIGABLE_BANK_WIDTH)), 0.0, 1.0)
 	var head_taper_curve: float = clampf(
 		float(rivers.get("head_taper_curve", RIVER_DEFAULT_HEAD_TAPER_CURVE)),
 		RIVER_HEAD_TAPER_CURVE_MIN, RIVER_HEAD_TAPER_CURVE_MAX)
@@ -4830,6 +4851,7 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("river_minor_half_width", minor_frac * radius)  # Minor band half-width (px)
 	m.set_shader_parameter("river_major_half_width", major_frac * radius)  # Major band half-width (px)
 	m.set_shader_parameter("river_navigable_half_width", navigable_frac * radius)  # channel half-width (px)
+	m.set_shader_parameter("river_navigable_bank_half_width", navigable_bank_frac * radius)  # bank skirt beyond the channel (px)
 	m.set_shader_parameter("river_head_taper_curve", head_taper_curve)     # trunk-head swell shape (unitless)
 	m.set_shader_parameter("river_softness", river_soft_frac * radius)     # bank ramp half-width (px)
 	m.set_shader_parameter("river_meander", meander_frac * radius)         # noise wander of the band (px)
@@ -4886,6 +4908,8 @@ func _rebuild_terrain_shader_maps() -> void:
 	river_bytes.resize(w * h * RIVER_MAP_CHANNELS)
 	var river_channel_bytes := PackedByteArray()   # R8: one texel per hex, the 6 exit bits
 	river_channel_bytes.resize(w * h)
+	var navigable_underlying_bytes := PackedByteArray()  # R8: per-hex underlying (valley) terrain id
+	navigable_underlying_bytes.resize(w * h)
 	# Hoist the per-hex-invariant raster fetches + sea-level math out of the double loop:
 	# both the FoW visibility channel and the elevation channel (plus its sea-level rescale
 	# constants) are the same for every hex, so fetch/compute them once here instead of
@@ -4945,6 +4969,10 @@ func _rebuild_terrain_shader_maps() -> void:
 			# The channel-exit mask is only 6 bits, but there is no room left in the RGBA8 above, so it gets
 			# its own R8 texel. It is what the shader arms the trunk's arms from — see RIVER_CHANNEL_MASK.
 			river_channel_bytes[idx] = int(tile_river_channel.get(hex_key, 0)) & RIVER_CHANNEL_MASK
+			# The underlying (valley) biome id the shader swaps in for a navigable hex's base. Falls back to
+			# this hex's own terrain id when the tile carried none — non-navigable texels are don't-care anyway.
+			var underlying_id: int = int(tile_underlying_terrain.get(hex_key, tid))
+			navigable_underlying_bytes[idx] = clampi(underlying_id, 0, 255) if underlying_id >= 0 else 0
 	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
 	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
 	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
@@ -4955,12 +4983,15 @@ func _rebuild_terrain_shader_maps() -> void:
 	_terrain_river_map_tex = ImageTexture.create_from_image(river_img)
 	var river_channel_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, river_channel_bytes)
 	_terrain_river_channel_map_tex = ImageTexture.create_from_image(river_channel_img)
+	var navigable_underlying_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, navigable_underlying_bytes)
+	_terrain_navigable_underlying_map_tex = ImageTexture.create_from_image(navigable_underlying_img)
 	if _terrain_blend_material != null:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
 		_terrain_blend_material.set_shader_parameter("elev_map", _terrain_elev_map_tex)
 		_terrain_blend_material.set_shader_parameter("river_map", _terrain_river_map_tex)
 		_terrain_blend_material.set_shader_parameter("river_channel_map", _terrain_river_channel_map_tex)
+		_terrain_blend_material.set_shader_parameter("navigable_underlying_map", _terrain_navigable_underlying_map_tex)
 	_warn_orphan_navigable_rivers(navigable_hexes)
 
 func _warn_orphan_navigable_rivers(navigable_hexes: Array[Vector2i]) -> void:

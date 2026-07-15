@@ -200,6 +200,7 @@ const RIVER_MOUTH_CROP := Rect2(0.76, 0.42, 0.20, 0.45)   # the mouth: channel �
 # clamped and the head slides off-centre. 3 steps puts the head hex at a few hundred px and still fits.
 const RIVER_JOIN_ZOOM_STEPS := 3   # zoom-in steps before the close-up
 const RIVER_JOIN_CROP_RADII := 1.6 # crop half-size = this × hex_radius → the head hex plus its joins
+const NOTCH_ZOOM_IN := 1.5          # extra zoom for the notch frame so the head-hex channel reads clearly
 # The map is COVER-fit and the fit is the zoom FLOOR (MapView.MIN_ZOOM_FACTOR = 1.0 — you cannot zoom out
 # past it), so on a window wider than the grid's aspect the lowest rows are simply off-screen. The river,
 # its trunk and the lake all live in those lower rows, so the state PANS up (the swim state's idiom) to
@@ -288,6 +289,12 @@ var _river_branch_head := Vector2i(-1, -1)
 # Where _snapshot_rivers put the MID-CHAIN tributary junction (see RIVER_MIDCHAIN_MIN_COL_MARGIN). Reported
 # back for the same reason as the branch head; (-1, -1) if the grid left no room for one.
 var _river_midchain_junction := Vector2i(-1, -1)
+# Where _snapshot_rivers_notch put the head hex whose inflow corner and single exit side flank the SAME
+# vertex — the geometry that used to draw a NOTCH. Reported back so the crop can centre on it.
+var _river_notch_head := Vector2i(-1, -1)
+# Where _snapshot_rivers_lake_alongside put the one-hex inland_sea ringed by navigable hexes that merely
+# run ALONGSIDE it (no channel exits toward the lake) — the @21,61 case the shore-pass mouth test fixes.
+var _river_lake_hex := Vector2i(-1, -1)
 
 func _ready() -> void:
 	get_window().size = Vector2i(1000, 800)
@@ -816,6 +823,48 @@ func _ready() -> void:
 		await _save_crop_px("map_rivers_midchain", mid_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
 	else:
 		push_warning("map_preview: no mid-chain tributary junction placed — hourglass frame skipped")
+	# The NOTCH case, same zoom: a chain HEAD whose tributary hands over at its BOTTOM vertex (corner 1) and
+	# whose single channel exit is the ADJACENT SW side (dir 2) — both flanking the same corner. The old
+	# centre-hub routing drew inflow_corner → centre → exit_mid, which doubled back into a visible NOTCH /
+	# inverted-V at the corner (the tributary looked like it hooked into the wrong corner). Read for: the
+	# tributary flowing SMOOTHLY from its edge ribbon into the channel and straight out the SW exit, with NO
+	# notch/V at the bottom, and the slim bank following the new flow line.
+	_map.display_snapshot(_snapshot_rivers_notch(GRID_W, GRID_H))
+	_map._fit_map_to_view()
+	# Zoom in so the head hex fills the crop — the notch is a small feature at the corner and reads clearly
+	# only with plenty of pixels on the channel.
+	_map._apply_zoom(NOTCH_ZOOM_IN, get_viewport().get_visible_rect().size * 0.5)
+	await _settle()
+	if _river_notch_head.x >= 0:
+		_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+			- _map._hex_center(_river_notch_head.x, _river_notch_head.y, _map.last_hex_radius, _map.last_origin)
+		_map.queue_redraw()
+		await _settle()
+		var notch_center: Vector2 = _map._hex_center(
+			_river_notch_head.x, _river_notch_head.y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_rivers_notch", notch_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
+	else:
+		push_warning("map_preview: no notch head placed — notch frame skipped")
+	# The ALONGSIDE-LAKE case (@21,61), same zoom: a one-hex inland_sea ringed by navigable hexes whose
+	# river_channel exits all point along their own chain / out to the eastern sea — NONE into the lake. The
+	# old shore pass dropped the coast on ANY navigable↔water adjacency, so it ate the lake's beach/foam ring
+	# on those three edges (a hard seam now that the bank renders the valley terrain). The mouth test must now
+	# draw the lake its FULL ring INCLUDING the navigable-adjacent edges. Read for: an unbroken beach/foam ring
+	# around the whole lake, and the navigable valley getting a normal coast against it.
+	_map.display_snapshot(_snapshot_rivers_lake_alongside(GRID_W, GRID_H))
+	_map._fit_map_to_view()
+	_map._apply_zoom(NOTCH_ZOOM_IN, get_viewport().get_visible_rect().size * 0.5)
+	await _settle()
+	if _river_lake_hex.x >= 0:
+		_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+			- _map._hex_center(_river_lake_hex.x, _river_lake_hex.y, _map.last_hex_radius, _map.last_origin)
+		_map.queue_redraw()
+		await _settle()
+		var lake_center: Vector2 = _map._hex_center(
+			_river_lake_hex.x, _river_lake_hex.y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_rivers_lake_alongside", lake_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
+	else:
+		push_warning("map_preview: no alongside lake placed — lake frame skipped")
 	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
 	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
 	# smooth (mipmapped river array) and not shimmering.
@@ -1537,7 +1586,7 @@ func _river_mouth_channel(channel: Dictionary, terrain: Array, last: Vector2i, u
 ## One tile dict per hex carrying ANY of the three river masks — shaped exactly like the native decoder's
 ## tile_to_dict: river_edges by SIDE (2 bits), river_inflow by CORNER (2 bits), river_channel by SIDE
 ## (1 bit). A hex may carry any combination (a trunk head carries all three).
-func _river_tiles(gw: int, masks: Dictionary, inflow: Dictionary, channel: Dictionary) -> Array:
+func _river_tiles(gw: int, terrain: Array, masks: Dictionary, inflow: Dictionary, channel: Dictionary) -> Array:
 	var keys: Dictionary = {}
 	for key: Vector2i in masks:
 		keys[key] = true
@@ -1547,10 +1596,17 @@ func _river_tiles(gw: int, masks: Dictionary, inflow: Dictionary, channel: Dicti
 		keys[key] = true
 	var tiles: Array = []
 	for key: Vector2i in keys:
+		# underlying_terrain is the VALLEY biome the river cut — the wire field the client swaps in for a
+		# navigable hex's base. Ordinary tiles carry their own terrain; a navigable hex (terrain 37) preserves
+		# the underlying land (here the surrounding prairie), so its body reads as the valley with only a slim
+		# bank skirt on the channel, not a whole hex of gravel.
+		var tid: int = int(terrain[key.y * gw + key.x])
+		var underlying: int = RIVER_LAND_ID if tid == RIVER_NAVIGABLE_ID else tid
 		tiles.append({
 			"entity": key.y * gw + key.x,
 			"x": key.x,
 			"y": key.y,
+			"underlying_terrain": underlying,
 			"river_edges": int(masks.get(key, 0)),
 			"river_inflow": int(inflow.get(key, 0)),
 			"river_channel": int(channel.get(key, 0)),
@@ -1737,7 +1793,7 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 	return {
 		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"tiles": _river_tiles(gw, masks, inflow, channel),
+		"tiles": _river_tiles(gw, terrain, masks, inflow, channel),
 		"populations": [],
 		"herds": [],
 	}
@@ -1787,7 +1843,130 @@ func _snapshot_rivers_web(gw: int, gh: int) -> Dictionary:
 	return {
 		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"tiles": _river_tiles(gw, {}, {}, channel),
+		"tiles": _river_tiles(gw, terrain, {}, {}, channel),
+		"populations": [],
+		"herds": [],
+	}
+
+## State "rivers notch" — the render-routing regression guard. A chain HEAD whose tributary hands over at
+## its BOTTOM vertex (corner 1) and whose single channel exit is the ADJACENT SW side (dir 2). Both flank
+## corner 1, so the retired centre-hub routing (inflow spur centre→corner + exit arm centre→edge-midpoint)
+## drew inflow_corner → centre → exit_mid, doubling back into a NOTCH / inverted-V at the corner. The direct
+## inflow-corner → exit-midpoint routing must draw ONE smooth tapered channel with no notch.
+func _snapshot_rivers_notch(gw: int, gh: int) -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(gw * gh)
+	for y in range(gh):
+		for x in range(gw):
+			terrain[y * gw + x] = RIVER_OCEAN_ID if x >= gw - RIVER_OCEAN_COLS else RIVER_LAND_ID
+
+	_river_notch_head = Vector2i(-1, -1)
+	var head := Vector2i(clampi(int(gw * 0.42), 2, gw - RIVER_OCEAN_COLS - 2),
+		clampi(int(gh * 0.42), 2, gh - 3))
+	var exit_nb := _river_neighbor(head.x, head.y, RIVER_DIR_SW, gw, gh)  # the head's single exit side
+	var se := _river_neighbor(head.x, head.y, RIVER_DIR_SE, gw, gh)       # the tributary ribbon's approach
+	if exit_nb.x < 0 or se.x < 0 or exit_nb == se:
+		return {  # grid too small for the topology — render riverless rather than a wrong frame
+			"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
+			"overlays": {"terrain": terrain},
+			"tiles": [], "populations": [], "herds": [],
+		}
+
+	var masks: Dictionary = {}
+	var inflow: Dictionary = {}
+	var channel: Dictionary = {}
+
+	terrain[head.y * gw + head.x] = RIVER_NAVIGABLE_ID
+	# Tributary EDGE ribbon: rides the head's SE side (dir 1, which flanks corner 1) into the bottom vertex,
+	# plus a hop further SE, so a Minor stream visibly arrives at the corner the channel hands over on.
+	_river_set_edge(masks, head.x, head.y, RIVER_DIR_SE, se, RIVER_CLASS_MINOR)
+	var se2 := _river_neighbor(se.x, se.y, RIVER_DIR_SE, gw, gh)
+	if se2.x >= 0 and int(terrain[se2.y * gw + se2.x]) == RIVER_LAND_ID:
+		_river_set_edge(masks, se.x, se.y, RIVER_DIR_SE, se2, RIVER_CLASS_MINOR)
+	# Hand over at the head's BOTTOM vertex (corner 1) — the corner the SW exit side also flanks.
+	inflow[head] = RIVER_CLASS_MINOR << (RIVER_CLASS_BITS * RIVER_TRIB_TERMINUS_CORNER)
+
+	# The trunk leaves through the SW side and runs a short way WEST (away from the tributary) so the head
+	# has exactly ONE exit. The crop shows only the head + immediate joins, so the tail need not reach sea.
+	var path: Array[Vector2i] = [head, exit_nb]
+	terrain[exit_nb.y * gw + exit_nb.x] = RIVER_NAVIGABLE_ID
+	var cur := exit_nb
+	for _i in range(2):
+		var nb := _river_neighbor(cur.x, cur.y, RIVER_DIR_W, gw, gh)
+		if nb.x < 0 or int(terrain[nb.y * gw + nb.x]) != RIVER_LAND_ID:
+			break
+		terrain[nb.y * gw + nb.x] = RIVER_NAVIGABLE_ID
+		path.append(nb)
+		cur = nb
+	for i in range(path.size() - 1):
+		_river_link_channel(channel, path[i], path[i + 1], gw, gh)
+
+	_river_notch_head = head
+	return {
+		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"tiles": _river_tiles(gw, terrain, masks, inflow, channel),
+		"populations": [],
+		"herds": [],
+	}
+
+## State "rivers lake alongside" — the @21,61 case for the shore-pass MOUTH test. A one-hex inland_sea
+## ringed by three navigable hexes (its NW/NE/E neighbours) that form a chain RUNNING ALONGSIDE the lake and
+## draining to the eastern sea — none of their river_channel exits point INTO the lake. The old shore pass
+## dropped the coast on any navigable↔water adjacency, eating the lake's ring there; the mouth test must draw
+## the full ring because none of these edges is a true mouth.
+func _snapshot_rivers_lake_alongside(gw: int, gh: int) -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(gw * gh)
+	for y in range(gh):
+		for x in range(gw):
+			terrain[y * gw + x] = RIVER_OCEAN_ID if x >= gw - RIVER_OCEAN_COLS else RIVER_LAND_ID
+
+	_river_lake_hex = Vector2i(-1, -1)
+	var lake := Vector2i(clampi(int(gw * 0.44), 3, gw - RIVER_OCEAN_COLS - 3),
+		clampi(int(gh * 0.5), 2, gh - 3))
+	# The three navigable neighbours (consecutive ring positions NW→NE→E, so each pair shares an edge and the
+	# three form a contiguous chain), each adjacent to the lake but chained only to EACH OTHER + downstream.
+	var ring_dirs := [RIVER_DIR_NW, RIVER_DIR_NE, RIVER_DIR_E]
+	var nav_cells: Array[Vector2i] = []
+	for d: int in ring_dirs:
+		var c := _river_neighbor(lake.x, lake.y, d, gw, gh)
+		if c.x < 0 or c.x >= gw - RIVER_OCEAN_COLS:
+			return {  # grid too small / too close to the sea for the topology — render riverless
+				"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
+				"overlays": {"terrain": terrain}, "tiles": [], "populations": [], "herds": [],
+			}
+		terrain[c.y * gw + c.x] = RIVER_NAVIGABLE_ID
+		nav_cells.append(c)
+	terrain[lake.y * gw + lake.x] = RIVER_LAKE_ID  # the inland_sea hex, stamped AFTER its ring
+
+	var channel: Dictionary = {}
+	# Chain the three navigable neighbours to each other (consecutive ring positions are edge-adjacent).
+	for i in range(nav_cells.size() - 1):
+		_river_link_channel(channel, nav_cells[i], nav_cells[i + 1], gw, gh)
+	# Drain the east end (E of the lake) further EAST to the open sea, so the chain has a real mouth (which
+	# STAYS excluded — the frame shows the alongside ring AND the open mouth at once).
+	var cur: Vector2i = nav_cells[nav_cells.size() - 1]
+	var path: Array[Vector2i] = [cur]
+	var mouth_col: int = gw - RIVER_OCEAN_COLS - 1
+	var guard := 0
+	while cur.x < mouth_col and guard < gw:
+		guard += 1
+		var nb := _river_neighbor(cur.x, cur.y, RIVER_DIR_E, gw, gh)
+		if nb.x < 0 or int(terrain[nb.y * gw + nb.x]) != RIVER_LAND_ID:
+			break
+		terrain[nb.y * gw + nb.x] = RIVER_NAVIGABLE_ID
+		path.append(nb)
+		cur = nb
+	for i in range(path.size() - 1):
+		_river_link_channel(channel, path[i], path[i + 1], gw, gh)
+	_river_mouth_channel(channel, terrain, path[path.size() - 1], path[path.size() - 2] if path.size() > 1 else path[0], gw, gh)
+
+	_river_lake_hex = lake
+	return {
+		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"tiles": _river_tiles(gw, terrain, {}, {}, channel),
 		"populations": [],
 		"herds": [],
 	}
