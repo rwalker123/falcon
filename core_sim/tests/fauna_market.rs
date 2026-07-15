@@ -191,10 +191,34 @@ fn market_policy_string_round_trips() {
 }
 
 /// Market declines a herd far faster than Surplus and earns far more trade goods.
+///
+/// **A SLOW-breeder claim** (Grazing 2b-ii): Market's `0.20 × biomass` stock-skim only out-depletes
+/// Surplus's `1.6 × MSY` flow-cull when regrowth is slow enough that it can't refill the skim
+/// (`r < 0.25`, given the market fraction + regrow-then-take order). The spawned route-1 game the
+/// harness reuses is now *fast* (rabbit/fowl `r` = 0.35), which OUT-breeds the 20% skim, so Surplus's
+/// steady 60%-over-MSY over-harvest actually depletes a fast breeder FASTER than Market — inverting the
+/// claim (this test failed exactly that way: market 0.383 vs surplus 0.170 remaining). Seat both herds
+/// at a slow-breeder rate to exercise the commercial-cull-crashes-slow-game mechanic the test is about
+/// (bison/whale/mammoth territory). Mirrors `market_hunt_drives_collapse`. Pinning `r` also makes the
+/// comparison deterministic — the previous reliance on the ambient per-species `r` was order-dependent
+/// in the shared test binary.
 #[test]
 fn market_declines_faster_and_earns_more_trade_than_surplus() {
+    /// Below the ~0.25 market-collapse threshold — deer/megafauna, the commercially-hunted slow game.
+    const SLOW_BREEDER_R: f32 = 0.05;
     let mut app = spawn_world();
     let (market_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        for id in [&market_herd, &surplus_herd] {
+            registry
+                .herds
+                .iter_mut()
+                .find(|h| &h.id == id)
+                .unwrap()
+                .regrowth_rate = SLOW_BREEDER_R;
+        }
+    }
     spawn_hunter(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
     spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
 
