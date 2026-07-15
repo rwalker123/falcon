@@ -14,10 +14,11 @@ fn main() {
     })
     .expect("Failed to run flatc");
 
-    // flatc emits non-rustfmt output (2-space indent, over-long lines). Since the
-    // bindings are checked into the repo, an unformatted regeneration otherwise fails
-    // CI's `cargo fmt --check`. Format in place with the crate edition so the result
-    // matches `cargo fmt`. Best-effort: a missing rustfmt only warns, never fails the build.
+    // flatc emits non-rustfmt output (2-space indent, over-long lines). The bindings are
+    // generated into OUT_DIR (git-ignored, regenerated every build — NOT checked in) and
+    // `include!`d, so format them in place with the crate edition so the generated code
+    // reads cleanly and matches `cargo fmt` if ever inspected. Best-effort: a missing
+    // rustfmt only warns, never fails the build.
     let generated = out_dir.join("snapshot_generated.rs");
     match Command::new("rustfmt")
         .args(["--edition", "2021"])

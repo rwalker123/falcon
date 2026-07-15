@@ -264,6 +264,20 @@ pub struct HerdTelemetryState {
     /// with it. It recovers when fed again (it never despawns and never loses the pen).
     #[serde(default = "pen_fully_fed")]
     pub pen_fed_fraction: f32,
+    /// **The herd's current derived carrying capacity K** (`Herd::carrying_capacity`), recomputed each
+    /// turn from the graze its range yields (Grazing Phase 2b-ii). For a mobile herd this is the
+    /// ecological K; for a penned herd it is the pen-time frozen value. With `biomass` the client shows
+    /// "caps at ~K on this range" and flags overgrazing as `biomass > carrying_capacity`. Derived at
+    /// capture. Appended (append-only wire).
+    #[serde(default)]
+    pub carrying_capacity: f32,
+    /// The hex radius of the herd's grazing range (`Herd::graze_range_radius`: small game `0`, big game
+    /// `1`, migratory `loiter_radius`) — the exact ring the sim grazes/derives K over. Exported as the
+    /// radius the sim uses (not from `size_class`, since migratory depends on `loiter_radius`, absent
+    /// from the wire) so the client reproduces it with `hex_range_tiles`. Derived at capture. Appended
+    /// last.
+    #[serde(default)]
+    pub graze_range_radius: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -295,6 +309,8 @@ impl Default for HerdTelemetryState {
             hunt_trip_estimates: Vec::new(),
             pen_upkeep: 0.0,
             pen_fed_fraction: pen_fully_fed(),
+            carrying_capacity: 0.0,
+            graze_range_radius: 0,
         }
     }
 }
@@ -436,6 +452,17 @@ pub struct HerdState {
     /// investment.
     #[serde(default)]
     pub corral_progress: f32,
+    /// Per-species fodder demand per unit biomass (Grazing Phase 2b-i), cached on the live `Herd` at
+    /// spawn from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire)
+    /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.
+    #[serde(default)]
+    pub fodder_per_biomass: f32,
+    /// Per-species **wild logistic regrowth rate** (Grazing Phase 2b-ii), cached on the live `Herd` at
+    /// spawn from its `SpeciesDef` (falling back to the global wild rate when the row omits it).
+    /// Round-tripped here (sim-side rollback only, not on the client wire) so a rollback restores the
+    /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
+    #[serde(default)]
+    pub regrowth_rate: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -1634,6 +1661,15 @@ pub struct PopulationCohortState {
     /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
     #[serde(default)]
     pub pen_feed_upkeep: f32,
+    /// One worker's carry contribution to a hunt expedition's haul
+    /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
+    /// [`Self::max_expedition_party_size`] / `expedition_viability_warn_turns` /
+    /// `hunt_per_worker_provisions`), populated for **every** cohort since the outfit UI lives on the
+    /// resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
+    /// `party_workers × expedition_per_worker_carry` (the carry cap the pack fills to before
+    /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
+    #[serde(default)]
+    pub expedition_per_worker_carry: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -3110,6 +3146,9 @@ fn create_herds<'a>(
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 huntPolicyCeilings: hunt_policy_ceilings,
                 huntTripEstimates: hunt_trip_estimates,
+                // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
+                carryingCapacity: herd.carrying_capacity,
+                grazeRangeRadius: herd.graze_range_radius,
             },
         );
         entries.push(entry);
@@ -3613,6 +3652,7 @@ fn create_populations<'a>(
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
+                    expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                 },
             )
         })
@@ -4750,8 +4790,8 @@ mod tests {
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
 
-    /// A herd that is **not** penned eats nothing and is never starving — and an older snapshot with
-    /// neither field decodes to the same neutral pair (the `= 0` / `= 1` schema defaults).
+    /// A herd that is **not** penned eats nothing and is never starving — it decodes to the neutral
+    /// pair (the `= 0` / `= 1` schema defaults).
     #[test]
     fn an_unpenned_herd_defaults_to_no_upkeep_and_fully_fed() {
         let snapshot = snapshot_with_herd(HerdTelemetryState {

@@ -1378,7 +1378,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **`pending`** = a state of the ORDER (composed locally, not yet acknowledged; it rides on ANY row,
     is a modifier rather than a phase member, wins the glyph slot with `○`, and keeps the amber label
     tint). The policy glyph is read off the assignment's `policy` field (populated for forage too); an
-    older snapshot with no policy falls back to no glyph. **Each source row headlines its per-turn food yield**
+    an assignment whose policy is unset falls back to no glyph. **Each source row headlines its per-turn food yield**
     (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
     `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
     (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
@@ -1391,7 +1391,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **orthogonal to the ⚠ overdraw flag** and deliberately NOT the same glyph: overdraw is *ecological*
     (taking past regrowth), overstaffing is *labor* (wasted workers) — a source can be overstaffed while
     perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed
-    == 0` (rehydrated/older snapshot, or a pending optimistic assign) means "unknown" → no note, never a
+    == 0` (rehydrated, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one.
     **ONE yield row per rung — each rung gets the row that informs ITS decision, never both.** On the
     **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the same per-turn number PLUS
@@ -1737,7 +1737,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
     Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
-    `per_worker_yield == 0` (dead-season tile, or an older snapshot with no forecast fields) → no row,
+    `per_worker_yield == 0` (a dead-season tile) → no row,
     no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
     `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
     expedition accumulates toward a carry cap over several turns of travel, so the herd's per-turn
@@ -1804,6 +1804,46 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
   / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
   is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
+- **Herd grazing range + carrying capacity** (Grazing Phase 2b-iii; `docs/plan_grazing_2b.md` §8,
+  `core_sim` Phase 2b-ii — K becomes ecological): make the ecological carrying-capacity model
+  *visible*, so the player sees WHY a herd is the size it is. Two wire fields on `HerdTelemetryState`
+  (appended after `penFedFraction`), decoded in `native/src/lib.rs herds_to_array` (both snapshot +
+  delta share it): **`carryingCapacity`** → `carrying_capacity` (the herd's CURRENT derived K, what it
+  caps at on its range) and **`grazeRangeRadius`** → `graze_range_radius` (the hex radius of its
+  grazing range: small game 0, big game 1, migratory = its loiter_radius). Surfaced two ways:
+  - **Herd drawer rows** (`Hud._herd_summary_lines`): the **`Biomass`** row carries the herd's CURRENT
+    head vs the K its range supports as a **`current / max` pair** — **`Biomass: 1480 / 2150`** — the
+    same convention the forage patch (`Forage biomass: 84 / 120`) and the tile card (`Pasture: 236 /
+    240`) use, so a herd reads like the other food stocks. The old standalone `Carrying cap: ~K` row was
+    merged INTO it and removed; the `~` is dropped because a `current / max` pair already implies the max
+    is the derived ceiling. A separate **`Range: N tiles`** row stays (the ground the herd grazes — the
+    hex-disk count `1 + 3r(r+1)` via `_graze_range_label`: radius 0 → "Range: 1 tile" singular, 1 → 7, 2
+    → 19; the SAME count the map ring draws; key ≤ 16 chars so `_split_detail_kv` aligns it as a table
+    row beside Biomass). **Overgrazing is a FEATURE of the pair:** an overgrazed herd has `biomass > K`,
+    so the row honestly reads `current > max` (e.g. **`Biomass: 2100 / 1352`**), and when `biomass >
+    carrying_capacity × (1 + OVERGRAZE_EPSILON)` a WARN-amber full-width **`⚠ Overgrazing — range can't
+    sustain this herd`** row appears beneath (a `_format_detail_bbcode` branch tinting the sentence with
+    the shared `HudStyle.WARN_HEX` — NOT a parallel styling path). The ⚠ row carries the overgrazing
+    signal; the merged value is deliberately left un-tinted (tinting it too was rendered and rejected as
+    a noisy double-up). This is a **trivial honest comparison of two sim-provided numbers**, never a
+    re-derivation of the ecology model (K and graze flow are the sim's). **Guards:** `carrying_capacity
+    <= 0` (a herd momentarily on barren range derives K = 0) falls back to the bare `Biomass: X` (never
+    `X / 0`) and suppresses the overgrazing test; a **corralled** herd (doesn't roam-graze a range)
+    suppresses the Range row + overgrazing test entirely (its K is a frozen pen-time value), but keeps
+    the merged `Biomass: X / Y` pair.
+  - **Map range ring** (`MapView._draw_herd_range_highlights`, drawn from `_draw` when a herd is
+    selected, under the herd markers): the tiles within `graze_range_radius` of the herd — the EXACT
+    ring the sim grazes / derives K over — as a warm graze-amber FILLED region + gold tile outlines
+    (`HERD_RANGE_FILL` / `HERD_RANGE_OUTLINE`), deliberately DISTINCT from the band work-range ring's
+    faint cyan (a herd's range is a different thing, and both can be on at once) and readable over the
+    Pasture overlay (so the ring sits on the actual graze). Reuses the band ring's odd-r `_hex_distance`
+    / `_band_effective_col` (seam-wrapped) / `_fill_hex` / `_outline_hex` primitives. `graze_range_radius
+    == 0` (small game) → the herd's own single tile. A **corralled** herd draws nothing. Fog-gated via
+    `_is_tile_visible` like the herd marker.
+  - Verify: ui_preview `herd_grazing_healthy` (`Biomass: 1480 / 2150`, current < max, no warning) /
+    `herd_overgrazing` (`Biomass: 2100 / 1352`, current > max → the ⚠ row) / `herd_grazing_small_game`
+    (radius 0 → "Range: 1 tile") / `herd_domesticated` (the penned case: `Biomass: X / Y` with NO Range
+    row and no ⚠); map_preview `map_pasture_herd_range` (the gold ring over the Pasture overlay).
 - **Clear-all / move-band** (`Hud.gd`, Early-Game Labor slice 3b): the single-task
   Scout/Cancel affordance + its optimistic `_pending_transition_bands` machinery were
   **retired** with the labor-allocation model. There is no longer a band-global task to
@@ -1981,7 +2021,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
   `band_pen_starving` (part-paid feed, net −0.53 red). The breakdown **auto-shows when food is concerning** (`_food_is_concerning`:
   net-negative OR runway below the warn threshold, mirroring `_morale_is_concerning`), else it's
-  collapsed but reachable via the click. Older snapshot / no flow → the bare `Food N (D days)` line,
+  collapsed but reachable via the click. No flow → the bare `Food N (D days)` line,
   no net/disclosure. **The Food + Morale rows share ONE disclosure mechanism** (see "Band morale
   readout" for the shared helpers) — see `_register_disclosure` / `_on_detail_meta_clicked` /
   `_breakdown_open_for` / `_breakdown_expanded`. (The label + click are wired on BOTH the Occupants-card
@@ -2232,6 +2272,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `forecast_horizon_turns` (`turns_to_fill == 0`) — a "can't fill" verdict, **not** a collapsed herd: a
   thriving herd whose yield is too slow for this party's packs lands here too. The click still commits
   (information, not a gate).
+  **The forecast also shows the HAUL — the food a filled pack delivers** (`HUNT_FORECAST_HAUL_FORMAT`,
+  ` · ~%d food`): the whole point of the party stepper is a tradeoff (a bigger party climbs the turns
+  AND the food it brings home), and turns-only hid the upside. The haul = `party_workers ×
+  expedition_per_worker_carry` — the same **blessed party×lever arithmetic as the band ceiling**, NOT
+  the ecology/turns-to-fill lookup the expedition discipline protects. It is computed in
+  `_hunt_trip_forecast` (which already has band + party) and rides the returned dict as `haul`, so the
+  shared `_hunt_forecast_line_bbcode` renders it identically at **both** entry points (banner + herd
+  panel). Shown ONLY when the pack **fills** (viable → `≈6 turns to fill · ~16 food`; too-slow →
+  `⚠ … ≈54 turns to fill · ~16 food — too slow to be worth sending`); **omitted** on the won't-fill and
+  denial states — those packs never reach the cap, so a haul there would be a lie. `expedition_per_worker_carry`
+  (`PopulationCohortState.expeditionPerWorkerCarry`, shipped 4.0) is decoded in `native/src/lib.rs`
+  beside the other expedition levers and flowed onto the MapView unit marker / covered by
+  `marker_field_guard`; **absent/0 → no `haul` key → the turns line renders alone** (live guard, no divide).
   **The client does ZERO arithmetic for an expedition's trip — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
@@ -2261,7 +2314,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
   client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
   that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
-  levers (older snapshot) → no forecast line, banner unchanged.
+  levers absent → no forecast line, banner unchanged.
   `SEND_HUNT_POLICY_HINTS["sustain"]` was rewritten when Sustain became the MSY *flow* (it used to
   promise "one conservative harvest"). ui_preview states `hunt_forecast_viable` /
   `hunt_forecast_not_viable` / `hunt_forecast_never_fills` + `expedition_launch_policy_sustain` (dock

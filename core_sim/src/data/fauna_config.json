@@ -1,4 +1,5 @@
 {
+  "_comment_species_regrowth_rate": "PER-SPECIES WILD REGROWTH RATE r (Grazing Phase 2b-ii) — the logistic breeding rate a WILD herd of this species grows at, replacing the retired single global ecology.regrowth_rate (0.05) that bred every animal — rabbit and mammoth alike — at the same rate. That uniform rate was the artifact behind PR #117's 'small game can't provision an expedition': a rabbit warren's MSY (= r*K/4) was crippled by a megafauna's r. Now fast small game breeds hot and slow megafauna cold: rabbit/fowl 0.35, deer/boar 0.10, migratory (mammoth/steppe_runner/marsh_grazer) 0.04. Only WILD herds read this; the pastoral (0.25) and pen (0.90) husbandry rungs keep their own faster r (fauna::herd_ecology), and the phase bands stay shared. STARTING ANCHORS — measure and retune (docs/plan_grazing_2b.md §5). NOTE the ladder tension this creates for fast breeders: a wild rabbit's r=0.35 EXCEEDS the pastoral rung's 0.25, so taming a rabbit is a growth DOWNGRADE — flagged for the 2d pen/pastoral retune, not fixed here.",
   "species": {
     "mammoth": {
       "display_name": "Thunder Mammoths",
@@ -9,7 +10,9 @@
       "host_biomes": ["boreal_arctic", "montane_highland"],
       "dwell_turns": 1,
       "loiter_turns": [14, 26],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.011,
+      "regrowth_rate": 0.04
     },
     "steppe_runner": {
       "display_name": "Steppe Runners",
@@ -20,7 +23,9 @@
       "host_biomes": ["savanna_grassland"],
       "dwell_turns": 1,
       "loiter_turns": [12, 22],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.05,
+      "regrowth_rate": 0.04
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
@@ -31,7 +36,9 @@
       "host_biomes": ["wetland_swamp", "riverine_delta"],
       "dwell_turns": 1,
       "loiter_turns": [12, 22],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.03,
+      "regrowth_rate": 0.04
     },
     "deer": {
       "display_name": "Red Deer",
@@ -40,7 +47,9 @@
       "route_len": [2, 3],
       "biomass": [600, 1200],
       "host_biomes": ["temperate_forest", "mixed_woodland", "savanna_grassland"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.05,
+      "regrowth_rate": 0.10
     },
     "boar": {
       "display_name": "Wild Boar",
@@ -49,7 +58,9 @@
       "route_len": [2, 3],
       "biomass": [500, 1000],
       "host_biomes": ["temperate_forest", "mixed_woodland", "wetland_swamp"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.06,
+      "regrowth_rate": 0.10
     },
     "rabbit": {
       "display_name": "Rabbit Warren",
@@ -58,7 +69,9 @@
       "route_len": [1, 1],
       "biomass": [80, 200],
       "host_biomes": ["savanna_grassland", "semi_arid_scrub", "temperate_forest"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.10,
+      "regrowth_rate": 0.35
     },
     "fowl": {
       "display_name": "Wild Fowl",
@@ -67,7 +80,9 @@
       "route_len": [1, 1],
       "biomass": [60, 160],
       "host_biomes": ["wetland_swamp", "riverine_delta", "coastal_littoral"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.09,
+      "regrowth_rate": 0.35
     }
   },
   "abundance": {
@@ -191,6 +206,8 @@
       "extinction_floor": 0.0
     },
     "_comment_reseed_floor_fraction": "The exact mirror of forage.reseed_floor_fraction. Grass reseeds from the surrounding ground, so GRAZE IS NEVER PERMANENTLY DEAD: an eaten-out tile is lifted to this small standing crop before regrowth each turn and recovers via the normal logistic curve, instead of sticking at 0 forever (logistic_regrowth(0, ..) == 0). Kept BELOW collapse_fraction (validated) so a stripped pasture still reads Collapsing — the floor stops permanent death, it does not hide overgrazing.",
-    "reseed_floor_fraction": 0.02
+    "reseed_floor_fraction": 0.02,
+    "_comment_overgraze_escapement_fraction": "THE OVERGRAZING ESCAPEMENT FLOOR (Grazing 2b-ii). Grazing (advance_herd_grazing) may draw a patch down to this fraction of capacity but NO LOWER in a turn. This is the constant-ESCAPEMENT discipline that makes the coupled herd<->graze system converge (docs/plan_grazing_2b.md §2.2 — the same lesson the corral learned when constant-catch MSY was unstable). WHY: the herd's demand (fodder*B) is a constant-CATCH draw on the graze, and a catch that strips a patch past the point where its regrowth can refill the offtake collapses the range into a permanently-stripped attractor at the reseed floor — the herd surviving as a stunted remnant on dead ground (MEASURED: at the bare 0.02 reseed floor an overgrazed rabbit range locks at graze 2.8% / herd 11% of K; at this 0.25 floor it recovers to graze ~38% / herd ~95% of K). Bounds K below at graze_sustainable_flow(0.25*cap)/fodder ≈ 0.84*K_max, so overgrazing can shrink a herd by at most ~16% — a MODEST but stable force; LOWER this for more dramatic overgrazing at rising crash risk. Validated: > reseed_floor_fraction (a real escapement, not just the reseed lift) and < 0.5 (the graze MSY point — overgrazing below the most-productive intensity stays possible and visible). STARTING ANCHOR — measure and retune (grazing_2b_convergence.rs).",
+    "overgraze_escapement_fraction": 0.25
   }
 }

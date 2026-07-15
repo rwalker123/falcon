@@ -537,6 +537,14 @@ const HUNT_WORKED_RING_FACTOR := 0.62   # of hex radius
 const HUNT_WORKED_RING_WIDTH := 3.0
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
+# Selected-herd GRAZING RANGE (Grazing Phase 2b-iii): the tiles within `graze_range_radius` of the herd
+# — the EXACT ring the sim grazes and derives its carrying capacity K over — as a filled region + tile
+# outlines. Warm graze amber, deliberately DISTINCT from the band work-range ring's faint cyan (a herd's
+# range is a different thing, and both can be on at once) and readable OVER the Pasture overlay, so the
+# ring sits on the actual graze the herd lives on. radius 0 (small game) = the herd's own single tile.
+const HERD_RANGE_FILL := Color(0.82, 0.55, 0.14, 0.22)     # warm graze amber, translucent region
+const HERD_RANGE_OUTLINE := Color(0.96, 0.72, 0.24, 0.80)  # gold rim on each range tile
+const HERD_RANGE_OUTLINE_WIDTH := 2.0
 # On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
 # (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
@@ -1422,6 +1430,10 @@ func _draw() -> void:
 	# exception — they are queued here and flushed at the very end of _draw (see _flush_yield_labels).
 	_draw_band_work_highlights(radius, origin)
 
+	# Selected herd: its grazing range (the ground that sets its carrying capacity), drawn over the
+	# tile tints / Pasture overlay but under the herd markers so the animal still reads on top.
+	_draw_herd_range_highlights(radius, origin)
+
 	_draw_supply_links(radius, origin)
 	_draw_primary_bands(radius, origin)
 
@@ -2237,6 +2249,44 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	#    (possibly seam-crossing) path the sim actually takes. Works for bands AND expeditions.
 	_draw_travel_destination(band, band_col, band_row, eff_col, band_center, radius, origin)
 
+## Draw the selected herd's GRAZING RANGE — the hex tiles within `graze_range_radius` of its tile — as
+## a filled + outlined region (Grazing Phase 2b-iii). This is the EXACT ring the sim grazes / derives K
+## over, so the player sees the ground that sets the herd's carrying capacity; over the Pasture overlay
+## it sits on the actual graze. `graze_range_radius == 0` (small game) → the herd's own single tile.
+## Reuses the same hex-distance / fill / outline primitives as the band work-range ring (styled
+## distinctly). A CORRALLED herd draws NOTHING — a penned herd doesn't roam-graze a range.
+func _draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
+	if selected_herd_id == "":
+		return
+	var herd := _herd_by_id(selected_herd_id)
+	if herd.is_empty():
+		return
+	if bool(herd.get("corralled", false)):
+		return
+	var x := int(herd.get("x", -1))
+	var y := int(herd.get("y", -1))
+	if x < 0 or y < 0:
+		return
+	if not _is_tile_visible(x, y):
+		return
+	var range_radius := int(herd.get("graze_range_radius", 0))
+	# Render in the herd's wrapped column frame so the ring stays contiguous across the seam (mirrors
+	# the band work-range ring). A ±range_radius col/row bounding box is a superset of the hex disc;
+	# keep only tiles whose true odd-r hex distance from the herd is within range (radius 0 → its tile).
+	var eff_col := _band_effective_col(x, radius, origin)
+	for drow in range(-range_radius, range_radius + 1):
+		var row := y + drow
+		if row < 0 or row >= grid_height:
+			continue
+		for dcol in range(-range_radius, range_radius + 1):
+			var col := eff_col + dcol
+			if _hex_distance(eff_col, y, col, row) > range_radius:
+				continue
+			if not _wrap_horizontal and (col < 0 or col >= grid_width):
+				continue
+			_fill_hex(col, row, radius, origin, HERD_RANGE_FILL)
+			_outline_hex(col, row, radius, origin, HERD_RANGE_OUTLINE, HERD_RANGE_OUTLINE_WIDTH)
+
 ## Draw the dashed-amber pending overlay for a band: pending forage tiles, pending hunted herds
 ## (dashed ring + dashed link), and a pending move destination (dashed tile + dashed link).
 func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col: int, band_center: Vector2, radius: float, origin: Vector2) -> void:
@@ -2976,6 +3026,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				# rate, which IS arithmetic. Band = flow arithmetic; expedition = lookup.
 				"hunt_per_worker_provisions": float(entry.get("hunt_per_worker_provisions", 0.0)),
 				"expedition_viability_warn_turns": int(entry.get("expedition_viability_warn_turns", 0)),
+				# Per-worker carry: the pre-launch forecast shows the HAUL a filled pack delivers as
+				# party × this lever (the same blessed party×lever arithmetic as the band ceiling, NOT
+				# the turns-to-fill lookup). 0 when absent → no haul rendered.
+				"expedition_per_worker_carry": float(entry.get("expedition_per_worker_carry", 0.0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})

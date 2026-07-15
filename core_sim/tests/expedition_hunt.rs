@@ -13,9 +13,9 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, hunt_policy_ceiling, hunt_take,
-    hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
+    advance_expeditions, advance_herds, build_headless_app, herd_ecology, hunt_policy_ceiling,
+    hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
     CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
@@ -140,6 +140,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_one(),
+        last_food_consumption: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),
@@ -339,9 +340,15 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
     let _party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    // A wild herd → the wild ecology (the shared `herd_ecology` mapping; a tamed/penned herd would
-    // resolve to the pastoral/pen curve instead).
-    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &fauna.ecology, &fauna);
+    // A wild herd → the wild ecology **at this herd's per-species regrowth rate** (Grazing 2b-ii:
+    // `herd_ecology` folds the cached per-species `r` into the wild curve; a tamed/penned herd would
+    // resolve to the pastoral/pen curve instead). Read it from the herd, never `&fauna.ecology` — the
+    // whole point of `herd_ecology` being THE seam is that the expedition take reads the same rate.
+    let ecology = {
+        let registry = app.world.resource::<HerdRegistry>();
+        herd_ecology(registry.find(&id).expect("herd present"), &fauna)
+    };
+    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &ecology, &fauna);
     assert!(expected > 0.0, "a half-capacity herd has a positive MSY");
 
     app.world.run_system_once(advance_expeditions);
@@ -697,6 +704,10 @@ fn exported_hunt_trip_estimates_match_a_real_party_run() {
         cohort.expedition_viability_warn_turns, cfg.hunt.viability_warn_turns,
         "the exported viability threshold must be the config lever the sim warns on"
     );
+    assert_eq!(
+        cohort.expedition_per_worker_carry, cfg.hunt.per_worker_carry,
+        "the exported per-worker carry must be the config lever the client multiplies for the pre-launch HAUL"
+    );
 
     // Snapshot every herd's pre-trip state up front: a real party run advances the ecology of EVERY
     // herd (and despawns the collapsing one), so a baseline read lazily mid-sweep would be stale — or
@@ -975,10 +986,16 @@ fn party_fills_on_the_forecast_turn() {
         }
 
         if actual.is_some() {
-            assert_eq!(
+            // A full pack ends the *hunting* leg — the party turns for home. It may already have
+            // reached it and begun `Delivering` by the fill turn (Grazing 2b-ii makes small game a
+            // genuinely fast provisioner — rabbit `r` = 0.35 refills the pack quickly — so the
+            // small/Market leg, which under the old uniform `r` = 0.05 never filled inside the horizon
+            // at all, now not only fills but can conclude the whole trip). Either post-hunt phase
+            // satisfies "the trip completes"; only staying in `Hunting` would be the failure.
+            assert_ne!(
                 phase(&app, party),
-                ExpeditionPhase::Returning,
-                "{context}: a full pack completes the trip"
+                ExpeditionPhase::Hunting,
+                "{context}: a full pack completes the trip (it is no longer hunting)"
             );
         }
     }

@@ -2817,6 +2817,7 @@ fn spawn_population_entity(
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
+        last_food_consumption: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
@@ -3535,12 +3536,13 @@ pub fn simulate_population(
 
         // Demographic model: consume the band's local food, then resolve deaths, births,
         // maturation, and aging (see `advance_demographics`).
+        let food_before = cohort.stores.get(FOOD);
         let outcome = advance_demographics(
             DemographicState {
                 children: cohort.children,
                 working: cohort.working,
                 elders: cohort.elders,
-                food_store: cohort.stores.get(FOOD),
+                food_store: food_before,
             },
             temp_diff,
             max_cap_scalar,
@@ -3550,6 +3552,11 @@ pub fn simulate_population(
         cohort.working = outcome.working;
         cohort.elders = outcome.elders;
         cohort.stores.set(FOOD, outcome.food_store);
+        // The food the people ACTUALLY ate this turn = the larder drop across `advance_demographics`
+        // (consumption is its only `food_store` debit). This is the ledger's consumption term — it
+        // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
+        // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
+        cohort.last_food_consumption = (food_before - outcome.food_store).to_f32();
         cohort.sync_size();
 
         // A band's population only emigrates once it has settled for a while — this gates the
@@ -3948,7 +3955,7 @@ pub fn advance_expeditions(
                         // ladder's rung → growth-rate mapping (`herd_ecology` / `herd_capacity`); a
                         // party hunting a tamed or penned herd draws on *its* curve, not the wild one.
                         let carrying_capacity = herd_capacity(&herds.herds[idx], &fauna);
-                        let ecology = herd_ecology(&herds.herds[idx], &fauna).clone();
+                        let ecology = herd_ecology(&herds.herds[idx], &fauna);
                         let cap = scalar_from_f32(workers as f32 * cfg.hunt.per_worker_carry);
                         let in_reach = crate::grid_utils::hex_distance_wrapped(
                             exp_pos,
@@ -4345,7 +4352,7 @@ pub fn hunt_take(
         policy,
         herd.biomass,
         herd_capacity(herd, fauna),
-        herd_ecology(herd, fauna),
+        &herd_ecology(herd, fauna),
         fauna,
     );
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
@@ -4461,10 +4468,10 @@ fn hunt_trip_provisions_bound(
     // against the wild curve would under-estimate it and could reject a trip that WOULD have filled.
     let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
-    let peak_regrowth = fauna::peak_regrowth(capacity, ecology).max(0.0) as f64;
+    let peak_regrowth = fauna::peak_regrowth(capacity, &ecology).max(0.0) as f64;
     let throughput =
         horizon * workers as f64 * labor.hunt.per_worker_biomass_capacity.max(0.0) as f64;
-    let ecology_bound = match hunt_expedition_floor(policy, capacity, ecology) {
+    let ecology_bound = match hunt_expedition_floor(policy, capacity, &ecology) {
         None => horizon * peak_regrowth,
         Some(floor) => (herd.biomass - floor).max(0.0) as f64 + horizon * peak_regrowth,
     };
@@ -4586,7 +4593,7 @@ fn simulate_hunt_trip(
             policy,
             quarry.biomass,
             capacity,
-            ecology,
+            &ecology,
             fauna,
         )
         .min(carry_room_biomass.max(0.0));
@@ -5050,7 +5057,7 @@ pub fn advance_labor_allocation(
                     let sustainable = sustainable_yield(
                         biomass_before,
                         herd_capacity(herd, &fauna),
-                        herd_ecology(herd, &fauna),
+                        &herd_ecology(herd, &fauna),
                     ) * hunt.provisions_per_biomass
                         * mult_f;
                     // Overstaffing: invert the biomass take by the per-hunter throughput (hunt has no
@@ -7018,6 +7025,7 @@ mod wellbeing_tests {
             elders: scalar_zero(),
             stores: LocalStore::new(),
             morale: m,
+            last_food_consumption: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
@@ -7290,6 +7298,8 @@ mod labor_yield_tests {
             vec![UVec2::new(0, 0)],
             biomass,
             CAP,
+            0.0,
+            fauna.ecology.regrowth_rate,
         );
         herd.refresh_ecology_phase(&fauna);
         drop(fauna);
@@ -7325,6 +7335,7 @@ mod labor_yield_tests {
                     elders: scalar_zero(),
                     stores: LocalStore::new(),
                     morale: scalar_one(),
+                    last_food_consumption: 0.0,
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),
@@ -7502,12 +7513,7 @@ mod labor_yield_tests {
 
     /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
     fn cultivate_source_patch(world: &mut World, biomass: f32) {
-        let ecology = world
-            .resource::<LaborConfigHandle>()
-            .get()
-            .forage
-            .ecology
-            .clone();
+        let ecology = world.resource::<LaborConfigHandle>().get().forage.ecology;
         let mut registry = world.resource_mut::<ForageRegistry>();
         let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
         patch.cultivation_progress = 1.0;
@@ -7520,12 +7526,7 @@ mod labor_yield_tests {
     /// `workers_needed` overstaffing tests, which need a full patch so the per-policy biomass-fraction
     /// ceiling binds rather than the seeded half-cap stock.
     fn set_wild_patch_biomass(world: &mut World, biomass: f32) {
-        let ecology = world
-            .resource::<LaborConfigHandle>()
-            .get()
-            .forage
-            .ecology
-            .clone();
+        let ecology = world.resource::<LaborConfigHandle>().get().forage.ecology;
         let mut registry = world.resource_mut::<ForageRegistry>();
         let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
         patch.biomass = biomass;
@@ -8470,6 +8471,9 @@ mod hunt_trip_bound_tests {
     const BIOMASS_FRACTIONS: [f32; 10] = [0.0, 0.01, 0.02, 0.1, 0.149, 0.15, 0.16, 0.5, 0.9, 1.0];
     /// Party sizes: 0 (no pack) through one past `max_party_size`.
     const WORKER_SWEEP: std::ops::RangeInclusive<u32> = 0..=9;
+    /// The sweep's wild herds breed at the builtin wild rate (`fauna.ecology.regrowth_rate`), so the
+    /// sweep's `sustainable_yield(&fauna.ecology)` expectations match the herd's per-species curve.
+    const WILD_SWEEP_REGROWTH_RATE: f32 = 0.05;
 
     fn herd(cap: f32, biomass: f32, domesticated: bool) -> Herd {
         let mut herd = Herd::new(
@@ -8479,6 +8483,8 @@ mod hunt_trip_bound_tests {
             vec![UVec2::new(1, 1)],
             biomass,
             cap,
+            0.0,
+            WILD_SWEEP_REGROWTH_RATE,
         );
         if domesticated {
             herd.domestication_progress = 1.0;

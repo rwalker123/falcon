@@ -3154,7 +3154,7 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}`:
         //   turns_to_fill == 0  → does not fill within the forecast horizon ("won't fill", not an ETA)
         //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
-        // Empty for a non-huntable herd; absent on an older snapshot (the HUD then shows no forecast).
+        // Empty for a non-huntable herd (the HUD then shows no forecast).
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
             for estimate in estimates {
@@ -3208,6 +3208,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // MapView's herd marker (a starving pen's glyph tints DANGER).
         let _ = dict.insert("pen_upkeep", herd.penUpkeep());
         let _ = dict.insert("pen_fed_fraction", herd.penFedFraction());
+        // Ecological carrying capacity + grazing range (Grazing Phase 2b-iii). `carrying_capacity` is
+        // the herd's CURRENT derived K (what it caps at on its range); `graze_range_radius` is the hex
+        // radius of that range (small game 0, big game 1, migratory = its loiter_radius). The herd
+        // drawer reads them for the "Carrying capacity" / "Range" rows + the honest overgrazing test
+        // (`biomass > carrying_capacity`), and MapView draws the EXACT ring the sim grazes over.
+        let _ = dict.insert("carrying_capacity", herd.carryingCapacity());
+        let _ = dict.insert("graze_range_radius", herd.grazeRangeRadius() as i64);
         array.push(&dict.to_variant());
     }
     array
@@ -3942,7 +3949,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
             // capped by its policy ceiling / resource biomass, so the surplus workers idled here.
             // The allocation row surfaces that as the "only N of M working" overstaffing note.
-            // 0 on a rehydrated save / older snapshot ⇒ the note degrades to hidden, never wrong.
+            // 0 on a rehydrated save ⇒ the note degrades to hidden, never wrong.
             let _ = entry.insert("workers_needed", assignment.workersNeeded() as i64);
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
@@ -4030,6 +4037,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_viability_warn_turns",
         cohort.expeditionViabilityWarnTurns() as i64,
+    );
+    // Per-worker carry the pack fills to: an expedition delivers `party_workers ×
+    // expeditionPerWorkerCarry` food when it fills. This IS a display number the client may multiply
+    // by the party size (the same blessed party×lever arithmetic as the band ceiling — NOT the
+    // ecology/turns-to-fill lookup the expedition discipline protects), used to show the pre-launch
+    // HAUL beside the turns-to-fill forecast. 0 when absent.
+    let _ = dict.insert(
+        "expedition_per_worker_carry",
+        f64::from(cohort.expeditionPerWorkerCarry()),
     );
 
     if let Some(access) = cohort.accessibleStockpile() {

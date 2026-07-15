@@ -243,14 +243,11 @@ const ROSTER_ROW_H_PADDING := 10.0
 const ROSTER_ACCENT_WIDTH := 3.0
 const ROSTER_HEADER_FONT_SIZE := 10
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
-# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior. `harvest` /
-# `follow` are retained for older snapshots but the live enum emits forage/hunt.
+# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
 const ACTIVITY_GLYPHS := {
     "idle": "·",
     "forage": "🌾",
-    "harvest": "🌾",
     "hunt": "🏹",
-    "follow": "🦌",
     "scout": "🧭",
     "warrior": "🛡",
 }
@@ -368,7 +365,7 @@ const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hu
 # patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
-# A patch with no streamed phase (older snapshot / redacted remembered tile) still fails the Thriving
+# A patch with no streamed phase (redacted remembered tile) still fails the Thriving
 # test; it reads as unknown rather than asserting a phase we don't have.
 const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
 # A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
@@ -401,6 +398,17 @@ const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
+# Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
+# range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
+# row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
+# `_split_detail_kv` renders it as an aligned table row beside Biomass.
+const HERD_RANGE_ROW := "Range"
+# Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
+# range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
+# of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
+# from flickering the warning. WARN-tinted via `_format_detail_bbcode` (the Ecology/Corral rows' path).
+const OVERGRAZE_EPSILON := 0.05
+const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
 # The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
@@ -489,7 +497,7 @@ const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
 # source's take at its ceiling (policy ceiling / resource biomass), so past `workers_needed`
 # extra workers produce nothing HERE and should move elsewhere. A source can be overstaffed while
 # perfectly sustainable (and overdrawn while fully used), so this reads as its own WARN-tinted note
-# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save / older snapshot)
+# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save)
 # means "unknown" ⇒ no note, never a wrong one.
 const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
@@ -539,8 +547,8 @@ const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
 # pre-commit row quotes the real running cost at the moment the player actually decides. The
 # subtraction is a pure difference of two numbers the sim exported for THIS herd; the client models
 # no ecology. (Before the sim exported that projection this row said "before feed"; it no longer
-# has to.) An older snapshot with no `pen_upkeep` degrades to the plain no-feed format above rather
-# than printing a fabricated "− 0.00 feed".
+# has to.) A herd with no `pen_upkeep` (no pen feed to charge) degrades to the plain no-feed format
+# above rather than printing a fabricated "− 0.00 feed".
 const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing this row can
 # say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above `K/2`), so a
@@ -557,8 +565,8 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
-# Below this a worker produces nothing here (a dead-season forage tile, or an older snapshot with no
-# forecast fields). Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
+# Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
+# Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
 const FORECAST_MIN_PER_WORKER := 0.0001
 # Sentinel for "no forecast data" → the stepper is not forecast-capped.
@@ -713,6 +721,12 @@ const HUNT_ESTIMATE_KEY_SEPARATOR := ":"
 # over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
 # pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
 const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
+# The HAUL a filled pack delivers, appended to the turns line so the party-size tradeoff reads BOTH
+# ways: a bigger party climbs the turns AND the food it brings home. The haul = party_workers ×
+# expedition_per_worker_carry (blessed party×lever arithmetic, NOT the ecology lookup turns comes
+# from). Shown ONLY when the pack fills (viable OR too-slow); a won't-fill / denial trip never reaches
+# the cap, so quoting a haul there would be a lie. Absent/0 per-worker-carry → no suffix (live guard).
+const HUNT_FORECAST_HAUL_FORMAT := " · ~%d food"
 # Above the config's viability threshold the trip still launches (this is information, not a block) —
 # but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
 const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
@@ -1151,7 +1165,7 @@ func _hunt_forecast_bbcode() -> String:
 
 ## Render a `_hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
 ## three colors (cyan viable / amber too-slow / red returns-empty), or "" when the forecast isn't
-## available (older snapshot → the caller shows no line at all). SHARED by both hunt-expedition entry
+## available (a herd with no exported estimate → the caller shows no line at all). SHARED by both hunt-expedition entry
 ## points: the targeting banner (band-first flow) and the herd panel's live compose block (herd-first
 ## flow), so the two can never drift apart.
 func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
@@ -1173,10 +1187,13 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
         ]
     var turns := int(forecast.get("turns", 0))
     var text: String = HUNT_FORECAST_TURNS_FORMAT % [herd_name, turns]
+    # The pack fills here (viable OR too-slow), so the haul is a real delivery, not a lie — append it.
+    # No `haul` key = the snapshot didn't carry the per-worker-carry lever → render turns only.
+    var haul: String = HUNT_FORECAST_HAUL_FORMAT % int(forecast["haul"]) if forecast.has("haul") else ""
     if bool(forecast.get("viable", true)):
-        return "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, text]
-    return "[color=#%s]%s%s%s[/color]" % [
-        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
+        return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, haul]
+    return "[color=#%s]%s%s%s%s[/color]" % [
+        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, haul, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
     ]
 
 ## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. A PURE TABLE
@@ -1213,7 +1230,15 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     # A warn threshold of 0 means the server sent none — report the turns, judge nothing.
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
     var viable: bool = warn_turns <= 0 or turns <= warn_turns
-    return {"available": true, "fills": true, "turns": turns, "viable": viable}
+    var result := {"available": true, "fills": true, "turns": turns, "viable": viable}
+    # The haul a filled pack delivers: party_workers × the per-worker carry lever — blessed party×lever
+    # arithmetic (the same kind as the band ceiling), NOT the ecology/turns-to-fill lookup. Only set
+    # when the lever is present (> 0), so the renderer can guard on the key's absence rather than a fake
+    # zero. Withheld from the denial / won't-fill branches above: those packs never reach the cap.
+    var per_worker_carry := float(band.get("expedition_per_worker_carry", 0.0))
+    if per_worker_carry > 0.0:
+        result["haul"] = int(round(float(workers) * per_worker_carry))
+    return result
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
 ## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
@@ -1723,7 +1748,7 @@ func _source_icon_prefix(icon: String) -> String:
     return "%s " % icon if icon != "" else ""
 
 ## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
-## there. "" when the tile has no known module (older snapshot / undiscovered), so the row renders
+## there. "" when the tile has no known module (undiscovered), so the row renders
 ## bare rather than with a misleading fallback sprig.
 func _food_module_icon(x: int, y: int) -> String:
     var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
@@ -2230,7 +2255,7 @@ func _format_yield(value: float) -> String:
 ##     what the assigned workers could produce, so the surplus workers idled HERE and should be
 ##     reassigned. True for ALL policies (every source has a ceiling), and orthogonal to overdraw —
 ##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
-## Parts are empty when the source carries no confirmed data (pending assign / older snapshot), so
+## Parts are empty when the source carries no confirmed data (pending assign), so
 ## the row degrades to bare rather than asserting a wrong state.
 func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var label_suffix := ""
@@ -2255,7 +2280,7 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
         label_suffix = " %s" % _format_yield(actual)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
-    # here. `workers_needed == 0` means "unknown" (rehydrated/older snapshot) → no note.
+    # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
     var workers := int(m.get("workers", 0))
     var needed := int(m.get("workers_needed", 0))
@@ -2380,7 +2405,7 @@ func _band_pen_feed(band: Dictionary) -> float:
     return float(band.get("pen_feed_upkeep", 0.0))
 
 ## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
-## floor) — so an older snapshot / decode miss reads as "no flow" (net readout + breakdown omitted,
+## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted,
 ## not zeroed).
 func _band_has_food_flow(band: Dictionary) -> bool:
     return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
@@ -2552,7 +2577,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # Policy is now populated for forage assignments (sim writes the string field). The row
             # carries it as the shared POLICY GLYPH (`FoodIcons.for_policy` — the same icon on the
             # picker button and the map's yield label), not the old "[sustain]" word; the tooltip
-            # spells it out. An older snapshot without a policy falls back to no glyph. Re-staffing
+            # spells it out. An assignment whose policy is unset falls back to no glyph. Re-staffing
             # via the stepper preserves the policy (default Sustain when absent).
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
             var forage_policy_glyph := _row_glyph_suffix(FoodIcons.for_policy(fpolicy)) \
@@ -3860,7 +3885,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append("Climate: %s" % TileClimate.band_for(temperature))
     # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
     # apply to). Terrain-intrinsic permanent geography, so it renders before the discovered
-    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated/older snapshot
+    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated snapshot
     # degrades to no row instead of a wrong one; RiverEdges returns [] on a riverless tile, so it
     # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
     if tile_info.has("river_edges"):
@@ -4700,7 +4725,7 @@ func _band_food_line(unit_data: Dictionary) -> String:
     var line := "Food: %d  (%s)" % [provisions, _food_days_text(days)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
     # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
-    # An enemy band / older snapshot shows the bare larder line, exactly as before.
+    # An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
     if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
         var net := _band_net_food(unit_data)
@@ -4906,9 +4931,34 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     # were the same three facts a second time (the name three times, counting the `Herd` row's
     # "Red Deer (game_deer_07)"). What follows is only what the header CAN'T show: the herd's state.
     var lines: Array[String] = []
+    # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
+    # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
+    # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
+    # range; an overgrazed herd has `biomass > K`, so the pair honestly reads `current > max` (e.g.
+    # `2100 / 1352`) — a FEATURE that makes the overshoot visible in the numbers (the ⚠ row below
+    # spells out the consequence). The `~` the old standalone `Carrying cap` row carried is dropped:
+    # a `current / max` pair already implies the max is the derived ceiling. Guard: a herd momentarily
+    # on barren range derives K = 0, so `carrying_capacity <= 0` falls back to the bare `Biomass: X`
+    # (never `X / 0`) and suppresses the overgrazing test below.
+    var corralled := bool(herd_data.get("corralled", false))
+    var carrying_capacity := float(herd_data.get("carrying_capacity", 0.0))
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
-        lines.append("Biomass: %.0f" % biomass)
+        if carrying_capacity > 0.0:
+            lines.append("Biomass: %d / %d" % [int(round(biomass)), int(round(carrying_capacity))])
+        else:
+            lines.append("Biomass: %.0f" % biomass)
+    # The grazing range — WHY the herd is this size (the tiles it grazes / derives K over). A CORRALLED
+    # herd doesn't roam-graze a range, so its Range row + overgrazing test are meaningless (its K is a
+    # frozen pen-time value); the penned herd keeps the merged `Biomass: X / Y` pair, plainly.
+    if not corralled:
+        var range_radius := int(herd_data.get("graze_range_radius", 0))
+        lines.append("%s: %s" % [HERD_RANGE_ROW, _graze_range_label(range_radius)])
+    # Overgrazing: biomass exceeds what the range can sustainably feed (both numbers sim-provided — the
+    # client compares, it does NOT re-derive the ecology). Suppressed for a corralled herd and when K is
+    # unknown. The `X / Y` pair above already shows X > Y; this row states the consequence.
+    if not corralled and carrying_capacity > 0.0 and biomass > carrying_capacity * (1.0 + OVERGRAZE_EPSILON):
+        lines.append(OVERGRAZING_WARNING)
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
@@ -4965,6 +5015,15 @@ func _ecology_value_hex(value: String) -> String:
     if normalized.contains("stress"):
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
+
+## Tile-count label for a herd's grazing range from its hex radius — "the ground this herd grazes".
+## The hex-disk count `1 + 3r(r+1)`: radius 0 → 1 tile (small game, its own hex), 1 → 7, 2 → 19. Same
+## count the map ring draws, so the readout and the ring can never disagree. Singular for a lone tile.
+func _graze_range_label(range_radius: int) -> String:
+    var tiles := 1 + 3 * range_radius * (range_radius + 1)
+    if tiles == 1:
+        return "1 tile"
+    return "%d tiles" % tiles
 
 ## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows
 ## a livestock glyph; in-progress shows the percentage. `_format_detail_bbcode` tints a
@@ -5066,6 +5125,14 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = false
             var row_hex := HudStyle.HEALTHY_HEX if line.contains(MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
+            continue
+        # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
+        # WARN_HEX the Ecology/Corral value rows use — not a parallel styling path, just the shared color.
+        if line == OVERGRAZING_WARNING:
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.WARN_HEX, line]
             continue
         var kv := _split_detail_kv(line)
         if kv.is_empty():

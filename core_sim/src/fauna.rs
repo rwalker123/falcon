@@ -11,9 +11,13 @@ use std::hash::{Hash, Hasher};
 
 use crate::{
     components::{FollowPolicy, PopulationCohort, SourceYield, Tile, FOOD},
-    fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
+    fauna_config::{
+        default_loiter_radius, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
+        SizeClass, SpeciesDef, NO_GRAZE_CAPACITY,
+    },
     food::{classify_food_module, FoodModule},
-    grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
+    graze::GrazeRegistry,
+    grid_utils::{hex_distance_wrapped, hex_neighbor, hex_range_tiles, HEX_DIRECTION_COUNT},
     hashing::FnvHasher,
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -187,6 +191,19 @@ pub struct Herd {
     pub biomass: f32,
     /// Per-species carrying capacity (= table biomass max) that biomass regrows toward.
     pub carrying_capacity: f32,
+    /// Per-species **fodder demand per unit biomass** (Grazing Phase 2b-i), cached from the
+    /// `SpeciesDef` at spawn exactly as `carrying_capacity` is. Each turn a mobile herd draws
+    /// `fodder_per_biomass × biomass` graze from the tiles in its range (`advance_herd_grazing`).
+    /// `0.0` for a non-grazing species. **Inert on carrying capacity this slice** — the eating only
+    /// draws the graze layer down (visible on the pasture overlay); `K` is still the species constant.
+    pub fodder_per_biomass: f32,
+    /// Per-species **wild logistic regrowth rate** (Grazing Phase 2b-ii), cached from the `SpeciesDef`
+    /// at spawn (mirroring `fodder_per_biomass`), resolved via `SpeciesDef::regrowth_rate_or` so a row
+    /// that omits it falls back to `fauna.ecology.regrowth_rate`. [`herd_ecology`] folds it into the
+    /// herd's **wild** ecology (fast small game breeds hot, slow megafauna cold); a domesticated
+    /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Round-tripped through
+    /// the rollback snapshot (`HerdState.regrowth_rate`, sim-side only — not on the client wire).
+    pub regrowth_rate: f32,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
     pub ecology_phase: EcologyPhase,
@@ -256,6 +273,9 @@ pub struct Herd {
 }
 
 impl Herd {
+    // A constructor that mirrors the herd's identity + spawn-state fields (id/species/size/route/
+    // biomass/K/fodder/regrowth) — bundling them into a struct would just move the noise.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         species_display: String,
@@ -263,6 +283,8 @@ impl Herd {
         route: Vec<UVec2>,
         biomass: f32,
         carrying_capacity: f32,
+        fodder_per_biomass: f32,
+        regrowth_rate: f32,
     ) -> Self {
         let label = format!("{} ({})", species_display, id);
         let current_pos = route.first().copied().unwrap_or_else(|| UVec2::new(0, 0));
@@ -286,6 +308,8 @@ impl Herd {
             next_pos: None,
             biomass,
             carrying_capacity,
+            fodder_per_biomass,
+            regrowth_rate,
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
             ecology_phase: EcologyPhase::Thriving,
             domestication_progress: 0.0,
@@ -307,7 +331,7 @@ impl Herd {
         self.ecology_phase = classify_ecology_phase(
             self.biomass,
             herd_capacity(self, fauna),
-            herd_ecology(self, fauna),
+            &herd_ecology(self, fauna),
         );
     }
 
@@ -392,6 +416,28 @@ impl Herd {
         false
     }
 
+    /// The **grazing range radius** (hex distance from `current_pos`) the herd eats each turn
+    /// (Grazing Phase 2b-i). It is the footprint the herd already *occupies*, keyed off `size_class`:
+    /// - **Small** game (a warren, `route_len == 1`) sits on its one tile → `R = 0`.
+    /// - **Big** game roams a couple of tiles → `R = 1` (its tile + the 6 neighbours).
+    /// - **Migratory** herds graze their whole current loiter cluster → `R = loiter_radius` (the same
+    ///   radius their loiter-wander is confined to, so the range they eat is exactly the range they
+    ///   roam — not the whole baked route, which they only pass through).
+    ///
+    /// Resolving from `size_class` (rather than adding a new lever) keeps the range tied to the
+    /// existing footprint the design §4 identified as *already* the grazing range. `def` supplies the
+    /// migratory `loiter_radius`; a `None` (unresolved species) falls back to the same default the
+    /// loiter-wander uses.
+    pub fn graze_range_radius(&self, def: Option<&SpeciesDef>) -> u32 {
+        match self.size_class {
+            SizeClass::Small => 0,
+            SizeClass::Big => 1,
+            SizeClass::Migratory => def
+                .map(|d| d.loiter_radius)
+                .unwrap_or(default_loiter_radius()),
+        }
+    }
+
     /// The herd's live tile — walked one hex per move by `advance_herds` (graze-wander /
     /// loiter-migrate), no longer a teleport to `route[step_index]`.
     pub fn position(&self) -> UVec2 {
@@ -424,13 +470,24 @@ pub(crate) const PEN_FULLY_FED: f32 = 1.0;
 /// Every consumer of a herd's ecology — regrowth, the MSY/policy ceilings, the phase classification,
 /// the forecast, the expedition — resolves it *here*. **No call site may re-derive it**: a second copy
 /// of this mapping is exactly how a forecast starts promising a number the take won't pay.
-pub fn herd_ecology<'a>(herd: &Herd, fauna: &'a FaunaConfig) -> &'a EcologyConfig {
+/// Returns an **owned** `EcologyConfig` (cheap — five `f32`s, `Copy`) rather than a borrow, because a
+/// **wild** herd's curve now runs at the herd's own **per-species `regrowth_rate`** (Grazing Phase
+/// 2b-ii): the wild ecology with only its `regrowth_rate` swapped for `herd.regrowth_rate`, leaving the
+/// shared phase bands (`collapse_fraction`/`stressed_fraction`/`extinction_floor`) intact. The
+/// pastoral/pen rungs keep their own faster `r` verbatim. This stays THE single seam — every consumer
+/// (regrowth, MSY/policy ceilings, phase classification, forecast, expedition) reads the folded rate
+/// here and nowhere re-derives it, so a wild rabbit and a wild mammoth breed at different rates without
+/// a second copy of the mapping.
+pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     if herd.is_corralled() {
-        &fauna.husbandry.pen.ecology
+        fauna.husbandry.pen.ecology
     } else if herd.is_domesticated() {
-        &fauna.husbandry.pastoral.ecology
+        fauna.husbandry.pastoral.ecology
     } else {
-        &fauna.ecology
+        EcologyConfig {
+            regrowth_rate: herd.regrowth_rate,
+            ..fauna.ecology
+        }
     }
 }
 
@@ -610,6 +667,8 @@ fn herd_from_state(state: &HerdState) -> Herd {
         next_pos: state.next_pos.map(|(x, y)| UVec2::new(x, y)),
         biomass: state.ecology.biomass,
         carrying_capacity: state.ecology.carrying_capacity,
+        fodder_per_biomass: state.fodder_per_biomass,
+        regrowth_rate: state.regrowth_rate,
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
         owner: state.ecology.owner.map(FactionId),
@@ -811,7 +870,16 @@ fn spawn_migratory_herds(
     for idx in 0..herd_target {
         let (key, def) = migratory[rng.gen_range(0..migratory.len())];
         let steps = def.sample_route_len(rng);
-        let Some(route) = build_route(base, width, height, tile_registry, tiles, rng, steps) else {
+        let Some(route) = build_route(
+            base,
+            width,
+            height,
+            tile_registry,
+            tiles,
+            &fauna.graze,
+            rng,
+            steps,
+        ) else {
             continue;
         };
         let biomass = def.sample_biomass(rng);
@@ -824,6 +892,8 @@ fn spawn_migratory_herds(
             route,
             biomass,
             carrying_capacity,
+            def.fodder_per_biomass,
+            def.regrowth_rate_or(fauna.ecology.regrowth_rate),
         );
         // Start loitering at the spawn anchor for a randomized window (rather than migrating off
         // immediately from `Loiter { turns_left: 0 }`).
@@ -938,6 +1008,8 @@ fn spawn_game_group_at(
         route,
         biomass,
         carrying_capacity,
+        def.fodder_per_biomass,
+        def.regrowth_rate_or(fauna.ecology.regrowth_rate),
     );
     herd.refresh_ecology_phase(fauna);
     Some(herd)
@@ -954,6 +1026,10 @@ pub fn advance_herds(
     world_seed: Option<Res<WorldGenSeed>>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
+    // Optional so the many hand-built fauna test harnesses that run `advance_herds` in isolation
+    // don't have to stand up a graze layer; a `None`/empty registry falls back to plain land movement
+    // (the pre-2b-i behaviour). The live app always carries a seeded `GrazeRegistry`.
+    graze: Option<Res<GrazeRegistry>>,
 ) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
@@ -967,6 +1043,9 @@ pub fn advance_herds(
     let height = config.grid_size.y.max(1);
     let wrap = config.map_topology.wrap_horizontal;
     let base_seed = world_seed.map(|s| s.0).unwrap_or(config.map_seed) ^ tick.0;
+    // A `None`/empty graze layer → plain land movement (pre-2b-i); a seeded one → graze-aware roam.
+    let empty_graze = GrazeRegistry::default();
+    let graze = graze.as_deref().unwrap_or(&empty_graze);
     for herd in registry.herds.iter_mut() {
         // Deterministic per-herd, per-turn RNG (rollback-stable): map_seed ^ tick ^ salt ^ id-hash.
         let mut hasher = FnvHasher::new();
@@ -985,11 +1064,25 @@ pub fn advance_herds(
                 def,
                 &tile_registry,
                 &tiles,
+                graze,
                 &mut rng,
                 width,
                 height,
                 wrap,
             );
+            // **K becomes ecological** (Grazing Phase 2b-ii). A *mobile* herd's carrying capacity is
+            // recomputed each turn from the graze its (post-roam) range yields, so nothing downstream
+            // changes: `herd_capacity` still reads this cached field, every consumer is unchanged. A
+            // **corralled** herd is skipped — it keeps the `carrying_capacity` frozen at pen time, and
+            // `herd_capacity`'s corral branch scales it by `pen.capacity_fraction` (pen K is 2d's
+            // concern, not this slice). Recomputed AFTER roam (K reflects where the herd now stands)
+            // and BEFORE `regrow_biomass` (the herd grows toward the range's K this turn) — the same
+            // range `advance_herd_grazing` then eats.
+            if let Some(k) =
+                ecological_carrying_capacity(herd, def, graze, &fauna, width, height, wrap)
+            {
+                herd.carrying_capacity = k;
+            }
         }
         regrow_biomass(herd, &fauna);
         let position = herd.position();
@@ -1024,6 +1117,168 @@ pub fn advance_herds(
     density.rebuild(config.grid_size, &registry);
 }
 
+/// The **graze's sustainable flow** at biomass `G` (Grazing Phase 2b-ii) — one turn's regrowth at the
+/// MSY-clamped biomass (`min(G, cap/2)`), **pure logistic, without the Allee cutoff**. This is the
+/// graze counterpart of [`sustainable_yield`], but deliberately *not* that helper: `sustainable_yield`
+/// runs through `net_biomass_delta`, which zeroes the flow below `collapse_fraction` (the animal Allee
+/// crash) — yet **grass has no depensation** (`advance_graze_regrowth` runs pure logistic, and the
+/// design promises a pasture always recovers). Using `sustainable_yield` here would make a heavily-but-
+/// recoverably grazed tile read `K = 0` and crash its herd to zero on ground that in fact regrows — the
+/// exact "crash on recoverable ground" the convergence gate forbids. This flow peaks at
+/// `r_graze·cap/4` for `G ≥ cap/2` (so `K` is flat while the range holds above its MSY point) and
+/// declines smoothly to `0` as `G → 0` (so overgrazing lowers `K` continuously, no cliff).
+pub(crate) fn graze_sustainable_flow(biomass: f32, cap: f32, graze_eco: &EcologyConfig) -> f32 {
+    logistic_regrowth(
+        biomass.min(cap * MSY_BIOMASS_FRACTION),
+        cap,
+        graze_eco.regrowth_rate,
+    )
+}
+
+/// **The ecological carrying capacity** (Grazing Phase 2b-ii, `docs/plan_grazing_2b.md` §2/§3): the
+/// number of animals the sustainable graze flow on a herd's range can feed. Sum the graze flow
+/// ([`graze_sustainable_flow`], at each tile's **current — drawn-down —** biomass) over the herd's
+/// range tiles ([`hex_range_tiles`], the SAME tiles [`advance_herd_grazing`] eats), then denominate
+/// into animals by the herd's per-species `fodder_per_biomass`:
+///
+/// ```text
+/// K = Σ_range graze_sustainable_flow(G_tile, G_cap_tile, graze.ecology) / fodder_per_biomass
+/// ```
+///
+/// Reading the graze's **current** biomass is the whole feedback loop (§2.1): a range grazed below its
+/// MSY point yields less flow, so `K` falls and the herd shrinks (the emergent overgrazing spiral); a
+/// range at/above its MSY point yields the full flow, so `K` is maximal and a herd at `K` eats exactly
+/// that flow, holding the pasture at the most productive grazing intensity — carrying capacity falls
+/// out of the loop, it is not a number anyone set.
+///
+/// Returns `None` (→ the caller keeps the herd's frozen constant `K`) for a **non-grazing** herd
+/// (`fodder_per_biomass <= 0`, e.g. a legacy config or a species that omits it) or when the graze
+/// layer is **absent/empty** (the isolated fauna test harnesses run `advance_herds` without a graze
+/// registry) — nothing regresses. A genuinely barren/overgrazed range yields `Some(small)` down toward
+/// `Some(0.0)`; the herd shrinks toward it (movement, §4.1, keeps herds off zero-graze ground so this
+/// is the overgrazing tail, not a stranding).
+fn ecological_carrying_capacity(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    graze: &GrazeRegistry,
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<f32> {
+    if herd.fodder_per_biomass <= 0.0 || graze.is_empty() {
+        return None;
+    }
+    let radius = herd.graze_range_radius(def);
+    let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
+    let mut flow = 0.0;
+    for tile in range {
+        if let Some(patch) = graze.patch(tile) {
+            flow += graze_sustainable_flow(
+                patch.biomass,
+                patch.carrying_capacity,
+                &fauna.graze.ecology,
+            );
+        }
+    }
+    Some(flow / herd.fodder_per_biomass)
+}
+
+/// **The graze draw-down** (Grazing Phase 2b-i, `docs/plan_grazing_2b.md` §3). Each **mobile,
+/// non-corralled** herd eats the graze on the tiles in its range, lowering the `GrazeRegistry` — the
+/// animal-edible mirror of `forage::forage_take`. A corralled herd is fed from its keeper's larder
+/// (`pen_upkeep`), not from the land, so it is skipped.
+///
+/// Per herd: enumerate its **range** = [`hex_range_tiles`]`(current_pos, graze_range_radius)`, demand
+/// `fodder_per_biomass × biomass` fodder, and draw it from the range's patches ([`graze_take`]),
+/// **proportional to each tile's available graze** and floored at the **overgrazing escapement floor**
+/// (never below `overgraze_escapement_fraction × capacity` — 2b-ii's convergence discipline; a barren
+/// tile with no patch contributes nothing).
+///
+/// **Deterministic under rollback.** Herds are drawn **sequentially in `HerdRegistry` order** — that
+/// Vec is itself rollback-persisted in a fixed order (captured coord-stable and rebuilt by
+/// `update_from_states`), and `advance_herds`' `retain` / immigration's `push` both preserve it — so
+/// two herds sharing a tile always draw in the same order, and the eaten state is reproducible.
+///
+/// **This is one half of the coupled model (2b-ii).** The draw-down lowers the range's graze, which is
+/// what [`ecological_carrying_capacity`] reads next turn to size the herd — so eating a range down
+/// *lowers `K`* (the overgrazing feedback), and the escapement floor is what stops that feedback from
+/// running away. (In 2b-i this was inert on `K`; 2b-ii activates it.)
+///
+/// Turn order: registered **after `advance_herds`** (herds have roamed to their new tile *and* had `K`
+/// recomputed + grown toward it) and **before `advance_graze_regrowth`** (so the eaten state is what
+/// regrows — a herd can't eat grass that regrew the same turn).
+pub fn advance_herd_grazing(
+    herds: Res<HerdRegistry>,
+    mut graze: ResMut<GrazeRegistry>,
+    config: Res<SimulationConfig>,
+    fauna_config: Res<FaunaConfigHandle>,
+) {
+    if herds.herds.is_empty() || graze.is_empty() {
+        return;
+    }
+    let fauna = fauna_config.get();
+    let width = config.grid_size.x.max(1);
+    let height = config.grid_size.y.max(1);
+    let wrap = config.map_topology.wrap_horizontal;
+    // Grazing draws down to the **overgrazing escapement floor** (2b-ii), not the reseed floor: the
+    // constant-escapement discipline that keeps the herd↔graze loop convergent (validated `>` the
+    // reseed floor, so it is the binding one). Below it a range collapses into a stripped remnant.
+    let escapement_floor_fraction = fauna.graze.overgraze_escapement_fraction;
+    for herd in herds.herds.iter() {
+        // Corralled herds are fed from the larder, not the land (Rung 1c) — they don't graze.
+        if herd.is_corralled() {
+            continue;
+        }
+        let demand = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+        if demand <= 0.0 {
+            continue;
+        }
+        let def = fauna.species_by_display(&herd.species);
+        let radius = herd.graze_range_radius(def);
+        let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
+        graze_take(&mut graze, &range, demand, escapement_floor_fraction);
+    }
+}
+
+/// Draw `demand` fodder from the graze patches on `range`, **proportional to each tile's available
+/// graze** (biomass above `floor_fraction × capacity`) and clamped so no patch drops below that floor.
+/// The animal-edible counterpart of `forage::forage_take`'s subtract-and-clamp discipline.
+///
+/// `floor_fraction` is the **overgrazing escapement floor** (2b-ii, `graze.overgraze_escapement_fraction`)
+/// — grazing may draw a patch down to it but no further, the constant-escapement discipline that keeps
+/// the coupled herd↔graze loop convergent (a deeper draw would let a range collapse into a stripped
+/// remnant it cannot climb back out of; `docs/plan_grazing_2b.md` §2.2). It sits *above* the reseed
+/// lift, so it is the binding floor.
+///
+/// Proportional distribution (not an even split) is order-independent within a single herd's take and
+/// spreads the pressure toward the richer tiles in the range; a tile with no patch (barren) simply
+/// isn't in the sum and contributes nothing. If the whole range's available graze is below `demand`
+/// the herd eats all of it (down to the floors) and no further — the range is grazed out for the turn.
+/// The `ecology_phase` is left stale here on purpose: `advance_graze_regrowth` (the very next system)
+/// regrows every patch and refreshes its phase, exactly as `forage_take` defers to `regrow_patch`.
+fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fraction: f32) {
+    // Total graze available across the range (each tile's biomass above the escapement floor).
+    let mut total_available = 0.0;
+    for &tile in range {
+        if let Some(patch) = graze.patch(tile) {
+            let floor = floor_fraction * patch.carrying_capacity;
+            total_available += (patch.biomass - floor).max(0.0);
+        }
+    }
+    if total_available <= 0.0 {
+        return;
+    }
+    let taken_fraction = (demand / total_available).min(1.0);
+    for &tile in range {
+        if let Some(patch) = graze.patch_mut(tile) {
+            let floor = floor_fraction * patch.carrying_capacity;
+            let available = (patch.biomass - floor).max(0.0);
+            patch.biomass -= available * taken_fraction;
+        }
+    }
+}
+
 /// One turn of graze-wander / loiter-migrate movement (`docs/plan_wildlife_hunting_overlay.md`
 /// "Herd Movement"). Deterministic under the per-turn seeded `rng`. Mutates the herd's
 /// `current_pos` / `dwell_remaining` / `roam` / `step_index` / `next_pos`. `def` supplies the
@@ -1037,6 +1292,7 @@ fn advance_herd_roam(
     def: Option<&SpeciesDef>,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
     rng: &mut SmallRng,
     width: u32,
     height: u32,
@@ -1067,7 +1323,7 @@ fn advance_herd_roam(
                 .get(herd.step_index)
                 .copied()
                 .unwrap_or(herd.current_pos);
-            step_herd_toward(herd, target, registry, tiles, width, height, wrap);
+            step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
             herd.dwell_remaining = dwell_turns;
         }
         RoamState::Loiter { turns_left } => {
@@ -1091,6 +1347,7 @@ fn advance_herd_roam(
                     loiter_radius,
                     registry,
                     tiles,
+                    graze,
                     rng,
                     width,
                     height,
@@ -1114,7 +1371,7 @@ fn advance_herd_roam(
                 .get(next_index)
                 .copied()
                 .unwrap_or(herd.current_pos);
-            let moved = step_herd_toward(herd, target, registry, tiles, width, height, wrap);
+            let moved = step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
             if herd.current_pos == target || !moved {
                 // Arrived (or hemmed in) → loiter at the new anchor for a fresh window.
                 herd.step_index = next_index;
@@ -1128,6 +1385,7 @@ fn advance_herd_roam(
                     target,
                     registry,
                     tiles,
+                    graze,
                     width,
                     height,
                     wrap,
@@ -1140,11 +1398,13 @@ fn advance_herd_roam(
 /// Step the herd one hex toward `target`, choosing the land neighbour that most reduces hex
 /// distance (deterministic tie-break by direction order). Returns whether it moved (`false` = no
 /// land neighbour gets closer, so it stays — avoids marching into water / off the map).
+#[allow(clippy::too_many_arguments)]
 fn step_herd_toward(
     herd: &mut Herd,
     target: UVec2,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
     width: u32,
     height: u32,
     wrap: bool,
@@ -1157,6 +1417,7 @@ fn step_herd_toward(
         target,
         registry,
         tiles,
+        graze,
         width,
         height,
         wrap,
@@ -1169,19 +1430,31 @@ fn step_herd_toward(
     }
 }
 
-/// The land neighbour of `from` with the smallest hex distance to `target`, but only if it is
-/// strictly closer than `from` (so a herd never oscillates or backtracks into water).
+/// The land neighbour of `from` that best steps toward `target` — **graze-aware** (Grazing 2b-i
+/// §4.1). A candidate must be land, **grazeable** (a `GrazeRegistry` patch with positive capacity —
+/// never barren glacier / rock / desert, where a grazer would starve on ground it should never cross),
+/// and strictly closer to `target` than `from` (so a herd never oscillates, backtracks, or wanders
+/// away from its anchor). Among those, the closest wins; **ties break toward the richer pasture**
+/// (higher graze capacity) so a herd drifts along fertile ground, and direction order breaks the rest.
+/// `None` = no grazeable step gets closer, so the herd stays put — a herd hemmed in by barren does not
+/// cross it.
+#[allow(clippy::too_many_arguments)]
 fn best_land_neighbor_toward(
     from: UVec2,
     target: UVec2,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
     width: u32,
     height: u32,
     wrap: bool,
 ) -> Option<UVec2> {
+    // With no seeded graze layer (isolated test harnesses / pre-graze worldgen) fall back to plain
+    // land movement — every land tile is passable and there is no fertility bias.
+    let graze_aware = !graze.is_empty();
     let cur_dist = hex_distance_wrapped(from, target, width, wrap);
-    let mut best: Option<(UVec2, u32)> = None;
+    // (pos, hex distance to target, graze capacity) — closest-then-richest.
+    let mut best: Option<(UVec2, u32, f32)> = None;
     for dir in 0..HEX_DIRECTION_COUNT {
         let Some((nx, ny)) = hex_neighbor(from.x, from.y, dir, width, height, wrap) else {
             continue;
@@ -1190,16 +1463,42 @@ fn best_land_neighbor_toward(
         if !is_land_tile(np, registry, tiles) {
             continue;
         }
+        // Barren avoidance: a tile with no patch (or zero capacity) is dead ground — never step onto it.
+        let cap = tile_graze_capacity(graze, np);
+        if graze_aware && cap <= NO_GRAZE_CAPACITY {
+            continue;
+        }
         let d = hex_distance_wrapped(np, target, width, wrap);
-        if d < cur_dist && best.map(|(_, bd)| d < bd).unwrap_or(true) {
-            best = Some((np, d));
+        if d >= cur_dist {
+            continue;
+        }
+        let better = match best {
+            None => true,
+            Some((_, best_dist, best_cap)) => d < best_dist || (d == best_dist && cap > best_cap),
+        };
+        if better {
+            best = Some((np, d, cap));
         }
     }
-    best.map(|(pos, _)| pos)
+    best.map(|(pos, _, _)| pos)
 }
 
-/// Nudge the herd ≤1 hex to a random land tile within `loiter_radius` of `anchor` (deterministic
-/// via the seeded `rng`); if it is hemmed in, it stays.
+/// A tile's graze **capacity** (the land's stable fertility, not its live biomass) — `0` where no
+/// patch exists (barren biome). 2b-i's movement keys off capacity, not the eaten-down live biomass,
+/// on purpose: chasing *receding* grass (leaving a cluster because it was grazed out) is the emergent
+/// 2c dynamic, deliberately deferred. Here herds only *avoid barren* and *prefer fertile* ground.
+fn tile_graze_capacity(graze: &GrazeRegistry, tile: UVec2) -> f32 {
+    graze
+        .patch(tile)
+        .map(|patch| patch.carrying_capacity)
+        .unwrap_or(NO_GRAZE_CAPACITY)
+}
+
+/// Nudge the herd ≤1 hex within `loiter_radius` of `anchor` — **graze-aware** (Grazing 2b-i §4.1).
+/// Candidates must be land, within the loiter radius, **and grazeable** (a positive-capacity patch);
+/// the herd never wanders onto barren ground and, if hemmed in by it, stays put. The step is chosen
+/// **weighted by graze capacity** (richer pasture more likely), folding graze into the *existing*
+/// per-turn seeded `rng` (one draw — no second RNG), so it stays deterministic under rollback.
 #[allow(clippy::too_many_arguments)]
 fn wander_near_anchor(
     herd: &mut Herd,
@@ -1207,12 +1506,17 @@ fn wander_near_anchor(
     loiter_radius: u32,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
     rng: &mut SmallRng,
     width: u32,
     height: u32,
     wrap: bool,
 ) {
-    let mut options: Vec<UVec2> = Vec::new();
+    // With no seeded graze layer (isolated test harnesses) fall back to plain land movement.
+    let graze_aware = !graze.is_empty();
+    // (tile, graze capacity) for each grazeable land neighbour inside the loiter radius.
+    let mut options: Vec<(UVec2, f32)> = Vec::new();
+    let mut total_capacity = 0.0;
     for dir in 0..HEX_DIRECTION_COUNT {
         let Some((nx, ny)) = hex_neighbor(
             herd.current_pos.x,
@@ -1225,16 +1529,37 @@ fn wander_near_anchor(
             continue;
         };
         let np = UVec2::new(nx, ny);
-        if is_land_tile(np, registry, tiles)
-            && hex_distance_wrapped(np, anchor, width, wrap) <= loiter_radius
+        if !is_land_tile(np, registry, tiles)
+            || hex_distance_wrapped(np, anchor, width, wrap) > loiter_radius
         {
-            options.push(np);
+            continue;
         }
+        let cap = tile_graze_capacity(graze, np);
+        if graze_aware && cap <= NO_GRAZE_CAPACITY {
+            continue;
+        }
+        options.push((np, cap));
+        total_capacity += cap;
     }
     if options.is_empty() {
         return;
     }
-    herd.current_pos = options[rng.gen_range(0..options.len())];
+    if !graze_aware {
+        // Pre-2b-i behaviour: a uniform random land neighbour (same RNG draw as before).
+        herd.current_pos = options[rng.gen_range(0..options.len())].0;
+        return;
+    }
+    // Capacity-weighted pick over the one existing RNG draw (all-positive weights, so this always
+    // lands on an option; the final fallback covers f32 rounding at the top of the range).
+    let mut threshold = rng.gen::<f32>() * total_capacity;
+    for (tile, cap) in &options {
+        threshold -= cap;
+        if threshold <= 0.0 {
+            herd.current_pos = *tile;
+            return;
+        }
+    }
+    herd.current_pos = options[options.len() - 1].0;
 }
 
 /// Per-turn immigration: with probability `immigration.chance_per_turn`, respawn one
@@ -1464,7 +1789,7 @@ pub fn advance_husbandry(
             let take_biomass = managed_yield_biomass(
                 herd.biomass,
                 herd_capacity(herd, &fauna),
-                herd_ecology(herd, &fauna),
+                &herd_ecology(herd, &fauna),
             );
             herd.biomass -= take_biomass;
             // The output multiplier is per-band and applied at payout below (the yield is split across
@@ -1730,7 +2055,7 @@ pub fn hunt_source_yield_preview(
         sustainable_yield(
             herd.biomass,
             herd_capacity(herd, fauna),
-            herd_ecology(herd, fauna),
+            &herd_ecology(herd, fauna),
         ),
         fauna,
         output_multiplier,
@@ -1839,7 +2164,7 @@ pub(crate) fn hunt_forecast(
     let capacity = herd_capacity(herd, fauna);
     let ceiling = |policy| {
         hunt_provisions(
-            hunt_policy_ceiling(policy, herd.biomass, capacity, ecology, fauna)
+            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, fauna)
                 .clamp(0.0, herd.biomass),
             fauna,
             output_multiplier,
@@ -1953,8 +2278,9 @@ pub(crate) fn peak_regrowth(cap: f32, ecology: &EcologyConfig) -> f32 {
 /// turn by turn on a **clone** and must apply the *same* regrowth the live `advance_herds` does —
 /// re-deriving the curve there would let the pre-launch estimate drift from the sim.
 pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
-    // The herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity`): wild `r` = 0.05, pastoral
-    // 0.15, penned 0.60 — the whole husbandry ladder is just this curve run at a different rate.
+    // The herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity`): wild `r` is now
+    // **per-species** (fast small game ~0.35, slow megafauna ~0.04), pastoral 0.25, penned 0.90 — the
+    // whole husbandry ladder is just this curve run at a different rate.
     let ecology = herd_ecology(herd, fauna);
     let cap = herd_capacity(herd, fauna);
     // A domesticated (managed) group is immune to the overhunting collapse: it always
@@ -1962,7 +2288,7 @@ pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     let delta = if herd.is_domesticated() {
         logistic_regrowth(herd.biomass, cap, ecology.regrowth_rate)
     } else {
-        net_biomass_delta(herd.biomass, cap, ecology)
+        net_biomass_delta(herd.biomass, cap, &ecology)
     };
     // **The pen's growth is what the FEED buys.** A penned herd cannot graze, so an unfed one does not
     // grow at all (`docs/plan_corral_managed_population.md` §3.1: *fed → regrow; underfed → shrink*) —
@@ -2001,14 +2327,27 @@ fn determine_herd_count(width: u32, height: u32) -> u32 {
     baseline.clamp(2, 6)
 }
 
-/// Long migratory route: a jittered spiral of `steps` waypoints around `origin`,
-/// keeping only land tiles. Returns `None` if fewer than 3 distinct points land.
+/// Radius (hexes) of the neighbourhood `build_route` searches to pull a migratory anchor onto the
+/// most fertile nearby ground (Grazing 2b-i §4.1). Small — a local nudge that shifts the anchor onto
+/// grass without redrawing the spiral's shape.
+const ANCHOR_FERTILITY_SCAN_RADIUS: u32 = 1;
+
+/// Long migratory route: a jittered spiral of `steps` waypoints around `origin`, keeping only land
+/// tiles and **biasing each anchor onto fertile ground** so the route connects pasture (2b-i §4.1).
+/// Returns `None` if fewer than 3 distinct points land.
+///
+/// Fertility is read **directly from `graze_config.capacity_by_biome`** for each tile's terrain, NOT
+/// from the live `GrazeRegistry`: `build_route` runs inside `spawn_initial_herds`, which is ordered
+/// **before** `spawn_initial_graze` in the Startup chain, so no graze patches exist yet. The bias is
+/// deterministic (a pure argmax over the neighbourhood — no extra RNG draw).
+#[allow(clippy::too_many_arguments)]
 fn build_route(
     origin: UVec2,
     width: u32,
     height: u32,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    graze_config: &GrazeConfig,
     rng: &mut SmallRng,
     steps: u32,
 ) -> Option<Vec<UVec2>> {
@@ -2026,8 +2365,14 @@ fn build_route(
             height,
         );
         if let Some(pos) = candidate {
-            if is_land_tile(pos, registry, tiles) && points.last().copied() != Some(pos) {
-                points.push(pos);
+            // Shift the spiral point onto the richest pasture in its immediate neighbourhood, so a
+            // migratory herd loiters where the grass is.
+            if let Some(anchor) =
+                most_fertile_land_near(pos, registry, tiles, graze_config, width, height)
+            {
+                if points.last().copied() != Some(anchor) {
+                    points.push(anchor);
+                }
             }
         }
     }
@@ -2036,6 +2381,49 @@ fn build_route(
     } else {
         Some(points)
     }
+}
+
+/// The land tile of the highest **graze capacity** (from the config table) within
+/// [`ANCHOR_FERTILITY_SCAN_RADIUS`] of `center` — the fertile-anchor argmax `build_route` uses. Ties
+/// resolve by `hex_range_tiles` scan order (deterministic). `None` only when no tile in the
+/// neighbourhood is land. Uses `wrap = false` to match `build_route`'s clamp-based spiral geometry.
+fn most_fertile_land_near(
+    center: UVec2,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze_config: &GrazeConfig,
+    width: u32,
+    height: u32,
+) -> Option<UVec2> {
+    let mut best: Option<(UVec2, f32)> = None;
+    for tile in hex_range_tiles(center, ANCHOR_FERTILITY_SCAN_RADIUS, width, height, false) {
+        if !is_land_tile(tile, registry, tiles) {
+            continue;
+        }
+        let capacity = tile_terrain(tile, registry, tiles)
+            .map(|terrain| graze_config.capacity_for(terrain))
+            .unwrap_or(NO_GRAZE_CAPACITY);
+        if best
+            .map(|(_, best_cap)| capacity > best_cap)
+            .unwrap_or(true)
+        {
+            best = Some((tile, capacity));
+        }
+    }
+    best.map(|(pos, _)| pos)
+}
+
+/// The tile's `TerrainType` at `pos`, or `None` off-map. Used to read a tile's graze capacity from
+/// the config table at spawn (before the `GrazeRegistry` exists).
+fn tile_terrain(
+    pos: UVec2,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+) -> Option<sim_runtime::TerrainType> {
+    registry
+        .index(pos.x, pos.y)
+        .and_then(|entity| tiles.get(entity).ok())
+        .map(|tile| tile.terrain)
 }
 
 /// Short roaming route for wild game: `steps` waypoints within a small radius of
@@ -2148,5 +2536,259 @@ mod tests {
         for size in [SizeClass::Small, SizeClass::Big, SizeClass::Migratory] {
             assert_eq!(SizeClass::from_key(size.as_str()), size);
         }
+    }
+
+    // ---- Grazing Phase 2b-i ----------------------------------------------------------------
+
+    use crate::graze::{GrazePatch, GrazeRegistry};
+
+    /// Wild per-species regrowth rate for the 2b-i grazing harnesses (inert on `K`, so any live rate
+    /// works); the global wild default the retired single ecology used.
+    const WILD_TEST_REGROWTH_RATE: f32 = 0.05;
+
+    fn herd_of_size(size: SizeClass, biomass: f32, cap: f32, fodder: f32) -> Herd {
+        Herd::new(
+            "game_test".to_string(),
+            "Test Beast".to_string(),
+            size,
+            vec![UVec2::new(1, 1)],
+            biomass,
+            cap,
+            fodder,
+            WILD_TEST_REGROWTH_RATE,
+        )
+    }
+
+    #[test]
+    fn graze_range_radius_maps_from_size_class() {
+        let fauna = FaunaConfig::builtin();
+        // Small game sits on its one tile; big game roams a 1-hex footprint.
+        assert_eq!(
+            herd_of_size(SizeClass::Small, 100.0, 200.0, 0.1).graze_range_radius(None),
+            0
+        );
+        assert_eq!(
+            herd_of_size(SizeClass::Big, 800.0, 1200.0, 0.05).graze_range_radius(None),
+            1
+        );
+        // Migratory grazes its whole loiter cluster = the species' loiter_radius.
+        let mammoth = fauna.species_by_display("Thunder Mammoths");
+        assert_eq!(
+            herd_of_size(SizeClass::Migratory, 9000.0, 12000.0, 0.011).graze_range_radius(mammoth),
+            mammoth.map(|d| d.loiter_radius).unwrap()
+        );
+        // With no resolvable species row, a migratory herd falls back to the loiter default.
+        assert_eq!(
+            herd_of_size(SizeClass::Migratory, 9000.0, 12000.0, 0.011).graze_range_radius(None),
+            default_loiter_radius()
+        );
+    }
+
+    fn full_patch(x: u32, cap: f32) -> GrazePatch {
+        GrazePatch::new(UVec2::new(x, 0), cap)
+    }
+
+    #[test]
+    fn graze_take_draws_down_proportionally_and_respects_the_reseed_floor() {
+        const CAP: f32 = 240.0;
+        const FLOOR_FRACTION: f32 = 0.02;
+        let mut graze = GrazeRegistry::default();
+        // Two full tiles in range + one absent (barren) tile that must contribute nothing.
+        graze.patches.insert(UVec2::new(0, 0), full_patch(0, CAP));
+        graze.patches.insert(UVec2::new(1, 0), full_patch(1, CAP));
+        let range = [UVec2::new(0, 0), UVec2::new(1, 0), UVec2::new(2, 0)];
+
+        // A modest demand is split proportionally (both patches equal → equal draw), never below floor.
+        graze_take(&mut graze, &range, 48.0, FLOOR_FRACTION);
+        let a = graze.patch(UVec2::new(0, 0)).unwrap().biomass;
+        let b = graze.patch(UVec2::new(1, 0)).unwrap().biomass;
+        assert!(
+            (a - b).abs() < 1e-4,
+            "equal patches drawn equally: {a} vs {b}"
+        );
+        assert!(
+            (a - (CAP - 24.0)).abs() < 1e-3,
+            "each of two tiles paid half of 48: {a}"
+        );
+        assert!(
+            graze.patch(UVec2::new(2, 0)).is_none(),
+            "barren tile stays absent"
+        );
+
+        // An enormous demand cannot drive a patch below its reseed floor.
+        graze_take(&mut graze, &range, 1e9, FLOOR_FRACTION);
+        let floor = FLOOR_FRACTION * CAP;
+        for x in [0u32, 1] {
+            let biomass = graze.patch(UVec2::new(x, 0)).unwrap().biomass;
+            assert!(
+                (biomass - floor).abs() < 1e-3,
+                "an overgrazed tile floors at the reseed floor, not 0: {biomass} vs {floor}"
+            );
+        }
+    }
+
+    /// Grazing draws a patch down, and once the herd stops eating it the patch **recovers** toward
+    /// capacity via the shared reseeding regrowth curve — overgrazing is never permanent (the reseed
+    /// floor + logistic climb). This pins the draw-down + recovery loop at the helper level.
+    #[test]
+    fn a_grazed_patch_recovers_after_the_herd_moves_on() {
+        const CAP: f32 = 240.0;
+        const FLOOR_FRACTION: f32 = 0.02;
+        let regrowth_rate = FaunaConfig::builtin().graze.ecology.regrowth_rate;
+        let mut graze = GrazeRegistry::default();
+        graze.patches.insert(UVec2::new(0, 0), full_patch(0, CAP));
+        let range = [UVec2::new(0, 0)];
+
+        // Herd present: eat hard for several turns → the tile is drawn well down.
+        for _ in 0..8 {
+            graze_take(&mut graze, &range, 60.0, FLOOR_FRACTION);
+        }
+        let grazed = graze.patch(UVec2::new(0, 0)).unwrap().biomass;
+        assert!(
+            grazed < 0.6 * CAP,
+            "sustained grazing draws the range down: {grazed}"
+        );
+
+        // Herd moves on: no more grazing, only regrowth (the very next system each turn). It climbs back.
+        let patch = graze.patch_mut(UVec2::new(0, 0)).unwrap();
+        for _ in 0..40 {
+            patch.biomass = reseeding_logistic_regrowth(
+                patch.biomass,
+                patch.carrying_capacity,
+                regrowth_rate,
+                FLOOR_FRACTION,
+            );
+        }
+        assert!(
+            patch.biomass > 0.9 * CAP,
+            "an ungrazed patch recovers toward capacity: {}",
+            patch.biomass
+        );
+    }
+
+    // A tiny hand-built world to exercise the graze-aware roam directly through `advance_herds`.
+    fn roam_world(barren_gap: bool) -> bevy::prelude::World {
+        use sim_runtime::TerrainType;
+
+        let mut world = bevy::prelude::World::default();
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(5, 1);
+        config.map_topology.wrap_horizontal = false;
+        config.map_seed = 42;
+        world.insert_resource(config);
+        world.insert_resource(FaunaConfigHandle::default());
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(HerdTelemetry::default());
+        world.insert_resource(HerdDensityMap::default());
+
+        // A 5×1 strip of land; graze patches on every tile EXCEPT x=2 when `barren_gap` (that tile is
+        // then "barren" — land with no pasture, the case a grazer must refuse to cross).
+        let tiles: Vec<_> = (0..5)
+            .map(|x| {
+                world
+                    .spawn(Tile {
+                        position: UVec2::new(x, 0),
+                        terrain: TerrainType::PrairieSteppe,
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        world.insert_resource(TileRegistry {
+            tiles,
+            width: 5,
+            height: 1,
+        });
+        let mut graze = GrazeRegistry::default();
+        for x in 0..5 {
+            if barren_gap && x == 2 {
+                continue;
+            }
+            graze.patches.insert(UVec2::new(x, 0), full_patch(x, 240.0));
+        }
+        world.insert_resource(graze);
+
+        // A big-game herd at x=1 whose next anchor is x=4 — its path east runs straight through x=2.
+        let mut herd = herd_of_size(SizeClass::Big, 240.0, 240.0, 0.0);
+        herd.route = vec![UVec2::new(1, 0), UVec2::new(4, 0)];
+        herd.current_pos = UVec2::new(1, 0);
+        herd.step_index = 0;
+        herd.dwell_remaining = 0;
+        herd.roam = RoamState::GrazeWander;
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd);
+        world.insert_resource(registry);
+        world
+    }
+
+    #[test]
+    fn roam_never_steps_onto_a_barren_tile_it_could_avoid() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Positive control: with pasture all the way, the herd steps east onto x=2.
+        let mut open = roam_world(false);
+        open.run_system_once(advance_herds);
+        let pos = open.resource::<HerdRegistry>().herds[0].current_pos;
+        assert_eq!(
+            pos,
+            UVec2::new(2, 0),
+            "with grass everywhere the herd advances east"
+        );
+
+        // With x=2 barren, the only distance-reducing step is dead ground → the herd stays put rather
+        // than crossing it. It never ends the turn on the zero-graze tile.
+        let mut gapped = roam_world(true);
+        gapped.run_system_once(advance_herds);
+        let pos = gapped.resource::<HerdRegistry>().herds[0].current_pos;
+        assert_eq!(
+            pos,
+            UVec2::new(1, 0),
+            "the herd refuses to cross barren ground"
+        );
+        assert_ne!(pos, UVec2::new(2, 0));
+    }
+
+    /// **The inert invariant.** `advance_herd_grazing` moves only the graze layer — it must not touch
+    /// any herd's biomass or carrying capacity, and `K` stays the species constant (not graze-derived)
+    /// this slice, so a hunt forecast is byte-identical before and after a grazing turn.
+    #[test]
+    fn grazing_is_inert_on_carrying_capacity_and_hunt_yield() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = roam_world(false);
+        // Give the herd a real appetite so grazing actually draws the layer down.
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].fodder_per_biomass = 0.10;
+            registry.herds[0].biomass = 200.0;
+        }
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let before = world.resource::<HerdRegistry>().herds[0].clone();
+        let forecast_before = hunt_forecast(&before, &fauna, 40.0, 1.0);
+
+        world.run_system_once(advance_herd_grazing);
+
+        let after = &world.resource::<HerdRegistry>().herds[0];
+        assert_eq!(
+            after.biomass, before.biomass,
+            "grazing does not touch herd biomass"
+        );
+        assert_eq!(
+            after.carrying_capacity, before.carrying_capacity,
+            "K is untouched by grazing"
+        );
+        // K is still the species constant, not a graze-derived value.
+        assert_eq!(herd_capacity(after, &fauna), after.carrying_capacity);
+        let forecast_after = hunt_forecast(after, &fauna, 40.0, 1.0);
+        assert_eq!(
+            forecast_before.ceiling_sustain, forecast_after.ceiling_sustain,
+            "the Sustain hunt ceiling is unchanged by grazing (inert on the hunting economy)"
+        );
+
+        // And the grazing genuinely happened — the herd's tile was drawn down.
+        let grazed = world
+            .resource::<GrazeRegistry>()
+            .patch(UVec2::new(1, 0))
+            .unwrap()
+            .biomass;
+        assert!(grazed < 240.0, "the herd's tile was grazed: {grazed}");
     }
 }

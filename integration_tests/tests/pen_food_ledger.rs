@@ -29,14 +29,20 @@ use core_sim::{
 const SEED: u64 = 119_304_647;
 /// Enough food that the pen's feed (and the people's demand) are both paid in full.
 const AMPLE_LARDER: f32 = 500.0;
-/// Enough for the band to eat, but far short of a Red-Deer-sized pen's feed → a **partial** payment.
-const THIN_LARDER: f32 = 1.0;
+/// **The people eat first, off the same larder** (`simulate_population` runs before the corral-tend
+/// branch of `advance_labor_allocation`). So a thin larder that only part-pays the *pen* must still
+/// cover the band's own ~4/turn food demand in full — otherwise the humans drain it dry and the pen
+/// is paid **zero**, which tests starvation, not a partial pen payment. This value feeds the people
+/// fully and leaves a remainder that is a genuine fraction of a Red-Deer-sized pen's ~10.8/turn feed.
+const THIN_LARDER: f32 = 8.0;
 /// The exported floats are `f32` sums of `Scalar`-quantized takes; a few ULPs of slack, no more.
 const EPSILON: f32 = 0.01;
 
 /// Stand a band up with a **penned herd it keeps**, seed its larder, run one real turn, and return
-/// `(larder_before, larder_after, food_income, food_consumption, pen_feed_upkeep)`.
-fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32) {
+/// `(larder_before, larder_after, food_income, food_consumption, pen_feed_upkeep, pen_fed_fraction)`.
+/// `pen_fed_fraction` (paid ÷ demanded, read off the live herd) is the partial-payment witness: `1.0`
+/// = fully fed, `< 1.0` = the pen only part-paid and the herd starves for the rest.
+fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -73,7 +79,7 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32) {
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Hunt {
-                fauna_id: herd_id,
+                fauna_id: herd_id.clone(),
                 policy: FollowPolicy::Sustain,
             },
             workers: workers.max(1),
@@ -117,12 +123,23 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32) {
         .find(|c| !c.is_expedition)
         .expect("the resident band is exported");
 
+    // The pen's fed fraction lives on the live herd (transient, set by the tend branch this turn).
+    let pen_fed_fraction = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|h| h.id == herd_id)
+        .expect("the penned herd is still alive")
+        .pen_fed_fraction;
+
     (
         before,
         after,
         cohort.food_income,
         cohort.food_consumption,
         cohort.pen_feed_upkeep,
+        pen_fed_fraction,
     )
 }
 
@@ -130,11 +147,16 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32) {
 /// and the three exported terms reconcile with the larder exactly.
 #[test]
 fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
-    let (before, after, income, consumption, pen_feed) = run_one_turn_with_a_pen(AMPLE_LARDER);
+    let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
+        run_one_turn_with_a_pen(AMPLE_LARDER);
 
     assert!(
         pen_feed > 0.0,
         "a band keeping a pen must report a real feed debit (got {pen_feed})"
+    );
+    assert!(
+        (pen_fed_fraction - 1.0).abs() < EPSILON,
+        "an ample larder pays the pen in full (fed fraction {pen_fed_fraction})"
     );
     assert!(income > 0.0, "the pen pays its keeper (got {income})");
     assert!(consumption > 0.0, "the people eat (got {consumption})");
@@ -161,11 +183,24 @@ fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
 /// herd starves for the difference (its own `penFedFraction` carries that).
 #[test]
 fn the_food_ledger_reconciles_when_the_pen_is_only_partly_fed() {
-    let (before, after, income, consumption, pen_feed) = run_one_turn_with_a_pen(THIN_LARDER);
+    let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
+        run_one_turn_with_a_pen(THIN_LARDER);
 
+    // The people ate first (in full — `THIN_LARDER` covers their demand), so the pen was paid only
+    // the larder's *remainder*: a real, positive, but **partial** debit. `pen_fed_fraction < 1` is the
+    // proof it is genuinely partial (the herd starves for the shortfall); `> 0` that it paid at all.
     assert!(
-        pen_feed > 0.0 && pen_feed <= THIN_LARDER + EPSILON,
-        "a thin larder can only part-pay the feed: paid {pen_feed} from {THIN_LARDER}"
+        consumption > 0.0 && consumption < THIN_LARDER,
+        "the band eats its fill from the thin larder first: ate {consumption} of {THIN_LARDER}"
+    );
+    assert!(
+        pen_feed > 0.0,
+        "the larder's remainder still part-pays the pen: paid {pen_feed}"
+    );
+    assert!(
+        pen_fed_fraction > 0.0 && pen_fed_fraction < 1.0,
+        "a PARTIAL payment — the pen got some feed but not all it demanded (fed fraction \
+         {pen_fed_fraction})"
     );
 
     let delta = after - before;

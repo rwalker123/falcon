@@ -2098,6 +2098,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             stores,
             morale: Scalar::from_raw(cohort_state.morale),
             // Derived per-turn (not snapshot-persisted); recomputed on the next `simulate_population`.
+            last_food_consumption: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
@@ -3982,12 +3983,15 @@ fn population_state(
                 .collect()
         })
         .unwrap_or_default();
-    // Band-level food flow: income = Σ per-source actual yield; consumption reuses the one-turn
-    // `demand` already computed above for `days_of_food` (don't recompute `food_demand`).
+    // Band-level food flow: income = Σ per-source actual yield; consumption is the food the people
+    // ACTUALLY ate this turn (`cohort.last_food_consumption`, the real `stores` debit at the turn's
+    // opening brackets), NOT a `food_demand` re-derived here on the post-turn brackets — the same
+    // turn's births would inflate that and break the larder ledger identity by exactly the growth.
+    // (`demand` above stays post-turn for `days_of_food`, which is a forward "turns I can last".)
     let food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
-    let food_consumption = demand.to_f32();
+    let food_consumption = cohort.last_food_consumption;
     // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
     // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
     // comes straight off `cohort.stores` — so without exporting it the client's
@@ -4134,6 +4138,7 @@ fn population_state(
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
+        expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
     }
 }
 
@@ -4241,6 +4246,8 @@ fn herd_state(herd: &Herd) -> HerdState {
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
         corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
         corral_progress: herd.corral_progress,
+        fodder_per_biomass: herd.fodder_per_biomass,
+        regrowth_rate: herd.regrowth_rate,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4562,6 +4569,14 @@ fn herd_snapshot_entries(
                     .filter(|_| entry.huntable)
                     .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
                     .unwrap_or_default(),
+                // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
+                // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,
+                // exactly as `advance_herds` does; an unresolved species falls back to the loiter
+                // default). A vanished herd (unreachable here) reports the neutral 0 / 0.
+                carrying_capacity: herd.map(|herd| herd.carrying_capacity).unwrap_or(0.0),
+                graze_range_radius: herd
+                    .map(|herd| herd.graze_range_radius(fauna.species_by_display(&herd.species)))
+                    .unwrap_or(0),
             }
         })
         .collect()
@@ -4699,6 +4714,11 @@ mod tests {
             // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
             corralled_at: Some((5, 6)),
             corral_progress: 1.0,
+            // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
+            // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
+            fodder_per_biomass: 0.05,
+            // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
+            regrowth_rate: 0.04,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -5031,6 +5051,7 @@ mod tests {
             elders,
             stores: LocalStore::new(),
             morale: crate::scalar::scalar_one(),
+            last_food_consumption: 0.0,
             last_morale_delta: crate::scalar::scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
@@ -5088,8 +5109,9 @@ mod tests {
         )
     }
 
-    /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = `food_demand(...)`, and
-    /// each labor-assignment row carries its matching actual/sustainable yield (zipped by index).
+    /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = the food the people
+    /// actually ate this turn (`cohort.last_food_consumption`), and each labor-assignment row carries
+    /// its matching actual/sustainable yield (zipped by index).
     #[test]
     fn population_state_reports_food_income_and_consumption() {
         let working = Scalar::from_f32(30.0);
@@ -5124,12 +5146,18 @@ mod tests {
             ],
             last_pen_feed_upkeep: 0.0,
         };
-        let (cohort, allocation) = food_test_cohort(
+        let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
             working,
             Scalar::from_f32(0.0),
             allocation,
         );
+        // The food the people actually ate this turn (the real `stores` debit `simulate_population`
+        // records), which the ledger's `food_consumption` term echoes verbatim — NOT a `food_demand`
+        // re-derived at capture on the post-turn brackets (that would break the larder identity by
+        // the same turn's population growth).
+        const CONSUMED: f32 = 4.13;
+        cohort.last_food_consumption = CONSUMED;
         let state = capture_food_state(&cohort, &allocation);
 
         // food_income = Σ actual (2.5 + 0.5).
@@ -5138,19 +5166,12 @@ mod tests {
             "food_income sums per-source actual: {}",
             state.food_income
         );
-        // food_consumption reuses the same one-turn food_demand daysOfFood divides by.
-        let expected_consumption = crate::systems::food_demand(
-            cohort.children,
-            cohort.working,
-            cohort.elders,
-            &crate::demographics_config::DemographicsConfig::default().consumption,
-        )
-        .to_f32();
+        // food_consumption == the food actually eaten (`cohort.last_food_consumption`).
         assert!(
-            (state.food_consumption - expected_consumption).abs() < 1e-5,
-            "food_consumption == food_demand: {} vs {}",
+            (state.food_consumption - CONSUMED).abs() < 1e-5,
+            "food_consumption == last_food_consumption: {} vs {}",
             state.food_consumption,
-            expected_consumption
+            CONSUMED
         );
         // Each assignment row carries its zipped actual/sustainable.
         assert_eq!(state.labor_assignments.len(), 2);
@@ -5890,6 +5911,8 @@ mod tests {
             vec![UVec2::new(4, 4)],
             50.0,
             100.0,
+            0.0,
+            0.05,
         );
         penned.corral_at(UVec2::new(4, 4));
         registry.herds.push(penned);
@@ -5901,6 +5924,8 @@ mod tests {
             vec![UVec2::new(1, 1)],
             50.0,
             100.0,
+            0.0,
+            0.05,
         ));
 
         let telemetry = HerdTelemetry {
@@ -5914,6 +5939,94 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **Grazing 2b-iii — the ecological readout on the wire.** A herd exports its live derived
+    /// carrying capacity K and the exact hex radius the sim grazes/derives K over. The radius is
+    /// resolved from the `SpeciesDef` (migratory `loiter_radius`) exactly as `advance_herds` does, so a
+    /// small/big/migratory species each reports the footprint the sim actually uses (0 / 1 /
+    /// `loiter_radius`), and the client can reproduce the ring with `hex_range_tiles`.
+    #[test]
+    fn herd_snapshot_reports_carrying_capacity_and_graze_range_radius() {
+        use crate::fauna_config::SizeClass;
+
+        let fauna = FaunaConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+
+        // One mobile herd per size class, each a real species so `species_by_display` resolves the
+        // migratory `loiter_radius`. Distinct carrying capacities so the assertion is meaningful.
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(Herd::new(
+            "herd_small".to_string(),
+            "Rabbit Warren".to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(2, 2)],
+            120.0,
+            163.0,
+            0.10,
+            0.35,
+        ));
+        registry.herds.push(Herd::new(
+            "herd_big".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            900.0,
+            1352.0,
+            0.05,
+            0.10,
+        ));
+        registry.herds.push(Herd::new(
+            "herd_migratory".to_string(),
+            "Thunder Mammoths".to_string(),
+            SizeClass::Migratory,
+            vec![UVec2::new(6, 6)],
+            8000.0,
+            9000.0,
+            0.011,
+            0.04,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        for herd in &registry.herds {
+            let exported = states.iter().find(|h| h.id == herd.id).unwrap();
+            assert!(
+                (exported.carrying_capacity - herd.carrying_capacity).abs() < 1e-6,
+                "{}: exported K {} should equal the live K {}",
+                herd.id,
+                exported.carrying_capacity,
+                herd.carrying_capacity,
+            );
+            let expected_radius = herd.graze_range_radius(fauna.species_by_display(&herd.species));
+            assert_eq!(
+                exported.graze_range_radius, expected_radius,
+                "{}: exported graze range radius should equal graze_range_radius(def)",
+                herd.id,
+            );
+        }
+
+        // Pin the per-size expectations so a regression in the size_class → radius mapping is caught.
+        let small = states.iter().find(|h| h.id == "herd_small").unwrap();
+        assert_eq!(
+            small.graze_range_radius, 0,
+            "small game grazes its one tile"
+        );
+        let big = states.iter().find(|h| h.id == "herd_big").unwrap();
+        assert_eq!(big.graze_range_radius, 1, "big game grazes radius 1");
+        let migratory = states.iter().find(|h| h.id == "herd_migratory").unwrap();
+        assert_eq!(
+            migratory.graze_range_radius,
+            fauna
+                .species_by_display("Thunder Mammoths")
+                .unwrap()
+                .loiter_radius,
+            "a migratory herd grazes its loiter_radius",
+        );
     }
 
     /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
@@ -5934,6 +6047,8 @@ mod tests {
             vec![UVec2::new(4, 4)],
             PEN_BIOMASS,
             100.0,
+            0.0,
+            0.05,
         );
         penned.corral_at(UVec2::new(4, 4));
         // The keeper could only pay half the feed last turn → the herd is starving.
@@ -5946,6 +6061,8 @@ mod tests {
             vec![UVec2::new(1, 1)],
             50.0,
             100.0,
+            0.0,
+            0.05,
         ));
 
         let telemetry = HerdTelemetry {
@@ -6000,6 +6117,8 @@ mod tests {
             vec![UVec2::new(2, 2)],
             BIOMASS,
             CAP,
+            0.0,
+            0.05,
         );
         mobile.claim_domestication(FactionId(0));
         registry.herds.push(mobile);
@@ -6011,6 +6130,8 @@ mod tests {
             vec![UVec2::new(3, 3)],
             BIOMASS,
             CAP,
+            0.0,
+            0.05,
         );
         penned.claim_domestication(FactionId(0));
         penned.corral_at(UVec2::new(3, 3));

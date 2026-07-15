@@ -5,7 +5,7 @@
     "elders": 0.15
   },
   "consumption": {
-    "per_capita_draw": 0.03,
+    "per_capita_draw": 0.16,
     "child_factor": 0.6,
     "working_factor": 1.0,
     "elder_factor": 0.8
