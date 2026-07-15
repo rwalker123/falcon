@@ -4780,8 +4780,8 @@ mod tests {
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
 
-    /// A herd that is **not** penned eats nothing and is never starving — and an older snapshot with
-    /// neither field decodes to the same neutral pair (the `= 0` / `= 1` schema defaults).
+    /// A herd that is **not** penned eats nothing and is never starving — it decodes to the neutral
+    /// pair (the `= 0` / `= 1` schema defaults).
     #[test]
     fn an_unpenned_herd_defaults_to_no_upkeep_and_fully_fed() {
         let snapshot = snapshot_with_herd(HerdTelemetryState {

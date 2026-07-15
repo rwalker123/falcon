@@ -16,7 +16,7 @@ class_name PenStatus
 ##                 every turn, and its yield falls with it. It recovers if fed again — it never
 ##                 despawns and never loses the pen — so this is a warning, not an obituary.
 
-## A fully-fed pen. The neutral value: an un-penned herd, and an older snapshot with no such field.
+## A fully-fed pen. The neutral value: an un-penned herd.
 const FULLY_FED := 1.0
 ## Rounding slack, so float noise on a fully-paid pen (0.999) does not read as a famine. Below this
 ## the herd is genuinely losing biomass.

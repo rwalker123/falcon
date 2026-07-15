@@ -1366,7 +1366,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **`pending`** = a state of the ORDER (composed locally, not yet acknowledged; it rides on ANY row,
     is a modifier rather than a phase member, wins the glyph slot with `○`, and keeps the amber label
     tint). The policy glyph is read off the assignment's `policy` field (populated for forage too); an
-    older snapshot with no policy falls back to no glyph. **Each source row headlines its per-turn food yield**
+    an assignment whose policy is unset falls back to no glyph. **Each source row headlines its per-turn food yield**
     (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
     `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
     (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
@@ -1379,7 +1379,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **orthogonal to the ⚠ overdraw flag** and deliberately NOT the same glyph: overdraw is *ecological*
     (taking past regrowth), overstaffing is *labor* (wasted workers) — a source can be overstaffed while
     perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed
-    == 0` (rehydrated/older snapshot, or a pending optimistic assign) means "unknown" → no note, never a
+    == 0` (rehydrated, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one.
     **ONE yield row per rung — each rung gets the row that informs ITS decision, never both.** On the
     **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the same per-turn number PLUS
@@ -1725,7 +1725,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
     Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
-    `per_worker_yield == 0` (dead-season tile, or an older snapshot with no forecast fields) → no row,
+    `per_worker_yield == 0` (a dead-season tile) → no row,
     no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
     `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
     expedition accumulates toward a carry cap over several turns of travel, so the herd's per-turn
@@ -2009,7 +2009,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
   `band_pen_starving` (part-paid feed, net −0.53 red). The breakdown **auto-shows when food is concerning** (`_food_is_concerning`:
   net-negative OR runway below the warn threshold, mirroring `_morale_is_concerning`), else it's
-  collapsed but reachable via the click. Older snapshot / no flow → the bare `Food N (D days)` line,
+  collapsed but reachable via the click. No flow → the bare `Food N (D days)` line,
   no net/disclosure. **The Food + Morale rows share ONE disclosure mechanism** (see "Band morale
   readout" for the shared helpers) — see `_register_disclosure` / `_on_detail_meta_clicked` /
   `_breakdown_open_for` / `_breakdown_expanded`. (The label + click are wired on BOTH the Occupants-card
@@ -2289,7 +2289,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
   client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
   that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
-  levers (older snapshot) → no forecast line, banner unchanged.
+  levers absent → no forecast line, banner unchanged.
   `SEND_HUNT_POLICY_HINTS["sustain"]` was rewritten when Sustain became the MSY *flow* (it used to
   promise "one conservative harvest"). ui_preview states `hunt_forecast_viable` /
   `hunt_forecast_not_viable` / `hunt_forecast_never_fills` + `expedition_launch_policy_sustain` (dock

@@ -243,14 +243,11 @@ const ROSTER_ROW_H_PADDING := 10.0
 const ROSTER_ACCENT_WIDTH := 3.0
 const ROSTER_HEADER_FONT_SIZE := 10
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
-# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior. `harvest` /
-# `follow` are retained for older snapshots but the live enum emits forage/hunt.
+# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
 const ACTIVITY_GLYPHS := {
     "idle": "·",
     "forage": "🌾",
-    "harvest": "🌾",
     "hunt": "🏹",
-    "follow": "🦌",
     "scout": "🧭",
     "warrior": "🛡",
 }
@@ -368,7 +365,7 @@ const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hu
 # patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
-# A patch with no streamed phase (older snapshot / redacted remembered tile) still fails the Thriving
+# A patch with no streamed phase (redacted remembered tile) still fails the Thriving
 # test; it reads as unknown rather than asserting a phase we don't have.
 const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
 # A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
@@ -500,7 +497,7 @@ const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
 # source's take at its ceiling (policy ceiling / resource biomass), so past `workers_needed`
 # extra workers produce nothing HERE and should move elsewhere. A source can be overstaffed while
 # perfectly sustainable (and overdrawn while fully used), so this reads as its own WARN-tinted note
-# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save / older snapshot)
+# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save)
 # means "unknown" ⇒ no note, never a wrong one.
 const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
@@ -550,8 +547,8 @@ const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
 # pre-commit row quotes the real running cost at the moment the player actually decides. The
 # subtraction is a pure difference of two numbers the sim exported for THIS herd; the client models
 # no ecology. (Before the sim exported that projection this row said "before feed"; it no longer
-# has to.) An older snapshot with no `pen_upkeep` degrades to the plain no-feed format above rather
-# than printing a fabricated "− 0.00 feed".
+# has to.) A herd with no `pen_upkeep` (no pen feed to charge) degrades to the plain no-feed format
+# above rather than printing a fabricated "− 0.00 feed".
 const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing this row can
 # say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above `K/2`), so a
@@ -568,8 +565,8 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
-# Below this a worker produces nothing here (a dead-season forage tile, or an older snapshot with no
-# forecast fields). Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
+# Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
+# Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
 const FORECAST_MIN_PER_WORKER := 0.0001
 # Sentinel for "no forecast data" → the stepper is not forecast-capped.
@@ -1162,7 +1159,7 @@ func _hunt_forecast_bbcode() -> String:
 
 ## Render a `_hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
 ## three colors (cyan viable / amber too-slow / red returns-empty), or "" when the forecast isn't
-## available (older snapshot → the caller shows no line at all). SHARED by both hunt-expedition entry
+## available (a herd with no exported estimate → the caller shows no line at all). SHARED by both hunt-expedition entry
 ## points: the targeting banner (band-first flow) and the herd panel's live compose block (herd-first
 ## flow), so the two can never drift apart.
 func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
@@ -1734,7 +1731,7 @@ func _source_icon_prefix(icon: String) -> String:
     return "%s " % icon if icon != "" else ""
 
 ## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
-## there. "" when the tile has no known module (older snapshot / undiscovered), so the row renders
+## there. "" when the tile has no known module (undiscovered), so the row renders
 ## bare rather than with a misleading fallback sprig.
 func _food_module_icon(x: int, y: int) -> String:
     var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
@@ -2241,7 +2238,7 @@ func _format_yield(value: float) -> String:
 ##     what the assigned workers could produce, so the surplus workers idled HERE and should be
 ##     reassigned. True for ALL policies (every source has a ceiling), and orthogonal to overdraw —
 ##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
-## Parts are empty when the source carries no confirmed data (pending assign / older snapshot), so
+## Parts are empty when the source carries no confirmed data (pending assign), so
 ## the row degrades to bare rather than asserting a wrong state.
 func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var label_suffix := ""
@@ -2266,7 +2263,7 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
         label_suffix = " %s" % _format_yield(actual)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
-    # here. `workers_needed == 0` means "unknown" (rehydrated/older snapshot) → no note.
+    # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
     var workers := int(m.get("workers", 0))
     var needed := int(m.get("workers_needed", 0))
@@ -2391,7 +2388,7 @@ func _band_pen_feed(band: Dictionary) -> float:
     return float(band.get("pen_feed_upkeep", 0.0))
 
 ## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
-## floor) — so an older snapshot / decode miss reads as "no flow" (net readout + breakdown omitted,
+## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted,
 ## not zeroed).
 func _band_has_food_flow(band: Dictionary) -> bool:
     return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
@@ -2563,7 +2560,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # Policy is now populated for forage assignments (sim writes the string field). The row
             # carries it as the shared POLICY GLYPH (`FoodIcons.for_policy` — the same icon on the
             # picker button and the map's yield label), not the old "[sustain]" word; the tooltip
-            # spells it out. An older snapshot without a policy falls back to no glyph. Re-staffing
+            # spells it out. An assignment whose policy is unset falls back to no glyph. Re-staffing
             # via the stepper preserves the policy (default Sustain when absent).
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
             var forage_policy_glyph := _row_glyph_suffix(FoodIcons.for_policy(fpolicy)) \
@@ -3871,7 +3868,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append("Climate: %s" % TileClimate.band_for(temperature))
     # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
     # apply to). Terrain-intrinsic permanent geography, so it renders before the discovered
-    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated/older snapshot
+    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated snapshot
     # degrades to no row instead of a wrong one; RiverEdges returns [] on a riverless tile, so it
     # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
     if tile_info.has("river_edges"):
@@ -4711,7 +4708,7 @@ func _band_food_line(unit_data: Dictionary) -> String:
     var line := "Food: %d  (%s)" % [provisions, _food_days_text(days)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
     # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
-    # An enemy band / older snapshot shows the bare larder line, exactly as before.
+    # An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
     if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
         var net := _band_net_food(unit_data)
