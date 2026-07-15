@@ -580,6 +580,13 @@ fn main() {
             } => {
                 handle_corral(&mut app, faction, UVec2::new(target_x, target_y));
             }
+            Command::ExtendPen {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_extend_pen(&mut app, faction, UVec2::new(target_x, target_y));
+            }
             Command::CancelOrder {
                 faction,
                 band_entity_bits,
@@ -721,6 +728,11 @@ enum Command {
         target_y: u32,
     },
     Corral {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    ExtendPen {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
@@ -2666,6 +2678,167 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
     );
 }
 
+/// Grazing 2d-β — the `ExtendPen` command. Put an owned, **built** pen at `tile` into the "extending"
+/// state so its keeper band works off the next fenced ring (`pen_radius += 1` at completion, ~25 turns
+/// at the corral build rate, with the harvest dipped to `corralling_yield_fraction` while it fences).
+/// The pen's whole life rides `CommandEventKind::Corral`, so the extend feed lines reuse it.
+///
+/// Validates: a herd penned **exactly at `tile`** (`corralled_at`, the fixed pen anchor — not the
+/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Herding**,
+/// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
+/// keeping it (or the ring never accrues, and an untended pen escapes anyway).
+fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    let Some(fauna_id) = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|herd| herd.corralled_at == Some(tile))
+        .map(|herd| herd.id.clone())
+    else {
+        warn!(
+            target: "shadow_scale::command",
+            command = "extend_pen",
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            "command.extend_pen.rejected=no_pen"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("No pen at ({}, {}) to extend.", tile.x, tile.y),
+        );
+        return;
+    };
+
+    let (owns, knows_herding, at_max, already_extending, pen_radius_max) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let pen_radius_max = fauna.husbandry.pen_radius_max;
+        let knows = app
+            .world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(faction, HERDING_DISCOVERY_ID)
+            >= scalar_from_f32(fauna.husbandry.knowledge_completion_threshold);
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&fauna_id)
+            .expect("herd resolved above");
+        (
+            herd.owner == Some(faction),
+            knows,
+            herd.pen_radius >= pen_radius_max,
+            herd.pen_extending,
+            pen_radius_max,
+        )
+    };
+    let reason = if !knows_herding {
+        Some(
+            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
+                .to_string(),
+        )
+    } else if !owns {
+        Some(format!("You do not own the pen for {}.", fauna_id))
+    } else if already_extending {
+        Some(format!(
+            "The pen for {} is already being extended.",
+            fauna_id
+        ))
+    } else if at_max {
+        Some(format!(
+            "The pen for {} is already at its maximum size.",
+            fauna_id
+        ))
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        warn!(
+            target: "shadow_scale::command",
+            command = "extend_pen",
+            faction = %faction.0,
+            herd = %fauna_id,
+            reason = %reason,
+            "command.extend_pen.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        return;
+    }
+
+    // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
+    let keeper_target = LaborTarget::Hunt {
+        fauna_id: fauna_id.clone(),
+        policy: FollowPolicy::Sustain, // matched by `same_source` (herd id), so policy is irrelevant
+    };
+    let keepers = app
+        .world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(cohort, _)| cohort.faction == faction)
+        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
+        .count();
+    if keepers == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!(
+                "No band is keeping {}. Assign herders to it first, then extend the pen.",
+                fauna_id
+            ),
+        );
+        return;
+    }
+
+    // Enter the extending state — `begin_pen_extension` re-checks is_corralled / not-extending /
+    // below-max, so the guard and the validation above can never disagree.
+    let began = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == fauna_id)
+            .expect("herd resolved above");
+        herd.begin_pen_extension(pen_radius_max)
+    };
+    if !began {
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("Cannot extend the pen for {} right now.", fauna_id),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "extend_pen",
+        faction = %faction.0,
+        herd = %fauna_id,
+        x = tile.x,
+        y = tile.y,
+        "command.extend_pen.extending"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Corral,
+        faction,
+        format!(
+            "Extending the pen for {} at ({}, {})",
+            fauna_id, tile.x, tile.y
+        ),
+        Some(format!(
+            "status=extending action=extend_pen herd={} x={} y={}",
+            fauna_id, tile.x, tile.y
+        )),
+    );
+}
+
 /// Re-point every band of `faction` **already working** `target`'s source (matched by
 /// `LaborTarget::same_source`, so the tile / herd id) at `target`'s policy, keeping each band's
 /// worker count. Returns how many bands were switched (`0` = nobody is working that source, which the
@@ -3418,6 +3591,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         } => Some(Command::Corral {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::ExtendPen {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::ExtendPen {
             faction: FactionId(faction_id),
             target_x,
             target_y,
@@ -4932,6 +5114,150 @@ mod tests {
         handle_corral(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    // --- ExtendPen (Grazing 2d-β) — the command form of growing a built pen's fenced footprint. ------
+
+    /// Seed a herd already **penned** at `coord` (`corral_at`), optionally owned by `owner`.
+    fn seed_penned_herd(
+        app: &mut bevy::prelude::App,
+        coord: UVec2,
+        owner: Option<FactionId>,
+    ) -> String {
+        let id = seed_herd(app, coord, owner);
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.corral_at(coord);
+        id
+    }
+
+    fn herd_pen_state(app: &bevy::prelude::App, id: &str) -> (u32, bool) {
+        let herd = app.world.resource::<HerdRegistry>().find(id).unwrap();
+        (herd.pen_radius, herd.pen_extending)
+    }
+
+    /// `extend_pen` is rejected before the faction has learned Herding.
+    #[test]
+    fn extend_pen_rejected_when_herding_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "learned Herding"));
+        assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
+    }
+
+    /// `extend_pen` targets the fixed pen anchor: an unpenned (mobile) herd at the tile is "no pen".
+    #[test]
+    fn extend_pen_rejected_when_no_pen_at_tile() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        // A domesticated but NOT-penned herd standing on the tile.
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "No pen at"));
+        assert_eq!(herd_pen_state(&app, &id), (0, false));
+    }
+
+    /// `extend_pen` is rejected for a faction that doesn't own the pen.
+    #[test]
+    fn extend_pen_rejected_for_non_owner() {
+        let mut app = build_headless_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(owner));
+        grant_herding(&mut app, intruder);
+
+        handle_extend_pen(&mut app, intruder, coord);
+
+        assert!(corral_failure_detail_contains(&app, "do not own the pen"));
+        assert_eq!(herd_pen_state(&app, &id), (0, false));
+    }
+
+    /// A pen already at `pen_radius_max` refuses to extend further.
+    #[test]
+    fn extend_pen_rejected_at_max_radius() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let radius_max = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .husbandry
+            .pen_radius_max;
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .find(|h| h.id == id)
+            .unwrap()
+            .pen_radius = radius_max;
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "maximum size"));
+        assert_eq!(herd_pen_state(&app, &id), (radius_max, false));
+    }
+
+    /// With nobody keeping the pen the ring could never accrue: `extend_pen` says to staff it first.
+    #[test]
+    fn extend_pen_rejected_when_no_band_is_keeping_it() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "No band is keeping"));
+        assert_eq!(herd_pen_state(&app, &id), (0, false));
+    }
+
+    /// The happy path: an owned, kept, Herding-known pen below the max enters the extending state.
+    #[test]
+    fn extend_pen_sets_the_extending_state() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert_eq!(
+            herd_pen_state(&app, &id),
+            (0, true),
+            "the pen enters the extending state (radius unchanged until the ring completes)"
+        );
+        assert!(corral_failure_detail_contains(&app, "status=extending"));
     }
 
     /// **The investment policies never reach an expedition.** Penning a herd (or preparing a patch)

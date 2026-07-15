@@ -215,9 +215,10 @@ mod tests {
             // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
             corralled_at: Some((5, 6)),
             corral_progress: 1.0,
-            // Grazing 2d: the pen's fenced footprint radius + the in-flight extend meter round-trip.
+            // Grazing 2d: the pen's fenced footprint radius + the in-flight extend meter/state round-trip.
             pen_radius: 1,
             pen_extend_progress: 0.5,
+            pen_extending: true,
             // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
             // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
             fodder_per_biomass: 0.05,

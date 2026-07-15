@@ -170,6 +170,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "extend_pen",
+        aliases: &[],
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (needs Herding, an owned penned herd, and room below the pen-radius max).",
+        usage: "extend_pen <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
         summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
@@ -775,6 +781,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y: parse_u32(y_str, "corral target_y")?,
             })
         }
+        "extend_pen" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::ExtendPen {
+                faction_id: parse_u32(faction_str, "extend_pen faction")?,
+                target_x: parse_u32(x_str, "extend_pen target_x")?,
+                target_y: parse_u32(y_str, "extend_pen target_y")?,
+            })
+        }
         "cancel_order" => {
             let faction_str = parts
                 .next()
@@ -1167,6 +1189,22 @@ mod tests {
         // Both coordinates are required.
         assert!(matches!(
             parse_command_line("corral 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    #[test]
+    fn parse_extend_pen_command() {
+        assert_eq!(
+            parse_command_line("extend_pen 0 7 3").unwrap(),
+            CommandPayload::ExtendPen {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        assert!(matches!(
+            parse_command_line("extend_pen 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
     }

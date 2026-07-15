@@ -377,3 +377,113 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
          (upkeep × feed-time biomass {feed_time_biomass})"
     );
 }
+
+/// Read a herd's `(pen_radius, pen_extending, carrying_capacity)`.
+fn pen_state(app: &App, id: &str) -> (u32, bool, f32) {
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .expect("herd persists");
+    (herd.pen_radius, herd.pen_extending, herd.carrying_capacity)
+}
+
+/// Put the penned herd into the ExtendPen "extending" state (the sim half of `handle_extend_pen`).
+fn begin_extension(app: &mut App, id: &str, radius_max: u32) -> bool {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .expect("herd persists")
+        .begin_pen_extension(radius_max)
+}
+
+#[test]
+fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
+    const FODDER: f32 = 0.10;
+    const WILD_R: f32 = 0.35;
+    // corral_build_progress_per_turn = 0.04 → 25 turns per ring; give a couple turns of slack.
+    const RING_TURNS: u32 = 28;
+
+    let radius_max = FaunaConfigHandle::default().get().husbandry.pen_radius_max;
+    assert!(
+        radius_max >= 2,
+        "this test wants at least two rings to grow"
+    );
+
+    let mut app = base_world();
+    let (tile, _) = richest_pasture(&app);
+    // Seat a radius-0 pen at equilibrium-ish so K is stable before the extension.
+    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let keeper = spawn_keeper(&mut app, &id, tile);
+    for _ in 0..60 {
+        run_pen_turn(&mut app, keeper);
+    }
+    let (r0, extending0, k0) = pen_state(&app, &id);
+    assert_eq!(
+        (r0, extending0),
+        (0, false),
+        "starts a settled radius-0 pen"
+    );
+
+    // --- Ring 1: begin extending, then work it off. ---
+    assert!(
+        begin_extension(&mut app, &id, radius_max),
+        "a built radius-0 pen below the max may begin an extension"
+    );
+    // A second begin while one is in flight is a no-op (mirrors the command's rejection).
+    assert!(
+        !begin_extension(&mut app, &id, radius_max),
+        "no second extension may start while one is in flight"
+    );
+
+    let mut flipped_on = None;
+    for turn in 1..=RING_TURNS {
+        run_pen_turn(&mut app, keeper);
+        if pen_state(&app, &id).0 == 1 {
+            flipped_on = Some(turn);
+            break;
+        }
+    }
+    let flipped_on = flipped_on.expect("the ring completes within its build window");
+    assert!(
+        (24..=RING_TURNS).contains(&flipped_on),
+        "the ring takes ~25 turns at the corral build rate (flipped on turn {flipped_on})"
+    );
+    let (r1, extending1, _) = pen_state(&app, &id);
+    assert_eq!(
+        (r1, extending1),
+        (1, false),
+        "on completion pen_radius is 1 and the extending state clears"
+    );
+
+    // Let the larger footprint's K settle, then confirm it ROSE (7 tiles of pasture > 1 tile).
+    for _ in 0..40 {
+        run_pen_turn(&mut app, keeper);
+    }
+    let (_, _, k1) = pen_state(&app, &id);
+    assert!(
+        k1 > k0 * 1.5,
+        "the extended (7-tile) footprint raises K well above the single-tile pen: {k1} vs {k0}"
+    );
+
+    // --- Ring 2 → reach the max, then REFUSE to go past it. ---
+    assert!(begin_extension(&mut app, &id, radius_max));
+    for _ in 0..RING_TURNS {
+        run_pen_turn(&mut app, keeper);
+        if pen_state(&app, &id).0 == 2 {
+            break;
+        }
+    }
+    assert_eq!(
+        pen_state(&app, &id).0,
+        2,
+        "the second ring reaches radius 2"
+    );
+    // At the max, a further extension is refused (the command's `at_max` rejection, sim-side).
+    assert!(
+        !begin_extension(&mut app, &id, radius_max),
+        "a pen at pen_radius_max ({radius_max}) refuses to extend further"
+    );
+}

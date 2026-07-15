@@ -481,9 +481,13 @@ pub struct HerdState {
     #[serde(default)]
     pub pen_radius: u32,
     /// Pen-**extension** build progress `0..1` for the in-flight ring (2d-β). Persisted alongside
-    /// `pen_radius`; `0.0` this slice.
+    /// `pen_radius` so a rollback rewinds a partly-fenced ring.
     #[serde(default)]
     pub pen_extend_progress: f32,
+    /// The `ExtendPen` "extending" state (2d-β) — `true` while a ring is being worked off. Persisted so
+    /// a rollback preserves the in-flight extension rather than stranding a half-progress meter.
+    #[serde(default)]
+    pub pen_extending: bool,
     /// Per-species fodder demand per unit biomass (Grazing Phase 2b-i), cached on the live `Herd` at
     /// spawn from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire)
     /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.

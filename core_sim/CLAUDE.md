@@ -951,9 +951,10 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
     tend it. **This binary escape is the *no-keeper* case only** — nobody is minding the gate. A keeper
     who is present but *broke* starves the herd instead (above); it never breaks out.
-- **Persistence** — `corralled_at`, `corral_progress`, **and `pen_radius` / `pen_extend_progress`
-  (Grazing 2d)** round-trip through the rollback snapshot on `HerdState` (authoritative sim state), so a
-  rollback rewinds a half-built pen (or a grown fence) rather than losing the investment;
+- **Persistence** — `corralled_at`, `corral_progress`, **and `pen_radius` / `pen_extend_progress` /
+  `pen_extending` (Grazing 2d)** round-trip through the rollback snapshot on `HerdState` (authoritative
+  sim state), so a rollback rewinds a half-built pen (or an in-flight fence extension) rather than losing
+  the investment;
   `corralled_tended_this_turn`, **`pen_fed_fraction`, `pen_starving`, `footprint_intake` and
   `pen_pasture_fraction`** are transient (not persisted) — a rehydrated pen reads "untended, fully fed",
   so a rollback can only *delay* an escape or a starvation turn by one turn, never invent a famine.
@@ -962,7 +963,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   **`upkeep_per_biomass` (0.002 — the feed, now footprint-offset)** and `starve_shrink_rate` (**0.10** —
   a fully-unfed herd loses 10%/turn); `capacity_fraction` is **deleted** (`K_pen` is the fenced
   footprint's graze flow). Plus the **per-species growth gains** `pastoral_gain` (1.5) / `pen_gain`
-  (3.0) / `husbandry_regrowth_cap` (0.75), the **`pastoral`** block (phase bands only),
+  (3.0) / `husbandry_regrowth_cap` (0.75), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
+  validated `>= 1`), the **`pastoral`** block (phase bands only),
   **`corralling_yield_fraction` (0.50 — the investment cost, the animal twin of
   `cultivating_yield_fraction`)**, **`corral_build_progress_per_turn` (0.04 → 25 turns to build; a
   dedicated lever so pen speed and *tame* speed tune independently)**, `knowledge_progress_per_turn`
@@ -1560,14 +1562,14 @@ oscillates or crashes if built carelessly.
 See Also: `docs/plan_grazing_2b.md` §2.2 (the convergence risk), §9 (the measure list),
 `docs/plan_corral_managed_population.md` §3 (the constant-escapement lesson this reuses).
 
-### Phase 2d-α — the pen economy: a pen becomes fenced land
+### Phase 2d — the pen economy: a pen becomes fenced land
 
 The pen slice (`docs/plan_grazing_2d.md`). A pen stops being a special case (a single frozen tile fed
 entirely from the larder) and becomes **a piece of fenced land the herd grazes**:
 
 - **`Herd.pen_radius`** (default `0` = today's single tile) — the pen's footprint is
   `hex_range_tiles(corralled_at, pen_radius)`. All footprint logic (`herd_footprint`) reads it; the
-  `ExtendPen` command that grows it is **2d-β** (not this slice — `pen_radius` stays `0`).
+  `ExtendPen` command grows it (2d-β, below).
 - **Footprint `K`** — `advance_herds` recomputes a penned herd's `K` over its footprint via the same
   `ecological_carrying_capacity` seam a mobile herd uses (penned herds stop being frozen). A
   **wholly-barren** footprint keeps the frozen `K` and is fully larder-fed (§2.3's preserved worst case).
@@ -1585,10 +1587,39 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
   the *fastest* species' pen nets positive when fully larder-fed; a slow breeder or poor-pasture pen may
   run at a **loss by design** (it pays off only when self-feeding drives upkeep → 0).
 - **Wire** (append-only on `HerdTelemetryState`): `penRadius`, `penFootprintTiles` (server in-bounds
-  count), `penPastureFraction`, `penExtendProgress` (0 until β). Convergence gated by
+  count), `penPastureFraction`, `penExtendProgress`. Convergence gated by
   `core_sim/tests/grazing_2d_pen.rs` (a pen converges at radius 0/1; lush → free, barren → full bill).
-- **Deferred:** `ExtendPen` command + build ladder (2d-β); the client footprint highlight / feed-split
-  readout / extend affordance (2d-γ).
+
+**2d-β — the `ExtendPen` command + build ladder** (§4). Growing a pen's fenced footprint is a labor
+investment worked off over turns, reusing the corral build ladder — no materials economy:
+
+- **`Command::ExtendPen { faction, target_x, target_y }`** (full proto/runtime/text/server plumbing —
+  `ExtendPenCommand` proto field **39**, verb `extend_pen <faction> <x> <y>`), routed like `Corral`
+  through `handle_extend_pen`. It reuses `CommandEventKind::Corral` (one kind for the pen's whole life).
+  Validation (each with a clear rejection): a herd **penned exactly at that tile** (`corralled_at`, the
+  fixed anchor — *not* the roaming `position()` `corral` keys off), owned by the faction, the faction
+  knows **Herding**, `pen_radius < husbandry.pen_radius_max`, **no extension already in flight**, and a
+  band is **keeping** it (a Hunt assignment on the herd — else the ring never accrues and an untended
+  pen escapes anyway). On success it sets the herd's **`pen_extending`** state via
+  `Herd::begin_pen_extension` (which re-checks penned / not-extending / below-max, so the command's
+  validation and the mutation can never disagree).
+- **The build ladder** rides the corral-tend branch of `advance_labor_allocation`: while `pen_extending`,
+  the keeper's HARVEST is **dipped to `corralling_yield_fraction`** (the forgone yield *is* the labor
+  cost of the ring, the same dip the corral *build* pays), and `Herd::accrue_pen_extension` adds
+  `husbandry.corral_build_progress_per_turn` (0.04 → ~25 turns/ring) to `pen_extend_progress` **after**
+  the take. At `1.0` the ring completes: `pen_radius += 1` (saturating at `pen_radius_max`),
+  `pen_extend_progress` resets, `pen_extending` clears, and a `Corral` feed line fires; the larger
+  footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
+  extending — self-feeding and the harvest dip are orthogonal.
+- **Config:** `husbandry.pen_radius_max` (**2** → up to a 19-tile footprint; validated `>= 1`). The only
+  new lever. **`pen_extending`** persists on `HerdState` alongside `pen_radius` / `pen_extend_progress`,
+  so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire now carries the live ring
+  meter (α left it at 0) for a client "Fencing N%" badge.
+- **Tests:** `grazing_2d_pen::extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max` (the
+  ring accrues over ~25 turns, flips `pen_radius` 0→1, K rises with the 7-tile footprint, and caps at
+  `pen_radius_max`); `server::tests::extend_pen_*` (the five validation rejections + the happy path).
+- **Deferred (2d-γ, client):** the footprint highlight, the feed-split readout (`penPastureFraction` +
+  `penUpkeep`), and the extend affordance / "Fencing N%" badge (`penExtendProgress`).
 
 ---
 

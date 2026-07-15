@@ -344,7 +344,14 @@ pub fn advance_labor_allocation(
                             pasture_fraction + (1.0 - pasture_fraction) * larder_covered;
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
-                        let take_biomass = fauna::pen_yield_biomass(herd, &fauna);
+                        // **While EXTENDING the pen (2d-β) the keeper is fencing, not fully
+                        // harvesting**, so the take is DIPPED to `corralling_yield_fraction` — the
+                        // forgone yield IS the labor cost of the ring (the same dip the corral *build*
+                        // pays), consistent with §4 "worked by the keeper band's labor, no materials".
+                        let mut take_biomass = fauna::pen_yield_biomass(herd, &fauna);
+                        if herd.pen_extending {
+                            take_biomass *= husbandry.corralling_yield_fraction;
+                        }
                         herd.biomass -= take_biomass;
                         let provisions =
                             scalar_from_f32(hunt_provisions(take_biomass, &fauna, mult_f));
@@ -352,6 +359,30 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let tended = provisions.to_f32();
+                        // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
+                        // this turn pays exactly the dipped yield the forecast promised; the completed
+                        // larger footprint's higher K arrives on the next `advance_herds`.
+                        if herd.pen_extending
+                            && herd.accrue_pen_extension(
+                                husbandry.corral_build_progress_per_turn,
+                                husbandry.pen_radius_max,
+                            )
+                        {
+                            let pen_tile = herd.corralled_at.unwrap_or_else(|| herd.position());
+                            event_log.push(CommandEventEntry::new(
+                                tick.0,
+                                CommandEventKind::Corral,
+                                faction,
+                                format!(
+                                    "Extended the pen for {} to radius {}",
+                                    fauna_id, herd.pen_radius
+                                ),
+                                Some(format!(
+                                    "status=extended action=extend_pen herd={} radius={} x={} y={}",
+                                    fauna_id, herd.pen_radius, pen_tile.x, pen_tile.y
+                                )),
+                            ));
+                        }
                         // A corralled herd is worker-tended maintenance (the animal mirror of the
                         // tended patch): a fixed one-worker "need", not scaling with the take. And a
                         // *managed* harvest never overdraws — it takes exactly the MSY — so

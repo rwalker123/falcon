@@ -134,6 +134,8 @@
     "pastoral_gain": 1.5,
     "pen_gain": 3.0,
     "husbandry_regrowth_cap": 0.75,
+    "_comment_pen_radius_max": "PEN EXTENSION CAP (Grazing 2d-beta, the ExtendPen command): the largest fenced-footprint radius a pen may reach. 2 -> up to a 19-tile footprint (hex disk 1, 7, 19); each ring is a 25-turn keeper-labor investment (corral_build_progress_per_turn). Raise to let pens grow into larger self-feeding operations at more forgone-yield turns.",
+    "pen_radius_max": 2,
     "pastoral": {
       "_comment": "The MOBILE DOMESTICATED rung: passive (no worker, no upkeep — a roaming herd grazes for free). Its growth is now PER-SPECIES (wild_r * pastoral_gain, capped), so a tamed herd grows faster than a wild one but by a MULTIPLE of its own rate. The ecology block below carries only the shared phase bands; its regrowth_rate is unused (folded per-species by fauna::herd_ecology).",
       "ecology": {}

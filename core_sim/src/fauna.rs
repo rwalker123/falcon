@@ -240,9 +240,17 @@ pub struct Herd {
     /// count) so β only has to grow it. Authoritative sim state — snapshot-persisted.
     pub pen_radius: u32,
     /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
-    /// ladder, 2d-β). Stays `0.0` this slice (2d-α wires the field so β only accrues it); exported as
-    /// `penExtendProgress` for a "Fencing N%" badge. Snapshot-persisted alongside `pen_radius`.
+    /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at
+    /// `husbandry.corral_build_progress_per_turn`; at `1.0` the ring completes (`pen_radius += 1`, this
+    /// resets to `0.0`, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
+    /// badge. Snapshot-persisted alongside `pen_radius`.
     pub pen_extend_progress: f32,
+    /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
+    /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
+    /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
+    /// when the ring completes. Snapshot-persisted so a rollback rewinds an in-flight extension rather
+    /// than stranding a half-progress meter that never completes.
+    pub pen_extending: bool,
     /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
     /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen larder-offset in
     /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
@@ -338,6 +346,7 @@ impl Herd {
             corral_progress: 0.0,
             pen_radius: 0,
             pen_extend_progress: 0.0,
+            pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
             corralled_tended_this_turn: false,
@@ -435,6 +444,39 @@ impl Herd {
         self.corral_progress = (self.corral_progress + amount).min(1.0);
         if self.corral_progress >= 1.0 {
             self.corral_at(tile);
+            return true;
+        }
+        false
+    }
+
+    /// Begin an `ExtendPen` extension (Grazing 2d-β): enter the "extending" state with a fresh ring
+    /// meter. Requires a **built pen with room to grow** (`is_corralled()` and `pen_radius <
+    /// radius_max`) and **no extension already in flight** — returns `false` (a no-op) otherwise, so the
+    /// command handler's validation and this guard can never disagree. The animal mirror of the `Corral`
+    /// policy's under-construction state, but on an *already-penned* herd.
+    pub fn begin_pen_extension(&mut self, radius_max: u32) -> bool {
+        if !self.is_corralled() || self.pen_extending || self.pen_radius >= radius_max {
+            return false;
+        }
+        self.pen_extending = true;
+        self.pen_extend_progress = 0.0;
+        true
+    }
+
+    /// Accrue one turn of pen-**extension** progress (2d-β), the twin of [`accrue_corral`] on an
+    /// already-penned herd: while `pen_extending`, add `amount` to `pen_extend_progress`; at `1.0` the
+    /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
+    /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
+    /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
+    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, radius_max: u32) -> bool {
+        if !self.pen_extending {
+            return false;
+        }
+        self.pen_extend_progress = (self.pen_extend_progress + amount).min(1.0);
+        if self.pen_extend_progress >= 1.0 {
+            self.pen_radius = (self.pen_radius + 1).min(radius_max);
+            self.pen_extend_progress = 0.0;
+            self.pen_extending = false;
             return true;
         }
         false
@@ -725,6 +767,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         corral_progress: state.corral_progress,
         pen_radius: state.pen_radius,
         pen_extend_progress: state.pen_extend_progress,
+        pen_extending: state.pen_extending,
         // Transient (not persisted) — recomputed each turn (footprint/pasture) or reset to the neutral
         // value: a rehydrated corralled herd is "untended" until worked again, and "fed" (so a rollback
         // can delay a starvation turn but never invent one).

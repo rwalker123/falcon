@@ -384,6 +384,11 @@ pub struct HusbandryConfig {
     /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
     /// overshoot/oscillate. `0.75` keeps the discrete logistic monotone.
     pub husbandry_regrowth_cap: f32,
+    /// **The largest fenced-footprint radius a pen may reach** (Grazing 2d-β, the `ExtendPen` command).
+    /// Each worked-off ring grows `Herd::pen_radius` by 1; the command refuses once `pen_radius` reaches
+    /// this. `2` → up to a 19-tile footprint (`hex_range_tiles` disk `1, 7, 19`). Validated `>= 1`
+    /// (a `0` cap would forbid every extension).
+    pub pen_radius_max: u32,
     /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
     /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
     /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
@@ -406,6 +411,7 @@ impl Default for HusbandryConfig {
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
             pen_gain: DEFAULT_PEN_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
+            pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
             knowledge_progress_per_turn: 0.05,
             knowledge_completion_threshold: 1.0,
         }
@@ -477,6 +483,11 @@ const DEFAULT_PEN_GAIN: f32 = 3.0;
 /// be scaled into an unstable/oscillating discrete-logistic rate. `0.75` keeps growth monotone (well
 /// below the `r ≥ 1` overshoot regime). A **playtest lever**.
 const DEFAULT_HUSBANDRY_REGROWTH_CAP: f32 = 0.75;
+
+/// **The largest fenced-footprint radius a pen may reach** (Grazing 2d-β). `2` → up to a 19-tile
+/// footprint; each ring is a 25-turn `ExtendPen` labor investment. A **playtest lever** (higher = pens
+/// can grow into larger self-feeding operations at more keeper-turns of cost).
+const DEFAULT_PEN_RADIUS_MAX: u32 = 2;
 
 /// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
@@ -777,6 +788,15 @@ impl FaunaConfig {
             "husbandry.husbandry_regrowth_cap",
             self.husbandry.husbandry_regrowth_cap,
         )?;
+        // `pen_radius_max` at `0` would forbid every `ExtendPen` (2d-β) — the command could never grow a
+        // pen past its single tile, silently disabling the mechanic.
+        if self.husbandry.pen_radius_max < 1 {
+            return Err(FaunaConfigError::Invalid {
+                field: "husbandry.pen_radius_max",
+                constraint: "be at least 1 (a 0 cap forbids every pen extension)".to_string(),
+                value: self.husbandry.pen_radius_max.to_string(),
+            });
+        }
 
         // --- The pen's feed. A shrink rate above 1 would drive an underfed herd's biomass *negative* in
         // one turn; below 0 it would *grow* a starving herd.

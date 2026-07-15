@@ -154,6 +154,11 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    ExtendPen {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
     CancelOrder {
         faction_id: u32,
         band_entity_bits: Option<u64>,
@@ -523,6 +528,15 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::ExtendPen {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::ExtendPen(pb::ExtendPenCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::CancelOrder {
                 faction_id,
                 band_entity_bits,
@@ -813,6 +827,11 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
             },
             pb::command_envelope::Command::Corral(cmd) => CommandPayload::Corral {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::ExtendPen(cmd) => CommandPayload::ExtendPen {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
