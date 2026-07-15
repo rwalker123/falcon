@@ -189,22 +189,22 @@ fn earthlike_preset_generates_rivers() {
     let _ = wrap;
 }
 
-/// **The shore-hug regression.** A river must *end* at the moment it touches standing water and a new
-/// river begins where it leaves — feed-in and drain-out are separate segments, never one river threaded
-/// *along* the shore. Symptom before the fix: an edge with land on one bank and a lake/sea on the other
-/// was still emitted, so an edge river hugged the lakeshore (measured 30 of 62 land edge-river tiles
-/// sat directly against an InlandSea/NavigableRiver on the exported seed).
+/// **The shore-hug / connect-to-the-mouth regression.** A river must *connect* to the standing water
+/// it ends at and stop — feed-in and drain-out are separate segments, never one river threaded *along*
+/// the shore. The old both-banks-only rule hugged the lakeshore; the first fix over-corrected and
+/// dropped the water-touching edge, leaving a visible GAP one step short of the water.
 ///
-/// **Invariant chosen (holds exactly, not merely ~0):** no emitted river EDGE has terrain standing
-/// water — an InlandSea or an ocean-family tile (DeepOcean/ContinentalShelf/CoralShelf/
-/// HydrothermalVentField) — on *either* bank. That is precisely the half-submerged edge the fix now
-/// splits on. (`NavigableRiver` is deliberately excluded: a river's own edge→navigable hand-off shares
-/// exactly one edge with its trunk *by construction* — that shared bank is the join, not a shore-hug —
-/// so the "V" trunk-flank symptom is measured separately by the census, not asserted here.)
+/// The mouth edge now legitimately borders the water (it is the connecting edge), so the invariant is
+/// no longer "no emitted edge borders water". The new invariant, which still forbids a shore-hug:
+/// **each river has AT MOST ONE terrain-water-touching edge, and it is the LAST one (the mouth).** A
+/// river that ran along a shore would have several such edges, or one that is not its final edge.
+/// (`NavigableRiver` is deliberately excluded: a river's own edge→navigable hand-off shares exactly
+/// one edge with its trunk *by construction* — that shared bank is the join, not a shore-hug — so the
+/// "V" trunk-flank symptom is measured separately by the census, not asserted here.)
 #[test]
 fn edge_rivers_terminate_at_water_not_along_it() {
-    // The ocean/inland-sea water an emitted edge must never border. NavigableRiver is intentionally
-    // absent — see the doc comment.
+    // The ocean/inland-sea water the emit split keys off. NavigableRiver is intentionally absent —
+    // see the doc comment.
     fn is_standing_water(terrain: TerrainType) -> bool {
         matches!(
             terrain,
@@ -218,6 +218,7 @@ fn edge_rivers_terminate_at_water_not_along_it() {
 
     let mut offenders = 0usize;
     let mut emitted_edges = 0usize;
+    let mut mouths = 0usize;
     for seed in invariant_seeds() {
         let world = earthlike_world_seeded(seed);
         let config = world.resource::<SimulationConfig>();
@@ -238,7 +239,8 @@ fn edge_rivers_terminate_at_water_not_along_it() {
         };
 
         for river in &hydrology.rivers {
-            for edge in &river.edges {
+            let mut water_edges: Vec<usize> = Vec::new();
+            for (i, edge) in river.edges.iter().enumerate() {
                 emitted_edges += 1;
                 let near = terrain_at(edge.hex);
                 let far = core_sim::grid_utils::hex_neighbor(
@@ -251,10 +253,29 @@ fn edge_rivers_terminate_at_water_not_along_it() {
                 )
                 .map(|(x, y)| terrain_at(UVec2::new(x, y)));
                 if is_standing_water(near) || far.is_some_and(is_standing_water) {
+                    water_edges.push(i);
+                }
+            }
+
+            // At most one water-touching edge (no shore-hug)...
+            if water_edges.len() > 1 {
+                offenders += 1;
+                println!(
+                    "seed {seed}: river {} runs along a shore — {} of its edges border standing water",
+                    river.id,
+                    water_edges.len()
+                );
+                continue;
+            }
+            // ...and if present, it is the LAST edge (the mouth connecting the river to the water).
+            if let Some(&i) = water_edges.first() {
+                mouths += 1;
+                if i != river.edges.len() - 1 {
                     offenders += 1;
                     println!(
-                        "seed {seed}: river {} edge {:?} dir {} borders standing water (near {near:?}, far {far:?})",
-                        river.id, edge.hex, edge.dir
+                        "seed {seed}: river {} touches water at edge {i} of {}, not its mouth",
+                        river.id,
+                        river.edges.len()
                     );
                 }
             }
@@ -265,9 +286,14 @@ fn edge_rivers_terminate_at_water_not_along_it() {
         emitted_edges > 0,
         "expected emitted river edges across the sweep"
     );
+    assert!(
+        mouths > 0,
+        "expected at least one edge river to connect to its mouth"
+    );
     assert_eq!(
         offenders, 0,
-        "an emitted river edge borders standing water — a river must terminate INTO the water, not run along it"
+        "a river runs along a shore or stops short of its mouth — it must have at most one \
+         water-touching edge, and it must be the last (the mouth)"
     );
 }
 
@@ -407,6 +433,78 @@ fn navigable_hex_chains_are_contiguous_and_terminate_at_water() {
     );
 
     println!("navigable rivers checked: {checked}");
+}
+
+/// **Part B + C.** A navigable river must *be* a waterway: its chain must CONNECT to standing water
+/// (a landlocked navigable dead-end on dry land is demoted to the edge model) and must be no shorter
+/// than `river_navigable_min_hexes` (a 1- or 2-hex navigable is a puddle, not a river). Swept over
+/// `CENSUS_SEEDS`.
+#[test]
+fn navigable_rivers_connect_to_water() {
+    let mut checked = 0usize;
+    for seed in CENSUS_SEEDS {
+        let world = earthlike_world_seeded(seed);
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        // The effective lever the emitter ran under: override > preset (> default, folded into the
+        // preset by serde). No magic number.
+        let preset = world
+            .resource::<MapPresetsHandle>()
+            .get()
+            .get(&config.map_preset_id)
+            .cloned()
+            .expect("earthlike preset present");
+        let min_hexes = config
+            .hydrology
+            .navigable_min_hexes
+            .unwrap_or(preset.river_navigable_min_hexes);
+
+        let registry = world.resource::<TileRegistry>().clone();
+        let hydrology = world.resource::<HydrologyState>();
+        let terrain_at = |pos: UVec2| -> TerrainType {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+                .terrain
+        };
+
+        for river in &hydrology.rivers {
+            if river.navigable_hexes.is_empty() {
+                continue;
+            }
+            checked += 1;
+
+            // Part C: no navigable run shorter than the configured minimum.
+            assert!(
+                river.navigable_hexes.len() >= min_hexes,
+                "seed {seed}: river {} navigable run is {} hexes (< min {min_hexes}) — a puddle",
+                river.id,
+                river.navigable_hexes.len()
+            );
+
+            // Part B: the terminal hex reaches standing water (it is water itself — a merged trunk —
+            // or hex-adjacent to sea / lake / another navigable trunk). No landlocked navigable.
+            let last = *river.navigable_hexes.last().expect("non-empty");
+            let reaches = is_water(terrain_at(last))
+                || hex_neighbors_wrapped(last.x, last.y, width, height, wrap)
+                    .any(|(x, y)| is_water(terrain_at(UVec2::new(x, y))));
+            assert!(
+                reaches,
+                "seed {seed}: river {} navigable chain dead-ends on dry land at {last:?}",
+                river.id
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "expected at least one navigable river across the seed sweep"
+    );
+    println!("navigable rivers connected to water: {checked}");
 }
 
 /// The per-tile mask is the gameplay primitive: for every traced edge, BOTH flanking hexes must
@@ -1089,6 +1187,10 @@ struct MapCensus {
     /// The **"V" metric**: the most sides of a single `NavigableRiver` trunk hex flanked by an edge
     /// river (was 2 — a tributary ran up two sides of the trunk before handing over at a far corner).
     max_trunk_flank: usize,
+    /// Navigable runs whose terminal hex dead-ends on dry land (**must be 0** — Part B).
+    landlocked_navigable: usize,
+    /// Navigable runs whose terminal hex reaches standing water (the mouth-connection count).
+    mouth_connected_navigable: usize,
 }
 
 impl MapCensus {
@@ -1159,6 +1261,8 @@ impl MapCensus {
         let mut major = 0usize;
         let mut discharge = Vec::new();
         let mut navigable_runs = Vec::new();
+        let mut landlocked_navigable = 0usize;
+        let mut mouth_connected_navigable = 0usize;
         for river in &hydrology.rivers {
             *segment_orders.entry(river.order).or_default() += 1;
             for edge in &river.edges {
@@ -1169,8 +1273,16 @@ impl MapCensus {
                     RiverClass::None => {}
                 }
             }
-            if !river.navigable_hexes.is_empty() {
+            if let Some(&last) = river.navigable_hexes.last() {
                 navigable_runs.push(river.navigable_hexes.len());
+                let reaches = is_water(tile_at(last).terrain)
+                    || hex_neighbors_wrapped(last.x, last.y, width, height, wrap)
+                        .any(|(x, y)| is_water(tile_at(UVec2::new(x, y)).terrain));
+                if reaches {
+                    mouth_connected_navigable += 1;
+                } else {
+                    landlocked_navigable += 1;
+                }
             }
         }
 
@@ -1193,6 +1305,8 @@ impl MapCensus {
             shore_hug,
             edge_river_tiles,
             max_trunk_flank,
+            landlocked_navigable,
+            mouth_connected_navigable,
         }
     }
 
@@ -1317,6 +1431,8 @@ fn census_pass(label: &str, erosion: &ErosionConfig) -> (MapCensus, Vec<(u64, La
         shore_hug: 0,
         edge_river_tiles: 0,
         max_trunk_flank: 0,
+        landlocked_navigable: 0,
+        mouth_connected_navigable: 0,
     };
     let mut landscapes: Vec<(u64, Landscape)> = Vec::new();
 
@@ -1363,6 +1479,8 @@ fn census_pass(label: &str, erosion: &ErosionConfig) -> (MapCensus, Vec<(u64, La
         aggregate.shore_hug += c.shore_hug;
         aggregate.edge_river_tiles += c.edge_river_tiles;
         aggregate.max_trunk_flank = aggregate.max_trunk_flank.max(c.max_trunk_flank);
+        aggregate.landlocked_navigable += c.landlocked_navigable;
+        aggregate.mouth_connected_navigable += c.mouth_connected_navigable;
     }
 
     report(
@@ -1462,15 +1580,24 @@ fn drainage_census() {
 
     let runs = |c: &MapCensus| -> String {
         let max = c.navigable_runs.iter().copied().max().unwrap_or(0);
+        let min = c.navigable_runs.iter().copied().min().unwrap_or(0);
         let mean = if c.navigable_runs.is_empty() {
             0.0
         } else {
             c.navigable_runs.iter().sum::<usize>() as f64 / c.navigable_runs.len() as f64
         };
         format!(
-            "segments={:<3} hexes={:<4} mean run={mean:.1} MAX RUN={max}",
+            "segments={:<3} hexes={:<4} mean run={mean:.1} MIN RUN={min} MAX RUN={max} | \
+             landlocked={} mouth-connected={} (histogram {:?})",
             c.navigable_runs.len(),
-            c.navigable_runs.iter().sum::<usize>()
+            c.navigable_runs.iter().sum::<usize>(),
+            c.landlocked_navigable,
+            c.mouth_connected_navigable,
+            {
+                let mut h = c.navigable_runs.clone();
+                h.sort_unstable();
+                h
+            }
         )
     };
     println!(

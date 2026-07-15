@@ -18,7 +18,8 @@
     "river_channel_min_discharge": 3.0,
     "river_class_major_min_discharge": 12.0,
     "river_class_navigable_min_discharge": 25.0,
-    "river_navigable_enabled": true
+    "river_navigable_enabled": true,
+    "navigable_min_hexes": 3
   },
   "ambient_temperature": 18.0,
   "temperature_lerp": 0.05,

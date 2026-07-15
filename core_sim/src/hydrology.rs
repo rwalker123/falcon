@@ -941,33 +941,52 @@ struct StemEmitter<'a> {
     tiles: &'a TileWorld<'a>,
     elevation_field: &'a ElevationField,
     thresholds: RiverClassThresholds,
+    /// The shortest navigable hex chain that still reads as a river. A shorter chain is a puddle, so
+    /// it is demoted to the river's edge (Major) form (`river_navigable_min_hexes`).
+    navigable_min_hexes: usize,
 }
 
 impl StemEmitter<'_> {
-    /// Emit a stem as **one river per contiguous run of steps that touch no standing water**.
+    /// Emit a stem as **one river per contiguous run of steps that touch no standing water** — but a
+    /// river **connects** to the water it ends at rather than stopping one step short of it.
     ///
     /// A river **ends the moment it touches standing water, and a new river begins where it leaves**:
     /// feed-in and drain-out are separate segments, not one river threaded through — or *around* — the
-    /// water. A step whose edge touches standing water on *either* bank is skipped and splits the
-    /// stem, so the river visibly runs *into* the lake/sea/trunk at the first corner it reaches it
-    /// (rather than hugging the shore along it) and re-emerges below as its own segment. The
-    /// accumulation still flows through underneath, so the outlet stays a big river below a big lake —
-    /// only the rendered segmentation changes. The break is also required because a `RiverSegment`'s
-    /// edge chain and navigable chain are both **paths**: a chain with a water-shaped hole in it would
-    /// be neither contiguous nor drawable.
+    /// water. The first water-touching edge is emitted as the **mouth** — the connecting edge that
+    /// reaches the water — and terminates the run; the *rest* of the consecutive water-touching edges
+    /// (the shore-hug + the submerged stretch) are then **skipped, not drawn**, and a new run resumes
+    /// at the next dry (non-water-touching) edge. So there is exactly ONE water-touching edge per
+    /// river and it is the LAST one: the river runs *into* the lake/sea/trunk and stops, rather than
+    /// hugging the shore along it, and the drain-out below re-emerges as its own segment (connected on
+    /// its source side, its first corner being water-adjacent). The accumulation still flows through
+    /// underneath, so the outlet stays a big river below a big lake — only the rendered segmentation
+    /// changes. The split is also required because a `RiverSegment`'s edge chain and navigable chain
+    /// are both **paths**: a chain with a water-shaped hole in it would be neither contiguous nor
+    /// drawable. Index-based so the shore-hug stretch can be skipped without re-emitting fragments.
     fn emit(&self, stem: &Stem, existing_navigable: &HashSet<usize>) -> Vec<TracedRiver> {
         let steps = self.steps(stem);
         let mut rivers = Vec::new();
         let mut run: Vec<(usize, CornerStep)> = Vec::new();
-        for (from, step) in steps {
+        let mut i = 0;
+        while i < steps.len() {
+            let (from, step) = steps[i];
             if self.edge_touches_water(&step, existing_navigable) {
+                // Emit the CONNECTING edge (it reaches the water = the mouth), terminate the run here,
+                // then skip the rest of the consecutive water-touching edges (shore-hug + submerged):
+                // they are NOT drawn and NOT turned into fragments.
+                run.push((from, step));
                 if let Some(river) = self.emit_run(&run, stem.terminus, existing_navigable) {
                     rivers.push(river);
                 }
                 run.clear();
+                i += 1;
+                while i < steps.len() && self.edge_touches_water(&steps[i].1, existing_navigable) {
+                    i += 1;
+                }
                 continue;
             }
             run.push((from, step));
+            i += 1;
         }
         if let Some(river) = self.emit_run(&run, stem.terminus, existing_navigable) {
             rivers.push(river);
@@ -1012,15 +1031,70 @@ impl StemEmitter<'_> {
             .is_some_and(is_standing_water)
     }
 
+    /// Trace one run into a river, then enforce the two navigable invariants: a navigable chain must
+    /// **connect to standing water** (Part B) and be no shorter than `navigable_min_hexes` (Part C).
+    /// A chain that dead-ends on dry land, or is a 1–2 hex puddle, is **demoted** to the river's edge
+    /// (Major) form — the river stays, it just isn't navigable water — by re-tracing the same run with
+    /// the navigable model disabled.
     fn emit_run(
         &self,
         run: &[(usize, CornerStep)],
         terminus: usize,
         existing_navigable: &HashSet<usize>,
     ) -> Option<TracedRiver> {
+        let traced = self.trace_run(
+            run,
+            terminus,
+            existing_navigable,
+            self.thresholds.navigable_enabled,
+        )?;
+        if !traced.navigable_hexes.is_empty()
+            && (!self.navigable_reaches_water(&traced.navigable_hexes, existing_navigable)
+                || traced.navigable_hexes.len() < self.navigable_min_hexes)
+        {
+            // Demote: this navigable chain is landlocked or too short. Re-emit the whole run as Major
+            // edges (navigable disabled) so the river survives on the edge model.
+            return self.trace_run(run, terminus, existing_navigable, false);
+        }
+        Some(traced)
+    }
+
+    /// The last hex of a navigable chain is standing water itself (it merged onto an existing trunk)
+    /// or is hex-adjacent to it (sea / lake / a stamped navigable trunk) — i.e. the chain **reaches**
+    /// the water rather than dead-ending on dry land.
+    fn navigable_reaches_water(
+        &self,
+        chain: &[UVec2],
+        existing_navigable: &HashSet<usize>,
+    ) -> bool {
+        let Some(&last) = chain.last() else {
+            return false;
+        };
+        let is_standing = |hex: UVec2| {
+            self.tiles.is_water_hex(hex) || existing_navigable.contains(&self.grid.tile_index(hex))
+        };
+        is_standing(last)
+            || (0..HEX_DIRECTION_COUNT as u8)
+                .filter_map(|dir| self.grid.neighbor(last, dir))
+                .any(is_standing)
+    }
+
+    /// Trace one run's edges + navigable tail. `navigable_enabled` overrides the emitter's threshold
+    /// so `emit_run` can re-trace a demoted run purely on the edge model.
+    fn trace_run(
+        &self,
+        run: &[(usize, CornerStep)],
+        terminus: usize,
+        existing_navigable: &HashSet<usize>,
+        navigable_enabled: bool,
+    ) -> Option<TracedRiver> {
         if run.is_empty() {
             return None;
         }
+        let thresholds = RiverClassThresholds {
+            navigable_enabled,
+            ..self.thresholds
+        };
 
         let mut edges: Vec<RiverEdge> = Vec::new();
         let mut last_emitted: Option<RiverEdge> = None;
@@ -1032,7 +1106,7 @@ impl StemEmitter<'_> {
             // Discharge of the edge about to be crossed = accumulation at its upstream corner. This
             // is monotonically non-decreasing downstream, so an edge's class never shrinks.
             let discharge = self.field.accumulation[*from];
-            match self.thresholds.classify(discharge) {
+            match thresholds.classify(discharge) {
                 Some(class) => {
                     let edge = RiverEdge {
                         hex: step.hex,
@@ -1566,6 +1640,9 @@ struct HydrologyLevers {
     channel_min: f32,
     /// The only noise gate left: an emitted river shorter than this (in hexes) is dropped.
     min_length: usize,
+    /// The shortest navigable hex chain that still reads as a river; a shorter one is demoted to the
+    /// river's edge (Major) form (`river_navigable_min_hexes`).
+    navigable_min_hexes: usize,
     /// The gentle-coast gate deltas are stamped under — the shelf's own threshold, so "gentle coast"
     /// means one thing across worldgen.
     coast_height_threshold: f32,
@@ -1637,6 +1714,10 @@ impl HydrologyLevers {
                 .min_length
                 .or(preset.map(|p| p.river_min_length))
                 .unwrap_or(crate::map_preset::default_river_min_length()),
+            navigable_min_hexes: overrides
+                .navigable_min_hexes
+                .or(preset.map(|p| p.river_navigable_min_hexes))
+                .unwrap_or(crate::map_preset::default_river_navigable_min_hexes()),
             coast_height_threshold: preset
                 .map(|p| p.shelf.coast_height_threshold)
                 .unwrap_or(DEFAULT_COAST_HEIGHT_THRESHOLD),
@@ -1744,6 +1825,7 @@ pub fn generate_hydrology(world: &mut World) {
             tiles: &tiles,
             elevation_field: &elevation_field,
             thresholds: levers.thresholds,
+            navigable_min_hexes: levers.navigable_min_hexes,
         };
 
         // The channel this river lays down is what a later tributary merges *into* (see
@@ -2228,6 +2310,9 @@ mod tests {
             tiles: &tiles,
             elevation_field: &fixture.elevation,
             thresholds,
+            // Unit fixtures exercise the hand-off geometry on tiny maps, so the Part C puddle gate is
+            // held off (1) here; the worldgen minimum is swept by the integration tests.
+            navigable_min_hexes: 1,
         };
         let mut navigable: HashSet<usize> = HashSet::new();
         let mut out = Vec::new();

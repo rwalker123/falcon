@@ -153,26 +153,36 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   corner: the fill raises it to its lowest saddle and it **spills**, so the whole upstream catchment
   carries *through* the lake and out a genuine outlet. Real outlet rivers, and a big river below a big
   lake, fall out for free (replacing the old `lake_heads` hack). Two consequences:
-  - **A river ENDS the moment it touches standing water, and a new river begins where it leaves.** An
-    edge is emitted only while it touches no standing water; a step whose edge touches standing water on
-    *either* bank is skipped and **splits the stem into separate `RiverSegment`s** (feed-in and
-    drain-out are separate rivers, not one segment threaded *through* — or *around* — the water).
-    "Standing water" is a lake / inland sea / ocean on the terrain map **or** a previously-stamped
-    navigable trunk (`StemEmitter::edge_touches_water`, reading `is_water_hex` + `existing_navigable`).
-    The earlier both-banks-only rule left a **half-submerged** edge (land on one bank, water on the
-    other) emitted and drawn, so an edge river **hugged the lakeshore** and a tributary **ran up the
-    side of a navigable trunk hex to a far corner** (a "V") before handing over; ending the run at first
-    contact terminates the river *into* the water at the first corner it reaches instead. The
-    accumulation still flows through underneath (discharge/class unchanged), so the outlet stays a big
-    river below a big lake and can independently go navigable again below it — **only the rendered
-    segmentation changes.** The split is also required because a segment's edge chain and navigable
-    chain are both *paths* — a chain with a water-shaped hole in it would be neither contiguous nor
-    drawable. Guarded by `hydrology_earthlike::edge_rivers_terminate_at_water_not_along_it` (no emitted
-    edge borders an InlandSea/ocean tile on either bank — the lake shore-hug is now **exactly 0**; the
-    navigable-trunk "V" and the shore-hug tile proxy are tracked by the `drainage_census`). **This
-    materially reduces navigable rivers** (they no longer accrue shore-hugging false chains): measured
-    31→21 navigable segments and 142→75 navigable hexes over the 6-seed sweep (max run 25→21), and the
-    shore-hug tile proxy 43%→26% with max trunk-flank 4→2.
+  - **A river ENDS at standing water and CONNECTS to it; a new river begins where terrain drains out.**
+    The run emits the **first water-touching edge as the mouth** (the connecting edge that reaches the
+    water) and terminates there; the *rest* of the consecutive water-touching edges (the shore-hug + the
+    submerged stretch) are **skipped, not drawn**, and a new run resumes at the next dry edge. So there
+    is exactly **one water-touching edge per river and it is the LAST one** — the river runs *into* the
+    lake/sea/trunk and stops rather than hugging the shore, and the drain-out below re-emerges as its own
+    segment (connected on its source side, its first corner being water-adjacent). "Standing water" is a
+    lake / inland sea / ocean on the terrain map **or** a previously-stamped navigable trunk
+    (`StemEmitter::edge_touches_water`, reading `is_water_hex` + `existing_navigable`). The original
+    both-banks rule hugged the lakeshore ("V" up a trunk hex); the first fix over-corrected and *dropped*
+    the water-touching edge, leaving a visible **gap one step short of the water** — the current rule
+    draws the mouth and skips only the shore-hug. The accumulation still flows through underneath
+    (discharge/class unchanged), so the outlet stays a big river below a big lake and can independently go
+    navigable again below it — **only the rendered segmentation changes.** The split is also required
+    because a segment's edge chain and navigable chain are both *paths* — a chain with a water-shaped hole
+    in it would be neither contiguous nor drawable. Guarded by
+    `hydrology_earthlike::edge_rivers_terminate_at_water_not_along_it` (a river has **at most one**
+    terrain-water-touching edge and it is the **last** — the mouth — so no river runs along a shore; the
+    navigable-trunk "V" and the shore-hug tile proxy are tracked by the `drainage_census`).
+  - **A navigable river must CONNECT to water, or it isn't navigable.** After the split a navigable chain
+    must end at the water it connects to (its last hex is standing water, or hex-adjacent to it —
+    `StemEmitter::navigable_reaches_water`). A chain that **dead-ends on dry land** (an endorheic run with
+    no ocean) is **demoted to the river's edge (Major) form** — re-traced with the navigable model off,
+    so the river survives on the edge model rather than stranding a landlocked navigable dead-end. A
+    navigable run shorter than **`river_navigable_min_hexes`** (a 1- or 2-hex puddle) is demoted the same
+    way. Both demotions run in `StemEmitter::emit_run`; guarded by
+    `hydrology_earthlike::navigable_rivers_connect_to_water` (every navigable run reaches standing water
+    and is ≥ the lever, swept over `CENSUS_SEEDS`). Aggregate over the 6-seed sweep: **14 navigable
+    segments / 68 hexes, min run 3, max run 22, 0 landlocked, all mouth-connected** (the `drainage_census`
+    now reports the landlocked count, the run histogram, and the mouth-connection count).
   - **Deltas are PER-TRANSITION, not per-terminus.** A river now both *enters* a standing water body
     and *leaves* it, so the delta scan stamps a delta at **every land→standing-water transition** along
     the river's ordered hex path (plus the mouth, where the path simply ends against the water) — each
@@ -359,6 +369,7 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   | `river_class_major_min_discharge` | **12.0** | Minor → Major. |
   | `river_class_navigable_min_discharge` | **25.0** | Major → `NavigableRiver` hex chain. |
   | `river_navigable_enabled` | true | Kill switch for the navigable tail. |
+  | `river_navigable_min_hexes` (`navigable_min_hexes` in the override block) | **3** | Shortest navigable hex chain that still reads as a river; a shorter run is demoted to the edge (`Major`) form (a 1–2 hex navigable is a puddle). |
   | `river_min_length` (`min_length` in the override block) | 2 hexes | The **only** noise gate. Keep it low. |
 
   **The three discharge thresholds are `f32` and ABSOLUTE.** Discharge means *precipitation-weighted
@@ -378,9 +389,10 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
 
   **Measured** shape at those thresholds, on the **eroded** landscape
   (`hydrology_earthlike::drainage_census`, `#[ignore]`d; run with `-- --ignored --nocapture`),
-  aggregate over 6 seeds of an 80×52 earthlike map (after the "end at first standing water" fix):
-  **14.5 rivers per map**, 81.1% Minor / 18.9% Major, **3.5 navigable segments / 12.5 navigable hexes**
-  per map (down from 5.2 / 23.7 before the fix — segments that used to hug shorelines are gone);
+  aggregate over 6 seeds of an 80×52 earthlike map (after the "connect to the mouth + demote landlocked/
+  puddle navigable" fix): **14.5 rivers per map**, 81.1% Minor / 18.9% Major, **~2.3 navigable segments
+  / ~11 navigable hexes per map** (14 segments / 68 hexes over the 6-seed sweep, min run 3, 0 landlocked
+  — the shore-hugging false chains, the landlocked dead-ends, and the 1–2 hex puddles are all gone);
   land-corner accumulation p50 = 0.60 / p95 = 10.2 / p99 = 64.4 / **max 587**; corner confluences
   **11.6%** of land corners (4.1% before the drainage-network rewrite); Strahler on the drainage tree
   o1 = 12366, o2 = 2246, o3 = 837, o4 = 254, o5 = 34 (the accumulation/confluence/Strahler figures read

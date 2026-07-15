@@ -44,6 +44,9 @@ pub struct HydrologyOverrides {
     pub class_navigable_min_discharge: Option<f32>,
     /// Kill switch for navigable rivers.
     pub navigable_enabled: Option<bool>,
+    /// The shortest navigable hex chain that still reads as a river; below this it is demoted to the
+    /// river's edge (`Major`) form.
+    pub navigable_min_hexes: Option<usize>,
 }
 
 /// Configuration for map topology (wrapping behavior).
@@ -358,6 +361,7 @@ struct HydrologyOverridesData {
     river_class_major_min_discharge: Option<f32>,
     river_class_navigable_min_discharge: Option<f32>,
     river_navigable_enabled: Option<bool>,
+    navigable_min_hexes: Option<usize>,
 }
 
 impl HydrologyOverridesData {
@@ -373,6 +377,7 @@ impl HydrologyOverridesData {
             class_major_min_discharge: self.river_class_major_min_discharge,
             class_navigable_min_discharge: self.river_class_navigable_min_discharge,
             navigable_enabled: self.river_navigable_enabled,
+            navigable_min_hexes: self.navigable_min_hexes,
         }
     }
 }

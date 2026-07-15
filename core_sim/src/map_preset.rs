@@ -87,6 +87,11 @@ pub struct MapPreset {
     /// `river_class_navigable_min_discharge` simply stays `Major` all the way to its mouth.
     #[serde(default = "default_river_navigable_enabled")]
     pub river_navigable_enabled: bool,
+    /// The shortest `NavigableRiver` hex chain that still reads as a river. A shorter chain is a
+    /// puddle, so it is demoted to the river's edge (`Major`) form rather than stamped navigable — a
+    /// 1- or 2-hex navigable dead-end is not a waterway.
+    #[serde(default = "default_river_navigable_min_hexes")]
+    pub river_navigable_min_hexes: usize,
 
     #[serde(default)]
     pub macro_land: MacroLandConfig,
@@ -478,6 +483,13 @@ pub(crate) const fn default_river_class_navigable_min_discharge() -> f32 {
 
 const fn default_river_navigable_enabled() -> bool {
     true
+}
+
+/// The shortest navigable hex chain that still reads as a river. Below this a navigable run is a
+/// puddle (a 1- or 2-hex water speck between lakes), so it is demoted to the river's edge (`Major`)
+/// form. **3** — a navigable river is a boat-scale waterway, not two tiles of standing water.
+pub(crate) const fn default_river_navigable_min_hexes() -> usize {
+    3
 }
 
 /// Stream-power fluvial erosion on the **base heightfield**, run at the end of
