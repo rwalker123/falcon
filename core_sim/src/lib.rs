@@ -145,6 +145,8 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
+// The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use hydrology::{debug_drainage_census, DrainageCensus};
 pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
@@ -158,7 +160,7 @@ pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
     BUILTIN_LABOR_CONFIG,
 };
-pub use map_preset::{MapPreset, MapPresets, MapPresetsHandle};
+pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };

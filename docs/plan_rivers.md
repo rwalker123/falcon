@@ -64,9 +64,16 @@ Corner elevation is the **mean** of its 3 hexes. Mean rather than min is what ma
 work: it puts a corner low exactly where the trough between two low hexes is, so rivers
 settle into valleys and run *between* hexes rather than over them.
 
-The pipeline otherwise keeps its existing shape — priority-flood cost field from the sea,
-flow accumulation, headwater source categories, min-spacing/min-length acceptance,
-termination classes — all ported to corners rather than redesigned.
+**The routing described here — a priority-flood COST field from the sea, headwater source
+categories, min-spacing/min-length acceptance, termination classes — is GONE.** It was the shape this
+arc inherited and did not redesign, and it was the wrong shape: a cost-to-sea field is dominated by
+*distance to the nearest coast*, so the tree it produced was close to a distance transform rather than
+a drainage network. The follow-up arc replaced all of it with steepest descent on a **depression-filled,
+precipitation-weighted elevation surface**, extracted by **main-stem decomposition** — see
+`docs/plan_rivers_drainage_network.md` and `core_sim/CLAUDE.md` → Rivers, which are authoritative.
+
+What survived unchanged is everything on *this* page below: the corner graph itself, canonical edges,
+the class vocabulary, the navigable hand-off, `river_inflow`, and the wire format.
 
 This also incidentally fixes the square-grid/hex mismatch that `core_sim/CLAUDE.md` flagged
 as known-deferred: the corner lattice derives from the real odd-r hex adjacency.
@@ -123,9 +130,20 @@ tributary ran along three of its sides on the way in), which leaves two candidat
 between them. A renderer keyed off the edge mask alone would guess — drawing an arm from the hex
 centre to every flanked side's midpoint, three arms, and a hex that fills with water.
 
-So the sim states the terminus. On the **first navigable hex only**, at the corner the edge chain
-ended on, with the class of the **last emitted edge**. A river that was navigable from its first
-step emitted no edges, has no tributary, and reports `0` — no invented inflow.
+So the sim states the terminus, at the corner the edge chain ended on, with the class of the **last
+emitted edge**. A river that was navigable from its first step emitted no edges, has no tributary,
+and reports `0` — no invented inflow.
+
+> **The semantics WIDENED with the drainage network.** This document originally said *"on the **first
+> navigable hex only**"* — i.e. `river_inflow` *meant* "this hex is a navigable chain HEAD", which was
+> true only because the old extraction could not join a tributary to a trunk anywhere else. A real
+> network joins tributaries to trunks **mid-chain** — that is the whole payoff — so `river_inflow` now
+> means **"a tributary hands over to the channel at this vertex"**, on *any* navigable hex. Same field,
+> same bits, same corner convention, same widest-wins rule; only the meaning widened.
+>
+> The client therefore can no longer read `inflow != 0` as "chain head". It **popcounts the
+> `river_channel` exit bits** instead: 1 exit = head (taper), ≥ 2 = mid-chain (full width), 3 =
+> confluence. See `docs/plan_rivers_drainage_network.md` §A and `core_sim/CLAUDE.md` → Rivers.
 
 Corner `i` is the vertex at screen angle `60*i + 30`, **+y down** (the client's `_hex_points`):
 `0` lower-right, `1` bottom, `2` lower-left, `3` upper-left, `4` top, `5` upper-right. In the sim's
@@ -133,9 +151,9 @@ Corner `i` is the vertex at screen angle `60*i + 30`, **+y down** (the client's 
 `TOP(H)`, `BOTTOM(NE(H))`; side `dir` spans corners `{dir - 1, dir}`. Both tables are unit-tested
 exhaustively against the corner model — a wrong table puts *every* tributary on the wrong vertex.
 
-Two tributaries can end at the **same** vertex of the same trunk hex (three hexes meet at a corner,
-so a river down either bank converges there — a confluence at a corner, present on real seeds). One
-slot holds one class, so the **wider** wins: `Major` over `Minor`, and order-independent.
+Two tributaries can hand over at the **same** vertex of the same hex (three hexes meet at a corner, so
+a river down either bank converges there — a confluence at a corner, present on real seeds). One slot
+holds one class, so the **wider** wins: `Major` over `Minor`, and order-independent.
 
 ## Wire format
 
@@ -189,9 +207,14 @@ from `_build_canopy_texture_array()`, and a new per-hex splatmap (RG8, 12 bits =
 ## Config levers
 
 Worldgen (`simulation_config.json` → `hydrology`, and per-preset in `map_presets.json`):
-- `river_class_major_min_discharge`
-- `river_class_navigable_min_discharge`
+- `river_class_major_min_discharge` (**12.0**)
+- `river_class_navigable_min_discharge` (**25.0**)
 - `river_navigable_enabled`
+
+These are now `f32` and **absolute**: discharge means *precipitation-weighted upstream drainage area
+in hex-equivalents* (a fully-wet hex contributes 1.0), so the same value means the same river on any
+map size. The full lever set (fill epsilon, flat jitter, base runoff, moisture weight, channel
+threshold) lives in `core_sim/CLAUDE.md` → Rivers.
 
 Render (`terrain_config.json` → `rivers`): band widths per class (`minor_width` / `major_width`,
 plus `navigable_width` — the CHANNEL half-width, wider than Major but well short of filling the
@@ -199,19 +222,29 @@ hex), softness, meander, width variation, texture scale, LOD floor, flow speed. 
 (softness / meander / width-variation / bank-noise / flow-speed) are **shared** by the edge and
 channel passes rather than duplicated per class.
 
-## Known consequence — navigable rivers bisect landmasses
+## Navigable rivers bisect landmasses — and that is the POINT
 
-A one-hex-wide navigable river cuts a continent in two, and **there is no crossing
-technology yet**. Nothing breaks today (rivers have no movement effect, so this is currently
-cosmetic), but when movement lands a great river becomes a hard wall until boats exist — it
-can strand a starting band on the wrong side or wall off half a landmass.
+An earlier draft of this document filed landmass bisection as a *risk*. **It is not one, and the
+follow-up arc settled it as a goal.**
 
-This is a design item for the movement PR, not a bug in this one. The levers already exist:
-tune `river_class_navigable_min_discharge` so only a handful of rivers per map qualify, and/or
-add fords, bridges, or a crossing tech. The `river_navigable_enabled` kill switch exists so
-the feature can be turned off wholesale if it proves hostile.
+A one-hex-wide navigable river cuts a continent in two. Today that is free: **movement has no
+impediments at all yet**, so a navigable river blocks nothing, and crossing technology is a future
+slice that will arrive *with* the movement rules it belongs to. And when movement does land, **the
+Mississippi cutting the United States roughly in half is a feature of the map, not a defect** — a
+great river is supposed to be a thing you must go around, ford, bridge, or boat.
+
+So: **no landmass-connectivity test, and no tuning against bisection.** The tuning target is a map
+that *reads* right — a handful of genuine great rivers with real length. `river_navigable_enabled`
+survives as a kill switch, but it exists for debugging, not as an escape hatch from bisection.
+
+The live constraint is the opposite one: navigable rivers are still too **short** (max ~10–13 hexes),
+and no threshold fixes that — it is blocked on fluvial erosion in the heightfield. See
+`docs/plan_rivers_drainage_network.md` → "As built" and `core_sim/CLAUDE.md` → Rivers → "Known
+limitation".
 
 ## See also
 
+- **`docs/plan_rivers_drainage_network.md`** — the follow-up arc that replaced the routing and
+  extraction this document described. Read it *with* this one.
 - `core_sim/CLAUDE.md` → Worldgen Pipeline (Hydrology)
 - `clients/godot_thin_client/CLAUDE.md` → Terrain Texture System (Edge Blending)

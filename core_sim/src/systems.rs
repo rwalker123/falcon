@@ -6314,19 +6314,8 @@ mod terrain_tag_tests {
         let mut config = SimulationConfig::builtin();
         config.map_preset_id = "earthlike".to_string();
         config.map_seed = 119304647;
-        config.hydrology = crate::HydrologyOverrides {
-            river_density: Some(1.4),
-            river_min_count: Some(8),
-            river_max_count: Some(24),
-            accumulation_threshold_factor: Some(0.2),
-            source_percentile: Some(0.55),
-            source_sea_buffer: Some(0.04),
-            min_length: Some(8),
-            fallback_min_length: Some(4),
-            spacing: Some(8.0),
-            uphill_gain_pct: Some(0.07),
-            ..Default::default()
-        };
+        // The shipped hydrology config — the map a player actually gets. With a real drainage
+        // network there is no override set that manufactures a different river count.
 
         world.insert_resource(config);
         world.insert_resource(SimulationTick::default());
@@ -6351,7 +6340,6 @@ mod terrain_tag_tests {
             .expect("tile registry after spawn")
             .clone();
         let width = registry.width as usize;
-        let height = registry.height as usize;
 
         // Every tile a river touches: flanking a river edge, or on a navigable river's hex chain.
         let wrap = world
@@ -6394,26 +6382,21 @@ mod terrain_tag_tests {
             if !river_mask[idx] {
                 orphan_deltas += 1;
             }
-            let x = (idx % width) as i32;
-            let y = (idx / width) as i32;
-            let borders_water = [
-                (-1, 0),
-                (1, 0),
-                (0, -1),
-                (0, 1),
-                (-1, -1),
-                (1, 1),
-                (-1, 1),
-                (1, -1),
-            ]
-            .iter()
-            .any(|(dx, dy)| {
-                let nx = x + dx;
-                let ny = y + dy;
-                if nx < 0 || ny < 0 || nx as usize >= width || ny as usize >= height {
-                    return false;
-                }
-                terrain_by_idx[ny as usize * width + nx as usize]
+            // The map's OWN topology: hex adjacency, honouring the horizontal wrap. A square 3x3
+            // stencil would call a delta on the seam column landlocked when the water it drains
+            // into is one hex away across the wrap — which is where hydrology legitimately puts
+            // some of them.
+            let x = (idx % width) as u32;
+            let y = (idx / width) as u32;
+            let borders_water = crate::grid_utils::hex_neighbors_wrapped(
+                x,
+                y,
+                registry.width,
+                registry.height,
+                wrap,
+            )
+            .any(|(nx, ny)| {
+                terrain_by_idx[(ny * registry.width + nx) as usize]
                     .map(is_water)
                     .unwrap_or(false)
             });

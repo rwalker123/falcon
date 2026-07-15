@@ -53,6 +53,47 @@
 - [x] Document palette alignment across `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md` (Owner: TBD, Estimate: 0.5d; Deps: verified Godot palette mapping).
 - [x] Add Godot/CLI terrain legend surfaced from shared palette data (Owner: TBD, Estimate: 1d; Deps: palette documentation).
 
+### Fluvial erosion in the heightfield
+`heightfield::apply_fluvial_erosion` (shipped, `enabled: true` on both presets) runs the classic
+landscape-evolution model minus uplift — `∂z/∂t = D∇²z − K·A^m·S^n` — at the end of
+`build_elevation_field`, i.e. **before the land mask**, which is what makes it bite: the mask ranks
+tiles by elevation, so the coastline is a level set of that field. Authoritative spec + config table
++ the full measured A/B: `core_sim/CLAUDE.md` → Rivers → "Fluvial erosion".
+
+- [x] **Fluvial erosion pass on the elevation field.** Result, measured over 6 seeds with the river
+      thresholds held fixed: **SPONGE fixed** — coastal tiles of the largest landmass 59.2% → **52.8%**,
+      seed spread 14.3 → **9.6**, every seed improved. **The ~13-hex navigable ceiling is gone** —
+      longest river **10 → 25 hexes** (it was never the threshold, it was the landscape). **CAPTURE is
+      NOT fixed** — biggest-basin/landmass 11.0% → 13.3%, spread 39.5 → 34.1: seed 5 jumps 4.7% →
+      21.0% and seeds 1/3 roughly double, but they are still single-digit while seed 4 runs at 38%.
+- [x] Two things the pass had to learn, both now guarded by doc comments: base level is the mask's
+      **rank contour**, not `sea_level` (only 24–37% of cells are above `sea_level` but the mask claims
+      38% for land — freezing at `sea_level` froze the whole coastal band and measured as a no-op); and
+      `restamp_elevation` **clamps a third of all land flat onto `sea_level`**, so the field is
+      monotonically re-anchored (`anchor_contour_to_sea_level`) or the carved valleys never reach
+      hydrology.
+
+- [ ] **Capture: the divides, not the valleys.** Incision deepens the valleys a continent already has;
+      it does not move its **divides**, which come from the continent-scale fbm in
+      `build_elevation_field`. A noise-dome continent (seeds 1/3) sheds radially no matter how deep the
+      valleys get. The next lever is therefore the **noise itself** — a tilted / warped / multi-ridge
+      continent field (domain warping, or a large-scale tilt term), not more erosion. Measure with
+      `hydrology_earthlike::drainage_census`'s CAPTURE column, which now A/Bs erosion on and off.
+- [ ] *(Optional, cheap)* **Morphological open/close on the land mask** — a majority filter that fills
+      1-hex nooks and deletes 1-hex specks. Erosion took the sponge from 59% → 53%; a compact blob is
+      ~14%, so there is still headroom that a direct attack on crenellation could take.
+- [ ] **A navigable-chain mouth hex can be re-stamped to a dry biome, stranding an orphan
+      `river_channel` bit.** After `generate_hydrology` stamps a `NavigableRiver` chain, a later
+      terrain pass (tag-solver / palette clamp) can overwrite the chain's **mouth** hex with a dry
+      biome (e.g. `AlluvialPlain`) — even though `NavigableRiver` is a `must_have` — leaving a hex
+      that carries a `river_channel` exit bit but renders as land: a channel that "should" be water
+      showing as ground (seen on seed 5226386361516556246 at (6,10), a 3-hex chain `(6,12)→(5,11)→
+      (6,10)`). **Pre-existing** — present before the river-mouth fixes (commit 3074390), *not*
+      introduced by them; it is a terrain-stamp interaction, separate from emit/segmentation. Fix is
+      in the stamp pass, likely protecting a navigable **chain** hex the way delta mouths are already
+      protected. Guard with a test that no hex carries a `river_channel` bit while rendering a
+      non-water terrain.
+
 ### Trade Knowledge Diffusion
 - [x] Introduce `TradeKnowledgeDiffusion` stage that consumes openness metrics to share discoveries between factions (Owner: Ravi, Estimate: 2d; Blocked by schema/runtime helpers).
 - [x] Integrate migration-driven knowledge seeding into population movement systems (Owner: Elena, Estimate: 1.5d; Requires migration knowledge fragments in snapshots).

@@ -366,6 +366,13 @@ const float RIVER_NAVIGABLE_LAYER = 2.0;
 // Degenerate fallback: a navigable hex with no qualifying arm (the sim should never emit one — MapView
 // push_warnings if it does) still gets water, as a blob at the hex centre, rather than a hex of bare bank.
 const float RIVER_NAVIGABLE_ORPHAN_BLOB = 0.9;  // blob radius, as a multiple of the channel half-width
+// CHAIN HEAD, read off the riverChannel exit mask — the ONLY thing that says a navigable hex is the SOURCE
+// of its chain rather than a hex in the middle of it. A head has just its ONE downstream link; a mid-chain
+// hex has an upstream link too (2); a confluence has 3. riverInflow can NOT answer this any more: since the
+// drainage network landed, a tributary hands over to the channel at ANY navigable hex's vertex, not only the
+// chain's first (core_sim/CLAUDE.md → Rivers; docs/plan_rivers_drainage_network.md §A). Gating the head taper
+// on inflow would pinch a full-width trunk to the tributary's width at a mid-chain junction — an HOURGLASS.
+const int RIVER_CHANNEL_HEAD_MAX_EXITS = 1;
 // Hex CORNER geometry, for the riverInflow mask (B/A of the river map): corner `i` is the vertex at angle
 // 60*i + 30 with +y DOWN — exactly MapView._hex_points' order (0 lower-right, 1 bottom, 2 lower-left,
 // 3 upper-left, 4 top, 5 upper-right), which is the wire contract the sim packs the mask against. So a
@@ -1200,15 +1207,33 @@ void fragment() {
 			float width_mod = river_width_mod(v_map);
 			float width_px = river_bank_wobble(v_map);
 			float half_w = max(river_navigable_half_width * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+			// How many sides the channel flows out through — the chain's TOPOLOGY at this hex, read off the
+			// very mask the trunk-arm loop below arms itself from (no new uniform, no new texture: the data is
+			// already on the GPU). A chain HEAD has only its downstream link (1 exit); a MID-CHAIN hex has its
+			// upstream one too (2); a confluence has 3. It is also the arm count the degenerate-blob fallback
+			// needs, so it is counted ONCE here rather than tallied inside the arm loop.
+			int exits = 0;
+			for (int dir = 0; dir < 6; dir++) {
+				exits += (channel >> dir) & 1;
+			}
 			// HEAD TAPER — the width the trunk's arms START at, at the hex CENTRE. On the FIRST hex of a
-			// chain (the only hex with a nonzero riverInflow) the trunk used to spring to full navigable
-			// width the instant it left the centre: a hairline Minor arrived at a vertex and a few px later
-			// was a great river. A jump-cut, not a river. So on that hex the arms start at the half-width of
-			// the WIDEST tributary feeding in (max over the 6 inflow corners — two tributaries can land on
-			// the same trunk head, and the sim already stores the widest class per corner) and SWELL to the
-			// channel's full width by the time they reach the hex EDGE (see the per-arm mix below).
-			// A hex with inflow == 0 (mid-chain, or a river navigable from its first step) keeps the
-			// CONSTANT full width: head_base stays river_navigable_half_width and the mix is a no-op.
+			// chain (the only hex with <= RIVER_CHANNEL_HEAD_MAX_EXITS channel exits) the trunk used to spring
+			// to full navigable width the instant it left the centre: a hairline Minor arrived at a vertex and
+			// a few px later was a great river. A jump-cut, not a river. So on that hex the arms start at the
+			// half-width of the WIDEST tributary feeding in (max over the 6 inflow corners — two tributaries
+			// can land on the same head, and the sim already stores the widest class per corner) and SWELL to
+			// the channel's full width by the time they reach the hex EDGE (see the per-arm mix below).
+			// THE GATE IS THE CHANNEL EXIT COUNT, *NOT* `inflow != 0`. Since the drainage network landed,
+			// riverInflow means "a tributary hands over at this vertex" — true of ANY navigable hex, not just
+			// the chain's first (core_sim/CLAUDE.md → Rivers; docs/plan_rivers_drainage_network.md §A). Keying
+			// the taper off it would pinch a full-width trunk down to the tributary's width at a mid-chain
+			// junction's CENTRE and swell it back out on both sides: a visible HOURGLASS in mid-channel.
+			// A hex with >= 2 exits is MID-CHAIN and keeps the CONSTANT full width (head_base stays
+			// river_navigable_half_width and the mix is a no-op); only a genuine source hex tapers.
+			// The SPUR below stays UNCONDITIONAL — it carries the tributary from the hex centre out to its
+			// vertex, and a mid-chain junction needs it MORE, not less: without it the tributary's band would
+			// dead-end at the vertex (distance r from the centre), short of the trunk's arms, which only reach
+			// the edge MIDPOINTS.
 			// min() with the channel width guards a config where a class is somehow wider than the trunk —
 			// a head must never START wider than it ends.
 			float inflow_base = 0.0;
@@ -1218,14 +1243,14 @@ void fragment() {
 				inflow_base = max(inflow_base,
 					(icls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width);
 			}
-			float head_base = (inflow_base > 0.0)
+			bool is_chain_head = exits <= RIVER_CHANNEL_HEAD_MAX_EXITS;
+			float head_base = (is_chain_head && inflow_base > 0.0)
 				? min(inflow_base, river_navigable_half_width)
 				: river_navigable_half_width;
 			float cov_trunk = -1e9;         // coverage = half_width - distance; > 0 inside the water
 			float cov_spur = -1e9;          // best INFLOW spur, tracked apart so the two can crossfade
 			float spur_layer = 0.0;         // river-array layer of the winning spur (class - 1)
 			vec2 best_tangent = vec2(1.0, 0.0);
-			int arms = 0;
 			for (int dir = 0; dir < 6; dir++) {
 				// The exit bit IS the arm rule — no neighbour fetch, and none possible: the mask is
 				// asymmetric at the mouth, so the neighbour's opinion is not a substitute for the own hex's.
@@ -1233,7 +1258,6 @@ void fragment() {
 				// geometry only wants the neighbour's CENTRE, and hex_center is pure math on the raw,
 				// unwrapped column — so the arm points the right way even across the seam).
 				if (((channel >> dir) & 1) == 0) { continue; }
-				arms++;
 				ivec2 off = neighbor_offset(row, dir);
 				vec2 nb_c = hex_center(col + off.x, row + off.y);
 				// The arm SEGMENT: own centre → the shared edge's midpoint. Clamped to the segment (like the
@@ -1282,7 +1306,7 @@ void fragment() {
 				}
 			}
 			float best_cov = max(cov_trunk, cov_spur);
-			if (arms == 0) {
+			if (exits == 0) {
 				// Degenerate — a navigable hex the river never leaves (a tributary may still feed it: an
 				// inflow spur is not an arm). The sim should never emit one (MapView push_warnings if it
 				// does); draw a blob at the centre rather than a hex of bare bank with no water in it.
