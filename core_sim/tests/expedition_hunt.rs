@@ -140,6 +140,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_one(),
+        last_food_consumption: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),

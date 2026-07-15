@@ -76,6 +76,7 @@ fn spawn_band(app: &mut App, x: u32, y: u32, food: i64) -> Entity {
                 elders: scalar_zero(),
                 stores,
                 morale: scalar_zero(),
+                last_food_consumption: 0.0,
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),

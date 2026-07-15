@@ -2817,6 +2817,7 @@ fn spawn_population_entity(
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
+        last_food_consumption: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
@@ -3535,12 +3536,13 @@ pub fn simulate_population(
 
         // Demographic model: consume the band's local food, then resolve deaths, births,
         // maturation, and aging (see `advance_demographics`).
+        let food_before = cohort.stores.get(FOOD);
         let outcome = advance_demographics(
             DemographicState {
                 children: cohort.children,
                 working: cohort.working,
                 elders: cohort.elders,
-                food_store: cohort.stores.get(FOOD),
+                food_store: food_before,
             },
             temp_diff,
             max_cap_scalar,
@@ -3550,6 +3552,11 @@ pub fn simulate_population(
         cohort.working = outcome.working;
         cohort.elders = outcome.elders;
         cohort.stores.set(FOOD, outcome.food_store);
+        // The food the people ACTUALLY ate this turn = the larder drop across `advance_demographics`
+        // (consumption is its only `food_store` debit). This is the ledger's consumption term — it
+        // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
+        // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
+        cohort.last_food_consumption = (food_before - outcome.food_store).to_f32();
         cohort.sync_size();
 
         // A band's population only emigrates once it has settled for a while — this gates the
@@ -7035,6 +7042,7 @@ mod wellbeing_tests {
             elders: scalar_zero(),
             stores: LocalStore::new(),
             morale: m,
+            last_food_consumption: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
@@ -7344,6 +7352,7 @@ mod labor_yield_tests {
                     elders: scalar_zero(),
                     stores: LocalStore::new(),
                     morale: scalar_one(),
+                    last_food_consumption: 0.0,
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),

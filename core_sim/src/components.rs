@@ -321,6 +321,16 @@ pub struct PopulationCohort {
     /// will hold later at larger scale (`docs/plan_settlement_population.md`).
     pub stores: LocalStore,
     pub morale: Scalar,
+    /// The food the band's people **actually ate** this turn (`min(food_demand, larder)` at the
+    /// turn's *opening* brackets — the real `stores` debit `advance_demographics` took, before the
+    /// same turn's births/aging change the head-count). This — not a re-derived `food_demand` on the
+    /// *post*-turn brackets — is the consumption term of the larder ledger identity
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, so it holds by
+    /// construction whether the band is fully fed or starving (the debit symmetry of
+    /// `LaborAllocation::last_pen_feed_upkeep`, the food the pen actually paid). Derived each turn by
+    /// `simulate_population`; not snapshot-persisted — a rehydrated cohort reads `0` until the next
+    /// turn recomputes it.
+    pub last_food_consumption: f32,
     /// This turn's signed morale delta (before clamping into `[0, 1]`). Derived each turn by
     /// `simulate_population`; the client renders it as a rising/falling trend arrow. Not
     /// snapshot-persisted — a rehydrated cohort reads `0` until the next turn recomputes it.
@@ -778,8 +788,9 @@ pub struct LaborAllocation {
     /// what it handed over (and its herds starve for the rest).
     ///
     /// **Why it must exist.** A pen's feed is taken straight off `cohort.stores`, so it appears in
-    /// **neither** `food_income` (Σ per-source `actual`) nor `food_consumption` (the *people's*
-    /// `food_demand`). Without exporting it the band's net-food readout overstates the surplus by
+    /// **neither** `food_income` (Σ per-source `actual`) nor `food_consumption` (the food the
+    /// *people* actually ate, `PopulationCohort::last_food_consumption`). Without exporting it the
+    /// band's net-food readout overstates the surplus by
     /// exactly the upkeep and the player watches the larder drain with no explanation. Exported as
     /// `PopulationCohortState.pen_feed_upkeep` so the client can render "my people ate X" and "my
     /// animals ate Y" as **separate lines** (deliberately NOT folded into `food_consumption` — that

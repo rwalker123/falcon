@@ -4602,6 +4602,7 @@ mod tests {
                     elders: core_sim::scalar_zero(),
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
+                    last_food_consumption: 0.0,
                     last_morale_delta: core_sim::scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),

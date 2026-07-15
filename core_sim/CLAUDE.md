@@ -750,8 +750,10 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     ladder" for the full validated list.
 - **The band's food ledger — `PopulationCohortState.penFeedUpkeep` (the per-band roll-up).** A pen's
   feed is taken straight off `cohort.stores` (`LocalStore::take`, the corral-tend branch), so it lands
-  in **neither** `foodIncome` (Σ per-source `actual`) **nor** `foodConsumption` (the *people's*
-  `food_demand`). A band keeping a pen would therefore display a surplus **overstated by exactly the
+  in **neither** `foodIncome` (Σ per-source `actual`) **nor** `foodConsumption` (the food the *people*
+  actually ate — `PopulationCohort::last_food_consumption`, the real opening-brackets `stores` debit,
+  the symmetric twin of this pen debit; **not** a post-turn `food_demand`, which the same turn's
+  births would inflate). A band keeping a pen would therefore display a surplus **overstated by exactly the
   upkeep** — on a Red Deer pen a phantom **+1.74/turn** against a band that eats ~1.2 — and the player
   would watch the larder drain unexplained. `penFeedUpkeep` is **the food the band actually PAID** this
   turn (the summed `LocalStore::take` *return*, not the demand — a band that can only part-pay reports
@@ -1884,8 +1886,12 @@ helper. A *tended* patch / *corralled* herd (maintenance labor, not scaling gath
 extra workers were idle. The snapshot surfaces all of this: each `LaborAssignment` row
 carries `actualYield`/`sustainableYield`/**`workersNeeded`** (client accessor `workersNeeded()`), and
 each `PopulationCohortState` carries band-level
-`foodIncome` (Σ per-source `actual`) + `foodConsumption` (the same one-turn `food_demand` `daysOfFood`
-divides by). All derived at capture (0 on a rehydrated save before the next tick). **The client
+`foodIncome` (Σ per-source `actual`) + `foodConsumption` (the food the people **actually ate** this
+turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at the turn's *opening*
+brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
+births would inflate that and break the larder ledger identity by exactly the growth. `daysOfFood`
+still divides by the post-turn `food_demand` — a forward "turns I can last", a different question).
+All derived at capture (0 on a rehydrated save before the next tick). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**

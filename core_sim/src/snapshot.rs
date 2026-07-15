@@ -2098,6 +2098,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             stores,
             morale: Scalar::from_raw(cohort_state.morale),
             // Derived per-turn (not snapshot-persisted); recomputed on the next `simulate_population`.
+            last_food_consumption: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
@@ -3982,12 +3983,15 @@ fn population_state(
                 .collect()
         })
         .unwrap_or_default();
-    // Band-level food flow: income = Σ per-source actual yield; consumption reuses the one-turn
-    // `demand` already computed above for `days_of_food` (don't recompute `food_demand`).
+    // Band-level food flow: income = Σ per-source actual yield; consumption is the food the people
+    // ACTUALLY ate this turn (`cohort.last_food_consumption`, the real `stores` debit at the turn's
+    // opening brackets), NOT a `food_demand` re-derived here on the post-turn brackets — the same
+    // turn's births would inflate that and break the larder ledger identity by exactly the growth.
+    // (`demand` above stays post-turn for `days_of_food`, which is a forward "turns I can last".)
     let food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
-    let food_consumption = demand.to_f32();
+    let food_consumption = cohort.last_food_consumption;
     // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
     // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
     // comes straight off `cohort.stores` — so without exporting it the client's
@@ -5046,6 +5050,7 @@ mod tests {
             elders,
             stores: LocalStore::new(),
             morale: crate::scalar::scalar_one(),
+            last_food_consumption: 0.0,
             last_morale_delta: crate::scalar::scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
@@ -5103,8 +5108,9 @@ mod tests {
         )
     }
 
-    /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = `food_demand(...)`, and
-    /// each labor-assignment row carries its matching actual/sustainable yield (zipped by index).
+    /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = the food the people
+    /// actually ate this turn (`cohort.last_food_consumption`), and each labor-assignment row carries
+    /// its matching actual/sustainable yield (zipped by index).
     #[test]
     fn population_state_reports_food_income_and_consumption() {
         let working = Scalar::from_f32(30.0);
@@ -5139,12 +5145,18 @@ mod tests {
             ],
             last_pen_feed_upkeep: 0.0,
         };
-        let (cohort, allocation) = food_test_cohort(
+        let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
             working,
             Scalar::from_f32(0.0),
             allocation,
         );
+        // The food the people actually ate this turn (the real `stores` debit `simulate_population`
+        // records), which the ledger's `food_consumption` term echoes verbatim — NOT a `food_demand`
+        // re-derived at capture on the post-turn brackets (that would break the larder identity by
+        // the same turn's population growth).
+        const CONSUMED: f32 = 4.13;
+        cohort.last_food_consumption = CONSUMED;
         let state = capture_food_state(&cohort, &allocation);
 
         // food_income = Σ actual (2.5 + 0.5).
@@ -5153,19 +5165,12 @@ mod tests {
             "food_income sums per-source actual: {}",
             state.food_income
         );
-        // food_consumption reuses the same one-turn food_demand daysOfFood divides by.
-        let expected_consumption = crate::systems::food_demand(
-            cohort.children,
-            cohort.working,
-            cohort.elders,
-            &crate::demographics_config::DemographicsConfig::default().consumption,
-        )
-        .to_f32();
+        // food_consumption == the food actually eaten (`cohort.last_food_consumption`).
         assert!(
-            (state.food_consumption - expected_consumption).abs() < 1e-5,
-            "food_consumption == food_demand: {} vs {}",
+            (state.food_consumption - CONSUMED).abs() < 1e-5,
+            "food_consumption == last_food_consumption: {} vs {}",
             state.food_consumption,
-            expected_consumption
+            CONSUMED
         );
         // Each assignment row carries its zipped actual/sustainable.
         assert_eq!(state.labor_assignments.len(), 2);
