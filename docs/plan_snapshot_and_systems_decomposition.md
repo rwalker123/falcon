@@ -50,7 +50,7 @@ touch different tables and never collide on slot order.
 | `SubsistenceSection` | herds, foragePatches, sedentarization, intensificationKnowledge, foodModules | — |
 | `KnowledgeSection` | greatDiscoveryDefinitions, greatDiscoveries, greatDiscoveryProgress, greatDiscoveryTelemetry, knowledgeLedger, knowledgeTimeline, knowledgeMetrics, discoveredSites, discoveryProgress | removedKnowledgeLedger |
 | `GovernanceSection` | power, powerMetrics, corruption, corruptionRaster, crisisTelemetry, crisisOverlay | removedPower |
-| `CultureSection` | cultureLayers, cultureTensions, cultureRaster, influencers, axisBias, sentiment, sentimentRaster | removedInfluencers, removedCultureLayers, removedCultureTensions |
+| `CultureSection` | cultureLayers, cultureTensions, cultureRaster, influencers, axisBias, sentiment, sentimentRaster | removedInfluencers, removedCultureLayers |
 | `VisionSection` | fogRaster, visibilityRaster, militaryRaster | — |
 | `CampaignSection` | campaignProfiles, commandEvents, victory | — |
 
@@ -238,3 +238,18 @@ verified pass; the `MapView.gd` remainder is also summarized in
 5. **`native/src/lib.rs`** remains a single-file hotspot (Step 1 re-routed ~90
    read sites through section accessors but did not split the file). Splitting it
    by domain is a candidate if it stays a conflict source.
+
+### Pre-existing cleanups surfaced by PR #122 review
+
+These are code-quality items the reviewer flagged on lines this PR only *moved
+verbatim* from the old monolithic `snapshot.rs` — they pre-date the refactor and
+were left untouched to keep the split behavior-preserving. Worth a small
+follow-up PR:
+
+6. **`#[allow(clippy::too_many_arguments)]`** on `fog_raster_from_discoveries`
+   (`snapshot/vision.rs`) and `population_state` (`snapshot/population.rs`).
+   Replace each with a parameter struct so the allow can be dropped, rather than
+   suppressing the lint.
+7. **Per-capture `tracing::info!`** in `visibility_raster_from_ledger`
+   (`snapshot/vision.rs`) fires once per snapshot capture (every tick). Downgrade
+   to `debug!` or gate behind a flag.
