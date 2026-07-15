@@ -382,8 +382,14 @@ fn apply_fluvial_erosion(
             // *drowned* by the land mask's elevation ranking — it becomes a sea inlet and takes its
             // basin with it). A cell that already sits below the floor simply cannot incise, rather
             // than being lifted onto it. Clamping against the SNAPSHOT is safe: the downstream cell
-            // only ever erodes further down from there.
-            let floor = incision_floor.min(elev).max(snapshot[d]);
+            // only ever erodes further down from there. INVARIANT: incision never RAISES a cell — the
+            // floor is clamped to at most `elev` on BOTH terms, so `values[idx] <= elev` always.
+            // Inside a filled depression the downstream neighbour can sit above `elev`
+            // (the `.max(cfg.min_slope)` above exists for exactly that negative-slope case);
+            // `snapshot[d].min(elev)` stops that from lifting the cell onto its neighbour. On the dry
+            // side (`snapshot[d] < elev`) the `.min(elev)` is a no-op, so the "never below downstream"
+            // behaviour is unchanged.
+            let floor = incision_floor.min(elev).max(snapshot[d].min(elev));
             values[idx] = (elev - dz).max(floor);
         }
 
@@ -623,6 +629,71 @@ mod tests {
         assert_ne!(
             off_tame, on,
             "enabled=true left the field identical to disabled — erosion did nothing"
+        );
+    }
+
+    /// Incision is NON-INCREASING per cell: `apply_fluvial_erosion` may lower or hold a cell, but it
+    /// must never RAISE one. This pins the fix for the "erosion lifts terrain in a pit" artifact —
+    /// inside a filled depression the steepest-descent downstream neighbour can sit *above* the
+    /// current cell (the `.max(min_slope)` in the incision step exists for exactly that negative-slope
+    /// case), and an unclamped downstream floor would set `values[idx] = snapshot[d] > elev`, lifting
+    /// the pit bottom onto its neighbour. Diffusion legitimately raises valley cells (∇²z averaging),
+    /// so it is disabled here to isolate the incision term the invariant applies to.
+    #[test]
+    fn incision_never_raises_a_cell() {
+        // A field with a hard enclosed basin: a low pit ringed by a tall wall, draining out one gap
+        // to a border outlet. The fill floods the pit and the wall-interior flats, so the incision
+        // step routes several cells toward a *higher* filled neighbour — the exact case the bug hit.
+        let (width, height) = (9usize, 9usize);
+        let (cx, cy) = (4i32, 4i32);
+        let mut values = vec![0.0f32; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let (dx, dy) = (x as i32 - cx, y as i32 - cy);
+                let cheby = dx.abs().max(dy.abs());
+                let elev = match cheby {
+                    0 => 0.10, // pit bottom
+                    1 => 0.20, // basin floor
+                    2 => 0.90, // ring wall
+                    _ => 0.50, // outer slope draining to the border
+                };
+                values[y * width + x] = elev;
+            }
+        }
+        // A gap in the wall so the basin has a genuine spill point (otherwise the fill still resolves,
+        // but this keeps the drainage realistic).
+        values[(cy as usize) * width + (cx as usize + 2)] = 0.30;
+
+        let before = values.clone();
+        let cfg = ErosionConfig {
+            enabled: true,
+            iterations: 20,
+            erodibility: 0.5, // strong incision, so the term genuinely bites
+            area_exponent: 0.5,
+            slope_exponent: 1.0,
+            timestep: 0.5,
+            min_slope: 1e-4,
+            fill_epsilon: 1e-6,
+            diffusivity: 0.0, // isolate incision — diffusion may legitimately raise valley cells
+            incision_floor: 0.0,
+            anchor_contour_to_sea_level: false,
+        };
+        // base_level below every cell: nothing is frozen sea, so every non-border cell incises.
+        apply_fluvial_erosion(&mut values, width, height, -1.0, &cfg);
+
+        for (i, (&after, &orig)) in values.iter().zip(before.iter()).enumerate() {
+            assert!(
+                after <= orig + 1e-6,
+                "cell {i} was RAISED by incision: {orig} -> {after}"
+            );
+        }
+        // Non-vacuous: with strong incision on a real basin, at least one cell must actually drop.
+        assert!(
+            values
+                .iter()
+                .zip(before.iter())
+                .any(|(&a, &o)| a < o - 1e-6),
+            "erosion left every cell unchanged — the test isn't exercising incision"
         );
     }
 }

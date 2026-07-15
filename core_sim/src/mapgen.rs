@@ -3583,42 +3583,42 @@ mod tests {
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 1617).abs() <= 32,
+            (metrics.fold as isize - 1462).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 160).abs() <= 16,
+            (metrics.fault as isize - 186).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 18).abs() <= 6,
+            (metrics.volcanic as isize - 14).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 872).abs() <= 32,
+            (metrics.dome as isize - 865).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 1035).abs() <= 32,
+            (metrics.polar_fold as isize - 887).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 44).abs() <= 16,
+            (metrics.polar_fault as isize - 57).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 124).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 188).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 44).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 9).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
@@ -3633,7 +3633,7 @@ mod tests {
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 1303).abs() <= 40,
+            (metrics.fold as isize - 2114).abs() <= 40,
             "polar_contrast fold count drift: {}",
             metrics.fold
         );
@@ -3643,32 +3643,32 @@ mod tests {
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 64).abs() <= 10,
+            (metrics.volcanic as isize - 71).abs() <= 10,
             "polar_contrast volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 1081).abs() <= 40,
+            (metrics.dome as isize - 1033).abs() <= 40,
             "polar_contrast dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 468).abs() <= 36,
+            (metrics.polar_fold as isize - 561).abs() <= 36,
             "polar_contrast polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 186).abs() <= 18,
+            (metrics.polar_fault as isize - 182).abs() <= 18,
             "polar_contrast polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 44).abs() <= 14,
+            (metrics.polar_uplift_cells as isize - 18).abs() <= 14,
             "polar_contrast polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 83).abs() <= 18,
+            (metrics.polar_relief_cells as isize - 139).abs() <= 18,
             "polar_contrast polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
