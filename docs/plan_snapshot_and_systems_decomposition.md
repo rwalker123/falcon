@@ -188,3 +188,53 @@ the `ui_preview` PNG harness.
   concurrently in the worktree without collision.
 - Every step is behavior-preserving; the combined verification bar is: workspace
   builds, all tests pass, `ui_preview` frames match pre-refactor rendering.
+
+---
+
+## Status (PR #122)
+
+Steps 1–3 landed in full. Step 4 landed **partially** — the cleanly-verifiable
+extractions shipped; several `_draw_*` families were deliberately left in place
+(see below). Verified: `cargo fmt`, `clippy -D warnings`, 303 `core_sim` tests,
+and the `ui_preview`/`map_preview` PNG harnesses (47/47 map frames byte-identical).
+
+Extracted in Step 4:
+- Hud: `ui/hud/CommandFeedController.gd`, `ui/hud/LegendController.gd`.
+- MapView: `ui/MinimapController.gd`, `ui/BandMarkerRenderer.gd`,
+  `ui/SecondaryMarkerRenderer.gd` (each holds a `_view: MapView` back-ref; shared
+  geometry/glyph/pill/fog primitives, marker source arrays, and selection state
+  stay on MapView).
+
+## Deferred follow-ups
+
+These were consciously scoped out (not missed). Each is a candidate for its own
+verified pass; the `MapView.gd` remainder is also summarized in
+`clients/godot_thin_client/CLAUDE.md` (key-scripts table, `MapView.gd` row).
+
+1. **Terrain / raster / shader draw family** (`_draw_terrain_direct`,
+   `_update_terrain_shader_quad`, `_rebuild_terrain_shader_maps`,
+   `_draw_hex_textured*`, blend-class helpers). *Highest remaining churn, so
+   highest conflict-reduction value — but the hardest.* It is **not** a read-only
+   draw family: it owns a large mutable state surface (the `_cache_*` SubViewport,
+   a `ShaderMaterial` + ~40 uniforms, `_terrain_blend_*`, id/vis/river map
+   textures, `_hex_texture_cache`) written across `_ready`/`_process`/
+   `display_snapshot`/`_draw`. A mechanical move risks subtle visual drift that the
+   PNG harness only weakly covers. Needs a dedicated pass, not a bounded one.
+2. **Selected-band overlays** — work-highlights, yield-labels, herd-range,
+   pending, travel-destination. Reads `_selected_player_band`/`selected_unit_id`/
+   `_labor_*` and, critically, **queues the yield-label batch mid-`_draw` and
+   flushes it at the very end** (`_deferred_yield_labels` → `_flush_yield_labels`);
+   extracting cleanly means splitting that batch lifecycle across MapView and a
+   helper. Verifiable (work/herd_range/travel fixtures exist) — just larger than a
+   marker move.
+3. **Trade / crisis / terrain-highlight annotations + targeting / routes**
+   (`_draw_trade_overlay`, `_draw_crisis_annotations`, `_draw_terrain_highlight`).
+   Cohesive, but **no `map_preview` fixture exercises them** (no canned
+   trade-link/crisis/highlight/targeting data), so there is no before/after pixel
+   comparison. **Add fixtures first**, then extract under the revert-on-drift rule.
+4. **Hud selection-panel builders** (`_build_allocation_*`, `_herd_summary_lines`).
+   Read shared `_selected_*` state; defer until a selection-panel PNG fixture can
+   verify them.
+5. **`native/src/lib.rs`** remains a single-file hotspot (Step 1 re-routed ~90
+   read sites through section accessors but did not split the file). Splitting it
+   by domain is a candidate if it stays a conflict source.
