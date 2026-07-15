@@ -1341,7 +1341,9 @@ pub struct TileState {
     /// that carry no patch. Unlike graze this is **non-zero on fishery water** (`ContinentalShelf` /
     /// `CoralShelf` / `InlandSea`) — a fishery is a food module on water. Only a *stated-zero* biome
     /// (deep ocean, glacier, lava, salt flat) reads `0`. Derived at capture from
-    /// `ForageLaborConfig::capacity_for(tile.terrain)` — see `docs/plan_grazing_foundation.md` §1.1.
+    /// `forage::tile_forage_capacity`, which keys off `resource_terrain()` (the underlying valley
+    /// biome on a navigable hex, the tile's own terrain elsewhere); a `NavigableRiver` hex additionally
+    /// earns the navigable fishing bonus — see `docs/plan_grazing_foundation.md` §1.1.
     #[serde(default)]
     pub forage_capacity: f32,
     /// The tile's **real ground** for resource reads. Equals `terrain` on every ordinary tile; on a
