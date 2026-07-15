@@ -116,13 +116,13 @@ const PASTURE_WINDOW_SIZE := Vector2i(1200, 720)
 const PASTURE_CAPACITY_BY_TERRAIN := {
 	0: 0.0,      # deep_ocean
 	1: 0.0,      # continental_shelf
-	10: 230.0,   # alluvial_plain — the tag solver's fallback biome, so it is everywhere
+	10: 110.0,   # alluvial_plain — the tag solver's fallback biome, so it is everywhere
 	11: 240.0,   # prairie_steppe — the reference pasture
 	12: 55.0,    # mixed_woodland — poor: the canopy shades out the ground cover
 	15: 8.0,     # hot_desert_erg — marginal, but NOT zero (the "full 8/8" case)
-	20: 70.0,    # tundra — thin but real
+	20: 100.0,   # tundra — thin but real
 	22: 0.0,     # glacier — no pasture at all
-	26: 30.0,    # alpine_mountain
+	26: 65.0,    # alpine_mountain
 	30: 0.0,     # basaltic_lava_field — no pasture at all
 }
 # The Water terrain tag (bit 0), the same server truth MapView._pasture_color splits sea from dead ground on.

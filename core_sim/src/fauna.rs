@@ -418,8 +418,8 @@ pub(crate) const PEN_FULLY_FED: f32 = 1.0;
 /// *growth rate*, and nothing else:
 ///
 /// - **wild** (`fauna.ecology`, `r` = 0.05) — hunted, predated, winter-killed;
-/// - **pastoral** (`husbandry.pastoral.ecology`, `r` = 0.15) — tamed but still roaming;
-/// - **pen** (`husbandry.pen.ecology`, `r` = 0.60) — corralled: sheltered, guarded, and **fed**.
+/// - **pastoral** (`husbandry.pastoral.ecology`, `r` = 0.25) — tamed but still roaming;
+/// - **pen** (`husbandry.pen.ecology`, `r` = 0.90) — corralled: sheltered, guarded, and **fed**.
 ///
 /// Every consumer of a herd's ecology — regrowth, the MSY/policy ceilings, the phase classification,
 /// the forecast, the expedition — resolves it *here*. **No call site may re-derive it**: a second copy

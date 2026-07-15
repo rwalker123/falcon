@@ -288,15 +288,22 @@ impl Default for FollowConfig {
 /// | Rung | Ecology | `r` | Costs |
 /// |---|---|---|---|
 /// | Wild | `fauna.ecology` | 0.05 | a worker |
-/// | Mobile domesticated (**pastoral**) | [`PastoralConfig::ecology`] | 0.15 | none — passive |
-/// | Penned (**pen**) | [`PenConfig::ecology`] | 0.60 | a worker + **food upkeep** + pinned |
+/// | Mobile domesticated (**pastoral**) | [`PastoralConfig::ecology`] | 0.25 | none — passive |
+/// | Penned (**pen**) | [`PenConfig::ecology`] | 0.90 | a worker + **food upkeep** + pinned |
 ///
-/// The managed harvest **draws the herd down** (it takes `sustainable_yield(..)`, exactly as the
-/// `Sustain` hunt policy does), which is what makes it sustainable: the herd converges on `K/2` and
-/// holds there, paying `r·K/4` forever. The retired flat `provisions_per_biomass` /
-/// `corral_provisions_per_biomass` rates paid a share of standing **stock** and never drew the herd
-/// down at all — a penned herd parked at capacity and printed food forever (~48× the Sustain
-/// baseline).
+/// The managed harvest **draws the herd down**, which is what makes it sustainable: the herd
+/// converges on `K/2` and holds there, paying `r·K/4` forever. Both husbandry rungs take it through
+/// the shared helper `fauna::managed_yield_biomass`, which is **constant-*escapement* MSY** —
+/// `take = min(peak_regrowth(K), max(0, B − K/2))` — **not** the constant-*catch* `sustainable_yield`
+/// a wild `Sustain` hunt takes. The sim regrows in Logistics and harvests in Population, so a
+/// constant-catch take is evaluated at the **post**-regrowth biomass; above `K/2` both forms cap at
+/// MSY and converge on `K/2`, but **below `K/2`** constant-catch removes `g(B + g(B)) > g(B)` — more
+/// than the herd grew — which at the pen's `r` = 0.90 spirals a fully-fed herd to zero. Escapement
+/// never takes a herd below `K/2`, so a depleted managed herd **rebuilds** (yielding less while it
+/// does) and then pays `r·K/4` forever — stable from both sides. The retired flat
+/// `provisions_per_biomass` / `corral_provisions_per_biomass` rates, by contrast, paid a share of
+/// standing **stock** and never drew the herd down at all — a penned herd parked at capacity and
+/// printed food forever (~48× the Sustain baseline).
 ///
 /// **Corral (Rung 1c) levers.** Corralling is an **explicit `Corral` policy with an investment
 /// cost**, the animal twin of Cultivate: while the pen is being built (`Herd::corral_progress` < 1.0)
@@ -706,7 +713,7 @@ impl FaunaConfig {
         // **THE PEN MUST NOT BE A TRAP.** At its settled operating point the pen yields `r·K/4 · p`
         // and eats `u · K·(2 + r)/4`, so it nets positive iff `u < r·p / (2 + r)` (see
         // [`PEN_ESCAPEMENT_QUARTERS`] for the derivation). Shipped:
-        // `0.002 < 0.60 × 0.02 / 2.6 ≈ 0.00462` ✓ (a ~2.3× margin). A violating override would make
+        // `0.002 < 0.90 × 0.02 / 2.90 ≈ 0.0062` ✓ (a ~3.1× margin). A violating override would make
         // corralling a permanent, silent net food LOSS — the player pays a 25-turn build and a
         // permanent keeper to make their food situation strictly worse.
         let pen_regrowth = self.husbandry.pen.ecology.regrowth_rate;

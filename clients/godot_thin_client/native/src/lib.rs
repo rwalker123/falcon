@@ -3192,9 +3192,15 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("corral_yield", herd.corralYield());
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
         // cannot graze, so its keeper hauls it food every turn.
-        //   `pen_upkeep`       = food/turn the pen demands at the herd's CURRENT biomass. 0 when the
-        //                        herd is not penned (there is no pen to feed yet) — so the client can
-        //                        NOT quote a pre-build feed figure, and must not invent one.
+        //   `pen_upkeep`       = the feed/turn the pen DEMANDS, or WOULD demand once built, at the
+        //                        herd's CURRENT biomass. Always meaningful — a projection for an
+        //                        unpenned herd, the live demand for a penned one — NEVER
+        //                        "0-because-unpenned". Computed on the same biomass basis as
+        //                        `corral_yield`, so the two are a matched pair the Corral forecast row
+        //                        subtracts ("…then +Y − Z feed"). This is the DEMANDED figure, distinct
+        //                        from the PAID amount (the per-band PopulationCohortState.penFeedUpkeep
+        //                        the food ledger actually debits) — a starving pen demands more than it
+        //                        is paid, and `pen_fed_fraction` is that ratio.
         //   `pen_fed_fraction` = the share of that demand the keeper actually paid last turn.
         //                        1.0 = fully fed (also the value for any un-penned herd); < 1.0 = the
         //                        herd is STARVING and shrinking every turn.
