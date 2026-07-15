@@ -42,11 +42,16 @@ const KIND_IDLE_WORKERS := "idle_workers"
 const KIND_STARVING := "starving"
 const KIND_LOSING_POPULATION := "losing_population"
 const KIND_AWAITING_ORDERS := "awaiting_orders"
+# A penned herd its keeper cannot feed — it shrinks every turn (docs/plan_corral_managed_population.md).
+# The icon is the corral glyph the whole husbandry ladder already wears (herd drawer badge, Corral
+# policy button, the band ledger's pen-feed row), so the row reads as "your pen" at a glance.
+const KIND_STARVING_PEN := "starving_pen"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
 	KIND_LOSING_POPULATION: "📉",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
+	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
 }
 const KIND_ICON_FALLBACK := "●"
 

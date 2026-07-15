@@ -111,13 +111,26 @@
     "morale_gain": 0.01
   },
   "husbandry": {
+    "_comment_ladder": "THE HUSBANDRY YIELD LADDER IS FLOW-BASED: every rung pays MSY (= r*K/4 * hunt.provisions_per_biomass), and the rungs differ ONLY in the ecology that MSY is computed against — management buys a GROWTH RATE, not a licence to eat the standing stock. Wild r=0.05 -> pastoral (tamed, mobile) r=0.25 -> pen (corralled) r=0.90. Every managed harvest DRAWS THE HERD DOWN, which is what makes it sustainable: the herd converges on K/2 and holds there, paying r*K/4 forever. The retired flat rates (provisions_per_biomass 0.01, corral_provisions_per_biomass 0.012) paid a share of standing STOCK with no draw-down — a penned Red Deer herd parked at capacity and printed 14.4 food/turn forever, ~48x the Sustain baseline and ~19x a 30-person band's entire demand. See docs/plan_corral_managed_population.md.",
     "progress_per_turn": 0.04,
     "decay_per_turn": 0.01,
     "claim_threshold": 0.6,
-    "provisions_per_biomass": 0.01,
-    "_comment_corral_provisions_per_biomass": "ANCHORED TO MARKET, deliberately: a finished pen pays 3x the Market rate = 3 * market.take_fraction * hunt.provisions_per_biomass = 3 * 0.20 * 0.02 = 0.012 provisions/turn per unit of standing biomass — and pays it SUSTAINABLY (no draw-down), where Market reaches its rate only by crashing the herd. Residual, stated honestly: 3x Market is still ~48x the Sustain (MSY) baseline, because Market is itself ~16x Sustain — the two are computed against different denominators (a share of standing STOCK vs a share of regrowth FLOW, MSY = regrowth_rate/4 = 1.25% of capacity). Closing that gap for real needs the corral to become a managed population with food upkeep (herd size drives yield) — see TASKS.md 'Corral as a managed population'.",
-    "corral_provisions_per_biomass": 0.012,
-    "corralling_yield_fraction": 0.25,
+    "pastoral": {
+      "_comment": "The MOBILE DOMESTICATED rung: passive (no worker, no upkeep — a roaming herd grazes for free) and 5x the wild growth rate, because a tamed herd is protected from predation, disease and winter kill. Red Deer (K=1200) pays 0.25*1200/4*0.02 = 1.50 food/turn — clearly ABOVE a ~30-person band's demand (~0.79), so taming a herd buys a real SURPLUS (savings, an expedition, the settle pull), not a subsistence treadmill. Retuned from 0.15, which landed income at 1.275 vs consumption 1.294 — a permanent one-day-of-food knife-edge with no savings at all.",
+      "ecology": { "regrowth_rate": 0.25 }
+    },
+    "pen": {
+      "_comment": "The PENNED rung: the ladder's top growth rate (18x wild, 3.6x pastoral) — and the only rung with a running cost, because a confined herd CANNOT GRAZE and so must be fed. Red Deer (K=1200) grosses 0.90*1200/4*0.02 = 5.40 food/turn; at its settled operating point it eats ~1.74 (the feed is charged on the post-regrowth biomass K/2 + r*K/4), netting ~3.66 — 12x wild Sustain and ~2.4x the free pastoral rung, so the ladder stays monotone and the pen is still worth a worker + feed + being pinned.",
+      "ecology": { "regrowth_rate": 0.90 },
+      "_comment_capacity_fraction": "K_pen = capacity_fraction * carrying_capacity. 1.0 = the pen holds exactly what the range held, making the penned rung a pure growth-rate upgrade with no second arbitrary scale. Lower it to make penning a smaller but faster-growing population.",
+      "capacity_fraction": 1.0,
+      "_comment_upkeep_per_biomass": "FEED — UNCHANGED BY THE RETUNE, deliberately: the running cost is the entire point of the arc and must not be weakened to fix balance. Food/turn drawn from the keeper band's larder per unit of standing biomass. Bounded by the pen's own net-positive invariant, which FaunaConfig::validate() ENFORCES: at the settled operating point the pen yields r*K/4*p and eats u*K*(2+r)/4 (the feed is charged on the POST-regrowth biomass K/2 + r*K/4 — you feed every animal in the pen, including the ones you are about to harvest), so net > 0 iff u < r*p/(2+r) = 0.90*0.02/2.90 = 0.0062. The shipped 0.002 sits a ~3.1x margin inside that bound — a real running cost (Red Deer: ~1.74 food/turn at B*, roughly a third of the 5.40 gross) that still leaves the pen the ladder's best rung. Raise it past the bound and corralling becomes a permanent net food LOSS; the config is refused rather than silently trapping the player.",
+      "upkeep_per_biomass": 0.002,
+      "_comment_starve_shrink_rate": "STARVATION: an underfed pen shrinks by starve_shrink_rate * (1 - fed_fraction) * biomass each turn, floored at ecology.extinction_floor * K_pen — the herd withers to a remnant and RECOVERS when fed again (it never despawns and never loses the pen). 0.10 = a fully-unfed herd loses 10%/turn: slow enough that a bad winter is survivable and visibly recoverable, fast enough that sustained neglect really does reduce the pen to a remnant.",
+      "starve_shrink_rate": 0.10
+    },
+    "_comment_corralling_yield_fraction": "THE INVESTMENT COST: while the pen is being built the crew takes only this fraction of the herd's Sustain (MSY) ceiling. 0.50 = the build costs HALF the pastoral yield for 25 turns (Red Deer: 0.75/turn against 1.50 walking away, ~19 provisions forgone) — a real, deliberate cost paid from a SURPLUS. Retuned from 0.25, which forced the band to pay it out of a famine and crashed its population ~50% before the pen completed.",
+    "corralling_yield_fraction": 0.50,
     "corral_build_progress_per_turn": 0.04,
     "knowledge_progress_per_turn": 0.05,
     "knowledge_completion_threshold": 1.0
@@ -125,5 +138,59 @@
   "market": {
     "take_fraction": 0.20,
     "trade_goods_multiplier": 4.0
+  },
+  "_comment_graze": "THE GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock (grass, browse, forbs), on ANY vegetated land tile. It is a DIFFERENT stock on a DIFFERENT distribution from the human-edible forage (labor_config.json `forage`, seeds/nuts/tubers, food-module tiles only): humans cannot digest cellulose, and that is the entire economic basis of herding. Phase 2a ships the layer INERT — it regrows, persists and exports, and NOTHING reads it for gameplay yet.",
+  "graze": {
+    "_comment_capacity_by_biome": "A DATA TABLE OVER THE 38 BIOMES, NOT A FORMULA. Grazeable biomass (grass, browse, forbs — cellulose humans cannot digest) a tile of each biome carries at capacity. Every biome must appear (validate() rejects a partial table — a missing row would silently read as an invisible zero-graze dead zone). READ IT AGAINST ITS TWIN: labor_config.json's forage.capacity_by_biome is the same 38 rows for the HUMAN food web, and the two are meant to DISAGREE — that disagreement is the agropastoral decision (docs/plan_grazing_foundation.md §1). Anchor: PrairieSteppe = 240 is THE reference pasture (and only 70 forage: grass feeds animals, humans get seed heads); every other row is a claim about that biome relative to it. The ABSOLUTE scale is a free parameter — only the ratios matter until Phase 2b's fodder_per_biomass denominates it into animals. THE INVERSIONS: MixedWoodland (55) / BorealTaiga (40) are poor pasture and rich forage (190/90) — a closed canopy shades out the ground cover but drops nuts and mast. The silt lowlands (AlluvialPlain 140, Floodplain/RiverDelta 130 — LOWERED from 230/230/220, where they were tied with prairie for best pasture) are THE FARM, NOT THE PASTURE: their value moved to the human web (195-210), where a river valley's silt and water actually belong. Alluvial is additionally the tag solver's fallback biome, so leaving it tied for best pasture also baked a worldgen artifact into the fauna model.",
+    "capacity_by_biome": {
+      "DeepOcean": 0.0,
+      "ContinentalShelf": 0.0,
+      "InlandSea": 0.0,
+      "CoralShelf": 0.0,
+      "HydrothermalVentField": 0.0,
+      "TidalFlat": 200.0,
+      "RiverDelta": 130.0,
+      "MangroveSwamp": 60.0,
+      "FreshwaterMarsh": 160.0,
+      "Floodplain": 130.0,
+      "AlluvialPlain": 110.0,
+      "PrairieSteppe": 240.0,
+      "MixedWoodland": 55.0,
+      "BorealTaiga": 40.0,
+      "PeatHeath": 135.0,
+      "HotDesertErg": 8.0,
+      "RockyReg": 10.0,
+      "SemiAridScrub": 100.0,
+      "SaltFlat": 0.0,
+      "OasisBasin": 90.0,
+      "Tundra": 100.0,
+      "PeriglacialSteppe": 150.0,
+      "Glacier": 0.0,
+      "SeasonalSnowfield": 25.0,
+      "RollingHills": 150.0,
+      "HighPlateau": 75.0,
+      "AlpineMountain": 65.0,
+      "KarstHighland": 60.0,
+      "CanyonBadlands": 12.0,
+      "ActiveVolcanoSlope": 0.0,
+      "BasalticLavaField": 0.0,
+      "AshPlain": 0.0,
+      "FumaroleBasin": 0.0,
+      "ImpactCraterField": 20.0,
+      "KarstCavernMouth": 20.0,
+      "SinkholeField": 20.0,
+      "AquiferCeiling": 60.0,
+      "NavigableRiver": 0.0
+    },
+    "_comment_ecology": "GRASS REGROWS FAST — it is the quickest-renewing vegetal stock in the model, and that is the economic premise of herding: a pasture eaten to the ground is back within a few seasons, a nut grove is not. Ordering (a claim about biology, not a knob): wild fauna 0.05 << forage 0.25 (labor_config.json) < GRAZE 0.40 << a fed pen 0.90 (a hyper-managed system, not a wild one). At r = 0.40 a tile's sustainable flow is r*K/4 = 0.10*K per turn and a stripped pasture climbs back to ~90% of capacity in ~20 turns (vs ~35 at forage's 0.25). collapse_rate is INERT for graze — grass has no Allee depensation, so advance_graze_regrowth runs pure logistic regrowth and never the collapse branch; the shared EcologyConfig simply carries the field (exactly as labor_config's forage ecology does). collapse_fraction/stressed_fraction are read, for the phase bands the overgrazing readout uses.",
+    "ecology": {
+      "regrowth_rate": 0.40,
+      "collapse_fraction": 0.15,
+      "collapse_rate": 0.20,
+      "stressed_fraction": 0.40,
+      "extinction_floor": 0.0
+    },
+    "_comment_reseed_floor_fraction": "The exact mirror of forage.reseed_floor_fraction. Grass reseeds from the surrounding ground, so GRAZE IS NEVER PERMANENTLY DEAD: an eaten-out tile is lifted to this small standing crop before regrowth each turn and recovers via the normal logistic curve, instead of sticking at 0 forever (logistic_regrowth(0, ..) == 0). Kept BELOW collapse_fraction (validated) so a stripped pasture still reads Collapsing — the floor stops permanent death, it does not hide overgrazing.",
+    "reseed_floor_fraction": 0.02
   }
 }

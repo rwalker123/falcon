@@ -339,7 +339,9 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
     let _party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &fauna);
+    // A wild herd → the wild ecology (the shared `herd_ecology` mapping; a tamed/penned herd would
+    // resolve to the pastoral/pen curve instead).
+    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &fauna.ecology, &fauna);
     assert!(expected > 0.0, "a half-capacity herd has a positive MSY");
 
     app.world.run_system_once(advance_expeditions);
@@ -1165,6 +1167,7 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
             FollowPolicy::Surplus,
             depleted_biomass,
             depleted_cap,
+            &fauna.ecology,
             &fauna
         ) > depleted_biomass,
         "the depleted-herd case must actually exercise the biomass clamp"

@@ -32,6 +32,41 @@ const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
 const ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
 const ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
 const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
+# --- PASTURE (graze) overlay -------------------------------------------------------------------
+# The channel paints the LAND'S GRAZE CAPACITY — "how good a pasture is this ground?" — because that
+# is the question the layer exists to answer (is prairie really pasture; is forest really poor?), and
+# because it is a property of the biome, not a transient. The *fill* (standing biomass ÷ capacity) is
+# a different question ("how eaten-down is it?"), reported as a map-wide figure in the legend and
+# per-tile on the tile card; it becomes worth its own ramp only once herds actually eat graze.
+#
+# ZERO PASTURE IS NOT LOW PASTURE. A desert at 8/8 (full, but marginal) and a glacier that carries no
+# pasture at all are completely different facts, and a single ramp bottoming out at black renders both
+# as "dark". So a zero-capacity tile leaves the ramp entirely and is painted a flat barren tone —
+# water in a drowned slate (it is not ground), dead land in a bare rock-violet — while ANY positive
+# capacity starts at PASTURE_POOR_COLOR, a visibly-on-the-ramp straw.
+const PASTURE_OVERLAY_KEY := "pasture"
+const PASTURE_POOR_COLOR := Color(0.85, 0.78, 0.42, 1.0)    # marginal grazing — dry straw
+const PASTURE_RICH_COLOR := Color(0.13, 0.62, 0.24, 1.0)    # the reference pasture — deep grass green
+const PASTURE_DEAD_COLOR := Color(0.34, 0.30, 0.38, 1.0)    # land that carries NO pasture (glacier/lava/rock)
+const PASTURE_WATER_COLOR := Color(0.10, 0.16, 0.28, 1.0)   # water — no pasture, and not ground at all
+# The Water terrain tag (bit 0 of TileState.terrain_tags — see TERRAIN_TAG_KEYS). Server truth, unlike
+# the render-side `blend_class`, so it is what separates "sea" from "dead ground" in the overlay.
+const PASTURE_WATER_TAG := 1 << 0
+# --- FORAGE (human food) overlay ---------------------------------------------------------------
+# The human-edible twin of the pasture channel. It paints the human-food CAPACITY (potential) of
+# each tile's biome — "what human food could this land yield?" (seeds, nuts, tubers, fruit, fish) —
+# from `TileState.forageCapacity`, cached in `tile_forage`, exactly as pasture reads `tile_graze`.
+# Like pasture it is a POTENTIAL on every tile, not "where a gathering site stands".
+#
+# WHERE IT DIVERGES FROM PASTURE: water is NOT uniformly barren. Coastal shelves carry real FISHING
+# potential and sit ON the capacity ramp, while deep ocean stays dark — so the coasts light up on
+# the forage map where they are dead on the pasture map. Only genuinely-zero tiles (deep ocean,
+# glacier, lava) leave the ramp for the single barren fill; there is no "land but no site" middle
+# category (that was the sparse-patch model, replaced by per-tile potential).
+const FORAGE_OVERLAY_KEY := "forage"
+const FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
+const FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
+const FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
 # only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
@@ -114,6 +149,32 @@ const SECONDARY_VISIBLE_CAP := 3             # icons drawn before the +N overflo
 const SECONDARY_ICON_SIZE_FACTOR := 0.55     # of hex radius (was ~1.05 over a backing disc)
 const SECONDARY_ICON_MIN_SIZE := 10.0
 const SECONDARY_ICON_COLOR := Color(0.97, 0.98, 0.94, 1.0)
+# STARVING-PEN DISTRESS BADGE (docs/plan_corral_managed_population.md). A corralled herd whose keeper
+# could not pay this turn's feed is SHRINKING every turn — the drawer must not be the only place that
+# says so. The affordance is DRAWN GEOMETRY, never a tint or a glyph: a herd marker is a full-color
+# EMOJI, so `modulate` leaves it looking like an ordinary brown animal (measured — see the rejected
+# tint below), and a font ⚠ carries emoji presentation and renders as a blob at marker size (the same
+# hazard that forced `MagnifierButton` and the line-art policy icons to hand-draw). So:
+#   • a DANGER ring around the herd's slot (the same primitive as the food-harvest ring), and
+#   • a filled DANGER disc badge on the icon's upper-right with a hand-drawn white "!".
+# Driven by `PenStatus.herd_is_starving` — the same test the herd drawer's "⚠ Starving" row uses.
+const HERD_DISTRESS_COLOR := HudStyle.DANGER
+const HERD_DISTRESS_RING_FACTOR := 0.46        # of hex radius — just outside the food-harvest ring
+const HERD_DISTRESS_RING_WIDTH := 2.5
+const HERD_DISTRESS_RING_SEGMENTS := 24
+# The badge, sized off the icon (not the hex) so it tracks the glyph it annotates at every zoom.
+const HERD_DISTRESS_BADGE_RADIUS_FACTOR := 0.38   # of the icon size
+const HERD_DISTRESS_BADGE_OFFSET_FACTOR := Vector2(0.42, -0.42)   # of the icon size, from its center
+const HERD_DISTRESS_BADGE_RIM_COLOR := Color(0.12, 0.05, 0.05, 0.9)
+const HERD_DISTRESS_BADGE_RIM_WIDTH := 1.5
+const HERD_DISTRESS_BADGE_SEGMENTS := 16
+# The hand-drawn "!" inside the badge: a tapered stem plus a dot, as fractions of the badge radius.
+const HERD_DISTRESS_BANG_COLOR := Color(1.0, 1.0, 1.0, 1.0)
+const HERD_DISTRESS_BANG_STEM_TOP := -0.55
+const HERD_DISTRESS_BANG_STEM_BOTTOM := 0.12
+const HERD_DISTRESS_BANG_STEM_WIDTH := 0.24
+const HERD_DISTRESS_BANG_DOT_Y := 0.46
+const HERD_DISTRESS_BANG_DOT_RADIUS := 0.15
 # Legibility without the old dark backing disc: a 1px-offset drop shadow under the glyph.
 const MARKER_GLYPH_SHADOW_OFFSET := Vector2(1.0, 1.0)
 const MARKER_GLYPH_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.6)
@@ -527,6 +588,9 @@ const OVERLAY_COLORS := {
 	"elevation": ELEVATION_HIGH_COLOR,
 	"moisture": Color(0.2, 0.65, 0.95, 1.0),
 	"province": Color(0.52, 0.64, 0.78, 1.0),
+	# The pasture channel paints through `_pasture_color` (a two-tone ramp plus two off-ramp barren
+	# tones), not a single-hue tint; this is the swatch any generic fallback path shows for it.
+	PASTURE_OVERLAY_KEY: PASTURE_RICH_COLOR,
 }
 
 const TERRAIN_TAG_KEYS := [
@@ -683,6 +747,17 @@ var tile_habitability: Dictionary = {}
 # Per-tile temperature (°, latitude + elevation climate, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Climate row.
 var tile_temperature: Dictionary = {}
+# Per-tile GRAZE — the pasture layer (decoded from TileState: graze_biomass / graze_capacity /
+# graze_ecology_phase), keyed by Vector2i(x, y). Read by `_tile_info_at` for the Tile-card Pasture
+# rows and by `_build_pasture_legend` for the map-wide standing-stock figure. Entries are stored ONLY
+# for tiles that actually carry pasture (capacity > 0), so "no pasture here" is an absent reading —
+# the same discipline the sim's GrazeRegistry keeps — and can never be printed as "0 / 0".
+var tile_graze: Dictionary = {}
+# Per-tile FORAGE capacity — the human-food layer (decoded from TileState.forage_capacity), keyed by
+# Vector2i(x, y). Read by `_build_forage_legend` for the Poorest/Average/Richest figures. Stored ONLY
+# for tiles that carry human-food potential (capacity > 0), so the map-wide zeros (deep ocean/glacier/
+# lava) fall out as the barren count rather than dragging the "poorest" figure to 0.
+var tile_forage: Dictionary = {}
 var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
@@ -1097,6 +1172,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	tile_lookup.clear()
 	tile_habitability.clear()
 	tile_temperature.clear()
+	tile_graze.clear()
+	tile_forage.clear()
 	tile_river_edges.clear()
 	tile_river_inflow.clear()
 	tile_river_channel.clear()
@@ -1122,6 +1199,21 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					tile_habitability[Vector2i(x, y)] = float(tile_dict["habitability"])
 				if tile_dict.has("temperature"):
 					tile_temperature[Vector2i(x, y)] = float(tile_dict["temperature"])
+				# Graze: only a tile whose biome actually carries pasture gets an entry (see
+				# `tile_graze`). A zero-capacity tile is a *dead* one, and the Tile card must
+				# print nothing there rather than "0 / 0".
+				var graze_capacity: float = float(tile_dict.get("graze_capacity", 0.0))
+				if graze_capacity > 0.0:
+					tile_graze[Vector2i(x, y)] = {
+						"biomass": float(tile_dict.get("graze_biomass", 0.0)),
+						"capacity": graze_capacity,
+						"phase": String(tile_dict.get("graze_ecology_phase", "")),
+					}
+				# Forage (human-food) potential — only tiles that carry any get an entry, so the
+				# barren zeros (deep ocean/glacier/lava) don't drag the legend's "poorest" to 0.
+				var forage_capacity: float = float(tile_dict.get("forage_capacity", 0.0))
+				if forage_capacity > 0.0:
+					tile_forage[Vector2i(x, y)] = forage_capacity
 				var river_mask: int = int(tile_dict.get("river_edges", 0))
 				if river_mask != 0:
 					tile_river_edges[Vector2i(x, y)] = river_mask
@@ -2397,6 +2489,27 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
+## The starving-pen distress badge: a filled DANGER disc with a dark rim and a HAND-DRAWN white "!",
+## pinned to the upper-right of a marker glyph. Hand-drawn for the same reason `MagnifierButton` is —
+## a font ⚠/❗ renders as an emoji blob at this size — and geometric so it reads OVER the full-color
+## emoji it annotates. Sized off `icon_size`, so it shrinks with the marker at far zoom (and the
+## caller is already LOD-gated by the secondary-slot system).
+func _draw_distress_badge(icon_center: Vector2, icon_size: int) -> void:
+	var badge_r: float = float(icon_size) * HERD_DISTRESS_BADGE_RADIUS_FACTOR
+	var center := icon_center + HERD_DISTRESS_BADGE_OFFSET_FACTOR * float(icon_size)
+	draw_circle(center, badge_r, HERD_DISTRESS_COLOR)
+	draw_arc(center, badge_r, 0, TAU, HERD_DISTRESS_BADGE_SEGMENTS,
+		HERD_DISTRESS_BADGE_RIM_COLOR, HERD_DISTRESS_BADGE_RIM_WIDTH)
+	# The "!": a stem (a rect, so it stays crisp at small sizes) over a dot.
+	var stem_w: float = badge_r * HERD_DISTRESS_BANG_STEM_WIDTH
+	var stem_top: float = badge_r * HERD_DISTRESS_BANG_STEM_TOP
+	var stem_bottom: float = badge_r * HERD_DISTRESS_BANG_STEM_BOTTOM
+	draw_rect(Rect2(
+		center + Vector2(-stem_w * 0.5, stem_top),
+		Vector2(stem_w, stem_bottom - stem_top)), HERD_DISTRESS_BANG_COLOR)
+	draw_circle(center + Vector2(0.0, badge_r * HERD_DISTRESS_BANG_DOT_Y),
+		badge_r * HERD_DISTRESS_BANG_DOT_RADIUS, HERD_DISTRESS_BANG_COLOR)
+
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
@@ -2498,7 +2611,18 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
-	_draw_marker_glyph(icon_center, herd_icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
+	var icon_size := _secondary_icon_size(radius)
+	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
+	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
+	# full-color emoji, so `modulate` just yields a slightly-darker brown animal (rendered, looked at,
+	# reverted). The distress read has to be geometry the emoji cannot swallow.
+	var starving := PenStatus.herd_is_starving(herd)
+	if starving:
+		draw_arc(icon_center, radius * HERD_DISTRESS_RING_FACTOR, 0, TAU, HERD_DISTRESS_RING_SEGMENTS,
+			HERD_DISTRESS_COLOR, HERD_DISTRESS_RING_WIDTH)
+	_draw_marker_glyph(icon_center, herd_icon, icon_size, SECONDARY_ICON_COLOR)
+	if starving:
+		_draw_distress_badge(icon_center, icon_size)
 
 	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
 	var tile := Vector2i(x, y)
@@ -2776,6 +2900,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# selected-unit copy (the per-source actual/sustainable yields ride inside labor_assignments).
 			"food_income": float(entry.get("food_income", 0.0)),
 			"food_consumption": float(entry.get("food_consumption", 0.0)),
+			# The ledger's THIRD term: the food this band paid this turn to feed the pens it keeps
+			# (a corralled herd cannot graze). It comes straight off the larder and is in neither of
+			# the two rows above, so the Food line's net rate must subtract it — see Hud._band_net_food.
+			"pen_feed_upkeep": float(entry.get("pen_feed_upkeep", 0.0)),
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),
 			"morale_cause": int(entry.get("morale_cause", 0)),
@@ -3115,6 +3243,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["habitability"] = float(tile_habitability[tile_key])
 	if tile_temperature.has(tile_key):
 		info["temperature"] = float(tile_temperature[tile_key])
+	# Pasture (graze). Deliberately NOT in FOW_DISCOVERED_HIDDEN_KEYS: like the biome, the height and
+	# the habitability above it, the grass is a property of the GROUND — you can see a steppe from a
+	# ridge, and it is remembered, not live contents. (Occupants are what a remembered tile redacts.)
+	if tile_graze.has(tile_key):
+		var graze: Dictionary = tile_graze[tile_key]
+		info["graze_biomass"] = float(graze.get("biomass", 0.0))
+		info["graze_capacity"] = float(graze.get("capacity", 0.0))
+		info["graze_ecology_phase"] = String(graze.get("phase", ""))
 	# Hex-edge rivers (the 12-bit Minor/Major mask, 2 bits per odd-r direction). Deliberately NOT in
 	# FOW_DISCOVERED_HIDDEN_KEYS: a river is permanent geography, like the terrain label and a
 	# discovered Wondrous Site, so a remembered tile still reports it. Never-seen tiles are already
@@ -3363,7 +3499,51 @@ func _tile_color(x: int, y: int) -> Color:
 		var gradient_color: Color = _elevation_color(overlay_value)
 		var blend: float = clampf(overlay_value * 0.85 + 0.15, 0.0, 1.0)
 		return GRID_COLOR.lerp(gradient_color, blend)
+	if active_overlay_key == PASTURE_OVERLAY_KEY:
+		return _pasture_color(x, y, overlay_value)
+	if active_overlay_key == FORAGE_OVERLAY_KEY:
+		return _forage_color(x, y, overlay_value)
 	return GRID_COLOR.lerp(overlay_color, overlay_value)
+
+## Pasture overlay color for one tile. `normalized` is the tile's graze capacity as a fraction of the
+## map's RICHEST pasture (the native decoder scales it against the max, not min-max — see
+## `snapshot_dict`), so 1.0 is the best pasture on this map and 0.0 means NO pasture at all.
+##
+## Zero leaves the ramp: a tile that carries no pasture is a categorically different fact from a poor
+## one, and painting both dark would let the overlay lie about exactly the thing it exists to show.
+## Water is split out from dead land (Water terrain tag) because "the sea has no grass" is not a
+## finding — burying it in the same tone as a glacier would drown the real dead ground.
+func _pasture_color(x: int, y: int, normalized: float) -> Color:
+	if normalized <= 0.0:
+		if (_tag_mask_at(x, y) & PASTURE_WATER_TAG) != 0:
+			return PASTURE_WATER_COLOR
+		return PASTURE_DEAD_COLOR
+	return _pasture_ramp_color(normalized)
+
+## The pasture ramp itself: the HUE carries the capacity (straw → grass). The barren tones sit OFF
+## this ramp entirely, so the map's poorest real pasture still reads unmistakably AS pasture without
+## any floor fudge. Shared by the map paint and the legend swatches, so they cannot drift apart.
+func _pasture_ramp_color(normalized_capacity: float) -> Color:
+	return PASTURE_POOR_COLOR.lerp(PASTURE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
+
+## Forage overlay color for one tile. `normalized` is the tile's human-food capacity as a fraction
+## of the map's RICHEST forage tile (the native decoder scales it against the max — see
+## `snapshot_dict`), so 1.0 is the best human-food land on this map and 0.0 means genuinely none.
+##
+## Twin of `_pasture_color`, but WATER is not an off-category: a coastal shelf with fishing
+## potential is a positive value and rides the ramp, so it lights up here where it is barren on the
+## pasture map. Only genuinely-zero tiles (deep ocean, glacier, lava) leave the ramp for the single
+## barren fill — the `x`/`y` are unused (no water/dead split), kept for the overlay-color signature.
+func _forage_color(_x: int, _y: int, normalized: float) -> Color:
+	if normalized <= 0.0:
+		return FORAGE_BARREN_COLOR
+	return _forage_ramp_color(normalized)
+
+## The forage ramp: HUE carries the capacity (wheat → leaf green). Kept a distinct green from the
+## pasture ramp so the two food webs read as different layers. Shared by the map paint and the
+## legend swatches, so they cannot drift apart.
+func _forage_ramp_color(normalized_capacity: float) -> Color:
+	return FORAGE_POOR_COLOR.lerp(FORAGE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
 	var colors := _get_terrain_colors()
@@ -3559,6 +3739,10 @@ func _legend_for_current_view() -> Dictionary:
 		return _build_tag_legend()
 	if not overlay_channels.has(active_overlay_key):
 		return {}
+	if active_overlay_key == PASTURE_OVERLAY_KEY:
+		return _build_pasture_legend()
+	if active_overlay_key == FORAGE_OVERLAY_KEY:
+		return _build_forage_legend()
 	if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
 		var selection := _culture_selection_data()
 		if bool(selection.get("valid", false)):
@@ -3571,6 +3755,204 @@ func _legend_for_current_view() -> Dictionary:
 				context_label = "Selection (%d tiles)" % tile_count
 			return _build_scalar_overlay_legend("culture", normalized, raw, stats, context_label)
 	return _build_scalar_overlay_legend(active_overlay_key)
+
+## Legend for the PASTURE channel. It cannot use `_build_scalar_overlay_legend`, because that one
+## reports min/avg/max over EVERY tile — and here the map-wide minimum is 0 (the sea), which would
+## report the world's poorest pasture as "0" and say nothing about the ground that has none. So the
+## rows are: the barren tones (off-ramp, counted), then Poor/Average/Rich measured over the tiles
+## that ACTUALLY carry pasture. The map-wide standing stock (biomass ÷ capacity) rides in the
+## description — the "how eaten-down is it?" question the capacity ramp deliberately does not answer.
+func _build_pasture_legend() -> Dictionary:
+	var raw: PackedFloat32Array = _overlay_raw_array(PASTURE_OVERLAY_KEY)
+	var max_capacity: float = 0.0
+	for value in raw:
+		var capacity := float(value)
+		if is_finite(capacity):
+			max_capacity = maxf(max_capacity, capacity)
+
+	var pasture_min: float = INF
+	var pasture_max: float = 0.0
+	var pasture_sum: float = 0.0
+	var pasture_tiles: int = 0
+	var biomass_sum: float = 0.0
+	for entry in tile_graze.values():
+		var patch: Dictionary = entry
+		var capacity: float = float(patch.get("capacity", 0.0))
+		if capacity <= 0.0:
+			continue
+		pasture_tiles += 1
+		pasture_min = minf(pasture_min, capacity)
+		pasture_max = maxf(pasture_max, capacity)
+		pasture_sum += capacity
+		biomass_sum += float(patch.get("biomass", 0.0))
+
+	# Every land tile the map knows about, minus the ones carrying pasture = the DEAD ground. Water is
+	# excluded (its emptiness is not a finding), and it is counted off the Water terrain tag, which is
+	# server truth — the same test `_pasture_color` paints with, so the legend can't disagree with the map.
+	var water_tiles: int = 0
+	var land_tiles: int = 0
+	for y in grid_height:
+		for x in grid_width:
+			if (_tag_mask_at(x, y) & PASTURE_WATER_TAG) != 0:
+				water_tiles += 1
+			else:
+				land_tiles += 1
+	var dead_tiles: int = maxi(land_tiles - pasture_tiles, 0)
+
+	var description := "Graze capacity — the ANIMAL-edible stock (grass and browse; humans cannot digest it)."
+	if pasture_sum > 0.0:
+		description += "\nStanding stock %d%% of capacity across %d pasture tiles." % [
+			int(round(biomass_sum / pasture_sum * 100.0)), pasture_tiles
+		]
+
+	var rows: Array = []
+	if pasture_tiles == 0:
+		rows.append({
+			"color": PASTURE_DEAD_COLOR,
+			"label": "No pasture anywhere",
+			"value_text": "Awaiting graze telemetry",
+		})
+	else:
+		var avg_capacity: float = pasture_sum / float(pasture_tiles)
+		rows.append({
+			"color": _pasture_color_for_capacity(pasture_min, max_capacity),
+			"label": "Poorest pasture",
+			"value_text": _format_pasture_capacity(pasture_min),
+		})
+		rows.append({
+			"color": _pasture_color_for_capacity(avg_capacity, max_capacity),
+			"label": "Average pasture",
+			"value_text": _format_pasture_capacity(avg_capacity),
+		})
+		rows.append({
+			"color": _pasture_color_for_capacity(pasture_max, max_capacity),
+			"label": "Richest pasture",
+			"value_text": _format_pasture_capacity(pasture_max),
+		})
+	# Kept SHORT: the legend panel clips a long row label, and "the ground here carries no pasture at
+	# all" is the one row that must never be half-read.
+	rows.append({
+		"color": PASTURE_DEAD_COLOR,
+		"label": "Barren ground",
+		"value_text": "%d tiles" % dead_tiles,
+	})
+	rows.append({
+		"color": PASTURE_WATER_COLOR,
+		"label": "Water",
+		"value_text": "%d tiles" % water_tiles,
+	})
+	return {
+		"key": PASTURE_OVERLAY_KEY,
+		"title": String(overlay_channel_labels.get(PASTURE_OVERLAY_KEY, "Pasture")),
+		"description": description,
+		"rows": rows,
+		"stats": {
+			"min": (0.0 if pasture_tiles == 0 else pasture_min),
+			"max": pasture_max,
+			"avg": (0.0 if pasture_tiles == 0 else pasture_sum / float(pasture_tiles)),
+		},
+	}
+
+## The legend swatch for a given capacity: re-normalizes against the map's richest pasture exactly as
+## the decoder does for the map, then paints through the SAME ramp (`_pasture_ramp_color`).
+func _pasture_color_for_capacity(capacity: float, max_capacity: float) -> Color:
+	if max_capacity <= 0.0:
+		return PASTURE_DEAD_COLOR
+	return _pasture_ramp_color(capacity / max_capacity)
+
+func _format_pasture_capacity(capacity: float) -> String:
+	return "%.0f graze" % capacity
+
+## Legend for the FORAGE channel — the human-food twin of `_build_pasture_legend`. It cannot use
+## `_build_scalar_overlay_legend` for the same reason pasture can't: the map-wide minimum is 0 (every
+## barren tile — deep ocean/glacier/lava), which would report the world's poorest forage as "0". So
+## the rows are Poorest/Average/Richest measured over the tiles that ACTUALLY carry human food, then
+## the barren "No forage" count. The description carries the honest gathering-sites sub-count — the
+## tiles you can actually work today, a subset of the potential — so the ramp reads as POTENTIAL
+## without pretending the rest of the land is worthless.
+func _build_forage_legend() -> Dictionary:
+	var raw: PackedFloat32Array = _overlay_raw_array(FORAGE_OVERLAY_KEY)
+	var max_capacity: float = 0.0
+	for value in raw:
+		var capacity := float(value)
+		if is_finite(capacity):
+			max_capacity = maxf(max_capacity, capacity)
+
+	var forage_min: float = INF
+	var forage_max: float = 0.0
+	var forage_sum: float = 0.0
+	var forage_tiles: int = 0
+	for entry in tile_forage.values():
+		var capacity: float = float(entry)
+		if capacity <= 0.0:
+			continue
+		forage_tiles += 1
+		forage_min = minf(forage_min, capacity)
+		forage_max = maxf(forage_max, capacity)
+		forage_sum += capacity
+
+	# Every tile the map knows about, minus the ones carrying human food = the barren ground (deep
+	# ocean, glacier, lava). Unlike pasture there is no water/land split here — coastal shelves carry
+	# forage and ride the ramp, so "water" is not an off-category; only genuinely-zero tiles are.
+	var total_tiles: int = maxi(grid_width, 0) * maxi(grid_height, 0)
+	var barren_tiles: int = maxi(total_tiles - forage_tiles, 0)
+
+	var description := "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish."
+	# Gathering sites = the tiles you can actually forage today (a subset of the potential above).
+	description += "\nGathering sites: %d tiles." % food_sites.size()
+
+	var rows: Array = []
+	if forage_tiles == 0:
+		rows.append({
+			"color": FORAGE_BARREN_COLOR,
+			"label": "No forage anywhere",
+			"value_text": "Awaiting forage telemetry",
+		})
+	else:
+		var avg_capacity: float = forage_sum / float(forage_tiles)
+		rows.append({
+			"color": _forage_color_for_capacity(forage_min, max_capacity),
+			"label": "Poorest forage",
+			"value_text": _format_forage_capacity(forage_min),
+		})
+		rows.append({
+			"color": _forage_color_for_capacity(avg_capacity, max_capacity),
+			"label": "Average forage",
+			"value_text": _format_forage_capacity(avg_capacity),
+		})
+		rows.append({
+			"color": _forage_color_for_capacity(forage_max, max_capacity),
+			"label": "Richest forage",
+			"value_text": _format_forage_capacity(forage_max),
+		})
+	# Kept SHORT (the legend panel clips). Deep ocean, glacier and lava — the only ground that truly
+	# yields no human food.
+	rows.append({
+		"color": FORAGE_BARREN_COLOR,
+		"label": "No forage",
+		"value_text": "%d tiles" % barren_tiles,
+	})
+	return {
+		"key": FORAGE_OVERLAY_KEY,
+		"title": String(overlay_channel_labels.get(FORAGE_OVERLAY_KEY, "Forage")),
+		"description": description,
+		"rows": rows,
+		"stats": {
+			"min": (0.0 if forage_tiles == 0 else forage_min),
+			"max": forage_max,
+			"avg": (0.0 if forage_tiles == 0 else forage_sum / float(forage_tiles)),
+		},
+	}
+
+## Legend swatch for a given forage capacity: re-normalizes against the map's richest patch exactly
+## as the decoder does for the map, then paints through the SAME ramp (`_forage_ramp_color`).
+func _forage_color_for_capacity(capacity: float, max_capacity: float) -> Color:
+	if max_capacity <= 0.0:
+		return FORAGE_BARREN_COLOR
+	return _forage_ramp_color(capacity / max_capacity)
+
+func _format_forage_capacity(capacity: float) -> String:
+	return "%.0f food" % capacity
 
 func _build_terrain_legend() -> Dictionary:
 	var present_ids: PackedInt32Array = present_terrain_ids()

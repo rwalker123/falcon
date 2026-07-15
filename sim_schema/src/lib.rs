@@ -178,6 +178,12 @@ pub struct HuntTripEstimateState {
     pub delivers_food: bool,
 }
 
+/// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
+/// (or older-snapshot) herd never reads as starving.
+fn pen_fully_fed() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -220,6 +226,7 @@ pub struct HerdTelemetryState {
     pub ceiling_corral: f32,
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With `ceiling_corral`, lets the client show "preparing X → then Y" pre-commit.
+    /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
     /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
@@ -239,6 +246,24 @@ pub struct HerdTelemetryState {
     /// simulated rather than divided. Derived at capture. Appended last.
     #[serde(default)]
     pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
+    /// **The feed this pen demands — or WOULD demand once built** — at the herd's CURRENT biomass
+    /// (`pen.upkeep_per_biomass × biomass`), because a confined herd cannot graze. A **projection**
+    /// for an unpenned herd, the **live** demand for a penned one: always meaningful, never
+    /// `0`-because-unpenned. Computed on the same biomass basis as [`Self::corral_yield`], so the two
+    /// are a **matched pair** — the pre-commit `Corral` row must show the running cost beside the
+    /// payoff, since the herd it is deciding about is by definition *not yet penned*.
+    ///
+    /// **Demanded, not paid.** A starving pen demands more than it is paid ([`Self::pen_fed_fraction`]
+    /// is that ratio). The band's *actual* ledger debit is
+    /// `PopulationCohortState::pen_feed_upkeep` — draw **that** in the food ledger, not this.
+    #[serde(default)]
+    pub pen_upkeep: f32,
+    /// The fraction of `pen_upkeep` the keeper actually **paid** last turn. `1.0` = fully fed (also
+    /// the value for a herd that is not penned, and for a rehydrated one); `< 1` = **starving** — the
+    /// herd is shrinking by `pen.starve_shrink_rate × (1 − this) × biomass` per turn, and its yield
+    /// with it. It recovers when fed again (it never despawns and never loses the pen).
+    #[serde(default = "pen_fully_fed")]
+    pub pen_fed_fraction: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -268,6 +293,8 @@ impl Default for HerdTelemetryState {
             corral_yield: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
+            pen_upkeep: 0.0,
+            pen_fed_fraction: pen_fully_fed(),
         }
     }
 }
@@ -420,6 +447,21 @@ pub struct HerdState {
 /// `(x, y)` tile key is the patch's location.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ForageState {
+    #[serde(default)]
+    pub x: u32,
+    #[serde(default)]
+    pub y: u32,
+    #[serde(default)]
+    pub ecology: EcologyState,
+}
+
+/// Authoritative mirror of a live **graze (pasture) patch** (`GrazeRegistry`), round-tripped through
+/// the rollback snapshot so a rollback rewinds grazing draw-down — the animal-edible counterpart of
+/// `ForageState`, on the same shared `EcologyState` record. Graze is **wild ground**: it is never
+/// owned, tended or improved, so `EcologyState`'s `progress` / `owner` ride at their defaults.
+/// The `(x, y)` tile key is the patch's location. See `docs/plan_grazing_foundation.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GrazeState {
     #[serde(default)]
     pub x: u32,
     #[serde(default)]
@@ -1246,7 +1288,47 @@ pub struct TileState {
     /// ocean/inland sea/delta is not mirrored back). `0` on every hex with no navigable channel.
     #[serde(default)]
     pub river_channel: u8,
+    /// **Graze (pasture) readout** — the tile's live *animal-edible* biomass (grass/browse), the stock
+    /// herds eat. `0` on water/ice/rock and on any tile with no pasture. Distinct from the
+    /// *human-edible* forage stock (`ForagePatchState`, food-module tiles only) — see
+    /// `docs/plan_grazing_foundation.md`. Derived at capture from the `GrazeRegistry`.
+    #[serde(default)]
+    pub graze_biomass: f32,
+    /// The tile's graze **capacity** — a property of the *land* (its biome), not of any animal. `0`
+    /// means the biome carries no pasture at all; `graze_biomass / graze_capacity` is the pasture's
+    /// health (and, from Phase 2b, the overgrazing signal).
+    #[serde(default)]
+    pub graze_capacity: f32,
+    /// The tile's pasture phase, as [`GRAZE_PHASE_NONE`] / [`GRAZE_PHASE_THRIVING`] /
+    /// [`GRAZE_PHASE_STRESSED`] / [`GRAZE_PHASE_COLLAPSING`]. A compact code rather than the string
+    /// the sparse herd/forage payloads use, because this rides *every* tile (the `moraleCause:ubyte`
+    /// idiom). `NONE` is the default, so "this biome has no pasture" is never confused with "this
+    /// pasture is healthy".
+    #[serde(default)]
+    pub graze_ecology_phase: u8,
+    /// **Forage potential** — the *human-edible* twin of [`graze_capacity`](Self::graze_capacity).
+    /// The land's per-biome human-food capacity (`forage.capacity_by_biome`, `labor_config.json`),
+    /// read from the config table for *every* tile — **not** from the sparse `ForagePatch`, which
+    /// exists only on food-module tiles. That is the point: the client draws a Forage overlay of the
+    /// biome's *potential* everywhere (the mirror of the pasture overlay), including the ~95% of tiles
+    /// that carry no patch. Unlike graze this is **non-zero on fishery water** (`ContinentalShelf` /
+    /// `CoralShelf` / `InlandSea`) — a fishery is a food module on water. Only a *stated-zero* biome
+    /// (deep ocean, glacier, lava, salt flat) reads `0`. Derived at capture from
+    /// `ForageLaborConfig::capacity_for(tile.terrain)` — see `docs/plan_grazing_foundation.md` §1.1.
+    #[serde(default)]
+    pub forage_capacity: f32,
 }
+
+/// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
+/// Deliberately the zero/default value: an absent reading must never masquerade as a healthy one.
+pub const GRAZE_PHASE_NONE: u8 = 0;
+/// `TileState::graze_ecology_phase` — pasture at or above the stressed band (healthy).
+pub const GRAZE_PHASE_THRIVING: u8 = 1;
+/// `TileState::graze_ecology_phase` — pasture drawn down into the stressed band (overgrazed).
+pub const GRAZE_PHASE_STRESSED: u8 = 2;
+/// `TileState::graze_ecology_phase` — pasture stripped below the collapse band (severely overgrazed;
+/// it still recovers — grass reseeds — but slowly).
+pub const GRAZE_PHASE_COLLAPSING: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogisticsLinkState {
@@ -1513,7 +1595,8 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub food_income: f32,
     /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `days_of_food` divides by). Derived per-turn at capture. Appended last.
+    /// one-turn demand `days_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
+    /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
     /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
@@ -1534,6 +1617,23 @@ pub struct PopulationCohortState {
     /// (`expedition_config.hunt.viability_warn_turns`).
     #[serde(default)]
     pub expedition_viability_warn_turns: u32,
+    /// **The food this band actually PAID for pen feed this turn**, summed across every corral it
+    /// keeps — the real `LocalStore::take` debit, not the demanded amount (a band that could only
+    /// part-pay records only what it handed over, and its herds starve for the rest).
+    ///
+    /// A pen's feed comes straight off the band's stores, so it is in **neither** [`Self::food_income`]
+    /// **nor** [`Self::food_consumption`]. Render it as its own **negative** row in the food ledger —
+    /// "my people ate X" and "my animals ate Y" are deliberately separate lines, and it is *not* folded
+    /// into `food_consumption`. The sim answers it so the client does no arithmetic:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
+    /// ```
+    ///
+    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, not persisted (a rehydrated
+    /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
+    #[serde(default)]
+    pub pen_feed_upkeep: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -1981,7 +2081,7 @@ pub struct SentimentTelemetryState {
     pub agency: SentimentAxisTelemetry,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
     pub tiles: Vec<TileState>,
@@ -2018,6 +2118,12 @@ pub struct WorldSnapshot {
     /// the FlatBuffers client stream; rollback restore reads it via `ForageRegistry::update_from_states`.
     #[serde(default)]
     pub forage_registry: Vec<ForageState>,
+    /// Authoritative graze/pasture sim state (`GrazeRegistry`), round-tripped for rollback correctness
+    /// (biomass / ecology phase per land tile). Like `herd_registry` / `forage_registry` this is the
+    /// *sim* record and is not on the FlatBuffers client stream — the client reads graze off the
+    /// per-tile `TileState.graze_*` fields. Restore reads it via `GrazeRegistry::update_from_states`.
+    #[serde(default)]
+    pub graze_registry: Vec<GrazeState>,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]
@@ -2999,6 +3105,8 @@ fn create_herds<'a>(
                 ceilingEradicate: herd.ceiling_eradicate,
                 ceilingCorral: herd.ceiling_corral,
                 corralYield: herd.corral_yield,
+                penUpkeep: herd.pen_upkeep,
+                penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 huntPolicyCeilings: hunt_policy_ceilings,
                 huntTripEstimates: hunt_trip_estimates,
@@ -3176,6 +3284,10 @@ fn create_tiles<'a>(
                     mountainKind: to_fb_mountain_kind(tile.mountain_kind),
                     mountainRelief: tile.mountain_relief,
                     habitability: tile.habitability,
+                    grazeBiomass: tile.graze_biomass,
+                    grazeCapacity: tile.graze_capacity,
+                    grazeEcologyPhase: tile.graze_ecology_phase,
+                    forageCapacity: tile.forage_capacity,
                     riverEdges: tile.river_edges,
                     riverInflow: tile.river_inflow,
                     riverChannel: tile.river_channel,
@@ -3497,6 +3609,7 @@ fn create_populations<'a>(
                     moraleUnrest: cohort.morale_unrest,
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
+                    penFeedUpkeep: cohort.pen_feed_upkeep,
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
@@ -4587,4 +4700,74 @@ pub struct GenerationState {
     pub bias_trust: i64,
     pub bias_equity: i64,
     pub bias_agency: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `WorldSnapshot` carrying exactly one herd — the rest of the world is irrelevant to the herd
+    /// telemetry's wire encoding.
+    fn snapshot_with_herd(herd: HerdTelemetryState) -> WorldSnapshot {
+        WorldSnapshot {
+            herds: vec![herd],
+            ..WorldSnapshot::default()
+        }
+    }
+
+    /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
+    /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
+    /// (append-only discipline), and the client renders the feed as a negative row against the
+    /// **gross** `corralYield`. Encode → decode with the generated reader, so a field that silently
+    /// failed to serialize cannot pass.
+    #[test]
+    fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {
+        const UPKEEP: f32 = 1.2;
+        const FED: f32 = 0.25;
+        const CORRAL_YIELD: f32 = 3.6;
+
+        let snapshot = snapshot_with_herd(HerdTelemetryState {
+            id: "herd_pen".to_string(),
+            species: "Red Deer".to_string(),
+            corralled: true,
+            corral_yield: CORRAL_YIELD,
+            pen_upkeep: UPKEEP,
+            pen_fed_fraction: FED,
+            ..Default::default()
+        });
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .herds()
+            .expect("herds present")
+            .get(0);
+        assert!(herd.corralled());
+        assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
+        assert!((herd.penUpkeep() - UPKEEP).abs() < 1e-6);
+        assert!((herd.penFedFraction() - FED).abs() < 1e-6);
+    }
+
+    /// A herd that is **not** penned eats nothing and is never starving — and an older snapshot with
+    /// neither field decodes to the same neutral pair (the `= 0` / `= 1` schema defaults).
+    #[test]
+    fn an_unpenned_herd_defaults_to_no_upkeep_and_fully_fed() {
+        let snapshot = snapshot_with_herd(HerdTelemetryState {
+            id: "herd_wild".to_string(),
+            ..Default::default()
+        });
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .herds()
+            .expect("herds present")
+            .get(0);
+        assert_eq!(herd.penUpkeep(), 0.0);
+        assert_eq!(herd.penFedFraction(), 1.0);
+    }
 }

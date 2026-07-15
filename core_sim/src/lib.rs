@@ -29,6 +29,7 @@ mod fauna_config;
 mod food;
 mod forage;
 mod generations;
+mod graze;
 mod great_discovery;
 pub mod grid_utils;
 pub mod hashing;
@@ -118,14 +119,14 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, forecast_expected_take, hunt_policy_ceiling, hunt_provisions,
-    hunt_source_yield_preview, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
-    SourceYieldForecast, HERDING_DISCOVERY_ID,
+    advance_herds, advance_husbandry, forecast_expected_take, herd_capacity, herd_ecology,
+    hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep, repopulate_fauna,
+    spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
-    load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
-    SpeciesDef, BUILTIN_FAUNA_CONFIG,
+    load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
+    GrazeConfig, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
@@ -136,6 +137,7 @@ pub use forage::{
     spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
+pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
     GreatDiscoveryEffectEvent, GreatDiscoveryEffectKind, GreatDiscoveryFlag, GreatDiscoveryId,
@@ -474,6 +476,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdTelemetry::default())
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
+        .insert_resource(GrazeRegistry::default())
         .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
         .insert_resource(FoodSiteRegistry::default())
@@ -540,6 +543,7 @@ pub fn build_headless_app() -> App {
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 spawn_initial_forage,
+                spawn_initial_graze,
                 espionage::initialise_espionage_roster,
             )
                 .chain(),
@@ -562,6 +566,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_logistics,
                 advance_herds,
                 advance_forage_regrowth,
+                advance_graze_regrowth,
                 advance_cultivation,
                 repopulate_fauna,
                 advance_husbandry,

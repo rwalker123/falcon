@@ -586,6 +586,20 @@ struct OverlaySlices<'a> {
     elevation_sea_level: f32,
     moisture: &'a [f32],
     visibility: &'a [f32],
+    /// The GRAZE (pasture) layer's per-tile CAPACITY — how much pasture this tile's biome can
+    /// carry, in graze-biomass units (`0` = this biome carries no pasture at all). Unlike every
+    /// other slice here it is not a wire raster: graze rides `TileState`, so this is assembled
+    /// from the tiles (the same shape the logistics fallback already builds from them). Empty
+    /// when the snapshot carries no graze — the channel is then omitted rather than published as
+    /// a map-wide field of zeros, which would read as "nowhere has any pasture".
+    pasture_capacity: &'a [f32],
+    /// The FORAGE (human food) layer's per-tile CAPACITY — the human-edible POTENTIAL of this
+    /// tile's biome (`TileState.forageCapacity`), the exact twin of `pasture_capacity`: every tile
+    /// carries a value from its biome table, assembled from the tiles. `0` = genuinely no human
+    /// food (deep ocean, glacier, lava). UNLIKE pasture, WATER is not uniformly barren — coastal
+    /// shelves carry real fishing potential and sit ON the capacity ramp; only genuinely-zero tiles
+    /// are the off-ramp barren fill (see MapView `_forage_color`).
+    forage_capacity: &'a [f32],
 }
 
 struct TerrainSlices<'a> {
@@ -648,6 +662,8 @@ fn snapshot_dict(
     let elevation_base = copy_into(overlays.elevation);
     let elevation_sea_level = overlays.elevation_sea_level;
     let moisture_base = copy_into(overlays.moisture);
+    let pasture_base = copy_into(overlays.pasture_capacity);
+    let forage_base = copy_into(overlays.forage_capacity);
 
     let mut logistics_normalized = logistics_base.clone();
     normalize_overlay(&mut logistics_normalized);
@@ -669,6 +685,40 @@ fn snapshot_dict(
     normalize_overlay(&mut elevation_normalized);
     let mut moisture_normalized = moisture_base.clone();
     normalize_overlay(&mut moisture_normalized);
+    // Pasture is normalized against the map's RICHEST pasture, NOT min-max stretched like the
+    // other channels. Zero is a REAL, meaningful reading here ("no pasture at all"), not merely
+    // the low end of a range: a min-max stretch would rebase the ramp onto the worst *land* value
+    // and make a marginal desert look like a dead glacier — or vice versa — depending on the map.
+    let pasture_max_capacity = pasture_base
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold(0.0f32, f32::max);
+    let pasture_normalized: Vec<f32> = if pasture_max_capacity > 0.0 {
+        pasture_base
+            .iter()
+            .map(|v| (v / pasture_max_capacity).clamp(0.0, 1.0))
+            .collect()
+    } else {
+        vec![0.0f32; pasture_base.len()]
+    };
+
+    // Forage normalizes against the map's RICHEST forage patch (mirrors pasture, NOT min-max):
+    // 1.0 is the best gathering site on this map, and 0.0 is the abundant "no patch here" state,
+    // which the client paints neutrally rather than as barren.
+    let forage_max_capacity = forage_base
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold(0.0f32, f32::max);
+    let forage_normalized: Vec<f32> = if forage_max_capacity > 0.0 {
+        forage_base
+            .iter()
+            .map(|v| (v / forage_max_capacity).clamp(0.0, 1.0))
+            .collect()
+    } else {
+        vec![0.0f32; forage_base.len()]
+    };
 
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
@@ -734,6 +784,10 @@ fn snapshot_dict(
     let moisture_array = packed_from_slice(&moisture_normalized);
     let moisture_raw_array = packed_from_slice(&moisture_base);
     let moisture_contrast_array = packed_from_slice(&moisture_contrast_vec);
+    let pasture_array = packed_from_slice(&pasture_normalized);
+    let pasture_raw_array = packed_from_slice(&pasture_base);
+    let forage_array = packed_from_slice(&forage_normalized);
+    let forage_raw_array = packed_from_slice(&forage_base);
 
     let elevation_placeholder = elevation_array.is_empty();
     let moisture_placeholder = overlays.moisture.is_empty();
@@ -890,6 +944,50 @@ fn snapshot_dict(
             placeholder: elevation_base.is_empty(),
         },
     );
+    // Pasture (Grazing Phase 2a). Published ONLY when the snapshot actually carries graze: a
+    // map-wide field of zeros is not "no data", it is the false claim that the world has no
+    // pasture anywhere. A delta (which carries no per-tile graze) therefore simply omits it.
+    if pasture_max_capacity > 0.0 {
+        insert_overlay_channel(
+            &mut channels,
+            &mut channel_order,
+            OverlayChannelParams {
+                key: "pasture",
+                label: "Pasture (Graze Capacity)",
+                description: Some(
+                    "How much GRASS AND BROWSE this tile's biome can carry — the animal-edible stock (humans cannot digest it). Prairie is the reference pasture; a closed forest canopy shades the ground cover out; water, glacier and lava carry NO pasture at all and are drawn as barren, not as poor.",
+                ),
+                normalized: &pasture_array,
+                raw: &pasture_raw_array,
+                // No separate contrast curve: the capacity ramp IS the signal being read.
+                contrast: &pasture_array,
+                placeholder: false,
+            },
+        );
+    }
+    // Forage (human food) — the twin of the pasture channel, sourced per-tile from the biome's
+    // human-food potential. Published ONLY when the snapshot actually carries forage capacity.
+    // A `0` here means genuinely no human food (deep ocean, glacier, lava); coastal shelves carry
+    // fishing potential and sit ON the ramp, so the forage map DIVERGES from pasture (where all
+    // water is barren) — that divergence is the whole point of the two-web split.
+    if forage_max_capacity > 0.0 {
+        insert_overlay_channel(
+            &mut channels,
+            &mut channel_order,
+            OverlayChannelParams {
+                key: "forage",
+                label: "Forage (Human Food Capacity)",
+                description: Some(
+                    "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish. Every tile carries a value from its biome; forest and river valleys read rich where prairie reads poor, coastal shelves light up as fishing grounds, and only deep ocean, glacier and lava carry none.",
+                ),
+                normalized: &forage_array,
+                raw: &forage_raw_array,
+                // No separate contrast curve: the capacity ramp IS the signal being read.
+                contrast: &forage_array,
+                placeholder: false,
+            },
+        );
+    }
 
     let _ = overlays.insert("channels", &channels);
     let _ = overlays.insert("channel_order", &channel_order.clone());
@@ -1857,6 +1955,14 @@ impl DeltaAggregator {
                 elevation_sea_level,
                 moisture: &moisture,
                 visibility: &visibility,
+                // A delta carries only the tiles that CHANGED, so it can never assemble a whole
+                // pasture field — it publishes NO pasture channel rather than a field of zeros
+                // that would claim the world has no pasture. (The delta path degrades the same way
+                // for every other channel it did not receive; the live stream is full snapshots.)
+                pasture_capacity: &[],
+                // Same reasoning: a delta carries no forage-patch list, so it publishes NO forage
+                // channel rather than a field of zeros that would claim there are no gathering sites.
+                forage_capacity: &[],
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),
@@ -2571,6 +2677,39 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         Some(tag_vec.as_slice())
     };
 
+    // The PASTURE field, assembled from the tiles (graze rides `TileState`, not a raster — it is
+    // per-entity diffed, so an ungrazed turn costs zero delta bytes). A tile that carries no patch
+    // reports capacity 0, which is exactly the reading we want: "this ground holds no pasture".
+    let mut pasture_capacity_vec: Vec<f32> = vec![0.0f32; total];
+    if let Some(tiles) = snapshot.tiles() {
+        for tile in tiles {
+            let x = tile.x();
+            let y = tile.y();
+            if x >= final_width || y >= final_height {
+                continue;
+            }
+            let idx = (y as usize) * (final_width as usize) + x as usize;
+            pasture_capacity_vec[idx] = tile.grazeCapacity();
+        }
+    }
+
+    // The FORAGE field, assembled from the tiles' human-food POTENTIAL (`TileState.forageCapacity`),
+    // the exact twin of pasture above — every tile carries a value from its biome. `0` = genuinely
+    // no human food (deep ocean, glacier, lava); coastal shelves carry a positive value and sit ON
+    // the ramp (fishing), which is where the forage map diverges from pasture.
+    let mut forage_capacity_vec: Vec<f32> = vec![0.0f32; total];
+    if let Some(tiles) = snapshot.tiles() {
+        for tile in tiles {
+            let x = tile.x();
+            let y = tile.y();
+            if x >= final_width || y >= final_height {
+                continue;
+            }
+            let idx = (y as usize) * (final_width as usize) + x as usize;
+            forage_capacity_vec[idx] = tile.forageCapacity();
+        }
+    }
+
     // NOTE: the old HydrologyOverlay polyline (RiverSegment/HydrologyPoint) was DELETED from the
     // schema. Rivers now ride the tiles: Minor/Major as the per-tile `riverEdges` bitmask (see
     // tile_to_dict) and Navigable as the `NavigableRiver` terrain — the tiles fully determine the
@@ -2611,6 +2750,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             elevation_sea_level,
             moisture: &moisture_resized,
             visibility: &visibility_resized,
+            pasture_capacity: &pasture_capacity_vec,
+            forage_capacity: &forage_capacity_vec,
         },
         TerrainSlices {
             terrain: terrain_slice,
@@ -3046,8 +3187,27 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // The Corral INVESTMENT rung (hunt-only): `ceiling_corral` is the food/turn the herd pays
         // WHILE the pen is being built (the deliberate dip), `corral_yield` what it pays once penned.
         // Together they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("ceiling_corral", herd.ceilingCorral());
         let _ = dict.insert("corral_yield", herd.corralYield());
+        // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
+        // cannot graze, so its keeper hauls it food every turn.
+        //   `pen_upkeep`       = the feed/turn the pen DEMANDS, or WOULD demand once built, at the
+        //                        herd's CURRENT biomass. Always meaningful — a projection for an
+        //                        unpenned herd, the live demand for a penned one — NEVER
+        //                        "0-because-unpenned". Computed on the same biomass basis as
+        //                        `corral_yield`, so the two are a matched pair the Corral forecast row
+        //                        subtracts ("…then +Y − Z feed"). This is the DEMANDED figure, distinct
+        //                        from the PAID amount (the per-band PopulationCohortState.penFeedUpkeep
+        //                        the food ledger actually debits) — a starving pen demands more than it
+        //                        is paid, and `pen_fed_fraction` is that ratio.
+        //   `pen_fed_fraction` = the share of that demand the keeper actually paid last turn.
+        //                        1.0 = fully fed (also the value for any un-penned herd); < 1.0 = the
+        //                        herd is STARVING and shrinking every turn.
+        // Read by Hud's herd drawer (the Corral row's starving state + the Pen feed row) and by
+        // MapView's herd marker (a starving pen's glyph tints DANGER).
+        let _ = dict.insert("pen_upkeep", herd.penUpkeep());
+        let _ = dict.insert("pen_fed_fraction", herd.penFedFraction());
         array.push(&dict.to_variant());
     }
     array
@@ -3688,6 +3848,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
+    // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
+    // the pens it keeps, summed across every corralled herd it works. It is taken straight off the
+    // larder and is in NEITHER of the two rows above, so the true net is
+    //     larder_delta == food_income − food_consumption − pen_feed_upkeep
+    // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`). The sim answers this — the
+    // client must never re-derive it by summing the herds' `pen_upkeep`.
+    let _ = dict.insert("pen_feed_upkeep", cohort.penFeedUpkeep() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback
@@ -4132,7 +4299,48 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());
+    // The GRAZE (pasture) layer — the ANIMAL-edible vegetal stock, on nearly every land tile
+    // (Grazing Phase 2a). Deliberately NOT the same thing as the human-edible ForagePatch biomass:
+    // grass/browse is cellulose humans cannot digest. Plain floats on the wire (not fixed-point).
+    // `graze_capacity == 0` means this biome carries NO pasture at all (water/glacier/lava) — an
+    // absent reading, never a zero-but-healthy one.
+    let _ = dict.insert("graze_biomass", tile.grazeBiomass() as f64);
+    let _ = dict.insert("graze_capacity", tile.grazeCapacity() as f64);
+    // The FORAGE (human food) layer — the human-edible POTENTIAL of this tile's biome, twin of
+    // graze_capacity. Cached client-side in `tile_forage` for the Forage overlay legend's
+    // Poorest/Average/Richest figures (the overlay slice itself is built from the same field above).
+    // `0` = genuinely no human food (deep ocean, glacier, lava); coastal shelves are positive.
+    let _ = dict.insert("forage_capacity", tile.forageCapacity() as f64);
+    // The phase rides the wire as a compact code; it is resolved HERE into the same phase
+    // vocabulary the herd/forage-patch payloads already carry as strings, so the client has ONE
+    // ecology vocabulary and the tile card can reuse the shared Ecology label/tint path verbatim.
+    let phase = graze_phase_str(tile.grazeEcologyPhase());
+    if !phase.is_empty() {
+        let _ = dict.insert("graze_ecology_phase", phase);
+    }
     dict
+}
+
+/// `TileState.grazeEcologyPhase` codes. Mirrors `sim_schema::GRAZE_PHASE_*` — the native crate
+/// depends only on the generated FlatBuffers crate, so the codes are restated (not re-invented)
+/// here. `NONE` is the schema default, so "this biome has no pasture" can never be misread as
+/// "this pasture is healthy".
+const GRAZE_PHASE_NONE: u8 = 0;
+const GRAZE_PHASE_THRIVING: u8 = 1;
+const GRAZE_PHASE_STRESSED: u8 = 2;
+const GRAZE_PHASE_COLLAPSING: u8 = 3;
+
+/// The phase code → the client's shared ecology phase vocabulary (`EcologyPhase::as_str`, the same
+/// strings `HerdTelemetryState.ecologyPhase` / `ForagePatchState.ecologyPhase` carry). `NONE` maps
+/// to the empty string: no pasture here, so there is no phase to report at all.
+fn graze_phase_str(code: u8) -> &'static str {
+    match code {
+        GRAZE_PHASE_THRIVING => "thriving",
+        GRAZE_PHASE_STRESSED => "stressed",
+        GRAZE_PHASE_COLLAPSING => "collapsing",
+        GRAZE_PHASE_NONE => "",
+        _ => "",
+    }
 }
 
 fn tiles_to_array(
