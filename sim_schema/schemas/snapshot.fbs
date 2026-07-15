@@ -1058,6 +1058,18 @@ table HerdTelemetryState {
   // pen.starve_shrink_rate × (1 - penFedFraction) × biomass each turn, and its yield with it. It
   // recovers when fed again (it never despawns and never loses the pen). Render a warning.
   penFedFraction:float = 1;
+  // --- Ecological carrying capacity + grazing range (Grazing Phase 2b-iii, appended last) ---
+  // The herd's CURRENT derived carrying capacity K (`Herd::carrying_capacity`), recomputed each turn
+  // from the graze its range yields (Phase 2b-ii). For a mobile herd this is the ecological K; for a
+  // penned herd it is the frozen pen-time value. With `biomass` this lets the client show "caps at ~K
+  // on this range" and flag overgrazing as `biomass > carryingCapacity` (a trivial honest comparison
+  // the client does — no separate flag). Appended (append-only schema discipline).
+  carryingCapacity:float = 0;
+  // The hex radius of the herd's grazing range (`Herd::graze_range_radius`: small game 0, big game 1,
+  // migratory `loiter_radius`) — the EXACT ring the sim grazes/derives K over. Exporting the radius the
+  // sim uses (not `sizeClass`, since migratory depends on `loiter_radius`, which is not on the wire)
+  // lets the client reproduce it with `hex_range_tiles`, so the two never disagree. Appended last.
+  grazeRangeRadius:uint = 0;
 }
 
 table CommandEventState {

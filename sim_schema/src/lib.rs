@@ -264,6 +264,20 @@ pub struct HerdTelemetryState {
     /// with it. It recovers when fed again (it never despawns and never loses the pen).
     #[serde(default = "pen_fully_fed")]
     pub pen_fed_fraction: f32,
+    /// **The herd's current derived carrying capacity K** (`Herd::carrying_capacity`), recomputed each
+    /// turn from the graze its range yields (Grazing Phase 2b-ii). For a mobile herd this is the
+    /// ecological K; for a penned herd it is the pen-time frozen value. With `biomass` the client shows
+    /// "caps at ~K on this range" and flags overgrazing as `biomass > carrying_capacity`. Derived at
+    /// capture. Appended (append-only wire).
+    #[serde(default)]
+    pub carrying_capacity: f32,
+    /// The hex radius of the herd's grazing range (`Herd::graze_range_radius`: small game `0`, big game
+    /// `1`, migratory `loiter_radius`) — the exact ring the sim grazes/derives K over. Exported as the
+    /// radius the sim uses (not from `size_class`, since migratory depends on `loiter_radius`, absent
+    /// from the wire) so the client reproduces it with `hex_range_tiles`. Derived at capture. Appended
+    /// last.
+    #[serde(default)]
+    pub graze_range_radius: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -295,6 +309,8 @@ impl Default for HerdTelemetryState {
             hunt_trip_estimates: Vec::new(),
             pen_upkeep: 0.0,
             pen_fed_fraction: pen_fully_fed(),
+            carrying_capacity: 0.0,
+            graze_range_radius: 0,
         }
     }
 }
@@ -3121,6 +3137,9 @@ fn create_herds<'a>(
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 huntPolicyCeilings: hunt_policy_ceilings,
                 huntTripEstimates: hunt_trip_estimates,
+                // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
+                carryingCapacity: herd.carrying_capacity,
+                grazeRangeRadius: herd.graze_range_radius,
             },
         );
         entries.push(entry);

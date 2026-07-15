@@ -4564,6 +4564,14 @@ fn herd_snapshot_entries(
                     .filter(|_| entry.huntable)
                     .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
                     .unwrap_or_default(),
+                // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
+                // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,
+                // exactly as `advance_herds` does; an unresolved species falls back to the loiter
+                // default). A vanished herd (unreachable here) reports the neutral 0 / 0.
+                carrying_capacity: herd.map(|herd| herd.carrying_capacity).unwrap_or(0.0),
+                graze_range_radius: herd
+                    .map(|herd| herd.graze_range_radius(fauna.species_by_display(&herd.species)))
+                    .unwrap_or(0),
             }
         })
         .collect()
@@ -5925,6 +5933,94 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **Grazing 2b-iii — the ecological readout on the wire.** A herd exports its live derived
+    /// carrying capacity K and the exact hex radius the sim grazes/derives K over. The radius is
+    /// resolved from the `SpeciesDef` (migratory `loiter_radius`) exactly as `advance_herds` does, so a
+    /// small/big/migratory species each reports the footprint the sim actually uses (0 / 1 /
+    /// `loiter_radius`), and the client can reproduce the ring with `hex_range_tiles`.
+    #[test]
+    fn herd_snapshot_reports_carrying_capacity_and_graze_range_radius() {
+        use crate::fauna_config::SizeClass;
+
+        let fauna = FaunaConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+
+        // One mobile herd per size class, each a real species so `species_by_display` resolves the
+        // migratory `loiter_radius`. Distinct carrying capacities so the assertion is meaningful.
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(Herd::new(
+            "herd_small".to_string(),
+            "Rabbit Warren".to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(2, 2)],
+            120.0,
+            163.0,
+            0.10,
+            0.35,
+        ));
+        registry.herds.push(Herd::new(
+            "herd_big".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            900.0,
+            1352.0,
+            0.05,
+            0.10,
+        ));
+        registry.herds.push(Herd::new(
+            "herd_migratory".to_string(),
+            "Thunder Mammoths".to_string(),
+            SizeClass::Migratory,
+            vec![UVec2::new(6, 6)],
+            8000.0,
+            9000.0,
+            0.011,
+            0.04,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        for herd in &registry.herds {
+            let exported = states.iter().find(|h| h.id == herd.id).unwrap();
+            assert!(
+                (exported.carrying_capacity - herd.carrying_capacity).abs() < 1e-6,
+                "{}: exported K {} should equal the live K {}",
+                herd.id,
+                exported.carrying_capacity,
+                herd.carrying_capacity,
+            );
+            let expected_radius = herd.graze_range_radius(fauna.species_by_display(&herd.species));
+            assert_eq!(
+                exported.graze_range_radius, expected_radius,
+                "{}: exported graze range radius should equal graze_range_radius(def)",
+                herd.id,
+            );
+        }
+
+        // Pin the per-size expectations so a regression in the size_class → radius mapping is caught.
+        let small = states.iter().find(|h| h.id == "herd_small").unwrap();
+        assert_eq!(
+            small.graze_range_radius, 0,
+            "small game grazes its one tile"
+        );
+        let big = states.iter().find(|h| h.id == "herd_big").unwrap();
+        assert_eq!(big.graze_range_radius, 1, "big game grazes radius 1");
+        let migratory = states.iter().find(|h| h.id == "herd_migratory").unwrap();
+        assert_eq!(
+            migratory.graze_range_radius,
+            fauna
+                .species_by_display("Thunder Mammoths")
+                .unwrap()
+                .loiter_radius,
+            "a migratory herd grazes its loiter_radius",
+        );
     }
 
     /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
