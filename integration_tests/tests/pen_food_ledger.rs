@@ -19,9 +19,9 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, FactionId, FollowPolicy, HerdRegistry,
-    LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort, SimulationConfig,
-    SnapshotHistory, Tile, FOOD,
+    build_headless_app, run_turn, scalar_from_f32, FactionId, FollowPolicy, GrazeRegistry,
+    HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
+    SimulationConfig, SnapshotHistory, Tile, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -73,6 +73,18 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
         herd.corral_at(band_pos); // pen it ON the band's tile: in reach, and it no longer roams
         herd.id.clone()
     };
+
+    // **Pin the pen to a BARREN footprint (Grazing 2d).** A penned herd now grazes its fenced footprint
+    // and the larder pays only what the pasture cannot cover (§2.3) — so on real pasture `penUpkeep → 0`
+    // and there is no ongoing feed to reconcile. This test is about the LEDGER identity when the pen
+    // DOES draw the larder, so we preserve the pre-2d worst case: strip the graze patch under the pen
+    // tile (`pen_radius = 0` → the footprint is exactly `band_pos`). A wholly-barren footprint keeps the
+    // herd's frozen K and is fully larder-fed (§2.3's preserved worst case), so the feed is the full
+    // `upkeep × biomass` and the identity has a real, positive `penFeedUpkeep` to reconcile against.
+    app.world
+        .resource_mut::<GrazeRegistry>()
+        .patches
+        .remove(&band_pos);
 
     // The band's ONLY assignment: keep the pen. So every food flow this turn is one of the three the
     // identity names — the pen's harvest (income), the people's demand (consumption), the pen's feed.

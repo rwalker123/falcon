@@ -1631,6 +1631,8 @@ pub fn capture_snapshot(
         &fauna_config,
         &labor_config,
         &expedition_cfg,
+        config.grid_size,
+        config.map_topology.wrap_horizontal,
     );
     // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
     // sorted deterministically by herd id like the generation states.

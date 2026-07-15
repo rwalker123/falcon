@@ -313,19 +313,38 @@ pub fn advance_labor_allocation(
                     // the tended-patch arm in Forage.
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
-                        let demand = pen_upkeep(herd, &fauna);
+                        // **The larder offset (Grazing 2d §2.3).** A penned herd grazes its fenced
+                        // footprint (`advance_herd_grazing`, Logistics → `footprint_intake`), and that
+                        // grass covers part of its feed. The keeper's larder pays only the remainder:
+                        //   demand_grass     = fodder_per_biomass × biomass   (grass to fully feed it)
+                        //   pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)
+                        //   larder_upkeep    = pen.upkeep_per_biomass × biomass × (1 − pasture_fraction)
+                        // A lush footprint (pasture_fraction → 1) feeds the pen for free; a barren one
+                        // (→ 0) pays the full bill (today's worst case, preserved).
+                        let demand_grass = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+                        let pasture_fraction = if demand_grass > 0.0 {
+                            (herd.footprint_intake / demand_grass).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        herd.pen_pasture_fraction = pasture_fraction;
+                        let demand = pen_upkeep(herd, &fauna) * (1.0 - pasture_fraction);
                         let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
                         pen_feed_paid += paid;
-                        // Nothing demanded (a zero-biomass pen / a zero upkeep lever) = fully fed.
-                        herd.pen_fed_fraction = if demand > 0.0 {
+                        // The herd's TOTAL fed fraction: the footprint's share plus the paid share of
+                        // the (reduced) larder bill. Fully fed when the larder covers its remainder (or
+                        // nothing was demanded). A well-pastured pen whose keeper can't pay is still fed
+                        // by its grass — `pasture_fraction`, never falsely 0.
+                        let larder_covered = if demand > 0.0 {
                             (paid / demand).clamp(0.0, 1.0)
                         } else {
                             1.0
                         };
+                        herd.pen_fed_fraction =
+                            pasture_fraction + (1.0 - pasture_fraction) * larder_covered;
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
-                        let take_biomass =
-                            fauna::pen_yield_biomass(herd.biomass, herd.carrying_capacity, &fauna);
+                        let take_biomass = fauna::pen_yield_biomass(herd, &fauna);
                         herd.biomass -= take_biomass;
                         let provisions =
                             scalar_from_f32(hunt_provisions(take_biomass, &fauna, mult_f));

@@ -233,6 +233,26 @@ pub struct Herd {
     /// escapes** (`advance_husbandry`) resets it to `0.0` — the pen is lost along with the herd that
     /// roamed off it, so re-penning pays the full investment again.
     pub corral_progress: f32,
+    /// **The pen's footprint radius** (Grazing 2d) — the hex range, centred on `corralled_at`, of the
+    /// *fenced land* a penned herd grazes and derives its `K` over (`hex_range_tiles(corralled_at,
+    /// pen_radius)`). `0` = today's single tile; each ring the `ExtendPen` command (2d-β) works off
+    /// raises it. Read by **all** the pen-footprint logic (K, grazing, the larder offset, the wire
+    /// count) so β only has to grow it. Authoritative sim state — snapshot-persisted.
+    pub pen_radius: u32,
+    /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
+    /// ladder, 2d-β). Stays `0.0` this slice (2d-α wires the field so β only accrues it); exported as
+    /// `penExtendProgress` for a "Fencing N%" badge. Snapshot-persisted alongside `pen_radius`.
+    pub pen_extend_progress: f32,
+    /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
+    /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen larder-offset in
+    /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
+    /// the pen; the larder pays only the remainder. **Not** snapshot-persisted (recomputed each turn).
+    pub footprint_intake: f32,
+    /// Transient per-turn scratch: the share of a penned herd's feed its footprint covered last FEED
+    /// (`footprint_intake / (fodder_per_biomass × biomass)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
+    /// = the pasture feeds the pen for free; `0.0` = a barren footprint pays the full larder bill.
+    /// Exported as `penPastureFraction`. `0.0` for an unpenned herd. **Not** snapshot-persisted.
+    pub pen_pasture_fraction: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
@@ -316,6 +336,10 @@ impl Herd {
             owner: None,
             corralled_at: None,
             corral_progress: 0.0,
+            pen_radius: 0,
+            pen_extend_progress: 0.0,
+            footprint_intake: 0.0,
+            pen_pasture_fraction: 0.0,
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
             pen_starving: false,
@@ -480,9 +504,9 @@ pub(crate) const PEN_FULLY_FED: f32 = 1.0;
 /// a second copy of the mapping.
 pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     if herd.is_corralled() {
-        fauna.husbandry.pen.ecology
+        pen_ecology_for(herd, fauna)
     } else if herd.is_domesticated() {
-        fauna.husbandry.pastoral.ecology
+        pastoral_ecology_for(herd, fauna)
     } else {
         EcologyConfig {
             regrowth_rate: herd.regrowth_rate,
@@ -491,22 +515,44 @@ pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     }
 }
 
-/// **THE capacity that actually bounds a herd.** A **penned** herd is bounded by the *pen*
-/// (`capacity_fraction × carrying_capacity`), not by the land; a mobile herd (wild or pastoral) is
-/// bounded by its range. The twin of [`herd_ecology`] — same rule: no call site re-derives it.
-pub fn herd_capacity(herd: &Herd, fauna: &FaunaConfig) -> f32 {
-    if herd.is_corralled() {
-        pen_capacity(herd.carrying_capacity, fauna)
-    } else {
-        herd.carrying_capacity
+/// The **pastoral** ecology a herd would live under: its per-species managed rate
+/// (`min(husbandry_regrowth_cap, wild_r × pastoral_gain)`, Grazing 2d §3) folded into the pastoral
+/// rung's shared phase bands. Retires the flat `pastoral.ecology.regrowth_rate`.
+fn pastoral_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
+    EcologyConfig {
+        regrowth_rate: managed_regrowth_rate(
+            herd.regrowth_rate,
+            fauna.husbandry.pastoral_gain,
+            fauna,
+        ),
+        ..fauna.husbandry.pastoral.ecology
     }
 }
 
-/// The pen's carrying capacity for a herd whose range capacity is `carrying_capacity`. Split out of
-/// [`herd_capacity`] because the *forecast* must answer "what would this herd pay **once penned**?"
-/// for a herd that is not penned yet ([`hunt_forecast`]'s `managed_yield`).
-pub(crate) fn pen_capacity(carrying_capacity: f32, fauna: &FaunaConfig) -> f32 {
-    (carrying_capacity * fauna.husbandry.pen.capacity_fraction).max(0.0)
+/// The **pen** ecology a herd would live under *if penned* — its per-species managed rate
+/// (`min(husbandry_regrowth_cap, wild_r × pen_gain)`) folded into the pen rung's phase bands. Shared by
+/// [`herd_ecology`] (a live penned herd) **and** [`pen_yield_biomass`] (the forecast's "what would this
+/// pay once penned?" projection for a herd that is not penned yet), so the two never disagree.
+fn pen_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
+    EcologyConfig {
+        regrowth_rate: managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pen_gain, fauna),
+        ..fauna.husbandry.pen.ecology
+    }
+}
+
+/// A managed rung's per-species growth rate (Grazing 2d §3): the herd's own wild `r` scaled by the
+/// rung's `gain`, clamped to the stable-band cap so a fast breeder cannot be pushed into an
+/// oscillating discrete-logistic rate. The one place the `wild_r × gain → capped r` mapping lives.
+fn managed_regrowth_rate(wild_r: f32, gain: f32, fauna: &FaunaConfig) -> f32 {
+    (wild_r * gain).min(fauna.husbandry.husbandry_regrowth_cap)
+}
+
+/// **THE capacity that actually bounds a herd** — its cached `carrying_capacity`. For a **mobile** herd
+/// that is the range's ecological `K` (Grazing 2b-ii); for a **penned** herd it is the fenced
+/// footprint's `K` (Grazing 2d — `capacity_fraction` is retired, a penned herd is no longer scaled off
+/// the range). The twin of [`herd_ecology`] — same rule: no call site re-derives it.
+pub fn herd_capacity(herd: &Herd, _fauna: &FaunaConfig) -> f32 {
+    herd.carrying_capacity
 }
 
 /// **The feed a pen demands — or WOULD demand once built** — at the herd's current biomass:
@@ -569,14 +615,17 @@ pub(crate) fn managed_yield_biomass(biomass: f32, capacity: f32, ecology: &Ecolo
         .min(peak_regrowth(capacity, ecology))
 }
 
-/// The **gross managed harvest a PEN yields**, in biomass: [`managed_yield_biomass`] against the
-/// *pen's* ecology (`r` = 0.60) and the *pen's* capacity. Split from the pastoral call so the forecast
-/// can answer "what would this herd pay **once penned**?" for a herd that is not penned yet.
-pub(crate) fn pen_yield_biomass(biomass: f32, carrying_capacity: f32, fauna: &FaunaConfig) -> f32 {
+/// The **gross managed harvest a PEN yields**, in biomass: [`managed_yield_biomass`] against the herd's
+/// per-species pen ecology ([`pen_ecology_for`]) and the pen's capacity (the herd's
+/// `carrying_capacity`, which for a penned herd is its fenced footprint's `K` — Grazing 2d). Takes the
+/// `&Herd` (not raw scalars) because the per-species pen `r` needs the herd's own wild rate; the
+/// forecast still calls it for a herd that is **not penned yet** to project "what would this pay once
+/// penned?".
+pub(crate) fn pen_yield_biomass(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     managed_yield_biomass(
-        biomass,
-        pen_capacity(carrying_capacity, fauna),
-        &fauna.husbandry.pen.ecology,
+        herd.biomass,
+        herd.carrying_capacity,
+        &pen_ecology_for(herd, fauna),
     )
 }
 
@@ -674,8 +723,13 @@ fn herd_from_state(state: &HerdState) -> Herd {
         owner: state.ecology.owner.map(FactionId),
         corralled_at: state.corralled_at.map(|(x, y)| UVec2::new(x, y)),
         corral_progress: state.corral_progress,
-        // Transient (not persisted) — a rehydrated corralled herd is "untended" until worked again,
-        // and "fed" (so a rollback can delay a starvation turn but never invent one).
+        pen_radius: state.pen_radius,
+        pen_extend_progress: state.pen_extend_progress,
+        // Transient (not persisted) — recomputed each turn (footprint/pasture) or reset to the neutral
+        // value: a rehydrated corralled herd is "untended" until worked again, and "fed" (so a rollback
+        // can delay a starvation turn but never invent one).
+        footprint_intake: 0.0,
+        pen_pasture_fraction: 0.0,
         corralled_tended_this_turn: false,
         pen_fed_fraction: PEN_FULLY_FED,
         pen_starving: false,
@@ -1070,17 +1124,23 @@ pub fn advance_herds(
                 height,
                 wrap,
             );
-            // **K becomes ecological** (Grazing Phase 2b-ii). A *mobile* herd's carrying capacity is
-            // recomputed each turn from the graze its (post-roam) range yields, so nothing downstream
-            // changes: `herd_capacity` still reads this cached field, every consumer is unchanged. A
-            // **corralled** herd is skipped — it keeps the `carrying_capacity` frozen at pen time, and
-            // `herd_capacity`'s corral branch scales it by `pen.capacity_fraction` (pen K is 2d's
-            // concern, not this slice). Recomputed AFTER roam (K reflects where the herd now stands)
-            // and BEFORE `regrow_biomass` (the herd grows toward the range's K this turn) — the same
-            // range `advance_herd_grazing` then eats.
-            if let Some(k) =
-                ecological_carrying_capacity(herd, def, graze, &fauna, width, height, wrap)
-            {
+        }
+        // **K is ecological — for a MOBILE herd its roam range, for a PENNED herd its fenced footprint**
+        // (Grazing 2b-ii + 2d §2.1). Recomputed each turn (penned herds are no longer frozen) from the
+        // graze the footprint yields, so nothing downstream changes: `herd_capacity` still reads this
+        // cached field. Computed AFTER movement (K reflects where the herd now stands / its fence) and
+        // BEFORE `regrow_biomass` (the herd grows toward this K), over the SAME tiles
+        // `advance_herd_grazing` then eats.
+        //
+        // **A penned herd on a WHOLLY-BARREN footprint keeps its frozen K and is fully larder-fed** —
+        // §2.3's "today's behaviour, preserved as the worst case". `ecological_carrying_capacity`
+        // returns `Some(0.0)` for a zero-graze footprint, which would crush the pen to zero; a rock pen
+        // instead holds its herd on the granary. A grazeable footprint (`k > 0`) gives the pen its
+        // ecological K and it self-feeds. (A *mobile* herd keeps the 2b-ii behaviour — it shrinks toward
+        // `Some(0)` on barren ground, which its graze-aware roam is meant to keep it off of.)
+        if let Some(k) = ecological_carrying_capacity(herd, def, graze, &fauna, width, height, wrap)
+        {
+            if !(herd.is_corralled() && k <= 0.0) {
                 herd.carrying_capacity = k;
             }
         }
@@ -1127,6 +1187,21 @@ pub fn advance_herds(
 /// exact "crash on recoverable ground" the convergence gate forbids. This flow peaks at
 /// `r_graze·cap/4` for `G ≥ cap/2` (so `K` is flat while the range holds above its MSY point) and
 /// declines smoothly to `0` as `G → 0` (so overgrazing lowers `K` continuously, no cliff).
+/// **The tiles a herd grazes / derives its `K` over** (Grazing 2d §2.1) — a single seam so the K
+/// computation, the graze draw-down and the wire's footprint count all read one definition. Returns
+/// the `(anchor, radius)` for `hex_range_tiles`:
+/// - a **penned** herd → its **fenced footprint** `(corralled_at, pen_radius)` (a pen is a piece of
+///   fenced land; it does not roam);
+/// - a **mobile** herd → its **roam range** `(current_pos, graze_range_radius)` (Grazing 2b-i).
+///
+/// `pen_radius = 0` (today) is the single corralled tile; the `ExtendPen` command (2d-β) grows it.
+fn herd_footprint(herd: &Herd, def: Option<&SpeciesDef>) -> (UVec2, u32) {
+    match herd.corralled_at {
+        Some(pen) => (pen, herd.pen_radius),
+        None => (herd.current_pos, herd.graze_range_radius(def)),
+    }
+}
+
 pub(crate) fn graze_sustainable_flow(biomass: f32, cap: f32, graze_eco: &EcologyConfig) -> f32 {
     logistic_regrowth(
         biomass.min(cap * MSY_BIOMASS_FRACTION),
@@ -1169,8 +1244,8 @@ fn ecological_carrying_capacity(
     if herd.fodder_per_biomass <= 0.0 || graze.is_empty() {
         return None;
     }
-    let radius = herd.graze_range_radius(def);
-    let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
+    let (anchor, radius) = herd_footprint(herd, def);
+    let range = hex_range_tiles(anchor, radius, width, height, wrap);
     let mut flow = 0.0;
     for tile in range {
         if let Some(patch) = graze.patch(tile) {
@@ -1209,7 +1284,7 @@ fn ecological_carrying_capacity(
 /// recomputed + grown toward it) and **before `advance_graze_regrowth`** (so the eaten state is what
 /// regrows — a herd can't eat grass that regrew the same turn).
 pub fn advance_herd_grazing(
-    herds: Res<HerdRegistry>,
+    mut herds: ResMut<HerdRegistry>,
     mut graze: ResMut<GrazeRegistry>,
     config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
@@ -1225,19 +1300,21 @@ pub fn advance_herd_grazing(
     // constant-escapement discipline that keeps the herd↔graze loop convergent (validated `>` the
     // reseed floor, so it is the binding one). Below it a range collapses into a stripped remnant.
     let escapement_floor_fraction = fauna.graze.overgraze_escapement_fraction;
-    for herd in herds.herds.iter() {
-        // Corralled herds are fed from the larder, not the land (Rung 1c) — they don't graze.
-        if herd.is_corralled() {
-            continue;
-        }
+    for herd in herds.herds.iter_mut() {
+        // **Penned herds graze too now (Grazing 2d §2.2)** — a pen is a piece of fenced *land*, and the
+        // herd draws it down over its footprint exactly like a wild herd (escapement-floored). The grass
+        // it draws (`footprint_intake`) offsets its keeper's larder bill this turn (§2.3, read in
+        // `advance_labor_allocation`). `herd_footprint` picks the fenced footprint for a penned herd,
+        // the roam range for a mobile one.
         let demand = (herd.fodder_per_biomass * herd.biomass).max(0.0);
         if demand <= 0.0 {
+            herd.footprint_intake = 0.0;
             continue;
         }
         let def = fauna.species_by_display(&herd.species);
-        let radius = herd.graze_range_radius(def);
-        let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
-        graze_take(&mut graze, &range, demand, escapement_floor_fraction);
+        let (anchor, radius) = herd_footprint(herd, def);
+        let range = hex_range_tiles(anchor, radius, width, height, wrap);
+        herd.footprint_intake = graze_take(&mut graze, &range, demand, escapement_floor_fraction);
     }
 }
 
@@ -1257,7 +1334,10 @@ pub fn advance_herd_grazing(
 /// the herd eats all of it (down to the floors) and no further — the range is grazed out for the turn.
 /// The `ecology_phase` is left stale here on purpose: `advance_graze_regrowth` (the very next system)
 /// regrows every patch and refreshes its phase, exactly as `forage_take` defers to `regrow_patch`.
-fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fraction: f32) {
+///
+/// **Returns the biomass actually drawn** (`min(demand, total_available)`), which the pen larder-offset
+/// (Grazing 2d §2.3) reads as the herd's `footprint_intake` — the share the footprint fed the pen.
+fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fraction: f32) -> f32 {
     // Total graze available across the range (each tile's biomass above the escapement floor).
     let mut total_available = 0.0;
     for &tile in range {
@@ -1267,7 +1347,7 @@ fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fra
         }
     }
     if total_available <= 0.0 {
-        return;
+        return 0.0;
     }
     let taken_fraction = (demand / total_available).min(1.0);
     for &tile in range {
@@ -1277,6 +1357,7 @@ fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fra
             patch.biomass -= available * taken_fraction;
         }
     }
+    (taken_fraction * total_available).max(0.0)
 }
 
 /// One turn of graze-wander / loiter-migrate movement (`docs/plan_wildlife_hunting_overlay.md`
@@ -2125,17 +2206,8 @@ pub fn hunt_provisions(biomass_take: f32, fauna: &FaunaConfig, output_multiplier
 ///
 /// Shared by the corral-tend branch of `advance_labor_allocation` (the payout) and [`hunt_forecast`]
 /// (the forecast + the "what will this herd pay once penned?" projection), so forecast == actual.
-pub(crate) fn corral_provisions(
-    biomass: f32,
-    carrying_capacity: f32,
-    fauna: &FaunaConfig,
-    output_multiplier: f32,
-) -> f32 {
-    hunt_provisions(
-        pen_yield_biomass(biomass, carrying_capacity, fauna),
-        fauna,
-        output_multiplier,
-    )
+pub(crate) fn corral_provisions(herd: &Herd, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
+    hunt_provisions(pen_yield_biomass(herd, fauna), fauna, output_multiplier)
 }
 
 /// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
@@ -2153,12 +2225,7 @@ pub(crate) fn hunt_forecast(
 ) -> SourceYieldForecast {
     // The pen's yield is **gross** — its feed is debited separately (wire: `penUpkeep`).
     if herd.is_corralled() {
-        return SourceYieldForecast::tended(corral_provisions(
-            herd.biomass,
-            herd.carrying_capacity,
-            fauna,
-            output_multiplier,
-        ));
+        return SourceYieldForecast::tended(corral_provisions(herd, fauna, output_multiplier));
     }
     let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
@@ -2185,12 +2252,7 @@ pub(crate) fn hunt_forecast(
         // `corral_provisions` takes the raw capacity rather than a penned herd) — so the client can
         // show "preparing X → then Y" before the player commits to the 25-turn cost.
         ceiling_prepare: ceiling(FollowPolicy::Corral),
-        managed_yield: corral_provisions(
-            herd.biomass,
-            herd.carrying_capacity,
-            fauna,
-            output_multiplier,
-        ),
+        managed_yield: corral_provisions(herd, fauna, output_multiplier),
     }
 }
 

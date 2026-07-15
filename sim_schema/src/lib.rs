@@ -278,6 +278,25 @@ pub struct HerdTelemetryState {
     /// last.
     #[serde(default)]
     pub graze_range_radius: u32,
+    /// **The pen's fenced-footprint radius** (Grazing 2d) — `0` = the single corralled tile; each ring
+    /// the `ExtendPen` command works off raises it. `0` for an unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_radius: u32,
+    /// **The count of in-bounds fenced tiles** in the pen's footprint — server-computed
+    /// (`hex_range_tiles(corralled_at, pen_radius)` length), NOT the closed-form disk count `1,7,19,…`
+    /// (which is wrong at map edges). `0` for an unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_footprint_tiles: u32,
+    /// **The share of a penned herd's feed its footprint covered** (`pasture_fraction`, Grazing 2d
+    /// §2.3): `1.0` = the fenced pasture feeds it for free, `0.0` = a barren footprint pays the full
+    /// larder bill. With `penUpkeep` the client shows "fed by pasture NN% · larder N/turn". `0.0` for an
+    /// unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_pasture_fraction: f32,
+    /// **The in-flight ring's build meter** `0..1` for a "Fencing N%" badge (`ExtendPen`, 2d-β). `0.0`
+    /// this slice (β populates it). Appended last (append-only).
+    #[serde(default)]
+    pub pen_extend_progress: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -311,6 +330,10 @@ impl Default for HerdTelemetryState {
             pen_fed_fraction: pen_fully_fed(),
             carrying_capacity: 0.0,
             graze_range_radius: 0,
+            pen_radius: 0,
+            pen_footprint_tiles: 0,
+            pen_pasture_fraction: 0.0,
+            pen_extend_progress: 0.0,
         }
     }
 }
@@ -452,6 +475,15 @@ pub struct HerdState {
     /// investment.
     #[serde(default)]
     pub corral_progress: f32,
+    /// The pen's **footprint radius** (Grazing 2d) — the fenced land a penned herd grazes / derives K
+    /// over (`hex_range_tiles(corralled_at, pen_radius)`). `0` = the single corralled tile. Persisted so
+    /// a rollback preserves a fence the `ExtendPen` command (2d-β) grew.
+    #[serde(default)]
+    pub pen_radius: u32,
+    /// Pen-**extension** build progress `0..1` for the in-flight ring (2d-β). Persisted alongside
+    /// `pen_radius`; `0.0` this slice.
+    #[serde(default)]
+    pub pen_extend_progress: f32,
     /// Per-species fodder demand per unit biomass (Grazing Phase 2b-i), cached on the live `Herd` at
     /// spawn from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire)
     /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.
@@ -3405,6 +3437,11 @@ fn create_herds<'a>(
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
                 grazeRangeRadius: herd.graze_range_radius,
+                // The pen economy (Grazing 2d) — appended last.
+                penRadius: herd.pen_radius,
+                penFootprintTiles: herd.pen_footprint_tiles,
+                penPastureFraction: herd.pen_pasture_fraction,
+                penExtendProgress: herd.pen_extend_progress,
             },
         );
         entries.push(entry);

@@ -316,9 +316,15 @@ impl Default for FollowConfig {
 ///
 /// | Rung | Ecology | `r` | Costs |
 /// |---|---|---|---|
-/// | Wild | `fauna.ecology` | 0.05 | a worker |
-/// | Mobile domesticated (**pastoral**) | [`PastoralConfig::ecology`] | 0.25 | none — passive |
-/// | Penned (**pen**) | [`PenConfig::ecology`] | 0.90 | a worker + **food upkeep** + pinned |
+/// | Wild | `fauna.ecology` | per-species `wild_r` | a worker |
+/// | Mobile domesticated (**pastoral**) | [`PastoralConfig::ecology`] | `min(cap, wild_r × pastoral_gain)` | none — passive |
+/// | Penned (**pen**) | [`PenConfig::ecology`] | `min(cap, wild_r × pen_gain)` | a worker + **food upkeep** + pinned |
+///
+/// Since Grazing 2d the managed rungs are **per-species** (`wild_r × gain`, capped) rather than the
+/// retired flat `0.25 / 0.90` — a penned rabbit and a penned mammoth are different economies. A penned
+/// herd's carrying capacity is its **fenced footprint's** graze flow (`hex_range_tiles(corralled_at,
+/// pen_radius)`), so it grazes its own land and the larder only pays what the pasture cannot cover
+/// (`pen_upkeep × biomass × (1 − pasture_fraction)`) — `capacity_fraction` is retired.
 ///
 /// The managed harvest **draws the herd down**, which is what makes it sustainable: the herd
 /// converges on `K/2` and holds there, paying `r·K/4` forever. Both husbandry rungs take it through
@@ -365,6 +371,19 @@ pub struct HusbandryConfig {
     /// policy (`Herd::corral_progress`, `1.0` = penned). At `0.04` a pen takes 25 turns to build,
     /// matching the plant side's `cultivation.progress_per_turn`.
     pub corral_build_progress_per_turn: f32,
+    /// **Per-species husbandry growth (Grazing 2d §3).** The mobile-domesticated (pastoral) rung grows
+    /// at `min(husbandry_regrowth_cap, wild_r × pastoral_gain)` — a MULTIPLE of the herd's own wild
+    /// breeding rate, not a flat rate, so a tamed rabbit and a tamed mammoth are different economies.
+    /// `> 1` (management must beat wild growth); `< pen_gain` (the ladder is monotone). Folded into the
+    /// pastoral ecology by [`crate::fauna::herd_ecology`]; retires the flat `pastoral.ecology.regrowth_rate`.
+    pub pastoral_gain: f32,
+    /// The penned rung's growth multiplier: `min(husbandry_regrowth_cap, wild_r × pen_gain)` — the top
+    /// of the ladder (`> pastoral_gain`). Retires the flat `pen.ecology.regrowth_rate`.
+    pub pen_gain: f32,
+    /// The stable-band ceiling on any managed `r`: `pastoral`/`pen` growth is capped here so a fast
+    /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
+    /// overshoot/oscillate. `0.75` keeps the discrete logistic monotone.
+    pub husbandry_regrowth_cap: f32,
     /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
     /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
     /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
@@ -384,6 +403,9 @@ impl Default for HusbandryConfig {
             pen: PenConfig::default(),
             corralling_yield_fraction: DEFAULT_CORRALLING_YIELD_FRACTION,
             corral_build_progress_per_turn: DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN,
+            pastoral_gain: DEFAULT_PASTORAL_GAIN,
+            pen_gain: DEFAULT_PEN_GAIN,
+            husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             knowledge_progress_per_turn: 0.05,
             knowledge_completion_threshold: 1.0,
         }
@@ -393,13 +415,14 @@ impl Default for HusbandryConfig {
 /// The **mobile domesticated (pastoral) rung** of the husbandry ladder: a tamed herd that still roams
 /// with the band. It pays its owner the MSY of *this* ecology every turn, passively — no worker, no
 /// upkeep (a roaming herd grazes the land for free; that is what roaming *is*).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct PastoralConfig {
-    /// The ecology a *tamed, mobile* herd lives under. Only `regrowth_rate` differs from the wild
-    /// `fauna.ecology` in the shipped config — the phase bands (`collapse_fraction` etc.) are the
-    /// shared defaults, so a pastoral herd classifies Thriving/Stressed on the same scale.
-    /// [`DEFAULT_PASTORAL_REGROWTH_RATE`] carries the derivation.
+    /// The ecology a *tamed, mobile* herd lives under — the **phase bands only** now. Since Grazing 2d
+    /// the pastoral `regrowth_rate` is **per-species** (`min(husbandry_regrowth_cap, wild_r ×
+    /// pastoral_gain)`, folded in by [`crate::fauna::herd_ecology`]); this block's own `regrowth_rate`
+    /// is unused (it defaults to the wild rate and only the shared `collapse_fraction`/… bands are read,
+    /// so a pastoral herd classifies Thriving/Stressed on the same scale as a wild one).
     pub ecology: EcologyConfig,
 }
 
@@ -408,14 +431,11 @@ pub struct PastoralConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PenConfig {
-    /// The ecology a *penned* herd lives under: shelter, feed and protection buy the ladder's top
-    /// growth rate ([`DEFAULT_PEN_REGROWTH_RATE`]). The keeper harvests this ecology's MSY.
+    /// The ecology a *penned* herd lives under — the **phase bands only** now. Since Grazing 2d the pen
+    /// `regrowth_rate` is **per-species** (`min(husbandry_regrowth_cap, wild_r × pen_gain)`, folded in
+    /// by [`crate::fauna::herd_ecology`] / `pen_ecology_for`); this block's own `regrowth_rate` is
+    /// unused (only the shared phase bands are read). The keeper harvests the per-species pen MSY.
     pub ecology: EcologyConfig,
-    /// The pen's carrying capacity as a fraction of the herd's own (`K_pen = capacity_fraction ×
-    /// carrying_capacity`) — the pen holds a share of what the land held, so it scales per-species
-    /// with no new absolute. `1.0` (the shipped value) = the pen is as roomy as the range; lower it to
-    /// make penning a *smaller but faster-growing* population. Validated `> 0`.
-    pub capacity_fraction: f32,
     /// **Feed.** Food/turn the pen demands per unit of standing biomass, drawn from the keeper band's
     /// larder (`upkeep_per_biomass × biomass`). [`DEFAULT_PEN_UPKEEP_PER_BIOMASS`] carries the
     /// derivation and the net-positive invariant it must satisfy — see
@@ -432,62 +452,44 @@ pub struct PenConfig {
 impl Default for PenConfig {
     fn default() -> Self {
         Self {
-            ecology: EcologyConfig {
-                regrowth_rate: DEFAULT_PEN_REGROWTH_RATE,
-                ..EcologyConfig::default()
-            },
-            capacity_fraction: DEFAULT_PEN_CAPACITY_FRACTION,
+            // Phase bands only — the pen `regrowth_rate` is per-species (Grazing 2d), so this defaults
+            // to the shared wild bands and its own rate is unread.
+            ecology: EcologyConfig::default(),
             upkeep_per_biomass: DEFAULT_PEN_UPKEEP_PER_BIOMASS,
             starve_shrink_rate: DEFAULT_PEN_STARVE_SHRINK_RATE,
         }
     }
 }
 
-impl Default for PastoralConfig {
-    fn default() -> Self {
-        Self {
-            ecology: EcologyConfig {
-                regrowth_rate: DEFAULT_PASTORAL_REGROWTH_RATE,
-                ..EcologyConfig::default()
-            },
-        }
-    }
-}
+/// **The pastoral growth multiplier (Grazing 2d §3).** A tamed, mobile herd grows `pastoral_gain ×`
+/// its own wild breeding rate (capped at [`DEFAULT_HUSBANDRY_REGROWTH_CAP`]) — protection from
+/// predation/disease/winter kill buys a *multiple* of the species' own `r`, not a flat rate, so a
+/// tamed rabbit (0.35 → 0.525) and a tamed mammoth (0.04 → 0.06) become different economies. Retires
+/// the flat `0.25`. A **playtest lever** — measure and tune (`docs/plan_grazing_2d.md` §3).
+const DEFAULT_PASTORAL_GAIN: f32 = 1.5;
 
-/// **The pastoral growth rate — 5× wild.** Taming a herd protects it from predation, disease and
-/// winter kill, so it grows faster; that higher `r` (and *only* that) is what domestication buys.
-/// Everything else about the rung is unchanged, and the yield is still the same MSY *flow*
-/// (`r·K/4 × hunt.provisions_per_biomass`), so the rungs stay commensurable. At the shipped levers a
-/// Red Deer herd (K = 1200) pays `0.25 × 1200 / 4 × 0.02` = **1.50 food/turn** — clearly *above* a
-/// ~30-person band's entire demand (~0.79), so taming a herd buys a real **surplus**: savings, an
-/// expedition, the settle pull.
+/// **The pen growth multiplier (Grazing 2d §3).** The ladder's top: a penned herd grows `pen_gain ×`
+/// its wild rate (capped). Resulting pen `r`: rabbit `0.75` (capped, booms) · deer `0.30` · mammoth
+/// `0.12` (a long-haul investment). Retires the flat `0.90`. A **playtest lever**.
+const DEFAULT_PEN_GAIN: f32 = 3.0;
+
+/// **The stable-band cap on any managed `r`.** `wild_r × gain` is clamped here so a fast breeder cannot
+/// be scaled into an unstable/oscillating discrete-logistic rate. `0.75` keeps growth monotone (well
+/// below the `r ≥ 1` overshoot regime). A **playtest lever**.
+const DEFAULT_HUSBANDRY_REGROWTH_CAP: f32 = 0.75;
+
+/// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
-/// **Retuned from 0.15**, which was measured (a scripted 100-turn campaign on three pinned seeds) to
-/// land a freshly-taming band at income **1.275** against consumption **1.294** — a permanent
-/// one-day-of-food treadmill with no savings, no affordable expedition, and a `SedentarizationScore`
-/// that never reached its soft threshold. The retired stock-share rate, for contrast, paid **12.0**
-/// (sixteen bands' entire demand, free, forever). Both are absurd; this sits between them.
-const DEFAULT_PASTORAL_REGROWTH_RATE: f32 = 0.25;
-
-/// **The pen's growth rate — 18× wild, 3.6× pastoral.** A penned herd is sheltered, fed and guarded:
-/// the top of the ladder, and the reason the pen is worth a 25-turn build plus a permanent keeper.
-/// At the shipped levers Red Deer (K = 1200) grosses `0.90 × 1200 / 4 × 0.02` = **5.40 food/turn**,
-/// and at its settled operating point nets **≈ 3.66** of that after feed — **12× wild Sustain** and
-/// **≈ 2.4× the free pastoral rung below it**, so the ladder stays monotone and the pen still earns
-/// its worker + feed + being pinned.
-const DEFAULT_PEN_REGROWTH_RATE: f32 = 0.90;
-
-/// The pen holds exactly what the range held (`K_pen = K`). A v1 anchor: it makes the penned rung a
-/// pure *growth-rate* upgrade, so nothing about the model turns on a second, arbitrary scale.
-const DEFAULT_PEN_CAPACITY_FRACTION: f32 = 1.0;
-
-/// **The pen's feed cost per unit of biomass — the running cost that is the whole point of the arc.**
-/// Chosen against the pen's own operating point so the pen is always a net gain and never a trap:
-/// it nets positive iff **`u < r · p / (2 + r)`** (see [`PEN_ESCAPEMENT_QUARTERS`] for the
-/// derivation) = `0.90 × 0.02 / 2.90` ≈ `0.0062`. The shipped `0.002` sits a **~3.1× margin** inside
-/// that bound — a real cost (Red Deer: ≈ 1.74 food/turn at `B*`, roughly a third of the 5.40 gross)
-/// that still leaves the pen the ladder's best rung. [`FaunaConfig::validate`] **enforces** the bound,
-/// so an override cannot silently turn corralling into a permanent net food loss.
+/// **Grazing 2d inverts the old "every pen is net-positive" guarantee (§2.4).** With per-species pen
+/// `r` and *situational* (pasture-dependent) feed, a static all-species guarantee no longer models the
+/// system: a slow-breeder pen (mammoth pen `r ≈ 0.12` → bound `0.0011`) would reject the shipped
+/// `0.002`, yet such a pen running at a loss on poor pasture is now a player's **bad placement, not a
+/// config error**. So [`FaunaConfig::validate`] enforces only a **best-case sanity floor**: the upkeep
+/// dial must leave the **fastest-breeding** species profitable even when *fully larder-fed* (worst
+/// pasture) — `u < r_pen · p / (2 + r_pen)` for `r_pen = min(cap, max_wild_r × pen_gain)`. With
+/// `r_pen(rabbit) = 0.75`: `0.002 < 0.75 × 0.02 / 2.75 ≈ 0.0055` ✓. Slow breeders and poor pasture may
+/// run a pen at a **loss by design** (see [`PEN_ESCAPEMENT_QUARTERS`] for the operating-point
+/// derivation the floor uses).
 ///
 /// **Deliberately left alone by the growth-rate retune**: weakening the feed to fix a balance problem
 /// would delete the mechanic the arc exists to add.
@@ -676,6 +678,9 @@ const MAX_FRACTION: f32 = 1.0;
 ///
 /// (The idealised `u < r·p/2` ignores that the feed is charged post-regrowth, and is therefore a hair
 /// *too loose* — it would admit a narrow band of upkeep values that are in fact a net loss.)
+///
+/// Since Grazing 2d the `r` in that bound is the **fastest** species' pen rate (§2.4) — the floor is a
+/// best-case sanity check, not an every-species guarantee.
 const PEN_ESCAPEMENT_QUARTERS: f32 = 2.0;
 
 impl FaunaConfig {
@@ -751,30 +756,30 @@ impl FaunaConfig {
             }
         }
 
-        // --- The ladder is MONOTONE: management buys a growth rate, so each rung must grow faster
-        // than the one below it. Invert this and penning a herd would *lower* its yield — the player
-        // pays a build + a keeper + feed to earn less.
+        // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the
+        // species' own wild `r`, so each rung grows faster than the one below it for **every** species.
+        // Invert this and penning a herd would *lower* its yield. `pastoral_gain > 1` (management must
+        // beat wild growth); `pen_gain > pastoral_gain` (the pen tops the ladder); the cap is a live
+        // positive rate (the stable-band ceiling the gains clamp to).
         require_greater_than(
-            "husbandry.pen.ecology.regrowth_rate",
-            self.husbandry.pen.ecology.regrowth_rate,
-            "husbandry.pastoral.ecology.regrowth_rate",
-            self.husbandry.pastoral.ecology.regrowth_rate,
+            "husbandry.pastoral_gain",
+            self.husbandry.pastoral_gain,
+            "1.0 (management must beat wild growth)",
+            MAX_FRACTION,
         )?;
         require_greater_than(
-            "husbandry.pastoral.ecology.regrowth_rate",
-            self.husbandry.pastoral.ecology.regrowth_rate,
-            "ecology.regrowth_rate",
-            self.ecology.regrowth_rate,
+            "husbandry.pen_gain",
+            self.husbandry.pen_gain,
+            "husbandry.pastoral_gain",
+            self.husbandry.pastoral_gain,
+        )?;
+        require_positive_finite(
+            "husbandry.husbandry_regrowth_cap",
+            self.husbandry.husbandry_regrowth_cap,
         )?;
 
-        // --- The pen. `capacity_fraction` at `0` gives `K_pen = 0` → the MSY is 0 and the herd is
-        // instantly below every phase threshold: penning would delete the herd's yield outright.
-        require_positive_finite(
-            "husbandry.pen.capacity_fraction",
-            self.husbandry.pen.capacity_fraction,
-        )?;
-        // A shrink rate above 1 would drive an underfed herd's biomass *negative* in one turn; below 0
-        // it would *grow* a starving herd.
+        // --- The pen's feed. A shrink rate above 1 would drive an underfed herd's biomass *negative* in
+        // one turn; below 0 it would *grow* a starving herd.
         require_in_unit_range(
             "husbandry.pen.starve_shrink_rate",
             self.husbandry.pen.starve_shrink_rate,
@@ -783,22 +788,27 @@ impl FaunaConfig {
             "husbandry.pen.upkeep_per_biomass",
             self.husbandry.pen.upkeep_per_biomass,
         )?;
-        // **THE PEN MUST NOT BE A TRAP.** At its settled operating point the pen yields `r·K/4 · p`
-        // and eats `u · K·(2 + r)/4`, so it nets positive iff `u < r·p / (2 + r)` (see
-        // [`PEN_ESCAPEMENT_QUARTERS`] for the derivation). Shipped:
-        // `0.002 < 0.90 × 0.02 / 2.90 ≈ 0.0062` ✓ (a ~3.1× margin). A violating override would make
-        // corralling a permanent, silent net food LOSS — the player pays a 25-turn build and a
-        // permanent keeper to make their food situation strictly worse.
-        let pen_regrowth = self.husbandry.pen.ecology.regrowth_rate;
-        let net_positive_bound = pen_regrowth * self.hunt.provisions_per_biomass
-            / (PEN_ESCAPEMENT_QUARTERS + pen_regrowth);
+        // **THE PEN MUST NOT BE A TRAP — a BEST-CASE floor (Grazing 2d §2.4).** With per-species pen `r`
+        // and pasture-dependent feed, the old "every pen nets positive" guarantee no longer models the
+        // system (it would reject slow-breeder worlds outright), and a slow breeder on poor pasture
+        // running at a loss is now a player's bad placement, **not** a config error. So we require only
+        // that the **fastest-breeding** species stays net-positive even when *fully larder-fed* (worst
+        // pasture): at the operating point a pen yields `r·K/4 · p` and eats `u · K·(2 + r)/4`, so it
+        // nets positive iff `u < r_pen · p / (2 + r_pen)` for `r_pen = min(cap, max_wild_r × pen_gain)`
+        // (see [`PEN_ESCAPEMENT_QUARTERS`]). Shipped: `0.002 < 0.75 × 0.02 / 2.75 ≈ 0.0055` ✓. A
+        // violating override would make **even the best pen** a permanent net food LOSS.
+        let fastest_pen_r = (self.max_wild_regrowth_rate() * self.husbandry.pen_gain)
+            .min(self.husbandry.husbandry_regrowth_cap);
+        let net_positive_bound = fastest_pen_r * self.hunt.provisions_per_biomass
+            / (PEN_ESCAPEMENT_QUARTERS + fastest_pen_r);
         if self.husbandry.pen.upkeep_per_biomass >= net_positive_bound {
             return Err(FaunaConfigError::Invalid {
                 field: "husbandry.pen.upkeep_per_biomass",
                 constraint: format!(
-                    "be less than pen.ecology.regrowth_rate × hunt.provisions_per_biomass / \
-                     (2 + pen.ecology.regrowth_rate) (= {net_positive_bound}), or the pen costs more \
-                     feed than its harvest yields food"
+                    "be less than r_pen × hunt.provisions_per_biomass / (2 + r_pen) (= \
+                     {net_positive_bound}), where r_pen is the FASTEST species' pen rate \
+                     min(husbandry_regrowth_cap, max_wild_r × pen_gain) — otherwise even the best pen \
+                     costs more feed than its harvest yields"
                 ),
                 value: self.husbandry.pen.upkeep_per_biomass.to_string(),
             });
@@ -861,6 +871,17 @@ impl FaunaConfig {
         validate_graze(&self.graze)?;
 
         Ok(())
+    }
+
+    /// The **fastest wild breeding rate** across the species table — each species' own `regrowth_rate`
+    /// (or the global wild rate for a row that omits it), folded with `f32::max` and seeded from the
+    /// global rate so an empty table falls back to it. The best-case input to the pen's net-positive
+    /// floor (Grazing 2d §2.4): the fastest species is the one that must stay profitable.
+    fn max_wild_regrowth_rate(&self) -> f32 {
+        self.species
+            .values()
+            .map(|def| def.regrowth_rate_or(self.ecology.regrowth_rate))
+            .fold(self.ecology.regrowth_rate, f32::max)
     }
 
     /// `(key, def)` pairs for every migratory species, in a stable key order.
@@ -1279,21 +1300,24 @@ mod tests {
     #[test]
     fn builtin_husbandry_ladder_is_monotone_and_the_pen_pays() {
         let config = FaunaConfig::builtin();
-        let wild = config.ecology.regrowth_rate;
-        let pastoral = config.husbandry.pastoral.ecology.regrowth_rate;
-        let pen = config.husbandry.pen.ecology.regrowth_rate;
+        // The ladder is monotone as GAINS now (Grazing 2d): pastoral beats wild, pen tops pastoral.
         assert!(
-            pen > pastoral && pastoral > wild,
-            "{wild} < {pastoral} < {pen}"
+            config.husbandry.pen_gain > config.husbandry.pastoral_gain
+                && config.husbandry.pastoral_gain > 1.0,
+            "1.0 < {} < {}",
+            config.husbandry.pastoral_gain,
+            config.husbandry.pen_gain
         );
-        // net > 0 at the settled operating point ⟺ upkeep < r·p / (2 + r).
-        let bound = pen * config.hunt.provisions_per_biomass / (PEN_ESCAPEMENT_QUARTERS + pen);
+        // Best-case floor: the FASTEST species' pen rate must still net positive when fully larder-fed.
+        let fastest_pen_r = (config.max_wild_regrowth_rate() * config.husbandry.pen_gain)
+            .min(config.husbandry.husbandry_regrowth_cap);
+        let bound = fastest_pen_r * config.hunt.provisions_per_biomass
+            / (PEN_ESCAPEMENT_QUARTERS + fastest_pen_r);
         assert!(
             config.husbandry.pen.upkeep_per_biomass < bound,
-            "the shipped pen must net positive: {} < {bound}",
+            "the shipped pen must net positive for the fastest breeder: {} < {bound}",
             config.husbandry.pen.upkeep_per_biomass
         );
-        assert!(config.husbandry.pen.capacity_fraction > 0.0);
     }
 
     /// Mutate the builtin, re-serialize, and re-load it through `from_json_str` — the *only* entry
@@ -1317,13 +1341,10 @@ mod tests {
     /// player pays a 25-turn build + a permanent keeper to make their food situation strictly worse.
     #[test]
     fn validate_rejects_a_pen_that_eats_more_than_it_yields() {
-        // Bound = r·p / (2 + r) = 0.90 × 0.02 / 2.90 ≈ 0.0062; at or above it the pen is a net loss at
-        // its settled operating point.
+        // Best-case floor (Grazing 2d §2.4): r_pen(fastest) = min(0.75, 0.35 × 3.0) = 0.75, so the
+        // bound is 0.75 × 0.02 / 2.75 ≈ 0.0055; at or above it EVEN THE BEST pen is a net loss.
         let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.0065).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");
-        // The *idealised* bound `r·p/2` (= 0.009) ignores that the feed is charged on the
-        // post-regrowth biomass, so it is a hair too loose: a config in that band costs more feed than
-        // its harvest yields food and must still be refused.
         let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.008).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");
         // The shipped value has ample room inside the bound.
@@ -1334,15 +1355,13 @@ mod tests {
     /// pay *less* than it (it also carries feed), inverting the whole intensification incentive.
     #[test]
     fn validate_rejects_an_inverted_husbandry_ladder() {
-        let err = reject(|json| {
-            json["husbandry"]["pen"]["ecology"]["regrowth_rate"] = (0.10).into();
-        });
-        assert_rejects_field(err, "husbandry.pen.ecology.regrowth_rate");
-
-        let err = reject(|json| {
-            json["husbandry"]["pastoral"]["ecology"]["regrowth_rate"] = (0.05).into();
-        });
-        assert_rejects_field(err, "husbandry.pastoral.ecology.regrowth_rate");
+        // The ladder is monotone as GAINS now (Grazing 2d): a pen that grows no faster than the
+        // pastoral rung inverts the incentive.
+        let err = reject(|json| json["husbandry"]["pen_gain"] = (1.2).into());
+        assert_rejects_field(err, "husbandry.pen_gain");
+        // Management must beat wild growth, or taming is a downgrade.
+        let err = reject(|json| json["husbandry"]["pastoral_gain"] = (0.9).into());
+        assert_rejects_field(err, "husbandry.pastoral_gain");
     }
 
     #[test]
@@ -1351,7 +1370,9 @@ mod tests {
         assert_rejects_field(err, "ecology.regrowth_rate");
         let err =
             reject(|json| json["husbandry"]["pen"]["ecology"]["regrowth_rate"] = (0.0).into());
-        // A `0` pen rate trips the monotone check first — either way it cannot load.
+        // The pen ecology block still carries the shared phase bands, so a `0` regrowth trips
+        // `validate_ecology` (its `regrowth_rate` must be a live rate, even though the *managed* growth
+        // rate is now per-species and does not read it).
         assert!(matches!(err, FaunaConfigError::Invalid { .. }));
     }
 
@@ -1361,12 +1382,6 @@ mod tests {
         assert_rejects_field(err, "ecology.stressed_fraction");
         let err = reject(|json| json["ecology"]["extinction_floor"] = (0.50).into());
         assert_rejects_field(err, "ecology.collapse_fraction");
-    }
-
-    #[test]
-    fn validate_rejects_a_pen_with_no_room() {
-        let err = reject(|json| json["husbandry"]["pen"]["capacity_fraction"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.pen.capacity_fraction");
     }
 
     #[test]

@@ -252,8 +252,10 @@ mod tests {
         let forage = crate::labor_config::LaborConfig::builtin();
         assert!(fauna.graze.ecology.regrowth_rate > forage.forage.ecology.regrowth_rate);
         assert!(fauna.graze.ecology.regrowth_rate > fauna.ecology.regrowth_rate);
-        // ...but below the fed pen, which is a hyper-managed system rather than a wild one.
-        assert!(fauna.graze.ecology.regrowth_rate < fauna.husbandry.pen.ecology.regrowth_rate);
+        // ...but below the fed pen's growth ceiling, which is a hyper-managed system rather than a
+        // wild one. Since Grazing 2d the pen rate is per-species (`wild_r × pen_gain`, capped), so the
+        // ceiling a fed pen can reach is `husbandry_regrowth_cap`.
+        assert!(fauna.graze.ecology.regrowth_rate < fauna.husbandry.husbandry_regrowth_cap);
     }
 
     #[test]

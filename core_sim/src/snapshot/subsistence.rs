@@ -20,6 +20,8 @@ pub(crate) fn herd_state(herd: &Herd) -> HerdState {
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
         corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
         corral_progress: herd.corral_progress,
+        pen_radius: herd.pen_radius,
+        pen_extend_progress: herd.pen_extend_progress,
         fodder_per_biomass: herd.fodder_per_biomass,
         regrowth_rate: herd.regrowth_rate,
         ecology: EcologyState {
@@ -176,7 +178,11 @@ pub(crate) fn herd_snapshot_entries(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
+    grid_size: UVec2,
+    wrap_horizontal: bool,
 ) -> Vec<HerdTelemetryState> {
+    let width = grid_size.x.max(1);
+    let height = grid_size.y.max(1);
     telemetry
         .entries
         .iter()
@@ -244,6 +250,27 @@ pub(crate) fn herd_snapshot_entries(
                 graze_range_radius: herd
                     .map(|herd| herd.graze_range_radius(fauna.species_by_display(&herd.species)))
                     .unwrap_or(0),
+                // The pen economy (Grazing 2d). `penFootprintTiles` is the SERVER's in-bounds count of
+                // the fenced footprint (not the closed-form disk, which is wrong at map edges); `0` for
+                // an unpenned herd. `penPastureFraction` / `penExtendProgress` are transient herd
+                // scratch (Population ran before this capture, so they reflect the current turn).
+                pen_radius: herd.map(|herd| herd.pen_radius).unwrap_or(0),
+                pen_footprint_tiles: herd
+                    .and_then(|herd| {
+                        herd.corralled_at.map(|anchor| {
+                            crate::grid_utils::hex_range_tiles(
+                                anchor,
+                                herd.pen_radius,
+                                width,
+                                height,
+                                wrap_horizontal,
+                            )
+                            .len() as u32
+                        })
+                    })
+                    .unwrap_or(0),
+                pen_pasture_fraction: herd.map(|herd| herd.pen_pasture_fraction).unwrap_or(0.0),
+                pen_extend_progress: herd.map(|herd| herd.pen_extend_progress).unwrap_or(0.0),
             }
         })
         .collect()
