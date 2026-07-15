@@ -29,6 +29,9 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
+## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:
+## { faction, x, y } — the pen's anchor tile. Main formats the `extend_pen <faction> <x> <y>` command.
+signal extend_pen_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -370,6 +373,25 @@ const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
+# Grazing 2d-γ — the pen is fenced LAND that grazes itself. Two herd-drawer rows state it:
+#   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
+#     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
+#     edges, so the client never recomputes it).
+#   • the FEED SPLIT — "Fed by pasture NN% · larder N.N food/turn" (`pen_pasture_fraction` × 100 and
+#     `pen_upkeep`, the OFFSET larder bill). A self-feeding pen on lush land reads "100% · larder 0.0";
+#     a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
+const PEN_FOOTPRINT_ROW := "Pen"
+const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
+const PEN_FEED_SPLIT_ROW := "Fed by pasture"
+const PEN_FEED_SPLIT_FORMAT := "%d%% · larder %.1f food/turn"
+# The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
+# On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
+# (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
+# "Building N%" meter. The server rejects an extend at max radius / unowned / Herding-unknown with a
+# feed message, so the client does not pre-gate on those (max radius is not on the wire).
+const PEN_EXTEND_LABEL := "Extend pen"
+const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
+const PEN_FENCING_LABEL := "Fencing %d%%"
 # Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
 # range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
@@ -2735,6 +2757,40 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
         "expedition": int(expedition.get("entity", -1)),
     })
 
+## The Extend-pen affordance on a selected PENNED herd (Grazing 2d-γ). While no ring is in flight
+## (`pen_extend_progress == 0`) it offers an "Extend pen" button that issues `extend_pen <faction>
+## <x> <y>` at the pen's anchor (a penned herd sits AT `corralled_at`, so the herd's own tile is the
+## anchor). While a ring is being worked off (`pen_extend_progress > 0`) the button is replaced by a
+## WARN-amber "Fencing N%" badge — the pen twin of the corral-build "Building N%" meter. The server
+## rejects an extend at max radius / unowned / Herding-unknown with a feed message; the client does
+## not pre-gate on those (max radius is not on the wire).
+func _build_extend_pen_control(herd: Dictionary) -> void:
+    var extend_progress := float(herd.get("pen_extend_progress", 0.0))
+    if extend_progress > 0.0:
+        var badge := Label.new()
+        badge.text = PEN_FENCING_LABEL % int(round(extend_progress * PROGRESS_PERCENT_SCALE))
+        badge.add_theme_color_override("font_color", HudStyle.WARN)
+        herd_assign_controls.add_child(badge)
+        return
+    var x := int(herd.get("x", -1))
+    var y := int(herd.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var extend_btn := Button.new()
+    extend_btn.text = PEN_EXTEND_LABEL
+    extend_btn.tooltip_text = PEN_EXTEND_TOOLTIP
+    HudStyle.apply_button(extend_btn, "ghost")
+    extend_btn.pressed.connect(_emit_extend_pen.bind(x, y))
+    herd_assign_controls.add_child(extend_btn)
+
+## Emit the extend-pen request for the pen anchored at (x, y). Main formats `extend_pen <faction> <x> <y>`.
+func _emit_extend_pen(x: int, y: int) -> void:
+    emit_signal("extend_pen_requested", {
+        "faction": PLAYER_FACTION_ID,
+        "x": x,
+        "y": y,
+    })
+
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
 func _build_herd_assign_controls(herd: Dictionary) -> void:
@@ -2743,8 +2799,13 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     for child in herd_assign_controls.get_children():
         child.queue_free()
     var resolved := _resolve_assign_band()
+    var corralled := bool(herd.get("corralled", false))
     var can_assign := bool(herd.get("huntable", false)) and not resolved.is_empty()
-    herd_assign_controls.visible = can_assign
+    # A penned herd always offers the Extend-pen action (grow the fenced footprint), even if it is no
+    # longer huntable — so the controls stay visible for a pen OR a huntable herd.
+    herd_assign_controls.visible = can_assign or corralled
+    if corralled:
+        _build_extend_pen_control(herd)
     if not can_assign:
         return
     var herd_id := String(herd.get("id", ""))
@@ -4863,7 +4924,16 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var fed_fraction := PenStatus.fed_fraction(herd_data)
     if bool(herd_data.get("corralled", false)):
         lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
+        # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds tile
+        # count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own grazed
+        # footprint covers vs what the keeper still hauls from the larder.
+        var pen_radius := int(herd_data.get("pen_radius", 0))
+        var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
+        lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
         var upkeep := float(herd_data.get("pen_upkeep", 0.0))
+        var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
+        lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
+            % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), upkeep]])
         if upkeep >= FOOD_FLOW_MIN:
             lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
     elif corral_progress > 0.0:

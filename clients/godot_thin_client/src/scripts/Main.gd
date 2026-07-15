@@ -123,6 +123,8 @@ func _ready() -> void:
             hud.connect("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
+        if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
+            hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -425,6 +427,18 @@ func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     if policy != "":
         line += " %s" % policy
     _send_runtime_command(line, "Send hunting expedition (%d, %s) after %s." % [party_workers, policy if policy != "" else "sustain", fauna_id])
+
+## Extend a built pen by one fenced ring (Grazing 2d-γ). `extend_pen <faction> <x> <y>` targets the
+## pen's anchor tile; the server works the ring off over ~25 turns (rejecting at max radius / unowned /
+## Herding-unknown with a feed message).
+func _on_hud_extend_pen(payload: Dictionary) -> void:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var line := "extend_pen %d %d %d" % [faction, x, y]
+    _send_runtime_command(line, "Extend pen at (%d, %d)." % [x, y])
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

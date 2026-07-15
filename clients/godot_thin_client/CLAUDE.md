@@ -1897,6 +1897,35 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MagnifierButton` + the line-art policy icons to hand-draw). map_preview: `map_herd_starving` — a
   starving pen beside a **fed** one, which is the A/B the tint failed and the badge passes.
   **And the turn orb** surfaces it as the `starving_pen` attention producer — see the orb bullet.
+- **The pen is fenced LAND — the pen-economy surface** (Grazing 2d-γ, `docs/plan_grazing_2d.md` §7;
+  snapshot `HerdTelemetryState.penRadius` / `penFootprintTiles` / `penPastureFraction` /
+  `penExtendProgress` → `pen_radius` / `pen_footprint_tiles` / `pen_pasture_fraction` /
+  `pen_extend_progress`, decoded in `native/src/lib.rs herds_to_array`). A penned herd grazes its own
+  fenced footprint and the grass it eats **offsets** the larder bill (`pen_upkeep` is now that offset).
+  Three surfaces:
+  - **Herd drawer** (`_herd_summary_lines`, corralled branch): a **`Pen: radius R · N tiles`** footprint
+    row — `pen_footprint_tiles` is the SERVER's in-bounds count, shown **verbatim** (the closed-form
+    hex-disk count is wrong at map edges) — and a **`Fed by pasture NN% · larder N.N food/turn`** feed
+    split (`pen_pasture_fraction` × 100 + `pen_upkeep`): a self-feeding pen on lush land reads "100% ·
+    larder 0.0" (and the amber Pen-feed debit row disappears), a scrub pen "0% · larder 1.7". The Corral
+    / Pen-feed / starving rows above are unchanged.
+  - **Extend affordance** (`_build_extend_pen_control`, in the herd `%HerdAssignControls`): on a built
+    pen with no ring in flight (`pen_extend_progress == 0`) an **"Extend pen"** button emits
+    `extend_pen_requested{faction,x,y}` → `Main._on_hud_extend_pen` → `extend_pen <faction> <x> <y>` at
+    the pen anchor (a penned herd sits AT `corralled_at`, so its own tile). While a ring is being fenced
+    (`pen_extend_progress > 0`) the button is replaced by a WARN-amber **"Fencing N%"** badge — the pen
+    twin of the corral-build "Building N%" meter. The server rejects an extend at max radius / unowned /
+    Herding-unknown with a feed message; the client does not pre-gate (max radius is not on the wire).
+  - **Map footprint highlight** (`MapView._draw_pen_footprint_highlight`, drawn under the herd markers
+    when a corralled herd is selected): the fenced hex disk of radius `pen_radius` around the pen anchor,
+    in a distinct **enclosure-green** tint (`PEN_FOOTPRINT_FILL`/`_OUTLINE`) — deliberately NOT the gold
+    of the roam-range ring, so a fenced footprint reads as a different thing. Reuses the range ring's
+    wrapped-column / `_hex_distance` / `_fill_hex` / `_outline_hex` primitives (bounds-clamped by the
+    loop). A corralled herd draws no roam-range, so exactly one of the two ever renders.
+  ui_preview: `herd_pen_self_feeding` (radius 2 · 19 tiles, 100% · larder 0.0, Extend-pen button) /
+  `herd_pen_extending` (mid-extension → "Fencing 60%" badge) / `herd_domesticated` (radius 1 · 7 tiles,
+  0% · larder 1.7); map_preview: `map_pasture_pen_footprint` (the green footprint disc, the A/B against
+  `map_pasture_herd_range`'s gold roam-range).
 - **Forage-patch cultivation readout** (`Hud.gd` `_tile_terrain_lines`): a forage tile's
   intensification state, mirroring the herd Husbandry row. `native/src/lib.rs
   forage_patches_to_array` decodes `foragePatches[]` (`ForagePatchState`) into both the

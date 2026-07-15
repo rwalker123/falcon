@@ -545,6 +545,14 @@ const HUNT_WORKED_LINK_WIDTH := 2.5
 const HERD_RANGE_FILL := Color(0.82, 0.55, 0.14, 0.22)     # warm graze amber, translucent region
 const HERD_RANGE_OUTLINE := Color(0.96, 0.72, 0.24, 0.80)  # gold rim on each range tile
 const HERD_RANGE_OUTLINE_WIDTH := 2.0
+# Selected-CORRALLED-herd PEN FOOTPRINT (Grazing 2d-γ): the fenced hex disk of radius `pen_radius`
+# around the pen's anchor (a penned herd's own tile), the ground it grazes to offset its larder bill.
+# Deliberately a DISTINCT "fenced" tint — a cool enclosure green — NOT the warm gold of a wild herd's
+# roam-range, so a fenced footprint reads as a different thing. Only drawn for a corralled herd (which
+# suppresses the roam-range ring), so the two never collide.
+const PEN_FOOTPRINT_FILL := Color(0.20, 0.60, 0.42, 0.22)    # enclosed-pasture green, translucent
+const PEN_FOOTPRINT_OUTLINE := Color(0.34, 0.82, 0.58, 0.85) # fence-green rim on each fenced tile
+const PEN_FOOTPRINT_OUTLINE_WIDTH := 2.0
 # On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
 # (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
@@ -1426,6 +1434,9 @@ func _draw() -> void:
 	# Selected herd: its grazing range (the ground that sets its carrying capacity), drawn over the
 	# tile tints / Pasture overlay but under the herd markers so the animal still reads on top.
 	_draw_herd_range_highlights(radius, origin)
+	# Selected CORRALLED herd: its fenced pen footprint (a distinct enclosure tint). A corralled herd
+	# draws no roam-range above, so exactly one of the two ever renders.
+	_draw_pen_footprint_highlight(radius, origin)
 
 	_draw_supply_links(radius, origin)
 	_band_markers.draw_primary_bands(radius, origin)
@@ -2073,6 +2084,43 @@ func _draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			_fill_hex(col, row, radius, origin, HERD_RANGE_FILL)
 			_outline_hex(col, row, radius, origin, HERD_RANGE_OUTLINE, HERD_RANGE_OUTLINE_WIDTH)
+
+## Draw the selected CORRALLED herd's PEN FOOTPRINT (Grazing 2d-γ) — the fenced hex disk of radius
+## `pen_radius` around the pen's anchor (a penned herd sits AT `corralled_at`, so its own tile is the
+## anchor). This is the ground the pen grazes to offset its larder bill; a distinct enclosure-green
+## tint keeps it apart from a wild herd's gold roam-range. Reuses the range ring's wrapped-column /
+## hex-distance / fill / outline primitives, so it clamps to map bounds the same way — the disk region
+## is drawn from `pen_radius` (bounds-clamped by the loop), NOT from the server's `pen_footprint_tiles`
+## count (which the DRAWER displays verbatim). Only a corralled herd draws it (the roam-range ring
+## early-returns on `corralled`, so the two are mutually exclusive).
+func _draw_pen_footprint_highlight(radius: float, origin: Vector2) -> void:
+	if selected_herd_id == "":
+		return
+	var herd := _herd_by_id(selected_herd_id)
+	if herd.is_empty():
+		return
+	if not bool(herd.get("corralled", false)):
+		return
+	var x := int(herd.get("x", -1))
+	var y := int(herd.get("y", -1))
+	if x < 0 or y < 0:
+		return
+	if not _is_tile_visible(x, y):
+		return
+	var pen_radius := int(herd.get("pen_radius", 0))
+	var eff_col := _band_effective_col(x, radius, origin)
+	for drow in range(-pen_radius, pen_radius + 1):
+		var row := y + drow
+		if row < 0 or row >= grid_height:
+			continue
+		for dcol in range(-pen_radius, pen_radius + 1):
+			var col := eff_col + dcol
+			if _hex_distance(eff_col, y, col, row) > pen_radius:
+				continue
+			if not _wrap_horizontal and (col < 0 or col >= grid_width):
+				continue
+			_fill_hex(col, row, radius, origin, PEN_FOOTPRINT_FILL)
+			_outline_hex(col, row, radius, origin, PEN_FOOTPRINT_OUTLINE, PEN_FOOTPRINT_OUTLINE_WIDTH)
 
 ## Draw the dashed-amber pending overlay for a band: pending forage tiles, pending hunted herds
 ## (dashed ring + dashed link), and a pending move destination (dashed tile + dashed link).
