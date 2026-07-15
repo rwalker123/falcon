@@ -401,13 +401,11 @@ const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
-# Herd drawer ecological carrying capacity + grazing range (Grazing Phase 2b-iii): the two numbers that
-# explain WHY a herd is the size it is. `Range` is the ground it grazes (tile count of its hex range,
-# so it pairs with the map ring); `Carrying cap` is the K that ground can support (paired with Biomass:
-# here's how many animals, here's the ceiling the land sets). Keys stay ≤ 16 chars so `_split_detail_kv`
-# renders them as aligned table rows beside Biomass ("Carrying capacity" is 17 — hence the abbreviation).
+# Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
+# range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
+# row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
+# `_split_detail_kv` renders it as an aligned table row beside Biomass.
 const HERD_RANGE_ROW := "Range"
-const HERD_CAPACITY_ROW := "Carrying cap"
 # Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
 # range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
 # of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
@@ -4919,24 +4917,34 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     # were the same three facts a second time (the name three times, counting the `Herd` row's
     # "Red Deer (game_deer_07)"). What follows is only what the header CAN'T show: the herd's state.
     var lines: Array[String] = []
-    var biomass: float = float(herd_data.get("biomass", 0.0))
-    if biomass > 0.0:
-        lines.append("Biomass: %.0f" % biomass)
-    # The range + its derived carrying capacity — WHY the herd is this size (Grazing Phase 2b-iii). K is
-    # derived each turn from the graze on the herd's range; `biomass > K` is the honest overgrazing test
-    # (both numbers sim-provided — the client compares, it does NOT re-derive the ecology). A CORRALLED
-    # herd doesn't roam-graze a range, so the range row + overgrazing test are meaningless for it (its K
-    # is a frozen pen-time value); the Carrying capacity row still renders, plainly.
+    # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
+    # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
+    # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
+    # range; an overgrazed herd has `biomass > K`, so the pair honestly reads `current > max` (e.g.
+    # `2100 / 1352`) — a FEATURE that makes the overshoot visible in the numbers (the ⚠ row below
+    # spells out the consequence). The `~` the old standalone `Carrying cap` row carried is dropped:
+    # a `current / max` pair already implies the max is the derived ceiling. Guard: a herd momentarily
+    # on barren range derives K = 0, so `carrying_capacity <= 0` falls back to the bare `Biomass: X`
+    # (never `X / 0`) and suppresses the overgrazing test below.
     var corralled := bool(herd_data.get("corralled", false))
     var carrying_capacity := float(herd_data.get("carrying_capacity", 0.0))
+    var biomass: float = float(herd_data.get("biomass", 0.0))
+    if biomass > 0.0:
+        if carrying_capacity > 0.0:
+            lines.append("Biomass: %d / %d" % [int(round(biomass)), int(round(carrying_capacity))])
+        else:
+            lines.append("Biomass: %.0f" % biomass)
+    # The grazing range — WHY the herd is this size (the tiles it grazes / derives K over). A CORRALLED
+    # herd doesn't roam-graze a range, so its Range row + overgrazing test are meaningless (its K is a
+    # frozen pen-time value); the penned herd keeps the merged `Biomass: X / Y` pair, plainly.
     if not corralled:
         var range_radius := int(herd_data.get("graze_range_radius", 0))
         lines.append("%s: %s" % [HERD_RANGE_ROW, _graze_range_label(range_radius)])
-    if carrying_capacity > 0.0:
-        lines.append("%s: ~%d" % [HERD_CAPACITY_ROW, int(round(carrying_capacity))])
-        # Guard: K <= 0 (older snapshot / a penned herd's frozen value) can't be compared against.
-        if not corralled and biomass > carrying_capacity * (1.0 + OVERGRAZE_EPSILON):
-            lines.append(OVERGRAZING_WARNING)
+    # Overgrazing: biomass exceeds what the range can sustainably feed (both numbers sim-provided — the
+    # client compares, it does NOT re-derive the ecology). Suppressed for a corralled herd and when K is
+    # unknown. The `X / Y` pair above already shows X > Y; this row states the consequence.
+    if not corralled and carrying_capacity > 0.0 and biomass > carrying_capacity * (1.0 + OVERGRAZE_EPSILON):
+        lines.append(OVERGRAZING_WARNING)
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))

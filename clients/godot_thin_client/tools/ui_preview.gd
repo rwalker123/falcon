@@ -578,15 +578,16 @@ func _ready() -> void:
 	await _save("herd_collapsing")
 
 	# State 3b-graze — the ecological carrying-capacity readout (Grazing Phase 2b-iii). A HEALTHY herd:
-	# the drawer shows "Range: 7 tiles" + "Carrying cap: ~2150" beside "Biomass: 1480" — how many animals
-	# vs the ceiling the land sets — with NO overgrazing warning (biomass ≤ K).
+	# the drawer shows the merged "Biomass: 1480 / 2150" current/max pair (how many animals vs the ceiling
+	# the land sets) + a separate "Range: 7 tiles" row — with NO overgrazing warning (biomass ≤ K).
 	_hud.show_herd_selection(_grazing_healthy_herd_fixture())
 	await _settle()
 	await _save("herd_grazing_healthy")
 
-	# State 3b-overgraze — the same rows, but biomass (2100) > K (1352): the WARN-amber
-	# "⚠ Overgrazing — range can't sustain this herd" row appears under Carrying cap. It shows ONLY when
-	# biomass exceeds K — the honest sim-number comparison, not a re-derived ecology model.
+	# State 3b-overgraze — the same rows, but biomass (2100) > K (1352): the pair reads "Biomass: 2100 /
+	# 1352" (current > max) and the WARN-amber "⚠ Overgrazing — range can't sustain this herd" row
+	# appears beneath. It shows ONLY when biomass exceeds K — the honest sim-number comparison, not a
+	# re-derived ecology model.
 	_hud.show_herd_selection(_overgrazing_herd_fixture())
 	await _settle()
 	await _save("herd_overgrazing")
@@ -1898,7 +1899,7 @@ func _herd_fixture() -> Dictionary:
 		"biomass": 820.0,
 		# Ecological carrying capacity + grazing range (Grazing Phase 2b-iii): the numbers that explain
 		# the herd's size. Big game roams a radius-1 range (7 tiles); on good steppe it caps ~2150, well
-		# above this herd's 820 biomass, so the drawer reads the healthy "Range / Carrying cap" pair with
+		# above this herd's 820 biomass, so the drawer reads the healthy "Biomass: 820 / 2150" pair with
 		# no overgrazing warning. The dedicated grazing states below dial in overgrazed / small-game.
 		"carrying_capacity": 2150.0,
 		"graze_range_radius": 1,
@@ -1976,7 +1977,7 @@ func _collapsing_herd_fixture() -> Dictionary:
 	return fixture
 
 ## A compact NON-food tile_info (like the corral fixtures) so the Tile card stays short and the herd
-## drawer's Biomass / Range / Carrying cap (+ overgrazing) rows land in-frame rather than below the fold.
+## drawer's Biomass (current/max) / Range (+ overgrazing) rows land in-frame rather than below the fold.
 func _compact_herd_tile() -> Dictionary:
 	return {
 		"x": 66, "y": 10,
@@ -1988,8 +1989,8 @@ func _compact_herd_tile() -> Dictionary:
 	}
 
 ## A HEALTHY grazing herd (Grazing Phase 2b-iii): big game (radius-1 range → "Range: 7 tiles") whose
-## biomass sits below the K its range supports, so the drawer reads the "Range / Carrying cap" pair
-## beside Biomass with NO overgrazing warning. domestication 0 keeps the frame focused on the new rows.
+## biomass sits below the K its range supports, so the merged "Biomass: 1480 / 2150" current/max pair
+## reads current < max with NO overgrazing warning. domestication 0 keeps the frame focused on the rows.
 func _grazing_healthy_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["domestication"] = 0.0
@@ -2000,9 +2001,9 @@ func _grazing_healthy_herd_fixture() -> Dictionary:
 	return fixture
 
 ## An OVERGRAZING herd: biomass (2100) exceeds the K (1352) its range can sustainably feed, so the
-## drawer adds the WARN-amber "⚠ Overgrazing — range can't sustain this herd" row under Carrying cap.
-## The herd is drawing its range down and will shrink — the honest biomass > K comparison, both numbers
-## sim-provided.
+## merged pair reads "Biomass: 2100 / 1352" (current ABOVE max) and the drawer adds the WARN-amber
+## "⚠ Overgrazing — range can't sustain this herd" row. The herd is drawing its range down and will
+## shrink — the honest biomass > K comparison, both numbers sim-provided.
 func _overgrazing_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["domestication"] = 0.0
