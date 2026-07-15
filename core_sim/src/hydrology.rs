@@ -944,19 +944,23 @@ struct StemEmitter<'a> {
 }
 
 impl StemEmitter<'_> {
-    /// Emit a stem as **one river per contiguous run of dry steps**.
+    /// Emit a stem as **one river per contiguous run of steps that touch no standing water**.
     ///
-    /// A step whose edge has water on *both* sides is inside a body of water — there the river IS
-    /// the water, so no edge is emitted and no channel hex is stamped: the river visibly enters the
-    /// lake and re-emerges below it. That break also splits the stem, because a `RiverSegment`'s
-    /// edge chain and navigable chain are both **paths**: an edge chain with a lake-shaped hole in
-    /// it would be neither contiguous nor drawable.
+    /// A river **ends the moment it touches standing water, and a new river begins where it leaves**:
+    /// feed-in and drain-out are separate segments, not one river threaded through — or *around* — the
+    /// water. A step whose edge touches standing water on *either* bank is skipped and splits the
+    /// stem, so the river visibly runs *into* the lake/sea/trunk at the first corner it reaches it
+    /// (rather than hugging the shore along it) and re-emerges below as its own segment. The
+    /// accumulation still flows through underneath, so the outlet stays a big river below a big lake —
+    /// only the rendered segmentation changes. The break is also required because a `RiverSegment`'s
+    /// edge chain and navigable chain are both **paths**: a chain with a water-shaped hole in it would
+    /// be neither contiguous nor drawable.
     fn emit(&self, stem: &Stem, existing_navigable: &HashSet<usize>) -> Vec<TracedRiver> {
         let steps = self.steps(stem);
         let mut rivers = Vec::new();
         let mut run: Vec<(usize, CornerStep)> = Vec::new();
         for (from, step) in steps {
-            if self.edge_is_submerged(&step) {
+            if self.edge_touches_water(&step, existing_navigable) {
                 if let Some(river) = self.emit_run(&run, stem.terminus, existing_navigable) {
                     rivers.push(river);
                 }
@@ -990,12 +994,22 @@ impl StemEmitter<'_> {
         steps
     }
 
-    /// Both hexes flanking this edge are water — the step runs *inside* a lake, sea or ocean.
-    fn edge_is_submerged(&self, step: &CornerStep) -> bool {
-        let Some(far) = self.grid.neighbor(step.hex, step.dir) else {
-            return false;
+    /// **Either** hex flanking this edge is standing water — the river has reached the shore. Standing
+    /// water is a lake / inland sea / ocean on the terrain map (`is_water_hex`) **or** a previously
+    /// stamped navigable trunk (`existing_navigable`); the latter is not on the terrain map yet during
+    /// extraction, so both sources must be consulted. A half-submerged edge (land on one bank, water
+    /// on the other) is what makes an edge river hug a shoreline or a tributary climb the side of a
+    /// trunk hex to a far corner; ending the run here terminates the river *into* the water instead.
+    fn edge_touches_water(&self, step: &CornerStep, existing_navigable: &HashSet<usize>) -> bool {
+        let is_standing_water = |hex: UVec2| {
+            self.tiles.is_water_hex(hex) || existing_navigable.contains(&self.grid.tile_index(hex))
         };
-        self.tiles.is_water_hex(step.hex) && self.tiles.is_water_hex(far)
+        if is_standing_water(step.hex) {
+            return true;
+        }
+        self.grid
+            .neighbor(step.hex, step.dir)
+            .is_some_and(is_standing_water)
     }
 
     fn emit_run(

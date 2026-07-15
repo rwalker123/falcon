@@ -153,11 +153,26 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   corner: the fill raises it to its lowest saddle and it **spills**, so the whole upstream catchment
   carries *through* the lake and out a genuine outlet. Real outlet rivers, and a big river below a big
   lake, fall out for free (replacing the old `lake_heads` hack). Two consequences:
-  - **No river edge is emitted inside a water body.** An edge whose *both* flanking hexes are water is
-    skipped: there the river **is** the water, so it visibly enters the lake and re-emerges below it.
-    That break also **splits the stem into separate `RiverSegment`s**, because a segment's edge chain
-    and navigable chain are both *paths* — an edge chain with a lake-shaped hole in it would be
-    neither contiguous nor drawable.
+  - **A river ENDS the moment it touches standing water, and a new river begins where it leaves.** An
+    edge is emitted only while it touches no standing water; a step whose edge touches standing water on
+    *either* bank is skipped and **splits the stem into separate `RiverSegment`s** (feed-in and
+    drain-out are separate rivers, not one segment threaded *through* — or *around* — the water).
+    "Standing water" is a lake / inland sea / ocean on the terrain map **or** a previously-stamped
+    navigable trunk (`StemEmitter::edge_touches_water`, reading `is_water_hex` + `existing_navigable`).
+    The earlier both-banks-only rule left a **half-submerged** edge (land on one bank, water on the
+    other) emitted and drawn, so an edge river **hugged the lakeshore** and a tributary **ran up the
+    side of a navigable trunk hex to a far corner** (a "V") before handing over; ending the run at first
+    contact terminates the river *into* the water at the first corner it reaches instead. The
+    accumulation still flows through underneath (discharge/class unchanged), so the outlet stays a big
+    river below a big lake and can independently go navigable again below it — **only the rendered
+    segmentation changes.** The split is also required because a segment's edge chain and navigable
+    chain are both *paths* — a chain with a water-shaped hole in it would be neither contiguous nor
+    drawable. Guarded by `hydrology_earthlike::edge_rivers_terminate_at_water_not_along_it` (no emitted
+    edge borders an InlandSea/ocean tile on either bank — the lake shore-hug is now **exactly 0**; the
+    navigable-trunk "V" and the shore-hug tile proxy are tracked by the `drainage_census`). **This
+    materially reduces navigable rivers** (they no longer accrue shore-hugging false chains): measured
+    31→21 navigable segments and 142→75 navigable hexes over the 6-seed sweep (max run 25→21), and the
+    shore-hug tile proxy 43%→26% with max trunk-flank 4→2.
   - **Deltas are PER-TRANSITION, not per-terminus.** A river now both *enters* a standing water body
     and *leaves* it, so the delta scan stamps a delta at **every land→standing-water transition** along
     the river's ordered hex path (plus the mouth, where the path simply ends against the water) — each
@@ -363,11 +378,14 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
 
   **Measured** shape at those thresholds, on the **eroded** landscape
   (`hydrology_earthlike::drainage_census`, `#[ignore]`d; run with `-- --ignored --nocapture`),
-  aggregate over 6 seeds of an 80×52 earthlike map: **21.8 rivers per map**, 76.3% Minor / 23.7%
-  Major, **5.2 navigable segments / 23.7 navigable hexes** per map; land-corner accumulation p50 =
-  0.60 / p95 = 10.2 / p99 = 64.4 / **max 587**; corner confluences **11.6%** of land corners (4.1%
-  before the drainage-network rewrite); Strahler on the drainage tree o1 = 12366, o2 = 2246,
-  o3 = 837, o4 = 254, o5 = 34. Per-seed spread is large and *should* be — see the verdict below.
+  aggregate over 6 seeds of an 80×52 earthlike map (after the "end at first standing water" fix):
+  **14.5 rivers per map**, 81.1% Minor / 18.9% Major, **3.5 navigable segments / 12.5 navigable hexes**
+  per map (down from 5.2 / 23.7 before the fix — segments that used to hug shorelines are gone);
+  land-corner accumulation p50 = 0.60 / p95 = 10.2 / p99 = 64.4 / **max 587**; corner confluences
+  **11.6%** of land corners (4.1% before the drainage-network rewrite); Strahler on the drainage tree
+  o1 = 12366, o2 = 2246, o3 = 837, o4 = 254, o5 = 34 (the accumulation/confluence/Strahler figures read
+  off the corner network, which the segmentation fix does not touch). Per-seed spread is large and
+  *should* be — see the verdict below.
 
 ### Fluvial erosion — the heightfield the drainage runs on
 The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
@@ -437,12 +455,12 @@ river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
 |---|---|---|
 | coastal tiles of the largest landmass (**SPONGE** — must fall) | **59.2%** (spread 14.3) | **52.8%** (spread **9.6**) |
 | biggest basin / largest landmass (**CAPTURE** — must rise) | 11.0% (spread 39.5) | 13.3% (spread 34.1) |
-| navigable rivers | 30 segments / 132 hexes / **max run 10** | 31 / 142 / **max run 25** |
+| navigable rivers (post "end-at-water" fix) | 21 segments / 67 hexes / **max run 7** | 21 / 75 / **max run 21** |
 
 > **Honest verdict: one of the two failures is fixed, the other is only dented.** The **sponge is
 > genuinely better** — every seed improves and the spread halves — and the **~13-hex navigable
-> ceiling is gone** (longest river 10 → **25** hexes; the ceiling was never the threshold, it was the
-> landscape). **Capture is not fixed.** The mean barely moves and the spread stays huge: seed 5 goes
+> ceiling is gone** (longest river 7 → **21** hexes post the "end-at-water" fix; the ceiling was never
+> the threshold, it was the landscape). **Capture is not fixed.** The mean barely moves and the spread stays huge: seed 5 goes
 > 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
 > single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
 > has; it does not move its divides.** The divides come from the continent-scale fbm, so the next

@@ -153,6 +153,11 @@ fn earthlike_preset_generates_rivers() {
     // Length is denominated in hexes: a corner step covers one hex side (~half a hex of downstream
     // progress), so `edges / 2` plus the whole-hex navigable tail is the river's reach. A real
     // drainage network always contains a long main stem — the trunk runs from the divide to the sea.
+    //
+    // Re-baselined 8 → 6 when rivers began **ending at the first standing water they touch** (a river
+    // now splits into a feed-in and a drain-out segment at every lake/trunk contact instead of
+    // threading one segment through — see `StemEmitter::edge_touches_water`), so the longest *single*
+    // segment on this seed is shorter. The invariant is unchanged: a main stem of real length exists.
     let max_len = hydrology
         .rivers
         .iter()
@@ -160,7 +165,7 @@ fn earthlike_preset_generates_rivers() {
         .max()
         .unwrap_or(0);
     assert!(
-        max_len >= 8,
+        max_len >= 6,
         "expected a main stem of real length, got {max_len} hexes"
     );
 
@@ -182,6 +187,88 @@ fn earthlike_preset_generates_rivers() {
         }
     }
     let _ = wrap;
+}
+
+/// **The shore-hug regression.** A river must *end* at the moment it touches standing water and a new
+/// river begins where it leaves — feed-in and drain-out are separate segments, never one river threaded
+/// *along* the shore. Symptom before the fix: an edge with land on one bank and a lake/sea on the other
+/// was still emitted, so an edge river hugged the lakeshore (measured 30 of 62 land edge-river tiles
+/// sat directly against an InlandSea/NavigableRiver on the exported seed).
+///
+/// **Invariant chosen (holds exactly, not merely ~0):** no emitted river EDGE has terrain standing
+/// water — an InlandSea or an ocean-family tile (DeepOcean/ContinentalShelf/CoralShelf/
+/// HydrothermalVentField) — on *either* bank. That is precisely the half-submerged edge the fix now
+/// splits on. (`NavigableRiver` is deliberately excluded: a river's own edge→navigable hand-off shares
+/// exactly one edge with its trunk *by construction* — that shared bank is the join, not a shore-hug —
+/// so the "V" trunk-flank symptom is measured separately by the census, not asserted here.)
+#[test]
+fn edge_rivers_terminate_at_water_not_along_it() {
+    // The ocean/inland-sea water an emitted edge must never border. NavigableRiver is intentionally
+    // absent — see the doc comment.
+    fn is_standing_water(terrain: TerrainType) -> bool {
+        matches!(
+            terrain,
+            TerrainType::DeepOcean
+                | TerrainType::ContinentalShelf
+                | TerrainType::CoralShelf
+                | TerrainType::HydrothermalVentField
+                | TerrainType::InlandSea
+        )
+    }
+
+    let mut offenders = 0usize;
+    let mut emitted_edges = 0usize;
+    for seed in invariant_seeds() {
+        let world = earthlike_world_seeded(seed);
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+        let hydrology = world.resource::<HydrologyState>();
+
+        let terrain_at = |pos: UVec2| -> TerrainType {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+                .terrain
+        };
+
+        for river in &hydrology.rivers {
+            for edge in &river.edges {
+                emitted_edges += 1;
+                let near = terrain_at(edge.hex);
+                let far = core_sim::grid_utils::hex_neighbor(
+                    edge.hex.x,
+                    edge.hex.y,
+                    usize::from(edge.dir),
+                    width,
+                    height,
+                    wrap,
+                )
+                .map(|(x, y)| terrain_at(UVec2::new(x, y)));
+                if is_standing_water(near) || far.is_some_and(is_standing_water) {
+                    offenders += 1;
+                    println!(
+                        "seed {seed}: river {} edge {:?} dir {} borders standing water (near {near:?}, far {far:?})",
+                        river.id, edge.hex, edge.dir
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        emitted_edges > 0,
+        "expected emitted river edges across the sweep"
+    );
+    assert_eq!(
+        offenders, 0,
+        "an emitted river edge borders standing water — a river must terminate INTO the water, not run along it"
+    );
 }
 
 /// The class histogram the thresholds are tuned against: most river length Minor (headwaters
@@ -994,12 +1081,62 @@ struct MapCensus {
     rivers: usize,
     minor: usize,
     major: usize,
+    /// Land tiles carrying an edge river that sit hex-adjacent to InlandSea/NavigableRiver — the
+    /// shore-hug proxy (was 30 of 62 before rivers began ending at first water contact).
+    shore_hug: usize,
+    /// Total land tiles carrying an edge river (the shore-hug denominator; the "62").
+    edge_river_tiles: usize,
+    /// The **"V" metric**: the most sides of a single `NavigableRiver` trunk hex flanked by an edge
+    /// river (was 2 — a tributary ran up two sides of the trunk before handing over at a far corner).
+    max_trunk_flank: usize,
 }
 
 impl MapCensus {
     fn of(world: &World) -> Self {
         let census = debug_drainage_census(world);
         let hydrology = world.resource::<HydrologyState>();
+
+        // Tile-level shore-hug + trunk-flank metrics (the fix's direct targets).
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+        let tile_at = |pos: UVec2| -> &Tile {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+        };
+        let mut shore_hug = 0usize;
+        let mut edge_river_tiles = 0usize;
+        let mut max_trunk_flank = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let pos = UVec2::new(x, y);
+                let tile = tile_at(pos);
+                if tile.terrain == TerrainType::NavigableRiver {
+                    let flank = (0..HEX_DIRECTION_COUNT as u8)
+                        .filter(|&d| tile.river_class_on_side(d) != RiverClass::None)
+                        .count();
+                    max_trunk_flank = max_trunk_flank.max(flank);
+                } else if !is_water(tile.terrain) && tile.has_any_river_edge() {
+                    edge_river_tiles += 1;
+                    let against_water =
+                        hex_neighbors_wrapped(x, y, width, height, wrap).any(|(nx, ny)| {
+                            matches!(
+                                tile_at(UVec2::new(nx, ny)).terrain,
+                                TerrainType::InlandSea | TerrainType::NavigableRiver
+                            )
+                        });
+                    if against_water {
+                        shore_hug += 1;
+                    }
+                }
+            }
+        }
 
         let mut land_contributors = [0usize; MAX_CORNER_CONTRIBUTORS + 1];
         for &c in &census.land_contributors {
@@ -1053,6 +1190,9 @@ impl MapCensus {
             rivers: hydrology.rivers.len(),
             minor,
             major,
+            shore_hug,
+            edge_river_tiles,
+            max_trunk_flank,
         }
     }
 
@@ -1145,6 +1285,18 @@ fn report(label: &str, c: &MapCensus) {
         pct(c.major)
     );
     println!("  {:<26} {}", "rivers (segments)", c.rivers);
+    println!(
+        "  {:<26} shore-hug={}/{} ({:.1}%) | max trunk flank (V)={}",
+        "shore-hug + V (fix)",
+        c.shore_hug,
+        c.edge_river_tiles,
+        if c.edge_river_tiles == 0 {
+            0.0
+        } else {
+            100.0 * c.shore_hug as f64 / c.edge_river_tiles as f64
+        },
+        c.max_trunk_flank
+    );
 }
 
 /// One arm of the census: every seed under one `erosion` setting. Prints the per-seed drainage
@@ -1162,6 +1314,9 @@ fn census_pass(label: &str, erosion: &ErosionConfig) -> (MapCensus, Vec<(u64, La
         rivers: 0,
         minor: 0,
         major: 0,
+        shore_hug: 0,
+        edge_river_tiles: 0,
+        max_trunk_flank: 0,
     };
     let mut landscapes: Vec<(u64, Landscape)> = Vec::new();
 
@@ -1205,6 +1360,9 @@ fn census_pass(label: &str, erosion: &ErosionConfig) -> (MapCensus, Vec<(u64, La
         aggregate.rivers += c.rivers;
         aggregate.minor += c.minor;
         aggregate.major += c.major;
+        aggregate.shore_hug += c.shore_hug;
+        aggregate.edge_river_tiles += c.edge_river_tiles;
+        aggregate.max_trunk_flank = aggregate.max_trunk_flank.max(c.max_trunk_flank);
     }
 
     report(
