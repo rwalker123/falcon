@@ -9,14 +9,22 @@ fn main() {
     println!("payload type: {:?}", envelope.payload_type());
     if let Some(snapshot) = envelope.payload_as_snapshot() {
         println!("tick: {}", snapshot.header().map(|h| h.tick()).unwrap_or(0));
-        let tiles = snapshot.tiles().map(|t| t.len()).unwrap_or(0);
+        let tiles = snapshot
+            .map()
+            .and_then(|m| m.tiles())
+            .map(|t| t.len())
+            .unwrap_or(0);
         println!("tiles: {}", tiles);
-        if let Some(first) = snapshot.tiles().map(|tiles| tiles.get(0)) {
+        if let Some(first) = snapshot
+            .map()
+            .and_then(|m| m.tiles())
+            .map(|tiles| tiles.get(0))
+        {
             println!("first tile temp: {}", first.temperature());
         }
         let mut max_temp = i64::MIN;
         let mut min_temp = i64::MAX;
-        if let Some(tiles) = snapshot.tiles() {
+        if let Some(tiles) = snapshot.map().and_then(|m| m.tiles()) {
             for tile in tiles {
                 let temp = tile.temperature();
                 if temp > max_temp {
@@ -28,7 +36,7 @@ fn main() {
             }
         }
         println!("tile temp range: {}..{}", min_temp, max_temp);
-        if let Some(overlay) = snapshot.terrainOverlay() {
+        if let Some(overlay) = snapshot.map().and_then(|m| m.terrainOverlay()) {
             println!(
                 "terrain overlay: {}x{} ({} samples)",
                 overlay.width(),
@@ -43,7 +51,7 @@ fn main() {
         );
         let mut max_temp = i64::MIN;
         let mut min_temp = i64::MAX;
-        if let Some(tiles) = delta.tiles() {
+        if let Some(tiles) = delta.map().and_then(|m| m.tiles()) {
             for tile in tiles {
                 let temp = tile.temperature();
                 max_temp = max_temp.max(temp);
@@ -51,7 +59,7 @@ fn main() {
             }
         }
         println!("delta tile temp range: {}..{}", min_temp, max_temp);
-        if let Some(overlay) = delta.terrainOverlay() {
+        if let Some(overlay) = delta.map().and_then(|m| m.terrainOverlay()) {
             println!(
                 "delta terrain overlay: {}x{} ({} samples)",
                 overlay.width(),

@@ -1191,207 +1191,219 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
             agg.server_build = build.to_string();
         }
     }
-    if let Some(tiles) = delta.tiles() {
+    if let Some(tiles) = delta.map().and_then(|s| s.tiles()) {
         for tile in tiles {
             agg.update_tile(tile.x(), tile.y(), tile.temperature());
         }
     }
-    if let Some(layer) = delta.terrainOverlay() {
+    if let Some(layer) = delta.map().and_then(|s| s.terrainOverlay()) {
         agg.apply_terrain_overlay(layer);
     }
-    if let Some(raster) = delta.logisticsRaster() {
+    if let Some(raster) = delta.economy().and_then(|s| s.logisticsRaster()) {
         agg.apply_logistics_raster(raster);
     }
-    if let Some(raster) = delta.sentimentRaster() {
+    if let Some(raster) = delta.culture().and_then(|s| s.sentimentRaster()) {
         agg.apply_sentiment_raster(raster);
     }
-    if let Some(raster) = delta.corruptionRaster() {
+    if let Some(raster) = delta.governance().and_then(|s| s.corruptionRaster()) {
         agg.apply_corruption_raster(raster);
     }
-    if let Some(raster) = delta.fogRaster() {
+    if let Some(raster) = delta.vision().and_then(|s| s.fogRaster()) {
         agg.apply_fog_raster(raster);
     }
-    if let Some(raster) = delta.visibilityRaster() {
+    if let Some(raster) = delta.vision().and_then(|s| s.visibilityRaster()) {
         agg.apply_visibility_raster(raster);
     }
-    if let Some(raster) = delta.cultureRaster() {
+    if let Some(raster) = delta.culture().and_then(|s| s.cultureRaster()) {
         agg.apply_culture_raster(raster);
     }
-    if let Some(raster) = delta.militaryRaster() {
+    if let Some(raster) = delta.vision().and_then(|s| s.militaryRaster()) {
         agg.apply_military_raster(raster);
     }
-    if let Some(overlay) = delta.crisisOverlay() {
+    if let Some(overlay) = delta.governance().and_then(|s| s.crisisOverlay()) {
         agg.apply_crisis_overlay(overlay);
     }
-    if let Some(overlay) = delta.elevationOverlay() {
+    if let Some(overlay) = delta.map().and_then(|s| s.elevationOverlay()) {
         agg.apply_elevation_overlay(overlay);
     }
-    if let Some(raster) = delta.moistureRaster() {
+    if let Some(raster) = delta.map().and_then(|s| s.moistureRaster()) {
         agg.apply_moisture_raster(raster);
     }
     let mut dict = agg.into_dictionary();
 
-    if let Some(victory) = delta.victory() {
+    if let Some(victory) = delta.campaign().and_then(|s| s.victory()) {
         let _ = dict.insert("victory", &victory_state_to_dict(victory));
     }
 
-    if let Some(events) = delta.commandEvents() {
+    if let Some(events) = delta.campaign().and_then(|s| s.commandEvents()) {
         let _ = dict.insert("command_events", &command_events_to_array(events));
     }
 
-    if let Some(herds) = delta.herds() {
+    if let Some(herds) = delta.subsistence().and_then(|s| s.herds()) {
         let _ = dict.insert("herds", &herds_to_array(herds));
     }
 
-    if let Some(sedentarization) = delta.sedentarization() {
+    if let Some(sedentarization) = delta.subsistence().and_then(|s| s.sedentarization()) {
         let _ = dict.insert(
             "sedentarization",
             &sedentarization_to_array(sedentarization),
         );
     }
 
-    if let Some(forage_patches) = delta.foragePatches() {
+    if let Some(forage_patches) = delta.subsistence().and_then(|s| s.foragePatches()) {
         let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
     }
 
-    if let Some(intensification) = delta.intensificationKnowledge() {
+    if let Some(intensification) = delta
+        .subsistence()
+        .and_then(|s| s.intensificationKnowledge())
+    {
         let _ = dict.insert(
             "intensification_knowledge",
             &intensification_knowledge_to_array(intensification),
         );
     }
 
-    if let Some(demographics) = delta.demographics() {
+    if let Some(demographics) = delta.population().and_then(|s| s.demographics()) {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
 
-    if let Some(discovered_sites) = delta.discoveredSites() {
+    if let Some(discovered_sites) = delta.knowledge().and_then(|s| s.discoveredSites()) {
         let _ = dict.insert(
             "discovered_sites",
             &discovered_sites_to_array(discovered_sites),
         );
     }
 
-    if let Some(definitions) = delta.greatDiscoveryDefinitions() {
+    if let Some(definitions) = delta
+        .knowledge()
+        .and_then(|s| s.greatDiscoveryDefinitions())
+    {
         let _ = dict.insert(
             "great_discovery_definitions",
             &great_discovery_definitions_to_array(definitions),
         );
     }
 
-    if let Some(axis_bias) = delta.axisBias() {
+    if let Some(axis_bias) = delta.culture().and_then(|s| s.axisBias()) {
         let _ = dict.insert("axis_bias", &axis_bias_to_dict(axis_bias));
     }
 
-    if let Some(sentiment) = delta.sentiment() {
+    if let Some(sentiment) = delta.culture().and_then(|s| s.sentiment()) {
         let _ = dict.insert("sentiment", &sentiment_to_dict(sentiment));
     }
 
-    if let Some(crisis) = delta.crisisTelemetry() {
+    if let Some(crisis) = delta.governance().and_then(|s| s.crisisTelemetry()) {
         let _ = dict.insert("crisis_telemetry", &crisis_telemetry_to_dict(crisis));
     }
 
-    if let Some(crisis_overlay) = delta.crisisOverlay() {
+    if let Some(crisis_overlay) = delta.governance().and_then(|s| s.crisisOverlay()) {
         let _ = dict.insert("crisis_overlay", &crisis_overlay_to_dict(crisis_overlay));
     }
 
-    if let Some(great_discoveries) = delta.greatDiscoveries() {
+    if let Some(great_discoveries) = delta.knowledge().and_then(|s| s.greatDiscoveries()) {
         let updates = great_discovery_states_to_array(great_discoveries);
         if !updates.is_empty() {
             let _ = dict.insert("great_discovery_updates", &updates);
         }
     }
 
-    if let Some(great_progress) = delta.greatDiscoveryProgress() {
+    if let Some(great_progress) = delta.knowledge().and_then(|s| s.greatDiscoveryProgress()) {
         let updates = great_discovery_progress_states_to_array(great_progress);
         if !updates.is_empty() {
             let _ = dict.insert("great_discovery_progress_updates", &updates);
         }
     }
 
-    if let Some(gd_telemetry) = delta.greatDiscoveryTelemetry() {
+    if let Some(gd_telemetry) = delta.knowledge().and_then(|s| s.greatDiscoveryTelemetry()) {
         let _ = dict.insert(
             "great_discovery_telemetry",
             &great_discovery_telemetry_to_dict(gd_telemetry),
         );
     }
 
-    if let Some(influencers) = delta.influencers() {
+    if let Some(influencers) = delta.culture().and_then(|s| s.influencers()) {
         let _ = dict.insert("influencer_updates", &influencers_to_array(influencers));
     }
 
-    let removed_influencers = u32_vector_to_packed_int32(delta.removedInfluencers());
+    let removed_influencers =
+        u32_vector_to_packed_int32(delta.culture().and_then(|s| s.removedInfluencers()));
     if !removed_influencers.is_empty() {
         let _ = dict.insert("influencer_removed", &removed_influencers);
     }
 
-    if let Some(ledger) = delta.corruption() {
+    if let Some(ledger) = delta.governance().and_then(|s| s.corruption()) {
         let _ = dict.insert("corruption", &corruption_to_dict(ledger));
     }
 
-    if let Some(populations) = delta.populations() {
+    if let Some(populations) = delta.population().and_then(|s| s.populations()) {
         let _ = dict.insert("population_updates", &populations_to_array(populations));
     }
 
-    let removed_populations = u64_vector_to_packed_int64(delta.removedPopulations());
+    let removed_populations =
+        u64_vector_to_packed_int64(delta.population().and_then(|s| s.removedPopulations()));
     if !removed_populations.is_empty() {
         let _ = dict.insert("population_removed", &removed_populations);
     }
 
-    if let Some(trade_links) = delta.tradeLinks() {
+    if let Some(trade_links) = delta.economy().and_then(|s| s.tradeLinks()) {
         let _ = dict.insert("trade_link_updates", &trade_links_to_array(trade_links));
     }
 
-    let removed_trade_links = u64_vector_to_packed_int64(delta.removedTradeLinks());
+    let removed_trade_links =
+        u64_vector_to_packed_int64(delta.economy().and_then(|s| s.removedTradeLinks()));
     if !removed_trade_links.is_empty() {
         let _ = dict.insert("trade_link_removed", &removed_trade_links);
     }
 
-    if let Some(power_nodes) = delta.power() {
+    if let Some(power_nodes) = delta.governance().and_then(|s| s.power()) {
         let _ = dict.insert("power_updates", &power_nodes_to_array(power_nodes));
     }
 
-    let removed_power = u64_vector_to_packed_int64(delta.removedPower());
+    let removed_power =
+        u64_vector_to_packed_int64(delta.governance().and_then(|s| s.removedPower()));
     if !removed_power.is_empty() {
         let _ = dict.insert("power_removed", &removed_power);
     }
 
-    if let Some(power_metrics) = delta.powerMetrics() {
+    if let Some(power_metrics) = delta.governance().and_then(|s| s.powerMetrics()) {
         let _ = dict.insert("power_metrics", &power_metrics_to_dict(power_metrics));
     }
 
-    if let Some(tiles) = delta.tiles() {
+    if let Some(tiles) = delta.map().and_then(|s| s.tiles()) {
         let _ = dict.insert("tile_updates", &tiles_to_array(tiles));
     }
 
-    let removed_tiles = u64_vector_to_packed_int64(delta.removedTiles());
+    let removed_tiles = u64_vector_to_packed_int64(delta.map().and_then(|s| s.removedTiles()));
     if !removed_tiles.is_empty() {
         let _ = dict.insert("tile_removed", &removed_tiles);
     }
 
-    if let Some(generations) = delta.generations() {
+    if let Some(generations) = delta.population().and_then(|s| s.generations()) {
         let _ = dict.insert("generation_updates", &generations_to_array(generations));
     }
 
-    let removed_generations = u16_vector_to_packed_int32(delta.removedGenerations());
+    let removed_generations =
+        u16_vector_to_packed_int32(delta.population().and_then(|s| s.removedGenerations()));
     if !removed_generations.is_empty() {
         let _ = dict.insert("generation_removed", &removed_generations);
     }
 
-    if let Some(layers) = delta.cultureLayers() {
+    if let Some(layers) = delta.culture().and_then(|s| s.cultureLayers()) {
         let _ = dict.insert("culture_layer_updates", &culture_layers_to_array(layers));
     }
 
-    let removed_layers = u32_vector_to_packed_int32(delta.removedCultureLayers());
+    let removed_layers =
+        u32_vector_to_packed_int32(delta.culture().and_then(|s| s.removedCultureLayers()));
     if !removed_layers.is_empty() {
         let _ = dict.insert("culture_layer_removed", &removed_layers);
     }
 
-    if let Some(tensions) = delta.cultureTensions() {
+    if let Some(tensions) = delta.culture().and_then(|s| s.cultureTensions()) {
         let _ = dict.insert("culture_tensions", &culture_tensions_to_array(tensions));
     }
 
-    if let Some(progress) = delta.discoveryProgress() {
+    if let Some(progress) = delta.knowledge().and_then(|s| s.discoveryProgress()) {
         let _ = dict.insert(
             "discovery_progress_updates",
             &discovery_progress_to_array(progress),
@@ -2061,7 +2073,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let mut moisture_grid: Vec<f32> = Vec::new();
     let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
-    if let Some(raster) = snapshot.logisticsRaster() {
+    if let Some(raster) = snapshot.economy().and_then(|s| s.logisticsRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2083,7 +2095,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         let mut width = 0u32;
         let mut height = 0u32;
         let mut fallback: HashMap<(u32, u32), f32> = HashMap::new();
-        if let Some(tiles) = snapshot.tiles() {
+        if let Some(tiles) = snapshot.map().and_then(|s| s.tiles()) {
             for tile in tiles {
                 let x = tile.x();
                 let y = tile.y();
@@ -2109,7 +2121,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let mut terrain_width = 0u32;
     let mut terrain_height = 0u32;
     let mut terrain_samples: Vec<(u16, u16)> = Vec::new();
-    if let Some(layer) = snapshot.terrainOverlay() {
+    if let Some(layer) = snapshot.map().and_then(|s| s.terrainOverlay()) {
         terrain_width = layer.width();
         terrain_height = layer.height();
         if let Some(samples) = layer.samples() {
@@ -2120,7 +2132,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    if let Some(raster) = snapshot.corruptionRaster() {
+    if let Some(raster) = snapshot.governance().and_then(|s| s.corruptionRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2150,7 +2162,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
 
     let mut sentiment_grid: Vec<f32> = Vec::new();
     let mut sentiment_dims = (0u32, 0u32);
-    if let Some(raster) = snapshot.sentimentRaster() {
+    if let Some(raster) = snapshot.culture().and_then(|s| s.sentimentRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2190,7 +2202,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         sentiment_dims = (fallback_width, fallback_height);
     }
 
-    if let Some(raster) = snapshot.fogRaster() {
+    if let Some(raster) = snapshot.vision().and_then(|s| s.fogRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2226,7 +2238,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         fog_dims = (fallback_width, fallback_height);
     }
 
-    if let Some(raster) = snapshot.visibilityRaster() {
+    if let Some(raster) = snapshot.vision().and_then(|s| s.visibilityRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2262,7 +2274,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         visibility_dims = (fallback_width, fallback_height);
     }
 
-    if let Some(raster) = snapshot.cultureRaster() {
+    if let Some(raster) = snapshot.culture().and_then(|s| s.cultureRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2298,7 +2310,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         culture_dims = (fallback_width, fallback_height);
     }
 
-    if let Some(raster) = snapshot.militaryRaster() {
+    if let Some(raster) = snapshot.vision().and_then(|s| s.militaryRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2316,7 +2328,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    if let Some(overlay) = snapshot.crisisOverlay() {
+    if let Some(overlay) = snapshot.governance().and_then(|s| s.crisisOverlay()) {
         if let Some(raster) = overlay.heatmap() {
             let width = raster.width();
             let height = raster.height();
@@ -2352,7 +2364,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    if let Some(raster) = snapshot.moistureRaster() {
+    if let Some(raster) = snapshot.map().and_then(|s| s.moistureRaster()) {
         let width = raster.width();
         let height = raster.height();
         if width > 0 && height > 0 {
@@ -2370,7 +2382,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    if let Some(overlay) = snapshot.elevationOverlay() {
+    if let Some(overlay) = snapshot.map().and_then(|s| s.elevationOverlay()) {
         let width = overlay.width();
         let height = overlay.height();
         elevation_sea_level = overlay.seaLevel();
@@ -2681,7 +2693,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     // per-entity diffed, so an ungrazed turn costs zero delta bytes). A tile that carries no patch
     // reports capacity 0, which is exactly the reading we want: "this ground holds no pasture".
     let mut pasture_capacity_vec: Vec<f32> = vec![0.0f32; total];
-    if let Some(tiles) = snapshot.tiles() {
+    if let Some(tiles) = snapshot.map().and_then(|s| s.tiles()) {
         for tile in tiles {
             let x = tile.x();
             let y = tile.y();
@@ -2698,7 +2710,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     // no human food (deep ocean, glacier, lava); coastal shelves carry a positive value and sit ON
     // the ramp (fishing), which is where the forage map diverges from pasture.
     let mut forage_capacity_vec: Vec<f32> = vec![0.0f32; total];
-    if let Some(tiles) = snapshot.tiles() {
+    if let Some(tiles) = snapshot.map().and_then(|s| s.tiles()) {
         for tile in tiles {
             let x = tile.x();
             let y = tile.y();
@@ -2717,7 +2729,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
 
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
     let mut campaign_profiles_array: Option<VarArray> = None;
-    if let Some(profiles) = snapshot.campaignProfiles() {
+    if let Some(profiles) = snapshot.campaign().and_then(|s| s.campaignProfiles()) {
         let mut arr = VarArray::new();
         for profile in profiles {
             let dict = campaign_profile_to_dict(profile);
@@ -2727,9 +2739,18 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             campaign_profiles_array = Some(arr);
         }
     }
-    let victory_dict = snapshot.victory().map(victory_state_to_dict);
-    let faction_inventory_array = snapshot.factionInventory().map(faction_inventory_to_array);
-    let herds_array = snapshot.herds().map(herds_to_array);
+    let victory_dict = snapshot
+        .campaign()
+        .and_then(|s| s.victory())
+        .map(victory_state_to_dict);
+    let faction_inventory_array = snapshot
+        .economy()
+        .and_then(|s| s.factionInventory())
+        .map(faction_inventory_to_array);
+    let herds_array = snapshot
+        .subsistence()
+        .and_then(|s| s.herds())
+        .map(herds_to_array);
 
     let mut dict = snapshot_dict(
         header.tick(),
@@ -2762,129 +2783,147 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         campaign_profiles_array,
         victory_dict,
         faction_inventory_array,
-        snapshot.commandEvents().map(command_events_to_array),
+        snapshot
+            .campaign()
+            .and_then(|s| s.commandEvents())
+            .map(command_events_to_array),
         herds_array,
-        snapshot.foodModules().map(food_modules_to_array),
+        snapshot
+            .subsistence()
+            .and_then(|s| s.foodModules())
+            .map(food_modules_to_array),
     );
 
     if let Some(server_build) = header.serverBuild() {
         let _ = dict.insert("server_build", server_build);
     }
 
-    if let Some(sedentarization) = snapshot.sedentarization() {
+    if let Some(sedentarization) = snapshot.subsistence().and_then(|s| s.sedentarization()) {
         let _ = dict.insert(
             "sedentarization",
             &sedentarization_to_array(sedentarization),
         );
     }
 
-    if let Some(forage_patches) = snapshot.foragePatches() {
+    if let Some(forage_patches) = snapshot.subsistence().and_then(|s| s.foragePatches()) {
         let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
     }
 
-    if let Some(intensification) = snapshot.intensificationKnowledge() {
+    if let Some(intensification) = snapshot
+        .subsistence()
+        .and_then(|s| s.intensificationKnowledge())
+    {
         let _ = dict.insert(
             "intensification_knowledge",
             &intensification_knowledge_to_array(intensification),
         );
     }
 
-    if let Some(demographics) = snapshot.demographics() {
+    if let Some(demographics) = snapshot.population().and_then(|s| s.demographics()) {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
 
-    if let Some(discovered_sites) = snapshot.discoveredSites() {
+    if let Some(discovered_sites) = snapshot.knowledge().and_then(|s| s.discoveredSites()) {
         let _ = dict.insert(
             "discovered_sites",
             &discovered_sites_to_array(discovered_sites),
         );
     }
 
-    if let Some(axis_bias) = snapshot.axisBias() {
+    if let Some(axis_bias) = snapshot.culture().and_then(|s| s.axisBias()) {
         let _ = dict.insert("axis_bias", &axis_bias_to_dict(axis_bias));
     }
 
-    if let Some(sentiment) = snapshot.sentiment() {
+    if let Some(sentiment) = snapshot.culture().and_then(|s| s.sentiment()) {
         let _ = dict.insert("sentiment", &sentiment_to_dict(sentiment));
     }
 
-    if let Some(influencers) = snapshot.influencers() {
+    if let Some(influencers) = snapshot.culture().and_then(|s| s.influencers()) {
         let _ = dict.insert("influencers", &influencers_to_array(influencers));
     }
 
-    if let Some(ledger) = snapshot.corruption() {
+    if let Some(ledger) = snapshot.governance().and_then(|s| s.corruption()) {
         let _ = dict.insert("corruption", &corruption_to_dict(ledger));
     }
 
-    if let Some(populations) = snapshot.populations() {
+    if let Some(populations) = snapshot.population().and_then(|s| s.populations()) {
         let _ = dict.insert("populations", &populations_to_array(populations));
     }
 
-    if let Some(power_nodes) = snapshot.power() {
+    if let Some(power_nodes) = snapshot.governance().and_then(|s| s.power()) {
         let _ = dict.insert("power_nodes", &power_nodes_to_array(power_nodes));
     }
 
-    if let Some(power_metrics) = snapshot.powerMetrics() {
+    if let Some(power_metrics) = snapshot.governance().and_then(|s| s.powerMetrics()) {
         let _ = dict.insert("power_metrics", &power_metrics_to_dict(power_metrics));
     }
 
-    if let Some(crisis) = snapshot.crisisTelemetry() {
+    if let Some(crisis) = snapshot.governance().and_then(|s| s.crisisTelemetry()) {
         let _ = dict.insert("crisis_telemetry", &crisis_telemetry_to_dict(crisis));
     }
 
-    if let Some(crisis_overlay) = snapshot.crisisOverlay() {
+    if let Some(crisis_overlay) = snapshot.governance().and_then(|s| s.crisisOverlay()) {
         let _ = dict.insert("crisis_overlay", &crisis_overlay_to_dict(crisis_overlay));
     }
 
-    if let Some(trade_links) = snapshot.tradeLinks() {
+    if let Some(trade_links) = snapshot.economy().and_then(|s| s.tradeLinks()) {
         let _ = dict.insert("trade_links", &trade_links_to_array(trade_links));
     }
 
-    if let Some(definitions) = snapshot.greatDiscoveryDefinitions() {
+    if let Some(definitions) = snapshot
+        .knowledge()
+        .and_then(|s| s.greatDiscoveryDefinitions())
+    {
         let _ = dict.insert(
             "great_discovery_definitions",
             &great_discovery_definitions_to_array(definitions),
         );
     }
 
-    if let Some(great_discoveries) = snapshot.greatDiscoveries() {
+    if let Some(great_discoveries) = snapshot.knowledge().and_then(|s| s.greatDiscoveries()) {
         let _ = dict.insert(
             "great_discoveries",
             &great_discovery_states_to_array(great_discoveries),
         );
     }
 
-    if let Some(great_progress) = snapshot.greatDiscoveryProgress() {
+    if let Some(great_progress) = snapshot
+        .knowledge()
+        .and_then(|s| s.greatDiscoveryProgress())
+    {
         let _ = dict.insert(
             "great_discovery_progress",
             &great_discovery_progress_states_to_array(great_progress),
         );
     }
 
-    if let Some(gd_telemetry) = snapshot.greatDiscoveryTelemetry() {
+    if let Some(gd_telemetry) = snapshot
+        .knowledge()
+        .and_then(|s| s.greatDiscoveryTelemetry())
+    {
         let _ = dict.insert(
             "great_discovery_telemetry",
             &great_discovery_telemetry_to_dict(gd_telemetry),
         );
     }
 
-    if let Some(tiles_fb) = snapshot.tiles() {
+    if let Some(tiles_fb) = snapshot.map().and_then(|s| s.tiles()) {
         let _ = dict.insert("tiles", &tiles_to_array(tiles_fb));
     }
 
-    if let Some(generations) = snapshot.generations() {
+    if let Some(generations) = snapshot.population().and_then(|s| s.generations()) {
         let _ = dict.insert("generations", &generations_to_array(generations));
     }
 
-    if let Some(layers) = snapshot.cultureLayers() {
+    if let Some(layers) = snapshot.culture().and_then(|s| s.cultureLayers()) {
         let _ = dict.insert("culture_layers", &culture_layers_to_array(layers));
     }
 
-    if let Some(tensions) = snapshot.cultureTensions() {
+    if let Some(tensions) = snapshot.culture().and_then(|s| s.cultureTensions()) {
         let _ = dict.insert("culture_tensions", &culture_tensions_to_array(tensions));
     }
 
-    if let Some(progress) = snapshot.discoveryProgress() {
+    if let Some(progress) = snapshot.knowledge().and_then(|s| s.discoveryProgress()) {
         let _ = dict.insert("discovery_progress", &discovery_progress_to_array(progress));
     }
 
