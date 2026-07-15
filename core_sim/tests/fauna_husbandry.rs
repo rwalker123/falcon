@@ -741,25 +741,47 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
     assert!(recovered.is_corralled(), "and it still has its pen");
 }
 
-/// **The ladder is monotone for EVERY species** — Rabbit Warren (K=200) → Red Deer (K=1200) →
-/// Thunder Mammoths (K=12000): `wild Sustain MSY < pastoral < pen net of upkeep`. A small-herd
-/// inversion is exactly the bug class that bit the expedition forecast, so this is asserted across the
-/// whole species table, not one species. Every number below is **measured from a real sim run** (a
-/// band's actual take / a real larder debit), never arithmetic.
+/// **The husbandry ladder, per species — and the fast-breeder inversion Grazing 2b-ii introduces.**
+/// Rabbit Warren (K=200) → Red Deer (K=1200) → Thunder Mammoths (K=12000), each measured at its **own
+/// per-species wild `r`** (2b-ii: rabbit 0.35, deer 0.10, mammoth 0.04 — no longer the single global
+/// 0.05 the pre-2b-ii test could ignore by reseating only the cap). Every number below is **measured
+/// from a real sim run** (a band's actual take / a real larder debit), never arithmetic.
+///
+/// The ladder is `wild Sustain MSY < pastoral < pen net of upkeep` **only while the species' wild `r`
+/// is below the pastoral rung's 0.25** (deer, mammoth). For a **fast breeder whose wild `r` ≥ 0.25**
+/// (rabbit/fowl), taming to the flat pastoral 0.25 is a growth *downgrade*, so the pastoral rung
+/// **inverts** — a KNOWN tension flagged for the 2d pen/pastoral retune (the pastoral/pen rungs keep
+/// their shipped absolute `r` this slice, per `docs/plan_grazing_2b.md` §7). The **pen** rung
+/// (`r` = 0.90) still tops every species, so the top of the ladder is never inverted; only the passive
+/// mobile rung is, and there the trade is mobility/collapse-immunity, not raw yield. Asserted per
+/// species according to which regime it is in — the invariant is not silently dropped, it is made
+/// conditional on the (measured) wild `r`.
 #[test]
 fn the_husbandry_ladder_is_monotone_for_every_species() {
     const MEASURE_STOCK: f32 = 5_000.0;
 
-    let species_caps: Vec<(String, f32)> = {
+    // (display, cap, per-species wild r) — the wild rung must be measured at each species' OWN r.
+    let species_caps: Vec<(String, f32, f32)> = {
         let fauna = FaunaConfigHandle::default().get();
+        let wild_default = fauna.ecology.regrowth_rate;
         ["rabbit", "deer", "mammoth"]
             .iter()
             .map(|key| {
                 let def = &fauna.species[*key];
-                (def.display_name.clone(), def.carrying_capacity())
+                (
+                    def.display_name.clone(),
+                    def.carrying_capacity(),
+                    def.regrowth_rate_or(wild_default),
+                )
             })
             .collect()
     };
+    let pastoral_r = FaunaConfigHandle::default()
+        .get()
+        .husbandry
+        .pastoral
+        .ecology
+        .regrowth_rate;
 
     // Measured twice: **at capacity** (a freshly-penned herd, `B = K`) and at the **settled operating
     // point** (`B* = K/2` — where a harvested herd actually converges; the point the pen's
@@ -779,14 +801,17 @@ fn the_husbandry_ladder_is_monotone_for_every_species() {
             "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9} {:>9}",
             "species", "K", "wild", "pastoral", "pen gross", "upkeep", "pen net"
         );
-        for (species, cap) in &species_caps {
-            let (species, cap) = (species.clone(), *cap);
+        for (species, cap, wild_r) in &species_caps {
+            let (species, cap, wild_r) = (species.clone(), *cap, *wild_r);
             let biomass = cap * biomass_fraction;
 
             // --- Wild Sustain: a band hunting a wild herd — its ACTUAL take, from the yield telemetry.
+            // Seat the herd at THIS species' per-species wild `r` (2b-ii), since the spawned short-range
+            // game the harness reuses carries its own rate.
             let mut app = spawn_world();
             let id = prime_thriving_herd(&mut app);
             reseat(&mut app, &id, cap, biomass);
+            set_wild_regrowth_rate(&mut app, &id, wild_r);
             let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
             run_turns_with_hunt(&mut app, 1);
             let wild = yield_of(&app, band);
@@ -820,17 +845,25 @@ fn the_husbandry_ladder_is_monotone_for_every_species() {
                 "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
             );
 
-            assert_ladder_is_monotone(&species, wild, pastoral, pen_gross, upkeep, pen_net);
+            assert_ladder_is_monotone(
+                &species, wild_r, pastoral_r, wild, pastoral, pen_gross, upkeep, pen_net,
+            );
         }
     }
     println!();
 }
 
-/// The ladder's ordering, asserted on **measured** numbers: `wild < pastoral < pen net of upkeep`, and
-/// the pen must cost real food while still netting positive. A small-herd inversion is exactly the bug
-/// class that bit the expedition forecast, so this runs for every species at every biomass measured.
+/// The ladder's ordering, asserted on **measured** numbers, **conditioned on the species' wild `r`**
+/// (Grazing 2b-ii). The pen rung (`r` = 0.90) must top every species and cost real food — that never
+/// inverts. The **pastoral** rung out-pays wild Sustain **iff** the species breeds slower than the flat
+/// pastoral 0.25; a fast breeder (`wild_r ≥ pastoral_r`) instead reads a documented inversion (taming
+/// it to 0.25 is a growth downgrade — the 2d retune target), and there we assert the inversion is
+/// *exactly* that and nothing worse (the pen still tops wild).
+#[allow(clippy::too_many_arguments)] // the ladder's measured columns + the two rates that gate them
 fn assert_ladder_is_monotone(
     species: &str,
+    wild_r: f32,
+    pastoral_r: f32,
     wild: f32,
     pastoral: f32,
     pen_gross: f32,
@@ -838,18 +871,48 @@ fn assert_ladder_is_monotone(
     pen_net: f32,
 ) {
     assert!(
-        wild > 0.0 && pastoral > wild,
-        "{species}: pastoral ({pastoral}) must out-pay wild Sustain ({wild})"
+        wild > 0.0,
+        "{species}: a thriving wild herd has a positive Sustain MSY ({wild})"
     );
-    assert!(
-        pen_net > pastoral,
-        "{species}: the pen NET of upkeep ({pen_net}) must out-pay the free pastoral rung \
-         ({pastoral}) — otherwise penning is irrational"
-    );
+    if wild_r < pastoral_r {
+        // The intended ladder: management (a faster growth rate) buys yield.
+        assert!(
+            pastoral > wild,
+            "{species}: pastoral ({pastoral}) must out-pay wild Sustain ({wild}) when wild r \
+             ({wild_r}) < pastoral r ({pastoral_r})"
+        );
+        assert!(
+            pen_net > pastoral,
+            "{species}: the pen NET of upkeep ({pen_net}) must out-pay the free pastoral rung \
+             ({pastoral}) — otherwise penning is irrational"
+        );
+    } else {
+        // The fast-breeder inversion (2b-ii): the flat pastoral rate is a downgrade, so the passive
+        // rung is a mobility/collapse-immunity trade, not a yield gain. Flagged for the 2d retune.
+        assert!(
+            pastoral <= wild,
+            "{species}: fast breeder (wild r {wild_r} ≥ pastoral r {pastoral_r}) — the pastoral rung \
+             ({pastoral}) is expected to sit AT/BELOW wild Sustain ({wild}); if it now out-pays wild, \
+             the inversion has been fixed and this branch should become the monotone one"
+        );
+        assert!(
+            pen_net > wild,
+            "{species}: even for a fast breeder the PEN net of upkeep ({pen_net}) must still top wild \
+             Sustain ({wild}) — the top of the ladder is never inverted"
+        );
+    }
     assert!(
         upkeep > 0.0 && upkeep < pen_gross,
         "{species}: the pen must cost real food ({upkeep}) and still net positive (gross {pen_gross})"
     );
+}
+
+/// Seat a herd's cached per-species **wild** regrowth rate (Grazing 2b-ii) — the wild rung is measured
+/// at each species' own `r`, and the harness reuses one spawned short-range herd for every row.
+fn set_wild_regrowth_rate(app: &mut App, id: &str, r: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.regrowth_rate = r;
 }
 
 /// A corralled herd left untended **escapes**: `advance_husbandry` clears `corralled_at`, reverting it

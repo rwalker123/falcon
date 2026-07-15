@@ -4242,6 +4242,7 @@ fn herd_state(herd: &Herd) -> HerdState {
         corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
         corral_progress: herd.corral_progress,
         fodder_per_biomass: herd.fodder_per_biomass,
+        regrowth_rate: herd.regrowth_rate,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4703,6 +4704,8 @@ mod tests {
             // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
             // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
             fodder_per_biomass: 0.05,
+            // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
+            regrowth_rate: 0.04,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -5895,6 +5898,7 @@ mod tests {
             50.0,
             100.0,
             0.0,
+            0.05,
         );
         penned.corral_at(UVec2::new(4, 4));
         registry.herds.push(penned);
@@ -5907,6 +5911,7 @@ mod tests {
             50.0,
             100.0,
             0.0,
+            0.05,
         ));
 
         let telemetry = HerdTelemetry {
@@ -5941,6 +5946,7 @@ mod tests {
             PEN_BIOMASS,
             100.0,
             0.0,
+            0.05,
         );
         penned.corral_at(UVec2::new(4, 4));
         // The keeper could only pay half the feed last turn → the herd is starving.
@@ -5954,6 +5960,7 @@ mod tests {
             50.0,
             100.0,
             0.0,
+            0.05,
         ));
 
         let telemetry = HerdTelemetry {
@@ -6009,6 +6016,7 @@ mod tests {
             BIOMASS,
             CAP,
             0.0,
+            0.05,
         );
         mobile.claim_domestication(FactionId(0));
         registry.herds.push(mobile);
@@ -6021,6 +6029,7 @@ mod tests {
             BIOMASS,
             CAP,
             0.0,
+            0.05,
         );
         penned.claim_domestication(FactionId(0));
         penned.corral_at(UVec2::new(3, 3));

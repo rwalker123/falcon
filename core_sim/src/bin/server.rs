@@ -4795,6 +4795,7 @@ mod tests {
             60.0,
             100.0,
             0.0,
+            0.05,
         );
         if let Some(faction) = owner {
             herd.claim_domestication(faction);

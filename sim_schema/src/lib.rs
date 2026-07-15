@@ -441,6 +441,12 @@ pub struct HerdState {
     /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.
     #[serde(default)]
     pub fodder_per_biomass: f32,
+    /// Per-species **wild logistic regrowth rate** (Grazing Phase 2b-ii), cached on the live `Herd` at
+    /// spawn from its `SpeciesDef` (falling back to the global wild rate when the row omits it).
+    /// Round-tripped here (sim-side rollback only, not on the client wire) so a rollback restores the
+    /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
+    #[serde(default)]
+    pub regrowth_rate: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }

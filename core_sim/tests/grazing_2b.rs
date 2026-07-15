@@ -242,14 +242,15 @@ fn a_grazed_cluster_recovers_after_the_herd_leaves() {
 }
 
 #[test]
-fn grazing_leaves_the_hunting_economy_byte_identical() {
-    // The inert invariant on a real map: running the graze draw-down over many turns never changes a
-    // herd's carrying capacity away from the species constant, so `K` (and every hunt yield derived
-    // from it) is exactly what it was before 2b-i.
+fn grazing_makes_carrying_capacity_ecological() {
+    // Grazing 2b-ii: `K` is no longer the species constant — a mobile herd's carrying capacity is
+    // recomputed each turn from the graze its range yields. So on a real map (a) the economy MOVES off
+    // the constants (the layer is live, not inert), and (b) every surviving herd's `K` stays finite and
+    // positive — movement (§4.1) keeps herds on grass, so K never crashes to zero on recoverable ground.
     let mut app = spawn_world();
 
-    // The species-constant K each live herd should keep (biomass table max via the config).
-    let expected_caps: std::collections::HashMap<String, f32> = {
+    // The species-constant K each herd carried at spawn (the pre-2b-ii value).
+    let spawn_caps: std::collections::HashMap<String, f32> = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         app.world
             .resource::<HerdRegistry>()
@@ -270,18 +271,96 @@ fn grazing_leaves_the_hunting_economy_byte_identical() {
     }
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let mut moved_off_constant = 0usize;
+    let mut grazing_herds = 0usize;
     for herd in app.world.resource::<HerdRegistry>().herds.iter() {
-        if let Some(&expected) = expected_caps.get(&herd.id) {
-            assert_eq!(
-                herd.carrying_capacity, expected,
-                "herd {} K stayed the species constant (inert on carrying capacity)",
-                herd.id
-            );
-        }
-        // K resolves to the raw carrying capacity, never a graze-derived value, this slice.
-        assert_eq!(
-            core_sim::herd_capacity(herd, &fauna),
+        // A surviving herd's K is finite and strictly positive — no NaN, no crash-to-zero.
+        assert!(
+            herd.carrying_capacity.is_finite() && herd.carrying_capacity > 0.0,
+            "herd {} keeps a finite, positive ecological K, got {}",
+            herd.id,
             herd.carrying_capacity
         );
+        // The resolver still reads the (now dynamic) cached field for a mobile herd — every downstream
+        // consumer is unchanged; only the value it caches moved.
+        if !herd.is_corralled() {
+            assert_eq!(
+                core_sim::herd_capacity(herd, &fauna),
+                herd.carrying_capacity
+            );
+        }
+        if herd.fodder_per_biomass > 0.0 {
+            grazing_herds += 1;
+            if let Some(&spawn_cap) = spawn_caps.get(&herd.id) {
+                if (herd.carrying_capacity - spawn_cap).abs() > 1e-3 {
+                    moved_off_constant += 1;
+                }
+            }
+        }
     }
+    assert!(grazing_herds > 0, "the map spawns grazing herds to measure");
+    assert!(
+        moved_off_constant > 0,
+        "at least one grazing herd's K became range-derived (the layer is live, not inert): \
+         {moved_off_constant}/{grazing_herds} moved off the species constant"
+    );
+}
+
+/// **THE 2b-ii MEASUREMENT** (`docs/plan_grazing_2b.md` §9). Run the real earthlike map forward until
+/// K settles, then report — per species — the ecological-K distribution (min/mean/max across the map's
+/// herds) vs. the retired constant, and the re-balanced hunting economy (Sustain MSY = `r·K/4·p` at the
+/// *new* per-species `r`; Market = `take_fraction·K·p`). Prints only — it asserts nothing, so retuning
+/// the levers moves the numbers, not the verdict. Run with `--nocapture`.
+#[test]
+fn the_2b_ii_measurement_report() {
+    let mut app = spawn_world();
+    // Long enough for the coupled loop to settle every herd on its range (the convergence test shows
+    // fixed points reached far sooner).
+    for _ in 0..120 {
+        run_turn(&mut app);
+    }
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let provisions = fauna.hunt.provisions_per_biomass;
+    let market_fraction = fauna.market.take_fraction;
+    let wild_default = fauna.ecology.regrowth_rate;
+
+    // Group surviving herds by species.
+    use std::collections::BTreeMap;
+    let mut by_species: BTreeMap<String, Vec<f32>> = BTreeMap::new();
+    for herd in app.world.resource::<HerdRegistry>().herds.iter() {
+        by_species
+            .entry(herd.species.clone())
+            .or_default()
+            .push(herd.carrying_capacity);
+    }
+
+    println!("\n=== 2b-ii K distribution (earthlike seed {MAP_SEED}, 120 turns) ===");
+    println!(
+        "  {:<18} {:>4} {:>8} {:>8} {:>8} {:>10} {:>6} {:>8} {:>9} {:>9}",
+        "species", "n", "K min", "K mean", "K max", "old const", "r", "old r", "Sustain", "Market"
+    );
+    for (species, caps) in &by_species {
+        let n = caps.len();
+        let (mut lo, mut hi, mut sum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0);
+        for &c in caps {
+            lo = lo.min(c);
+            hi = hi.max(c);
+            sum += c;
+        }
+        let mean = sum / n as f32;
+        let def = fauna.species_by_display(species);
+        let old_const = def.map(|d| d.carrying_capacity()).unwrap_or(0.0);
+        let r = def.and_then(|d| d.regrowth_rate).unwrap_or(wild_default);
+        // Sustain MSY and Market take at the MEAN ecological K, in provisions/turn.
+        let sustain = r * mean / 4.0 * provisions;
+        let market = market_fraction * mean * provisions;
+        println!(
+            "  {species:<18} {n:>4} {lo:>8.0} {mean:>8.0} {hi:>8.0} {old_const:>10.0} {r:>6.2} \
+             {wild_default:>8.2} {sustain:>9.3} {market:>9.3}"
+        );
+    }
+    println!(
+        "  (Sustain = r·K/4·{provisions}; Market = {market_fraction}·K·{provisions}; old r was the \
+         single global {wild_default})\n"
+    );
 }

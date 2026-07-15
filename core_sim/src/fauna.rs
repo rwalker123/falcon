@@ -197,6 +197,13 @@ pub struct Herd {
     /// `0.0` for a non-grazing species. **Inert on carrying capacity this slice** — the eating only
     /// draws the graze layer down (visible on the pasture overlay); `K` is still the species constant.
     pub fodder_per_biomass: f32,
+    /// Per-species **wild logistic regrowth rate** (Grazing Phase 2b-ii), cached from the `SpeciesDef`
+    /// at spawn (mirroring `fodder_per_biomass`), resolved via `SpeciesDef::regrowth_rate_or` so a row
+    /// that omits it falls back to `fauna.ecology.regrowth_rate`. [`herd_ecology`] folds it into the
+    /// herd's **wild** ecology (fast small game breeds hot, slow megafauna cold); a domesticated
+    /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Round-tripped through
+    /// the rollback snapshot (`HerdState.regrowth_rate`, sim-side only — not on the client wire).
+    pub regrowth_rate: f32,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
     pub ecology_phase: EcologyPhase,
@@ -266,6 +273,9 @@ pub struct Herd {
 }
 
 impl Herd {
+    // A constructor that mirrors the herd's identity + spawn-state fields (id/species/size/route/
+    // biomass/K/fodder/regrowth) — bundling them into a struct would just move the noise.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         species_display: String,
@@ -274,6 +284,7 @@ impl Herd {
         biomass: f32,
         carrying_capacity: f32,
         fodder_per_biomass: f32,
+        regrowth_rate: f32,
     ) -> Self {
         let label = format!("{} ({})", species_display, id);
         let current_pos = route.first().copied().unwrap_or_else(|| UVec2::new(0, 0));
@@ -298,6 +309,7 @@ impl Herd {
             biomass,
             carrying_capacity,
             fodder_per_biomass,
+            regrowth_rate,
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
             ecology_phase: EcologyPhase::Thriving,
             domestication_progress: 0.0,
@@ -319,7 +331,7 @@ impl Herd {
         self.ecology_phase = classify_ecology_phase(
             self.biomass,
             herd_capacity(self, fauna),
-            herd_ecology(self, fauna),
+            &herd_ecology(self, fauna),
         );
     }
 
@@ -458,13 +470,24 @@ pub(crate) const PEN_FULLY_FED: f32 = 1.0;
 /// Every consumer of a herd's ecology — regrowth, the MSY/policy ceilings, the phase classification,
 /// the forecast, the expedition — resolves it *here*. **No call site may re-derive it**: a second copy
 /// of this mapping is exactly how a forecast starts promising a number the take won't pay.
-pub fn herd_ecology<'a>(herd: &Herd, fauna: &'a FaunaConfig) -> &'a EcologyConfig {
+/// Returns an **owned** `EcologyConfig` (cheap — five `f32`s, `Copy`) rather than a borrow, because a
+/// **wild** herd's curve now runs at the herd's own **per-species `regrowth_rate`** (Grazing Phase
+/// 2b-ii): the wild ecology with only its `regrowth_rate` swapped for `herd.regrowth_rate`, leaving the
+/// shared phase bands (`collapse_fraction`/`stressed_fraction`/`extinction_floor`) intact. The
+/// pastoral/pen rungs keep their own faster `r` verbatim. This stays THE single seam — every consumer
+/// (regrowth, MSY/policy ceilings, phase classification, forecast, expedition) reads the folded rate
+/// here and nowhere re-derives it, so a wild rabbit and a wild mammoth breed at different rates without
+/// a second copy of the mapping.
+pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     if herd.is_corralled() {
-        &fauna.husbandry.pen.ecology
+        fauna.husbandry.pen.ecology
     } else if herd.is_domesticated() {
-        &fauna.husbandry.pastoral.ecology
+        fauna.husbandry.pastoral.ecology
     } else {
-        &fauna.ecology
+        EcologyConfig {
+            regrowth_rate: herd.regrowth_rate,
+            ..fauna.ecology
+        }
     }
 }
 
@@ -645,6 +668,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         biomass: state.ecology.biomass,
         carrying_capacity: state.ecology.carrying_capacity,
         fodder_per_biomass: state.fodder_per_biomass,
+        regrowth_rate: state.regrowth_rate,
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
         owner: state.ecology.owner.map(FactionId),
@@ -869,6 +893,7 @@ fn spawn_migratory_herds(
             biomass,
             carrying_capacity,
             def.fodder_per_biomass,
+            def.regrowth_rate_or(fauna.ecology.regrowth_rate),
         );
         // Start loitering at the spawn anchor for a randomized window (rather than migrating off
         // immediately from `Loiter { turns_left: 0 }`).
@@ -984,6 +1009,7 @@ fn spawn_game_group_at(
         biomass,
         carrying_capacity,
         def.fodder_per_biomass,
+        def.regrowth_rate_or(fauna.ecology.regrowth_rate),
     );
     herd.refresh_ecology_phase(fauna);
     Some(herd)
@@ -1044,6 +1070,19 @@ pub fn advance_herds(
                 height,
                 wrap,
             );
+            // **K becomes ecological** (Grazing Phase 2b-ii). A *mobile* herd's carrying capacity is
+            // recomputed each turn from the graze its (post-roam) range yields, so nothing downstream
+            // changes: `herd_capacity` still reads this cached field, every consumer is unchanged. A
+            // **corralled** herd is skipped — it keeps the `carrying_capacity` frozen at pen time, and
+            // `herd_capacity`'s corral branch scales it by `pen.capacity_fraction` (pen K is 2d's
+            // concern, not this slice). Recomputed AFTER roam (K reflects where the herd now stands)
+            // and BEFORE `regrow_biomass` (the herd grows toward the range's K this turn) — the same
+            // range `advance_herd_grazing` then eats.
+            if let Some(k) =
+                ecological_carrying_capacity(herd, def, graze, &fauna, width, height, wrap)
+            {
+                herd.carrying_capacity = k;
+            }
         }
         regrow_biomass(herd, &fauna);
         let position = herd.position();
@@ -1078,6 +1117,73 @@ pub fn advance_herds(
     density.rebuild(config.grid_size, &registry);
 }
 
+/// The **graze's sustainable flow** at biomass `G` (Grazing Phase 2b-ii) — one turn's regrowth at the
+/// MSY-clamped biomass (`min(G, cap/2)`), **pure logistic, without the Allee cutoff**. This is the
+/// graze counterpart of [`sustainable_yield`], but deliberately *not* that helper: `sustainable_yield`
+/// runs through `net_biomass_delta`, which zeroes the flow below `collapse_fraction` (the animal Allee
+/// crash) — yet **grass has no depensation** (`advance_graze_regrowth` runs pure logistic, and the
+/// design promises a pasture always recovers). Using `sustainable_yield` here would make a heavily-but-
+/// recoverably grazed tile read `K = 0` and crash its herd to zero on ground that in fact regrows — the
+/// exact "crash on recoverable ground" the convergence gate forbids. This flow peaks at
+/// `r_graze·cap/4` for `G ≥ cap/2` (so `K` is flat while the range holds above its MSY point) and
+/// declines smoothly to `0` as `G → 0` (so overgrazing lowers `K` continuously, no cliff).
+pub(crate) fn graze_sustainable_flow(biomass: f32, cap: f32, graze_eco: &EcologyConfig) -> f32 {
+    logistic_regrowth(
+        biomass.min(cap * MSY_BIOMASS_FRACTION),
+        cap,
+        graze_eco.regrowth_rate,
+    )
+}
+
+/// **The ecological carrying capacity** (Grazing Phase 2b-ii, `docs/plan_grazing_2b.md` §2/§3): the
+/// number of animals the sustainable graze flow on a herd's range can feed. Sum the graze flow
+/// ([`graze_sustainable_flow`], at each tile's **current — drawn-down —** biomass) over the herd's
+/// range tiles ([`hex_range_tiles`], the SAME tiles [`advance_herd_grazing`] eats), then denominate
+/// into animals by the herd's per-species `fodder_per_biomass`:
+///
+/// ```text
+/// K = Σ_range graze_sustainable_flow(G_tile, G_cap_tile, graze.ecology) / fodder_per_biomass
+/// ```
+///
+/// Reading the graze's **current** biomass is the whole feedback loop (§2.1): a range grazed below its
+/// MSY point yields less flow, so `K` falls and the herd shrinks (the emergent overgrazing spiral); a
+/// range at/above its MSY point yields the full flow, so `K` is maximal and a herd at `K` eats exactly
+/// that flow, holding the pasture at the most productive grazing intensity — carrying capacity falls
+/// out of the loop, it is not a number anyone set.
+///
+/// Returns `None` (→ the caller keeps the herd's frozen constant `K`) for a **non-grazing** herd
+/// (`fodder_per_biomass <= 0`, e.g. a legacy config or a species that omits it) or when the graze
+/// layer is **absent/empty** (the isolated fauna test harnesses run `advance_herds` without a graze
+/// registry) — nothing regresses. A genuinely barren/overgrazed range yields `Some(small)` down toward
+/// `Some(0.0)`; the herd shrinks toward it (movement, §4.1, keeps herds off zero-graze ground so this
+/// is the overgrazing tail, not a stranding).
+fn ecological_carrying_capacity(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    graze: &GrazeRegistry,
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<f32> {
+    if herd.fodder_per_biomass <= 0.0 || graze.is_empty() {
+        return None;
+    }
+    let radius = herd.graze_range_radius(def);
+    let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
+    let mut flow = 0.0;
+    for tile in range {
+        if let Some(patch) = graze.patch(tile) {
+            flow += graze_sustainable_flow(
+                patch.biomass,
+                patch.carrying_capacity,
+                &fauna.graze.ecology,
+            );
+        }
+    }
+    Some(flow / herd.fodder_per_biomass)
+}
+
 /// **The graze draw-down** (Grazing Phase 2b-i, `docs/plan_grazing_2b.md` §3). Each **mobile,
 /// non-corralled** herd eats the graze on the tiles in its range, lowering the `GrazeRegistry` — the
 /// animal-edible mirror of `forage::forage_take`. A corralled herd is fed from its keeper's larder
@@ -1085,21 +1191,23 @@ pub fn advance_herds(
 ///
 /// Per herd: enumerate its **range** = [`hex_range_tiles`]`(current_pos, graze_range_radius)`, demand
 /// `fodder_per_biomass × biomass` fodder, and draw it from the range's patches ([`graze_take`]),
-/// **proportional to each tile's available graze** and floored at each patch's reseed floor (never
-/// below `reseed_floor_fraction × capacity` — the same floor `regrow_graze_patch` reseeds to, so
-/// grazing can never permanently kill a tile). A barren tile (no patch) contributes nothing.
+/// **proportional to each tile's available graze** and floored at the **overgrazing escapement floor**
+/// (never below `overgraze_escapement_fraction × capacity` — 2b-ii's convergence discipline; a barren
+/// tile with no patch contributes nothing).
 ///
 /// **Deterministic under rollback.** Herds are drawn **sequentially in `HerdRegistry` order** — that
 /// Vec is itself rollback-persisted in a fixed order (captured coord-stable and rebuilt by
 /// `update_from_states`), and `advance_herds`' `retain` / immigration's `push` both preserve it — so
 /// two herds sharing a tile always draw in the same order, and the eaten state is reproducible.
 ///
-/// **INERT ON CARRYING CAPACITY.** This only moves the graze layer (visible on the pasture overlay);
-/// it never touches herd `biomass` or `K`, so the hunting economy is byte-identical to pre-2b-i.
+/// **This is one half of the coupled model (2b-ii).** The draw-down lowers the range's graze, which is
+/// what [`ecological_carrying_capacity`] reads next turn to size the herd — so eating a range down
+/// *lowers `K`* (the overgrazing feedback), and the escapement floor is what stops that feedback from
+/// running away. (In 2b-i this was inert on `K`; 2b-ii activates it.)
 ///
-/// Turn order: registered **after `advance_herds`** (herds have roamed to their new tile) and
-/// **before `advance_graze_regrowth`** (so the eaten state is what regrows — a herd can't eat grass
-/// that regrew the same turn).
+/// Turn order: registered **after `advance_herds`** (herds have roamed to their new tile *and* had `K`
+/// recomputed + grown toward it) and **before `advance_graze_regrowth`** (so the eaten state is what
+/// regrows — a herd can't eat grass that regrew the same turn).
 pub fn advance_herd_grazing(
     herds: Res<HerdRegistry>,
     mut graze: ResMut<GrazeRegistry>,
@@ -1113,7 +1221,10 @@ pub fn advance_herd_grazing(
     let width = config.grid_size.x.max(1);
     let height = config.grid_size.y.max(1);
     let wrap = config.map_topology.wrap_horizontal;
-    let reseed_floor_fraction = fauna.graze.reseed_floor_fraction;
+    // Grazing draws down to the **overgrazing escapement floor** (2b-ii), not the reseed floor: the
+    // constant-escapement discipline that keeps the herd↔graze loop convergent (validated `>` the
+    // reseed floor, so it is the binding one). Below it a range collapses into a stripped remnant.
+    let escapement_floor_fraction = fauna.graze.overgraze_escapement_fraction;
     for herd in herds.herds.iter() {
         // Corralled herds are fed from the larder, not the land (Rung 1c) — they don't graze.
         if herd.is_corralled() {
@@ -1126,14 +1237,19 @@ pub fn advance_herd_grazing(
         let def = fauna.species_by_display(&herd.species);
         let radius = herd.graze_range_radius(def);
         let range = hex_range_tiles(herd.current_pos, radius, width, height, wrap);
-        graze_take(&mut graze, &range, demand, reseed_floor_fraction);
+        graze_take(&mut graze, &range, demand, escapement_floor_fraction);
     }
 }
 
 /// Draw `demand` fodder from the graze patches on `range`, **proportional to each tile's available
-/// graze** (biomass above its reseed floor) and clamped so no patch drops below
-/// `reseed_floor_fraction × capacity`. The animal-edible counterpart of `forage::forage_take`'s
-/// subtract-and-clamp discipline (the floor is the one `regrow_graze_patch` reseeds to).
+/// graze** (biomass above `floor_fraction × capacity`) and clamped so no patch drops below that floor.
+/// The animal-edible counterpart of `forage::forage_take`'s subtract-and-clamp discipline.
+///
+/// `floor_fraction` is the **overgrazing escapement floor** (2b-ii, `graze.overgraze_escapement_fraction`)
+/// — grazing may draw a patch down to it but no further, the constant-escapement discipline that keeps
+/// the coupled herd↔graze loop convergent (a deeper draw would let a range collapse into a stripped
+/// remnant it cannot climb back out of; `docs/plan_grazing_2b.md` §2.2). It sits *above* the reseed
+/// lift, so it is the binding floor.
 ///
 /// Proportional distribution (not an even split) is order-independent within a single herd's take and
 /// spreads the pressure toward the richer tiles in the range; a tile with no patch (barren) simply
@@ -1141,12 +1257,12 @@ pub fn advance_herd_grazing(
 /// the herd eats all of it (down to the floors) and no further — the range is grazed out for the turn.
 /// The `ecology_phase` is left stale here on purpose: `advance_graze_regrowth` (the very next system)
 /// regrows every patch and refreshes its phase, exactly as `forage_take` defers to `regrow_patch`.
-fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, reseed_floor_fraction: f32) {
-    // Total graze available across the range (each tile's biomass above its own reseed floor).
+fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fraction: f32) {
+    // Total graze available across the range (each tile's biomass above the escapement floor).
     let mut total_available = 0.0;
     for &tile in range {
         if let Some(patch) = graze.patch(tile) {
-            let floor = reseed_floor_fraction * patch.carrying_capacity;
+            let floor = floor_fraction * patch.carrying_capacity;
             total_available += (patch.biomass - floor).max(0.0);
         }
     }
@@ -1156,7 +1272,7 @@ fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, reseed_fl
     let taken_fraction = (demand / total_available).min(1.0);
     for &tile in range {
         if let Some(patch) = graze.patch_mut(tile) {
-            let floor = reseed_floor_fraction * patch.carrying_capacity;
+            let floor = floor_fraction * patch.carrying_capacity;
             let available = (patch.biomass - floor).max(0.0);
             patch.biomass -= available * taken_fraction;
         }
@@ -1673,7 +1789,7 @@ pub fn advance_husbandry(
             let take_biomass = managed_yield_biomass(
                 herd.biomass,
                 herd_capacity(herd, &fauna),
-                herd_ecology(herd, &fauna),
+                &herd_ecology(herd, &fauna),
             );
             herd.biomass -= take_biomass;
             // The output multiplier is per-band and applied at payout below (the yield is split across
@@ -1939,7 +2055,7 @@ pub fn hunt_source_yield_preview(
         sustainable_yield(
             herd.biomass,
             herd_capacity(herd, fauna),
-            herd_ecology(herd, fauna),
+            &herd_ecology(herd, fauna),
         ),
         fauna,
         output_multiplier,
@@ -2048,7 +2164,7 @@ pub(crate) fn hunt_forecast(
     let capacity = herd_capacity(herd, fauna);
     let ceiling = |policy| {
         hunt_provisions(
-            hunt_policy_ceiling(policy, herd.biomass, capacity, ecology, fauna)
+            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, fauna)
                 .clamp(0.0, herd.biomass),
             fauna,
             output_multiplier,
@@ -2162,8 +2278,9 @@ pub(crate) fn peak_regrowth(cap: f32, ecology: &EcologyConfig) -> f32 {
 /// turn by turn on a **clone** and must apply the *same* regrowth the live `advance_herds` does —
 /// re-deriving the curve there would let the pre-launch estimate drift from the sim.
 pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
-    // The herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity`): wild `r` = 0.05, pastoral
-    // 0.15, penned 0.60 — the whole husbandry ladder is just this curve run at a different rate.
+    // The herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity`): wild `r` is now
+    // **per-species** (fast small game ~0.35, slow megafauna ~0.04), pastoral 0.25, penned 0.90 — the
+    // whole husbandry ladder is just this curve run at a different rate.
     let ecology = herd_ecology(herd, fauna);
     let cap = herd_capacity(herd, fauna);
     // A domesticated (managed) group is immune to the overhunting collapse: it always
@@ -2171,7 +2288,7 @@ pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     let delta = if herd.is_domesticated() {
         logistic_regrowth(herd.biomass, cap, ecology.regrowth_rate)
     } else {
-        net_biomass_delta(herd.biomass, cap, ecology)
+        net_biomass_delta(herd.biomass, cap, &ecology)
     };
     // **The pen's growth is what the FEED buys.** A penned herd cannot graze, so an unfed one does not
     // grow at all (`docs/plan_corral_managed_population.md` §3.1: *fed → regrow; underfed → shrink*) —
@@ -2425,6 +2542,10 @@ mod tests {
 
     use crate::graze::{GrazePatch, GrazeRegistry};
 
+    /// Wild per-species regrowth rate for the 2b-i grazing harnesses (inert on `K`, so any live rate
+    /// works); the global wild default the retired single ecology used.
+    const WILD_TEST_REGROWTH_RATE: f32 = 0.05;
+
     fn herd_of_size(size: SizeClass, biomass: f32, cap: f32, fodder: f32) -> Herd {
         Herd::new(
             "game_test".to_string(),
@@ -2434,6 +2555,7 @@ mod tests {
             biomass,
             cap,
             fodder,
+            WILD_TEST_REGROWTH_RATE,
         )
     }
 

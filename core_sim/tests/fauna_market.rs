@@ -215,10 +215,25 @@ fn market_declines_faster_and_earns_more_trade_than_surplus() {
 }
 
 /// Sustained market hunting drives the group to local extinction (Phase D collapse reuse).
+///
+/// **Requires a species the market take can actually out-harvest** (Grazing 2b-ii). The `Market` take
+/// is `0.20 × biomass`; a herd collapses under it only when its per-species wild regrowth cannot refill
+/// that skim (`r < 0.25`, given the market fraction and the regrow-then-take turn order). The harness
+/// reuses spawned **small** game — now a *fast* breeder (rabbit `r` = 0.35) that OUT-breeds a 20% skim
+/// and settles at ~0.29·K rather than collapsing (a real 2b-ii property: fast small game resists market
+/// extinction). So seat this herd at a slow-breeder rate to exercise the collapse mechanic itself.
 #[test]
 fn market_hunt_drives_collapse() {
+    /// A slow breeder (below the ~0.25 market-collapse threshold) — deer/megafauna territory. A fast
+    /// small-game `r` (0.35) would out-breed the skim and never collapse (see the doc comment).
+    const SLOW_BREEDER_R: f32 = 0.05;
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
+        h.regrowth_rate = SLOW_BREEDER_R;
+    }
     let band = spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
     run_turns(&mut app, 40);
 

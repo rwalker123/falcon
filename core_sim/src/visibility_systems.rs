@@ -1199,6 +1199,7 @@ mod tests {
             100.0,
             100.0,
             0.0,
+            0.05,
         );
 
         let mut allocation = LaborAllocation::default();

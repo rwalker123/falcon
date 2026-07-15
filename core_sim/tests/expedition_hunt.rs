@@ -13,9 +13,9 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, hunt_policy_ceiling, hunt_take,
-    hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
+    advance_expeditions, advance_herds, build_headless_app, herd_ecology, hunt_policy_ceiling,
+    hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
     CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
@@ -339,9 +339,15 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
     let _party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    // A wild herd → the wild ecology (the shared `herd_ecology` mapping; a tamed/penned herd would
-    // resolve to the pastoral/pen curve instead).
-    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &fauna.ecology, &fauna);
+    // A wild herd → the wild ecology **at this herd's per-species regrowth rate** (Grazing 2b-ii:
+    // `herd_ecology` folds the cached per-species `r` into the wild curve; a tamed/penned herd would
+    // resolve to the pastoral/pen curve instead). Read it from the herd, never `&fauna.ecology` — the
+    // whole point of `herd_ecology` being THE seam is that the expedition take reads the same rate.
+    let ecology = {
+        let registry = app.world.resource::<HerdRegistry>();
+        herd_ecology(registry.find(&id).expect("herd present"), &fauna)
+    };
+    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &ecology, &fauna);
     assert!(expected > 0.0, "a half-capacity herd has a positive MSY");
 
     app.world.run_system_once(advance_expeditions);
@@ -975,10 +981,16 @@ fn party_fills_on_the_forecast_turn() {
         }
 
         if actual.is_some() {
-            assert_eq!(
+            // A full pack ends the *hunting* leg — the party turns for home. It may already have
+            // reached it and begun `Delivering` by the fill turn (Grazing 2b-ii makes small game a
+            // genuinely fast provisioner — rabbit `r` = 0.35 refills the pack quickly — so the
+            // small/Market leg, which under the old uniform `r` = 0.05 never filled inside the horizon
+            // at all, now not only fills but can conclude the whole trip). Either post-hunt phase
+            // satisfies "the trip completes"; only staying in `Hunting` would be the failure.
+            assert_ne!(
                 phase(&app, party),
-                ExpeditionPhase::Returning,
-                "{context}: a full pack completes the trip"
+                ExpeditionPhase::Hunting,
+                "{context}: a full pack completes the trip (it is no longer hunting)"
             );
         }
     }

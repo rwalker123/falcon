@@ -194,16 +194,27 @@ fn graze_distribution_report() {
 
         // --- The model claims, guarded ---
 
-        // Every patch is seeded FULL and nothing eats it in Phase 2a, so the live biomass IS the
-        // capacity. If this ever fails, something started consuming graze — which is Phase 2b.
+        // **Phase 2b: herds now EAT.** Patches seed full, but the first turn's graze draw-down
+        // (`advance_herd_grazing`) consumes a little where herds stand — so live biomass sits *just
+        // below* capacity, never above (grazing only removes), and only a small fraction is gone after
+        // one turn (herds occupy a sliver of the map, and the escapement floor bounds how deep any one
+        // tile is drawn). This is the twin of the 2a inertness guard, inverted: it now asserts the
+        // layer is *live* but its draw-down is modest, not that it is untouched. The distribution this
+        // report measures is **capacity** (the biome table), which grazing never moves.
         let live_biomass: f64 = registry
             .patches
             .values()
             .map(|patch| f64::from(patch.biomass))
             .sum();
         assert!(
-            (live_biomass - total_capacity).abs() < 1.0,
-            "Phase 2a is INERT: nothing may draw graze down ({live_biomass:.0} vs {total_capacity:.0})"
+            live_biomass <= total_capacity + 1.0,
+            "grazing only draws graze DOWN, never above capacity ({live_biomass:.0} vs \
+             {total_capacity:.0})"
+        );
+        assert!(
+            live_biomass > total_capacity * 0.9,
+            "Phase 2b grazing is active but modest after one turn — most of the map is ungrazed \
+             ({live_biomass:.0} vs {total_capacity:.0})"
         );
 
         // Dead ground exists, but the map is not made of it.

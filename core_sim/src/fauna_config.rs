@@ -92,6 +92,17 @@ pub struct SpeciesDef {
     /// harmless while Phase 2b-i is inert on carrying capacity.
     #[serde(default)]
     pub fodder_per_biomass: f32,
+    /// **Per-species logistic regrowth rate** for a *wild* herd (Grazing Phase 2b-ii). Replaces the
+    /// single global `fauna.ecology.regrowth_rate` (0.05) that every animal used to breed at — the
+    /// artifact that made "small game can't provision an expedition" (PR #117): a rabbit bred at a
+    /// mammoth's rate. Fast small game breeds hot (~0.35), slow megafauna cold (~0.04). Cached onto
+    /// `Herd` at spawn (mirroring `fodder_per_biomass` / `carrying_capacity`) and folded into the
+    /// herd's *wild* ecology by [`crate::fauna::herd_ecology`]; the **pastoral/pen** rungs keep their
+    /// own faster `r` (0.25 / 0.90), and the phase bands stay shared. `None` (omitted) falls back to
+    /// `fauna.ecology.regrowth_rate`, so an older config stays non-breaking. Validated finite & `> 0`
+    /// when present.
+    #[serde(default)]
+    pub regrowth_rate: Option<f32>,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -143,6 +154,14 @@ impl SpeciesDef {
     /// Per-species carrying capacity biomass regrows toward (= the table max).
     pub fn carrying_capacity(&self) -> f32 {
         self.biomass[1].max(self.biomass[0]).max(0.0)
+    }
+
+    /// The **wild** per-species logistic regrowth rate to cache on a spawned `Herd`, falling back to
+    /// the global `fauna.ecology.regrowth_rate` when the row omits its own (Grazing Phase 2b-ii). The
+    /// pastoral/pen rungs never read this — they keep their own faster `r` (see
+    /// [`crate::fauna::herd_ecology`]).
+    pub fn regrowth_rate_or(&self, wild_default: f32) -> f32 {
+        self.regrowth_rate.unwrap_or(wild_default)
     }
 }
 
@@ -213,7 +232,7 @@ impl HuntConfig {
 /// A collapsing remnant below `extinction_floor * cap` disperses (despawns).
 /// `stressed_fraction` is the softer band used only to classify a herd's `EcologyPhase`
 /// for the client; it does not affect the growth curve.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(default)]
 pub struct EcologyConfig {
     pub regrowth_rate: f32,
@@ -550,6 +569,20 @@ pub struct GrazeConfig {
     /// (`logistic_regrowth(0, ..) == 0`). Kept below `ecology.collapse_fraction` so a stripped pasture
     /// still reads Collapsing — the floor stops permanent death, it does not hide overgrazing.
     pub reseed_floor_fraction: f32,
+    /// **The overgrazing escapement floor** (Grazing Phase 2b-ii), as a fraction of a tile's capacity:
+    /// grazing (`fauna::advance_herd_grazing`) can draw a patch down to this biomass but **no lower**
+    /// in a turn. This is the constant-*escapement* discipline the coupled herd↔graze system needs to
+    /// converge (`docs/plan_grazing_2b.md` §2.2, the same lesson the corral learned): the herd's demand
+    /// is a constant-*catch* draw on the graze, and a catch that strips a patch past the point where its
+    /// regrowth can refill the offtake collapses the range into a permanently-stripped attractor at the
+    /// reseed floor (the herd surviving as a stunted remnant on dead ground). Holding the draw above
+    /// this fraction bounds `K` below at `graze_sustainable_flow(escapement·cap)/fodder`, so an
+    /// **overgrazed range recovers to a stable smaller herd** instead of crashing. Set **above**
+    /// `reseed_floor_fraction` (so it is a real escapement, not just the reseed lift) and **below**
+    /// `MSY_BIOMASS_FRACTION` (0.5, the graze's own MSY point — so overgrazing below the productive
+    /// intensity is still *possible and visible*, just not unbounded). A **starting anchor** — deeper
+    /// (lower) allows more dramatic overgrazing at more crash risk; measure and retune (§9.5).
+    pub overgraze_escapement_fraction: f32,
 }
 
 /// Graze regrows **fast** — it is the quickest-renewing vegetal stock in the model, and that is the
@@ -565,6 +598,13 @@ const DEFAULT_GRAZE_REGROWTH_RATE: f32 = 0.40;
 /// Mirrors `forage.reseed_floor_fraction` (0.02) — see [`GrazeConfig::reseed_floor_fraction`].
 const DEFAULT_GRAZE_RESEED_FLOOR_FRACTION: f32 = 0.02;
 
+/// The overgrazing escapement floor (Grazing 2b-ii) — grazing cannot draw a patch below this fraction
+/// of capacity, the constant-escapement discipline that keeps the herd↔graze loop convergent. Measured
+/// (`core_sim/tests/grazing_2b_convergence.rs`): at `0.25` an overgrazed range settles on degraded
+/// ground (graze ~0.25–0.5·cap, `K` ≥ ~0.84·`K_max`) and **recovers**, where the bare reseed floor
+/// (0.02) locks it into a stripped remnant. See [`GrazeConfig::overgraze_escapement_fraction`].
+const DEFAULT_GRAZE_OVERGRAZE_ESCAPEMENT_FRACTION: f32 = 0.25;
+
 impl Default for GrazeConfig {
     fn default() -> Self {
         Self {
@@ -579,6 +619,7 @@ impl Default for GrazeConfig {
                 ..EcologyConfig::default()
             },
             reseed_floor_fraction: DEFAULT_GRAZE_RESEED_FLOOR_FRACTION,
+            overgraze_escapement_fraction: DEFAULT_GRAZE_OVERGRAZE_ESCAPEMENT_FRACTION,
         }
     }
 }
@@ -687,6 +728,28 @@ impl FaunaConfig {
             &self.husbandry.pastoral.ecology,
         )?;
         validate_ecology("husbandry.pen.ecology", &self.husbandry.pen.ecology)?;
+
+        // --- Per-species levers (Grazing Phase 2b-ii). A `regrowth_rate` present but non-positive is a
+        // dead wild herd (no MSY, never grows); a negative/NaN `fodder_per_biomass` would make the
+        // range draw-down and the range-derived `K` nonsense. Both are `#[serde(default)]`, so an older
+        // config that omits them stays valid (fodder → 0.0 = non-grazing; regrowth → the global wild
+        // rate). Iterated in stable key order so the error names a deterministic species.
+        let mut species: Vec<(&String, &SpeciesDef)> = self.species.iter().collect();
+        species.sort_by(|a, b| a.0.cmp(b.0));
+        for (key, def) in species {
+            // `"species.<key>.<leaf>"`, leaked to a `&'static str` like [`field`] (a fixed handful,
+            // one per species per load — the config is loaded a bounded number of times).
+            let species_field = |leaf: &str| -> &'static str {
+                Box::leak(format!("species.{key}.{leaf}").into_boxed_str())
+            };
+            require_non_negative_finite(
+                species_field("fodder_per_biomass"),
+                def.fodder_per_biomass,
+            )?;
+            if let Some(regrowth_rate) = def.regrowth_rate {
+                require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
+            }
+        }
 
         // --- The ladder is MONOTONE: management buys a growth rate, so each rung must grow faster
         // than the one below it. Invert this and penning a herd would *lower* its yield — the player
@@ -886,8 +949,33 @@ fn validate_graze(graze: &GrazeConfig) -> Result<(), FaunaConfigError> {
         "graze.reseed_floor_fraction",
         graze.reseed_floor_fraction,
     )?;
+
+    // The overgrazing escapement floor (2b-ii): a real escapement above the reseed lift, and below the
+    // graze MSY point (0.5·cap) so overgrazing is still possible/visible. Outside this band it is either
+    // useless (≤ reseed floor → the crash-prevention it exists for is gone) or degenerate (≥ 0.5 → no
+    // overgrazing can ever happen; a range is pinned at its most-productive intensity forever).
+    require_in_unit_range(
+        "graze.overgraze_escapement_fraction",
+        graze.overgraze_escapement_fraction,
+    )?;
+    require_greater_than(
+        "graze.overgraze_escapement_fraction",
+        graze.overgraze_escapement_fraction,
+        "graze.reseed_floor_fraction",
+        graze.reseed_floor_fraction,
+    )?;
+    require_greater_than(
+        "the graze MSY point (0.5)",
+        GRAZE_MSY_BIOMASS_FRACTION,
+        "graze.overgraze_escapement_fraction",
+        graze.overgraze_escapement_fraction,
+    )?;
     Ok(())
 }
+
+/// The graze's MSY biomass fraction (`cap/2`) — mirrors `fauna::MSY_BIOMASS_FRACTION` (the logistic
+/// peak), named here so the escapement-floor bound reads against the concept, not a bare `0.5`.
+const GRAZE_MSY_BIOMASS_FRACTION: f32 = 0.5;
 
 /// Every ecology block (wild / pastoral / pen — and each is a full [`EcologyConfig`]) shares the same
 /// invariants: a live growth rate, and phase thresholds ordered `extinction_floor < collapse_fraction
