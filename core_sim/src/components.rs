@@ -772,6 +772,30 @@ pub struct LaborAllocation {
     /// **excluded from equality** (see the manual `PartialEq` below) so it can never perturb the
     /// persisted-intent comparison.
     pub last_yields: Vec<SourceYield>,
+    /// **The food this band actually PAID for pen feed this turn** — the summed `paid` returned by
+    /// `LocalStore::take` in the corral-tend branch of `advance_labor_allocation`, across every pen it
+    /// keeps. The *real debit*, not the demanded amount: a band that could only part-pay records only
+    /// what it handed over (and its herds starve for the rest).
+    ///
+    /// **Why it must exist.** A pen's feed is taken straight off `cohort.stores`, so it appears in
+    /// **neither** `food_income` (Σ per-source `actual`) nor `food_consumption` (the *people's*
+    /// `food_demand`). Without exporting it the band's net-food readout overstates the surplus by
+    /// exactly the upkeep and the player watches the larder drain with no explanation. Exported as
+    /// `PopulationCohortState.pen_feed_upkeep` so the client can render "my people ate X" and "my
+    /// animals ate Y" as **separate lines** (deliberately NOT folded into `food_consumption` — that
+    /// separation is the readout the corral arc exists to give), and so the sim, not the client, is the
+    /// one doing the arithmetic. It closes the identity
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
+    /// ```
+    ///
+    /// which `core_sim/tests/fauna_husbandry.rs` pins against a real turn.
+    ///
+    /// Same treatment as `last_yields`: rebuilt from scratch each turn, **derived, not persisted** (a
+    /// rehydrated cohort reads `0.0` until the next tick), and **excluded from equality** below so it
+    /// can never perturb the persisted-intent comparison.
+    pub last_pen_feed_upkeep: f32,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of

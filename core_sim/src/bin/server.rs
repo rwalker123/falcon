@@ -5028,6 +5028,10 @@ mod tests {
     const SEED_EPSILON: f32 = 1e-4;
     /// Side of the square tile grid the seeding tests build.
     const GRID: u32 = 3;
+    /// The biome the harness grid stands on — grassland, matching the `FoodModule::SavannaGrassland`
+    /// tag its source tile carries. A forage patch's cap is the **tile's**
+    /// (`forage.capacity_by_biome`), so the harness names a biome rather than reading a constant.
+    const SOURCE_BIOME: sim_runtime::TerrainType = sim_runtime::TerrainType::PrairieSteppe;
 
     /// A `GRID`×`GRID` tile world + its `TileRegistry` (labor commands resolve band/source positions
     /// through it), with a full-weight `FoodModuleTag` on `source` so a Forage assignment there
@@ -5040,6 +5044,7 @@ mod tests {
                 app.world
                     .spawn(Tile {
                         position,
+                        terrain: SOURCE_BIOME,
                         ..Default::default()
                     })
                     .id()
@@ -5092,14 +5097,15 @@ mod tests {
             .insert(coord, patch);
     }
 
-    /// The configured per-patch carrying capacity (the tests stock patches as a fraction of it rather
-    /// than hard-coding biomass).
+    /// The harness grid's forage carrying capacity: **the tile's**, from
+    /// `forage.capacity_by_biome[SOURCE_BIOME]` (the human food web's per-biome table — no longer a
+    /// global constant). The tests stock patches as a fraction of it rather than hard-coding biomass.
     fn forage_carrying_capacity(app: &bevy::prelude::App) -> f32 {
         app.world
             .resource::<LaborConfigHandle>()
             .get()
             .forage
-            .carrying_capacity
+            .capacity_for(SOURCE_BIOME)
     }
 
     /// Drive the real command handler (band resolved by the default resident-band picker).

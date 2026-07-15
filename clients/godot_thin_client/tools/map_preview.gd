@@ -100,6 +100,56 @@ const SWIM_PAN_ROWS := -2.0   # pan UP by this many hex-radii → nudges the low
                               # viewport center so the crop stays unclamped (equal-sized fit vs pan crops)
 const SWIM_CROP_RADII := 2.4  # crop half-size = this × hex_radius → a couple hexes of context, small
                               # enough to stay within bounds after the pan/zoom on the short viewport
+# --- State "pasture" (the graze layer, Phase 2a) -------------------------------------------------
+const PASTURE_OVERLAY_KEY := "pasture"     # mirrors MapView.PASTURE_OVERLAY_KEY / the decoder's channel key
+const PASTURE_GRID_W := 26
+const PASTURE_GRID_H := 18
+# MapView is COVER-fit, so a grid whose aspect differs from the window's is CROPPED at the fit zoom —
+# and a pasture distribution you can only see two thirds of is exactly the frame this state exists to
+# avoid. The pointy-top odd-r extents of this grid are ≈ (W + 0.5)·√3 × (1.5·H + 0.5) hex radii, i.e.
+# ≈ 45.9 × 27.5 ≈ 1.67:1, so the window is set to match for this state (it is the last one rendered).
+const PASTURE_WINDOW_SIZE := Vector2i(1200, 720)
+# The sim's own per-biome graze capacities (core_sim/src/data/fauna_config.json → graze.capacity_by_biome),
+# keyed by terrain id. Transcribed, NOT invented — the whole state is worthless if the numbers are made up.
+# PrairieSteppe (240) is the reference pasture; MixedWoodland (55) is deliberately poor (a closed canopy
+# shades the ground cover out); water/glacier/lava are a stated 0.
+const PASTURE_CAPACITY_BY_TERRAIN := {
+	0: 0.0,      # deep_ocean
+	1: 0.0,      # continental_shelf
+	10: 110.0,   # alluvial_plain — the tag solver's fallback biome, so it is everywhere
+	11: 240.0,   # prairie_steppe — the reference pasture
+	12: 55.0,    # mixed_woodland — poor: the canopy shades out the ground cover
+	15: 8.0,     # hot_desert_erg — marginal, but NOT zero (the "full 8/8" case)
+	20: 100.0,   # tundra — thin but real
+	22: 0.0,     # glacier — no pasture at all
+	26: 65.0,    # alpine_mountain
+	30: 0.0,     # basaltic_lava_field — no pasture at all
+}
+# The Water terrain tag (bit 0), the same server truth MapView._pasture_color splits sea from dead ground on.
+const PASTURE_WATER_TAG := 1 << 0
+const PASTURE_WATER_IDS := [0, 1]   # the water biomes in this fixture (deep_ocean / continental_shelf)
+# Phase 2a ships the layer INERT — nothing eats graze yet — so every patch stands at FULL biomass and
+# reads Thriving, and this fixture says so rather than staging a fictional overgrazed blob the sim
+# cannot yet produce. (The stressed/collapsing tint is exercised on the tile card in ui_preview.)
+
+# --- State "forage" (the human-food layer, the twin of "pasture") --------------------------------
+const FORAGE_OVERLAY_KEY := "forage"       # mirrors MapView.FORAGE_OVERLAY_KEY / the decoder's channel key
+# The sim's own per-biome HUMAN-food capacities (core_sim/src/data/labor_config.json →
+# forage.capacity_by_biome), keyed by the SAME terrain ids the pasture fixture uses — so the two states
+# render the identical earthlike shape and the DIVERGENCE reads directly (forest/river rich where prairie
+# is poor; the coastal shelf LIGHTS UP as fishing where pasture is dead). Transcribed, NOT invented.
+const FORAGE_CAPACITY_BY_TERRAIN := {
+	0: 0.0,      # deep_ocean — no human food (barren)
+	1: 130.0,    # continental_shelf — FISHING: the coastal larder lights up (pasture reads this 0)
+	10: 195.0,   # alluvial_plain — silt + water = the richest cropland (the dominant interior)
+	11: 70.0,    # prairie_steppe — grass feeds animals; humans get only seed heads (the INVERSION)
+	12: 190.0,   # mixed_woodland — mast, nuts, berries: rich human food (the FLAGSHIP inversion)
+	15: 5.0,     # hot_desert_erg — near-barren for humans
+	20: 25.0,    # tundra — thin
+	22: 0.0,     # glacier — a stated 0
+	26: 20.0,    # alpine_mountain — thin (rangeland: better for animals than humans)
+	30: 0.0,     # basaltic_lava_field — a stated 0
+}
 # State "rivers" — Minor/Major rivers on hex EDGES + a NavigableRiver hex chain to the coast.
 # The edge chain is generated as the BOUNDARY of a region (all hexes north of a staircase row f(x)):
 # a region boundary is contiguous by construction, so the chain never breaks and every step of the
@@ -388,6 +438,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_herd_selected")
 
+	# State J-starving — a CORRALLED herd whose keeper could not pay this turn's feed. A penned herd
+	# cannot graze, so an unfed one is SHRINKING every turn (docs/plan_corral_managed_population.md);
+	# the marker flags it with a DANGER ring + a hand-drawn "!" badge. **The fed pen beside it must
+	# stay clean** — that A/B is the whole point of the frame (a tint-only treatment passed the "it's
+	# red-ish" eye test and failed this one: full-color emoji swallow a modulate).
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_pens())
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_herd_starving")
+
 	# State K — split-state guard: the selected band (selected_unit_id) stands on a DIFFERENT hex than
 	# selected_tile, simulating a band that migrated off the clicked hex on turn-advance. The outline
 	# stays on selected_tile; NO active-ring may draw on the band's actual hex (group_tile !=
@@ -601,6 +663,52 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_cohesion_farzoom")
 
+	# State "pasture" — THE GRAZE DISTRIBUTION (Grazing Phase 2a). The whole point of the phase is to
+	# LOOK at where the pasture is before Phase 2b makes every herd's carrying capacity a function of
+	# it. An earthlike-shaped map (ocean, an alluvial-plain interior — the tag solver's fallback, which
+	# really does dominate — a prairie steppe, a desert, tundra, glacier and lava) painted by the
+	# `pasture` overlay channel, so the three questions are answerable in one frame:
+	#   * does prairie/steppe read as the RICHEST pasture?
+	#   * is the alluvial plain visibly dominant?
+	#   * are glacier / lava / water visibly distinct from merely-POOR ground?
+	# It also carries a MIXED WOODLAND block, which a live earthlike map does NOT (the biome palette
+	# thins forest out entirely — tracked separately): the forest-is-poor-pasture inversion, the whole
+	# reason the two-stock split exists, is otherwise unobservable, so it is staged here deliberately.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)   # overlay mode paints solid per-hex colors; textures would fight it
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	get_window().size = PASTURE_WINDOW_SIZE   # match the grid's aspect — see PASTURE_WINDOW_SIZE
+	await _settle()
+	_map.display_snapshot(_snapshot_pasture())
+	# display_snapshot re-ingests the channels and clears the active overlay (the Inspector re-applies
+	# the player's selection every snapshot), so the channel is selected AFTER the snapshot lands.
+	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_pasture")
+	# The legend's numbers are the other half of the readout (min/avg/max + how much ground is dead),
+	# and this harness has no HUD to draw them into — print them so they can be checked against the map.
+	print("map_preview: pasture legend = ", _map._legend_for_current_view())
+
+	# State "forage" — THE HUMAN-FOOD DISTRIBUTION, the twin of "pasture". Same earthlike shape, the
+	# OTHER food web: it must look VISIBLY DIFFERENT from the pasture frame (that divergence is the whole
+	# point of the two-table split). Read against map_pasture.png:
+	#   * forest + river valleys read RICH here where prairie reads richest on pasture (the inversion);
+	#   * the coastal shelf LIGHTS UP as a fishing ground where pasture paints it dead water;
+	#   * only deep ocean / glacier / lava are barren, and a barren forage tile can still be good land.
+	get_window().size = PASTURE_WINDOW_SIZE   # same aspect as pasture — the two are meant to be compared
+	await _settle()
+	_map.display_snapshot(_snapshot_forage())
+	_map.set_overlay_channel(FORAGE_OVERLAY_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_forage")
+	print("map_preview: forage legend = ", _map._legend_for_current_view())
+
 	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
 	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
 	# is fed by the Major edge river, and drains to the sea through a delta lobe — with a real InlandSea
@@ -776,6 +884,142 @@ func _save_crop_px(name: String, center: Vector2, half: float) -> void:
 	else:
 		print("map_preview: saved ", name, ".png")
 
+## The terrain of the pasture state — an earthlike-SHAPED map, not a band strip: an ocean on the west
+## with a shelf, an ALLUVIAL-PLAIN interior (the fallback biome that really does carry most of a live
+## map's graze), a prairie steppe, a desert, a woodland block (staged — a live map has no forest), a
+## tundra/glacier north edge, an alpine spine and a lava scar. Returns terrain ids per tile, row-major.
+func _pasture_terrain() -> Array:
+	var ids: Array = []
+	ids.resize(PASTURE_GRID_W * PASTURE_GRID_H)
+	for row in PASTURE_GRID_H:
+		for col in PASTURE_GRID_W:
+			var id := 10                                   # alluvial_plain — the default ground
+			if col < 3:
+				id = 0                                     # deep_ocean
+			elif col == 3:
+				id = 1                                     # continental_shelf
+			elif row < 2:
+				id = 22 if col > 8 else 20                 # glacier cap over a tundra fringe
+			elif row < 4:
+				id = 20                                    # tundra
+			elif row >= 5 and row <= 10 and col >= 6 and col <= 12:
+				id = 11                                    # prairie_steppe — the reference pasture
+			elif row >= 12 and col >= 5 and col <= 11:
+				id = 15                                    # hot_desert_erg — marginal (8), NOT dead
+			elif row >= 4 and row <= 9 and col >= 16 and col <= 21:
+				id = 12                                    # mixed_woodland — the staged forest
+			elif col >= 22 and row >= 3 and row <= 13:
+				id = 26                                    # alpine_mountain spine
+			elif row >= 14 and col >= 16 and col <= 19:
+				id = 30                                    # basaltic_lava_field — dead ground
+			ids[row * PASTURE_GRID_W + col] = id
+	return ids
+
+## The pasture snapshot: terrain + the Water tag mask + per-tile graze (`tiles`) + the `pasture`
+## overlay channel. The channel mirrors what the native decoder publishes (raw = capacity, normalized
+## = capacity ÷ the map's RICHEST pasture — a max scale, not a min-max stretch, because 0 here is a
+## real reading: no pasture at all).
+func _snapshot_pasture() -> Dictionary:
+	var ids := _pasture_terrain()
+	var total := PASTURE_GRID_W * PASTURE_GRID_H
+	var tags: Array = []
+	tags.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var tiles: Array = []
+	var max_capacity := 0.0
+	for i in total:
+		var id := int(ids[i])
+		var capacity := float(PASTURE_CAPACITY_BY_TERRAIN.get(id, 0.0))
+		max_capacity = maxf(max_capacity, capacity)
+		tags[i] = (PASTURE_WATER_TAG if PASTURE_WATER_IDS.has(id) else 0)
+		raw[i] = capacity
+		tiles.append({
+			"entity": i,
+			"x": i % PASTURE_GRID_W,
+			"y": i / PASTURE_GRID_W,
+			"terrain": id,
+			# Phase 2a: every patch stands full, hence Thriving. A biome with no pasture reports no
+			# capacity and no phase at all — an ABSENT reading, never a zero-but-healthy one.
+			"graze_capacity": capacity,
+			"graze_biomass": capacity,
+			"graze_ecology_phase": ("thriving" if capacity > 0.0 else ""),
+		})
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	for i in total:
+		normalized[i] = (raw[i] / max_capacity if max_capacity > 0.0 else 0.0)
+	return {
+		"grid": {"width": PASTURE_GRID_W, "height": PASTURE_GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": ids,
+			"terrain_tags": tags,
+			"channels": {
+				PASTURE_OVERLAY_KEY: {
+					"label": "Pasture (Graze Capacity)",
+					"description": "Graze capacity by biome.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([PASTURE_OVERLAY_KEY]),
+		},
+		"tiles": tiles,
+		"populations": [],
+		"herds": [],
+	}
+
+## The forage snapshot: the SAME earthlike terrain as pasture, painted by the `forage` overlay channel
+## off the HUMAN-food table. Each tile carries `forage_capacity` (which MapView caches into `tile_forage`
+## for the legend) + the pre-normalized channel (raw = capacity, normalized = capacity ÷ the map's
+## RICHEST forage — a max scale, mirroring the native decoder). Water is NOT an off-category here:
+## continental_shelf carries 130 forage and rides the ramp (fishing), the divergence from pasture.
+func _snapshot_forage() -> Dictionary:
+	var ids := _pasture_terrain()   # reuse the pasture SHAPE so the two frames compare tile-for-tile
+	var total := PASTURE_GRID_W * PASTURE_GRID_H
+	var tags: Array = []
+	tags.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var tiles: Array = []
+	var max_capacity := 0.0
+	for i in total:
+		var id := int(ids[i])
+		var capacity := float(FORAGE_CAPACITY_BY_TERRAIN.get(id, 0.0))
+		max_capacity = maxf(max_capacity, capacity)
+		tags[i] = (PASTURE_WATER_TAG if PASTURE_WATER_IDS.has(id) else 0)
+		raw[i] = capacity
+		tiles.append({
+			"entity": i,
+			"x": i % PASTURE_GRID_W,
+			"y": i / PASTURE_GRID_W,
+			"terrain": id,
+			"forage_capacity": capacity,
+		})
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	for i in total:
+		normalized[i] = (raw[i] / max_capacity if max_capacity > 0.0 else 0.0)
+	return {
+		"grid": {"width": PASTURE_GRID_W, "height": PASTURE_GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": ids,
+			"terrain_tags": tags,
+			"channels": {
+				FORAGE_OVERLAY_KEY: {
+					"label": "Forage (Human Food Capacity)",
+					"description": "Human-food capacity by biome.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([FORAGE_OVERLAY_KEY]),
+		},
+		"tiles": tiles,
+		"populations": [],
+		"herds": [],
+	}
+
 func _terrain_array() -> Array:
 	var arr: Array = []
 	arr.resize(GRID_W * GRID_H)
@@ -813,6 +1057,19 @@ func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary
 func _deer_herd() -> Dictionary:
 	# Well outside the work-range ring (Chebyshev distance 5 from the band).
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
+
+## Two pens side by side: one FED, one STARVING. `corralled` + `pen_fed_fraction` < 1 is the sim's
+## starving signal — the herd is losing biomass every turn, and the map must show WHICH pen.
+func _snapshot_pens() -> Dictionary:
+	var fed := _deer_herd()
+	fed["corralled"] = true
+	fed["pen_fed_fraction"] = 1.0
+	var starving := {
+		"id": "game_aurochs_03", "label": "Aurochs (game_aurochs_03)",
+		"x": 10, "y": 7, "biomass": 310.0, "huntable": true,
+		"corralled": true, "pen_fed_fraction": 0.4,
+	}
+	return _base_snapshot(_band([], 2, 2), [fed, starving])
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==

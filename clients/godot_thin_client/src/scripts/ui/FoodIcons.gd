@@ -50,13 +50,18 @@ const HERD_SPECIES := {
 # ~12px map yield label), and the scales render tiny and faint — the known glyph-legibility hazard.
 # What survives the downscale is bold line art (♻ ⬆ ⇄) plus the high-contrast 💀. All verified in
 # the preview frames (band_panel_left / map_band_work).
+## The Corral rung's key, named because a THIRD consumer now reads its glyph off this table by key:
+## the turn orb's `starving_pen` attention row (an unfed pen is a corral problem, so it wears the
+## corral glyph). The picker/map look policies up by their snapshot string; the orb has no policy in
+## hand, so it needs the constant.
+const POLICY_CORRAL := "corral"
 const POLICY_ICONS := {
 	"sustain": "♻",
 	"surplus": "⬆",
 	"market": "⇄",
 	"eradicate": "💀",
 	"cultivate": "🌱",
-	"corral": "🐄",
+	POLICY_CORRAL: "🐄",
 }
 
 ## Icon for a take policy ("" for an unknown/absent policy, so callers render bare text).

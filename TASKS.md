@@ -28,7 +28,7 @@
 - [x] Generate rich knowledge telemetry frames once event ingestion lands (Owner: Systems Team — Ravi, Estimate: 0.5d; Deps: espionage event hooks). _Status_: Frames emit the full timeline ring buffer via `knowledge.telemetry`, and the Godot inspector now ingests the payload for metrics/timeline display._
 - [x] Extend the Godot thin client with the Knowledge Ledger panel and command surface described in `docs/architecture.md` §Knowledge Ledger & Leak Mechanics—subscribe to ledger/telemetry payloads, render overview/detail UI, and expose counter-intel/security posture controls (Owner: Client Team — Elena, Estimate: 2d; Deps: backend ledger payload & command endpoints). _Status_: Knowledge tab now streams missions/timeline data, includes a mission queue tester (auto agents, tier overrides, schedule offsets), and surfaces inline counter-intel policy/budget controls with live status synced from `shadow_scale::espionage` logs._
 - [x] Scope crisis telemetry channels promised in manual §10 by inventorying required metrics, network payloads, and inspector overlays in `docs/architecture.md`, then derive execution tasks for simulation and client teams (Owner: TBD, Estimate: 1.5d; Deps: Godot inspector overlay bandwidth). _Status_: Implemented `TurnStage::Crisis` + `advance_crisis_system`, emitting real `CrisisTelemetryState`/`CrisisOverlayState` via `ActiveCrisisLedger` and `CrisisOverlayCache`; docs/manual now outline the live data flow and the Godot inspector consumes non-stub overlays._
-- [ ] **Give `FaunaConfig` and `LaborConfig` a real `validate()`** — both docs claim "validation invariants" that are only ever asserted over the *builtin*, in their own module tests; neither type has a `validate()`, so a `FAUNA_CONFIG_PATH` / `LABOR_CONFIG_PATH` override that breaks one (a `0` `regrowth_rate`, a `0` `provisions_per_biomass`, `progress_per_turn <= decay_per_turn`, …) is accepted silently and quietly changes or disables behaviour. This is the same hole `ExpeditionConfig::validate()` just closed for expeditions (PR #117): follow the `crisis_config.rs` convention — validate inside `from_json_str` so *every* load path is covered, return a domain error variant, log a rejected override at **error** level, and fall back to the known-good builtin. Bound the levers whose `0`/negative would silently disable a feature or divide by zero; leave genuinely free levers free, and say which in the doc. Port the builtin-only test assertions into the validator and add a rejection test per bound. Then correct the two "Intended invariants" notes in `core_sim/CLAUDE.md` (Corral + Cultivation config blocks) back to "Validated". (Owner: TBD, Estimate: 0.5d; Deps: none.)
+- [ ] **Extend `LaborConfig::validate()` to the cultivation levers** (`FaunaConfig::validate()` **DONE** — landed with the corral-as-a-managed-population arc: it runs inside `from_json_str`, covers every load path, logs a rejected override at **error** level as `fauna_config.invalid_rejected`, falls back to the builtin, and enforces the pen's net-positive bound + the monotone husbandry ladder + the ordered phase bands in all three ecologies; the builtin-only assertions were ported into it with a rejection test per bound. `LaborConfig::validate()` now **exists** too — it runs inside `from_json_str` (every load path, the same `crisis_config.rs`/`FaunaConfig` convention: a broken invariant is logged at **error** level as `labor_config.invalid_rejected` and the builtin is used), but it covers **only** `forage.capacity_by_biome` — the total-over-every-`TerrainType` / finite / non-negative / not-all-zero table check, mirroring `validate_graze`.) — the **cultivation-lever invariants are still asserted only over the *builtin*, in `labor_config`'s own module tests**: `progress_per_turn > decay_per_turn`, `0 < cultivating_yield_fraction < 1`, `tended_provisions_per_biomass > 0`, `knowledge_progress_per_turn > 0`, and `0 < knowledge_completion_threshold <= 1`. So a `LABOR_CONFIG_PATH` override that breaks one (a `0` `tended_provisions_per_biomass`, `progress_per_turn <= decay_per_turn`, …) is still accepted silently and quietly changes or disables behaviour — the same hole the forage-table check (and `ExpeditionConfig::validate()`, PR #117) closed elsewhere. Port those builtin-only assertions into `LaborConfig::validate()`, extending the existing domain error variant, with a rejection test per bound. Bound the levers whose `0`/negative would silently disable a feature or divide by zero; leave genuinely free levers free, and say which in the doc. Then correct the "Intended invariants" note in `core_sim/CLAUDE.md`'s Cultivation config block (which still reads "`LaborConfig` has NO `validate()`") back to "Validated". (Owner: TBD, Estimate: 0.5d; Deps: none.)
 
 ### Great Discovery System
 - [x] Outline Great Discovery subsystem architecture mirroring manual §5 by defining data structures, trigger flow, and snapshot payload contracts in `docs/architecture.md`, then break the work into implementation tickets after approval (Owner: TBD, Estimate: 2d; Deps: coordination with Knowledge Diffusion hooks). _Status_: Architecture captured in `docs/architecture.md` §Great Discovery System Plan aligning with manual §5; implementation tickets listed below.
@@ -405,21 +405,28 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
   land the **corral** (pastoral) — the place-bound food-tending improvements from
   `plan_settlement_population.md`, knowledge-gated (`farming`/`herding`), built/tended/decaying. Pulls
   forward a slice of the Settlement arc's `build`/improvement system. Feeds `SedentarizationScore`.
-- [ ] **Corral as a managed population (food upkeep → herd size → yield).** A corral should be a
-  **population in its own right**, not a flat multiplier on a frozen biomass number. The penned animals
-  need **resources — food — to flourish**: the pen's output derives from **the number of animals you
-  have**, which is in turn driven by **the food (and other resources) you feed it** each turn. So:
-  (a) yield = f(animal count), not `corral_provisions_per_biomass × biomass`; (b) the penned herd
-  **consumes food each turn (upkeep)** — feeding it grows the herd toward a pen capacity, underfeeding
-  **shrinks** the herd and with it the yield; (c) the corral becomes an **ongoing commitment with a
-  running cost** instead of a one-off 25-turn build that then prints food forever — which is what makes
-  penning a real decision rather than a strictly-dominant one. **Current stopgap being replaced:** the
-  completed pen pays a flat `husbandry.corral_provisions_per_biomass × biomass` with **no upkeep**,
-  rebalanced (interim) to **3× the Market rate** (`corral_provisions_per_biomass = 0.012 = 3 ×
-  market.take_fraction × hunt.provisions_per_biomass`) — sustainable, but still ~48× the Sustain/MSY
-  baseline because a stock-share and a flow-share aren't commensurable. That flat-rate model is exactly
-  what this arc retires. See `core_sim/CLAUDE.md` → Fauna & Wild Game → **Corral (Intensification Rung
-  1c)** and `docs/plan_intensification.md` → *Open tuning dials* (the payoff dial).
+- [x] **Corral as a managed population (food upkeep → herd size → yield) — Phase 1a (sim) DONE.** The
+  whole husbandry yield ladder is now **flow-based**: every rung pays MSY, and the rungs differ only in
+  the **ecology** that MSY is computed against — wild `r` 0.05 → pastoral 0.15 → pen 0.60 (management
+  buys a *growth rate*). The managed harvest **draws the herd down** (constant-escapement MSY, so it is
+  stable from both sides), the pen **eats** (`pen.upkeep_per_biomass × biomass` from the keeper's
+  larder), and **underfeeding shrinks the herd** — floored at the extinction floor, recoverable when fed
+  again, announced in the feed. Both retired flat rates (`provisions_per_biomass` 0.01,
+  `corral_provisions_per_biomass` 0.012), `fauna::corral_provisions`, and the "no draw-down" model are
+  **deleted**. Also lands **`FaunaConfig::validate()`** (below), which enforces the pen's net-positive
+  bound and the monotone ladder. Design: `docs/plan_corral_managed_population.md`; spec:
+  `core_sim/CLAUDE.md` → **The husbandry yield ladder** + **Corral (Rung 1c)**.
+  - [ ] **Phase 1b (client) — REQUIRED BEFORE THIS SHIPS TO A PLAYER.** The readout: the pen's
+    `penUpkeep` as a **negative** row in the band's food ledger (against the **gross** `corralYield`),
+    the `penFedFraction` starving warning, and the corrected policy hints. Both fields are already on
+    the wire (`HerdTelemetryState`). Without it the player watches their larder drain with no
+    explanation.
+  - [ ] **Phase 2 (deferred) — grazing.** The pen's upkeep is drawn *first* from the tile's
+    `ForagePatch` biomass (the animals eat grass — a resource humans cannot), and only the **shortfall**
+    is hauled from the larder. Makes pasture quality gate pen size and tile choice matter, and removes
+    the one honesty wrinkle Phase 1 cannot (with a single food scalar, food-in/food-out is a physically
+    backwards conversion; real livestock is calorie-*negative* and worth it because it eats what we
+    can't). `ForageRegistry`/`regrow_patch` already exist, so this is plumbing, not new modeling.
 - [ ] **Cross-cutting — command yield-vector + pre-commit forecast.** Model a command's
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no

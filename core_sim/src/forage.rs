@@ -3,6 +3,15 @@
 //! Transposes the herd biomass / logistic-regrowth model (`fauna.rs`) onto worked forage tiles.
 //! Every `FoodModuleTag` tile gains a live per-patch `{ biomass, carrying_capacity, ecology_phase }`
 //! (`ForagePatch`) held in the authoritative `ForageRegistry` resource, keyed by tile coord.
+//!
+//! **This is the HUMAN food web** — seeds, nuts, tubers, fruit, shellfish — and its capacity is a
+//! property of the **land**: `forage.capacity_by_biome`, a per-biome table over the 37 biomes
+//! (`labor_config.json`). Its twin is the *animal* food web, `graze.capacity_by_biome`
+//! (`fauna_config.json`, `graze.rs`), and **the two are meant to disagree**: a closed-canopy
+//! woodland is rich in mast and poor in pasture, a prairie steppe is the reverse, a silt floodplain
+//! is cropland rather than range. *Your best farm is not your best pasture*
+//! (`docs/plan_grazing_foundation.md` §1). The `FoodModuleTag` still decides what **kind** of
+//! gathering a tile offers (and its `seasonal_weight`); the table decides **how much** is there.
 //! Foraging **draws the patch down** (`forage_take`), and `advance_forage_regrowth` regrows it each
 //! turn toward `carrying_capacity`. The patch's state round-trips through the rollback snapshot via
 //! the shared `sim_schema::ForageState`/`EcologyState` records — the same 0-i persistence pattern
@@ -41,12 +50,12 @@ use sim_schema::ForageState;
 use crate::{
     components::{FollowPolicy, SourceYield, Tile},
     fauna::{
-        classify_ecology_phase, forecast_source_yield, logistic_regrowth, sustainable_yield,
-        EcologyPhase, SourceYieldForecast,
+        classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
+        sustainable_yield, EcologyPhase, SourceYieldForecast,
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
-    labor_config::{ForageLaborConfig, LaborConfigHandle},
+    labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
 };
@@ -70,7 +79,9 @@ pub struct ForagePatch {
     pub tile: UVec2,
     /// Live gatherable stock, drawn down by `forage_take`, regrown by `advance_forage_regrowth`.
     pub biomass: f32,
-    /// Per-patch carrying cap that biomass regrows toward (flat default; per-`FoodModule` later).
+    /// Per-patch carrying cap that biomass regrows toward — **the tile's**, seeded from
+    /// `forage.capacity_by_biome[terrain]` (the human food web's per-biome table), never a global
+    /// constant. The exact counterpart of `GrazePatch::carrying_capacity`.
     pub carrying_capacity: f32,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from biomass vs
     /// `carrying_capacity`. Lights the client over-forage readout the same way herds do.
@@ -230,6 +241,14 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
 /// Seed a full patch on every `FoodModuleTag` tile at Startup (idempotent — a world that already
 /// carries patches, e.g. after a rollback restore, is skipped). Runs in the Startup chain after
 /// `spawn_initial_world` has stamped the food-module tags. Mirrors `spawn_initial_herds`.
+///
+/// **The patch's cap is the TILE's, not a constant** — `forage.capacity_by_biome[tile.terrain]`, the
+/// human food web's per-biome table (the mirror of `graze.capacity_by_biome`). A food-module tile
+/// whose biome carries nothing human-edible (`NO_FORAGE_CAPACITY` — a glacier, a salt pan, a
+/// deep-sea vent field: the module classifier tags these off their *tags*, not off anything growing
+/// there) is seeded **no patch at all**, exactly as a zero-graze tile holds no `GrazePatch`: "no food
+/// here" is an *absent* reading, never a zero one, and a zero-cap patch would be a permanently
+/// Collapsing source with a zero reseed floor.
 pub fn spawn_initial_forage(
     mut registry: ResMut<ForageRegistry>,
     labor_config: Res<LaborConfigHandle>,
@@ -241,7 +260,11 @@ pub fn spawn_initial_forage(
     let labor = labor_config.get();
     let forage = &labor.forage;
     for (tile, _module) in tiles.iter() {
-        let mut patch = ForagePatch::new(tile.position, forage.carrying_capacity);
+        let capacity = forage.capacity_for(tile.terrain);
+        if capacity <= NO_FORAGE_CAPACITY {
+            continue;
+        }
+        let mut patch = ForagePatch::new(tile.position, capacity);
         patch.refresh_ecology_phase(&forage.ecology);
         registry.patches.insert(tile.position, patch);
     }
@@ -315,13 +338,14 @@ pub fn advance_cultivation(
 /// floor — a healthy patch is untouched — and the floor is small (below `collapse_fraction`), so
 /// Eradicate still crashes a patch hard into the Collapsing band; it just can't hold it at `0`.
 fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_fraction: f32) {
-    let cap = patch.carrying_capacity;
-    // Reseed a depleted patch up to the floor (no-op for a healthy patch) so it has a seed stock to
-    // regrow from — plants reseed, so a crashed patch is never permanently stuck at 0.
-    let reseed_floor = reseed_floor_fraction * cap;
-    patch.biomass = patch.biomass.max(reseed_floor);
-    let delta = logistic_regrowth(patch.biomass, cap, ecology.regrowth_rate);
-    patch.biomass = (patch.biomass + delta).clamp(0.0, cap);
+    // The reseed lift + logistic step is the shared plant curve (`fauna::reseeding_logistic_regrowth`),
+    // so the human-edible forage stock and the animal-edible graze stock can never drift apart.
+    patch.biomass = reseeding_logistic_regrowth(
+        patch.biomass,
+        patch.carrying_capacity,
+        ecology.regrowth_rate,
+        reseed_floor_fraction,
+    );
     patch.refresh_ecology_phase(ecology);
 }
 
@@ -502,12 +526,21 @@ pub fn forage_source_yield_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::labor_config::LaborConfig;
+    use sim_runtime::TerrainType;
     use sim_schema::EcologyState;
 
-    /// A forage config with an easily-reasoned-about cap and dynamics for the unit tests.
+    /// The **shipped** forage config (the per-biome capacity table lives only in the JSON — the
+    /// struct default is deliberately empty, so `ForageLaborConfig::default()` would read every
+    /// biome as barren). Mirrors `graze::tests::test_graze_config`.
     fn test_forage_config() -> ForageLaborConfig {
-        ForageLaborConfig::default()
+        LaborConfig::builtin().forage.clone()
     }
+
+    /// The biome the patch-mechanics tests stand their patch on. Any positive-capacity biome works
+    /// (the mechanics are cap-relative); `AlluvialPlain` is the richest common human ground and the
+    /// one a `RiverineDelta` food module actually sits on.
+    const TEST_BIOME: TerrainType = TerrainType::AlluvialPlain;
 
     #[test]
     fn sustain_on_full_patch_yields_msy_and_draws_to_half_cap() {
@@ -516,7 +549,7 @@ mod tests {
         // `sustainable_yield` ceiling skims regrowth at the most-productive biomass (K/2), so a
         // full patch yields a positive harvest and Sustain draws it DOWN toward K/2 and holds.
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let half_cap = cap * 0.5;
         let msy = sustainable_yield(cap, cap, &forage.ecology);
         assert!(
@@ -587,7 +620,7 @@ mod tests {
     #[test]
     fn heavy_take_depletes_patch_and_drops_phase() {
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let mut patch = ForagePatch::new(UVec2::new(2, 3), cap);
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
@@ -620,7 +653,7 @@ mod tests {
     #[test]
     fn policy_ceilings_order_take_and_depletion() {
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let start = 0.8 * cap; // Thriving, clear positive net regrowth.
         let workers = 20; // worker_cap (20 × per_worker) far exceeds every policy ceiling.
 
@@ -660,7 +693,7 @@ mod tests {
     #[test]
     fn below_cap_patch_regrows_toward_cap() {
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let mut patch = ForagePatch::new(UVec2::new(0, 0), cap);
         patch.biomass = 0.25 * cap;
         patch.refresh_ecology_phase(&forage.ecology);
@@ -682,7 +715,7 @@ mod tests {
         // Pure-logistic regrowth: a patch driven far below the Allee threshold still recovers
         // (plants have no critical-depensation crash / extinction floor).
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let mut patch = ForagePatch::new(UVec2::new(4, 4), cap);
         patch.biomass = 0.02 * cap;
         patch.refresh_ecology_phase(&forage.ecology);
@@ -703,7 +736,7 @@ mod tests {
         // to a small standing crop each turn, so it recovers via normal regrowth — the "a feral
         // patch always recovers" invariant is now backed by code, not just the docstring.
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let floor = forage.reseed_floor_fraction * cap;
         assert!(floor > 0.0, "reseed floor must be a positive standing crop");
 
@@ -735,7 +768,7 @@ mod tests {
         // but it can't drive it *permanently* to 0: the patch bottoms out at ~the reseed floor and
         // recovers once Eradicate stops.
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let floor = forage.reseed_floor_fraction * cap;
         let mut patch = ForagePatch::new(UVec2::new(6, 6), cap);
         patch.refresh_ecology_phase(&forage.ecology);
@@ -771,7 +804,7 @@ mod tests {
         // A patch above the floor must regrow identically with or without the reseed lift (the floor
         // only reseeds depleted patches — a healthy patch is untouched).
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let start = 0.5 * cap; // comfortably above reseed_floor_fraction × cap.
 
         let mut with_floor = ForagePatch::new(UVec2::new(7, 7), cap);
@@ -800,7 +833,7 @@ mod tests {
     fn sustainable_yield_is_zero_below_allee() {
         // A collapsing (sub-Allee) patch is not sustainably harvestable.
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let below_allee = forage.ecology.collapse_fraction * cap * 0.5;
         assert_eq!(
             sustainable_yield(below_allee, cap, &forage.ecology),
@@ -813,7 +846,7 @@ mod tests {
     fn sustainable_yield_plateaus_at_msy_above_half_cap() {
         // For any healthy biomass (>= K/2) the MSY ceiling is flat at the K/2 peak.
         let forage = test_forage_config();
-        let cap = forage.carrying_capacity;
+        let cap = forage.capacity_for(TEST_BIOME);
         let msy = sustainable_yield(cap * 0.5, cap, &forage.ecology);
         assert!(msy > 0.0);
         for frac in [0.5_f32, 0.6, 0.75, 0.9, 1.0] {
@@ -905,7 +938,7 @@ mod tests {
         assert!(decay > 0.0);
 
         // Tended every turn → never decays, stays cultivated.
-        let mut tended = ForagePatch::new(UVec2::new(1, 1), forage.carrying_capacity);
+        let mut tended = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
         tended.cultivation_progress = 1.0;
         tended.owner = Some(FactionId(0));
         for _ in 0..200 {
@@ -919,7 +952,7 @@ mod tests {
         assert_eq!(tended.owner, Some(FactionId(0)));
 
         // Untended → feral. Reverts to wild after the first untended turn, then fully decays to 0.
-        let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.carrying_capacity);
+        let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
         feral.cultivation_progress = 1.0;
         feral.owner = Some(FactionId(0));
         // Turn 1 untended: decays below 1.0 → no longer cultivated.

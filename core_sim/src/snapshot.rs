@@ -19,7 +19,7 @@ use sim_runtime::{
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForagePatchState, ForageState, GenerationState, GreatDiscoveryDefinitionState,
+    ForagePatchState, ForageState, GenerationState, GrazeState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
     HerdState, HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState,
     InfluentialIndividualState, IntensificationKnowledgeState, KnowledgeLedgerEntryState,
@@ -31,7 +31,8 @@ use sim_runtime::{
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
-    VictorySnapshotState, WorldDelta, WorldSnapshot,
+    VictorySnapshotState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
+    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
@@ -50,13 +51,14 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast,
-        HERDING_DISCOVERY_ID,
+        hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+        SourceYieldForecast, HERDING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
     forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::{GenerationProfile, GenerationRegistry},
+    graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
         GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
@@ -135,6 +137,10 @@ pub struct SnapshotContext<'w> {
     /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
     /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
     pub forage_registry: Res<'w, ForageRegistry>,
+    /// Authoritative graze/pasture sim state, captured into the rollback snapshot (`graze_registry`)
+    /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
+    /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
+    pub graze_registry: Res<'w, GrazeRegistry>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
@@ -1339,6 +1345,7 @@ pub fn capture_snapshot(
         herds,
         herd_registry,
         forage_registry,
+        graze_registry,
         fog_reveals,
         elevation,
         moisture,
@@ -1378,6 +1385,9 @@ pub fn capture_snapshot(
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
 
+    // Forage potential (per-tile) is read from the biome table here, so the labor config is resolved
+    // ahead of the tile loop (it is reused for the labor/expedition readouts further down).
+    let labor_config = labor.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     let start_position = start_location.position();
@@ -1390,7 +1400,13 @@ pub fn capture_snapshot(
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
     for (entity, tile, food_module) in tiles.iter() {
-        tile_states.push(tile_state(entity, tile, &morale_pressure_cfg));
+        tile_states.push(tile_state(
+            entity,
+            tile,
+            &morale_pressure_cfg,
+            graze_registry.patch(tile.position),
+            &labor_config.forage,
+        ));
         if let Some(module) = food_module {
             seasonal_weights.insert(tile.position, module.seasonal_weight);
         }
@@ -1427,7 +1443,6 @@ pub fn capture_snapshot(
 
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
-    let labor_config = labor.get();
     let settlement_stage_config = settlement_stage.get();
     // Global labor config today (identical for every band); the work-range ring is surfaced
     // per-band so the client reads it off the selected band (future-proof if bands diverge).
@@ -1749,6 +1764,11 @@ pub fn capture_snapshot(
     let mut forage_registry_states: Vec<ForageState> =
         forage_registry.patches.values().map(forage_state).collect();
     forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
+    // Authoritative graze/pasture state for rollback, same coord-sorted shape as the forage registry.
+    // (The *client* readout is on `TileState`, captured above — this is the sim record only.)
+    let mut graze_registry_states: Vec<GrazeState> =
+        graze_registry.patches.values().map(graze_state).collect();
+    graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1783,6 +1803,7 @@ pub fn capture_snapshot(
         herds: herd_states.clone(),
         herd_registry: herd_registry_states,
         forage_registry: forage_registry_states,
+        graze_registry: graze_registry_states,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2194,6 +2215,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         forage_registry.update_from_states(&snapshot.forage_registry);
     } else {
         world.insert_resource(ForageRegistry::from_states(&snapshot.forage_registry));
+    }
+
+    // Rebuild the authoritative graze/pasture registry, same round-trip. Note this also means
+    // `spawn_initial_graze`'s "already populated → skip" guard sees a restored world as seeded.
+    if let Some(mut graze_registry) = world.get_resource_mut::<GrazeRegistry>() {
+        graze_registry.update_from_states(&snapshot.graze_registry);
+    } else {
+        world.insert_resource(GrazeRegistry::from_states(&snapshot.graze_registry));
     }
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
@@ -3621,6 +3650,8 @@ fn tile_state(
     entity: Entity,
     tile: &Tile,
     morale_pressure_cfg: &MoralePressureConfig,
+    graze: Option<&GrazePatch>,
+    forage: &ForageLaborConfig,
 ) -> TileState {
     let (mountain_kind, mountain_relief) = match tile.mountain {
         Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
@@ -3647,6 +3678,20 @@ fn tile_state(
         mountain_kind,
         mountain_relief,
         habitability,
+        // The pasture readout (Phase 2a). A tile with no patch is a biome that carries no graze at
+        // all, and reads a stated zero + `GRAZE_PHASE_NONE` — never a "healthy" default.
+        graze_biomass: graze.map(|patch| patch.biomass).unwrap_or_default(),
+        graze_capacity: graze
+            .map(|patch| patch.carrying_capacity)
+            .unwrap_or_default(),
+        graze_ecology_phase: graze_phase_code(graze),
+        // FORAGE POTENTIAL — the human-edible twin of `graze_capacity`. Read straight from the biome
+        // table for EVERY tile, NOT from the sparse `ForageRegistry`, so the potential shows on the
+        // ~95% of tiles that carry no patch (all the best cropland). On a food-module tile that DOES
+        // hold a `ForagePatch`, that patch was seeded at this same `capacity_for(biome)`, so this
+        // equals the patch's `carrying_capacity` — no drift between potential and realized. Non-zero
+        // on fishery water (shelf/coral/inland sea); only a stated-zero biome reads 0.
+        forage_capacity: forage.capacity_for(tile.terrain),
         river_edges: tile.river_edges,
         river_inflow: tile.river_inflow,
         river_channel: tile.river_channel,
@@ -3943,6 +3988,13 @@ fn population_state(
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
     let food_consumption = demand.to_f32();
+    // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
+    // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
+    // comes straight off `cohort.stores` — so without exporting it the client's
+    // `food_income − food_consumption` net-food row overstates the surplus by exactly the upkeep, and
+    // the player watches the larder drain with no explanation. Derived, like `food_income`: `0.0` on a
+    // rehydrated save until the next tick.
+    let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
     // Expedition discriminators + persistence fields (empty/false for a normal band).
     let (
         is_expedition,
@@ -4077,6 +4129,7 @@ fn population_state(
         settlement_stage,
         food_income,
         food_consumption,
+        pen_feed_upkeep,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
@@ -4213,6 +4266,35 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
             progress: patch.cultivation_progress,
             owner: patch.owner.map(|f| f.0),
         },
+    }
+}
+
+/// Capture a live `GrazePatch` into its authoritative snapshot mirror for rollback (the inverse is
+/// `graze::GrazeRegistry::update_from_states`). Mirrors `forage_state`; graze is **wild ground**, so
+/// the shared `EcologyState`'s cultivation fields (`progress`/`owner`) stay at their defaults.
+pub(crate) fn graze_state(patch: &GrazePatch) -> GrazeState {
+    GrazeState {
+        x: patch.tile.x,
+        y: patch.tile.y,
+        ecology: EcologyState {
+            biomass: patch.biomass,
+            carrying_capacity: patch.carrying_capacity,
+            ecology_phase: patch.ecology_phase.as_str().to_string(),
+            progress: 0.0,
+            owner: None,
+        },
+    }
+}
+
+/// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
+/// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
+/// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
+fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
+    match patch.map(|patch| patch.ecology_phase) {
+        None => GRAZE_PHASE_NONE,
+        Some(EcologyPhase::Thriving) => GRAZE_PHASE_THRIVING,
+        Some(EcologyPhase::Stressed) => GRAZE_PHASE_STRESSED,
+        Some(EcologyPhase::Collapsing) => GRAZE_PHASE_COLLAPSING,
     }
 }
 
@@ -4457,9 +4539,20 @@ fn herd_snapshot_entries(
                 ceiling_surplus: forecast.ceiling_surplus,
                 ceiling_market: forecast.ceiling_market,
                 ceiling_eradicate: forecast.ceiling_eradicate,
-                // The Corral investment rung: the preparing dip + the payoff once penned.
+                // The Corral investment rung: the preparing dip + the (gross) payoff once penned.
                 ceiling_corral: forecast.ceiling_prepare,
                 corral_yield: forecast.managed_yield,
+                // The pen as a managed population: what it EATS, and whether its keeper is paying.
+                // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
+                // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
+                // basis as `corral_yield`, so the pre-commit Corral row can show the running cost next
+                // to the payoff. `pen_fed_fraction` is the value the keeper's tend branch wrote this
+                // turn (Population runs before the capture), so the client reads the CURRENT turn's
+                // feeding, and `1.0` for anything unpenned.
+                pen_upkeep: herd.map(|herd| pen_upkeep(herd, fauna)).unwrap_or(0.0),
+                pen_fed_fraction: herd
+                    .map(|herd| herd.pen_fed_fraction)
+                    .unwrap_or(PEN_FULLY_FED),
                 // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
                 hunt_policy_ceilings: herd
                     .map(|_| hunt_policy_ceiling_entries(&forecast))
@@ -4674,10 +4767,70 @@ mod tests {
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
             habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: GRAZE_PHASE_NONE,
+            forage_capacity: 0.0,
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
         }
+    }
+
+    /// `TileState::forage_capacity` is the biome's HUMAN-food potential, read straight from
+    /// `forage.capacity_by_biome` for EVERY tile (not from the sparse `ForagePatch`). Confirms the
+    /// four contract cases + the no-drift consistency check against a seeded patch.
+    #[test]
+    fn tile_state_exports_forage_potential_from_biome_table() {
+        let labor = LaborConfig::builtin();
+        let forage = &labor.forage;
+        // The place-based morale terms are irrelevant to the forage readout; zero them out.
+        let morale_cfg = MoralePressureConfig {
+            ambient_temperature: Scalar::zero(),
+            temperature_morale_penalty: Scalar::zero(),
+            temperature_morale_tolerance: Scalar::zero(),
+            attrition_penalty_scale: Scalar::zero(),
+            hardness_penalty_scale: Scalar::zero(),
+        };
+        let at = |terrain: TerrainType| Tile {
+            position: UVec2::new(1, 1),
+            element: ElementKind::Arborite,
+            mass: Scalar::zero(),
+            temperature: Scalar::zero(),
+            terrain,
+            terrain_tags: TerrainTags::empty(),
+            mountain: None,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
+        };
+        let entity = Entity::from_raw(1);
+        let capture = |terrain: TerrainType, graze: Option<&GrazePatch>| {
+            tile_state(entity, &at(terrain), &morale_cfg, graze, forage).forage_capacity
+        };
+
+        // (a) A food-module tile that DOES hold a `ForagePatch` — the patch was seeded at
+        //     `capacity_for(biome)`, so the exported potential must equal its carrying capacity (no
+        //     drift between the potential and the realized patch).
+        let module_terrain = TerrainType::MixedWoodland;
+        let seeded = ForagePatch::new(
+            at(module_terrain).position,
+            forage.capacity_for(module_terrain),
+        );
+        assert_eq!(capture(module_terrain, None), seeded.carrying_capacity);
+
+        // (b) A non-food-module LAND tile with a positive-forage biome still exports a NON-ZERO
+        //     potential — the whole point: the client sees the biome's potential everywhere, not only
+        //     where a patch happens to sit.
+        assert!(capture(TerrainType::PrairieSteppe, None) > 0.0);
+
+        // (c) Fishery WATER carries a non-zero fishing value — the deliberate divergence from graze
+        //     (where all water is zero): a fishery is a food module on water.
+        assert!(capture(TerrainType::ContinentalShelf, None) > 0.0);
+
+        // (d) A genuinely-zero biome reads a STATED zero.
+        assert_eq!(capture(TerrainType::Glacier, None), 0.0);
+        assert_eq!(capture(TerrainType::DeepOcean, None), 0.0);
     }
 
     fn snapshot_with_overlay(
@@ -4711,6 +4864,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4772,6 +4926,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4828,6 +4983,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4966,6 +5122,7 @@ mod tests {
                     workers_needed: 5,
                 },
             ],
+            last_pen_feed_upkeep: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -5019,6 +5176,7 @@ mod tests {
                 workers: 10,
             }],
             last_yields: Vec::new(),
+            last_pen_feed_upkeep: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -5129,6 +5287,10 @@ mod tests {
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
             habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: GRAZE_PHASE_NONE,
+            forage_capacity: 0.0,
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
@@ -5752,5 +5914,144 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
+    /// (`pen_upkeep = pen.upkeep_per_biomass × biomass`) alongside its **gross** `corral_yield`, plus
+    /// last turn's `pen_fed_fraction` (`< 1` = starving) — what the client needs for the herd drawer
+    /// and the starving warning. A herd that is not penned is never starving.
+    #[test]
+    fn herd_snapshot_reports_the_pens_upkeep_and_fed_fraction() {
+        use crate::fauna_config::SizeClass;
+        const PEN_BIOMASS: f32 = 60.0;
+        const HALF_FED: f32 = 0.5;
+
+        let mut registry = HerdRegistry::default();
+        let mut penned = Herd::new(
+            "herd_pen".to_string(),
+            "Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            PEN_BIOMASS,
+            100.0,
+        );
+        penned.corral_at(UVec2::new(4, 4));
+        // The keeper could only pay half the feed last turn → the herd is starving.
+        penned.pen_fed_fraction = HALF_FED;
+        registry.herds.push(penned);
+        registry.herds.push(Herd::new(
+            "herd_wild".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            50.0,
+            100.0,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
+        let expected_upkeep = fauna.husbandry.pen.upkeep_per_biomass * PEN_BIOMASS;
+        assert!(
+            (pen.pen_upkeep - expected_upkeep).abs() < 1e-6,
+            "the pen exports its feed demand at the herd's current biomass: {} vs {expected_upkeep}",
+            pen.pen_upkeep
+        );
+        assert!((pen.pen_fed_fraction - HALF_FED).abs() < 1e-6);
+        assert!(
+            pen.corral_yield > 0.0,
+            "the pen's gross managed yield rides alongside its upkeep"
+        );
+
+        let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
+        assert_eq!(
+            wild.pen_fed_fraction, 1.0,
+            "a mobile herd is never starving"
+        );
+    }
+
+    /// **The feed must be known at the moment the player DECIDES.** `penUpkeep` is answered for an
+    /// **unpenned** herd too — the feed the pen *would* demand once built, at the herd's current
+    /// biomass — because the pre-commit `Corral` row is by definition looking at a herd that is not yet
+    /// penned. Quoting `corralYield` (the payoff) while reporting `penUpkeep = 0` (the running cost)
+    /// would advertise a number the player will never bank: the same defect class as quoting the gross
+    /// yield. The two are computed on the **same biomass basis**, so the client can just subtract.
+    #[test]
+    fn an_unpenned_herd_exports_the_feed_its_pen_would_demand() {
+        use crate::fauna_config::SizeClass;
+        /// Above the managed harvest's escapement point (`K/2`), so the pen has a positive projected
+        /// yield to sit the projected feed *next to* — at or below `K/2` a pen honestly pays nothing
+        /// until the herd rebuilds, and the row would be `0 → 0`.
+        const BIOMASS: f32 = 900.0;
+        const CAP: f32 = 1200.0;
+
+        let mut registry = HerdRegistry::default();
+        // A tamed but MOBILE herd — exactly what a player inspects while deciding whether to corral.
+        let mut mobile = Herd::new(
+            "herd_mobile".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(2, 2)],
+            BIOMASS,
+            CAP,
+        );
+        mobile.claim_domestication(FactionId(0));
+        registry.herds.push(mobile);
+        // The same herd, penned — its upkeep must read the same at the same biomass.
+        let mut penned = Herd::new(
+            "herd_penned".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(3, 3)],
+            BIOMASS,
+            CAP,
+        );
+        penned.claim_domestication(FactionId(0));
+        penned.corral_at(UVec2::new(3, 3));
+        registry.herds.push(penned);
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        let expected = fauna.husbandry.pen.upkeep_per_biomass * BIOMASS;
+        assert!(expected > 0.0);
+
+        let mobile = states.iter().find(|h| h.id == "herd_mobile").unwrap();
+        assert!(
+            !mobile.corralled,
+            "the herd under consideration is NOT penned"
+        );
+        assert!(
+            (mobile.pen_upkeep - expected).abs() < 1e-6,
+            "an unpenned herd must export the feed its pen WOULD demand \
+             (upkeep_per_biomass × biomass = {expected}): got {}",
+            mobile.pen_upkeep
+        );
+        assert!(
+            mobile.corral_yield > 0.0,
+            "the payoff is already projected for an unpenned herd — the cost must be too"
+        );
+
+        // A penned herd is unchanged, and reads the SAME upkeep at the same biomass: one field, one
+        // meaning, so `corralYield − penUpkeep` is a valid subtraction on either side of the decision.
+        let penned = states.iter().find(|h| h.id == "herd_penned").unwrap();
+        assert!(penned.corralled);
+        assert!(
+            (penned.pen_upkeep - mobile.pen_upkeep).abs() < 1e-6,
+            "penned and unpenned must agree at the same biomass: {} vs {}",
+            penned.pen_upkeep,
+            mobile.pen_upkeep
+        );
     }
 }
