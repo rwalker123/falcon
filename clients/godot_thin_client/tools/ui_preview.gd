@@ -633,6 +633,24 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_pen_extending")
 
+	# State 2d-δ wild ceiling — a hunt-only species. NO husbandry track in the drawer (no
+	# domestication / corral / pen rows), just the dim "Wild game — hunt only" hint, and the hunt policy
+	# picker offers the extractive four with NO Corral rung.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_wild_herd_fixture())
+	_hud._build_herd_assign_controls(_wild_herd_fixture())
+	await _settle()
+	await _save("herd_ceiling_wild")
+
+	# State 2d-δ pastoral ceiling — tameable + roams, never pennable. The drawer KEEPS the "Husbandry
+	# Domesticating 60%" row but shows "Herdable, not pennable" where the Corral rows would sit; the hunt
+	# policy picker again drops the Corral rung.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_pastoral_herd_fixture())
+	_hud._build_herd_assign_controls(_pastoral_herd_fixture())
+	await _settle()
+	await _save("herd_ceiling_pastoral")
+
 	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
 	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
 	# tamed): the MULTI-reason layout — a "🐄 Corral needs:" header with one indented "· <reason>" bullet
@@ -1946,6 +1964,37 @@ func _herd_fixture() -> Dictionary:
 		"corral_progress": 0.0,
 		"tile_info": _food_tile_fixture(),
 	}
+
+## A WILD-ceiling herd (Grazing 2d-δ): hunt-only. The drawer shows NO husbandry track (no
+## domestication / corral / pen rows) — just the "Wild game — hunt only" hint — and the hunt policy
+## picker drops the Corral rung.
+func _wild_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## A compact NON-food tile_info (like the domesticated/hunt-distance herds) so the tile card stays
+## short and the herd drawer's husbandry rows land in-frame rather than below the dock scroll fold.
+func _compact_herd_tile_fixture() -> Dictionary:
+	return {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
+
+## A PASTORAL-ceiling herd (Grazing 2d-δ): tameable + roams, but never pennable. The drawer keeps the
+## domestication (Husbandry) row but shows "Herdable, not pennable" where the Corral rows would sit, and
+## the hunt policy picker drops the Corral rung.
+func _pastoral_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["husbandry_ceiling"] = "pastoral"
+	fixture["domestication"] = 0.6
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
 
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
 func _occupied_tile_fixture() -> Dictionary:

@@ -3167,6 +3167,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // Grazing 2d-δ — how far up the husbandry ladder THIS species can climb ("wild" hunt-only /
+        // "pastoral" tame+roam-but-never-penned / "pen" the full ladder). Empty/absent ⇒ the client
+        // treats it as "pen" (the full ladder). Same string convention as `species`/`ecologyPhase`;
+        // the herd drawer gates its domestication + corral/extend affordances on it.
+        if let Some(husbandry_ceiling) = herd.husbandryCeiling() {
+            let _ = dict.insert("husbandry_ceiling", husbandry_ceiling);
+        }
         let _ = dict.insert("domestication", herd.domestication());
         // Per-policy BAND / local-hunt take ceilings (provisions/turn) for this herd's CURRENT state.
         // Surfaced as a `{policy -> provisions_per_turn}` Dictionary. With the cohort's

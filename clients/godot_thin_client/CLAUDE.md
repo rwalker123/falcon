@@ -1868,6 +1868,26 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
   band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
   `core_sim` Fauna & Wild Game — Domestication / husbandry).
+- **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
+  `docs/plan_grazing_2d.md` §4a; snapshot `HerdTelemetryState.husbandryCeiling` → `husbandry_ceiling`,
+  decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the
+  whole ladder — the string says how far this species can go: **`"wild"`** hunt-only, **`"pastoral"`**
+  tameable + roams but never pennable, **`"pen"`** (or **empty/absent** ⇒ treated as pen) the full
+  ladder. `Hud._husbandry_ceiling(herd)` normalizes it (unknown → `"pen"`, so an un-tagged herd behaves
+  exactly as before the field shipped). Two gates, both keyed off it:
+  - **Herd drawer** (`_herd_summary_lines`): `"wild"` shows **no** husbandry track at all (no
+    domestication / corral / pen rows), just the dim `Wild game — hunt only` hint; `"pastoral"` keeps
+    the domestication (Husbandry) row but replaces the whole corral/pen readout with the dim `Herdable,
+    not pennable` hint; `"pen"` renders the full ladder. The hints are colon-free, so
+    `_format_detail_bbcode` renders them as dim informational sentences.
+  - **Assign controls** (`_build_herd_assign_controls`): the **Corral** rung is filtered OUT of the
+    local-hunt policy picker for any non-`"pen"` species (`.filter`, so `HUNT_POLICY_OPTIONS` is
+    untouched) — an OUTRIGHT hide, not a greyed "learn Herding" gate, because penning is *impossible*
+    for the species, not merely unlearned. The Extend-pen action is implicitly gated (it only shows on a
+    `corralled` herd, which is pen-ceiling by construction).
+  ui_preview: `herd_ceiling_wild` (hunt-only, no husbandry track + hint, no Corral policy) /
+  `herd_ceiling_pastoral` (domestication kept, "Herdable, not pennable", no Corral policy) —
+  the existing `herd_*` states carry no ceiling → the unchanged pen path.
 - **Herd corral readout** (`Hud.gd` `_herd_summary_lines`): when a herd's `corralled`
   (snapshot `HerdTelemetryState.corralled`, decoded beside `domestication` in
   `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"

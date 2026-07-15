@@ -392,6 +392,18 @@ const PEN_FEED_SPLIT_FORMAT := "%d%% · larder %.1f food/turn"
 const PEN_EXTEND_LABEL := "Extend pen"
 const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
 const PEN_FENCING_LABEL := "Fencing %d%%"
+# Grazing 2d-δ — the per-species HUSBANDRY CEILING (`HerdTelemetryState.husbandryCeiling`): how far up
+# the ladder a species can climb. "wild" = hunt-only (no husbandry track at all); "pastoral" =
+# tameable + roams but can NEVER be penned (hide Corral + Extend); "pen" (or empty/absent) = the full
+# ladder, everything as today. The herd drawer + assign controls gate their husbandry affordances on it.
+const HUSBANDRY_CEILING_WILD := "wild"
+const HUSBANDRY_CEILING_PASTORAL := "pastoral"
+const HUSBANDRY_CEILING_PEN := "pen"
+# In place of the whole husbandry section on a wild-ceiling herd, and where the corral affordance would
+# sit on a pastoral one — so the missing controls read as intentional, not a bug. Colon-free, so
+# `_format_detail_bbcode` renders them as dim informational sentences (the `kv.is_empty()` path).
+const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
+const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
 # range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
@@ -2853,6 +2865,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
     # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
     var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
+    # Grazing 2d-δ: the Corral rung is a PEN-ceiling affordance — a wild/pastoral species can never be
+    # penned, so hide Corral outright for them (NOT a "locked, learn Herding" gate — it is impossible for
+    # this species, and offering it greyed would imply a reachable prerequisite). `.filter` copies, so the
+    # HUNT_POLICY_OPTIONS const is untouched.
+    if not is_expedition and _husbandry_ceiling(herd) != HUSBANDRY_CEILING_PEN:
+        hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_CORRAL)
     var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
@@ -4909,35 +4927,48 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
-    var domestication := float(herd_data.get("domestication", 0.0))
-    if domestication > 0.0:
-        lines.append("Husbandry: %s" % _husbandry_label(domestication))
-    # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
-    # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
-    # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
-    # "Cultivation N%" row, so the investment the player committed to is visibly under way.
-    # A PENNED herd is a managed population: it eats from its keeper's larder every turn, and an
-    # underfed one is shrinking right now. That is the loudest thing the drawer can say about it, so
-    # the Corral row itself flips to the starving state (DANGER-tinted via `_corral_value_hex`) and a
-    # "Pen feed" row states the demand and how much of it the keeper actually paid.
-    var corral_progress := float(herd_data.get("corral_progress", 0.0))
-    var fed_fraction := PenStatus.fed_fraction(herd_data)
-    if bool(herd_data.get("corralled", false)):
-        lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
-        # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds tile
-        # count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own grazed
-        # footprint covers vs what the keeper still hauls from the larder.
-        var pen_radius := int(herd_data.get("pen_radius", 0))
-        var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
-        lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
-        var upkeep := float(herd_data.get("pen_upkeep", 0.0))
-        var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
-        lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
-            % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), upkeep]])
-        if upkeep >= FOOD_FLOW_MIN:
-            lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
-    elif corral_progress > 0.0:
-        lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
+    # Grazing 2d-δ — how far up the husbandry ladder THIS species can climb gates the whole section.
+    # A WILD-ceiling herd shows NO husbandry track at all (just the hunt-only hint); a PASTORAL one
+    # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
+    # (or empty/absent) shows the full ladder, exactly as before.
+    var ceiling := _husbandry_ceiling(herd_data)
+    if ceiling == HUSBANDRY_CEILING_WILD:
+        lines.append(HUSBANDRY_WILD_HINT)
+    else:
+        var domestication := float(herd_data.get("domestication", 0.0))
+        if domestication > 0.0:
+            lines.append("Husbandry: %s" % _husbandry_label(domestication))
+        # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
+        # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
+        # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
+        # "Cultivation N%" row, so the investment the player committed to is visibly under way.
+        # A PENNED herd is a managed population: it eats from its keeper's larder every turn, and an
+        # underfed one is shrinking right now. That is the loudest thing the drawer can say about it, so
+        # the Corral row itself flips to the starving state (DANGER-tinted via `_corral_value_hex`) and a
+        # "Pen feed" row states the demand and how much of it the keeper actually paid.
+        # The whole corral/pen readout is PEN-ceiling only — a pastoral herd can never be penned (the
+        # server never builds one), so its Corral/pen rows are suppressed and a hint stands in their place.
+        if ceiling == HUSBANDRY_CEILING_PEN:
+            var corral_progress := float(herd_data.get("corral_progress", 0.0))
+            var fed_fraction := PenStatus.fed_fraction(herd_data)
+            if bool(herd_data.get("corralled", false)):
+                lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
+                # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
+                # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
+                # grazed footprint covers vs what the keeper still hauls from the larder.
+                var pen_radius := int(herd_data.get("pen_radius", 0))
+                var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
+                lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
+                var upkeep := float(herd_data.get("pen_upkeep", 0.0))
+                var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
+                lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
+                    % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), upkeep]])
+                if upkeep >= FOOD_FLOW_MIN:
+                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
+            elif corral_progress > 0.0:
+                lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
+        elif ceiling == HUSBANDRY_CEILING_PASTORAL:
+            lines.append(HUSBANDRY_PASTORAL_HINT)
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -4980,6 +5011,15 @@ func _graze_range_label(range_radius: int) -> String:
     if tiles == 1:
         return "1 tile"
     return "%d tiles" % tiles
+
+## The species' husbandry ceiling (Grazing 2d-δ) normalized to one of the three known values.
+## Empty/absent/unrecognized ⇒ "pen" (the full ladder), so an un-tagged herd behaves as it did
+## before the field existed. Read by the herd drawer + assign controls to gate husbandry affordances.
+func _husbandry_ceiling(herd_data: Dictionary) -> String:
+    var ceiling := String(herd_data.get("husbandry_ceiling", "")).strip_edges().to_lower()
+    if ceiling == HUSBANDRY_CEILING_WILD or ceiling == HUSBANDRY_CEILING_PASTORAL:
+        return ceiling
+    return HUSBANDRY_CEILING_PEN
 
 ## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows
 ## a livestock glyph; in-progress shows the percentage. `_format_detail_bbcode` tints a
