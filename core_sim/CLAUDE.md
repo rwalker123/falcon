@@ -209,6 +209,23 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   `NavigableRiver` mirrors `InlandSea` exactly (`WATER | FRESHWATER`, same movement/logistics/
   attrition profile), is in the biome palette's `must_have` set, and is protected from the tag
   solver's water-reduction pass — like `RiverDelta`, otherwise the solver would erase real rivers.
+  - **A navigable hex is a valley with a river in it — it keeps the biome it cut.** The stamp
+    (`hydrology.rs`) captures the pre-stamp biome into `Tile::underlying_terrain: Option<TerrainType>`
+    *before* overwriting `terrain`/`terrain_tags` with `NavigableRiver`, so the tile stays
+    **mechanically** water (movement/naval/logistics/attrition/tags/palette all keep keying on
+    `terrain == NavigableRiver`, untouched) but its **RESOURCE** reads route through
+    `Tile::resource_terrain()` (= `underlying_terrain` on a navigable hex, `terrain` everywhere else).
+    So a giant river yields the valley it runs through, not open water: **forage** = the underlying
+    biome's `forage.capacity_by_biome` **plus `forage.navigable_river_forage_bonus`** (default **80.0**,
+    `labor_config.json` — a navigable river is always a fishery, so a navigable hex *always* seeds a
+    forage patch, even over an otherwise-barren biome, at just the bonus there); **graze** = the plain
+    underlying `graze.capacity_by_biome` (no bonus — you don't pasture on the channel; a navigable-over-
+    grassland hex grazes like grassland). One shared helper `forage::tile_forage_capacity` sizes the
+    seeded patch AND the wire's `forageCapacity`, so they can't drift. The `NavigableRiver` rows in
+    `labor_config.json` (forage 130) and `fauna_config.json` (graze 0) are now **vestigial** (bypassed
+    by the underlying-terrain routing; left only to keep the tables total). Exported as
+    `TileState.underlyingTerrain:TerrainType` (append-only, = `resource_terrain()`, so it is the "real
+    ground" biome always; the client consults it only when `terrain == NavigableRiver`).
   - **The join invariant: the edge chain and the hex chain share an EDGE, never a bare corner.**
     The hand-off anchors on the last **emitted** edge, *not* on the un-emitted edge whose discharge
     crossed the threshold. Both are incident to the same corner and **three hexes meet at a corner**,

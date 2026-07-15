@@ -141,10 +141,15 @@ pub(crate) fn tile_state(
         // FORAGE POTENTIAL — the human-edible twin of `graze_capacity`. Read straight from the biome
         // table for EVERY tile, NOT from the sparse `ForageRegistry`, so the potential shows on the
         // ~95% of tiles that carry no patch (all the best cropland). On a food-module tile that DOES
-        // hold a `ForagePatch`, that patch was seeded at this same `capacity_for(biome)`, so this
+        // hold a `ForagePatch`, that patch was seeded at this same value (the SHARED helper), so this
         // equals the patch's `carrying_capacity` — no drift between potential and realized. Non-zero
-        // on fishery water (shelf/coral/inland sea); only a stated-zero biome reads 0.
-        forage_capacity: forage.capacity_for(tile.terrain),
+        // on fishery water (shelf/coral/inland sea); a NavigableRiver reads its underlying biome plus
+        // the river fishing bonus; only a stated-zero biome reads 0.
+        forage_capacity: crate::forage::tile_forage_capacity(forage, tile),
+        // The tile's REAL ground for resource reads — its own `terrain` everywhere, the underlying
+        // valley on a NavigableRiver. The client consults this only when `terrain == NavigableRiver`
+        // (elsewhere it equals `terrain`), so it is always the meaningful "real ground" biome.
+        underlying_terrain: tile.resource_terrain(),
         river_edges: tile.river_edges,
         river_inflow: tile.river_inflow,
         river_channel: tile.river_channel,

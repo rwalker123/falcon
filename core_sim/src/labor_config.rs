@@ -46,6 +46,14 @@ const DEFAULT_FORAGE_EXTINCTION_FLOOR: f32 = 0.0;
 /// can't drive it *permanently* to 0.
 const DEFAULT_FORAGE_RESEED_FLOOR_FRACTION: f32 = 0.02;
 
+/// Extra forage (human-food) capacity a `NavigableRiver` hex carries **on top of** the biome it was
+/// cut through (`navigable_forage_capacity`). A giant river is always a fishery — freshwater fish,
+/// waterfowl, cattail — so a navigable hex always seeds a forage patch, adding this bonus to
+/// `capacity_for(underlying_terrain)` even where the underlying biome is otherwise barren. The old
+/// fixed `NavigableRiver` row (130) is now vestigial (the tile reads its underlying biome); this is
+/// **additive** on top of that biome, so it starts conservative.
+const DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS: f32 = 80.0;
+
 /// Named-const defaults for the forage **policy axis** (Intensification §0-iii — "forage parity
 /// with hunting"). These mirror the fauna `follow`/`market`/`hunt` levers so a gather policy
 /// behaves like the matching hunt policy: **Surplus** overdraws the Sustain regrowth skim by
@@ -263,6 +271,11 @@ pub struct ForageLaborConfig {
     /// **Cultivation** tuning (Phase 1a): the plant analog of fauna husbandry — Sustain-forage
     /// accrual, decay, early-claim gate, and the steady tended-yield rate.
     pub cultivation: CultivationConfig,
+    /// The **river fishing bonus** added to a `NavigableRiver` hex's seeded forage capacity, on top of
+    /// the biome it was cut through — a navigable river is always a fishery. See
+    /// [`ForageLaborConfig::navigable_forage_capacity`] and
+    /// [`DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS`].
+    pub navigable_river_forage_bonus: f32,
 }
 
 impl ForageLaborConfig {
@@ -275,6 +288,16 @@ impl ForageLaborConfig {
             .get(&terrain)
             .copied()
             .unwrap_or(NO_FORAGE_CAPACITY)
+    }
+
+    /// Forage capacity of a **navigable river** hex: the biome it was cut through
+    /// (`capacity_for(underlying)`) **plus** the river fishing bonus. A navigable river is always a
+    /// fishery, so this is always `>= navigable_river_forage_bonus > 0` — a navigable hex always
+    /// seeds a patch, even over an otherwise-barren biome. THE single source of "navigable forage
+    /// capacity", shared by the seeding path (`spawn_initial_forage`) and the wire path
+    /// (`snapshot::tile_state`) so the two cannot drift.
+    pub fn navigable_forage_capacity(&self, underlying: TerrainType) -> f32 {
+        self.capacity_for(underlying) + self.navigable_river_forage_bonus
     }
 }
 
@@ -301,6 +324,7 @@ impl Default for ForageLaborConfig {
             market: ForageMarketConfig::default(),
             eradicate: ForageEradicateConfig::default(),
             cultivation: CultivationConfig::default(),
+            navigable_river_forage_bonus: DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS,
         }
     }
 }

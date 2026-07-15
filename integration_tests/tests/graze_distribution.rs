@@ -224,9 +224,14 @@ fn graze_distribution_report() {
             zero_fraction * 100.0
         );
 
-        // Water is never pasture, and it is never a *patch* either (an absent reading, not a zero one).
+        // Water is never pasture, and it is never a *patch* either (an absent reading, not a zero
+        // one) — EXCEPT a navigable river, which yields the valley it cut through (its underlying
+        // biome), so a navigable-over-grassland hex grazes like grassland. Every other water tile is
+        // barren.
         for tile in &snapshot.tiles {
-            if tile.terrain_tags.contains(TerrainTags::WATER) {
+            if tile.terrain_tags.contains(TerrainTags::WATER)
+                && tile.terrain != TerrainType::NavigableRiver
+            {
                 assert_eq!(tile.graze_capacity, 0.0, "water is not pasture");
                 assert!(registry.patch(UVec2::new(tile.x, tile.y)).is_none());
             }

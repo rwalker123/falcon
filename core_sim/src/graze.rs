@@ -31,7 +31,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use sim_runtime::TerrainTags;
+use sim_runtime::{TerrainTags, TerrainType};
 use sim_schema::GrazeState;
 
 use crate::{
@@ -162,10 +162,16 @@ pub fn spawn_initial_graze(
     let fauna = fauna_config.get();
     let graze = &fauna.graze;
     for tile in tiles.iter() {
-        if tile.terrain_tags.contains(TerrainTags::WATER) {
+        // Water carries no pasture — EXCEPT a navigable river, which yields the valley it was cut
+        // through (its underlying biome, `resource_terrain()`), not open water: a navigable-over-
+        // grassland hex grazes like grassland. No river fishing bonus here — you don't pasture
+        // animals on the channel. Every other water tile is skipped.
+        if tile.terrain_tags.contains(TerrainTags::WATER)
+            && tile.terrain != TerrainType::NavigableRiver
+        {
             continue;
         }
-        let capacity = graze.capacity_for(tile.terrain);
+        let capacity = graze.capacity_for(tile.resource_terrain());
         if capacity <= NO_GRAZE_CAPACITY {
             continue;
         }

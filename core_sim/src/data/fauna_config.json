@@ -197,6 +197,7 @@
       "AquiferCeiling": 60.0,
       "NavigableRiver": 0.0
     },
+    "_comment_navigable_river": "The NavigableRiver graze row (0) is VESTIGIAL — a navigable hex now grazes its UNDERLYING biome (resource_terrain), so a navigable-over-grassland hex grazes like grassland and this row is bypassed. Left only to keep the table total. (No river bonus on graze — you don't pasture animals on the channel.)",
     "_comment_ecology": "GRASS REGROWS FAST — it is the quickest-renewing vegetal stock in the model, and that is the economic premise of herding: a pasture eaten to the ground is back within a few seasons, a nut grove is not. Ordering (a claim about biology, not a knob): wild fauna 0.05 << forage 0.25 (labor_config.json) < GRAZE 0.40 << a fed pen 0.90 (a hyper-managed system, not a wild one). At r = 0.40 a tile's sustainable flow is r*K/4 = 0.10*K per turn and a stripped pasture climbs back to ~90% of capacity in ~20 turns (vs ~35 at forage's 0.25). collapse_rate is INERT for graze — grass has no Allee depensation, so advance_graze_regrowth runs pure logistic regrowth and never the collapse branch; the shared EcologyConfig simply carries the field (exactly as labor_config's forage ecology does). collapse_fraction/stressed_fraction are read, for the phase bands the overgrazing readout uses.",
     "ecology": {
       "regrowth_rate": 0.40,
