@@ -520,7 +520,7 @@ impl Default for MarketConfig {
 #[serde(default)]
 pub struct GrazeConfig {
     /// Grazeable biomass a tile of each biome carries at capacity. **A pure data table, not a
-    /// formula** — every one of the 37 [`TerrainType`]s must appear (enforced by
+    /// formula** — every [`TerrainType`] (`TerrainType::VALUES`) must appear (enforced by
     /// [`FaunaConfig::validate`]: a missing biome would silently read as zero graze, i.e. an
     /// invisible dead zone). `0.0` is the *deliberate* reading for water, glacier, bare rock and lava.
     /// The absolute scale is a free parameter — only the *ratios* matter until Phase 2b's
@@ -558,7 +558,7 @@ const DEFAULT_GRAZE_RESEED_FLOOR_FRACTION: f32 = 0.02;
 impl Default for GrazeConfig {
     fn default() -> Self {
         Self {
-            // Deliberately **empty**. The 37-row table is *data*, and its single authoritative copy is
+            // Deliberately **empty**. The per-`TerrainType` table is *data*, and its single authoritative copy is
             // `fauna_config.json` — duplicating it here would guarantee the two drift. A config whose
             // `graze` block omits (or under-fills) the table is *rejected* by [`FaunaConfig::validate`]
             // and the builtin — which has it — is used, so an incomplete table can never quietly
@@ -824,7 +824,7 @@ impl FaunaConfig {
 
 /// The graze table's own invariants — the ones that decide whether the **land layer** is trustworthy.
 ///
-/// - **Totality.** The table must name every one of the 37 biomes. A missing row silently reads
+/// - **Totality.** The table must name every `TerrainType` (`TerrainType::VALUES`). A missing row silently reads
 ///   `0.0` ([`NO_GRAZE_CAPACITY`]) — an invisible dead zone in the pasture layer that no error, no
 ///   log line and no overlay would ever explain. Zero must be *stated*, never *defaulted*.
 /// - **At least one positive row.** An all-zero table disables the entire layer (no herd could be
@@ -1332,7 +1332,7 @@ mod tests {
         assert_eq!(SizeClass::Migratory.as_str(), "migratory");
     }
 
-    /// The graze table must be **total** over the 37 biomes. A missing row would silently read as
+    /// The graze table must be **total** over every `TerrainType`. A missing row would silently read as
     /// zero graze — an invisible dead zone in the pasture layer that nothing would ever explain.
     #[test]
     fn validate_rejects_a_partial_graze_biome_table() {

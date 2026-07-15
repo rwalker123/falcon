@@ -416,25 +416,6 @@ table TileState {
   // Tile-intrinsic per-turn morale drain (fixed-point, FIXED_POINT_SCALE = 1e6; >= 0, bigger =
   // harsher). Band-independent property of the place — the sim's `tile_morale_pressure` total.
   habitability:long = 0;
-  // GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock
-  // (grass/browse), which is a different stock on a different distribution from the HUMAN-edible
-  // forage (`ForagePatchState`, food-module tiles only): a closed-canopy forest is rich in nuts and
-  // poor in graze; a prairie steppe is the reverse. Carried per-TileState rather than as a patch list
-  // because graze sits on nearly EVERY land tile (~2000/map) — and TileState is per-entity diffed, so
-  // an ungrazed turn costs zero delta bytes. Drives both the pasture map overlay and the tile card.
-  grazeBiomass:float = 0;    // live grazeable stock on this tile (0 = no pasture / eaten out)
-  grazeCapacity:float = 0;   // the LAND's capacity, from its biome (0 = this biome carries no pasture)
-  // 0 = none (no pasture at all), 1 = thriving, 2 = stressed, 3 = collapsing. A compact code (the
-  // `moraleCause:ubyte` idiom) because this rides every tile; `none` is the default so "no pasture"
-  // can never be mistaken for "healthy pasture".
-  grazeEcologyPhase:ubyte = 0;
-  // FORAGE POTENTIAL — the HUMAN-edible twin of grazeCapacity. The land's per-biome human-food
-  // capacity (`forage.capacity_by_biome`, labor_config.json), read from the config table for EVERY
-  // tile — NOT from the sparse ForagePatch (which lives only on food-module tiles). So the client can
-  // draw a Forage overlay of the biome's *potential* everywhere, the exact mirror of the pasture
-  // overlay. Unlike graze, this is NON-ZERO on fishery water (ContinentalShelf/CoralShelf/InlandSea):
-  // a fishery is a food module on water. Only a stated-zero biome (deep ocean, glacier, lava) reads 0.
-  forageCapacity:float = 0;
   // Packed per-side river classes: 2 bits per odd-r direction (0=E,1=SE,2=SW,3=W,4=NW,5=NE),
   // decoded via RiverClass (0=None, 1=Minor, 2=Major; 3 reserved). Both hexes flanking a river
   // edge carry it on their own side. With TerrainType.NavigableRiver this fully determines the
@@ -458,6 +439,25 @@ table TileState {
   // water carries no channel of its own, so the bit is not mirrored back). A confluence hex carries
   // the union of the chains through it. 0 on every hex with no navigable channel.
   riverChannel:ubyte = 0;
+  // GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock
+  // (grass/browse), which is a different stock on a different distribution from the HUMAN-edible
+  // forage (`ForagePatchState`, food-module tiles only): a closed-canopy forest is rich in nuts and
+  // poor in graze; a prairie steppe is the reverse. Carried per-TileState rather than as a patch list
+  // because graze sits on nearly EVERY land tile (~2000/map) — and TileState is per-entity diffed, so
+  // an ungrazed turn costs zero delta bytes. Drives both the pasture map overlay and the tile card.
+  grazeBiomass:float = 0;    // live grazeable stock on this tile (0 = no pasture / eaten out)
+  grazeCapacity:float = 0;   // the LAND's capacity, from its biome (0 = this biome carries no pasture)
+  // 0 = none (no pasture at all), 1 = thriving, 2 = stressed, 3 = collapsing. A compact code (the
+  // `moraleCause:ubyte` idiom) because this rides every tile; `none` is the default so "no pasture"
+  // can never be mistaken for "healthy pasture".
+  grazeEcologyPhase:ubyte = 0;
+  // FORAGE POTENTIAL — the HUMAN-edible twin of grazeCapacity. The land's per-biome human-food
+  // capacity (`forage.capacity_by_biome`, labor_config.json), read from the config table for EVERY
+  // tile — NOT from the sparse ForagePatch (which lives only on food-module tiles). So the client can
+  // draw a Forage overlay of the biome's *potential* everywhere, the exact mirror of the pasture
+  // overlay. Unlike graze, this is NON-ZERO on fishery water (ContinentalShelf/CoralShelf/InlandSea):
+  // a fishery is a food module on water. Only a stated-zero biome (deep ocean, glacier, lava) reads 0.
+  forageCapacity:float = 0;
 }
 
 table LogisticsLinkState {
@@ -594,6 +594,18 @@ table PopulationCohortState {
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;
+  // Hunt levers. Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`, and
+  // populated for EVERY cohort — the outfit/hunt UI lives on the resident-band panel).
+  //   - The pre-launch EXPEDITION trip length is NOT computed here: the client reads the sim's
+  //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
+  //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
+  //     turnsToFill == 0 → "won't fill").
+  //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
+  //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
+  //       × outputMultiplier
+  // Appended last (append-only schema discipline).
+  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
+  expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
   // The food this band ACTUALLY PAID for pen feed this turn (summed across every corral it keeps —
   // the real `LocalStore::take` debit, not the demanded amount; a band that could only part-pay
   // records only what it handed over, and its herds starve for the rest).
@@ -608,18 +620,6 @@ table PopulationCohortState {
   // Derived per-turn, not persisted (a rehydrated cohort reads 0 until the next tick), same as
   // foodIncome. Appended (append-only schema discipline).
   penFeedUpkeep:float = 0;
-  // Hunt levers. Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`, and
-  // populated for EVERY cohort — the outfit/hunt UI lives on the resident-band panel).
-  //   - The pre-launch EXPEDITION trip length is NOT computed here: the client reads the sim's
-  //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
-  //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
-  //     turnsToFill == 0 → "won't fill").
-  //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
-  //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
-  //       × outputMultiplier
-  // Appended last (append-only schema discipline).
-  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
-  expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -1024,6 +1024,20 @@ table HerdTelemetryState {
   // HUNT-ONLY (the patch twin is Cultivate).
   ceilingCorral:float = 0;
   corralYield:float = 0;
+  // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
+  // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
+  // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
+  // corral yield. These are the same numbers as the ceiling* scalars above, projected as a list.
+  // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
+  // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
+  // ecology model. Appended (append-only discipline).
+  huntPolicyCeilings:[HuntPolicyCeiling];
+  // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
+  // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
+  // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
+  // place-bound band work that `send_hunt_expedition` rejects, so they get NO rows here. Empty for a
+  // non-huntable herd. Appended last (append-only).
+  huntTripEstimates:[HuntTripEstimate];
   // --- The pen as a managed POPULATION (appended) --- a corralled herd is a population in its own
   // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
   // `corralYield` above is the GROSS managed harvest; the feed is this separate debit, so the client
@@ -1044,20 +1058,6 @@ table HerdTelemetryState {
   // pen.starve_shrink_rate × (1 - penFedFraction) × biomass each turn, and its yield with it. It
   // recovers when fed again (it never despawns and never loses the pen). Render a warning.
   penFedFraction:float = 1;
-  // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
-  // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
-  // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
-  // corral yield. These are the same numbers as the ceiling* scalars above, projected as a list.
-  // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
-  // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
-  // ecology model. Appended (append-only discipline).
-  huntPolicyCeilings:[HuntPolicyCeiling];
-  // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
-  // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
-  // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
-  // place-bound band work that `send_hunt_expedition` rejects, so they get NO rows here. Empty for a
-  // non-huntable herd. Appended last (append-only).
-  huntTripEstimates:[HuntTripEstimate];
 }
 
 table CommandEventState {

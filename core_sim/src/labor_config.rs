@@ -402,8 +402,9 @@ impl LaborConfig {
     }
 }
 
-/// The **human** food web's per-biome table must be *total* over the 37 biomes, finite, non-negative,
-/// and not everywhere zero — the exact invariants `validate_graze` enforces on the animal one:
+/// The **human** food web's per-biome table must be *total* over every `TerrainType`
+/// (`TerrainType::VALUES`), finite, non-negative, and not everywhere zero — the exact invariants
+/// `validate_graze` enforces on the animal one:
 /// - a **missing** biome silently reads `NO_FORAGE_CAPACITY` (`capacity_for`'s `unwrap_or`), i.e. an
 ///   invisible zero-forage dead zone nothing on the map would ever explain. **Zero must be stated.**
 /// - an **all-zero** table parses perfectly and leaves the map with no gatherable food anywhere.

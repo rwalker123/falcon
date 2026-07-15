@@ -229,6 +229,23 @@ pub struct HerdTelemetryState {
     /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
+    /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
+    /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
+    /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
+    /// rows all read its corral yield. The same numbers as the `ceiling_*` scalars above, projected
+    /// as a list; with the cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
+    /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
+    /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
+    #[serde(default)]
+    pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
+    /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
+    /// entry per (**extractive** policy × party size `1..=max_party_size`), so the outfit UI is a
+    /// **table lookup** and the client does no arithmetic at all. The investment policies
+    /// (Cultivate/Corral) are place-bound band work that `send_hunt_expedition` rejects, so they get
+    /// no rows here. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
+    /// simulated rather than divided. Derived at capture. Appended last.
+    #[serde(default)]
+    pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
     /// **The feed this pen demands — or WOULD demand once built** — at the herd's CURRENT biomass
     /// (`pen.upkeep_per_biomass × biomass`), because a confined herd cannot graze. A **projection**
     /// for an unpenned herd, the **live** demand for a penned one: always meaningful, never
@@ -247,23 +264,6 @@ pub struct HerdTelemetryState {
     /// with it. It recovers when fed again (it never despawns and never loses the pen).
     #[serde(default = "pen_fully_fed")]
     pub pen_fed_fraction: f32,
-    /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
-    /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
-    /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
-    /// rows all read its corral yield. The same numbers as the `ceiling_*` scalars above, projected
-    /// as a list; with the cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
-    /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
-    /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
-    #[serde(default)]
-    pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
-    /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
-    /// entry per (**extractive** policy × party size `1..=max_party_size`), so the outfit UI is a
-    /// **table lookup** and the client does no arithmetic at all. The investment policies
-    /// (Cultivate/Corral) are place-bound band work that `send_hunt_expedition` rejects, so they get
-    /// no rows here. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
-    /// simulated rather than divided. Derived at capture. Appended last.
-    #[serde(default)]
-    pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
 }
 
 impl Default for HerdTelemetryState {
@@ -291,10 +291,10 @@ impl Default for HerdTelemetryState {
             ceiling_eradicate: 0.0,
             ceiling_corral: 0.0,
             corral_yield: 0.0,
-            pen_upkeep: 0.0,
-            pen_fed_fraction: pen_fully_fed(),
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
+            pen_upkeep: 0.0,
+            pen_fed_fraction: pen_fully_fed(),
         }
     }
 }
@@ -1263,6 +1263,31 @@ pub struct TileState {
     /// bigger = harsher). Band-independent — a property of the place. Derived at capture.
     #[serde(default)]
     pub habitability: i64,
+    /// Packed per-side river classes: `class = RiverClass::from_bits(river_edges >> (2 * dir))`
+    /// for each odd-r direction `dir` (0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE). Both hexes flanking a
+    /// river edge carry it, each on their own side. Replaces the old polyline hydrology overlay:
+    /// together with `TerrainType::NavigableRiver` this fully determines the river render.
+    #[serde(default)]
+    pub river_edges: u16,
+    /// Packed per-**corner** river inflow: `class = RiverClass::from_bits(river_inflow >> (2 *
+    /// corner))` for each hex corner (`0` lower-right, `1` bottom, `2` lower-left, `3` upper-left,
+    /// `4` top, `5` upper-right — screen space, +y down).
+    ///
+    /// Set only on the **first hex of a `NavigableRiver` chain**, at the corner where the edge-river
+    /// chain terminates and hands its water to the navigable trunk, with the class of the last edge
+    /// it emitted. An edge river ends at a *vertex*, never mid-side, so this is where the renderer
+    /// must join the tributary to the trunk hex. `0` everywhere else.
+    #[serde(default)]
+    pub river_inflow: u16,
+    /// Packed per-side **channel exits** of a navigable river — 1 bit per odd-r direction (see
+    /// [`RiverChannel`]): `exits(dir) = (river_channel >> dir) & 1`.
+    ///
+    /// The trunk channel is a **path**, and only the tracer knows which neighbours a navigable hex
+    /// actually links to; a renderer that infers them from terrain draws a web. Arm only the sides
+    /// whose bit is set. Symmetric across a shared side, except at the mouth (the exit into the
+    /// ocean/inland sea/delta is not mirrored back). `0` on every hex with no navigable channel.
+    #[serde(default)]
+    pub river_channel: u8,
     /// **Graze (pasture) readout** — the tile's live *animal-edible* biomass (grass/browse), the stock
     /// herds eat. `0` on water/ice/rock and on any tile with no pasture. Distinct from the
     /// *human-edible* forage stock (`ForagePatchState`, food-module tiles only) — see
@@ -1292,31 +1317,6 @@ pub struct TileState {
     /// `ForageLaborConfig::capacity_for(tile.terrain)` — see `docs/plan_grazing_foundation.md` §1.1.
     #[serde(default)]
     pub forage_capacity: f32,
-    /// Packed per-side river classes: `class = RiverClass::from_bits(river_edges >> (2 * dir))`
-    /// for each odd-r direction `dir` (0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE). Both hexes flanking a
-    /// river edge carry it, each on their own side. Replaces the old polyline hydrology overlay:
-    /// together with `TerrainType::NavigableRiver` this fully determines the river render.
-    #[serde(default)]
-    pub river_edges: u16,
-    /// Packed per-**corner** river inflow: `class = RiverClass::from_bits(river_inflow >> (2 *
-    /// corner))` for each hex corner (`0` lower-right, `1` bottom, `2` lower-left, `3` upper-left,
-    /// `4` top, `5` upper-right — screen space, +y down).
-    ///
-    /// Set only on the **first hex of a `NavigableRiver` chain**, at the corner where the edge-river
-    /// chain terminates and hands its water to the navigable trunk, with the class of the last edge
-    /// it emitted. An edge river ends at a *vertex*, never mid-side, so this is where the renderer
-    /// must join the tributary to the trunk hex. `0` everywhere else.
-    #[serde(default)]
-    pub river_inflow: u16,
-    /// Packed per-side **channel exits** of a navigable river — 1 bit per odd-r direction (see
-    /// [`RiverChannel`]): `exits(dir) = (river_channel >> dir) & 1`.
-    ///
-    /// The trunk channel is a **path**, and only the tracer knows which neighbours a navigable hex
-    /// actually links to; a renderer that infers them from terrain draws a web. Arm only the sides
-    /// whose bit is set. Symmetric across a shared side, except at the mouth (the exit into the
-    /// ocean/inland sea/delta is not mirrored back). `0` on every hex with no navigable channel.
-    #[serde(default)]
-    pub river_channel: u8,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
@@ -1599,23 +1599,6 @@ pub struct PopulationCohortState {
     /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
-    /// **The food this band actually PAID for pen feed this turn**, summed across every corral it
-    /// keeps — the real `LocalStore::take` debit, not the demanded amount (a band that could only
-    /// part-pay records only what it handed over, and its herds starve for the rest).
-    ///
-    /// A pen's feed comes straight off the band's stores, so it is in **neither** [`Self::food_income`]
-    /// **nor** [`Self::food_consumption`]. Render it as its own **negative** row in the food ledger —
-    /// "my people ate X" and "my animals ate Y" are deliberately separate lines, and it is *not* folded
-    /// into `food_consumption`. The sim answers it so the client does no arithmetic:
-    ///
-    /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
-    /// ```
-    ///
-    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, not persisted (a rehydrated
-    /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
-    #[serde(default)]
-    pub pen_feed_upkeep: f32,
     /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
     /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
     ///
@@ -1634,6 +1617,23 @@ pub struct PopulationCohortState {
     /// (`expedition_config.hunt.viability_warn_turns`).
     #[serde(default)]
     pub expedition_viability_warn_turns: u32,
+    /// **The food this band actually PAID for pen feed this turn**, summed across every corral it
+    /// keeps — the real `LocalStore::take` debit, not the demanded amount (a band that could only
+    /// part-pay records only what it handed over, and its herds starve for the rest).
+    ///
+    /// A pen's feed comes straight off the band's stores, so it is in **neither** [`Self::food_income`]
+    /// **nor** [`Self::food_consumption`]. Render it as its own **negative** row in the food ledger —
+    /// "my people ate X" and "my animals ate Y" are deliberately separate lines, and it is *not* folded
+    /// into `food_consumption`. The sim answers it so the client does no arithmetic:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
+    /// ```
+    ///
+    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, not persisted (a rehydrated
+    /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
+    #[serde(default)]
+    pub pen_feed_upkeep: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
