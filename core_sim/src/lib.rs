@@ -119,10 +119,10 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, forecast_expected_take, herd_capacity, herd_ecology,
-    hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep, repopulate_fauna,
-    spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
+    advance_herd_grazing, advance_herds, advance_husbandry, forecast_expected_take, herd_capacity,
+    herd_ecology, hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
+    repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
@@ -565,6 +565,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 advance_herds,
+                advance_herd_grazing,
                 advance_forage_regrowth,
                 advance_graze_regrowth,
                 advance_cultivation,

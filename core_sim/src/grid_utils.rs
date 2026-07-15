@@ -136,6 +136,51 @@ pub fn hex_distance_wrapped(a: UVec2, b: UVec2, width: u32, wrap: bool) -> u32 {
     axial_distance(a_axial, b_axial)
 }
 
+/// Every tile within odd-r hex distance `radius` of `center` — the hex "disk" of that radius.
+///
+/// Wrap-aware horizontally (matching the map topology via [`hex_distance_wrapped`]) and clamped to
+/// the grid vertically (the poles are hard edges). `radius == 0` returns just `center`; the counts
+/// grow `1, 7, 19, …` (`1 + 3·r·(r+1)`) on an interior tile.
+///
+/// Implemented as a bounding-box scan + exact `hex_distance_wrapped(center, t) <= radius` filter,
+/// since no hex-disk primitive exists. The `[-radius, radius]²` offset box is a **superset**: every
+/// hex step changes the offset column and row by at most 1 (see `HEX_NEIGHBOR_OFFSETS`), so a tile
+/// `radius` steps away is within `radius` columns and rows — the exact filter then trims the box's
+/// corners (which read Chebyshev-in-range but hex-out-of-range). Deduplicates on a horizontally
+/// wrapped map narrow enough that two column offsets fold onto the same tile.
+pub fn hex_range_tiles(
+    center: UVec2,
+    radius: u32,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Vec<UVec2> {
+    let r = radius as i32;
+    let mut tiles = Vec::new();
+    for dy in -r..=r {
+        let y = center.y as i32 + dy;
+        if y < 0 || y >= height as i32 {
+            continue;
+        }
+        for dx in -r..=r {
+            let raw_x = center.x as i32 + dx;
+            let x = if wrap {
+                wrap_x(raw_x, width, true)
+            } else {
+                if raw_x < 0 || raw_x >= width as i32 {
+                    continue;
+                }
+                raw_x as u32
+            };
+            let tile = UVec2::new(x, y as u32);
+            if hex_distance_wrapped(center, tile, width, wrap) <= radius && !tiles.contains(&tile) {
+                tiles.push(tile);
+            }
+        }
+    }
+    tiles
+}
+
 /// Get the six hex neighbors in odd-r offset coordinates, with optional horizontal wrap.
 ///
 /// Returns up to 6 valid neighbor coordinates. Neighbors that would be outside
@@ -616,6 +661,78 @@ mod tests {
         assert_eq!(
             hex_distance_wrapped(a, b, W, true),
             hex_distance_wrapped(b, a, W, true)
+        );
+    }
+
+    #[test]
+    fn hex_range_tiles_counts_on_interior_tile() {
+        // The hex-disk counts: radius 0 → 1, 1 → 7, 2 → 19 (= 1 + 3·r·(r+1)) on a tile far from
+        // every edge, and every returned tile is genuinely within that hex distance.
+        const W: u32 = 80;
+        const H: u32 = 52;
+        for &center in &[UVec2::new(40, 24), UVec2::new(40, 25)] {
+            for (radius, expected) in [(0u32, 1usize), (1, 7), (2, 19)] {
+                let tiles = hex_range_tiles(center, radius, W, H, true);
+                assert_eq!(
+                    tiles.len(),
+                    expected,
+                    "radius {radius} around {center:?} should enclose {expected} tiles"
+                );
+                for t in &tiles {
+                    assert!(hex_distance_wrapped(center, *t, W, true) <= radius);
+                }
+                assert!(
+                    tiles.contains(&center),
+                    "the disk always contains its center"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hex_range_tiles_radius_zero_is_just_center() {
+        let center = UVec2::new(12, 9);
+        assert_eq!(hex_range_tiles(center, 0, 80, 52, true), vec![center]);
+    }
+
+    #[test]
+    fn hex_range_tiles_wraps_across_the_seam() {
+        // A radius-1 disk centered on the right edge reaches across the horizontal seam to column 0,
+        // with no duplicates and the full 7-tile count (the seam is not an edge under wrap).
+        const W: u32 = 80;
+        const H: u32 = 52;
+        let center = UVec2::new(79, 24);
+        let tiles = hex_range_tiles(center, 1, W, H, true);
+        assert_eq!(tiles.len(), 7);
+        assert!(
+            tiles.iter().any(|t| t.x == 0),
+            "the disk crosses the seam to x=0"
+        );
+        // No tile appears twice even where the wrap folds columns together.
+        let mut sorted = tiles.clone();
+        sorted.sort_by_key(|t| (t.y, t.x));
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            tiles.len(),
+            "wrapped disk has no duplicate tiles"
+        );
+
+        // With wrap disabled the same edge tile loses its across-seam neighbors.
+        let no_wrap = hex_range_tiles(center, 1, W, H, false);
+        assert!(no_wrap.iter().all(|t| t.x != 0));
+        assert!(no_wrap.len() < tiles.len());
+    }
+
+    #[test]
+    fn hex_range_tiles_clamps_at_the_poles() {
+        // Vertical edges are hard: a disk centered on the top row keeps only the in-bounds rows.
+        let center = UVec2::new(40, 0);
+        let tiles = hex_range_tiles(center, 2, 80, 52, true);
+        assert!(tiles.iter().all(|t| t.y <= 2), "no tile above the top edge");
+        assert!(
+            tiles.len() < 19,
+            "a pole-clamped disk is smaller than an interior one"
         );
     }
 

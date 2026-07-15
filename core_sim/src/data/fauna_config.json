@@ -9,7 +9,8 @@
       "host_biomes": ["boreal_arctic", "montane_highland"],
       "dwell_turns": 1,
       "loiter_turns": [14, 26],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.011
     },
     "steppe_runner": {
       "display_name": "Steppe Runners",
@@ -20,7 +21,8 @@
       "host_biomes": ["savanna_grassland"],
       "dwell_turns": 1,
       "loiter_turns": [12, 22],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.05
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
@@ -31,7 +33,8 @@
       "host_biomes": ["wetland_swamp", "riverine_delta"],
       "dwell_turns": 1,
       "loiter_turns": [12, 22],
-      "loiter_radius": 2
+      "loiter_radius": 2,
+      "fodder_per_biomass": 0.03
     },
     "deer": {
       "display_name": "Red Deer",
@@ -40,7 +43,8 @@
       "route_len": [2, 3],
       "biomass": [600, 1200],
       "host_biomes": ["temperate_forest", "mixed_woodland", "savanna_grassland"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.05
     },
     "boar": {
       "display_name": "Wild Boar",
@@ -49,7 +53,8 @@
       "route_len": [2, 3],
       "biomass": [500, 1000],
       "host_biomes": ["temperate_forest", "mixed_woodland", "wetland_swamp"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.06
     },
     "rabbit": {
       "display_name": "Rabbit Warren",
@@ -58,7 +63,8 @@
       "route_len": [1, 1],
       "biomass": [80, 200],
       "host_biomes": ["savanna_grassland", "semi_arid_scrub", "temperate_forest"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.10
     },
     "fowl": {
       "display_name": "Wild Fowl",
@@ -67,7 +73,8 @@
       "route_len": [1, 1],
       "biomass": [60, 160],
       "host_biomes": ["wetland_swamp", "riverine_delta", "coastal_littoral"],
-      "dwell_turns": 1
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.09
     }
   },
   "abundance": {

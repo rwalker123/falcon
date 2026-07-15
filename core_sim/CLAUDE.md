@@ -40,7 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: `pastoral.ecology` (`r` 0.25, the passive mobile-domesticated rung) and `pen` (`ecology.r` 0.90 / `capacity_fraction` / **`upkeep_per_biomass`** — the pen's feed — / `starve_shrink_rate`), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02; see "The Graze (Pasture) Layer"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn)) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: `pastoral.ecology` (`r` 0.25, the passive mobile-domesticated rung) and `pen` (`ecology.r` 0.90 / `capacity_fraction` / **`upkeep_per_biomass`** — the pen's feed — / `starve_shrink_rate`), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02; see "The Graze (Pasture) Layer"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -1199,9 +1199,54 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   — herds eat it, and `K_herd` becomes `range graze flow / fodder_per_biomass`, retiring
   `pen.capacity_fraction` and per-species `K`.
 
-See Also: `docs/plan_grazing_foundation.md` (design), "Depletable Forage" (the human-edible twin and
-the `ForageRegistry` pattern this mirrors), "Fauna & Wild Game" (the model this becomes the substrate
-of in Phase 2b).
+### Phase 2b-i — herds eat their range, movement is graze-aware (INERT on K)
+
+The first 2b slice (`docs/plan_grazing_2b.md` §8). Herds now **draw the graze layer down** on the
+tiles they occupy, and **movement avoids barren ground** — but **carrying capacity is still the
+species constant**, so the hunting economy (hunt/forecast yields) is byte-identical to 2a. This
+de-risks the K change (2b-ii) by proving the eating + movement first, exactly as 2a shipped the graze
+layer inert.
+
+- **`grid_utils::hex_range_tiles(center, radius, w, h, wrap)`** — every tile within odd-r hex distance
+  `radius` (the hex disk: `1, 7, 19, …`), wrap-aware horizontally + pole-clamped. Bounding-box scan +
+  exact `hex_distance_wrapped` filter. Shared by the herd range (and the pen/anything later).
+- **`SpeciesDef.fodder_per_biomass`** (`fauna_config.json`, `#[serde(default)]`) — the fodder one unit
+  of animal biomass demands per turn. **Cached onto `Herd` at spawn** (mirroring `carrying_capacity`)
+  and round-tripped through the rollback snapshot (`HerdState.fodder_per_biomass`, sim-side only — not
+  on the client wire). Shipped anchors (smaller animals eat MORE per unit biomass; **inert this slice**,
+  retuned from a measured anchor in 2b-ii): rabbit **0.10** / fowl **0.09** / boar **0.06** / deer
+  **0.05** / steppe_runner **0.05** / marsh_grazer **0.03** / mammoth **0.011**. Each is
+  `range_tiles × per-tile MSY (0.1·capacity) ÷ species K`, so a herd near its constant K eats ~its
+  range's sustainable graze flow and holds the range near half capacity.
+- **`Herd::graze_range_radius(&SpeciesDef)`** — the footprint a herd grazes, from `size_class`: Small
+  → **0** (its one tile), Big → **1**, Migratory → **loiter_radius** (the current loiter cluster, not
+  the whole route).
+- **`advance_herd_grazing`** (Logistics, registered **after `advance_herds`** and **before
+  `advance_graze_regrowth`**) — the `forage_take`-style draw-down: each **mobile, non-corralled** herd
+  demands `fodder_per_biomass × biomass` and draws it from its range's `GrazeRegistry` patches,
+  **proportional to each tile's available graze** and floored at each patch's `reseed_floor_fraction ×
+  capacity` (never permanently kills a tile). Herds draw **sequentially in `HerdRegistry` order** (that
+  Vec is rollback-persisted in a fixed order), so a shared tile is order-independent under rollback.
+  Corralled herds are fed from the larder (`pen_upkeep`), not the land, so they are skipped.
+- **Graze-aware movement** (§4.1): `advance_herd_roam` (`best_land_neighbor_toward` /
+  `wander_near_anchor`) **never steps onto a zero-graze tile** (no patch / zero capacity) and **biases
+  toward higher graze capacity** among candidates, folding graze into the *existing* per-turn seeded
+  RNG (deterministic under rollback). A herd hemmed in by barren stays put. `build_route` (spawn-time)
+  biases migratory anchors onto the most fertile nearby ground, reading capacity **directly from
+  `graze.capacity_by_biome`** (graze patches don't exist yet — `spawn_initial_herds` runs before
+  `spawn_initial_graze`). Movement keys off **capacity** (stable land fertility), *not* live biomass —
+  chasing *receding* grass (leaving a cluster because it was eaten out) is the emergent 2c dynamic,
+  deliberately deferred. `advance_herds` takes the graze layer as `Option<Res<GrazeRegistry>>`: a
+  `None`/empty registry falls back to plain land movement (the isolated fauna test harnesses).
+- **Measured** (`core_sim/tests/grazing_2b.rs`, earthlike seed 119304647, 40 turns): herd-occupied
+  pasture sits at **~61%** of capacity vs **~98.5%** on untouched tiles (grazing visibly draws range
+  down); a vacated cluster recovers **17.6% → 100%** once herds leave; **0/122 herds** end a turn on a
+  zero-graze tile (movement avoids barren). The ~61% (vs a ~50% target) says the fodder anchors are a
+  touch light — fine while inert, a starting point for 2b-ii's retune.
+
+See Also: `docs/plan_grazing_foundation.md` (design), `docs/plan_grazing_2b.md` (the 2b arc),
+"Depletable Forage" (the human-edible twin and the `ForageRegistry` pattern this mirrors), "Fauna &
+Wild Game" (the model this becomes the substrate of in Phase 2b).
 
 ---
 

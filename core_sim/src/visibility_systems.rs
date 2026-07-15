@@ -1198,6 +1198,7 @@ mod tests {
             vec![HERD_TILE],
             100.0,
             100.0,
+            0.0,
         );
 
         let mut allocation = LaborAllocation::default();

@@ -83,6 +83,15 @@ pub struct SpeciesDef {
     /// Migratory only: hex radius of the local graze-wander around a loiter anchor.
     #[serde(default = "default_loiter_radius")]
     pub loiter_radius: u32,
+    /// **Fodder one unit of animal biomass demands per turn** (Grazing Phase 2b-i). A herd of
+    /// `biomass` draws `fodder_per_biomass × biomass` graze from the tiles in its range each turn
+    /// (`fauna::advance_herd_grazing`), the metabolic denominator that turns the land's *grass flow*
+    /// into *animals*. Smaller animals run hotter per unit mass, so small game carries the largest
+    /// value and migratory megafauna the smallest. Cached onto `Herd` at spawn (mirroring
+    /// `carrying_capacity`). Defaults to `0.0` (a non-grazing species) for a config that omits it —
+    /// harmless while Phase 2b-i is inert on carrying capacity.
+    #[serde(default)]
+    pub fodder_per_biomass: f32,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -95,8 +104,9 @@ fn default_loiter_turns() -> [u32; 2] {
     [12, 24]
 }
 
-/// Default migratory loiter wander radius (hexes) around an anchor.
-fn default_loiter_radius() -> u32 {
+/// Default migratory loiter wander radius (hexes) around an anchor. Also the fallback grazing-range
+/// radius for a migratory herd whose species row can't be resolved (`Herd::graze_range_radius`).
+pub(crate) fn default_loiter_radius() -> u32 {
     2
 }
 

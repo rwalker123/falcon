@@ -4794,6 +4794,7 @@ mod tests {
             vec![coord],
             60.0,
             100.0,
+            0.0,
         );
         if let Some(faction) = owner {
             herd.claim_domestication(faction);

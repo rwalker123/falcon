@@ -4241,6 +4241,7 @@ fn herd_state(herd: &Herd) -> HerdState {
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
         corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
         corral_progress: herd.corral_progress,
+        fodder_per_biomass: herd.fodder_per_biomass,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4699,6 +4700,9 @@ mod tests {
             // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
             corralled_at: Some((5, 6)),
             corral_progress: 1.0,
+            // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
+            // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
+            fodder_per_biomass: 0.05,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -5890,6 +5894,7 @@ mod tests {
             vec![UVec2::new(4, 4)],
             50.0,
             100.0,
+            0.0,
         );
         penned.corral_at(UVec2::new(4, 4));
         registry.herds.push(penned);
@@ -5901,6 +5906,7 @@ mod tests {
             vec![UVec2::new(1, 1)],
             50.0,
             100.0,
+            0.0,
         ));
 
         let telemetry = HerdTelemetry {
@@ -5934,6 +5940,7 @@ mod tests {
             vec![UVec2::new(4, 4)],
             PEN_BIOMASS,
             100.0,
+            0.0,
         );
         penned.corral_at(UVec2::new(4, 4));
         // The keeper could only pay half the feed last turn → the herd is starving.
@@ -5946,6 +5953,7 @@ mod tests {
             vec![UVec2::new(1, 1)],
             50.0,
             100.0,
+            0.0,
         ));
 
         let telemetry = HerdTelemetry {
@@ -6000,6 +6008,7 @@ mod tests {
             vec![UVec2::new(2, 2)],
             BIOMASS,
             CAP,
+            0.0,
         );
         mobile.claim_domestication(FactionId(0));
         registry.herds.push(mobile);
@@ -6011,6 +6020,7 @@ mod tests {
             vec![UVec2::new(3, 3)],
             BIOMASS,
             CAP,
+            0.0,
         );
         penned.claim_domestication(FactionId(0));
         penned.corral_at(UVec2::new(3, 3));

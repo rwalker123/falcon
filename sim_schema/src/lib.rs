@@ -436,6 +436,11 @@ pub struct HerdState {
     /// investment.
     #[serde(default)]
     pub corral_progress: f32,
+    /// Per-species fodder demand per unit biomass (Grazing Phase 2b-i), cached on the live `Herd` at
+    /// spawn from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire)
+    /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.
+    #[serde(default)]
+    pub fodder_per_biomass: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }

@@ -7307,6 +7307,7 @@ mod labor_yield_tests {
             vec![UVec2::new(0, 0)],
             biomass,
             CAP,
+            0.0,
         );
         herd.refresh_ecology_phase(&fauna);
         drop(fauna);
@@ -8496,6 +8497,7 @@ mod hunt_trip_bound_tests {
             vec![UVec2::new(1, 1)],
             biomass,
             cap,
+            0.0,
         );
         if domesticated {
             herd.domestication_progress = 1.0;
