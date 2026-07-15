@@ -143,6 +143,42 @@ models fencing partly-barren land.
 
 ---
 
+## 4a. Husbandry ceiling — which species climb the ladder (slice 2d-δ)
+
+Not every animal can be herded, and not every herdable animal can be penned: humans pen cattle, herd
+reindeer, and only hunt deer and mammoth. The husbandry ladder is a **sequence** (wild → pastoral →
+pen), so a species' reach is a single **ceiling**, not two independent flags — which also makes the
+incoherent "pennable but not tameable" state unrepresentable.
+
+Add a per-species `husbandry_ceiling` enum to each species def (`fauna_config.json`), values:
+
+- **`wild`** — hunt-only. Domestication never accrues; the `domesticate` claim and the `corral`/
+  `extend_pen` commands reject.
+- **`pastoral`** — reaches the mobile-tamed rung but never the pen. Domestication works; `corral`/
+  `extend_pen` reject ("{Species} cannot be penned").
+- **`pen`** — the full ladder (today's universal behaviour).
+
+**Default `pen`** (preserves current behaviour for any untagged/future species). Initial roster:
+
+| species | ceiling | why |
+|---|---|---|
+| Mammoth | `wild` | megafauna windfall — hunt-only |
+| Deer | `wild` | hunted, not herded |
+| Steppe Runner (migratory) | `pastoral` | nomadic herding — follow, don't fence |
+| Marsh Grazer (migratory) | `pastoral` | same |
+| Boar | `pen` | → pig |
+| Rabbit | `pen` | hutches |
+| Fowl | `pen` | → poultry |
+
+Cache the ceiling on `Herd` at spawn (mirrors `regrowth_rate`/`fodder_per_biomass`). Gate three seams:
+domestication accrual (wild → no-op), the `domesticate` claim (wild → reject), and the `corral` /
+`extend_pen` commands + the `Corral` follow-policy accrual (below `pen` → reject/no-op). Append a
+`husbandryCeiling` wire field (append-only) so the client can hide the corral/extend affordance on
+non-pennable herds and the whole domestication track on wild ones. No `validate()` combination guard is
+needed — the single enum makes illegal states unrepresentable.
+
+---
+
 ## 5. Config changes (`core_sim/src/data/fauna_config.json`, `husbandry` block)
 
 - **Delete** `pen.capacity_fraction` (and its `_comment_capacity_fraction`).
@@ -198,6 +234,10 @@ Per-species pen `r` and self-feeding **share** the §2.4 invariant rework, so th
 - **2d-β — server:** `Command::ExtendPen` + build ladder + validation (§4).
 - **2d-γ — client:** §7 surface (footprint highlight, feed-split, extend affordance), verified via the
   ui_preview PNG harness.
+- **2d-δ — husbandry ceiling (§4a):** per-species `husbandry_ceiling` enum; gate domestication accrual,
+  the `domesticate` claim, and the `corral`/`extend_pen` commands + `Corral` policy accrual; append the
+  `husbandryCeiling` wire field; client hides the corral/extend affordance on non-pennable herds and the
+  domestication track on wild ones. Server + client.
 
 The 19 corral balance tests must be re-read, not assumed: self-feeding changes `penUpkeep` on good
 pasture, so tests asserting a fixed larder draw will need their fixtures pinned to a **barren footprint**

@@ -1094,6 +1094,11 @@ table HerdTelemetryState {
   // `penExtendProgress` = the in-flight fence ring's build meter (0..1) for a "Fencing N%" badge.
   // 0 this slice (2d-β populates it).
   penExtendProgress:float = 0;
+  // --- Husbandry ceiling (Grazing 2d-δ, appended last) --- how far up the ladder this species climbs:
+  // "wild" (hunt-only) | "pastoral" (tames + roams, never pens) | "pen" (the full ladder). The client
+  // hides the corral/extend affordance on a non-"pen" herd and the whole domestication track on a
+  // "wild" one. A free-form string like `species`/`sizeClass` (empty → "pen", the full ladder).
+  husbandryCeiling:string;
 }
 
 table CommandEventState {

@@ -224,6 +224,8 @@ mod tests {
             fodder_per_biomass: 0.05,
             // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
             regrowth_rate: 0.04,
+            // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
+            husbandry_ceiling: "wild".to_string(),
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -260,6 +262,9 @@ mod tests {
             // Mid-build: the pen is not finished, so the herd is still mobile.
             corralled_at: None,
             corral_progress: HALF_BUILT,
+            // Set explicitly (like `size_class`): an empty default normalizes to "pen" and would break
+            // the round-trip identity.
+            husbandry_ceiling: "pen".to_string(),
             ecology: EcologyState {
                 biomass: 60.0,
                 carrying_capacity: 100.0,

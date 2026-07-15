@@ -1656,6 +1656,10 @@ fn validate_labor_policy(
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return Err(format!("No herd '{}' to corral.", fauna_id));
             };
+            // Grazing 2d-δ: only a `Pen`-ceiling species may be penned (nomadic herders don't fence).
+            if !herd.can_pen() {
+                return Err(format!("{} cannot be penned.", herd.species));
+            }
             if herd.is_corralled() {
                 return Err(format!("{} is already corralled.", fauna_id));
             }
@@ -2418,6 +2422,8 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
     enum Outcome {
         UnknownHerd,
         AlreadyDomesticated,
+        /// Grazing 2d-δ: a `Wild`-ceiling species is hunt-only — carries the species display name.
+        WildGame(String),
         NotOwner,
         NotTame(f32),
         Claimed,
@@ -2437,6 +2443,9 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
         match registry.herds.iter_mut().find(|herd| herd.id == herd_id) {
             None => Outcome::UnknownHerd,
             Some(herd) if herd.is_domesticated() => Outcome::AlreadyDomesticated,
+            // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed (checked before ownership —
+            // it is a property of the animal, not of who is hunting it).
+            Some(herd) if !herd.can_domesticate() => Outcome::WildGame(herd.species.clone()),
             // Only the tending faction may claim; report ownership and tameness distinctly.
             Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
             Some(herd) if herd.domestication_progress < claim_threshold => {
@@ -2470,6 +2479,12 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             CommandEventKind::Domesticate,
             faction,
             format!("{} is already domesticated.", herd_id),
+        ),
+        Outcome::WildGame(species) => emit_command_failure(
+            app,
+            CommandEventKind::Domesticate,
+            faction,
+            format!("{species} is wild game — hunt-only, it cannot be domesticated."),
         ),
         Outcome::NotOwner => emit_command_failure(
             app,
@@ -2713,7 +2728,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         return;
     };
 
-    let (owns, knows_herding, at_max, already_extending, pen_radius_max) = {
+    let (owns, knows_herding, can_pen, species, at_max, already_extending, pen_radius_max) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let pen_radius_max = fauna.husbandry.pen_radius_max;
         let knows = app
@@ -2729,12 +2744,18 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         (
             herd.owner == Some(faction),
             knows,
+            herd.can_pen(),
+            herd.species.clone(),
             herd.pen_radius >= pen_radius_max,
             herd.pen_extending,
             pen_radius_max,
         )
     };
-    let reason = if !knows_herding {
+    let reason = if !can_pen {
+        // Grazing 2d-δ: belt-and-braces — a non-`Pen` species can never be penned, so this is
+        // unreachable via the gated corral path, but the extend command states the rule explicitly.
+        Some(format!("{species} cannot be penned."))
+    } else if !knows_herding {
         Some(
             "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
                 .to_string(),
@@ -5258,6 +5279,109 @@ mod tests {
             "the pen enters the extending state (radius unchanged until the ring completes)"
         );
         assert!(corral_failure_detail_contains(&app, "status=extending"));
+    }
+
+    // --- Husbandry ceiling gates (Grazing 2d-δ) -------------------------------------------------------
+
+    /// Set a seeded herd's husbandry ceiling (`wild` | `pastoral` | `pen`) for the gate tests.
+    fn set_ceiling(app: &mut bevy::prelude::App, id: &str, ceiling: core_sim::HusbandryCeiling) {
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .find(|h| h.id == id)
+            .unwrap()
+            .husbandry_ceiling = ceiling;
+    }
+
+    /// A `wild` species is hunt-only — the `domesticate` claim rejects it. (A wild herd never even
+    /// accrues husbandry, so this is the realistic path: an untamed wild herd the player tries to claim.)
+    #[test]
+    fn domesticate_rejects_a_wild_species() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        // Owner `None` so `seed_herd` doesn't auto-domesticate it (the ceiling check is what matters).
+        let id = seed_herd(&mut app, UVec2::new(1, 1), None);
+        set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Wild);
+
+        handle_domesticate(&mut app, faction, id.clone());
+
+        assert!(domesticate_failure_detail_contains(&app, "wild game"));
+        assert!(
+            !app.world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .unwrap()
+                .is_domesticated(),
+            "a wild herd is never domesticated"
+        );
+    }
+
+    fn domesticate_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Domesticate)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// A non-`pen` species (wild or pastoral) is refused by `corral` — nomadic herders don't fence.
+    #[test]
+    fn corral_rejects_a_non_pennable_species() {
+        for ceiling in [
+            core_sim::HusbandryCeiling::Wild,
+            core_sim::HusbandryCeiling::Pastoral,
+        ] {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let coord = UVec2::new(1, 1);
+            let id = seed_herd(&mut app, coord, Some(faction));
+            set_ceiling(&mut app, &id, ceiling);
+            grant_herding(&mut app, faction);
+            spawn_working_band(
+                &mut app,
+                faction,
+                LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    policy: FollowPolicy::Sustain,
+                },
+            );
+
+            handle_corral(&mut app, faction, coord);
+
+            assert!(
+                corral_failure_detail_contains(&app, "cannot be penned"),
+                "{ceiling:?} must be refused by corral"
+            );
+            assert!(!herd_is_corralled(&app, &id));
+        }
+    }
+
+    /// `extend_pen`'s belt-and-braces ceiling check: a (hypothetically) penned non-`pen` species is
+    /// refused before it can grow a ring.
+    #[test]
+    fn extend_pen_rejects_a_non_pennable_species() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Pastoral);
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_extend_pen(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "cannot be penned"));
+        assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
     }
 
     /// **The investment policies never reach an expedition.** Penning a herd (or preparing a patch)

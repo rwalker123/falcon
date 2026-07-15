@@ -54,6 +54,56 @@ impl SizeClass {
     }
 }
 
+/// **How far up the husbandry ladder a species can climb** (Grazing 2d-δ, `docs/plan_grazing_2d.md`
+/// §4a). The ladder is a *sequence* (wild → pastoral → pen), so a species' reach is a single ceiling,
+/// not two independent flags — which makes the incoherent "pennable but not tameable" state
+/// unrepresentable (no `validate()` combination guard needed). `Wild` is hunt-only (domestication never
+/// accrues, `domesticate`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
+/// (`corral`/`extend_pen` reject); `Pen` is the full ladder. **Default `Pen`** preserves the pre-δ
+/// universal-full-ladder behaviour for any untagged/future species.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HusbandryCeiling {
+    /// Hunt-only. Domestication never accrues.
+    Wild,
+    /// Reaches the mobile-tamed rung but never the pen.
+    Pastoral,
+    /// The full ladder — the default.
+    #[default]
+    Pen,
+}
+
+impl HusbandryCeiling {
+    /// Stable string key (also the snapshot `husbandry_ceiling` field / the wire `husbandryCeiling`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HusbandryCeiling::Wild => "wild",
+            HusbandryCeiling::Pastoral => "pastoral",
+            HusbandryCeiling::Pen => "pen",
+        }
+    }
+
+    /// Parse the stable string key back (inverse of `as_str`; the rollback restore path). Unknown/empty
+    /// strings resolve to the `Default` (`Pen`), preserving the full ladder.
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "wild" => HusbandryCeiling::Wild,
+            "pastoral" => HusbandryCeiling::Pastoral,
+            _ => HusbandryCeiling::Pen,
+        }
+    }
+
+    /// Can this species be **tamed** (mobile domestication)? True for `Pastoral` and `Pen`.
+    pub fn allows_domestication(&self) -> bool {
+        !matches!(self, HusbandryCeiling::Wild)
+    }
+
+    /// Can this species be **penned** (corralled)? True only for `Pen`.
+    pub fn allows_pen(&self) -> bool {
+        matches!(self, HusbandryCeiling::Pen)
+    }
+}
+
 /// One species row in the table.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpeciesDef {
@@ -103,6 +153,12 @@ pub struct SpeciesDef {
     /// when present.
     #[serde(default)]
     pub regrowth_rate: Option<f32>,
+    /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
+    /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
+    /// domestication accrual + the `domesticate` / `corral` / `extend_pen` paths. Defaults to `pen`
+    /// (the full ladder) when omitted. See [`HusbandryCeiling`].
+    #[serde(default)]
+    pub husbandry_ceiling: HusbandryCeiling,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -1277,6 +1333,32 @@ mod tests {
             .display_name
             .to_lowercase()
             .contains("boar"));
+    }
+
+    /// Grazing 2d-δ: the shipped roster's husbandry ceilings, and the `pen` default for an omitted one.
+    #[test]
+    fn builtin_husbandry_ceilings_match_the_roster() {
+        let config = FaunaConfig::builtin();
+        use HusbandryCeiling::*;
+        for (key, expected) in [
+            ("mammoth", Wild),
+            ("deer", Wild),
+            ("steppe_runner", Pastoral),
+            ("marsh_grazer", Pastoral),
+            ("boar", Pen),
+            ("rabbit", Pen),
+            ("fowl", Pen),
+        ] {
+            assert_eq!(
+                config.species[key].husbandry_ceiling, expected,
+                "{key} husbandry_ceiling"
+            );
+        }
+        // An omitted field defaults to `pen` (the full ladder), preserving pre-δ behaviour.
+        let def: SpeciesDef =
+            serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
+                .unwrap();
+        assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
     }
 
     #[test]

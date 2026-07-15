@@ -435,7 +435,14 @@ pub fn advance_labor_allocation(
                     if matches!(policy, FollowPolicy::Corral) {
                         let knows_herding = discovery.get_progress(faction, HERDING_DISCOVERY_ID)
                             >= herding_knowledge_threshold;
-                        if knows_herding && herd.is_domesticated() && herd.owner == Some(faction) {
+                        // Grazing 2d-δ: only a `Pen`-ceiling species may build a pen. A `Wild`/`Pastoral`
+                        // herd never accrues corral progress (the command path also rejects it, so this
+                        // is unreachable for a legitimately-assigned Corral policy — belt and braces).
+                        if knows_herding
+                            && herd.can_pen()
+                            && herd.is_domesticated()
+                            && herd.owner == Some(faction)
+                        {
                             let pen_tile = herd.position();
                             if herd.accrue_corral(
                                 faction,

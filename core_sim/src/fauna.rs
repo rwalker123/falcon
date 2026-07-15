@@ -13,7 +13,7 @@ use crate::{
     components::{FollowPolicy, PopulationCohort, SourceYield, Tile, FOOD},
     fauna_config::{
         default_loiter_radius, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
-        SizeClass, SpeciesDef, NO_GRAZE_CAPACITY,
+        HusbandryCeiling, SizeClass, SpeciesDef, NO_GRAZE_CAPACITY,
     },
     food::{classify_food_module, FoodModule},
     graze::GrazeRegistry,
@@ -204,6 +204,12 @@ pub struct Herd {
     /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Round-tripped through
     /// the rollback snapshot (`HerdState.regrowth_rate`, sim-side only — not on the client wire).
     pub regrowth_rate: f32,
+    /// **How far up the husbandry ladder this herd's species can climb** (Grazing 2d-δ), cached from
+    /// the `SpeciesDef` at spawn (mirroring `regrowth_rate` / `fodder_per_biomass`). Gates the three
+    /// husbandry seams without re-resolving config: domestication accrual (a `Wild` herd never tames),
+    /// the `domesticate` claim, and the `corral` / `extend_pen` paths (only a `Pen` herd pens).
+    /// Round-tripped through `HerdState.husbandry_ceiling` and exported as `husbandryCeiling`.
+    pub husbandry_ceiling: HusbandryCeiling,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
     pub ecology_phase: EcologyPhase,
@@ -338,6 +344,10 @@ impl Herd {
             carrying_capacity,
             fodder_per_biomass,
             regrowth_rate,
+            // Full ladder by default; the real spawn resolves the species' ceiling from its `SpeciesDef`
+            // right after construction (`spawn_short_range_game` / the migratory spawn). A test-built
+            // herd keeps the default `Pen` = the pre-2d-δ universal-full-ladder behaviour.
+            husbandry_ceiling: HusbandryCeiling::default(),
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
             ecology_phase: EcologyPhase::Thriving,
             domestication_progress: 0.0,
@@ -374,10 +384,25 @@ impl Herd {
         self.domestication_progress >= 1.0
     }
 
+    /// **Can this herd be tamed** (Grazing 2d-δ)? Gated by the species' `husbandry_ceiling` — a `Wild`
+    /// species is hunt-only, so domestication accrual and the `domesticate` claim no-op / reject.
+    pub fn can_domesticate(&self) -> bool {
+        self.husbandry_ceiling.allows_domestication()
+    }
+
+    /// **Can this herd be penned** (Grazing 2d-δ)? Only a `Pen`-ceiling species; the `corral` /
+    /// `extend_pen` paths and the `Corral` policy accrual reject a `Wild` or `Pastoral` species.
+    pub fn can_pen(&self) -> bool {
+        self.husbandry_ceiling.allows_pen()
+    }
+
     /// Accrue husbandry progress for `faction` (the tending band). Sets ownership on the
     /// first accrual; only the owner makes progress. Clamped to 1.0 (auto-domestication).
+    ///
+    /// **A `Wild`-ceiling species never accrues** (Grazing 2d-δ) — self-guarded here so the "hunt-only"
+    /// invariant holds regardless of the call site (and no wild herd ever picks up an `owner`).
     pub(crate) fn accrue_domestication(&mut self, faction: FactionId, amount: f32) {
-        if self.is_domesticated() {
+        if self.is_domesticated() || !self.can_domesticate() {
             return;
         }
         if self.owner.is_none() {
@@ -760,6 +785,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         carrying_capacity: state.ecology.carrying_capacity,
         fodder_per_biomass: state.fodder_per_biomass,
         regrowth_rate: state.regrowth_rate,
+        husbandry_ceiling: HusbandryCeiling::from_key(&state.husbandry_ceiling),
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
         owner: state.ecology.owner.map(FactionId),
@@ -997,6 +1023,8 @@ fn spawn_migratory_herds(
         herd.roam = RoamState::Loiter {
             turns_left: def.sample_loiter_turns(rng),
         };
+        // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
+        herd.husbandry_ceiling = def.husbandry_ceiling;
         herd.refresh_ecology_phase(fauna);
         log_herd_spawn(&herd);
         herds.push(herd);
@@ -1108,6 +1136,8 @@ fn spawn_game_group_at(
         def.fodder_per_biomass,
         def.regrowth_rate_or(fauna.ecology.regrowth_rate),
     );
+    // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
+    herd.husbandry_ceiling = def.husbandry_ceiling;
     herd.refresh_ecology_phase(fauna);
     Some(herd)
 }
@@ -2662,6 +2692,36 @@ mod tests {
             fodder,
             WILD_TEST_REGROWTH_RATE,
         )
+    }
+
+    /// Grazing 2d-δ: a `Wild`-ceiling herd never accrues domestication (and never picks up an owner),
+    /// a `Pastoral` one tames but cannot be penned, and a `Pen` one climbs the whole ladder.
+    #[test]
+    fn husbandry_ceiling_gates_taming_and_penning() {
+        let faction = FactionId(7);
+
+        let mut wild = herd_of_size(SizeClass::Big, 600.0, 1200.0, 0.05);
+        wild.husbandry_ceiling = HusbandryCeiling::Wild;
+        assert!(!wild.can_domesticate() && !wild.can_pen());
+        wild.accrue_domestication(faction, 1.0);
+        assert_eq!(wild.domestication_progress, 0.0, "a wild herd never tames");
+        assert_eq!(wild.owner, None, "and never picks up an owner");
+
+        let mut pastoral = herd_of_size(SizeClass::Migratory, 4000.0, 9000.0, 0.05);
+        pastoral.husbandry_ceiling = HusbandryCeiling::Pastoral;
+        assert!(pastoral.can_domesticate() && !pastoral.can_pen());
+        pastoral.accrue_domestication(faction, 1.0);
+        assert!(
+            pastoral.is_domesticated() && pastoral.owner == Some(faction),
+            "a pastoral herd tames fine"
+        );
+
+        let mut pen = herd_of_size(SizeClass::Small, 100.0, 200.0, 0.10);
+        pen.husbandry_ceiling = HusbandryCeiling::Pen;
+        assert!(
+            pen.can_domesticate() && pen.can_pen(),
+            "a pen herd climbs the full ladder"
+        );
     }
 
     #[test]

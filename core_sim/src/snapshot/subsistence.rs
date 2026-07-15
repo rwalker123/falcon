@@ -25,6 +25,7 @@ pub(crate) fn herd_state(herd: &Herd) -> HerdState {
         pen_extending: herd.pen_extending,
         fodder_per_biomass: herd.fodder_per_biomass,
         regrowth_rate: herd.regrowth_rate,
+        husbandry_ceiling: herd.husbandry_ceiling.as_str().to_string(),
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -272,6 +273,11 @@ pub(crate) fn herd_snapshot_entries(
                     .unwrap_or(0),
                 pen_pasture_fraction: herd.map(|herd| herd.pen_pasture_fraction).unwrap_or(0.0),
                 pen_extend_progress: herd.map(|herd| herd.pen_extend_progress).unwrap_or(0.0),
+                // Husbandry ceiling (Grazing 2d-δ) — the client hides the corral/extend affordance on a
+                // non-`pen` herd and the domestication track on a `wild` one.
+                husbandry_ceiling: herd
+                    .map(|herd| herd.husbandry_ceiling.as_str().to_string())
+                    .unwrap_or_default(),
             }
         })
         .collect()

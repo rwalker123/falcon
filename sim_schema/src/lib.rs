@@ -297,6 +297,12 @@ pub struct HerdTelemetryState {
     /// this slice (β populates it). Appended last (append-only).
     #[serde(default)]
     pub pen_extend_progress: f32,
+    /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ): `wild` | `pastoral` |
+    /// `pen`. The client hides the corral/extend affordance on a non-`pen` herd and the whole
+    /// domestication track on a `wild` one. A free-form string like `species` (empty → `pen`, the full
+    /// ladder). Appended last (append-only).
+    #[serde(default)]
+    pub husbandry_ceiling: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -334,6 +340,7 @@ impl Default for HerdTelemetryState {
             pen_footprint_tiles: 0,
             pen_pasture_fraction: 0.0,
             pen_extend_progress: 0.0,
+            husbandry_ceiling: String::new(),
         }
     }
 }
@@ -499,6 +506,11 @@ pub struct HerdState {
     /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
     #[serde(default)]
     pub regrowth_rate: f32,
+    /// How far up the husbandry ladder the herd's species climbs (Grazing 2d-δ): `wild` | `pastoral` |
+    /// `pen` (`HusbandryCeiling::as_str`/`from_key`). Cached on the live `Herd` at spawn; round-tripped
+    /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).
+    #[serde(default)]
+    pub husbandry_ceiling: String,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -3368,6 +3380,7 @@ fn create_herds<'a>(
         let species = builder.create_string(herd.species.as_str());
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
+        let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
         let hunt_policy_ceilings = if herd.hunt_policy_ceilings.is_empty() {
             None
         } else {
@@ -3446,6 +3459,8 @@ fn create_herds<'a>(
                 penFootprintTiles: herd.pen_footprint_tiles,
                 penPastureFraction: herd.pen_pasture_fraction,
                 penExtendProgress: herd.pen_extend_progress,
+                // Husbandry ceiling (Grazing 2d-δ) — appended last.
+                husbandryCeiling: Some(husbandry_ceiling),
             },
         );
         entries.push(entry);
