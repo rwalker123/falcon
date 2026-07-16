@@ -348,7 +348,32 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     "why can't I sow here?" must not be answered by making the command fail.
   - *Remaining:* the client (slice 6) — the native reader surfaces none of the five new fields, and no
     panel renders the two-meter split or the refusal.
-- [ ] **6 — Client.** Both new verbs + the two-meter split + the ladder readouts; ui_preview-verified.
+- [x] **6 — Client.** **Landed (slice 6b).** The decoder was dropping **all five** slice-6a plant
+  fields *and* slice-4's `seedSelection`/`penning` — present in the schema and bindings, absent from
+  the dicts, arriving as zeros (the third time `native/src/lib.rs` has silently eaten appended
+  fields); all seven now decode and MapView cross-refs the plant five onto `tile_info` as `patch_*`.
+  **The two-meter split (§4.1)** is enforced by SURFACE, not styling: faction knowledge lives *only*
+  in the top-bar strip, prefixed **"⚒ Your people know:"** and now carrying all four tracks; a
+  source's own build meters live *only* in its drawer rows; the single place they meet is a gated
+  verb's reason line, which pairs a KNOWLEDGE reason (fixed by **practice** — "Your people know
+  Penning 45% — ♻ Sustain-hunt a tamed herd to learn it") with a SOURCE reason (fixed by the
+  **verb** — "This herd is 40% tamed — ◎ Tame it to finish"). `Tame` (◎) and `Sow` (▦) ship as the
+  6th option on their pickers — **as policies on the existing `assign_labor` path**, so no new
+  command wiring; the standalone `tame`/`sow` verbs stay unused by the client. Sow's refusal is
+  rendered as an *answer* per fault (too poor / too dry / both), never a failing button. The `Field`
+  gets its own row beside `Cultivation` ("Sowing N%" → "▦ Field"), reading as a different thing from
+  a Tended Patch. Stale copy retired: Sustain's "the hunt also tames it" + "pays food every turn
+  without being hunted down", the `domesticate` reference, and Corral's Herding gate (now Penning).
+  Added `_tame_stalled_hint` for the pause-not-gate Thriving rule. ui_preview: `two_meter_split`,
+  `herd_tame`, `herd_tame_stalled`, `forage_sow`, `forage_sow_locked`, `forage_sow_too_dry`,
+  `forage_sow_too_poor`, `forage_field_building`, `forage_field`, `herd_corral_locked{,_both}`.
+  - *Remaining server-side:* **`Tame` has no quotable payoff on the wire.** Its dip rides
+    `huntPolicyCeilings` (a 6th `tame` row — fine), but there is no `pastoralYield` twin of
+    `tendedYield`/`corralYield`/`fieldYield`, and structurally there cannot be one today: 3b made the
+    payoff a faster `r` a worker must still harvest, not a managed rate. So Tame alone cannot render
+    the "preparing X → then Y" pair its three sibling rungs do — the client shows the real dip and
+    states the payoff in words rather than fabricating a number. A `pastoralYield` (or an honest
+    per-worker before→after) would complete the symmetry.
 - [ ] **Rung 4 (future, own arc): Worked Land** (plants) — irrigation / clearing / terracing makes
   unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"
   actually lives. Its animal twin is **Selective Breeding**. Both should be config-shaped rungs on the

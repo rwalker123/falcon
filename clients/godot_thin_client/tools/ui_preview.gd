@@ -472,6 +472,66 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_cultivate_stressed")
 
+	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
+	# State 6b-sow-locked — Seed Selection is only 12% learned, so ▦ Sow greys. On this ordinary
+	# prairie the ground ALSO refuses seed, so this is the MULTI-reason layout and — more to the point
+	# — it shows the two reasons a player must tell apart: one is fixed by PRACTICE (work a Tended
+	# Patch), the other only by MOVING somewhere else. No other rung on either ladder has the latter.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": 0.0,
+	}])
+	_hud._forage_assign_policy = "sustain"
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("forage_sow_locked")
+
+	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
+	# policy is now available — but only on rich, well-watered ground.").
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
+	}])
+
+	# State 6b-sow-too-dry — knowledge KNOWN, and still refused: this prairie is rich but dry. THE
+	# WHOLE POINT of the sim shipping a reason rather than a bool — only ~46 of 4160 tiles (1.1%) will
+	# take seed, so "why can't I sow here?" is *the* question rung 3 provokes, and the client cannot
+	# re-derive the answer (it has neither the biome capacity table nor the hydrology). The line must
+	# name the fault (dry), not just refuse, and point at the rung that lifts it.
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("forage_sow_too_dry")
+
+	# State 6b-sow-too-poor — the OTHER refusal, and the reason this pair is rendered together: thin
+	# upland ground that IS watered. A different fault must produce a different sentence and a
+	# different remedy — if these two frames read the same, the reason field is being wasted.
+	_hud.show_tile_selection(_sow_too_poor_tile_fixture())
+	await _settle()
+	await _save("forage_sow_too_poor")
+
+	# State 6b-sow — QUALIFYING ground at last (alluvial plain beside fresh water — one of the 46).
+	# ▦ Sow is ENABLED and selected, with NO refusal line. The forecast states a deal that is
+	# deliberately shaped unlike Cultivate's: "Preparing: +0.02 /turn → then +2.40 /turn" — near-zero
+	# while the crop is in the ground (pure investment; there is no standing stand to take a fraction
+	# of), then 2× a tended patch. That asymmetry IS rung 3's bargain.
+	_hud.show_tile_selection(_sowable_tile_fixture())
+	_hud._forage_assign_policy = "sow"
+	_hud._build_forage_assign_controls(_sowable_tile_fixture())
+	await _settle()
+	await _save("forage_sow")
+
+	# State 6b-sowing — the rung-3 BUILD meter: the Field row reads "Sowing 45%", following the pen's
+	# "Building 40%" / the fence's "Fencing 60%" convention. It sits BESIDE the "Cultivation 🌾 Tended
+	# Patch" row: the patch carries TWO independent meters, and both are the SOURCE's own.
+	_hud.show_tile_selection(_sowing_tile_fixture())
+	await _settle()
+	await _save("forage_field_building")
+
+	# State 6b-field — the COMPLETED Field, top of the plant ladder. The row must read "▦ Field" in
+	# SIGNAL cyan — a visibly DIFFERENT THING from "🌾 Tended Patch" (different word, different glyph),
+	# not a bigger percentage. That is the whole test of rung 3's readout.
+	_hud.show_tile_selection(_field_tile_fixture())
+	await _settle()
+	await _save("forage_field")
+
 	# Back to a plain Sustain compose for the range states below.
 	_hud._forage_assign_policy = "sustain"
 
@@ -652,20 +712,34 @@ func _ready() -> void:
 	await _save("herd_ceiling_pastoral")
 
 	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
-	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
-	# tamed): the MULTI-reason layout — a "🐄 Corral needs:" header with one indented "· <reason>" bullet
-	# per unmet prerequisite, each naming its remedy (♻ Sustain-hunt a Thriving herd). The knowledge
-	# meter in the top bar reads the same 35%.
-	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 0.35}])
+	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet: the MULTI-reason layout — a
+	# "🐄 Corral needs:" header with one indented "· <reason>" bullet per unmet prerequisite.
+	#
+	# THE §4.3 GATE RESHUFFLE IS WHAT THIS FRAME NOW GUARDS. Corral is gated on **PENNING** (35%), NOT
+	# on Herding — Herding gates Tame alone. The two reasons are also deliberately DIFFERENT KINDS:
+	#   · a KNOWLEDGE reason — "Your people know Penning 35%", fixed by PRACTICE (♻ Sustain-hunt a
+	#     tamed herd), and whose meter lives in the top-bar knowledge strip.
+	#   · a SOURCE reason — "This herd is 40% tamed", fixed by the 🐾 Tame VERB, and whose meter lives
+	#     in this herd's own drawer.
+	# Herding is fully known here precisely so the frame proves Corral is NOT keyed to it.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35,
+	}])
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	await _settle()
 	await _save("herd_corral_locked_both")
 
-	# State 3c-corral-locked — the SAME wild herd (domestication 0.4) once Herding is fully known: only
-	# the herd half of the gate remains, so 🐄 Corral greys with the single compact one-liner
-	# "🐄 Corral — Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it".
-	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
+	# State 3c-corral-locked — the SAME herd (domestication 0.4) once Penning is fully known: only the
+	# SOURCE half of the gate remains, so 🐄 Corral greys with the single compact one-liner
+	# "🐄 Corral — This herd is 40% tamed — 🐾 Tame it to finish".
+	#
+	# That remedy is the single most load-bearing copy fix in this slice. It used to read "♻ Sustain-hunt
+	# this Thriving herd to finish taming it" — the exact hidden rule this whole arc exists to kill.
+	# Sustain has not tamed anything since slice 3a; the Tame VERB does.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 1.0,
+	}])
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	await _settle()
@@ -699,6 +773,48 @@ func _ready() -> void:
 	_hud._build_herd_assign_controls(_depleted_corral_herd_fixture())
 	await _settle()
 	await _save("herd_corral_depleted")
+
+	# ---- THE INTENSIFICATION LADDER, slice 6b -----------------------------------------------------
+	# THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the headline of this slice, and
+	# the frame it is judged on. Two meters advance from one action and they are DIFFERENT KINDS of
+	# thing; this state puts both on screen at once so the distinction can actually be seen:
+	#   • FACTION KNOWLEDGE — the top-bar strip, prefixed "⚒ Your people know:". Herding ✔ known,
+	#     Penning still learning at 45%. This is your PEOPLE's craft: faction-wide, permanent, earned
+	#     by practice. It appears NOWHERE else — never in the drawer below.
+	#   • PER-SOURCE PROGRESS — this herd's own "Husbandry: Domesticating 40%" row, down in its
+	#     drawer. Local to THIS animal, and it decays if abandoned.
+	# The bridge between them is the gated 🐄 Corral's reason line, which names the knowledge, its live
+	# percent, and the practice that fills it — the one line that teaches the whole ladder.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": 0.45,
+	}])
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_taming_herd_fixture())
+	_hud._hunt_assign_policy = "tame"
+	_hud._build_herd_assign_controls(_taming_herd_fixture())
+	await _settle()
+	await _save("two_meter_split")
+
+	# State 6b-tame — the 🐾 Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
+	# Sustain/Surplus/Market/Eradicate/Corral, ENABLED (Herding is known) and selected on a
+	# pen-ceiling herd that is only 40% tamed. Its forecast row is deliberately NOT the dip→payoff
+	# pair the other investment rungs render: there is no `pastoralYield` on the wire and nothing to
+	# quote (taming's payoff is a faster regrowth a worker must still harvest, not a managed rate), so
+	# the row shows the REAL exported dip and states the payoff in words. Fabricating a "then +Y" — or
+	# deriving 1.5× client-side — would be the client re-deriving the ecology model.
+	await _save("herd_tame")
+
+	# State 6b-tame-stalled — the "why isn't my Tame progressing?" hint. Taming accrues ONLY while the
+	# herd is Thriving, but is deliberately NOT gated on it (a herd's phase swings as you hunt it), so
+	# the sim just PAUSES the meter. Silence here would recreate exactly the hidden-rule problem this
+	# arc exists to kill, so the drawer says it: what stopped, why, that progress is NOT lost, and the
+	# remedy (ease off — the opposite of "work harder").
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_taming_stalled_herd_fixture())
+	_hud._hunt_assign_policy = "tame"
+	_hud._build_herd_assign_controls(_taming_stalled_herd_fixture())
+	await _settle()
+	await _save("herd_tame_stalled")
 
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	_hud._hunt_assign_policy = "sustain"
@@ -1755,6 +1871,16 @@ func _food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
+		# Plant RUNG 3 — the Field + the Sow verb. This reference tile is ordinary prairie steppe:
+		# rich enough to forage, but it will NOT take seed (rung 3 moves seed, it cannot fertilize or
+		# irrigate), so the sim's `sow_site_refusal` verdict rides here and the Sow option is gated
+		# with the reason. Only ~1% of a real map is sowable, so REFUSED is the common case and is
+		# deliberately the default fixture; `_sowable_tile_fixture` is the exception.
+		"patch_field_progress": 0.0,
+		"patch_is_field": false,
+		"patch_ceiling_sow": 0.0,
+		"patch_field_yield": 0.0,
+		"patch_sow_site_refusal": "too_dry",
 		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
 		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
 		# Rendered as the `Pasture` / `Pasture ecology` rows right under `Forage biomass`, so the card
@@ -1923,6 +2049,91 @@ func _tended_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return tile
 
+## QUALIFYING GROUND for `Sow` — an alluvial plain beside fresh water, i.e. one of the ~46 tiles of
+## 4160 (1.1%) on the standard map that will actually take seed. `patch_sow_site_refusal` is "" (the
+## sim's verdict: no fault), so the ▦ Sow option ENABLES once Seed Selection is known. The Sow
+## forecast pair is deliberately asymmetric with Cultivate's: `ceiling_sow` is ~0 because a sown
+## patch has no standing crop to take a fraction of (a bare-ground sow is PURE investment), and
+## `field_yield` is 2× the tended yield — the payoff that makes the ladder's top plant rung worth it.
+func _sowable_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	# Kept WITHIN the reference band's forage range (it sits on 66,10 with work_range 2) so the Forage
+	# button ENABLES: this state exists to judge the Sow affordance, and an out-of-range tile disables
+	# the button for an unrelated reason and hides exactly what the frame is for.
+	tile["x"] = 67
+	tile["y"] = 11
+	tile["terrain_label"] = "Alluvial Plain"
+	tile["tags_text"] = "Fertile, Fresh Water"
+	tile["food_module"] = "riverine_delta"
+	tile["food_module_label"] = "Riverine Delta"
+	tile["site_name"] = ""
+	# The ground answers the site requirement: rich enough AND watered. No refusal.
+	tile["patch_sow_site_refusal"] = ""
+	tile["patch_ceiling_sow"] = 0.02
+	tile["patch_field_yield"] = 2.40
+	return tile
+
+## The OTHER refusal. `_food_tile_fixture` is "too_dry" (rich prairie away from water); this is thin
+## upland ground — watered, but too poor to take a crop without fertilizing. The two messages must
+## differ, name different faults, and each point at the rung that lifts it.
+func _sow_too_poor_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	# In range of the reference band, like `_sowable_tile_fixture` — the refusal must be the ONLY
+	# reason Sow is unavailable in this frame.
+	tile["x"] = 65
+	tile["y"] = 11
+	tile["terrain_label"] = "Montane Highland"
+	tile["tags_text"] = "Thin Soil, Fresh Water"
+	tile["food_module"] = "montane_highland"
+	tile["food_module_label"] = "Montane Highland"
+	tile["site_name"] = ""
+	tile["patch_sow_site_refusal"] = "too_poor"
+	return tile
+
+## A patch mid-SOW: the rung-3 build meter is running, so the Field row reads "Sowing 45%". It sits
+## BESIDE the Cultivation row (this ground was tended first) — the two meters are independent and
+## both are the SOURCE's own, which is the per-source half of the two-meter split.
+func _sowing_tile_fixture() -> Dictionary:
+	var tile := _sowable_tile_fixture()
+	tile["cultivation_progress"] = 1.0
+	tile["is_cultivated"] = true
+	tile["patch_field_progress"] = 0.45
+	tile["patch_is_field"] = false
+	return tile
+
+## A COMPLETED Field — the top of the plant ladder. The row must read "▦ Field" (SIGNAL), a visibly
+## DIFFERENT THING from "🌾 Tended Patch", not a bigger percentage.
+func _field_tile_fixture() -> Dictionary:
+	var tile := _sowing_tile_fixture()
+	tile["patch_field_progress"] = 1.0
+	tile["patch_is_field"] = true
+	# A completed Field reports every ceiling == per_worker_yield (a managed source needs one worker),
+	# exactly as a tended patch does — so the stepper caps at 1.
+	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_market"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
+	return tile
+
+## A herd mid-TAME on a pen-ceiling species: the 🐾 Tame rung is available and selected, the herd's
+## OWN meter reads 40% (`domestication`), and Corral is still gated on Penning. This is the frame the
+## TWO-METER SPLIT is judged on — see the `two_meter_split` state.
+func _taming_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["husbandry_ceiling"] = "pen"
+	fixture["domestication"] = 0.4
+	fixture["ecology_phase"] = "thriving"
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## The same herd, STRESSED — the "why isn't my Tame progressing?" case. Taming accrues only while the
+## herd is Thriving, but the verb is NOT gated on it (a herd's phase swings as you hunt it): the sim
+## just PAUSES the meter. Nothing else in the HUD would tell the player, so the drawer must.
+func _taming_stalled_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["ecology_phase"] = "stressed"
+	return fixture
+
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.
 func _world_herds_fixture() -> Array:
@@ -1962,6 +2173,19 @@ func _herd_fixture() -> Dictionary:
 		"ceiling_corral": 0.23,
 		"corral_yield": 1.05,
 		"corral_progress": 0.0,
+		# The TAME rung's dip. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
+		# rides the `hunt_policy_ceilings` LIST (the sim exports a row for every one of the six
+		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder actually produces and the
+		# only place `_tame_forecast_bbcode` can read the number from. The extractive rows match the
+		# flat ceilings above, because the sim exports ONE hunt model and the two views must agree.
+		"hunt_policy_ceilings": {
+			"sustain": 0.90,
+			"surplus": 1.80,
+			"market": 2.70,
+			"eradicate": 4.50,
+			"tame": 0.23,
+			"corral": 0.23,
+		},
 		"tile_info": _food_tile_fixture(),
 	}
 

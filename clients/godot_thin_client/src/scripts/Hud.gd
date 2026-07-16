@@ -158,8 +158,21 @@ const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
 const ATTENTION_TILE_FORMAT := "(%d, %d)"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
-# Separator between the Cultivation / Herding tracks in the top-bar intensification readout.
+# Separator between the four knowledge tracks in the top-bar intensification readout.
 const INTENSIFICATION_SEGMENT_SEP := "  ·  "
+# Leads the top-bar knowledge strip. This strip is the FACTION half of the two-meter split (§4.1) —
+# what your PEOPLE have learned, permanently, from cumulative practice — as opposed to the per-source
+# build meters in a herd's/patch's own drawer. The prefix exists precisely so the strip cannot be read
+# as a stat of whatever happens to be selected; ⚒ (a hammer-and-pick — craft/skill) is bold line art,
+# legible at top-bar size (the 🪙/💰 lesson), and used nowhere else in the HUD.
+const KNOWLEDGE_STRIP_PREFIX := "⚒ Your people know:  "
+# Block-glyph meter widths. `METER_BAR_CELLS` is the standard (Sedentarization). The knowledge strip
+# runs NARROWER because it carries four tracks on one top-bar line — at the standard width the line
+# overflowed and clipped its last track off-screen (caught in the preview, not in review).
+const METER_BAR_CELLS := 10
+const KNOWLEDGE_METER_CELLS := 5
+# A fully-learned track. Bare, because `KNOWLEDGE_STRIP_PREFIX` already supplies the verb.
+const KNOWLEDGE_KNOWN_BADGE := "✔"
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -298,20 +311,27 @@ const LABOR_KIND_WARRIOR := "warrior"
 # EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
 # by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
-# The Sustain rung by name: the default compose policy AND the one policy that TEACHES — every
-# intensification track (cultivation / herding knowledge, herd domestication) accrues only while a
-# band works a Thriving source under Sustain, so the gate reasons below point back at it.
+# The Sustain rung by name: the default compose policy. It is also the rung the ladder's KNOWLEDGE
+# is learned from — but only knowledge: since slice 3a **Sustain no longer tames anything**. Working
+# a source under a stewardship policy teaches the faction the knowledge that unlocks the NEXT rung's
+# verb (§4), and the per-source build meter is then filled by that verb itself.
 const LABOR_POLICY_SUSTAIN := "sustain"
 const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
-# INVESTMENT rungs (Intensification): an up-front cost — the source pays only its `ceiling_cultivate`
-# / `ceiling_corral` dip yield while the workers prepare it, then flips to the much higher tended /
-# corral yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate is forage-only,
-# Corral is hunt-only.
+# INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
+# cost — the source pays only its dip ceiling (`ceiling_cultivate` / `ceiling_sow` / `ceiling_tame`'s
+# equivalent / `ceiling_corral`) while the workers prepare it, then flips to the much higher managed
+# yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
+# + Corral are hunt-only. Each ladder now runs its verb TWICE — one verb per rung-transition:
+#   plants:  wild --cultivate--> Tended Patch --sow--> Field
+#   animals: wild --tame------> Pastoral herd --corral--> Pen
 const LABOR_POLICY_CULTIVATE := "cultivate"
+const LABOR_POLICY_SOW := "sow"
+const LABOR_POLICY_TAME := "tame"
 const LABOR_POLICY_CORRAL := "corral"
-# The full picker option sets per source kind (extractive rungs + that kind's one investment rung).
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate"]
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "corral"]
+# The full picker option sets per source kind (the four extractive rungs + that kind's TWO investment
+# rungs, in ladder order so the picker reads bottom-of-the-ladder → top).
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
 # Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
 # (gathering a plant patch's regrowth, not culling a herd).
 const FORAGE_POLICY_HINTS := {
@@ -320,6 +340,12 @@ const FORAGE_POLICY_HINTS := {
     "market": "Market — gather for trade goods; faster decline.",
     "eradicate": "Eradicate — strip the patch bare.",
     "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
+    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
+    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
+    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
+    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
+    # neglected Field reverts to WILD, not to a free tended patch.
+    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
 }
 # GATES on the investment rungs. The option stays VISIBLE but disabled with its reasons, so the player
 # learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
@@ -327,19 +353,64 @@ const FORAGE_POLICY_HINTS := {
 #
 # Each reason states WHAT'S MISSING + HOW FAR ALONG IT IS + THE ACTION THAT CLOSES IT — naming the
 # prerequisite alone ("Herd must be domesticated") tells the player a door is locked without saying
-# where the key is. All three tracks are taught by the SAME action: Sustain-work a THRIVING source
-# (`core_sim/src/systems.rs` — cultivation/herding knowledge and per-herd domestication accrue only
-# under Sustain on a Thriving patch/herd). The remedy therefore names the Sustain glyph, pulled from
-# the shared `FoodIcons.POLICY_ICONS` map so it is literally the icon on the button beside it.
-# Format args: %d = the live progress percent off the snapshot, %s = that Sustain glyph.
-const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Cultivation knowledge %d%% — %s Sustain-forage a Thriving patch to learn it"
-const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Herding knowledge %d%% — %s Sustain-hunt a Thriving herd to learn it"
-const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hunt this Thriving herd to finish taming it"
+# where the key is.
+#
+# THIS IS WHERE THE TWO-METER SPLIT IS TAUGHT (docs/plan_intensification_ladder.md §4.1). A gated
+# verb has at most two kinds of reason, and they are DIFFERENT KINDS OF THING:
+#   • a KNOWLEDGE reason — "your PEOPLE haven't learned this craft yet". Faction-wide, permanent,
+#     earned by cumulative practice on the rung BELOW. Its meter lives in the top-bar knowledge
+#     strip, never in this source's drawer, and the remedy names the PRACTICE that fills it.
+#   • a SOURCE reason — "you haven't done it to THIS herd/patch yet". Local, decays if abandoned.
+#     Its meter is the source's own drawer row, and the remedy names the VERB that fills it.
+# One line teaches the whole ladder: practise this rung → fill that knowledge meter → unlock that
+# verb. The remedies therefore name a glyph pulled from the shared `FoodIcons.POLICY_ICONS` map, so
+# each is literally the icon on a button beside it.
+#
+# The KNOWLEDGE reasons. Practice teaches the NEXT rung up (§4), and the rule keys off the rung the
+# source STANDS on, not the verb — so the same Sustain hunt teaches Herding on a wild herd and
+# Penning on a tamed one. Format args: %d = the live faction progress percent, %s = the Sustain glyph.
+const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Your people know Cultivation %d%% — %s Sustain-forage a wild patch to learn it"
+const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Your people know Herding %d%% — %s Sustain-hunt a wild herd to learn it"
+# The two knowledges slice 4 added. The §4.3 reshuffle put ONE knowledge on each transition, so these
+# gate the rung-3 verbs and their remedies point at working the rung-2 source — the ladder's
+# "practise this rung to unlock the next" rule, stated in the place the player is blocked.
+const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Selection %d%% — %s Sustain-forage a Tended Patch to learn it"
+const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s Sustain-hunt a tamed herd to learn it"
+# The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
+# `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
+# nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
+# is the exact hidden rule the arc exists to kill.
+const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 # The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
 # a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
 # patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
+# the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
+# client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so
+# the sim ships the VERDICT as a stable key and these turn it into the manual's voice. Never show a
+# Sow button that just fails, and never answer with a bare "you can't": each line names the fault AND
+# points at the rung that lifts it (Worked Land — irrigation and the plough — is a future arc, so the
+# promise is deliberately "not yet", not a date).
+#
+# Rung 3 moves seed but cannot FERTILIZE, so the land itself must do it: the ground has to be rich
+# already and near fresh water. Salt coast does not count.
+const SOW_REFUSAL_TOO_POOR := "too_poor"
+const SOW_REFUSAL_TOO_DRY := "too_dry"
+const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
+const SOW_REFUSAL_REASONS := {
+    "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
+    "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",
+    "too_poor_and_too_dry": "This ground is both too thin and too dry to take a crop — your people can carry seed, but neither feed the soil nor water it yet. The river valleys will take it; this ground will not, until they learn to work the land.",
+}
+# An unrecognized refusal key still refuses (fail CLOSED — the sim gates the command regardless, so a
+# button offered here would simply fail), and says the one thing we do know.
+const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people cannot yet work land like this."
+# Taming pauses (it does not fail, and it does not lose progress) while the herd is not Thriving. The
+# verb is deliberately NOT gated on that — a herd's phase swings as you hunt it — so this line is the
+# only thing standing between the player and a hidden rule. %s = the herd's live `ecology_phase`.
+const TAME_STALLED_HINT_FORMAT := "⚠ Taming is paused — the herd is %s, and it only gentles while Thriving. Progress is not lost: ease your hunters off and it resumes as the herd recovers."
 # A patch with no streamed phase (redacted remembered tile) still fails the Thriving
 # test; it reads as unknown rather than asserting a phase we don't have.
 const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
@@ -361,6 +432,15 @@ const DOMESTICATION_COMPLETE := 1.0
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const CORRAL_BUILDING_LABEL := "Building"
 const CORRAL_GLYPH := "🐄"
+# Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
+# "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
+# may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's
+# "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
+# and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
+const FIELD_ROW := "Field"
+const FIELD_PROGRESS_COMPLETE := 1.0
+const FIELD_SOWING_LABEL := "Sowing"
+const FIELD_BADGE_LABEL := "Field"
 # The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
 # graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
 # share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
@@ -417,19 +497,42 @@ const OVERGRAZE_EPSILON := 0.05
 const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
-# The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
-# each gating one investment rung.
+# The FOUR intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
+# the FACTION-WIDE half of the two-meter split (§4.1). One per rung-transition, so the list IS the
+# ladder, and §4.3 pins "no two rungs share an unlock gate":
+#   plant:  wild --cultivation--> tended --seed_selection--> field
+#   animal: wild --herding------> pastoral --penning-------> pen
+# `seed_selection`/`penning` were appended by slice 4 (discovery ids 2005/2006).
 const KNOWLEDGE_TRACK_CULTIVATION := "cultivation"
 const KNOWLEDGE_TRACK_HERDING := "herding"
+const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
+const KNOWLEDGE_TRACK_PENNING := "penning"
+# The player-facing name of each track, from the manual's vocabulary (§2a is authoritative). Also the
+# order the top-bar knowledge strip renders them in: each web's own ladder, bottom rung first, so the
+# strip reads as two ladders climbing rather than four unrelated numbers.
+const KNOWLEDGE_TRACK_LABELS := {
+    "cultivation": "Cultivation",
+    "seed_selection": "Seed Selection",
+    "herding": "Herding",
+    "penning": "Penning",
+}
 # Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
-# has never seen, so learning the discovery has to say what it bought.
+# has never seen, so learning the discovery has to say what it bought — and, since the verb is only
+# HALF the story, what the verb then asks of them (a per-source meter to fill).
 const KNOWLEDGE_UNLOCK_LABELS := {
     "cultivation": "Cultivation learned",
+    "seed_selection": "Seed Selection learned",
     "herding": "Herding learned",
+    "penning": "Penning learned",
 }
+# NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
+# halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
+# that gates Corral (rung 3).
 const KNOWLEDGE_UNLOCK_NOTES := {
-    "cultivation": "The Cultivate policy is now available on Thriving patches.",
-    "herding": "The Corral policy is now available on domesticated herds.",
+    "cultivation": "The Cultivate policy is now available on Thriving wild patches.",
+    "seed_selection": "The Sow policy is now available — but only on rich, well-watered ground.",
+    "herding": "The Tame policy is now available on wild herds that can be domesticated.",
+    "penning": "The Corral policy is now available on herds you have tamed.",
 }
 # The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
 # carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
@@ -446,10 +549,20 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 # the sim rejects a Corral expedition outright). This is also the local set `_policy_hint` spells out
 # on a worked Hunt row's tooltip — those rows are always a resident band's.
 const LOCAL_HUNT_POLICY_HINTS := {
-    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever; on a thriving herd the hunt also tames it, building husbandry toward livestock that pays food every turn without being hunted down.",
+    # Sustain USED to claim it tamed the herd ("on a thriving herd the hunt also tames it… livestock
+    # that pays food every turn without being hunted down"). BOTH halves of that are now false and
+    # the sentence is the reason this whole arc exists: slice 3a split the conflated branch, so
+    # Sustain TEACHES the faction Herding but tames nothing (the `tame` verb fills the herd's own
+    # meter), and slice 3b retired passive-free pastoral, so a tamed herd pays only through workers.
+    # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
+    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
-    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no husbandry, no trade — denial only.",
+    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no craft learned, no trade — denial only.",
+    # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
+    # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
+    # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
+    "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
     # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
     # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
     # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
@@ -530,13 +643,37 @@ const FORECAST_CEILING_KEYS := {
     # so the same expected(workers, policy) math shows the cost of the investment while composing.
     "cultivate": "ceiling_cultivate",
     "corral": "ceiling_corral",
+    # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
+    # are independently tunable, and folding them onto one number would pass every forecast==actual
+    # test by coincidence and lie the moment either rung is retuned.
+    "sow": "ceiling_sow",
+    # NOTE — `tame` is deliberately ABSENT. There is no flat `ceilingTame` scalar on the wire; the
+    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so it is read via `_hunt_policy_ceiling`
+    # and rendered by `_tame_forecast_bbcode`. Adding a key here would silently fall back to Sustain's
+    # ceiling and quote the wrong number.
 }
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
+#
+# `tame` has NO entry, and that is a real modelling fact rather than a gap in the decode: since slice
+# 3b retired passive-free pastoral, taming's payoff is **not a managed harvest rate** like
+# `tended_yield`/`corral_yield`/`field_yield`. It is a faster regrowth (`r` × pastoral_gain) that a
+# worker still has to harvest — so the tamed herd keeps paying through the ordinary Sustain/Surplus
+# ceilings, which RISE as the herd rebuilds. There is no instantaneous "then +Y" the sim could quote,
+# so the client does not invent one; `_tame_forecast_bbcode` shows the real dip and states the payoff
+# qualitatively. See the client CLAUDE.md note on the missing `pastoralYield`.
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
+    "sow": "field_yield",
 }
+# The INVESTMENT rungs by name — "does this rung trade a dip now for a better source later?". This is
+# the test for *which yield row a rung gets*, and it is deliberately NOT `policy in
+# FORECAST_PAYOFF_KEYS`: `tame` is an investment rung that has no quotable payoff (above), so the
+# payoff map cannot answer this question. An investment rung must never render the extractive
+# "renewable / ⚠ overdraws the herd" preview — it is drawn sustainably by construction, and the
+# verdict would argue with the dip row.
+const INVESTMENT_POLICIES := ["cultivate", "sow", "tame", "corral"]
 # The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
 # GROSS take with that feed NOT deducted — so advertising the payoff bare would promise a number the
@@ -546,6 +683,13 @@ const FORECAST_FEED_KEYS := {
 }
 # The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
 const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
+# TAME's forecast — the one investment rung whose payoff is not a number the sim can quote (see
+# FORECAST_PAYOFF_KEYS). The dip is REAL and exported (`hunt_policy_ceilings["tame"]`), so it is shown
+# as a number; the payoff is stated in words rather than fabricated. Saying "→ then +0.00 /turn" (the
+# default of a field that does not exist) would be a lie, and inventing 1.5× client-side would be the
+# client re-deriving the ecology model — the one thing it must never do.
+# NOTE: no "/turn" in this format string — `_format_yield` already appends YIELD_PER_TURN_SUFFIX.
+const TAME_FORECAST_FORMAT := "Gentling: %s — then the same hunters take more from a herd that stays near"
 # The same deal for a rung that also carries a running feed cost:
 #   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
 # `pen_upkeep` answers "what would this pen cost?" for an UNPENNED herd too (a projection at the
@@ -1432,29 +1576,46 @@ func update_discoveries(discovered_variant: Variant) -> void:
     discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
     discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
 
-## Show the player faction's intensification-ladder knowledge (Cultivation / Herding) as a
-## compact top-bar block-glyph meter, mirroring the Sedentarization readout. Each track is
-## hidden until the faction begins learning it (the snapshot row is sparse); a completed
-## track reads "✔ known" (SIGNAL) instead of the bar.
+## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
+## faction's intensification-ladder knowledge as a compact top-bar block-glyph strip, mirroring the
+## Sedentarization readout.
+##
+## This strip is deliberately the ONLY place a knowledge meter appears. The split it enforces:
+##   • KNOWLEDGE — "what my PEOPLE can do at all". Faction-wide, permanent, earned by cumulative
+##     practice. It lives HERE, in the top bar, prefixed and labelled as your people's craft.
+##   • PER-SOURCE PROGRESS — "have I done it to THIS herd/patch yet". Local, decays if abandoned. It
+##     lives in that source's own drawer row (Husbandry / Corral / Cultivation / Field).
+## They are different KINDS of thing, so they never share a surface: no knowledge percentage is ever
+## rendered into a herd's or a patch's stat grid, where it would read as one more number about that
+## animal. The two are related in exactly one place — a gated verb's reason line under the policy
+## picker (`_hunt_policy_gates` / `_forage_policy_gates`), which names the knowledge, its live
+## percent, and the practice that fills it. That line is what teaches the ladder.
+##
+## All FOUR tracks render (slice 4 added Seed Selection + Penning), in `KNOWLEDGE_TRACK_LABELS` order
+## — each web's ladder bottom-rung-first — so the strip reads as two ladders climbing rather than
+## four unrelated numbers. A track is hidden until the faction begins learning it (the snapshot row is
+## sparse, and an unstarted rung is noise); a completed track reads "✔ known" (SIGNAL) not a full bar.
 func update_intensification(intensification_variant: Variant) -> void:
     _ingest_intensification(intensification_variant)
     if intensification_label == null:
         return
-    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
-    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     var segments: Array[String] = []
     var all_known := true
-    if cultivation > 0.0:
-        segments.append("Cultivation %s" % _knowledge_meter_text(cultivation))
-        all_known = all_known and cultivation >= 1.0
-    if herding > 0.0:
-        segments.append("Herding %s" % _knowledge_meter_text(herding))
-        all_known = all_known and herding >= 1.0
+    for track in KNOWLEDGE_TRACK_LABELS:
+        var progress := _faction_knowledge(PLAYER_FACTION_ID, String(track))
+        if progress <= 0.0:
+            continue
+        segments.append("%s %s" % [
+            String(KNOWLEDGE_TRACK_LABELS[track]), _knowledge_meter_text(progress)])
+        all_known = all_known and progress >= KNOWLEDGE_COMPLETE
     if segments.is_empty():
         intensification_label.visible = false
         return
     intensification_label.visible = true
-    intensification_label.text = INTENSIFICATION_SEGMENT_SEP.join(segments)
+    # The prefix is what makes this strip read as YOUR PEOPLE'S SKILL rather than as a stat of
+    # whatever is currently selected — the one line of copy carrying the §4.1 distinction in the HUD.
+    intensification_label.text = "%s%s" % [
+        KNOWLEDGE_STRIP_PREFIX, INTENSIFICATION_SEGMENT_SEP.join(segments)]
     # Cyan once every learned track is fully known; neutral while any is still in progress.
     intensification_label.add_theme_color_override(
         "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
@@ -1476,10 +1637,11 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
         if faction < 0:
             continue
         var previous: Dictionary = _intensification_knowledge.get(faction, {})
-        var current := {
-            KNOWLEDGE_TRACK_CULTIVATION: float(row.get(KNOWLEDGE_TRACK_CULTIVATION, 0.0)),
-            KNOWLEDGE_TRACK_HERDING: float(row.get(KNOWLEDGE_TRACK_HERDING, 0.0)),
-        }
+        # Every track the ladder defines, off the one list — so adding a rung's knowledge is a
+        # KNOWLEDGE_TRACK_LABELS entry plus a decoder field, never an edit here.
+        var current := {}
+        for track in KNOWLEDGE_TRACK_LABELS:
+            current[track] = float(row.get(track, 0.0))
         for track in KNOWLEDGE_UNLOCK_NOTES:
             if not previous.has(track):
                 continue
@@ -1508,12 +1670,24 @@ func _faction_knowledge(faction: int, track: String) -> float:
     var tracks: Dictionary = _intensification_knowledge.get(faction, {})
     return float(tracks.get(track, 0.0))
 
-## One knowledge track's readout: the block-glyph bar + "learning" while in progress,
-## a "✔ known" badge once complete. `progress` is 0..1.
+## One knowledge track's readout: a compact block-glyph bar + the live percent while in progress, a
+## "✔ known" badge once complete. `progress` is 0..1.
+##
+## Deliberately TIGHTER than the Sedentarization meter beside it (which keeps the shared 10-cell
+## `_meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
+## "learning" per track the line overflowed the top bar and clipped its last track off-screen —
+## verified in the first cut of `two_meter_split.png`. The percent replaces the word rather than
+## joining it: it is strictly more informative, and it is the SAME number the gate reason under a
+## locked verb quotes, so the strip and the reason line visibly agree.
 func _knowledge_meter_text(progress: float) -> String:
-    if progress >= 1.0:
-        return "✔ known"
-    return "%s learning" % _meter_bar(progress * 100.0)
+    # A bare ✔ rather than "✔ known": the strip's own prefix already reads "Your people know:", so the
+    # word was saying it twice — and the two it cost per known track were enough to push the fourth
+    # track's percent onto the frame edge.
+    if progress >= KNOWLEDGE_COMPLETE:
+        return KNOWLEDGE_KNOWN_BADGE
+    return "%s %d%%" % [
+        _meter_bar(progress * PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
+        _progress_percent(progress)]
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
@@ -1524,10 +1698,12 @@ func _dependency_color(working: int, dependency: int) -> Color:
         return HudStyle.SIGNAL
     return HudStyle.INK_DIM
 
-## A 10-cell block-glyph bar for a 0–100 score.
-func _meter_bar(score: float) -> String:
-    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * 10.0))
-    return "▰".repeat(filled) + "▱".repeat(10 - filled)
+## A block-glyph bar for a 0–100 score. `cells` defaults to the standard width, so the
+## Sedentarization meter and every existing caller are unchanged; the knowledge strip passes a
+## narrower one because it now carries FOUR tracks on one top-bar line.
+func _meter_bar(score: float, cells: int = METER_BAR_CELLS) -> String:
+    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
+    return "▰".repeat(filled) + "▱".repeat(cells - filled)
 
 func _sedentarization_color(stage: String) -> Color:
     match stage:
@@ -2868,12 +3044,23 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
     # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
     var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
-    # Grazing 2d-δ: the Corral rung is a PEN-ceiling affordance — a wild/pastoral species can never be
-    # penned, so hide Corral outright for them (NOT a "locked, learn Herding" gate — it is impossible for
-    # this species, and offering it greyed would imply a reachable prerequisite). `.filter` copies, so the
-    # HUNT_POLICY_OPTIONS const is untouched.
-    if not is_expedition and _husbandry_ceiling(herd) != HUSBANDRY_CEILING_PEN:
-        hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_CORRAL)
+    # Grazing 2d-δ + the ladder's rung-2 verb: BOTH husbandry rungs are husbandry-ceiling affordances,
+    # and the ceiling says how far up the ladder THIS SPECIES can climb ("wild" hunt-only / "pastoral"
+    # tameable-but-never-pennable / "pen" the full ladder). An out-of-ceiling rung is HIDDEN OUTRIGHT,
+    # never greyed: greying it would imply a reachable prerequisite, and no amount of knowledge or
+    # work will ever let you pen an aurochs whose ceiling is "pastoral". Knowledge = "I know how";
+    # ceiling = "this animal allows it" — decoupled (§4.2), so the gates above are orthogonal to this.
+    #   • Corral needs a "pen" ceiling.
+    #   • Tame needs anything ABOVE "wild" — and is pointless once the herd is fully tamed, so it
+    #     retires from the picker at that point (its per-source meter is full; Corral is what's next).
+    # `.filter` copies, so the HUNT_POLICY_OPTIONS const is untouched.
+    if not is_expedition:
+        var ceiling := _husbandry_ceiling(herd)
+        if ceiling != HUSBANDRY_CEILING_PEN:
+            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_CORRAL)
+        if ceiling == HUSBANDRY_CEILING_WILD \
+                or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE:
+            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_TAME)
     var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
@@ -2956,16 +3143,32 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             herd_assign_controls.add_child(_alloc_hint_label(reason))
     else:
         # What this policy DOES for a resident band (the forecast line below carries the number; this
-        # carries the consequence — above all Sustain's husbandry-toward-livestock payoff, which is
-        # otherwise invisible). Deliberately NOT the expedition hints: a party earns neither.
+        # carries the consequence — above all what Sustain actually teaches, which is otherwise
+        # invisible). Deliberately NOT the expedition hints: a party earns neither.
         herd_assign_controls.add_child(_alloc_hint_label(
             String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
+        # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
+        # than left to be guessed. See `_tame_stalled_hint`.
+        var stalled := _tame_stalled_hint(herd)
+        if stalled != "":
+            var stalled_label := _alloc_hint_label(stalled)
+            stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
+            herd_assign_controls.add_child(stalled_label)
+        # TAME's own row — the investment rung with no quotable payoff, so it gets neither the
+        # dip→payoff row above (no `then +Y` exists) nor the extractive preview below (its
+        # "renewable / ⚠ overdraws" verdict is meaningless for a rung drawn sustainably by
+        # construction). See `_tame_forecast_bbcode`.
+        if _hunt_assign_policy == LABOR_POLICY_TAME:
+            var tame_line := _tame_forecast_bbcode(band, herd, _hunt_assign_count)
+            if tame_line != "":
+                herd_assign_controls.add_child(_forecast_label(tame_line))
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
         # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
-        # EXTRACTIVE rungs ONLY — the investment rung (Corral) is answered by the dip→payoff row above
-        # (`forecast_active`), and rendering both put two rows with the same number on the panel. See
-        # the ONE-yield-row-per-rung note there.
-        if not bool(forecast["investment"]):
+        # EXTRACTIVE rungs ONLY — an INVESTMENT rung is answered by the dip→payoff row above
+        # (`forecast_active`) or by Tame's row, and rendering both put two rows with the same number
+        # on the panel. See the ONE-yield-row-per-rung note there. Tested against the named rung set,
+        # NOT `forecast["investment"]` (which is really "has a payoff key" and so misses Tame).
+        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
             var yield_line := _local_hunt_preview_bbcode(
                 band, herd, _hunt_assign_policy, _hunt_assign_count)
             if yield_line != "":
@@ -3139,42 +3342,124 @@ func _forecast_label(bbcode: String) -> RichTextLabel:
 func _progress_percent(progress: float) -> int:
     return int(round(clampf(progress, 0.0, 1.0) * PROGRESS_PERCENT_SCALE))
 
-## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → Array[String] of
-## reasons (each already carrying its own remedy). Empty when every rung is available. Mirrors the
-## sim's `assign_labor` validation: the faction must have fully learned Cultivation, and only a
-## Thriving patch can be prepared.
+## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed
+## policy → Array[String] of reasons (each already carrying its own remedy). Empty when every rung is
+## available. Mirrors the sim's `assign_labor` validation.
+##
+## The two rungs gate on DIFFERENT things, which is the ladder made legible:
+##   • Cultivate — Cultivation knowledge + a Thriving patch (you improve what is already there).
+##   • Sow — Seed Selection knowledge + ground that will take seed. It needs NO prior patch and no
+##     Thriving gate (seed travels, and sown ground starts at the reseed floor — i.e. Collapsing — so
+##     a health gate would forbid the very case the rung exists for). What it needs instead is the
+##     LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
+##     reason on either web that the player answers by MOVING rather than by working.
 func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
-    var reasons: Array[String] = []
+    var gates := {}
+    var cultivate_reasons: Array[String] = []
     var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
     if cultivation < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
+        cultivate_reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
             _progress_percent(cultivation), sustain_icon])
     var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
     if phase != ECOLOGY_PHASE_THRIVING:
         var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
-        reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
-    if reasons.is_empty():
-        return {}
-    return {LABOR_POLICY_CULTIVATE: reasons}
+        cultivate_reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
+    if not cultivate_reasons.is_empty():
+        gates[LABOR_POLICY_CULTIVATE] = cultivate_reasons
+    var sow_reasons: Array[String] = []
+    var seed_selection := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_SEED_SELECTION)
+    if seed_selection < KNOWLEDGE_COMPLETE:
+        sow_reasons.append(GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
+            _progress_percent(seed_selection), sustain_icon])
+    var refusal := _sow_site_refusal_reason(tile_info)
+    if refusal != "":
+        sow_reasons.append(refusal)
+    if not sow_reasons.is_empty():
+        gates[LABOR_POLICY_SOW] = sow_reasons
+    return gates
 
-## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → Array[String] of reasons.
-## The herd twin of `_forage_policy_gates`: the faction must have fully learned Herding, and the herd
-## must be fully domesticated before a pen can be built for it.
+## WHY this ground will not take seed, in the manual's voice — "" when it will. Reads the sim's
+## `patch_sow_site_refusal` verdict; the client never re-derives it (it has neither the per-biome
+## capacity table nor the hydrology). An unknown key still refuses: the sim gates the command on the
+## same seam, so offering the button anyway would only produce a failure the player cannot read.
+func _sow_site_refusal_reason(tile_info: Dictionary) -> String:
+    var key := String(tile_info.get("patch_sow_site_refusal", "")).strip_edges()
+    if key == "":
+        return ""
+    return String(SOW_REFUSAL_REASONS.get(key, SOW_REFUSAL_FALLBACK))
+
+## Unmet prerequisites for the HUNT investment rungs (Tame = rung 2, Corral = rung 3), keyed policy →
+## Array[String] of reasons. The herd twin of `_forage_policy_gates`.
+##
+## The §4.3 GATE RESHUFFLE is what this function encodes: ONE knowledge per transition. **Herding
+## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
+## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
+##
+## Deliberately NOT gated: the herd being Thriving. Taming a herd whose phase swings under hunting
+## would be un-actionable, so the sim just PAUSES the meter instead — see `_tame_stalled_hint`, which
+## is how the player is told rather than left to guess.
+##
+## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
+## ANOTHER faction reads as available here while the sim rejects the assign.
 func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
     var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
-    var reasons: Array[String] = []
+    var gates := {}
+    var domestication := float(herd.get("domestication", 0.0))
+    var tame_reasons: Array[String] = []
     var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     if herding < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
+        tame_reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
             _progress_percent(herding), sustain_icon])
-    var domestication := float(herd.get("domestication", 0.0))
+    if not tame_reasons.is_empty():
+        gates[LABOR_POLICY_TAME] = tame_reasons
+    var corral_reasons: Array[String] = []
+    var penning := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_PENNING)
+    if penning < KNOWLEDGE_COMPLETE:
+        corral_reasons.append(GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
+            _progress_percent(penning), sustain_icon])
     if domestication < DOMESTICATION_COMPLETE:
-        reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-            _progress_percent(domestication), sustain_icon])
-    if reasons.is_empty():
-        return {}
-    return {LABOR_POLICY_CORRAL: reasons}
+        corral_reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
+            _progress_percent(domestication), FoodIcons.for_policy(LABOR_POLICY_TAME)])
+    if not corral_reasons.is_empty():
+        gates[LABOR_POLICY_CORRAL] = corral_reasons
+    return gates
+
+## TAME's pre-commit row: the real exported dip, and the payoff in words. "" when the snapshot lacks
+## the levers/ceilings (graceful degrade — no line, panel otherwise unchanged), matching
+## `_local_hunt_preview_bbcode`.
+##
+## The dip comes from `hunt_policy_ceilings["tame"]` via the SAME `_hunt_take_rate` arithmetic the
+## local hunt preview uses (`min(workers × per_worker, ceiling) × output_multiplier`) — blessed
+## band-flow arithmetic over a sim-exported ceiling, never a re-derivation of the ecology. The payoff
+## is NOT quoted: no `pastoralYield` exists on the wire, and there is nothing to quote (see
+## FORECAST_PAYOFF_KEYS). Rendered in the neutral investment-forecast tint, not income-green: while
+## gentling, this number is a COST the player is accepting, not income to celebrate.
+func _tame_forecast_bbcode(band: Dictionary, herd: Dictionary, workers: int) -> String:
+    var rate := _hunt_take_rate(band, herd, LABOR_POLICY_TAME, workers)
+    if rate < 0.0:
+        return ""
+    var actual := rate * float(band.get("output_multiplier", OUTPUT_FULL))
+    return TAME_FORECAST_FORMAT % _format_yield(actual)
+
+## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
+## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`_hunt_policy_gates`): a
+## herd's phase swings as it is hunted, so refusing the verb would be un-actionable churn. The sim
+## instead just PAUSES the meter — progress is neither lost nor switched — and resumes when the herd
+## recovers.
+##
+## Saying nothing here would recreate the exact failure this whole arc exists to kill: a hidden rule
+## the player can only learn by being told. So whenever Tame is the composed policy on a herd that
+## is not Thriving, state the pause, name the cause (its live phase), and name the remedy — which is
+## the opposite of "work harder" (ease off and let it recover), the same shape as the patch-ecology
+## gate's advice. Returns "" when Tame is not selected or the herd is Thriving (nothing to explain).
+func _tame_stalled_hint(herd: Dictionary) -> String:
+    if _hunt_assign_policy != LABOR_POLICY_TAME:
+        return ""
+    var phase := String(herd.get("ecology_phase", "")).strip_edges().to_lower()
+    if phase == "" or phase == ECOLOGY_PHASE_THRIVING:
+        return ""
+    return TAME_STALLED_HINT_FORMAT % phase.capitalize()
 
 ## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
 ## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
@@ -3914,6 +4199,18 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         var cultivation_progress := float(tile_info["cultivation_progress"])
         if cultivation_progress > 0.0:
             lines.append("Cultivation: %s" % _cultivation_label(cultivation_progress, false))
+    # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
+    # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
+    # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
+    # half of the two-meter split (§4.1) — the FACTION's Seed Selection knowledge is NOT shown here;
+    # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
+    # ground. Both rows are the source's own, and both decay if the patch is abandoned.
+    if bool(tile_info.get("patch_is_field", false)):
+        lines.append("%s: %s" % [FIELD_ROW, _field_label(1.0, true)])
+    elif tile_info.has("patch_field_progress"):
+        var field_progress := float(tile_info["patch_field_progress"])
+        if field_progress > 0.0:
+            lines.append("%s: %s" % [FIELD_ROW, _field_label(field_progress, false)])
     return lines
 
 # ---- Occupants roster ------------------------------------------------------
@@ -5054,6 +5351,23 @@ func _cultivation_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
+## Player-facing label for the plant RUNG-3 meter — the patch twin of `_corral_label` and the rung
+## above `_cultivation_label`. While the crop is going in it reads as a BUILD ("Sowing 40%"), using
+## the same building-verb convention as the pen's "Building 40%" / the fence's "Fencing 60%"; once
+## complete it is a **Field**, badged with its own glyph so it reads as a DIFFERENT THING from a
+## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
+func _field_label(progress: float, is_field: bool) -> String:
+    if is_field or progress >= FIELD_PROGRESS_COMPLETE:
+        return "%s %s" % [FoodIcons.for_policy(LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
+    return "%s %d%%" % [FIELD_SOWING_LABEL, _progress_percent(progress)]
+
+## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
+## is still going in. Matched on the label from `_field_label`, mirroring `_cultivation_value_hex`.
+func _field_value_hex(value: String) -> String:
+    if value.to_lower().contains(FIELD_BADGE_LABEL.to_lower()):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
 ## `_cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
 ## "Building N%", naming the work under way. A finished pen whose keeper did NOT pay this turn's
@@ -5177,6 +5491,11 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _husbandry_value_hex(String(kv[1]))
             elif String(kv[0]) == "Cultivation":
                 value_hex = _cultivation_value_hex(String(kv[1]))
+            elif String(kv[0]) == FIELD_ROW:
+                # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal
+                # once complete). Same shape as Cultivation's; kept its own case because a Field is a
+                # different rung with its own badge word, not a Tended Patch at a higher percentage.
+                value_hex = _field_value_hex(String(kv[1]))
             elif String(kv[0]) == "Corral":
                 value_hex = _corral_value_hex(String(kv[1]))
             elif String(kv[0]) == PEN_FEED_ROW:

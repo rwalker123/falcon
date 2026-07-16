@@ -446,6 +446,14 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
 	"patch_ceiling_market", "patch_ceiling_eradicate",
 	"patch_ceiling_cultivate", "patch_tended_yield",
+	# Plant rung 3 (the Field + Sow) — redacted exactly as their rung-2 twins above are: the two
+	# build meters are live patch state, and the Sow forecast pair is quoted at the patch's CURRENT
+	# biomass. `patch_sow_site_refusal` rides with them: it describes the GROUND (fertility + water,
+	# which a remembered tile would arguably still know), but it is only ever read to gate the Sow
+	# affordance — and that affordance is already withheld on a hex the player cannot see, so
+	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
+	"patch_field_progress", "patch_is_field",
+	"patch_ceiling_sow", "patch_field_yield", "patch_sow_site_refusal",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2979,6 +2987,18 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# pre-commit "Preparing: +X → then +Y" forecast.
 		info["patch_ceiling_cultivate"] = float(patch.get("ceiling_cultivate", 0.0))
 		info["patch_tended_yield"] = float(patch.get("tended_yield", 0.0))
+		# Plant RUNG 3 — the Field + the Sow verb (the twin of the herd's Corral block). The patch
+		# carries TWO independent build meters: `cultivation_progress` (rung 2, above) and
+		# `field_progress` here. Hud._tile_terrain_lines renders the meters; the Sow forecast pair
+		# drives `_build_forage_assign_controls`' "Preparing: +X → then +Y", exactly as the Cultivate
+		# pair does one rung down.
+		info["patch_field_progress"] = float(patch.get("field_progress", 0.0))
+		info["patch_is_field"] = bool(patch.get("is_field", false))
+		info["patch_ceiling_sow"] = float(patch.get("ceiling_sow", 0.0))
+		info["patch_field_yield"] = float(patch.get("field_yield", 0.0))
+		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
+		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
+		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

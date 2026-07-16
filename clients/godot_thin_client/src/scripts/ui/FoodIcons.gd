@@ -60,12 +60,33 @@ const HERD_SPECIES := {
 ## corral glyph). The picker/map look policies up by their snapshot string; the orb has no policy in
 ## hand, so it needs the constant.
 const POLICY_CORRAL := "corral"
+# The four INVESTMENT rungs, one per rung-transition of the two ladders
+# (docs/plan_intensification_ladder.md §2a):
+#   plants:  wild --cultivate--> Tended Patch --sow--> Field
+#   animals: wild --tame------> Pastoral herd --corral--> Pen
+# Each verb wears the glyph of THE RUNG IT BUILDS (🌱 the crop Cultivate starts, 🐄 the livestock
+# Corral pens), so `tame` and `sow` follow the same rule: ▦ = the plotted Field that Sow places (and
+# it reads as laid-out ground — a *different thing* from the 🌾 Tended Patch badge, which is the
+# point of rung 3); ◎ = the pastoral herd that now keeps to your camp, the rung's defining effect
+# (proximity: far → near → fixed, §3).
+#
+# BOTH ARE TEXT-PRESENTATION SYMBOLS, DELIBERATELY — and that is a sharper rule than "bold line art".
+# ♻ ⬆ ⇄ render BOLD because they inherit the label's font colour; an EMOJI carries its own colours
+# and cannot be tinted, so it renders at whatever contrast its art happens to have. 🐾 was tried for
+# `tame` and REJECTED on exactly that: at picker size it came out a faint washed-out tan against the
+# dark console — the weakest glyph in the row, next to a crisp white 💀 (see the first cut of
+# `two_meter_split.png`). This is the 🪙/💰 hazard's real mechanism, and it is why a *disabled* rung
+# also matters: a text glyph greys out with its button, an emoji stays stubbornly coloured.
+const POLICY_TAME := "tame"
+const POLICY_SOW := "sow"
 const POLICY_ICONS := {
 	"sustain": "♻",
 	"surplus": "⬆",
 	"market": "⇄",
 	"eradicate": "💀",
 	"cultivate": "🌱",
+	POLICY_SOW: "▦",
+	POLICY_TAME: "◎",
 	POLICY_CORRAL: "🐄",
 }
 

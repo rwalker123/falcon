@@ -3314,6 +3314,30 @@ fn forage_patches_to_array(
         // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
         let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
         let _ = dict.insert("tended_yield", patch.tendedYield());
+        // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
+        // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
+        // source and both ship: `cultivation_progress`/`is_cultivated` (rung 2, above) and these.
+        // They are independent — `Sow` needs no prior patch, so a Field may stand on ground that was
+        // never tended. Read `is_field` (the BOOL) for the completed rung; never infer a rung from
+        // the float. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as the
+        // Cultivate pair above.
+        let _ = dict.insert("field_progress", patch.fieldProgress());
+        let _ = dict.insert("is_field", patch.isField());
+        // Sow's "preparing X → then Y" pre-commit pair, mirroring `ceiling_cultivate`/`tended_yield`.
+        // `ceiling_sow` is the dip WHILE the ground is being sown (honestly ~0 on bare ground — there
+        // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
+        // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
+        let _ = dict.insert("ceiling_sow", patch.ceilingSow());
+        let _ = dict.insert("field_yield", patch.fieldYield());
+        // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
+        // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
+        // seam the `sow` command gates on. Shipped as an ANSWER rather than a bool because only ~1% of
+        // tiles are sowable (46 of 4160 on the standard map): the client has neither the per-biome
+        // capacity table nor the hydrology, so it CANNOT re-derive this. Same free-form-string
+        // convention as `species` / `husbandry_ceiling`; absent ⇒ treated as sowable by the client.
+        if let Some(sow_site_refusal) = patch.sowSiteRefusal() {
+            let _ = dict.insert("sow_site_refusal", sow_site_refusal);
+        }
         array.push(&dict.to_variant());
     }
     array
@@ -3326,8 +3350,19 @@ fn intensification_knowledge_to_array(
     for state in states {
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
+        // The FACTION-WIDE half of the two-meter split (docs/plan_intensification_ladder.md §4.1):
+        // "can my PEOPLE do this verb at all?", earned once by cumulative practice and permanent —
+        // as opposed to the per-source build meters (`domestication`/`corral_progress` on a herd,
+        // `cultivation_progress`/`field_progress` on a patch), which are local to ONE food source and
+        // decay if abandoned. One field per rung-transition, so these read as the ladder itself:
+        //   plant:  wild --cultivation--> tended --seed_selection--> field
+        //   animal: wild --herding------> pastoral --penning-------> pen
         let _ = dict.insert("cultivation", state.cultivation());
         let _ = dict.insert("herding", state.herding());
+        // Appended by slice 4 (discovery ids 2005/2006). The §4.3 gate reshuffle: `herding` now gates
+        // `tame` ALONE, and `penning` — not `herding` — gates `corral` + `extend_pen`.
+        let _ = dict.insert("seed_selection", state.seedSelection());
+        let _ = dict.insert("penning", state.penning());
         array.push(&dict.to_variant());
     }
     array
