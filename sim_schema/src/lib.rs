@@ -397,6 +397,31 @@ pub struct ForagePatchState {
     /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
     #[serde(default)]
     pub tended_yield: f32,
+    /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
+    /// `corral_progress`. Independent of `cultivation_progress`: `Sow` needs no prior patch, so a
+    /// Field may stand on ground that was never tended, and the client shows **two** meters.
+    #[serde(default)]
+    pub field_progress: f32,
+    /// The completed rung 3 — a sown **Field**. Read this rather than inferring a rung from
+    /// `field_progress`.
+    #[serde(default)]
+    pub is_field: bool,
+    /// Food/turn under the **Sow** policy — what the ground pays *while it is being sown* (the
+    /// `plant:field` rung's `yield_fraction_while_building ×` whatever it would otherwise pay). Its
+    /// own field, not `ceiling_cultivate`'s: the two plant investment rungs are independently tunable.
+    #[serde(default)]
+    pub ceiling_sow: f32,
+    /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
+    /// 2× `tended_yield` on the shipped dials). With `ceiling_sow`, Sow's "preparing X → then Y" pair.
+    #[serde(default)]
+    pub field_yield: f32,
+    /// **Why this ground will not take seed** ([`SiteRefusal::as_str`]: `"too_poor"` / `"too_dry"` /
+    /// `"too_poor_and_too_dry"`), or **`""`** when it will. Resolved through the same
+    /// `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so the wire
+    /// cannot disagree with the gate. Shipped as an *answer* because the client can re-derive
+    /// nothing: it holds neither the per-biome capacity table nor the hydrology.
+    #[serde(default)]
+    pub sow_site_refusal: String,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -3505,6 +3530,7 @@ fn create_forage_patches<'a>(
     let mut entries = Vec::with_capacity(patches.len());
     for patch in patches {
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
+        let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -3524,6 +3550,11 @@ fn create_forage_patches<'a>(
                 ceilingEradicate: patch.ceiling_eradicate,
                 ceilingCultivate: patch.ceiling_cultivate,
                 tendedYield: patch.tended_yield,
+                fieldProgress: patch.field_progress,
+                isField: patch.is_field,
+                ceilingSow: patch.ceiling_sow,
+                fieldYield: patch.field_yield,
+                sowSiteRefusal: Some(sow_site_refusal),
             },
         );
         entries.push(entry);

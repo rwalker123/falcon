@@ -1672,10 +1672,23 @@ herd has one appetite).
 - **Persistence** — `field_progress` rides `ForageState` (its own field beside the shared
   `EcologyState`'s cultivation `progress`/`owner`, mirroring `HerdState.corral_progress`), so a
   rollback rewinds a half-sown Field.
-- **Client follow-up (slice 6):** `ForagePatchState` has **no** `fieldProgress` / `isField` /
-  `ceilingSow` / `fieldYield` yet — sim-side the dip and the payoff live on
-  `SourceYieldForecast::ceiling_sow` (its own field, for `ceiling_tame`'s reason: two investment rungs
-  on one branch must never share a ceiling) and are not exported.
+- **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
+  `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
+  never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
+  so the client has **both** plant meters for the §4.1 two-meter split; `ceilingSow:float` +
+  `fieldYield:float` (Sow's "preparing X → then Y" pair, the twins of `ceilingCultivate`/`tendedYield`
+  — `ceilingSow` is its **own** field for `ceilingTame`'s reason: two investment rungs on one branch
+  must never share a ceiling); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
+  `"too_poor"` / `"too_dry"` / `"too_poor_and_too_dry"` ([`SiteRefusal::as_str`], free-form per the
+  `species`/`ecologyPhase` convention). That last one ships **the answer, not a bool**: only ~1% of
+  tiles are sowable, so *"why can't I sow here?"* is the live question, and the client can re-derive
+  nothing (it holds neither the capacity table nor the hydrology). The capture resolves it through the
+  **same** `RungSiteRequirement::refusal` seam the command and the labor arm gate on — pinned by
+  `the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on`, so the wire cannot disagree with
+  the gate.
+- **Client follow-up (slice 6):** the native reader
+  (`clients/godot_thin_client/native/src/lib.rs::forage_patches_to_array`) does not yet surface the
+  five new fields as dict keys, and no panel renders them.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (Intensification Rung 1c)"
 (the animal rung 3 this mirrors), "The Intensification Ladder" (the engine + the config).

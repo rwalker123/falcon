@@ -2248,18 +2248,18 @@ fn handle_send_hunt_expedition(
     // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
-        // The two **investment** policies are place-bound improvements a *resident* band builds and
-        // then tends — a detached expedition can't pen a herd and walk home, so they are rejected here
-        // alongside an unparseable token (the four extractive rungs are the expedition's whole axis).
+        // **Every** investment policy is place-bound work a *resident* band does — a detached party
+        // cannot tame a herd, pen it, or sow a field and walk home — so they are rejected here
+        // alongside an unparseable token.
+        //
+        // **Derived from the grouping, never re-listed.** `EXTRACTIVE` *is* the expedition's whole
+        // axis (`FollowPolicy::EXTRACTIVE`'s own docs say so, and the snapshot's trip-estimate export
+        // already walks exactly it), so asking whether the policy is in it cannot drift. The old
+        // hand-written `matches!(Cultivate | Corral)` had already drifted: it silently **accepted
+        // `tame`**, which would have reached `hunt_expedition_ceiling`'s unreachable arm — the exact
+        // "a parallel list rots" hazard `teaches_knowledge` is an exhaustive match to avoid.
         Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed)
-                if !matches!(
-                    parsed,
-                    FollowPolicy::Cultivate | FollowPolicy::Sow | FollowPolicy::Corral
-                ) =>
-            {
-                parsed
-            }
+            Ok(parsed) if FollowPolicy::EXTRACTIVE.contains(&parsed) => parsed,
             _ => {
                 emit_command_failure(
                     app,
@@ -5058,7 +5058,7 @@ mod tests {
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
         build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -5623,6 +5623,133 @@ mod tests {
                 .patch(coord)
                 .is_some_and(|patch| patch.is_field()),
             "the command claims nothing — the field must still be worked off"
+        );
+    }
+
+    /// **THE WIRE CANNOT DISAGREE WITH THE GATE.** `ForagePatchState.sowSiteRefusal` is the answer to
+    /// *"why can't I sow here?"* — the question players will actually ask, since only ~1% of tiles are
+    /// sowable — so it has to be the **same** verdict `handle_sow` acts on. Both resolve through
+    /// `RungSiteRequirement::refusal`; this asserts they agree on a qualifying tile, a too-poor tile
+    /// and a too-dry tile, by driving the *real* command and reading the *real* capture.
+    #[test]
+    fn the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on() {
+        for (expected_wire, expected_command_fault) in [
+            (SITE_ACCEPTED, None),
+            (
+                SiteRefusal::TooPoor.as_str(),
+                Some("too thin to take a crop"),
+            ),
+            (SiteRefusal::TooDry.as_str(), Some("too dry to take a crop")),
+        ] {
+            let mut app = build_world_app();
+            let faction = FactionId(0);
+            let coord = match expected_command_fault {
+                None => find_sowable_tile(&app),
+                Some(_) if expected_wire == SiteRefusal::TooPoor.as_str() => {
+                    find_refused_tile(&app, SiteRefusal::TooPoor)
+                }
+                Some(_) => find_refused_tile(&app, SiteRefusal::TooDry),
+            };
+            grant_seed_selection(&mut app, faction);
+            spawn_working_band(
+                &mut app,
+                faction,
+                LaborTarget::Forage {
+                    tile: coord,
+                    policy: FollowPolicy::Sustain,
+                },
+            );
+
+            // What the WIRE says about this ground.
+            recapture_snapshot_in_place(&mut app.world);
+            let snapshot = app
+                .world
+                .resource::<SnapshotHistory>()
+                .last_snapshot
+                .clone()
+                .expect("a snapshot was captured");
+            let patch = snapshot
+                .forage_patches
+                .iter()
+                .find(|patch| patch.x == coord.x && patch.y == coord.y)
+                .expect(
+                    "every food-bearing tile carries a patch, so the wire must describe this one",
+                );
+            assert_eq!(
+                patch.sow_site_refusal, expected_wire,
+                "the wire's verdict at {coord:?}"
+            );
+
+            // What the COMMAND does about this ground.
+            handle_sow(&mut app, faction, coord);
+            match expected_command_fault {
+                None => {
+                    assert!(
+                        !sow_failure_detail_contains(&app, "Nothing will grow"),
+                        "the wire says this ground takes seed ({expected_wire:?}) — the command must \
+                         not refuse it"
+                    );
+                }
+                Some(fault) => {
+                    assert!(
+                        sow_failure_detail_contains(&app, fault),
+                        "the wire says {expected_wire:?} — the command must refuse it for the SAME \
+                         reason"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The rung-3 meters and the Sow forecast pair reach the wire, and read as the rung the patch
+    /// actually stands on. `fieldYield` is the payoff the client shows against `ceilingSow`'s dip.
+    #[test]
+    fn the_wire_carries_both_plant_meters_and_the_sow_forecast_pair() {
+        let mut app = build_world_app();
+        let coord = find_sowable_tile(&app);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry
+                .patch_mut(coord)
+                .expect("sowable ground has a patch");
+            patch.biomass = patch.carrying_capacity * 0.5;
+            patch.cultivation_progress = 1.0;
+            patch.field_progress = 0.4;
+            patch.owner = Some(FactionId(0));
+        }
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot
+            .clone()
+            .expect("a snapshot was captured");
+        let patch = snapshot
+            .forage_patches
+            .iter()
+            .find(|patch| patch.x == coord.x && patch.y == coord.y)
+            .expect("the patch is on the wire");
+
+        // BOTH plant meters ship, independently — the two-meter split the client needs.
+        assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
+        assert!(patch.is_cultivated);
+        assert!((patch.field_progress - 0.4).abs() < 1e-6);
+        assert!(!patch.is_field, "0.4 is a half-sown field, not a Field");
+
+        // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
+        // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
+        assert!(patch.tended_yield > 0.0);
+        assert!(
+            patch.ceiling_sow > 0.0 && patch.ceiling_sow < patch.tended_yield,
+            "sowing a tended patch pays a fraction of what it would otherwise hand you: {} vs {}",
+            patch.ceiling_sow,
+            patch.tended_yield
+        );
+        assert!(
+            patch.field_yield > patch.tended_yield,
+            "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
+            patch.field_yield,
+            patch.tended_yield
         );
     }
 
@@ -6227,7 +6354,25 @@ mod tests {
     /// party may be spawned, and the failure must name the four policies that ARE valid.
     #[test]
     fn send_hunt_expedition_rejects_the_investment_policies() {
-        for token in ["corral", "cultivate"] {
+        // **Every** investment verb, derived from the grouping rather than re-listed here — the same
+        // discipline the code under test now uses. `tame` and `sow` are the ones a hand-written
+        // `matches!(Cultivate | Corral)` had silently let through.
+        let investment: Vec<&str> = [
+            FollowPolicy::Cultivate,
+            FollowPolicy::Sow,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+        ]
+        .iter()
+        .inspect(|policy| {
+            assert!(
+                !FollowPolicy::EXTRACTIVE.contains(policy),
+                "{policy:?} is an investment rung — the launch gate is EXTRACTIVE membership"
+            );
+        })
+        .map(|policy| policy.as_str())
+        .collect();
+        for token in investment {
             let mut app = build_headless_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));

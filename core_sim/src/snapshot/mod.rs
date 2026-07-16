@@ -57,8 +57,8 @@ use crate::{
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
     forage::{
-        forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-        SEED_SELECTION_DISCOVERY_ID,
+        field_provisions, forage_forecast, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
+        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -72,7 +72,7 @@ use crate::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
     },
-    intensification::LadderConfig,
+    intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
     knowledge_ledger::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
@@ -1383,6 +1383,7 @@ mod tests {
             &registry,
             &labor.forage,
             &LadderConfig::builtin(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert_eq!(patches.len(), 2);

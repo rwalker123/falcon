@@ -339,8 +339,15 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     against a constructed bare tile. Still an open design call: make forage sites genuinely sparse, or
     accept that rung 3's freedom is "choose *which* qualifying tile" (which the tightened site rule now
     makes a real choice — 46 tiles, not 2317).
-  - *Remaining:* the client (slice 6) — `ForagePatchState` has no `fieldProgress`/`isField`, and the
-    `Sow` dip + Field payoff live on `SourceYieldForecast::ceiling_sow` without a wire field.
+  - **Slice 6a exported the plant ladder to the wire** (append-only, `ForagePatchState` slots 36–44):
+    `fieldProgress` + `isField` (beside the already-shipped `cultivationProgress`/`isCultivated`, so
+    the client has both meters for the §4.1 split), `ceilingSow` + `fieldYield` (Sow's preparing→payoff
+    pair), and **`sowSiteRefusal`** — `""` / `"too_poor"` / `"too_dry"` / `"too_poor_and_too_dry"`,
+    resolved through the same `RungSiteRequirement::refusal` seam the command gates on. Shipping the
+    *reason* rather than a bool is what makes 46-of-4160 legible: the client can't re-derive it, and
+    "why can't I sow here?" must not be answered by making the command fail.
+  - *Remaining:* the client (slice 6) — the native reader surfaces none of the five new fields, and no
+    panel renders the two-meter split or the refusal.
 - [ ] **6 — Client.** Both new verbs + the two-meter split + the ladder readouts; ui_preview-verified.
 - [ ] **Rung 4 (future, own arc): Worked Land** (plants) — irrigation / clearing / terracing makes
   unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"

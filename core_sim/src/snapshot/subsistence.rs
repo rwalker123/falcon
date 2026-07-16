@@ -305,6 +305,11 @@ pub(crate) fn herd_snapshot_entries(
 /// `ForageRegistry` map iteration order is not). `owner` crosses as the tending faction's `u32`
 /// (`None` for a wild/untended patch).
 ///
+/// `sow_site_refusals` maps tile coord → **why the `plant:field` rung refuses that ground**, resolved
+/// by the caller (which has the tiles and the hydrology) through the one shared
+/// `RungSiteRequirement::refusal` seam. **Absent = the land takes seed** — the same
+/// absent-means-nothing convention `seasonal_weights` uses.
+///
 /// `seasonal_weights` maps tile coord → that tile's `FoodModuleTag::seasonal_weight`, folded into the
 /// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
 /// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
@@ -317,6 +322,7 @@ pub(crate) fn snapshot_forage_patches(
     forage: &ForageLaborConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
+    sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
@@ -345,6 +351,22 @@ pub(crate) fn snapshot_forage_patches(
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
                 ceiling_cultivate: forecast.ceiling_prepare,
                 tended_yield: forecast.managed_yield,
+                // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
+                // Field may stand on ground that was never tended — and its own preparing/payoff
+                // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
+                // client's "then Y" is the number the sim will hand over.
+                field_progress: patch.field_progress,
+                is_field: patch.is_field(),
+                ceiling_sow: forecast.ceiling_sow,
+                field_yield: field_provisions(patch.biomass, forage, FORECAST_OUTPUT_MULTIPLIER),
+                // **Why this ground will not take seed** — resolved by the caller through the *same*
+                // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
+                // the wire cannot disagree with the gate. Absent from the map = the land takes seed
+                // (`SITE_ACCEPTED`), mirroring `seasonal_weights`' absent-means-none convention.
+                sow_site_refusal: sow_site_refusals
+                    .get(&patch.tile)
+                    .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
+                    .to_string(),
             }
         })
         .collect();

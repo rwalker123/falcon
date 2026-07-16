@@ -907,6 +907,42 @@ table ForagePatchState {
   // commits to the investment. Cultivate is FORAGE-ONLY (the herd twin is Corral).
   ceilingCultivate:float = 0;
   tendedYield:float = 0;
+  // --- The Sow investment rung + the Field (appended, slice 5/6a) --- plant RUNG 3, the twin of the
+  // herd's Corral block. `fieldProgress` is the per-patch `plant:field` build meter 0..1 (the mirror
+  // of `HerdTelemetryState.corralProgress`); `isField` is the completed rung — read the BOOL, never
+  // infer a rung from the float. Note the plant branch now has TWO build meters on one source, and
+  // both ship: `cultivationProgress`/`isCultivated` (rung 2, already shipped above) and these. They
+  // are independent — `Sow` needs no prior patch, so a Field may stand on ground that was never
+  // tended.
+  fieldProgress:float = 0;
+  isField:bool = false;
+  // `ceilingSow` = food/turn WHILE the ground is being sown under the Sow policy (the rung's
+  // `yield_fraction_while_building` × what the ground would otherwise pay — the MSY dip on a wild
+  // patch, the *tended-harvest* dip on a tended one being upgraded). On ground the crew has only just
+  // seeded that is honestly ~0: there is no standing crop to take a fraction of, so a bare-ground sow
+  // is pure investment. `fieldYield` = food/turn the patch will pay ONCE sown (maintenance labor: one
+  // worker suffices), the Field's rate on its current standing crop — 2× `tendedYield` on the shipped
+  // dials. Together they are Sow's "preparing X → then Y" pre-commit pair, exactly as
+  // `ceilingCultivate`/`tendedYield` are Cultivate's. Its OWN field rather than reusing
+  // `ceilingCultivate`: the plant branch has two investment rungs whose dips are independently
+  // tunable, and folding them onto one number would pass every forecast==actual test by coincidence
+  // and lie the moment either rung is retuned (the `ceilingTame` lesson).
+  ceilingSow:float = 0;
+  fieldYield:float = 0;
+  // **WHY this ground will not take seed** — "" when it will (and on a rung with no site requirement).
+  // Otherwise the verdict of the `plant:field` rung's `site_requirement`, as a stable key:
+  //   "too_poor"             — the ground is watered, but too thin to take a crop without fertilizing
+  //   "too_dry"              — the ground is rich, but too dry to farm without irrigation
+  //   "too_poor_and_too_dry" — both
+  // Free-form string (the `species`/`sizeClass`/`husbandryCeiling` convention), so a future refusal
+  // needs no schema change.
+  //
+  // SHIPPED AS AN ANSWER, not a bool, because only ~1% of tiles are sowable (46 of 4160 on the
+  // standard map) — so "why can't I sow here?" is the question players will actually ask, and the
+  // client CANNOT re-derive it: it has neither the per-biome capacity table nor the hydrology. The
+  // server resolves it through the SAME seam (`RungSiteRequirement::refusal`) that the `sow` command
+  // and the labor arm gate on, so the wire, the rejection and the sim cannot disagree.
+  sowSiteRefusal:string;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

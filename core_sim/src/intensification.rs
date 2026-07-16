@@ -249,6 +249,25 @@ pub enum SiteRefusal {
     TooPoorAndTooDry,
 }
 
+impl SiteRefusal {
+    /// Stable wire/config key (`ForagePatchState.sowSiteRefusal`) — the `EcologyPhase::as_str`
+    /// convention: the live enum stays serde-free and crosses as a string, so a future refusal is a
+    /// new key rather than a schema change. **"" is not a variant** — the empty string is the wire's
+    /// "this ground takes seed", i.e. `Option::None`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SiteRefusal::TooPoor => "too_poor",
+            SiteRefusal::TooDry => "too_dry",
+            SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
+        }
+    }
+}
+
+/// The wire key for **"the land takes seed"** — the empty `sowSiteRefusal`, the `Option::None` of
+/// [`SiteRefusal::as_str`]. Named because both the capture and its tests state it, and "" is exactly
+/// the kind of literal that means nothing at a call site.
+pub const SITE_ACCEPTED: &str = "";
+
 impl RungSiteRequirement {
     /// **THE site seam** — the twin of [`RungDef::build_accrual`]: the rung states the rule, the
     /// caller supplies the two readings it judges and phrases the answer. Pure (no ECS, no config
