@@ -63,7 +63,8 @@ pub fn advance_labor_allocation(
     let pen_rung = ladder.rung(RungKey::AnimalPen);
     // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
     // labor at the same forgone-yield price, so it must never drift from the initial build.
-    let pen_build_rate = pen_rung.build_accrual(FollowPolicy::Corral, true);
+    let pen_build_rate =
+        pen_rung.build_accrual(FollowPolicy::Corral, true, RUNG_TIMESCALE_UNSCALED);
     let pen_build_dip = pen_rung
         .yield_fraction_while_building()
         .expect("the pen rung is an investment — it has a build meter");
@@ -222,7 +223,8 @@ pub fn advance_labor_allocation(
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
                         // side-effects of completing it.
-                        let accrual = tended_rung.build_accrual(*policy, eligible);
+                        let accrual =
+                            tended_rung.build_accrual(*policy, eligible, RUNG_TIMESCALE_UNSCALED);
                         if accrual > 0.0 {
                             patch.accrue_cultivation(faction, accrual);
                             if patch.is_cultivated() {
@@ -473,8 +475,16 @@ pub fn advance_labor_allocation(
                                 knows(&discovery, faction, knowledge, herding_knowledge_threshold)
                             }) && herd.can_domesticate()
                                 && herd.ecology_phase == EcologyPhase::Thriving;
-                        // THE build seam — the same call the plant side's Cultivate arm makes.
-                        let accrual = pastoral_rung.build_accrual(*policy, eligible);
+                        // THE build seam — the same call the plant side's Cultivate arm makes, at
+                        // **this species' own taming timescale** (slice 3c): the rung owns the
+                        // mechanic, the species scales it (rabbit ×1.0 → 25 turns, Steppe Runner ×0.2
+                        // → 125). The seam applies the multiplier to the decay too, so a herd that is
+                        // slow to tame is equally slow to forget — see `RungDef::build_accrual`.
+                        let accrual = pastoral_rung.build_accrual(
+                            *policy,
+                            eligible,
+                            fauna.taming_rate_for(&herd.species),
+                        );
                         if accrual > 0.0 {
                             herd.accrue_domestication(faction, accrual);
                             if herd.is_domesticated() {
@@ -509,7 +519,10 @@ pub fn advance_labor_allocation(
                             && herd.is_domesticated()
                             && herd.owner == Some(faction);
                         // THE build seam — the same call the plant side's Cultivate arm makes.
-                        let accrual = pen_rung.build_accrual(*policy, eligible);
+                        // Penning is a flat build for every species — only *taming* varies (slice
+                        // 3c): a fence is a fence.
+                        let accrual =
+                            pen_rung.build_accrual(*policy, eligible, RUNG_TIMESCALE_UNSCALED);
                         if accrual > 0.0 {
                             let pen_tile = herd.position();
                             if herd.accrue_corral(faction, accrual, pen_tile) {
@@ -811,7 +824,9 @@ mod labor_yield_tests {
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
     use crate::forage::{advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID};
     use crate::forage::{ForagePatch, ForageRegistry};
-    use crate::intensification::{LadderConfig, LadderConfigHandle, RungKey, RUNG_COMPLETE};
+    use crate::intensification::{
+        LadderConfig, LadderConfigHandle, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+    };
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
@@ -1800,7 +1815,7 @@ mod labor_yield_tests {
                 tended
                     .yield_fraction_while_building()
                     .expect("the tended rung is an investment"),
-                tended.build_accrual(FollowPolicy::Cultivate, true),
+                tended.build_accrual(FollowPolicy::Cultivate, true, RUNG_TIMESCALE_UNSCALED),
             )
         };
 
@@ -1901,7 +1916,7 @@ mod labor_yield_tests {
             (
                 pen.yield_fraction_while_building()
                     .expect("the pen rung is an investment"),
-                pen.build_accrual(FollowPolicy::Corral, true),
+                pen.build_accrual(FollowPolicy::Corral, true, RUNG_TIMESCALE_UNSCALED),
             )
         };
 

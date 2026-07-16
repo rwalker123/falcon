@@ -57,6 +57,16 @@ pub const BUILTIN_INTENSIFICATION_LADDER: &str = include_str!("data/intensificat
 /// sprinkled across the accrual sites.
 pub const RUNG_COMPLETE: f32 = 1.0;
 
+/// **The build timescale of a rung whose sources all build at the rung's own pace.** Passed by every
+/// caller that has no per-source multiplier to apply (the plant `tended` patch, the animal `pen` and
+/// its `ExtendPen` rings) — a rung's dials *are* its turns, undilated.
+///
+/// The multiplier exists because rung 2 of the animal ladder is **not** one-size-fits-all: a species
+/// declares its own `taming_rate` (`fauna_config`) and the `animal:pastoral` rung's build runs at that
+/// **timescale**. See [`RungDef::build_accrual`] for why it scales the whole timescale rather than the
+/// speed alone.
+pub const RUNG_TIMESCALE_UNSCALED: f32 = 1.0;
+
 /// Which food web a rung belongs to. The two webs are separate ladders that never share a rung — a
 /// master rancher isn't automatically a farmer (`plan_intensification_ladder.md` §4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -198,6 +208,11 @@ pub struct RungBuild {
     /// grows back over". Validated `0 <= decay_per_turn < progress_per_turn`: a rung that decayed at
     /// least as fast as it built could never complete, and `0` is legitimate (a pen's construction
     /// does not bleed; an abandoned pen escapes outright instead).
+    ///
+    /// **That bound holds per-source too, and it is checked exactly once here.** A per-source
+    /// `timescale` ([`RungDef::build_accrual`]) multiplies *both* rates, so the ratio is invariant and
+    /// no per-species restatement of this bound is needed — only that the multiplier itself is
+    /// positive and finite, which the roster that owns it (`FaunaConfig::validate`) enforces.
     pub decay_per_turn: f32,
     /// **The investment cost.** While the meter is filling, the source's take ceiling is only this
     /// fraction of its **Sustain (MSY)** ceiling — the crew is preparing, not harvesting. A fraction
@@ -262,32 +277,50 @@ impl RungDef {
     }
 
     /// **The build seam — the accrual side.** How much this rung's per-source meter advances this
-    /// turn: `progress_per_turn` when `policy` **is** the rung's verb *and* the caller's
+    /// turn: `progress_per_turn × timescale` when `policy` **is** the rung's verb *and* the caller's
     /// rung-specific gates hold (`eligible` — knows the unlock knowledge, the source is healthy, the
     /// species' ceiling allows it, the faction owns it), otherwise `0`.
     ///
     /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
     /// is what keeps the `wild` rungs (nothing to build) out of the engine.
     ///
+    /// # `timescale` — the rung owns the mechanic, the source scales it
+    ///
+    /// The dials are the *rung's*; how fast **this** source climbs it is the source's own nature —
+    /// exactly the split the fauna roster already uses (rung `pastoral_gain` × species wild `r`).
+    /// Today the only scaler is a species' `taming_rate` on `animal:pastoral` (a rabbit is quick and
+    /// forgiving, binding a migratory herd is generational); every other caller passes
+    /// [`RUNG_TIMESCALE_UNSCALED`].
+    ///
+    /// **It is a TIMESCALE, not a speed — [`RungDef::build_decay`] takes the same factor.** Scaling
+    /// accrual alone would be a different, broken mechanic: a Steppe Runner's `0.04 × 0.2 = 0.008`/turn
+    /// would fall *below* the rung's `0.01`/turn decay, so the species could never be tamed at all and
+    /// the ladder's own "taming must out-run its decay" bound would be violated per-species. Scaling
+    /// both preserves the rung's 4:1 ratio — **slow to tame, slow to forget** — which is also the
+    /// truer story: a beast that takes a lifetime to gentle does not go feral in a season.
+    ///
     /// The caller applies the amount to its own meter (`ForagePatch::accrue_cultivation` /
     /// `Herd::accrue_domestication` / `Herd::accrue_corral`), which owns the clamp to
     /// [`RUNG_COMPLETE`] and the side-effects of completing.
-    pub fn build_accrual(&self, policy: FollowPolicy, eligible: bool) -> f32 {
+    pub fn build_accrual(&self, policy: FollowPolicy, eligible: bool, timescale: f32) -> f32 {
         let Some(build) = self.build.as_ref() else {
             return 0.0;
         };
         if !eligible || self.verb_policy() != Some(policy) {
             return 0.0;
         }
-        build.progress_per_turn
+        build.progress_per_turn * timescale
     }
 
     /// **The build seam — the decay side.** How much this rung's per-source meter bleeds on a turn
-    /// nobody works the source. `0` for a rung with no build (nothing to lose).
-    pub fn build_decay(&self) -> f32 {
+    /// nobody works the source: `decay_per_turn × timescale`, the *same* factor
+    /// [`RungDef::build_accrual`] takes (see there — the multiplier dilates the whole build
+    /// timescale, so the rung's build:decay ratio is invariant). `0` for a rung with no build
+    /// (nothing to lose).
+    pub fn build_decay(&self, timescale: f32) -> f32 {
         self.build
             .as_ref()
-            .map_or(0.0, |build| build.decay_per_turn)
+            .map_or(0.0, |build| build.decay_per_turn * timescale)
     }
 
     /// **The build seam — the investment dip.** The fraction of the source's Sustain (MSY) ceiling
@@ -788,14 +821,23 @@ mod tests {
         let build = tended.build.as_ref().expect("tended rung builds");
 
         assert_eq!(
-            tended.build_accrual(FollowPolicy::Cultivate, true),
+            tended.build_accrual(FollowPolicy::Cultivate, true, RUNG_TIMESCALE_UNSCALED),
             build.progress_per_turn
         );
         // Wrong verb → nothing, even though the crew is working the patch.
-        assert_eq!(tended.build_accrual(FollowPolicy::Sustain, true), 0.0);
+        assert_eq!(
+            tended.build_accrual(FollowPolicy::Sustain, true, RUNG_TIMESCALE_UNSCALED),
+            0.0
+        );
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
-        assert_eq!(tended.build_accrual(FollowPolicy::Cultivate, false), 0.0);
-        assert_eq!(tended.build_decay(), build.decay_per_turn);
+        assert_eq!(
+            tended.build_accrual(FollowPolicy::Cultivate, false, RUNG_TIMESCALE_UNSCALED),
+            0.0
+        );
+        assert_eq!(
+            tended.build_decay(RUNG_TIMESCALE_UNSCALED),
+            build.decay_per_turn
+        );
         assert_eq!(
             tended.yield_fraction_while_building(),
             Some(build.yield_fraction_while_building)
@@ -820,9 +862,12 @@ mod tests {
                 FollowPolicy::Tame,
                 FollowPolicy::Corral,
             ] {
-                assert_eq!(wild.build_accrual(policy, true), 0.0);
+                assert_eq!(
+                    wild.build_accrual(policy, true, RUNG_TIMESCALE_UNSCALED),
+                    0.0
+                );
             }
-            assert_eq!(wild.build_decay(), 0.0);
+            assert_eq!(wild.build_decay(RUNG_TIMESCALE_UNSCALED), 0.0);
             assert_eq!(wild.yield_fraction_while_building(), None);
         }
     }
@@ -851,7 +896,7 @@ mod tests {
         let build = pastoral.build.as_ref().expect("the pastoral rung builds");
 
         assert_eq!(
-            pastoral.build_accrual(FollowPolicy::Tame, true),
+            pastoral.build_accrual(FollowPolicy::Tame, true, RUNG_TIMESCALE_UNSCALED),
             build.progress_per_turn
         );
         for policy in [
@@ -863,13 +908,16 @@ mod tests {
             FollowPolicy::Corral,
         ] {
             assert_eq!(
-                pastoral.build_accrual(policy, true),
+                pastoral.build_accrual(policy, true, RUNG_TIMESCALE_UNSCALED),
                 0.0,
                 "{policy:?} must not tame a herd — only Tame does"
             );
         }
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
-        assert_eq!(pastoral.build_accrual(FollowPolicy::Tame, false), 0.0);
+        assert_eq!(
+            pastoral.build_accrual(FollowPolicy::Tame, false, RUNG_TIMESCALE_UNSCALED),
+            0.0
+        );
     }
 
     #[test]

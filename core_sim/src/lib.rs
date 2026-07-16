@@ -155,7 +155,7 @@ pub use influencers::{
 pub use intensification::{
     knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, BUILTIN_INTENSIFICATION_LADDER, RUNG_COMPLETE,
+    RungKey, RungMovement, BUILTIN_INTENSIFICATION_LADDER, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

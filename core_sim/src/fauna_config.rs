@@ -153,6 +153,26 @@ pub struct SpeciesDef {
     /// when present.
     #[serde(default)]
     pub regrowth_rate: Option<f32>,
+    /// **How fast this species tames, as a multiple of the `animal:pastoral` rung's own pace**
+    /// (intensification ladder slice 3c). The rung owns the *mechanic*; the species scales it —
+    /// exactly the split [`SpeciesDef::regrowth_rate`] already uses against `pastoral_gain`/`pen_gain`.
+    /// A single dial on the rung would tame a rabbit and a Steppe Runner in the same 25 turns; taming
+    /// a small, quick, forgiving animal should be fast, and binding a large migratory herd should be
+    /// generational. Roster: rabbit/fowl/crag_goat `1.0` (25 turns) · boar `0.8` (~31) · aurochs `0.5`
+    /// (50) · steppe_runner/marsh_grazer `0.2` (125); a `wild`-ceiling species (deer, mammoth) never
+    /// tames, so it carries none.
+    ///
+    /// **It is a TIMESCALE — it scales the rung's `decay_per_turn` as well as its `progress_per_turn`**
+    /// (`RungDef::build_accrual` / `build_decay`, the one seam that honors it). Scaling the speed alone
+    /// would put a Steppe Runner's `0.04 × 0.2 = 0.008`/turn *below* the rung's `0.01`/turn decay —
+    /// literally untameable, and a violation of the ladder's "taming must out-run its decay" bound.
+    /// Scaling both keeps the ratio: **slow to tame, slow to forget**.
+    ///
+    /// Defaults to `1.0` (the rung's own pace) when omitted, so an untagged or future species keeps
+    /// today's behaviour. **Playtest dial.** Validated finite & `> 0` (at `0`/negative the species
+    /// would silently never tame, or un-tame while worked).
+    #[serde(default = "default_taming_rate")]
+    pub taming_rate: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
     /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
     /// domestication accrual + the `domesticate` / `corral` / `extend_pen` paths. Defaults to `pen`
@@ -169,6 +189,15 @@ fn default_dwell_turns() -> u32 {
 /// Default migratory loiter window (turns) at an anchor before the next migration leg.
 fn default_loiter_turns() -> [u32; 2] {
     [12, 24]
+}
+
+/// **A species that tames at the `animal:pastoral` rung's own pace** — the neutral timescale, so an
+/// untagged (or future) species behaves exactly as it did before the dial existed. Also what an
+/// unresolvable species name reads as (`FaunaConfig::taming_rate_for`).
+pub const DEFAULT_TAMING_RATE: f32 = 1.0;
+
+fn default_taming_rate() -> f32 {
+    DEFAULT_TAMING_RATE
 }
 
 /// Default migratory loiter wander radius (hexes) around an anchor. Also the fallback grazing-range
@@ -795,6 +824,13 @@ impl FaunaConfig {
             if let Some(regrowth_rate) = def.regrowth_rate {
                 require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
             }
+            // The taming timescale (slice 3c). **Positive is the whole bound**: the multiplier dilates
+            // the `animal:pastoral` rung's `progress_per_turn` AND its `decay_per_turn` together, so the
+            // ladder's own "taming must out-run its decay" check (`LadderConfig::validate`) already
+            // covers every species — the ratio is invariant under a positive scale. At `0` the species
+            // would silently never tame while reading as tameable; negative would *un*-tame a herd the
+            // crew is working, and (via the same decay) push its progress up while it is abandoned.
+            require_positive_finite(species_field("taming_rate"), def.taming_rate)?;
         }
 
         // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the
@@ -932,6 +968,17 @@ impl FaunaConfig {
         self.species
             .values()
             .find(|def| def.display_name == display)
+    }
+
+    /// **The species' taming timescale** ([`SpeciesDef::taming_rate`]), resolved by the display name a
+    /// `Herd` carries — the same live-resolution path the movement cadence levers take
+    /// (`fauna::advance_herds` → [`FaunaConfig::species_by_display`]), so retuning the dial takes
+    /// effect on herds already on the map instead of freezing at spawn. A species the table cannot
+    /// resolve (an isolated test fixture) reads [`DEFAULT_TAMING_RATE`] — the rung's own pace, i.e.
+    /// exactly the pre-dial behaviour.
+    pub fn taming_rate_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_TAMING_RATE, |def| def.taming_rate)
     }
 
     /// `(key, def)` pairs for every non-migratory (short-range) game species that
@@ -1272,6 +1319,7 @@ pub fn load_fauna_config_from_env() -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intensification::{LadderConfig, RungKey, RUNG_COMPLETE};
 
     #[test]
     fn builtin_config_parses() {
@@ -1314,6 +1362,66 @@ mod tests {
             serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
                 .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
+    }
+
+    /// Slice 3c: the shipped taming timescales, and the `1.0` default for an omitted one. The
+    /// **turns-to-tame** each implies is what the roster is really claiming, so assert that — a dial
+    /// read back as a number nobody can interpret is not a guard.
+    #[test]
+    fn builtin_taming_rates_match_the_roster() {
+        let config = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let progress_per_turn = ladder
+            .rung(RungKey::AnimalPastoral)
+            .build
+            .as_ref()
+            .expect("the pastoral rung builds")
+            .progress_per_turn;
+
+        for (key, rate, turns_to_tame) in [
+            ("rabbit", 1.0_f32, 25.0_f32),
+            ("fowl", 1.0, 25.0),
+            ("crag_goat", 1.0, 25.0),
+            ("boar", 0.8, 31.25),
+            ("aurochs", 0.5, 50.0),
+            ("steppe_runner", 0.2, 125.0),
+            ("marsh_grazer", 0.2, 125.0),
+        ] {
+            let def = &config.species[key];
+            assert_eq!(def.taming_rate, rate, "{key} taming_rate");
+            assert!(
+                (RUNG_COMPLETE / (progress_per_turn * def.taming_rate) - turns_to_tame).abs()
+                    < 0.01,
+                "{key} should tame in ~{turns_to_tame} turns"
+            );
+        }
+        // A `wild`-ceiling species never tames at all, so it states no rate (and reads the default).
+        for key in ["deer", "mammoth"] {
+            assert_eq!(
+                config.species[key].husbandry_ceiling,
+                HusbandryCeiling::Wild
+            );
+            assert_eq!(config.species[key].taming_rate, DEFAULT_TAMING_RATE);
+        }
+        // An omitted field taming at the rung's own pace is what keeps an untagged/future species on
+        // today's 25 turns.
+        let def: SpeciesDef =
+            serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
+                .unwrap();
+        assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
+        // And an unresolvable species reads the same, so a fixture herd can never tame at `0`/turn.
+        assert_eq!(config.taming_rate_for("No Such Beast"), DEFAULT_TAMING_RATE);
+    }
+
+    /// A `taming_rate` of `0` reads as "tameable" everywhere (the ceiling still says `pastoral`) while
+    /// the meter never moves — the silent-disable failure mode config validation exists to catch. A
+    /// negative one would *un*-tame a herd its crew is working.
+    #[test]
+    fn validate_rejects_a_non_positive_taming_rate() {
+        for bad in [0.0, -0.2] {
+            let err = reject(|json| json["species"]["rabbit"]["taming_rate"] = (bad).into());
+            assert_rejects_field(err, "species.rabbit.taming_rate");
+        }
     }
 
     #[test]

@@ -19,6 +19,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID, RUNG_COMPLETE,
+    RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -271,8 +272,19 @@ fn tame_policy_domesticates_thriving_herd() {
     spawn_hunter(&mut app, &id, FollowPolicy::Tame);
 
     // A herd under active taming is spared the decay pass (`tamed_this_turn`, mirroring a patch under
-    // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns to 1.0.
-    run_turns_with_hunt(&mut app, 30);
+    // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns at the rung's own pace.
+    // The map picks the species, and slice 3c makes the *timescale* per-species (a `taming_rate` 0.2
+    // herd needs 125), so run the slowest tameable row's worth of turns rather than a bare 30 —
+    // this test is about "sustained Tame work tames and the tamer owns it", not about the pace.
+    let slowest_taming_rate = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        fauna
+            .species
+            .values()
+            .map(|def| def.taming_rate)
+            .fold(f32::INFINITY, f32::min)
+    };
+    run_turns_with_hunt(&mut app, (30.0 / slowest_taming_rate).ceil() as u32);
 
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).expect("domesticated herd persists");
@@ -353,6 +365,106 @@ fn the_tame_take_dips_to_the_rungs_yield_fraction() {
         (tamed - sustained * dip).abs() < sustained * 0.02,
         "Tame must pay the rung's dip: expected ~{}, got {tamed}",
         sustained * dip
+    );
+}
+
+/// Re-badge a primed herd **as another species** — the display name is what
+/// `FaunaConfig::taming_rate_for` resolves, so this puts the *same herd, on the same code path*, at a
+/// different species' taming timescale with one dial changed and nothing else. The husbandry ceiling
+/// is taken from the same roster row, so the fixture can never be an incoherent species (a herd that
+/// tames at a ceiling its species forbids). Everything the turn loop keys off the herd itself
+/// (`size_class` → graze range → `K`, `fodder_per_biomass`, `regrowth_rate`) is untouched, so the
+/// ecology under the two runs is identical and only the taming rate differs.
+fn rebadge_as(app: &mut App, id: &str, species_key: &str) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let def = fauna
+        .species
+        .get(species_key)
+        .expect("the roster defines the species under test");
+    let (display, ceiling) = (def.display_name.clone(), def.husbandry_ceiling);
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.species = display;
+    herd.husbandry_ceiling = ceiling;
+}
+
+/// Turns of sustained `Tame` work before the herd is domesticated (capped, so a species that can
+/// never tame fails loudly instead of hanging).
+fn turns_to_tame(species_key: &str, cap_turns: u32) -> u32 {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, species_key);
+    grant_herding(&mut app);
+    spawn_hunter(&mut app, &id, FollowPolicy::Tame);
+    for turn in 1..=cap_turns {
+        run_turns_with_hunt(&mut app, 1);
+        if herd_of(&app, &id).is_domesticated() {
+            return turn;
+        }
+    }
+    panic!("{species_key} never tamed within {cap_turns} turns");
+}
+
+/// **Taming speed is a PER-SPECIES dial on one shared rung** (slice 3c). Before it, the
+/// `animal:pastoral` rung's single `progress_per_turn` tamed every animal in the same 25 turns — a
+/// rabbit cost what a Steppe Runner cost. Now the rung owns the mechanic and the species scales it:
+/// a quick, forgiving warren is 25 turns; binding a large migratory herd is generational (125).
+///
+/// Same herd, same verb, same code path — one dial apart (`rebadge_as`).
+#[test]
+fn taming_speed_is_a_per_species_dial_on_the_shared_rung() {
+    // `taming_rate` 1.0 → the rung's own pace.
+    let rabbit = turns_to_tame("rabbit", 40);
+    // `taming_rate` 0.2 → a 5× longer build. (Also the case that proves the multiplier scales the
+    // whole *timescale*: at 0.04 × 0.2 = 0.008/turn against the rung's 0.01/turn decay, a
+    // progress-only multiplier would leave this species literally untameable.)
+    let steppe_runner = turns_to_tame("steppe_runner", 160);
+
+    assert!(
+        rabbit.abs_diff(25) <= 1,
+        "a rabbit tames at the rung's own pace (~25 turns), took {rabbit}"
+    );
+    assert!(
+        steppe_runner.abs_diff(125) <= 1,
+        "a steppe runner tames 5× slower (~125 turns), took {steppe_runner}"
+    );
+}
+
+/// **The multiplier is a TIMESCALE, not a speed — the decay scales with it.** From the *same*
+/// partial taming, a Steppe Runner bleeds progress ~5× slower than a rabbit: slow to tame, slow to
+/// forget. This is what keeps the rung's build:decay ratio invariant per species (and is why the
+/// ladder's "taming must out-run its decay" bound needs no per-species restatement).
+#[test]
+fn a_slow_taming_species_is_equally_slow_to_forget() {
+    /// A partial taming both species start the decay from — well clear of the `0.0` clamp, so
+    /// neither run bottoms out and flatters the ratio.
+    const PARTIAL_TAMING: f32 = 0.5;
+    const ABANDONED_TURNS: u32 = 10;
+
+    let progress_lost = |species_key: &str| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        rebadge_as(&mut app, &id, species_key);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.accrue_domestication(FactionId(0), PARTIAL_TAMING);
+        }
+        assert_eq!(progress_of(&app, &id), PARTIAL_TAMING);
+        // Nobody is working it: the herd goes feral at its species' own decay.
+        run_turns_untended(&mut app, ABANDONED_TURNS);
+        PARTIAL_TAMING - progress_of(&app, &id)
+    };
+
+    let rabbit = progress_lost("rabbit");
+    let steppe_runner = progress_lost("steppe_runner");
+    assert!(
+        rabbit > 0.0 && steppe_runner > 0.0,
+        "an abandoned part-tamed herd of either species must bleed: {rabbit} / {steppe_runner}"
+    );
+    assert!(
+        (rabbit / steppe_runner - 5.0).abs() < 0.05,
+        "a steppe runner must forget 5× slower than a rabbit: lost {rabbit} vs {steppe_runner}"
     );
 }
 
@@ -1140,7 +1252,7 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::AnimalPen)
-        .build_accrual(FollowPolicy::Corral, true);
+        .build_accrual(FollowPolicy::Corral, true, RUNG_TIMESCALE_UNSCALED);
 
     // No keeper: the grace turn is consumed, then the herd breaks out.
     run_turns_untended(&mut app, 3);

@@ -56,7 +56,7 @@ use crate::{
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
-    intensification::{LadderConfig, LadderConfigHandle, RungKey},
+    intensification::{LadderConfig, LadderConfigHandle, RungKey, RUNG_TIMESCALE_UNSCALED},
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
@@ -330,7 +330,9 @@ pub fn advance_cultivation(
     let ladder = ladder_config.get();
     // The feral rate is the `plant:tended` rung's own build decay — the shared ladder seam
     // (`crate::intensification`), not a plant-only lever.
-    let decay = ladder.rung(RungKey::PlantTended).build_decay();
+    let decay = ladder
+        .rung(RungKey::PlantTended)
+        .build_decay(RUNG_TIMESCALE_UNSCALED);
     for patch in registry.patches.values_mut() {
         // Spare any patch a band worked as an improvement this turn (tending a completed patch, or
         // preparing one under Cultivate). Everything else decays: an untended cultivated patch goes
@@ -1074,7 +1076,9 @@ mod tests {
         // The feral rate is the `plant:tended` rung's build decay — the same value
         // `advance_cultivation` bleeds.
         let ladder = LadderConfig::builtin();
-        let decay = ladder.rung(RungKey::PlantTended).build_decay();
+        let decay = ladder
+            .rung(RungKey::PlantTended)
+            .build_decay(RUNG_TIMESCALE_UNSCALED);
         assert!(decay > 0.0);
 
         // Tended every turn → never decays, stays cultivated.

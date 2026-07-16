@@ -2039,7 +2039,10 @@ pub fn advance_husbandry(
     let ladder = ladder_config.get();
     // The go-feral rate is the `animal:pastoral` rung's own build decay — the shared ladder seam
     // (`crate::intensification`), exactly as `advance_cultivation` reads the `plant:tended` rung's.
-    let pastoral_decay = ladder.rung(RungKey::AnimalPastoral).build_decay();
+    // It is read **per herd** below, at that species' `taming_rate` (slice 3c): the multiplier scales
+    // the rung's whole build timescale, decay included, so a species that is slow to tame is equally
+    // slow to forget (a Steppe Runner bleeds its partial taming 5× slower than a rabbit).
+    let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
     for herd in registry.herds.iter_mut() {
         // One-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
         // cleared for every herd so it can never go stale.
@@ -2122,9 +2125,12 @@ pub fn advance_husbandry(
             // **Feral if untamed** — the animal mirror of `advance_cultivation`. A herd a crew
             // worked under `Tame` last turn is **spared**; an abandoned part-tamed herd bleeds the
             // `animal:pastoral` rung's own `decay_per_turn` back toward wild (its owner lapsing at
-            // zero). Reading the rate off the ladder is what keeps the two food webs' abandon-decay
-            // tuned together — it is the shared build seam's, not a fauna-only lever.
-            herd.decay_domestication(pastoral_decay);
+            // zero), **at its species' own taming timescale**. Reading the rate off the ladder is what
+            // keeps the two food webs' abandon-decay tuned together — it is the shared build seam's,
+            // not a fauna-only lever.
+            herd.decay_domestication(
+                pastoral_rung.build_decay(fauna.taming_rate_for(&herd.species)),
+            );
         }
     }
 }
