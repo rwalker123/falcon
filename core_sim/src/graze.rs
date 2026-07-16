@@ -129,6 +129,31 @@ impl GrazeRegistry {
             .map(|patch| patch.carrying_capacity)
             .sum()
     }
+
+    /// **The richest pasture on the map** — the single source of "where is the best grass?", returning
+    /// `(tile, carrying_capacity)`. `None` on a map with no pasture at all.
+    ///
+    /// **The tie-break is load-bearing, not decoration.** `capacity_by_biome` is a *per-biome* table, so
+    /// on any real map the maximum is shared by **every tile of the richest biome** (a whole prairie
+    /// steppe reads 240). `patches` is a `HashMap`, whose iteration order is randomised **per process**
+    /// by Rust's default hasher — so a plain `max_by(capacity)` returns a *different tile every run*.
+    /// Anything that then reads the winner's **surroundings** (a pen's fenced footprint, a herd's range)
+    /// silently samples a different neighbourhood each time, which is how this produced a ~3-in-15
+    /// flaky test. Ordering by `(capacity, then y, then x)` makes ties resolve to one stable tile
+    /// regardless of hasher seed. **Do not "simplify" this back to a bare `max_by`.**
+    pub fn richest_patch(&self) -> Option<(UVec2, f32)> {
+        self.patches
+            .iter()
+            .map(|(tile, patch)| (*tile, patch.carrying_capacity))
+            .max_by(|(a_tile, a_cap), (b_tile, b_cap)| {
+                a_cap
+                    .total_cmp(b_cap)
+                    // Ties: the northern-most, then western-most tile wins. Any total order over the
+                    // coord works — it only has to be independent of the hasher.
+                    .then(b_tile.y.cmp(&a_tile.y))
+                    .then(b_tile.x.cmp(&a_tile.x))
+            })
+    }
 }
 
 /// Reconstruct a live `GrazePatch` from its snapshot mirror (the rollback restore side of

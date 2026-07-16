@@ -93,13 +93,14 @@ fn base_world() -> App {
 }
 
 /// The richest pasture tile on the map (a prairie-class patch). Returns `(tile, capacity)`.
+///
+/// Delegates to `GrazeRegistry::richest_patch`, whose **deterministic tie-break** this test depends on:
+/// every tile of the richest biome shares the maximum capacity, so picking the winner off raw `HashMap`
+/// order would sample a different neighbourhood (and a different pen footprint) each process.
 fn richest_pasture(app: &App) -> (UVec2, f32) {
     app.world
         .resource::<GrazeRegistry>()
-        .patches
-        .iter()
-        .map(|(tile, patch)| (*tile, patch.carrying_capacity))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .richest_patch()
         .expect("the earthlike map seeds graze patches")
 }
 
