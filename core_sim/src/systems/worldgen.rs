@@ -1535,6 +1535,8 @@ pub fn apply_tag_budget_solver(
                             || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
                             || info.tags.contains(sim_runtime::TerrainTags::POLAR)
                             || info.tags.contains(sim_runtime::TerrainTags::HAZARDOUS)
+                            // Preserve hydrology-placed river deltas (see Wetland pass).
+                            || info.terrain == sim_runtime::TerrainType::RiverDelta
                         {
                             return false;
                         }
@@ -1592,6 +1594,8 @@ pub fn apply_tag_budget_solver(
                         let info = &tile_info[idx];
                         if info.tags.contains(sim_runtime::TerrainTags::FERTILE)
                             || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                            // Preserve hydrology-placed river deltas (see Wetland pass).
+                            || info.terrain == sim_runtime::TerrainType::RiverDelta
                         {
                             continue;
                         }

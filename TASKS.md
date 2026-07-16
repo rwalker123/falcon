@@ -82,17 +82,22 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
 - [ ] *(Optional, cheap)* **Morphological open/close on the land mask** — a majority filter that fills
       1-hex nooks and deletes 1-hex specks. Erosion took the sponge from 59% → 53%; a compact blob is
       ~14%, so there is still headroom that a direct attack on crenellation could take.
-- [ ] **A navigable-chain mouth hex can be re-stamped to a dry biome, stranding an orphan
-      `river_channel` bit.** After `generate_hydrology` stamps a `NavigableRiver` chain, a later
+- [x] **A navigable-chain mouth hex can be re-stamped to a dry biome, stranding an orphan
+      `river_channel` bit.** ~~After `generate_hydrology` stamps a `NavigableRiver` chain, a later
       terrain pass (tag-solver / palette clamp) can overwrite the chain's **mouth** hex with a dry
       biome (e.g. `AlluvialPlain`) — even though `NavigableRiver` is a `must_have` — leaving a hex
-      that carries a `river_channel` exit bit but renders as land: a channel that "should" be water
-      showing as ground (seen on seed 5226386361516556246 at (6,10), a 3-hex chain `(6,12)→(5,11)→
-      (6,10)`). **Pre-existing** — present before the river-mouth fixes (commit 3074390), *not*
-      introduced by them; it is a terrain-stamp interaction, separate from emit/segmentation. Fix is
-      in the stamp pass, likely protecting a navigable **chain** hex the way delta mouths are already
-      protected. Guard with a test that no hex carries a `river_channel` bit while rendering a
-      non-water terrain.
+      that carries a `river_channel` exit bit but renders as land.~~ **Fixed.** Root cause was
+      `apply_tag_budget_solver`'s **Fertile-*add*** branch (primary filter + fallback loop): it
+      restamped a hydrology-placed **`RiverDelta`** mouth cut through a **polar/non-fertile** biome to
+      `AlluvialPlain`. Such a delta lacks the `Fertile` tag, so the branch's `Fertile`/`Water` skips
+      didn't catch it, and — unlike every reduction branch and the water/wetland/coastal passes — the
+      Fertile-add branch was the one path missing the `terrain != RiverDelta` guard. (`NavigableRiver`
+      itself is `WATER`-tagged and was already excluded from this branch; the orphaned-channel symptom
+      was the delta mouth, not the navigable chain.) Reproduced on earthlike seed
+      12736602826901522706 at 104×64, hex @(50,17); the previously-cited seed 5226386361516556246 is
+      also clean now. Guarded by `core_sim/tests/navigable_mouth_delta.rs` (invariant: no hex carries a
+      `river_channel` bit on non-`NavigableRiver`/non-`RiverDelta` terrain, run through the real
+      Startup chain via `build_headless_app` so a later-pass clobber can't hide).
 
 ### Trade Knowledge Diffusion
 - [x] Introduce `TradeKnowledgeDiffusion` stage that consumes openness metrics to share discoveries between factions (Owner: Ravi, Estimate: 2d; Blocked by schema/runtime helpers).
