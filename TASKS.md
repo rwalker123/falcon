@@ -403,6 +403,15 @@ mechanic that supersedes the reverted flat carry-cap) and the **plant** path (fo
 farming), as a near-mechanical transpose of the shipped herd depletion + husbandry/domestication
 systems. Realizes the Settlement arc's food-tending improvement class (tended patches / corrals).
 
+- [ ] **Interaction + knowledge model — `docs/plan_intensification_ladder.md` (NEXT ARC, design done).**
+  Unifies the two paths into one grammar: symmetric 3-rung ladders (forage→tended→farm /
+  hunt→pastoral→pen), every transition a direct Cultivate-shaped verb (incl. a new **Tame** verb), all
+  rungs **worker-driven** (retires passive-free pastoral; intensifying raises yield-per-worker + regen
+  + ceiling + proximity), and a **practice-earns-next-knowledge** pattern (working rung N unlocks rung
+  N+1's verb; two distinct meters — faction knowledge vs per-source progress — which is the fix to the
+  hunting-vs-cultivate UX inconsistency). Core deliverable: a **generic rung engine + config ladder**
+  (`intensification_ladder.json`) replacing today's bespoke pastoral/pen branches, so new rungs
+  (selective breeding, irrigation) are config. Manual-first; reconcile with this section's Phase 0/1.
 - [ ] **Phase 0 — Forage parity with hunting.** Make forage tiles **depletable**: transpose the herd
   `biomass`/`carrying_capacity`/logistic-regrowth (+ ecology phases) onto forage, moved into
   **persisted** state (`FoodModuleTag` is an unpersisted worldgen tag today — step zero). Forage take
