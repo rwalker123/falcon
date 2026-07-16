@@ -40,7 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (**the plant rung-2 BUILD dials — the old `progress_per_turn`/`decay_per_turn`/`cultivating_yield_fraction` — moved to `intensification_ladder.json`'s `plant:tended` rung**, so both food webs climb on the same numbers) (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only the `plant:tended` rung's `yield_fraction_while_building × its Sustain/MSY ceiling` (the investment cost) and accrues that rung's `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
-| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / teaches; `null` = ungated / teaches nothing), `requires_rung` (the rung below — the ladder is strictly sequential), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam`, `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — **parsed and validated, but nothing reads them yet**). **Shipped rungs:** plant `wild`(1)/`tended`(2, verb `cultivate`, gate `cultivation`, build `0.04`/`0.01`/`0.25`); animal `wild`(1)/`pastoral`(2, **verb `null`** — taming still accrues implicitly from a Sustain hunt and is claimable early via `domesticate`, the conflation slice 3 fixes)/`pen`(3, verb `corral`, gate `herding`, ceiling `pen`, build `0.04`/`0.0`/`0.50`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / teaches; `null` = ungated / teaches nothing), `requires_rung` (the rung below — the ladder is strictly sequential), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**, `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1)/`tended`(2, verb `cultivate`, gate `cultivation`, build `0.04`/`0.01`/`0.25`); animal `wild`(1, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate `herding`, ceiling `pen`, build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 1.5 / `pen_gain` 3.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 0.75, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), the **`Corral` policy**'s investment levers having **moved to `intensification_ladder.json`'s `animal:pen` rung** (the old `corralling_yield_fraction` → `yield_fraction_while_building` 0.50, `corral_build_progress_per_turn` → `progress_per_turn` 0.04); every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -671,6 +671,30 @@ step ≤1 hex) — split by `size_class`:
   1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
   where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route.
 
+**Herd movement is a rung primitive** (intensification ladder slice 3b — the **first** behavior
+primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::herd_rung`: penned →
+`animal:pen`, tamed → `animal:pastoral`, else `animal:wild`) and dispatches on its
+`behavior.movement`, so §3's proximity spine **far → near → fixed** is *config*, not a branch on
+`is_domesticated()`:
+- **`roam`** (wild) — the graze-wander / loiter-migrate machine below, over its own full range.
+- **`drift_to_owner`** (pastoral) — each turn the herd first tries **one step toward the nearest band
+  of its owning faction** (`ResidentBand` only — a camp, not a passing expedition party). It
+  **composes with, never replaces, the 2b-i graze-aware roam**: the candidates are exactly the roam's
+  own acceptable steps (`acceptable_steps` — land, and not barren), ordered by **(hex distance to the
+  nearest camp ASC, graze capacity DESC, y ASC, x ASC)** — a *preference ordering*, so there is **no
+  drift-strength lever** to tune. Only a step that genuinely closes the distance counts as a drift;
+  once the herd is at the camp or hemmed in, the turn **falls through to the normal roam**, so a tamed
+  herd grazes *around* its people instead of freezing on their tile. The species' own `dwell_turns`
+  cadence still applies (taming makes an animal *near*, not fast), and the herd never crosses barren
+  ground to reach its owner. An unowned herd, or an owner with **no bands**, roams normally. The last
+  two sort keys are load-bearing: two candidates can tie on distance *and* capacity, and a tie broken
+  by anything incidental is the ~20% flake `GrazeRegistry::richest_patch` already cost us.
+  - *Emergent tension, deliberately unsolved (playtest):* a herd that prefers proximity will settle for
+    adequate-but-poorer pasture near camp, which lowers its range-derived `K` and shrinks it — real
+    pastoral overgrazing. It cannot **strip** the range: 2b-ii's `overgraze_escapement_fraction` floor
+    still binds, so the pasture recovers and the herd stabilizes smaller.
+- **`fixed`** (pen) — pinned at `corralled_at`, no roam, no heading arrow.
+
 Movement is **deterministic under rollback** — a per-herd/​per-turn `SmallRng` seeded from `map_seed ^
 tick ^ HERD_MOVEMENT_SEED_SALT ^ fnv(herd.id)` (mirrors `repopulate_fauna`). Cadence levers are
 per-species on `SpeciesDef` (`fauna_config.json`): `dwell_turns` (~1), `loiter_turns [min,max]`
@@ -772,17 +796,20 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 - *Emergent accrual*: in `advance_labor_allocation` (Population), a **Sustain** Hunt assignment on a
   **Thriving** herd adds `husbandry.progress_per_turn` for the acting faction (sets
   `owner` on first accrual; only the owner accrues). At `1.0` the herd auto-domesticates.
-- *Decay + yield*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after
-  `advance_herds` — runs *before* the same turn's accrual, so a Sustain-followed herd nets
-  `progress_per_turn − decay_per_turn` and an untended one only decays by
-  `husbandry.decay_per_turn`, clearing `owner` at 0). A **domesticated (pastoral)** herd pays its
-  owner the **MSY of the pastoral ecology** each turn — `fauna::managed_yield_biomass` under
-  `husbandry.pastoral.ecology` (`r` = 0.25) → `hunt_provisions`, split evenly across the owner's bands.
-  It stays **passive** (no worker, no upkeep — a roaming herd grazes the land for free) but the harvest
-  now **draws the herd down**, which is what makes it sustainable (see "The husbandry yield ladder"
-  below). The retired flat `provisions_per_biomass` (0.01) paid a share of standing **stock** with no
-  draw-down: a Red Deer herd at capacity printed 12 food/turn — *sixteen* ~30-person bands' entire
-  demand — free, forever.
+- *Decay*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after `advance_herds` — runs
+  *before* the same turn's accrual, so a `Tame`-worked herd nets `progress_per_turn − decay_per_turn`
+  and an abandoned one only decays by the `animal:pastoral` rung's `decay_per_turn`, clearing `owner`
+  at 0).
+- *Yield*: **none here — passive-free pastoral is RETIRED** (intensification ladder slice 3b, §3:
+  every rung is worker-driven). A tamed herd used to pay its owner the pastoral MSY **with no worker
+  at all**, split evenly across the owner's bands; `advance_husbandry` now pays **nothing** and a
+  pastoral herd yields **only** through a normal `Hunt` assignment, exactly like a wild one. The
+  taming payoff is **yield per worker**: `herd_ecology` puts a tamed herd on the pastoral ecology
+  (`r` = wild × `pastoral_gain` 1.5), so the *same* hunters take ~1.5× the sustainable food from the
+  same `K` (measured: `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder`).
+  That also deletes the "you are not paid twice" hazard structurally — with no second payment to
+  stack, the `Corral` dip is a real cost again — so the `Herd::worked_this_turn` flag that guarded it
+  is **gone**.
 - *Collapse immunity*: `regrow_biomass` uses plain `logistic_regrowth` (never the collapse
   branch) for a domesticated herd — a managed group recovers and never crashes.
 - *Explicit claim*: the `domesticate <faction_id> <herd_id>` command (`handle_domesticate`,
@@ -796,12 +823,14 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 
 Authoritative design: `docs/plan_corral_managed_population.md`. **Management buys a *growth rate*, not
 a licence to eat the standing stock.** Every rung of the ladder pays the Maximum Sustainable Yield; the
-rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you:
+rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you.
+**Every rung costs a worker** (intensification ladder §3): what climbing buys is **yield per worker**,
+not a rung that works itself.
 
 | Rung | Ecology | `r` (Grazing 2d — **per-species**) | Costs |
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
-| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.5) | **none — passive** |
+| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.5) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
 | Corral, building | the `animal:pen` rung's `yield_fraction_while_building × MSY` | — | a worker, 25 turns |
 | Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 3.0, cap 0.75) | a worker + **feed (footprint-offset)** + pinned |
 
@@ -829,16 +858,17 @@ rungs differ *only* in the **ecology** that MSY is computed against, and in what
 - **The managed harvest draws the herd down**, and that is what makes it sustainable: it converges the
   herd on `K/2` and holds it there, paying `r·K/4` forever. Both husbandry rungs take it through the one
   shared helper **`fauna::managed_yield_biomass`**.
-- **You are not paid twice for the same animals.** `advance_husbandry` **skips the passive pastoral
-  rung** for a herd a labor assignment worked last turn (`Herd::worked_this_turn`, a transient flag set
-  in the Hunt arm of `advance_labor_allocation` — the same one-turn lag as `corralled_tended_this_turn`).
-  A band working the herd is already paid through the labor arm (its `hunt_take`, the `Corral` build dip,
-  or the pen's harvest). **Without the skip the corral's investment cost becomes a profit**: a Red Deer
-  under construction would pay the dip (0.50 × 1.50 = 0.75) **plus** the passive rung (1.50) = 2.25/turn
-  — *more* than the 1.50 of walking away — recreating on the animal side exactly the "free path" the
-  intensification ladder exists to delete (a plain Sustain hunt on a tamed herd was double-paid the same
-  way). With the skip, building the pen costs a real **0.75/turn for 25 turns (~19 provisions forgone)**,
-  recouped ~9 turns after completion (pen net ≈3.66 vs pastoral 1.50 at `B*`).
+- **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
+  passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
+  worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
+  construction collected the `Corral` dip (0.50 × 1.50 = 0.75) **plus** the passive rung (1.50) =
+  2.25/turn, *more* than the 1.50 of walking away, turning the pen's investment cost into a profit.
+  Retiring the passive rung removes the hazard by construction (there is no second payment left to
+  stack), so the flag and the skip are **deleted**. The dip is a real cost measured against the real
+  alternative — hunting the same herd
+  (`fauna_husbandry::building_a_corral_costs_more_than_hunting_the_same_herd`): building pays
+  **0.75/turn for 25 turns (~19 provisions forgone)** against the 1.50 those same hunters would have
+  taken, recouped ~9 turns after completion (pen ≈3.66 gross at `B*`).
 - **It is constant-*escapement* MSY** — `take = min(peak_regrowth(K), max(0, B − K/2))` — **not** the
   constant-catch `sustainable_yield` a *wild* `Sustain` hunt takes. The sim regrows in Logistics and
   harvests in Population, so a constant-catch take is evaluated at the **post**-regrowth biomass; above
@@ -906,8 +936,8 @@ gated, **paid** verb, so both food webs read the same:
   (`Herd::tamed_this_turn` — a transient, non-persisted flag, the animal twin of
   `ForagePatch::tended_this_turn` with the same deliberate Logistics-reads-what-Population-wrote lag);
   an abandoned part-tamed herd bleeds the `animal:pastoral` rung's `decay_per_turn`, its owner lapsing
-  at zero. **Distinct from `worked_this_turn`**, which any hunt policy sets: a Sustain hunt *harvests*
-  a herd, it must not hold the taming meter up.
+  at zero. **Distinct from an ordinary hunt at any other policy**: a Sustain hunt *harvests* a herd, it
+  must not hold the taming meter up.
 - **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
   `CommandEventKind::Tame`) — **sets the `Tame` policy** on the bands already hunting the herd, the
   command form of the client's policy picker. It **tames nothing outright**. It targets a **herd id**
@@ -928,10 +958,12 @@ gated, **paid** verb, so both food webs read the same:
   `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn 0.01,
   yield_fraction_while_building 0.50 }`. The first two **moved verbatim** from `fauna_config.json`
   `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the animal-side `corral` precedent).
-- **Not in this slice:** passive-free pastoral still pays exactly what it paid before, and the
-  `drift_to_owner` movement primitive is unbuilt (slice 3b); `earns_knowledge` / the `Penning`
-  knowledge / the §4.3 gate reshuffle are slice 4 — so **Herding currently gates both `tame` and
-  `corral`**.
+- **Slice 3b landed the rest of the rung:** passive-free pastoral is **retired** (a tamed herd yields
+  only through a worker's Hunt assignment, at the pastoral `r` — see "Domestication / husbandry" and
+  "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
+  movement is a rung primitive").
+- **Not in this arc's shipped slices yet:** `earns_knowledge` / the `Penning` knowledge / the §4.3 gate
+  reshuffle are slice 4 — so **Herding currently gates both `tame` and `corral`**.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2 this now mirrors exactly), "Corral
 (Intensification Rung 1c)" (the rung above), "The Intensification Ladder" (the engine + the config).
@@ -983,6 +1015,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   cost**. Corralled = fixed + place-local worker-tended + **fed** + escapes-if-untended:
   - *Fixed* — `advance_herds` skips a corralled herd's `advance_herd_roam` (it stays at `corralled_at`,
     no heading arrow); it still grazes its footprint + regrows toward the footprint's `K` (Grazing 2d).
+    Since slice 3b this is **read off the `animal:pen` rung's `behavior.movement: fixed`**, not
+    hard-coded on `is_corralled()` — see "Herd movement is a rung primitive".
   - *Place-local worker-tended* — a **Hunt assignment on a corralled herd** is herding/tending it, and
     the turn has two halves (the tend branch of `advance_labor_allocation`'s Hunt arm, which `continue`s
     before `hunt_take` — a corralled herd is never both hunt-drawn AND paid):
@@ -1021,8 +1055,9 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
     deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
     tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
-    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated herd (resuming the
-    passive even-split husbandry yield). **The pen is lost, not merely opened** — re-penning pays the
+    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated (pastoral) herd —
+    which, since slice 3b, pays **nothing at all** until a band hunts it again. **The pen is lost, not
+    merely opened** — re-penning pays the
     full 25-turn `Corral` investment again, at the herd's new position. *Why zero, when a patch's
     `cultivation_progress` only decays gradually:* **a patch is a place and a herd is not.**
     `cultivation_progress` can survive partially because the improvement sits on a tile that cannot
@@ -1215,13 +1250,22 @@ the two webs still keep their own `knowledge_completion_threshold` (`labor_confi
 `forage.cultivation`, `fauna_config`'s `husbandry` — **identical values, duplicated**; a later slice may
 unify them). The helper unifies the *comparison*, not the tuning.
 
-### Behavior primitives — parsed, validated, NOT yet read
+### Behavior primitives — `movement` is live; `feeding`/`harvest` are still declarative
 
-`behavior` is config over **coded** primitives (bounded enums): `movement` ∈ `fixed | roam`, `feeding` ∈
-`photosynthesis | forage | self_graze`, `harvest` ∈ `worker_take | worker_tend | passive`. **Nothing
-reads them yet** — they are the seam a later slice switches on (a rung that recombines existing
-primitives is pure config; a rung needing a *new* primitive codes that one primitive once, after which
-it too is config).
+`behavior` is config over **coded** primitives (bounded enums): `movement` ∈ `fixed | roam |
+drift_to_owner`, `feeding` ∈ `photosynthesis | forage | self_graze`, `harvest` ∈ `worker_take |
+worker_tend | passive`. A rung that recombines existing primitives is pure config; a rung needing a
+*new* primitive codes that one primitive once, after which it too is config.
+
+- **`movement` IS READ** (slice 3b — the first primitive the engine applies): `fauna::advance_herds`
+  resolves each herd's rung and dispatches on it, which is what makes §3's proximity spine
+  (`roam` → `drift_to_owner` → `fixed`) a **config diff** rather than a code branch. `drift_to_owner`
+  is the primitive slice 3b coded; see "Herd movement is a rung primitive" under Fauna & Wild Game for
+  its ordering, its fallbacks, and the overgrazing tension it creates.
+- **`feeding` / `harvest` are parsed and validated only** — the seam later slices switch on. `harvest:
+  passive` is now **unused by every shipped rung**: retiring passive-free pastoral (§3, slice 3b) left
+  no rung that pays without workers. The variant stays as vocabulary for a future rung that genuinely
+  does.
 
 ### The config states TODAY's truth, deliberately
 
@@ -1231,13 +1275,15 @@ describes the sim as it is, not as it will be:
 | | rung 1 | rung 2 | rung 3 |
 |---|---|---|---|
 | **plant** | `wild` — no verb; **earns `cultivation`** (Sustain-forage a Thriving patch) | `tended` — verb **`cultivate`**, gate `cultivation`, earns nothing | *(none — `Field`/`Sow` is a later slice)* |
-| **animal** | `wild` — no verb; **earns `herding`** (Sustain-hunt a Thriving herd) | `pastoral` — **verb `null`**: taming still accrues *implicitly* from a Sustain hunt and is claimable early via `domesticate` — **the conflation a later slice fixes** by giving this rung the `tame` verb + a `herding` gate | `pen` — verb **`corral`**, gate `herding`, ceiling `pen` |
+| **animal** | `wild` — no verb; **earns `herding`** (Sustain-hunt a Thriving herd); `movement: roam` | `pastoral` — verb **`tame`**, gate `herding`, ceiling `pastoral`; **`movement: drift_to_owner`, `harvest: worker_take`** (slice 3b — was `roam`/`passive`) | `pen` — verb **`corral`**, gate `herding`, ceiling `pen`; `movement: fixed` |
 
-Two consequences to keep straight: **rung 1 already teaches** on both tracks (practice-earns-knowledge is
+Three consequences to keep straight: **rung 1 already teaches** on both tracks (practice-earns-knowledge is
 shipped — but the accrual is still driven by each web's own `knowledge_progress_per_turn`, so
-`earns_knowledge` is **declarative only** until a later slice wires the earn path through it), and the
-animal rung-2 dials (`progress_per_turn`/`decay_per_turn`/`claim_threshold`) still live in
-`fauna_config.json` `husbandry` because that rung is still bespoke.
+`earns_knowledge` is **declarative only** until a later slice wires the earn path through it); **Herding
+still gates both `tame` and `corral`** (the §4.3 reshuffle onto a new `penning` knowledge is slice 4);
+and the animal rung-2 **taming accrual/decay dials have moved here**, while the knowledge levers
+(`knowledge_progress_per_turn`/`knowledge_completion_threshold`) still live in `fauna_config.json`
+`husbandry`.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2), "Corral (Intensification Rung 1c)"
 (the animal rung 3), "The husbandry yield ladder" (what each rung *pays*, which this arc does **not**

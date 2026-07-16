@@ -235,10 +235,19 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
   behavior-preserving first** (same rungs, same numbers, now data) so the refactor is separable from the
   design change. Fold in the **shared knowledge-gate helper** (retires the 5 inlined
   `get_progress(..) >= threshold` checks, §0). The load-bearing slice.
-- [ ] **3 — Tame verb + worker-driven pastoral + proximity (animals).** Split the conflated Sustain
-  branch (`labor.rs:417-425`): Sustain teaches **Herding** only; the new `Tame` verb fills
-  `domestication_progress`. **Remove the `domesticate` early-claim** (`claim_threshold`). Retire
-  passive-free pastoral → worker-driven-but-efficient. Add the `drift_to_owner` movement primitive.
+- [x] **3 — Tame verb + worker-driven pastoral + proximity (animals).** **Landed in two slices.**
+  **3a:** the conflated Sustain branch is split (Sustain teaches **Herding** only; the new `Tame` verb
+  fills `domestication_progress` and pays the rung's investment dip) and the `domesticate` early-claim
+  (`claim_threshold`) is **removed**. **3b:** **passive-free pastoral is retired** — a tamed herd
+  yields *only* through a worker's Hunt assignment, and the payoff is **yield per worker**: the
+  existing `herd_ecology` seam already puts it on the pastoral `r` (wild × `pastoral_gain` 1.5), so the
+  same crew takes ~1.5× the food from the same `K` (the `worked_this_turn` no-double-pay flag went with
+  the payout it guarded). The **`drift_to_owner`** movement primitive is built and
+  `behavior.movement` is wired from the rung record — **the first primitive the engine reads**, so the
+  behaviour change ships as a config diff (`animal:pastoral` → `movement: drift_to_owner`, `harvest:
+  worker_take`). Flagged for playtest: a herd that prefers proximity may settle on poorer pasture near
+  camp, lowering its `K` — real pastoral overgrazing, floored (it cannot strip the range) by 2b-ii's
+  escapement.
 - [ ] **4 — The knowledge pattern, rung 2.** Practicing rung 2 earns the rung-3 knowledge: `Tame` earns
   **Penning** (2006), `Cultivate` earns **Seed Selection** (2005). Gate reshuffle (§4.3). The
   **two-meter UI split** (faction knowledge vs per-source progress — the root UX fix, §4.1). Only

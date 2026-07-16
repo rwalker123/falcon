@@ -128,7 +128,10 @@ impl RungKey {
     }
 }
 
-/// How a source at this rung moves. A bounded coded primitive (§5) — **not read yet**.
+/// How a source at this rung moves — **the proximity spine, far → near → fixed**
+/// (`docs/plan_intensification_ladder.md` §3, dial 4). A bounded coded primitive (§5), and the
+/// **first one the engine actually applies**: `fauna::advance_herds` dispatches a herd's movement off
+/// the rung it stands on, so a rung that recombines these is pure config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RungMovement {
@@ -136,9 +139,15 @@ pub enum RungMovement {
     Fixed,
     /// Roams its own range — you go to it.
     Roam,
+    /// **Drifts toward its owner's nearest band** and stays near it: less chasing, and it *reads* as
+    /// domesticated. Composes with (never replaces) the roam's own barren-avoidance / graze
+    /// preference — see `fauna::advance_herd_roam`. A source with no owner, or an owner with no
+    /// bands, simply roams.
+    DriftToOwner,
 }
 
-/// How a source at this rung feeds itself. A bounded coded primitive (§5) — **not read yet**.
+/// How a source at this rung feeds itself. A bounded coded primitive (§5) — **not read yet**
+/// (`movement` is the only primitive the engine reads today).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RungFeeding {
@@ -160,14 +169,16 @@ pub enum RungHarvest {
     WorkerTake,
     /// Workers take a **managed** harvest that never overdraws (a tended patch, a pen).
     WorkerTend,
-    /// Pays its owner with **no workers at all** — today's pastoral rung, which
-    /// `plan_intensification_ladder.md` §3 retires in slice 3.
+    /// Pays its owner with **no workers at all**. **No shipped rung is `passive` any more** —
+    /// `plan_intensification_ladder.md` §3 retired the passive-free pastoral rung in slice 3b (every
+    /// rung is worker-driven; intensifying buys *yield per worker*, not zero workers). The variant
+    /// survives as vocabulary for a future rung that genuinely pays for nothing.
     Passive,
 }
 
 /// The behavior primitives a rung recombines. Bounded enums over coded behavior, per §5 — a rung
-/// that recombines existing primitives is pure config. **Nothing reads these yet**: slice 2 parses
-/// and validates them so later slices can switch on them.
+/// that recombines existing primitives is pure config. Only **`movement`** is read today (slice 3b —
+/// `fauna::advance_herds`); `feeding` / `harvest` are still parsed and validated only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct RungBehavior {
     pub movement: RungMovement,

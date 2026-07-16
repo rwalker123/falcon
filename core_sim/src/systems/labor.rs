@@ -314,13 +314,6 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
-                    // **This band is working this herd** — whatever the policy. `advance_husbandry`
-                    // reads the flag next turn (Logistics, the deliberate one-turn lag) and skips the
-                    // **passive pastoral rung** for it: a band already paid through this arm is not
-                    // *also* paid for leaving the herd alone. Without it the passive payment stacks on
-                    // the `Corral` build dip and makes penning cost *less* than nothing — the "free
-                    // path" the intensification ladder exists to delete (see `Herd::worked_this_turn`).
-                    herd.worked_this_turn = true;
                     // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):

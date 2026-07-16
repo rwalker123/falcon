@@ -2,7 +2,7 @@
   "_comment": "THE INTENSIFICATION LADDER (docs/plan_intensification_ladder.md §5). Both food webs climb the same ladder: rung 1 = the wild source, rung 2 = you manage it in place, rung 3 = you control its reproduction. A rung is a RECORD; the ladder is a LIST; adding a rung is appending a record. THIS FILE DESCRIBES WHAT THE SIM DOES TODAY, not the target model — later slices change behaviour by EDITING it (that is the whole thesis). A rung whose `verb` is null is not driven by a policy today and the build engine skips it.",
   "_comment_branches": "`plant` = the human food web (forage patches, forage.rs). `animal` = the animal food web (herds, fauna.rs). The two learn separately (§4.2) and never share a rung.",
   "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs — there is nothing to build about a wild source).",
-  "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam. `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all). NOTHING READS THESE YET — they are parsed and validated only.",
+  "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam | drift_to_owner (the proximity spine far -> near -> fixed; a drifting herd biases each roam step toward its owner's nearest band, composing with — never replacing — the graze-aware roam's barren-avoidance and fertility preference). `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all — NO SHIPPED RUNG IS PASSIVE since slice 3b retired passive-free pastoral). **`movement` IS READ** by fauna::advance_herds (slice 3b — the first primitive the engine applies); `feeding`/`harvest` are parsed and validated only.",
   "rungs": [
     {
       "id": "wild",
@@ -79,11 +79,11 @@
         "decay_per_turn": 0.01,
         "yield_fraction_while_building": 0.5
       },
-      "_comment_behavior": "TODAY a pastoral herd pays its owner passively, with no workers — the `passive` primitive. Slice 3b retires it (worker-driven-but-efficient) and switches `movement` to `drift_to_owner`.",
+      "_comment_behavior": "Slice 3b, the thesis in action — THE BEHAVIOUR CHANGE IS THIS DIFF. `harvest` was `passive` (a tamed herd paid its owner with no workers at all); §3 retires that: EVERY rung is worker-driven, so a pastoral herd is now `worker_take` like a wild one — it yields only through a normal Hunt assignment. The payoff is not zero workers, it is YIELD PER WORKER: `herd_ecology` already gives a tamed herd the pastoral r (wild x `pastoral_gain` 1.5), so the same workers take ~1.5x the sustainable food. `movement` was `roam`; it is now `drift_to_owner` — the proximity spine's middle rung (wild roams its full range, tamed drifts to the camp, penned is fixed at the fence), which is also less chasing and so more effective yield.",
       "behavior": {
-        "movement": "roam",
+        "movement": "drift_to_owner",
         "feeding": "forage",
-        "harvest": "passive"
+        "harvest": "worker_take"
       }
     },
     {

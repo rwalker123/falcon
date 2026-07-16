@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
@@ -10,7 +11,7 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{FollowPolicy, PopulationCohort, SourceYield, Tile, FOOD},
+    components::{FollowPolicy, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
         HusbandryCeiling, SizeClass, SpeciesDef, NO_GRAZE_CAPACITY,
@@ -19,16 +20,14 @@ use crate::{
     graze::GrazeRegistry,
     grid_utils::{hex_distance_wrapped, hex_neighbor, hex_range_tiles, HEX_DIRECTION_COUNT},
     hashing::FnvHasher,
-    intensification::{LadderConfig, LadderConfigHandle, RungKey},
+    intensification::{LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement},
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
         StartLocation, TileRegistry,
     },
-    scalar::{scalar_from_f32, scalar_zero, Scalar},
-    systems::{output_multiplier, workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
-    wellbeing_config::WellbeingConfigHandle,
+    systems::{workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -288,23 +287,6 @@ pub struct Herd {
     /// than every turn it continues. Cleared when the pen is fed again (so a *second* famine is
     /// announced afresh). Not snapshot-persisted — a rollback can at worst re-announce.
     pub pen_starving: bool,
-    /// Transient per-turn flag: a **labor assignment worked this herd** this turn — any Hunt
-    /// assignment, at any policy (set in `advance_labor_allocation`, Population; read and cleared one
-    /// turn later by `advance_husbandry`, Logistics — the same deliberate one-turn lag as
-    /// `corralled_tended_this_turn`).
-    ///
-    /// **You are not paid twice for the same animals.** A band working the herd is already paid
-    /// through the labor arm (its `hunt_take`, or the `Corral` build dip, or the pen's harvest), so
-    /// `advance_husbandry` **skips the passive pastoral rung** for it. Without this the two payments
-    /// stack and the Corral *investment* becomes a **profit**: a Red Deer under construction pays the
-    /// dip (0.25 × 0.90 = 0.225) **plus** the passive pastoral MSY (0.90) = **1.125/turn**, more than
-    /// the 0.90 of leaving the herd alone — recreating on the animal side exactly the "free path" the
-    /// intensification ladder exists to remove (`docs/plan_intensification.md`, Rung 1a/1b/1c).
-    /// A plain Sustain hunt on a tamed herd was double-paid the same way.
-    ///
-    /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false`, so a rollback can only
-    /// grant one extra passive payment, never withhold one forever.
-    pub worked_this_turn: bool,
     /// **Was this herd actively TAMED this turn** — set by the `Tame` arm of
     /// `advance_labor_allocation`, read by `advance_husbandry` to spare it from `decay_domestication`.
     /// The animal twin of `ForagePatch::tended_this_turn`, with the same **deliberate one-turn lag**
@@ -313,8 +295,8 @@ pub struct Herd {
     /// `progress_per_turn` rather than net-of-decay. It is set even when a gate lapses mid-run
     /// (mirroring the plant side) — a crew that showed up and worked keeps the herd from reverting.
     ///
-    /// Distinct from [`Herd::worked_this_turn`], which is set by **any** hunt policy: a Sustain hunt
-    /// harvests a herd, it does not tame it, so it must not hold the taming meter up.
+    /// Distinct from a plain hunt at any other policy: a Sustain hunt *harvests* a herd, it does not
+    /// tame it, so it must not hold the taming meter up.
     ///
     /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false` ("untended"), so a
     /// rollback can only *delay* a decay turn by one, never invent progress.
@@ -377,7 +359,6 @@ impl Herd {
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
             pen_starving: false,
-            worked_this_turn: false,
             tamed_this_turn: false,
         }
     }
@@ -819,7 +800,6 @@ fn herd_from_state(state: &HerdState) -> Herd {
         corralled_tended_this_turn: false,
         pen_fed_fraction: PEN_FULLY_FED,
         pen_starving: false,
-        worked_this_turn: false,
         tamed_this_turn: false,
     }
 }
@@ -1167,10 +1147,18 @@ pub fn advance_herds(
     mut density: ResMut<HerdDensityMap>,
     config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
+    // The ladder decides **how a herd moves**: each herd's rung declares its `behavior.movement`
+    // primitive (§3's proximity spine `roam` → `drift_to_owner` → `fixed`), and this system is the
+    // first consumer of the behavior schema (slice 3b).
+    ladder_config: Res<LadderConfigHandle>,
     tick: Res<SimulationTick>,
     world_seed: Option<Res<WorldGenSeed>>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
+    // The camps a `drift_to_owner` herd drifts toward. `With<ResidentBand>`: the herd seeks its
+    // owner's *settled* bands, not a detached expedition party that happens to be passing (the
+    // positive-marker isolation convention — see `components::ResidentBand`).
+    bands: Query<&PopulationCohort, With<ResidentBand>>,
     // Optional so the many hand-built fauna test harnesses that run `advance_herds` in isolation
     // don't have to stand up a graze layer; a `None`/empty registry falls back to plain land movement
     // (the pre-2b-i behaviour). The live app always carries a seeded `GrazeRegistry`.
@@ -1184,6 +1172,7 @@ pub fn advance_herds(
         return;
     }
     let fauna = fauna_config.get();
+    let ladder = ladder_config.get();
     let width = config.grid_size.x.max(1);
     let height = config.grid_size.y.max(1);
     let wrap = config.map_topology.wrap_horizontal;
@@ -1191,6 +1180,7 @@ pub fn advance_herds(
     // A `None`/empty graze layer → plain land movement (pre-2b-i); a seeded one → graze-aware roam.
     let empty_graze = GrazeRegistry::default();
     let graze = graze.as_deref().unwrap_or(&empty_graze);
+    let owner_camps = owner_camp_tiles(&bands, &tiles);
     for herd in registry.herds.iter_mut() {
         // Deterministic per-herd, per-turn RNG (rollback-stable): map_seed ^ tick ^ salt ^ id-hash.
         let mut hasher = FnvHasher::new();
@@ -1199,14 +1189,19 @@ pub fn advance_herds(
             SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
         // Movement cadence levers for this species (fall back to a slow game default if unresolved).
         let def = fauna.species_by_display(&herd.species);
-        // A corralled (penned) herd is fixed at `corralled_at` — it does NOT roam (Rung 1c). It
-        // still grazes/regrows (ecology is independent of movement); only its wander is skipped.
-        if herd.is_corralled() {
-            herd.next_pos = None;
-        } else {
-            advance_herd_roam(
+        // **The movement primitive comes from the herd's RUNG, not from `is_domesticated()`** — the
+        // ladder's `behavior.movement` is config (§5), and this is the first place the engine reads
+        // it. §3's proximity spine falls out of the shipped records: wild `roam` → pastoral
+        // `drift_to_owner` → pen `fixed`.
+        match herd_rung(herd, &ladder).behavior.movement {
+            // A `fixed` source does not roam — today's penned herd, pinned at `corralled_at` (Rung
+            // 1c). It still grazes/regrows (ecology is independent of movement); only its wander is
+            // skipped.
+            RungMovement::Fixed => herd.next_pos = None,
+            RungMovement::Roam => advance_herd_roam(
                 herd,
                 def,
+                None, // no drift: a wild herd roams its own full range
                 &tile_registry,
                 &tiles,
                 graze,
@@ -1214,7 +1209,24 @@ pub fn advance_herds(
                 width,
                 height,
                 wrap,
-            );
+            ),
+            // `drift_to_owner`: the herd biases its step toward its owner's nearest camp. No owner,
+            // or an owner with no bands → `None`, i.e. a plain roam (the fallback is the `Option`).
+            RungMovement::DriftToOwner => {
+                let camps = herd.owner.and_then(|owner| owner_camps.get(&owner));
+                advance_herd_roam(
+                    herd,
+                    def,
+                    camps.map(|c| c.as_slice()),
+                    &tile_registry,
+                    &tiles,
+                    graze,
+                    &mut rng,
+                    width,
+                    height,
+                    wrap,
+                )
+            }
         }
         // **K is ecological — for a MOBILE herd its roam range, for a PENNED herd its fenced footprint**
         // (Grazing 2b-ii + 2d §2.1). Recomputed each turn (penned herds are no longer frozen) from the
@@ -1456,12 +1468,20 @@ fn graze_take(graze: &mut GrazeRegistry, range: &[UVec2], demand: f32, floor_fra
 /// `current_pos` / `dwell_remaining` / `roam` / `step_index` / `next_pos`. `def` supplies the
 /// species' cadence levers (`None` → a slow game default). Movement is ≤ 1 hex/turn and land-clamped;
 /// it never touches `biomass` (ecology stays independent — a loitering herd still grazes/regrows).
+///
+/// **`drift`** carries the `drift_to_owner` primitive (§3): `Some(camps)` = this herd's rung says it
+/// drifts, and these are its owner's band tiles. It **composes with, and does not replace, the wild
+/// roam**: the drift only pre-empts the roam's own target on a turn it can genuinely get *closer* to a
+/// camp. Once the herd is as near as it can get — at the camp, or hemmed in — the turn falls through
+/// to the normal state machine, so a tamed herd grazes around its people instead of freezing on their
+/// tile. `None` (a wild herd, an unowned one, or an owner with no bands) is exactly today's roam.
 // Args are the herd + its cadence levers + the grid/tile context needed to land-clamp a hex step;
 // bundling them adds noise without clarity (matches the other fauna spawn/movement helpers).
 #[allow(clippy::too_many_arguments)]
 fn advance_herd_roam(
     herd: &mut Herd,
     def: Option<&SpeciesDef>,
+    drift: Option<&[UVec2]>,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
@@ -1473,6 +1493,22 @@ fn advance_herd_roam(
     let dwell_turns = def.map(|d| d.dwell_turns).unwrap_or(1);
     let loiter_radius = def.map(|d| d.loiter_radius).unwrap_or(2);
     herd.next_pos = None;
+
+    // **`drift_to_owner`** — the tamed rung's attractor is its owner's camp, not its wild route, so it
+    // is resolved *before* the roam state machine and takes the turn when it can close the distance.
+    // The species' own `dwell_turns` cadence still applies: taming an animal does not make it faster,
+    // it makes it *near*.
+    if let Some(camps) = drift.filter(|camps| !camps.is_empty()) {
+        if herd.dwell_remaining > 0 {
+            herd.dwell_remaining -= 1;
+            return;
+        }
+        if drift_step_toward_owner(herd, camps, registry, tiles, graze, width, height, wrap) {
+            herd.dwell_remaining = dwell_turns;
+            return;
+        }
+        // Already at the camp (or no acceptable step gets nearer) → fall through to the normal roam.
+    }
 
     match herd.roam {
         RoamState::GrazeWander => {
@@ -1621,25 +1657,10 @@ fn best_land_neighbor_toward(
     height: u32,
     wrap: bool,
 ) -> Option<UVec2> {
-    // With no seeded graze layer (isolated test harnesses / pre-graze worldgen) fall back to plain
-    // land movement — every land tile is passable and there is no fertility bias.
-    let graze_aware = !graze.is_empty();
     let cur_dist = hex_distance_wrapped(from, target, width, wrap);
     // (pos, hex distance to target, graze capacity) — closest-then-richest.
     let mut best: Option<(UVec2, u32, f32)> = None;
-    for dir in 0..HEX_DIRECTION_COUNT {
-        let Some((nx, ny)) = hex_neighbor(from.x, from.y, dir, width, height, wrap) else {
-            continue;
-        };
-        let np = UVec2::new(nx, ny);
-        if !is_land_tile(np, registry, tiles) {
-            continue;
-        }
-        // Barren avoidance: a tile with no patch (or zero capacity) is dead ground — never step onto it.
-        let cap = tile_graze_capacity(graze, np);
-        if graze_aware && cap <= NO_GRAZE_CAPACITY {
-            continue;
-        }
+    for (np, cap) in acceptable_steps(from, registry, tiles, graze, width, height, wrap) {
         let d = hex_distance_wrapped(np, target, width, wrap);
         if d >= cur_dist {
             continue;
@@ -1653,6 +1674,161 @@ fn best_land_neighbor_toward(
         }
     }
     best.map(|(pos, _, _)| pos)
+}
+
+/// **The steps a herd may take at all** — the acceptance filter *every* movement primitive orders
+/// within (Grazing 2b-i §4.1), so `roam` and `drift_to_owner` can never disagree about what ground is
+/// crossable. A candidate must be a hex neighbour, **land**, and — when a graze layer is seeded —
+/// **not barren** (no patch, or zero capacity: dead ground a grazer would starve on and must never
+/// cross). Returned in hex-direction order, each paired with its tile's graze **capacity** — the
+/// land's stable fertility, which is the preference the primitives order by (never the live biomass;
+/// chasing *receding* grass is the deferred 2c dynamic).
+///
+/// With no seeded graze layer (the isolated fauna test harnesses / pre-graze worldgen) every land
+/// neighbour is acceptable at capacity `0` — the pre-2b-i behaviour, unchanged.
+fn acceptable_steps(
+    from: UVec2,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Vec<(UVec2, f32)> {
+    let graze_aware = !graze.is_empty();
+    let mut steps = Vec::new();
+    for dir in 0..HEX_DIRECTION_COUNT {
+        let Some((nx, ny)) = hex_neighbor(from.x, from.y, dir, width, height, wrap) else {
+            continue;
+        };
+        let np = UVec2::new(nx, ny);
+        if !is_land_tile(np, registry, tiles) {
+            continue;
+        }
+        let cap = tile_graze_capacity(graze, np);
+        if graze_aware && cap <= NO_GRAZE_CAPACITY {
+            continue;
+        }
+        steps.push((np, cap));
+    }
+    steps
+}
+
+/// **The `drift_to_owner` primitive** (`docs/plan_intensification_ladder.md` §3, dial 4): one step
+/// toward the owner's **nearest** camp. Returns whether the herd moved — `false` = it is already as
+/// near as it can get (standing in the camp, or no acceptable step closes the distance), and the
+/// caller falls through to the herd's normal roam, so a tamed herd grazes *around* its people rather
+/// than freezing on their tile.
+///
+/// **It composes with the roam, it does not replace it.** The candidates are exactly
+/// [`acceptable_steps`] — the roam's own land + barren-avoidance filter — and the roam's fertility
+/// preference survives as the second sort key. What the primitive changes is only the herd's
+/// *attractor*: its owner's camp instead of its wild route anchor.
+///
+/// **The order is TOTAL and hasher-independent**: `(camp distance ASC, graze capacity DESC, y ASC,
+/// x ASC)`. The last two keys exist because the first two can genuinely tie (two neighbours the same
+/// distance out on the same biome) and a tie broken by anything incidental is a flake waiting to
+/// happen — the lesson of `GrazeRegistry::richest_patch`'s `HashMap`-order tie. `camp_distance` mins
+/// over the camps, so the camp list's order cannot leak in either.
+///
+/// **There is no drift-strength lever, deliberately** — this is a preference *ordering*, not a
+/// weight: one step per turn toward the people, and nothing to tune.
+#[allow(clippy::too_many_arguments)]
+fn drift_step_toward_owner(
+    herd: &mut Herd,
+    camps: &[UVec2],
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> bool {
+    let current = camp_distance(herd.current_pos, camps, width, wrap);
+    if current == 0 {
+        // Standing on the camp tile: nothing to close, so the normal roam takes the turn.
+        return false;
+    }
+    let mut best: Option<(u32, f32, UVec2)> = None;
+    for (np, cap) in acceptable_steps(
+        herd.current_pos,
+        registry,
+        tiles,
+        graze,
+        width,
+        height,
+        wrap,
+    ) {
+        let d = camp_distance(np, camps, width, wrap);
+        // Only a step that genuinely closes the distance is a drift; anything else is roaming, and
+        // roaming is the fall-through's job.
+        if d >= current {
+            continue;
+        }
+        let candidate = (d, cap, np);
+        let better = best.is_none_or(|best| drift_order(candidate, best) == Ordering::Less);
+        if better {
+            best = Some(candidate);
+        }
+    }
+    match best {
+        Some((_, _, pos)) => {
+            herd.current_pos = pos;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The drift's **total** candidate order: nearest the camp, then the richer pasture, then a
+/// deterministic `(y, x)` tie-break. See [`drift_step_toward_owner`] on why the last key is not
+/// optional.
+fn drift_order(a: (u32, f32, UVec2), b: (u32, f32, UVec2)) -> Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| b.1.total_cmp(&a.1))
+        .then_with(|| a.2.y.cmp(&b.2.y))
+        .then_with(|| a.2.x.cmp(&b.2.x))
+}
+
+/// Hex distance from `from` to the **nearest** of `camps` (wrap-aware). A `min` over the list, so the
+/// list's order cannot change the answer — the drift's determinism rests on this. An empty list never
+/// reaches here (the caller filters it into a plain roam).
+fn camp_distance(from: UVec2, camps: &[UVec2], width: u32, wrap: bool) -> u32 {
+    camps
+        .iter()
+        .map(|&camp| hex_distance_wrapped(from, camp, width, wrap))
+        .min()
+        .unwrap_or(u32::MAX)
+}
+
+/// Every faction's **camps** — the tiles its resident bands stand on this turn, which is what a
+/// `drift_to_owner` herd steers by. Keyed by faction for an O(1) lookup per herd; each faction's Vec
+/// order is irrelevant by construction ([`camp_distance`] mins over it).
+fn owner_camp_tiles(
+    bands: &Query<&PopulationCohort, With<ResidentBand>>,
+    tiles: &Query<&Tile>,
+) -> BTreeMap<FactionId, Vec<UVec2>> {
+    let mut camps: BTreeMap<FactionId, Vec<UVec2>> = BTreeMap::new();
+    for cohort in bands.iter() {
+        if let Ok(tile) = tiles.get(cohort.current_tile) {
+            camps.entry(cohort.faction).or_default().push(tile.position);
+        }
+    }
+    camps
+}
+
+/// **The rung a herd stands on** — the animal ladder resolved for one herd: penned → `animal:pen`,
+/// tamed → `animal:pastoral`, else `animal:wild`. THE seam between herd state and the ladder config:
+/// a system asks for the rung and reads its declared primitives, instead of re-deriving behaviour
+/// from `is_domesticated()` at the call site (which is how the ladder stops being data).
+fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
+    ladder.rung(if herd.is_corralled() {
+        RungKey::AnimalPen
+    } else if herd.is_domesticated() {
+        RungKey::AnimalPastoral
+    } else {
+        RungKey::AnimalWild
+    })
 }
 
 /// A tile's graze **capacity** (the land's stable fertility, not its live biomass) — `0` where no
@@ -1686,28 +1862,19 @@ fn wander_near_anchor(
 ) {
     // With no seeded graze layer (isolated test harnesses) fall back to plain land movement.
     let graze_aware = !graze.is_empty();
-    // (tile, graze capacity) for each grazeable land neighbour inside the loiter radius.
+    // (tile, graze capacity) for each acceptable step inside the loiter radius.
     let mut options: Vec<(UVec2, f32)> = Vec::new();
     let mut total_capacity = 0.0;
-    for dir in 0..HEX_DIRECTION_COUNT {
-        let Some((nx, ny)) = hex_neighbor(
-            herd.current_pos.x,
-            herd.current_pos.y,
-            dir,
-            width,
-            height,
-            wrap,
-        ) else {
-            continue;
-        };
-        let np = UVec2::new(nx, ny);
-        if !is_land_tile(np, registry, tiles)
-            || hex_distance_wrapped(np, anchor, width, wrap) > loiter_radius
-        {
-            continue;
-        }
-        let cap = tile_graze_capacity(graze, np);
-        if graze_aware && cap <= NO_GRAZE_CAPACITY {
+    for (np, cap) in acceptable_steps(
+        herd.current_pos,
+        registry,
+        tiles,
+        graze,
+        width,
+        height,
+        wrap,
+    ) {
+        if hex_distance_wrapped(np, anchor, width, wrap) > loiter_radius {
             continue;
         }
         options.push((np, cap));
@@ -1826,31 +1993,26 @@ pub fn repopulate_fauna(
     }
 }
 
-/// Per-turn husbandry (`TurnStage::Logistics`, after `advance_herds`): harvest each **mobile
-/// domesticated (pastoral)** group's MSY for its owner, run the **penned** groups' escape/starvation
-/// checks, and decay husbandry progress on any not-yet-tamed group. Runs before the same turn's
-/// accrual in `advance_labor_allocation` (`Population`), so a Sustain-hunted group nets
-/// `progress_per_turn - decay_per_turn` while an untended one only decays.
+/// Per-turn husbandry (`TurnStage::Logistics`, after `advance_herds`): run the **penned** groups'
+/// escape/starvation checks and decay husbandry progress on any not-yet-tamed group. Runs before the
+/// same turn's accrual in `advance_labor_allocation` (`Population`), so a `Tame`-worked group nets
+/// `progress_per_turn - decay_per_turn` while an abandoned one only decays.
 ///
-/// **The pastoral yield is a real MSY harvest that DRAWS THE HERD DOWN** (the flow-based ladder,
-/// `docs/plan_corral_managed_population.md`): `sustainable_yield` under the *pastoral* ecology
-/// (`herd_ecology` — `r` = 0.15, 3× wild), converted by the shared `hunt_provisions`. Taking MSY each
-/// turn while the herd regrows logistically converges it on `K/2` and holds it there, paying `r·K/4`
-/// forever — the *same* mechanic the `Sustain` hunt policy already implements, finally applied to
-/// husbandry. It stays **passive** (no worker, no upkeep — a roaming herd grazes the land for free)
-/// and is still split evenly across the owner's bands. The retired flat
-/// `biomass × provisions_per_biomass` rate paid a share of standing **stock** with no draw-down: a
-/// Red Deer herd at capacity printed 12 food/turn — sixteen bands' entire demand — free, forever.
+/// **PASSIVE-FREE PASTORAL IS RETIRED — this pass pays NOTHING** (slice 3b,
+/// `docs/plan_intensification_ladder.md` §3: *every* rung is worker-driven). A tamed herd used to pay
+/// its owner its pastoral MSY here with **no worker at all**, split across the owner's bands. It no
+/// longer does: a pastoral herd yields **only** through a normal `Hunt` assignment, exactly like a
+/// wild one. The taming payoff is **yield per worker**, delivered for free by the existing
+/// [`herd_ecology`] seam — a tamed herd lives on the pastoral ecology (`r` = wild × `pastoral_gain`
+/// 1.5), so the *same* hunters take ~1.5× the sustainable food from the same `K`. That is the "buy
+/// freedom" thesis delivered granularly (surplus workers are freed for other tasks) instead of as a
+/// binary "pastoral = zero workers", and it is what keeps the pen's **investment dip** a real cost:
+/// with no passive rung there is no second payment for the same animals to stack on it, so the
+/// `worked_this_turn` no-double-pay flag is gone with the payout it guarded.
 ///
-/// **You are not paid twice for the same animals.** The passive rung is skipped for a herd a **labor
-/// assignment worked** last turn (`Herd::worked_this_turn`) — that band is already paid through the
-/// labor arm. Without the skip the passive payment stacks on the `Corral` **investment dip** and makes
-/// building a pen *more* profitable than doing nothing (0.225 + 0.90 > 0.90), recreating on the animal
-/// side the "free path" the intensification ladder exists to delete.
-///
-/// **Corral (Rung 1c).** A **corralled** herd is exempt from the pastoral even-split here — its keeper
-/// harvests the *pen's* MSY place-locally (`advance_labor_allocation`) — and this pass instead runs its
-/// two neglect checks. Logistics runs before Population, so both flags were written **last** turn (the
+/// **Corral (Rung 1c).** A **corralled** herd's keeper harvests the *pen's* MSY place-locally
+/// (`advance_labor_allocation`); this pass runs its two neglect checks and nothing else. Logistics
+/// runs before Population, so both flags were written **last** turn (the
 /// deliberate one-turn lag, mirroring `ForagePatch::tended_this_turn`):
 /// - **No keeper → escape.** An untended pen clears `corralled_at`, **zeroes `corral_progress`, and
 ///   resets the whole fenced-footprint state** (`pen_radius` / `pen_extend_progress` / `pen_extending`,
@@ -1870,39 +2032,27 @@ pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
     ladder_config: Res<LadderConfigHandle>,
-    wellbeing_config: Res<WellbeingConfigHandle>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
-    mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
     let ladder = ladder_config.get();
-    let wellbeing = wellbeing_config.get();
     // The go-feral rate is the `animal:pastoral` rung's own build decay — the shared ladder seam
     // (`crate::intensification`), exactly as `advance_cultivation` reads the `plant:tended` rung's.
     let pastoral_decay = ladder.rung(RungKey::AnimalPastoral).build_decay();
-    // Accumulate each owner's managed-livestock yield, then feed it into that faction's bands'
-    // larders — the pastoral counterpart of foraging income. Food is band-local from day one;
-    // an even split across the owner's bands is a v1 (Phase 3 corrals will make it place-local).
-    // FOOD income is fully fractional: accumulate each owner's yield as `Scalar` so a small or
-    // near-cap herd whose per-turn yield is < 1 provisions still credits the larder (rounding to an
-    // i64 dropped it entirely).
-    let mut yields: HashMap<FactionId, Scalar> = HashMap::new();
     for herd in registry.herds.iter_mut() {
-        // Read + clear the one-turn-lag "a band worked this herd" flag (written last turn in
-        // Population). Cleared for *every* herd, tame or wild, so it can never go stale.
-        let worked_by_labor = herd.worked_this_turn;
-        herd.worked_this_turn = false;
-        // Same one-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
-        // and cleared for every herd so it can never go stale.
+        // One-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
+        // cleared for every herd so it can never go stale.
         let tamed_last_turn = herd.tamed_this_turn;
         herd.tamed_this_turn = false;
         if herd.is_domesticated() {
+            // **A tamed herd is paid NOTHING here** — passive-free pastoral is retired (§3): it
+            // yields only through a worker's `Hunt` assignment, at the pastoral rung's better `r`.
+            //
             // Corral (Rung 1c): a penned herd's keeper harvests the **pen's** MSY place-local
-            // (`advance_labor_allocation`), NOT the pastoral even-split below — and it **escapes** if
-            // left untended, or **starves** if its keeper cannot pay the feed. Logistics runs before
-            // Population, so both flags read here were written last turn (a one-turn lag, mirroring
-            // `ForagePatch::tended_this_turn`).
+            // (`advance_labor_allocation`), and the pen **escapes** if left untended, or **starves**
+            // if its keeper cannot pay the feed. Logistics runs before Population, so both flags read
+            // here were written last turn (a one-turn lag, mirroring `ForagePatch::tended_this_turn`).
             if herd.is_corralled() {
                 if herd.corralled_tended_this_turn {
                     herd.corralled_tended_this_turn = false;
@@ -1967,47 +2117,6 @@ pub fn advance_husbandry(
                         ));
                     }
                 }
-                continue;
-            }
-            let Some(owner) = herd.owner else {
-                continue;
-            };
-            // **No double pay.** A band with a labor assignment on this herd already collected from it
-            // through the Hunt arm (its `hunt_take`, or the `Corral` build dip); the passive pastoral
-            // rung is what the herd pays when *nobody* is working it. Paying both stacks the two and
-            // turns the corral's investment cost into a profit — see `Herd::worked_this_turn`.
-            if worked_by_labor {
-                continue;
-            }
-            // **The pastoral rung: a real MSY harvest that draws the herd down.** The shared managed
-            // harvest ([`managed_yield_biomass`] — the *same* helper the pen's keeper takes), computed
-            // against the *pastoral* ecology a tamed herd lives under (`herd_ecology` — the single
-            // source of that mapping) and converted by the *same* shared `hunt_provisions`. No second
-            // yield formula, and no share of standing stock: taking MSY every turn holds the herd at
-            // K/2 and pays `r·K/4` forever.
-            let take_biomass = managed_yield_biomass(
-                herd.biomass,
-                herd_capacity(herd, &fauna),
-                &herd_ecology(herd, &fauna),
-            );
-            herd.biomass -= take_biomass;
-            // The output multiplier is per-band and applied at payout below (the yield is split across
-            // the owner's bands, which may have different multipliers), so convert at unit here.
-            let provisions = scalar_from_f32(hunt_provisions(
-                take_biomass,
-                &fauna,
-                UNSCALED_OUTPUT_MULTIPLIER,
-            ));
-            if provisions > scalar_zero() {
-                *yields.entry(owner).or_insert_with(scalar_zero) += provisions;
-                info!(
-                    target: "shadow_scale::analytics",
-                    event = "husbandry_yield",
-                    herd = %herd.id,
-                    faction = owner.0,
-                    biomass_take = take_biomass,
-                    provisions = %provisions,
-                );
             }
         } else if !tamed_last_turn {
             // **Feral if untamed** — the animal mirror of `advance_cultivation`. A herd a crew
@@ -2018,35 +2127,7 @@ pub fn advance_husbandry(
             herd.decay_domestication(pastoral_decay);
         }
     }
-    if yields.is_empty() {
-        return;
-    }
-    let mut band_counts: HashMap<FactionId, u32> = HashMap::new();
-    for cohort in cohorts.iter() {
-        if yields.contains_key(&cohort.faction) {
-            *band_counts.entry(cohort.faction).or_insert(0) += 1;
-        }
-    }
-    for mut cohort in cohorts.iter_mut() {
-        if let (Some(&total), Some(&count)) = (
-            yields.get(&cohort.faction),
-            band_counts.get(&cohort.faction),
-        ) {
-            if count > 0 {
-                // Productivity modifier stack (wellbeing): a discontented band tends the herd
-                // less effectively — scale its even share by its output multiplier at PAYOUT.
-                let share = total / Scalar::from_u32(count);
-                let mult = output_multiplier(&cohort, &wellbeing);
-                cohort.stores.add(FOOD, share * mult);
-            }
-        }
-    }
 }
-
-/// The neutral productivity multiplier — "convert this take at face value". The pastoral yield is
-/// pooled per faction and only *then* split across the owner's bands, each of which applies its own
-/// `output_multiplier` at payout, so the conversion itself must not pre-scale it.
-const UNSCALED_OUTPUT_MULTIPLIER: f32 = 1.0;
 
 /// **A keeper who cannot pay the feed starves the herd.** Reads the `pen_fed_fraction` its keeper
 /// wrote last turn (Population → Logistics, the deliberate one-turn lag) and, if the pen went hungry,
@@ -2726,6 +2807,8 @@ fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intensification::RUNG_COMPLETE;
+    use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
 
     #[test]
     fn ecology_phase_string_roundtrips() {
@@ -2932,6 +3015,7 @@ mod tests {
         config.map_seed = 42;
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
+        world.insert_resource(LadderConfigHandle::default());
         world.insert_resource(SimulationTick::default());
         world.insert_resource(HerdTelemetry::default());
         world.insert_resource(HerdDensityMap::default());
@@ -3000,6 +3084,142 @@ mod tests {
             "the herd refuses to cross barren ground"
         );
         assert_ne!(pos, UVec2::new(2, 0));
+    }
+
+    // --- `drift_to_owner` (Intensification ladder slice 3b, §3 dial 4) ------------------------------
+
+    /// Tame the strip world's herd for `faction` — the real accrual (never a fabricated flag), so the
+    /// husbandry ceiling still has its say.
+    fn tame_the_herd(world: &mut bevy::prelude::World, faction: FactionId) {
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        registry.herds[0].accrue_domestication(faction, RUNG_COMPLETE);
+        assert!(registry.herds[0].is_domesticated());
+    }
+
+    /// Plant a resident band of `faction` on the strip's tile `x` — the camp a tamed herd drifts to.
+    fn camp_at(world: &mut bevy::prelude::World, x: u32, faction: FactionId) {
+        let tile = world.resource::<TileRegistry>().index(x, 0).expect("tile");
+        world.spawn((
+            ResidentBand,
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 30,
+                children: scalar_zero(),
+                working: scalar_from_f32(30.0),
+                elders: scalar_zero(),
+                stores: crate::components::LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: crate::components::MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0,
+                faction,
+                knowledge: Vec::new(),
+                migration: None,
+            },
+        ));
+    }
+
+    fn herd_x(world: &bevy::prelude::World) -> u32 {
+        world.resource::<HerdRegistry>().herds[0].current_pos.x
+    }
+
+    fn run_roam_turns(world: &mut bevy::prelude::World, turns: u32) {
+        use bevy::ecs::system::RunSystemOnce;
+        for _ in 0..turns {
+            world.run_system_once(advance_herds);
+        }
+    }
+
+    /// **A tamed herd drifts toward its owner's camp** — the `drift_to_owner` primitive, wired from
+    /// the `animal:pastoral` rung's `behavior.movement` (§3's proximity spine: wild roams its range,
+    /// tamed stays near its people, penned is fixed). The strip's herd starts at x=4 with its wild
+    /// route anchor *also* east; taming it makes the camp at x=0 the attractor instead, and it walks
+    /// there one hex at a time (never teleporting).
+    #[test]
+    fn a_tamed_herd_drifts_toward_its_owners_camp() {
+        let faction = FactionId(0);
+        let mut world = roam_world(false);
+        world.resource_mut::<HerdRegistry>().herds[0].current_pos = UVec2::new(4, 0);
+        tame_the_herd(&mut world, faction);
+        camp_at(&mut world, 0, faction);
+
+        // One hex per step, and the species' own dwell cadence between steps — taming makes an animal
+        // near, not fast. Four hexes at ≤1/turn cannot be crossed in fewer than four turns.
+        let mut track = Vec::new();
+        for _ in 0..12 {
+            run_roam_turns(&mut world, 1);
+            track.push(herd_x(&world));
+        }
+        assert!(
+            track.windows(2).all(|w| w[0].abs_diff(w[1]) <= 1),
+            "the drift moves at most one hex per turn: {track:?}"
+        );
+        assert!(
+            track.contains(&0),
+            "a tamed herd reaches its owner's camp: {track:?}"
+        );
+        assert_eq!(
+            herd_x(&world),
+            0,
+            "and stays with its people once there (the strip's only pasture is its camp's tile)"
+        );
+    }
+
+    /// **No owner band → the plain roam, unchanged.** The drift is a preference over the *same*
+    /// candidates, so with nobody to drift to a tamed herd must move exactly as it did before it was
+    /// tamed — asserted against a wild control run of the same seeded world, not against a hand-copied
+    /// expectation.
+    #[test]
+    fn a_tamed_herd_with_no_owner_band_roams_exactly_like_a_wild_one() {
+        let mut wild = roam_world(false);
+        let mut tamed = roam_world(false);
+        tame_the_herd(&mut tamed, FactionId(0));
+        // Deliberately no `camp_at`: the owning faction has no bands at all.
+
+        for _ in 0..10 {
+            run_roam_turns(&mut wild, 1);
+            run_roam_turns(&mut tamed, 1);
+            assert_eq!(
+                herd_x(&tamed),
+                herd_x(&wild),
+                "with no owner band the tamed herd falls back to the wild roam"
+            );
+        }
+    }
+
+    /// **The drift is a preference among ACCEPTABLE steps — it never crosses barren ground.** The
+    /// camp sits at x=0 with dead ground at x=2 between it and the herd: the pull is real, but the
+    /// 2b-i barren-avoidance still binds, so the herd stops at the edge of the gap rather than
+    /// starving its way across it. (Composition, not replacement.)
+    #[test]
+    fn drift_never_steps_onto_barren_ground() {
+        let faction = FactionId(0);
+        let mut world = roam_world(true);
+        world.resource_mut::<HerdRegistry>().herds[0].current_pos = UVec2::new(4, 0);
+        tame_the_herd(&mut world, faction);
+        camp_at(&mut world, 0, faction);
+
+        for _ in 0..12 {
+            run_roam_turns(&mut world, 1);
+            assert_ne!(
+                herd_x(&world),
+                2,
+                "the drift must never put the herd on the barren tile"
+            );
+        }
+        assert_eq!(
+            herd_x(&world),
+            3,
+            "it drifts as near the camp as the pasture allows, and stops at the gap"
+        );
     }
 
     /// **The inert invariant.** `advance_herd_grazing` moves only the graze layer — it must not touch

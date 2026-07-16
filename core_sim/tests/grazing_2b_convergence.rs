@@ -23,9 +23,10 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CultureManager, DiscoveryProgressLedger,
     FactionInventory, FaunaConfigHandle, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick,
-    SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    HerdRegistry, HerdTelemetry, LadderConfigHandle, MapPresets, MapPresetsHandle,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it, per §9). Only used to stand up a
@@ -81,6 +82,7 @@ fn base_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
     app

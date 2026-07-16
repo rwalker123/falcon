@@ -11,9 +11,9 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CultureManager, DiscoveryProgressLedger,
     FactionInventory, FaunaConfigHandle, GenerationRegistry, GrazeRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle,
+    HerdRegistry, HerdTelemetry, LadderConfigHandle, MapPresets, MapPresetsHandle,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
 };
 
 /// A pinned earthlike map (the same seed the husbandry integration test uses, so it is known to
@@ -55,6 +55,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     // Herds spawn BEFORE graze patches (the Startup order build_route relies on) — mirror it here.
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);

@@ -433,62 +433,66 @@ fn domesticated_herd_is_collapse_immune() {
     );
 }
 
-/// **You are not paid twice for the same animals.** The passive pastoral rung is what a herd pays when
-/// *nobody* is working it; a band with a labor assignment on it is already paid through the Hunt arm.
-/// Paying both stacks them — and it is what turned the corral's *investment cost* into a profit.
+/// **A pastoral herd pays NOTHING without workers — every rung is worker-driven**
+/// (`docs/plan_intensification_ladder.md` §3, slice 3b).
+///
+/// **Retargeted from `a_domesticated_herd_worked_by_labor_is_not_also_paid_the_passive_rung`.** That
+/// test guarded the no-double-pay skip: the passive rung had to be withheld from a herd a band was
+/// already working, because paying both turned the corral's *investment cost* into a profit. Retiring
+/// passive-free pastoral makes that guarantee **structural** — there is no second payment left to
+/// stack — so this asserts the stronger thing the same run measures: an unworked tamed herd earns its
+/// owner nothing at all, and is not even drawn down. A tamed herd is livestock, not an annuity; it is
+/// worked, or it is idle capital. (What the *workers* then get is the pastoral rung's 1.5× `r` — see
+/// `the_husbandry_ladder_is_a_per_species_growth_rate_ladder`.)
 #[test]
-fn a_domesticated_herd_worked_by_labor_is_not_also_paid_the_passive_rung() {
+fn a_pastoral_herd_pays_nothing_without_workers() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     let cap = herd_of(&app, &id).carrying_capacity;
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
+    assert_eq!(provisions_f32(&mut app), 0.0, "larders start empty");
 
-    // Nobody working it → the passive rung pays.
-    app.world.run_system_once(advance_herds);
-    app.world.run_system_once(advance_husbandry);
-    let passive = provisions_f32(&mut app);
-    assert!(
-        passive > 0.0,
-        "an unworked tame herd pays its owner passively"
+    // Nobody works it. Run the herd's whole Logistics pipeline for a long stretch — the old passive
+    // rung would have printed its MSY into the owner's larders every one of these turns.
+    run_turns_untended(&mut app, 20);
+
+    assert_eq!(
+        provisions_f32(&mut app),
+        0.0,
+        "an unworked tame herd must yield its owner NOTHING — the passive rung is retired"
     );
-
-    // Now a band works it (any policy). Population sets `worked_this_turn`; the NEXT Logistics
-    // `advance_husbandry` must skip the passive payment (the deliberate one-turn lag).
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
-    app.world.run_system_once(advance_labor_allocation);
-    drain_larder(&mut app, band);
-    let before = provisions_f32(&mut app);
-
-    app.world.run_system_once(advance_herds);
-    app.world.run_system_once(advance_husbandry);
-
-    let passive_while_worked = provisions_f32(&mut app) - before;
     assert!(
-        passive_while_worked.abs() < 1e-4,
-        "a herd worked by labor must NOT also collect the passive rung (got {passive_while_worked})"
+        (herd_of(&app, &id).biomass - cap).abs() < cap * 1e-3,
+        "and nothing harvested it, so it sits at capacity"
     );
 }
 
-/// **The Corral build is a genuine net LOSS while it runs** — that is the investment the whole
-/// intensification ladder is built on. Before the no-double-pay fix the builder collected the dip
-/// (0.25 × MSY) *plus* the passive rung (MSY), i.e. **more** than walking away — corralling was pure
-/// upside and there was no decision.
+/// **The Corral build is a genuine net LOSS while it runs** — the investment the whole intensification
+/// ladder is built on.
+///
+/// **Retargeted baseline, same guarantee.** The comparison used to be "building the pen vs *walking
+/// away*", because a tamed herd left alone paid its owner the passive rung for free; that free path is
+/// what made the dip a profit before the no-double-pay fix, and slice 3b deletes it outright (walking
+/// away now pays **0**, which `a_pastoral_herd_pays_nothing_without_workers` pins). So the baseline is
+/// now the *real* alternative use of the same crew: **Sustain-hunting that same tamed herd**. The
+/// guarantee is unchanged and if anything sharper — the pen must cost the builder something against
+/// the best thing those workers could otherwise be doing on this herd, or there is no decision.
 #[test]
-fn building_a_corral_costs_more_than_walking_away() {
+fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     let cap = herd_of(&app, &id).carrying_capacity;
 
-    // (a) Walk away: nobody works the tame herd → it pays the full passive pastoral rung.
+    // (a) The alternative: the same band Sustain-hunts the tamed herd → the full pastoral MSY.
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
-    app.world.run_system_once(advance_herds);
-    app.world.run_system_once(advance_husbandry);
-    let walk_away = provisions_f32(&mut app);
+    let hunter = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    run_turns_with_hunt(&mut app, 1);
+    let hunting = yield_of(&app, hunter);
+    assert!(hunting > 0.0, "the alternative use of the crew pays");
 
-    // (b) Build the pen: a band works the same herd under Corral. It collects the dip and NOTHING
-    // else — the passive rung is skipped because the band is working the herd.
+    // (b) Build the pen: the same band, same herd, under Corral → the dip and nothing else.
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     let cap = herd_of(&app, &id).carrying_capacity;
@@ -496,12 +500,8 @@ fn building_a_corral_costs_more_than_walking_away() {
     reseat(&mut app, &id, cap, cap);
     grant_herding(&mut app);
     let builder = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
-    // Turn 1 seeds `worked_this_turn`; turn 2 is the steady state (the passive rung is skipped).
     run_turns_with_hunt(&mut app, 1);
-    drain_larder(&mut app, builder);
-    let before = provisions_f32(&mut app);
-    run_turns_with_hunt(&mut app, 1);
-    let building = provisions_f32(&mut app) - before;
+    let building = yield_of(&app, builder);
 
     let dip_fraction = app
         .world
@@ -511,35 +511,43 @@ fn building_a_corral_costs_more_than_walking_away() {
         .yield_fraction_while_building()
         .expect("the pen rung is an investment");
     assert!(
-        (building - dip_fraction * walk_away).abs() < walk_away * 0.05,
-        "building pays only the dip ({dip_fraction} × the pastoral MSY {walk_away}): got {building}"
+        (building - dip_fraction * hunting).abs() < hunting * 0.05,
+        "building pays only the dip ({dip_fraction} × the pastoral MSY {hunting}): got {building}"
     );
     assert!(
-        building < walk_away,
+        building < hunting,
         "**the pen must COST something**: building ({building}/turn) has to be a real loss against \
-         walking away ({walk_away}/turn), or corralling is free and there is no decision"
+         hunting the same herd ({hunting}/turn), or corralling is free and there is no decision"
     );
 }
 
-/// **The pastoral rung pays MSY, and the harvest DRAWS THE HERD DOWN** — which is what makes it
-/// sustainable (the flow-based ladder, `docs/plan_corral_managed_population.md`). It is still passive
-/// (no worker) and still split across the owner's bands; it is just no longer a share of standing
-/// *stock* that printed food forever.
+/// **The pastoral rung pays its pastoral MSY, and the harvest DRAWS THE HERD DOWN** — which is what
+/// makes it sustainable (the flow-based ladder, `docs/plan_corral_managed_population.md`).
+///
+/// **Retargeted from the passive path, guarantee intact.** The *what* is verbatim — a tamed herd's
+/// harvest is the MSY of the **pastoral** ecology (per-species `r` × `pastoral_gain`, resolved through
+/// the one `herd_ecology` seam) and it is a real take out of the herd, not a share of standing stock.
+/// Only the *who* changed: it is paid to a **worker** on a Hunt assignment rather than dropped into
+/// the owner's larders for free (slice 3b, §3 — every rung is worker-driven). That the pastoral `r`
+/// really does reach the worker's take is the crux of the slice, so it is asserted here against the
+/// herd's own resolved ecology.
 #[test]
-fn domesticated_herd_harvests_its_pastoral_msy_and_draws_the_herd_down() {
+fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_down() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     let (biomass_before, cap) = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
-        // At capacity: MSY = r·K/4 (the ceiling plateaus above K/2).
+        // At capacity: MSY = r·K/4 (the ceiling plateaus above K/2) and regrowth is 0, so a single
+        // Population-stage take is measurable against the herd's standing biomass.
         herd.biomass = herd.carrying_capacity;
         (herd.biomass, herd.carrying_capacity)
     };
     assert_eq!(provisions(&mut app), 0);
 
-    app.world.run_system_once(advance_husbandry);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    app.world.run_system_once(advance_labor_allocation);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     // Per-species pastoral rate (Grazing 2d): read the same seam the sim harvests through.
@@ -548,10 +556,14 @@ fn domesticated_herd_harvests_its_pastoral_msy_and_draws_the_herd_down() {
     let expected_provisions = expected_take * fauna.hunt.provisions_per_biomass;
     drop(fauna);
 
-    let paid = provisions_f32(&mut app);
+    let paid = yield_of(&app, band);
     assert!(
         (paid - expected_provisions).abs() < expected_provisions * 0.02,
-        "the pastoral yield is the pastoral MSY: expected {expected_provisions}, got {paid}"
+        "a worker's take on a tamed herd is the PASTORAL MSY: expected {expected_provisions}, got {paid}"
+    );
+    assert!(
+        (larder_of(&app, band) - paid).abs() < paid * 0.02,
+        "and it lands in the working band's own larder, place-local"
     );
     // **The premise that used to be false:** the managed harvest is a real take out of the herd.
     let after = app
@@ -848,6 +860,13 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
 /// GROSS ladder (`wild < pastoral < pen_gross`) is what "management buys a growth rate" means, and it is
 /// the invariant asserted here.
 ///
+/// **Slice 3b makes it a YIELD-PER-WORKER ladder, which is what the ladder now promises.** Every rung
+/// is worker-driven, so all three rows are measured the same way: the **same band, the same head-count
+/// (`HUNT_WORKERS`), the same `K`, the same per-species wild `r`** — only the rung differs. The
+/// monotone `wild < pastoral < pen` therefore reads directly as *food per worker*, and the
+/// `pastoral / wild` ratio is asserted to be exactly `pastoral_gain` — the payoff that replaced
+/// "pastoral = zero workers".
+///
 /// **What 2d does NOT guarantee at the BARREN worst case** (this harness runs no graze layer, so the pen
 /// is fully larder-fed): the pen's *net* payoff over pastoral. A penned herd normally grazes its fenced
 /// footprint and the larder pays only the shortfall (§2.3), so on real pasture `upkeep → 0` and
@@ -862,6 +881,8 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
 fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
     const MEASURE_STOCK: f32 = 50_000.0;
 
+    // The pastoral rung's promised multiple of the wild rung — read off the config, never pinned.
+    let pastoral_gain = FaunaConfigHandle::default().get().husbandry.pastoral_gain;
     // (display, cap, per-species wild r) — the wild rung must be measured at each species' OWN r.
     let species_caps: Vec<(String, f32, f32)> = {
         let fauna = FaunaConfigHandle::default().get();
@@ -912,21 +933,24 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
             run_turns_with_hunt(&mut app, 1);
             let wild = yield_of(&app, band);
 
-            // --- Pastoral (passive, no worker): the faction's larder credit. The yield is split
-            // evenly across ALL the owner's bands (the start profile spawns some too), so measure the
-            // faction total, not one band's larder.
+            // --- Pastoral: **the same band, the same head-count, hunting a TAMED herd** — its ACTUAL
+            // take. Passive-free pastoral is retired (slice 3b), so this row is now measured exactly
+            // like the wild one and the three rows are directly comparable **per worker**: same
+            // workers, same `K`, only the rung differs.
             let mut app = spawn_world();
             let id = prime_thriving_herd(&mut app);
             reseat(&mut app, &id, cap, biomass);
+            set_wild_regrowth_rate(&mut app, &id, wild_r);
             domesticate(&mut app, &id);
-            app.world.run_system_once(advance_herds);
-            app.world.run_system_once(advance_husbandry);
-            let pastoral = provisions_f32(&mut app);
+            let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+            run_turns_with_hunt(&mut app, 1);
+            let pastoral = yield_of(&app, band);
 
             // --- Pen: the gross yield credited + the feed debited, both read off the keeper's larder.
             let mut app = spawn_world();
             let id = prime_thriving_herd(&mut app);
             reseat(&mut app, &id, cap, cap);
+            set_wild_regrowth_rate(&mut app, &id, wild_r);
             corral_herd(&mut app, &id);
             reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
             let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
@@ -941,7 +965,16 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
                 "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
             );
 
-            assert_growth_rate_ladder(&species, wild_r, wild, pastoral, pen_gross, upkeep, pen_net);
+            assert_growth_rate_ladder(
+                &species,
+                wild_r,
+                pastoral_gain,
+                wild,
+                pastoral,
+                pen_gross,
+                upkeep,
+                pen_net,
+            );
         }
     }
     println!();
@@ -953,9 +986,11 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
 /// inversion is gone. The pen's *net* payoff over pastoral is realized by SELF-FEEDING (this barren
 /// harness runs the pen fully larder-fed, so it only asserts the pen costs real feed; the net-positive
 /// floor for the fastest breeder lives in `fauna_config`'s validate tests).
+#[allow(clippy::too_many_arguments)] // one measured column per argument — a struct would only rename them
 fn assert_growth_rate_ladder(
     species: &str,
     wild_r: f32,
+    pastoral_gain: f32,
     wild: f32,
     pastoral: f32,
     pen_gross: f32,
@@ -972,6 +1007,13 @@ fn assert_growth_rate_ladder(
         pastoral > wild,
         "{species}: pastoral ({pastoral}) out-pays wild Sustain ({wild}) — per-species pastoral r = \
          wild r ({wild_r}) × pastoral_gain > wild r"
+    );
+    // **And by exactly the gain** (slice 3b): the rows are equal-worker and equal-K, so this ratio IS
+    // the yield-per-worker payoff for taming — the whole of what replaced passive-free pastoral.
+    assert!(
+        (pastoral / wild - pastoral_gain).abs() < 0.02 * pastoral_gain,
+        "{species}: the SAME workers on a tamed herd take pastoral_gain ({pastoral_gain}×) the wild \
+         take — that multiple IS the taming payoff. wild {wild} → pastoral {pastoral}"
     );
     // Management buys a growth rate: the pen's GROSS yield tops the pastoral rung for every species.
     assert!(
@@ -1210,28 +1252,37 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     );
 }
 
-/// Regression (fully-fractional FOOD income): a small domesticated herd whose per-turn MSY harvest is
-/// below 1.0 provisions must still credit the owner's larder (rounding to an i64 used to drop it).
-/// Seeded above the Allee threshold (0.15 × K) and below the MSY point, so the harvest is a genuine
-/// sub-unit flow rather than zero.
+/// Regression (fully-fractional FOOD income): a **tiny** tamed herd whose per-turn MSY harvest is
+/// below 1.0 provisions must still credit the larder — rounding the credit to an i64 used to drop it
+/// entirely.
+///
+/// **Retargeted to the worker path** (slice 3b retired the passive payout this used to ride), and
+/// re-seated onto a deliberately tiny `K` so the take is sub-unit for **every** shipped species'
+/// `r` rather than for the one the map happened to spawn.
 #[test]
-fn sub_unit_husbandry_yield_credits_larder() {
-    /// Just above the MSY/escapement point (`K/2`): the managed harvest takes the thin standing
-    /// surplus above it, which is a fraction of a provision for every shipped species.
+fn sub_unit_pastoral_yield_credits_larder() {
+    /// A tiny herd: `r · K / 4` biomass is a fraction of a provision at every species' `r`.
+    const SUB_UNIT_CAP: f32 = 40.0;
+    /// Just above the MSY point (`K/2`) — a genuine sub-unit flow, not a zero.
     const SUB_UNIT_CAP_FRACTION: f32 = 0.52;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let cap = herd_of(&app, &id).carrying_capacity;
     domesticate(&mut app, &id);
-    reseat(&mut app, &id, cap, cap * SUB_UNIT_CAP_FRACTION);
+    reseat(
+        &mut app,
+        &id,
+        SUB_UNIT_CAP,
+        SUB_UNIT_CAP * SUB_UNIT_CAP_FRACTION,
+    );
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
-    app.world.run_system_once(advance_husbandry);
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    app.world.run_system_once(advance_labor_allocation);
 
     let larder = provisions_f32(&mut app);
     assert!(
         larder > 0.0 && larder < 1.0,
-        "a sub-1 husbandry yield must credit a positive fractional amount (got {larder})"
+        "a sub-1 pastoral yield must credit a positive fractional amount (got {larder})"
     );
 }
