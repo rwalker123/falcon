@@ -186,8 +186,7 @@
       "starve_shrink_rate": 0.10
     },
     "_comment_corral_build": "The pen's BUILD dials (the old corralling_yield_fraction 0.50 and corral_build_progress_per_turn 0.04) live in intensification_ladder.json -> the animal:pen rung's `build` block: both food webs climb on the same numbers. What remains here is the animal web's own economy.",
-    "knowledge_progress_per_turn": 0.05,
-    "knowledge_completion_threshold": 1.0
+    "_comment_knowledge": "The earned-knowledge dials (the old knowledge_progress_per_turn 0.05 / knowledge_completion_threshold 1.0) moved to intensification_ladder.json -> the ladder's `knowledge` block in slice 4, at the same values. They were duplicated VERBATIM in labor_config's forage.cultivation, back when each web had its own hard-coded earn site; the earn path is one rung-driven seam now (RungDef::knowledge_earned), so the pace of a lesson is the LADDER's number, not the animal web's."
   },
   "market": {
     "take_fraction": 0.20,

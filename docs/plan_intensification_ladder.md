@@ -19,6 +19,9 @@ The arc is **smaller than it looks**: it largely *finishes a correction the plan
   `systems/labor.rs:131-135` and `:417-425`. Neither is start-granted (deliberate, `forage.rs:65-68`).
   Levers: `knowledge_progress_per_turn` 0.05 / `knowledge_completion_threshold` 1.0 (~20 turns) in both
   `labor_config.rs:150-153` and `fauna_config.rs:451-454`. **We extend this to rung 2; we do not build it.**
+  *(Slice 4 did exactly that: both hard-coded earn sites are gone, replaced by the one rung-driven
+  `RungDef::knowledge_earned` seam, and the duplicated levers moved onto the ladder's `knowledge`
+  block — see §8 slice 4.)*
 - **The plant side already de-conflated Sustain.** `plan_intensification.md:109`: "*Sustain no longer
   tames anything. It only teaches the faction Cultivation knowledge*", and `:107-108` removed the plant
   early-claim ("*it existed to skip the investment*"). `Cultivate` is already the direct, gated,
@@ -248,10 +251,24 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
   worker_take`). Flagged for playtest: a herd that prefers proximity may settle on poorer pasture near
   camp, lowering its `K` — real pastoral overgrazing, floored (it cannot strip the range) by 2b-ii's
   escapement.
-- [ ] **4 — The knowledge pattern, rung 2.** Practicing rung 2 earns the rung-3 knowledge: `Tame` earns
-  **Penning** (2006), `Cultivate` earns **Seed Selection** (2005). Gate reshuffle (§4.3). The
-  **two-meter UI split** (faction knowledge vs per-source progress — the root UX fix, §4.1). Only
-  stewardship policies teach (§4.2).
+- [x] **4 — The knowledge pattern.** **Server landed.** `RungDef::knowledge_earned` is the one earn
+  seam: it reads the rung **the source currently stands on** and credits that rung's
+  `earns_knowledge`, retiring both hard-coded per-web `Sustain && Thriving → <ID>` branches — so
+  `earns_knowledge` went from declarative (slice 2) to **live for every rung, including the wild
+  ones**. Working a **pastoral** herd earns **Penning** (2006), a **tended** patch **Seed Selection**
+  (2005) — note the rule keys off the *rung*, not the verb, so the same Sustain hunt teaches Herding
+  on a wild herd and Penning on a tamed one. Gate reshuffle (§4.3) done: `animal:pen` moved
+  `herding` → `penning` (and `extend_pen`, riding the same rung, with it), so Herding gates `Tame`
+  alone — one knowledge per transition, pinned by a "no two rungs share an unlock gate" assertion.
+  Only stewardship teaches (§4.2) via `FollowPolicy::teaches_knowledge`, defined against the
+  `EXTRACTIVE` grouping: Sustain + the investment verbs teach, Surplus/Market/Eradicate never do. The
+  `Thriving` gate and rung-1 behaviour are unchanged. **DRY dividend:** the duplicated
+  `knowledge_progress_per_turn`/`knowledge_completion_threshold` (identical in `labor_config` *and*
+  `fauna_config`) collapsed onto the ladder's new `knowledge` block, their validate bounds with them.
+  **Measured pacing consequence (intended):** a pen is now a **~97-turn, four-leg climb** for a Wild
+  Boar — Herding 20 → Tame 32 → **Penning 20 (the new leg)** → Corral 25 — vs ~77 before.
+  *Remaining:* the **two-meter UI split** (§4.1) is client-side (slice 6); the server exports both
+  meters distinctly (`IntensificationKnowledgeState` gained `seedSelection`/`penning`, append-only).
 - [ ] **5 — Plant rung 3: Field + `Sow`.** New gameplay (not just parity): sow a **Field** on a chosen
   tile — a food source where none existed — gated on **Seed Selection**, riding the engine from slice 2.
   The animal twin of "place a source where you want it" is the Pen, so this completes the symmetry.

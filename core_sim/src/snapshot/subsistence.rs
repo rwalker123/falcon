@@ -349,10 +349,11 @@ pub(crate) fn snapshot_forage_patches(
     patches
 }
 
-/// Per-faction Cultivation (discovery 2003) / Herding (discovery 2004) knowledge progress
-/// (Intensification Rung 1b/1c) for the client learning/known meters. Iterates the ledger's factions
-/// in sorted order; a faction is emitted only when it has begun learning at least one ladder (both
-/// zero → skipped), mirroring how `discovery_progress_entries` skips empty progress.
+/// Per-faction intensification-ladder knowledge for the client's learning/known meters — one field
+/// per rung-transition: Cultivation (2003) → Seed Selection (2005) up the plant ladder, Herding
+/// (2004) → Penning (2006) up the animal one. Iterates the ledger's factions in sorted order; a
+/// faction is emitted only when it has begun learning **something** (all zero → skipped), mirroring
+/// how `discovery_progress_entries` skips empty progress.
 pub(crate) fn snapshot_intensification_knowledge(
     ledger: &DiscoveryProgressLedger,
 ) -> Vec<IntensificationKnowledgeState> {
@@ -367,13 +368,23 @@ pub(crate) fn snapshot_intensification_knowledge(
                 .get_progress(faction, CULTIVATION_DISCOVERY_ID)
                 .to_f32();
             let herding = ledger.get_progress(faction, HERDING_DISCOVERY_ID).to_f32();
-            if cultivation <= 0.0 && herding <= 0.0 {
+            let seed_selection = ledger
+                .get_progress(faction, SEED_SELECTION_DISCOVERY_ID)
+                .to_f32();
+            let penning = ledger.get_progress(faction, PENNING_DISCOVERY_ID).to_f32();
+            // A rung-3 knowledge cannot be positive while its rung-2 gate is zero (you cannot work a
+            // tended patch you never cultivated), so this stays equivalent to the old
+            // cultivation/herding-only check — but stating every meter keeps it true if a later slice
+            // grants one another way.
+            if cultivation <= 0.0 && herding <= 0.0 && seed_selection <= 0.0 && penning <= 0.0 {
                 return None;
             }
             Some(IntensificationKnowledgeState {
                 faction: faction_id,
                 cultivation,
                 herding,
+                seed_selection,
+                penning,
             })
         })
         .collect()

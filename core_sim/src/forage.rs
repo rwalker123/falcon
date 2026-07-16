@@ -56,7 +56,9 @@ use crate::{
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
-    intensification::{LadderConfig, LadderConfigHandle, RungKey, RUNG_TIMESCALE_UNSCALED},
+    intensification::{
+        LadderConfig, LadderConfigHandle, RungDef, RungKey, RUNG_TIMESCALE_UNSCALED,
+    },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
@@ -71,6 +73,22 @@ use crate::{
 /// it is deliberately **not** listed in any start profile's `starting_knowledge_tags`, so no faction
 /// starts knowing it. Next free id after `nomadic_wayfinding` (2001) / `portable_forge` (2002).
 pub const CULTIVATION_DISCOVERY_ID: u32 = 2003;
+
+/// Discovery id for the faction-level **Seed Selection** knowledge — the plant ladder's **rung-3**
+/// gate (`docs/plan_intensification_ladder.md` §2a/§4.3), and the twin of `fauna::PENNING_DISCOVERY_ID`.
+///
+/// **Earned by practising rung 2**: working a *tended* patch under a stewardship policy teaches it
+/// (`RungDef::knowledge_earned`, driven by the `plant:tended` rung's `earns_knowledge`) — you learn
+/// to select seed by *farming*, not by gathering wild stands. Like every other ladder knowledge it is
+/// declared as a start-profile knowledge tag (`seed_selection` → this id in
+/// `data/start_profile_knowledge_tags.json`) purely so it is mappable, and is deliberately **not**
+/// listed in any start profile's `starting_knowledge_tags` — nothing on the ladder is start-granted.
+///
+/// **Its consumer is slice 5**: this knowledge is *earned* now and *spent* when the `Field`/`Sow`
+/// rung lands. That is deliberate — a knowledge you can begin accumulating before the verb exists is
+/// exactly the "practice paces the ladder" model, not a dangling field. Next free id after
+/// `herding` (2004).
+pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
 
 /// A live depletable forage patch on a `FoodModuleTag` tile. Mirrors the herd biomass model's
 /// ecology subset, including cultivation (`cultivation_progress`/`owner`) — the plant analog of a
@@ -385,6 +403,24 @@ fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_f
 /// `yield_fraction_while_building × MSY` — the
 /// investment dip while the ground is being prepared. All are then throughput-capped and clamped to
 /// biomass.
+/// **The rung a patch stands on** — the plant ladder resolved for one patch: cultivated →
+/// `plant:tended`, else `plant:wild`. The exact twin of `fauna::herd_rung`, and the same seam: a
+/// system asks the patch for its rung and reads what that rung declares, rather than re-deriving the
+/// ladder from `is_cultivated()` at the call site.
+///
+/// Its one reader today is the Forage arm of `advance_labor_allocation` — **which knowledge this
+/// patch's rung teaches** (`RungDef::knowledge_earned`, slice 4). The plant web has no movement
+/// primitive to dispatch (a patch is a place), so unlike the animal side there is no second caller.
+///
+/// Slice 5's `Field` rung slots in here as one more arm.
+pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &'a RungDef {
+    ladder.rung(if patch.is_cultivated() {
+        RungKey::PlantTended
+    } else {
+        RungKey::PlantWild
+    })
+}
+
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     workers: u32,

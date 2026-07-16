@@ -909,14 +909,27 @@ table ForagePatchState {
   tendedYield:float = 0;
 }
 
-// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
-// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
-// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
-// learning/known meters. Only factions that have begun learning either ladder appear here.
+// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
+// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
+// renders learning/known meters. Only factions that have begun learning SOME ladder appear here.
+//
+// One field per rung-transition — "practice rung N unlocks rung N+1"
+// (docs/plan_intensification_ladder.md §4), so these read as the ladder itself:
+//   plant:  wild --cultivation--> tended --seedSelection--> field (the Sow rung, a later slice)
+//   animal: wild --herding------> pastoral --penning------> pen
+// APPEND-ONLY: cultivation/herding keep their shipped slots; seedSelection/penning are appended
+// strictly after (slice 4's two new discoveries, ids 2005/2006).
 table IntensificationKnowledgeState {
   faction:uint;
+  // Gates `cultivate`. Earned by working a WILD patch under a stewardship policy.
   cultivation:float = 0;
+  // Gates `tame` (and `tame` ONLY, since the §4.3 reshuffle). Earned by working a WILD herd.
   herding:float = 0;
+  // Gates `sow` (slice 5 — earned now, spent later). Earned by working a TENDED patch.
+  seedSelection:float = 0;
+  // Gates `corral` + `extend_pen` — the §4.3 reshuffle took this off `herding`. Earned by working a
+  // PASTORAL (tamed) herd.
+  penning:float = 0;
 }
 
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are

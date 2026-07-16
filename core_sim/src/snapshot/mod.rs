@@ -52,11 +52,14 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-        SourceYieldForecast, HERDING_DISCOVERY_ID, PEN_FULLY_FED,
+        SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
-    forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
+    forage::{
+        forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+        SEED_SELECTION_DISCOVERY_ID,
+    },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
     great_discovery::{

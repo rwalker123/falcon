@@ -46,8 +46,7 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
     StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
     SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, CULTIVATION_DISCOVERY_ID,
-    FOOD, HERDING_DISCOVERY_ID,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -1596,19 +1595,23 @@ fn validate_labor_policy(
             if !matches!(policy, FollowPolicy::Cultivate) {
                 return Ok(());
             }
-            let cultivation = app
-                .world
-                .resource::<LaborConfigHandle>()
-                .get()
-                .forage
-                .cultivation
-                .clone();
-            let knows_cultivation = knows(
-                app.world.resource::<DiscoveryProgressLedger>(),
-                faction,
-                CULTIVATION_DISCOVERY_ID,
-                cultivation.knowledge_completion_threshold,
-            );
+            // The rung's own gate, resolved off the ladder — the `validate_tame` pattern: the record
+            // says which knowledge opens `cultivate`, and the ladder says when a knowledge is known.
+            let (knowledge_threshold, tended_unlock) = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                (
+                    ladder.knowledge.completion_threshold,
+                    ladder.rung(RungKey::PlantTended).unlock_discovery_id(),
+                )
+            };
+            let knows_cultivation = tended_unlock.is_none_or(|knowledge| {
+                knows(
+                    app.world.resource::<DiscoveryProgressLedger>(),
+                    faction,
+                    knowledge,
+                    knowledge_threshold,
+                )
+            });
             if !knows_cultivation {
                 return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
             }
@@ -1648,20 +1651,30 @@ fn validate_labor_policy(
             if !matches!(policy, FollowPolicy::Corral) {
                 return Ok(());
             }
-            let knowledge_threshold = app
-                .world
-                .resource::<FaunaConfigHandle>()
-                .get()
-                .husbandry
-                .knowledge_completion_threshold;
-            let knows_herding = knows(
-                app.world.resource::<DiscoveryProgressLedger>(),
-                faction,
-                HERDING_DISCOVERY_ID,
-                knowledge_threshold,
-            );
-            if !knows_herding {
-                return Err("Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it.".to_string());
+            // **The §4.3 gate reshuffle**: rung 3 is gated on **Penning**, the knowledge rung 2
+            // teaches — not on Herding, which now gates `tame` alone. Read off the rung record (the
+            // `validate_tame` pattern) rather than a hard-coded id, so the gate cannot drift from the
+            // ladder the labor arm accrues against.
+            let (knowledge_threshold, pen_unlock) = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                (
+                    ladder.knowledge.completion_threshold,
+                    ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+                )
+            };
+            let knows_penning = pen_unlock.is_none_or(|knowledge| {
+                knows(
+                    app.world.resource::<DiscoveryProgressLedger>(),
+                    faction,
+                    knowledge,
+                    knowledge_threshold,
+                )
+            });
+            if !knows_penning {
+                return Err(
+                    "Your people have not learned Penning yet. Tame and keep herds to learn it."
+                        .to_string(),
+                );
             }
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return Err(format!("No herd '{}' to corral.", fauna_id));
@@ -1675,7 +1688,7 @@ fn validate_labor_policy(
             }
             if !herd.is_domesticated() {
                 return Err(format!(
-                    "{} is not domesticated. Sustain-hunt it to tame it before building a pen.",
+                    "{} is not domesticated. Tame it before building a pen.",
                     fauna_id
                 ));
             }
@@ -1713,10 +1726,9 @@ fn validate_tame(
     fauna_id: &str,
 ) -> Result<(), String> {
     let (knowledge_threshold, pastoral_unlock) = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         (
-            fauna.husbandry.knowledge_completion_threshold,
+            ladder.knowledge.completion_threshold,
             ladder.rung(RungKey::AnimalPastoral).unlock_discovery_id(),
         )
     };
@@ -2762,15 +2774,32 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         return;
     };
 
-    let (owns, knows_herding, can_pen, species, at_max, already_extending, pen_radius_max) = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let pen_radius_max = fauna.husbandry.pen_radius_max;
-        let knows_herding = knows(
-            app.world.resource::<DiscoveryProgressLedger>(),
-            faction,
-            HERDING_DISCOVERY_ID,
-            fauna.husbandry.knowledge_completion_threshold,
-        );
+    let (owns, knows_penning, can_pen, species, at_max, already_extending, pen_radius_max) = {
+        let pen_radius_max = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .husbandry
+            .pen_radius_max;
+        // A fence ring rides the **same `animal:pen` rung** as the initial build (2d-β: same labor,
+        // same dip, same dials), so it takes that rung's gate too — **Penning** since the §4.3
+        // reshuffle. Read off the rung, so a ring can never be gated differently from the pen it
+        // extends.
+        let (knowledge_threshold, pen_unlock) = {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            (
+                ladder.knowledge.completion_threshold,
+                ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+            )
+        };
+        let knows_penning = pen_unlock.is_none_or(|knowledge| {
+            knows(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                knowledge,
+                knowledge_threshold,
+            )
+        });
         let herd = app
             .world
             .resource::<HerdRegistry>()
@@ -2778,7 +2807,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
             .expect("herd resolved above");
         (
             herd.owner == Some(faction),
-            knows_herding,
+            knows_penning,
             herd.can_pen(),
             herd.species.clone(),
             herd.pen_radius >= pen_radius_max,
@@ -2790,9 +2819,9 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         // Grazing 2d-δ: belt-and-braces — a non-`Pen` species can never be penned, so this is
         // unreachable via the gated corral path, but the extend command states the rule explicitly.
         Some(format!("{species} cannot be penned."))
-    } else if !knows_herding {
+    } else if !knows_penning {
         Some(
-            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
+            "Your people have not learned Penning yet. Tame and keep herds to learn it."
                 .to_string(),
         )
     } else if !owns {
@@ -4810,7 +4839,12 @@ fn handle_rollback(
 mod tests {
     use super::*;
     use bevy::math::UVec2;
-    use core_sim::{build_headless_app, ForagePatch, RUNG_COMPLETE};
+    // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
+    // off the rung record (`unlock_discovery_id`), never a hard-coded id.
+    use core_sim::{
+        build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+    };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
     /// more; progress must be earned under the Cultivate policy).
@@ -5044,10 +5078,20 @@ mod tests {
         id
     }
 
+    /// Rung 2's gate — what `tame` needs. Since the §4.3 reshuffle that is **all** Herding opens:
+    /// corralling needs [`grant_penning`].
     fn grant_herding(app: &mut bevy::prelude::App, faction: FactionId) {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
             .add_progress(faction, HERDING_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    /// Rung 3's gate — what `corral` and `extend_pen` need. Deliberately grants **only** Penning, so
+    /// these tests also prove the gates read the right knowledge rather than any ladder progress.
+    fn grant_penning(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, PENNING_DISCOVERY_ID, scalar_from_f32(1.0));
     }
 
     fn herd_is_corralled(app: &bevy::prelude::App, id: &str) -> bool {
@@ -5067,20 +5111,26 @@ mod tests {
         })
     }
 
-    /// Rung 1c gate: `corral` is rejected when the faction has not learned Herding, even on a
-    /// domesticated herd it owns, and the herd stays mobile.
+    /// **The §4.3 gate reshuffle, asserted where it bites:** rung 3 is gated on **Penning**, and
+    /// **Herding is no longer enough**. The faction owns a domesticated herd and knows Herding — the
+    /// exact state that used to permit corralling — and `corral` is still refused, naming Penning.
+    /// The herd stays mobile.
+    ///
+    /// Granting Herding is the load-bearing half: a test that granted *nothing* would pass just as
+    /// happily against the old Herding gate, and so would not pin the reshuffle at all.
     #[test]
-    fn corral_rejected_when_herding_unknown() {
+    fn corral_rejected_when_penning_unknown_even_knowing_herding() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
         assert!(
-            corral_failure_detail_contains(&app, "learned Herding"),
-            "corral must emit a NotKnown failure when Herding is unknown"
+            corral_failure_detail_contains(&app, "learned Penning"),
+            "corral must emit a NotKnown failure naming PENNING — Herding gates `tame` only now"
         );
         assert!(
             !herd_is_corralled(&app, &id),
@@ -5096,7 +5146,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, None);
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
@@ -5115,7 +5165,7 @@ mod tests {
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(owner));
-        grant_herding(&mut app, intruder);
+        grant_penning(&mut app, intruder);
 
         handle_corral(&mut app, intruder, coord);
 
@@ -5135,7 +5185,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         let band = spawn_working_band(
             &mut app,
             faction,
@@ -5165,7 +5215,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
@@ -5342,17 +5392,19 @@ mod tests {
         (herd.pen_radius, herd.pen_extending)
     }
 
-    /// `extend_pen` is rejected before the faction has learned Herding.
+    /// `extend_pen` rides the same `animal:pen` rung as the initial build, so it takes the same
+    /// gate: **Penning**, not Herding (which is granted here to prove it is not sufficient).
     #[test]
-    fn extend_pen_rejected_when_herding_unknown() {
+    fn extend_pen_rejected_when_penning_unknown_even_knowing_herding() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
-        assert!(corral_failure_detail_contains(&app, "learned Herding"));
+        assert!(corral_failure_detail_contains(&app, "learned Penning"));
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
     }
 
@@ -5364,7 +5416,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         // A domesticated but NOT-penned herd standing on the tile.
         let id = seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
@@ -5380,7 +5432,7 @@ mod tests {
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(owner));
-        grant_herding(&mut app, intruder);
+        grant_penning(&mut app, intruder);
 
         handle_extend_pen(&mut app, intruder, coord);
 
@@ -5408,7 +5460,7 @@ mod tests {
             .find(|h| h.id == id)
             .unwrap()
             .pen_radius = radius_max;
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -5431,7 +5483,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
@@ -5446,7 +5498,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -5537,7 +5589,7 @@ mod tests {
             let coord = UVec2::new(1, 1);
             let id = seed_herd(&mut app, coord, Some(faction));
             set_ceiling(&mut app, &id, ceiling);
-            grant_herding(&mut app, faction);
+            grant_penning(&mut app, faction);
             spawn_working_band(
                 &mut app,
                 faction,
@@ -5566,7 +5618,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
         set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Pastoral);
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,

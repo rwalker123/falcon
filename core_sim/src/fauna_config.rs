@@ -468,13 +468,6 @@ pub struct HusbandryConfig {
     /// this. `2` → up to a 19-tile footprint (`hex_range_tiles` disk `1, 7, 19`). Validated `>= 1`
     /// (a `0` cap would forbid every extension).
     pub pen_radius_max: u32,
-    /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
-    /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
-    /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
-    pub knowledge_progress_per_turn: f32,
-    /// Ledger progress (`0..=1`) at which the faction **knows** Herding and may `corral`. `1.0` = the
-    /// ledger's completion value (`DiscoveryProgressLedger` clamps accrual to `1.0`).
-    pub knowledge_completion_threshold: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -486,8 +479,6 @@ impl Default for HusbandryConfig {
             pen_gain: DEFAULT_PEN_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
-            knowledge_progress_per_turn: 0.05,
-            knowledge_completion_threshold: 1.0,
         }
     }
 }
@@ -900,18 +891,11 @@ impl FaunaConfig {
             });
         }
 
-        // --- Husbandry accrual. (The pen's *build* dials — its rate and its investment dip — are
-        // bounded by `LadderConfig::validate`, which owns the `animal:pen` rung's `build` block.)
-        require_positive_finite(
-            "husbandry.knowledge_progress_per_turn",
-            self.husbandry.knowledge_progress_per_turn,
-        )?;
-        // `0` would mean Herding is known before it is learned; `> 1` is unreachable (the ledger
-        // clamps accrual to 1.0), so the gate could never open.
-        require_fraction(
-            "husbandry.knowledge_completion_threshold",
-            self.husbandry.knowledge_completion_threshold,
-        )?;
+        // --- (Husbandry's *build* dials — the pen's rate and its investment dip — are bounded by
+        // `LadderConfig::validate`, which owns the `animal:pen` rung's `build` block; so are the
+        // **earned-knowledge** dials as of slice 4, which moved to the ladder's `knowledge` block
+        // when the earn path became one rung-driven seam. Both bounds now hold for BOTH webs from a
+        // single statement, instead of each web restating its own copy.)
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
         require_greater_than(
@@ -1156,17 +1140,9 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
     Ok(())
 }
 
-/// `(0, 1]` — a fraction that must do *something* but may be whole.
-fn require_fraction(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
-    if !value.is_finite() || value <= 0.0 || value > MAX_FRACTION {
-        return Err(FaunaConfigError::Invalid {
-            field,
-            constraint: format!("be finite and in (0, {MAX_FRACTION}]"),
-            value: value.to_string(),
-        });
-    }
-    Ok(())
-}
+// NB: `require_fraction` — the `(0, 1]` bound — went with the earned-knowledge dials it was this
+// config's only caller of (slice 4). It lives on as `intensification::validate_knowledge`'s
+// `completion_threshold` check, which now states the bound once for both food webs.
 
 /// `(0, 1)` — a strict fraction: neither end is coherent (`0` = the lever does nothing, `1` = it does
 /// everything, and in both cases the mechanic it gates disappears).
@@ -1559,13 +1535,11 @@ mod tests {
     // `crate::intensification`'s `rejects_a_free_investment` / `rejects_a_starving_investment` /
     // `rejects_a_non_building_progress_rate`.
 
-    #[test]
-    fn validate_rejects_an_unlearnable_or_pre_learned_herding_gate() {
-        let err = reject(|json| json["husbandry"]["knowledge_progress_per_turn"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.knowledge_progress_per_turn");
-        let err = reject(|json| json["husbandry"]["knowledge_completion_threshold"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.knowledge_completion_threshold");
-    }
+    // NB: the earned-knowledge dials moved to the ladder in slice 4 (both webs' copies were
+    // identical once the earn path became one rung-driven seam), and so did this rejection test —
+    // `intensification::tests::rejects_a_ladder_nobody_could_ever_learn` /
+    // `rejects_a_knowledge_gate_that_is_open_or_shut_from_the_start` now assert the bound **once**,
+    // for both food webs, instead of each web guarding its own copy.
 
     // NB: "taming must out-run its own decay" is still guarded — it moved to
     // `intensification::tests::rejects_taming_that_cannot_outrun_its_decay` along with the dials

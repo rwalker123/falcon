@@ -46,18 +46,37 @@ const GAME_ID_PREFIX: &str = "game_";
 
 pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
 
-/// Discovery id for the faction-level **Herding** knowledge (Intensification Rung 1c — the
-/// earned-knowledge gate on the animal-pen path, `docs/plan_intensification.md` §4b; the animal
-/// mirror of `forage::CULTIVATION_DISCOVERY_ID`). Knowledge is **earned by doing**: a band
-/// Sustain-hunting a Thriving herd accrues this discovery in the per-faction
-/// `DiscoveryProgressLedger` (`advance_labor_allocation`), and the `corral` command is refused until
-/// the faction knows Herding. Declared as a start-profile knowledge tag (`herding` → this id in
+/// Discovery id for the faction-level **Herding** knowledge — the animal ladder's **rung-2** gate
+/// (`docs/plan_intensification_ladder.md` §2a/§4.3), and the mirror of
+/// `forage::CULTIVATION_DISCOVERY_ID`. Knowledge is **earned by doing**: working a **wild** herd under
+/// a stewardship policy teaches it (`RungDef::knowledge_earned`, driven by the `animal:wild` rung's
+/// `earns_knowledge`) — you learn to herd by managing wild herds. It gates the **`Tame`** verb.
+/// Declared as a start-profile knowledge tag (`herding` → this id in
 /// `data/start_profile_knowledge_tags.json`) purely so it is mappable; it is deliberately **not**
-/// listed in any start profile's `starting_knowledge_tags`, so no faction starts knowing it. Note
-/// the asymmetry vs. Cultivation: mobile *domestication* (pastoralism) stays ungated — only
-/// **corralling** (pinning a domesticated herd) needs Herding. Next free id after
-/// `cultivation` (2003).
+/// listed in any start profile's `starting_knowledge_tags`, so no faction starts knowing it.
+///
+/// **Herding no longer gates `Corral`** (the §4.3 reshuffle, slice 4): one knowledge per transition,
+/// so rung 3 moved onto its own [`PENNING_DISCOVERY_ID`] and this one is `Tame`'s gate alone. The old
+/// "mobile domestication stays ungated" asymmetry vs. Cultivation is likewise gone — both webs now
+/// gate rung 2 on the knowledge rung 1 teaches. Next free id after `cultivation` (2003).
 pub const HERDING_DISCOVERY_ID: u32 = 2004;
+
+/// Discovery id for the faction-level **Penning** knowledge — the animal ladder's **rung-3** gate
+/// (`docs/plan_intensification_ladder.md` §2a/§4.3), and the twin of
+/// `forage::SEED_SELECTION_DISCOVERY_ID`.
+///
+/// **Earned by practising rung 2**: working a *pastoral* (tamed) herd under a stewardship policy
+/// teaches it (`RungDef::knowledge_earned`, driven by the `animal:pastoral` rung's `earns_knowledge`)
+/// — §4's rule exactly, *"you learn herding by managing wild herds; penning by managing tamed ones"*.
+/// It gates the **`Corral`** verb (and, riding the same `animal:pen` rung, `ExtendPen`), which
+/// **Herding** used to gate. Declared as a start-profile knowledge tag (`penning` → this id in
+/// `data/start_profile_knowledge_tags.json`) purely so it is mappable, and deliberately **not**
+/// listed in any start profile's `starting_knowledge_tags` — nothing on the ladder is start-granted.
+///
+/// **Knowledge is general; the husbandry ceiling is per-species** (§4.2): taming a `pastoral`-ceiling
+/// Steppe Runner still teaches Penning — you just spend it on a boar, since the runner itself can
+/// never be fenced. Next free id after `seed_selection` (2005).
+pub const PENNING_DISCOVERY_ID: u32 = 2006;
 
 /// Coarse ecological health band derived from a group's biomass vs its carrying
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
@@ -1821,7 +1840,11 @@ fn owner_camp_tiles(
 /// tamed → `animal:pastoral`, else `animal:wild`. THE seam between herd state and the ladder config:
 /// a system asks for the rung and reads its declared primitives, instead of re-deriving behaviour
 /// from `is_domesticated()` at the call site (which is how the ladder stops being data).
-fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
+///
+/// Two systems resolve a herd through it: `advance_herds` (which movement primitive to run) and the
+/// Hunt arm of `advance_labor_allocation` (**which knowledge this herd's rung teaches** —
+/// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung`.
+pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
     ladder.rung(if herd.is_corralled() {
         RungKey::AnimalPen
     } else if herd.is_domesticated() {

@@ -1013,6 +1013,38 @@ impl FollowPolicy {
         FollowPolicy::Corral,
     ];
 
+    /// **Does working a source under this policy teach the faction anything?**
+    /// (`docs/plan_intensification_ladder.md` §4.2 — *"only stewardship policies teach"*.) THE single
+    /// source of that rule: [`crate::intensification::RungDef::knowledge_earned`] is its only reader,
+    /// so the ladder's whole earn path turns on this one predicate.
+    ///
+    /// **Stewardship = restraint.** You learn husbandry by *managing* a source, not by slaughtering
+    /// it — the same "restraint is the path" principle the corral arc established:
+    /// - **`Sustain`** teaches. It is [`FollowPolicy::EXTRACTIVE`]'s gentlest rung — it takes only the
+    ///   MSY, i.e. exactly what the source regrew — so it is the one *extractive* policy that is also
+    ///   stewardship. This is what keeps rung 1 teaching (Sustain-hunt a wild herd → Herding), the
+    ///   shipped behaviour §0 built.
+    /// - **`Surplus` / `Market` / `Eradicate`** teach nothing. They all **overdraw** — the rest of
+    ///   `EXTRACTIVE` — and running a source down is not practice.
+    /// - **`Cultivate` / `Tame` / `Corral`** teach. The investment rungs are stewardship by
+    ///   construction (they *are* the managing), and they are exactly the policies **not** in
+    ///   `EXTRACTIVE`.
+    ///
+    /// Deliberately an exhaustive `match` rather than a second const list beside `EXTRACTIVE`: a
+    /// parallel list can silently drift, whereas this makes a new `FollowPolicy` **fail to compile**
+    /// until someone decides whether it is stewardship. `follow_policy_teaching_matches_the_extractive_grouping`
+    /// pins it against `EXTRACTIVE` so the two groupings can never disagree.
+    pub fn teaches_knowledge(self) -> bool {
+        match self {
+            // The restrained extractive rung: takes the regrowth, leaves the stock.
+            FollowPolicy::Sustain => true,
+            // The overdrawing extractive rungs.
+            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => false,
+            // The investment rungs — managing IS the practice.
+            FollowPolicy::Cultivate | FollowPolicy::Tame | FollowPolicy::Corral => true,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             FollowPolicy::Sustain => "sustain",
@@ -1198,6 +1230,41 @@ impl Default for Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The stewardship rule, pinned against the `EXTRACTIVE` grouping it is defined in terms of**
+    /// (`docs/plan_intensification_ladder.md` §4.2). `teaches_knowledge` is an exhaustive match — so
+    /// a new policy cannot *forget* to decide — but a match can still silently disagree with the
+    /// const list beside it. This asserts the two groupings say the same thing:
+    /// - **Sustain** is the one extractive rung that teaches (it takes only the regrowth).
+    /// - Every **other** extractive rung overdraws, so it teaches nothing.
+    /// - Every **non**-extractive policy is an investment rung — managing IS the practice — so it
+    ///   teaches.
+    #[test]
+    fn follow_policy_teaching_matches_the_extractive_grouping() {
+        for policy in FollowPolicy::EXTRACTIVE {
+            let expected = matches!(policy, FollowPolicy::Sustain);
+            assert_eq!(
+                policy.teaches_knowledge(),
+                expected,
+                "{policy:?}: within EXTRACTIVE, Sustain alone is stewardship — the rest overdraw"
+            );
+        }
+        // The investment rungs: everything HUNT_POLICIES/forage offer that isn't extractive.
+        for policy in [
+            FollowPolicy::Cultivate,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+        ] {
+            assert!(
+                !FollowPolicy::EXTRACTIVE.contains(&policy),
+                "{policy:?} is an investment rung — it must not be in EXTRACTIVE"
+            );
+            assert!(
+                policy.teaches_knowledge(),
+                "{policy:?} is stewardship by construction — it must teach"
+            );
+        }
+    }
 
     #[test]
     fn workers_on_counts_scout_headcount() {

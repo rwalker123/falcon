@@ -18,8 +18,8 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID, RUNG_COMPLETE,
-    RUNG_TIMESCALE_UNSCALED,
+    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
+    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -610,7 +610,7 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     let cap = herd_of(&app, &id).carrying_capacity;
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
-    grant_herding(&mut app);
+    grant_penning(&mut app);
     let builder = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
     run_turns_with_hunt(&mut app, 1);
     let building = yield_of(&app, builder);
@@ -700,14 +700,22 @@ fn herding_knowledge(app: &App) -> f32 {
         .to_f32()
 }
 
-/// Complete faction 0's **Herding** knowledge — the `Corral` policy's gate — so a Corral assignment
-/// actually accrues pen progress.
-/// Teach faction 0 **Herding** — the unlock gate on *both* animal investment verbs (`Tame` at rung
-/// 2, `Corral` at rung 3). Taming is no longer ungated, so a taming test must grant it too.
+/// Teach faction 0 **Herding** — the unlock gate on the **`Tame`** verb (rung 2), and since the
+/// §4.3 reshuffle that alone. A taming test must grant it; a *corralling* test needs
+/// [`grant_penning`] instead.
 fn grant_herding(app: &mut App) {
     app.world
         .resource_mut::<DiscoveryProgressLedger>()
         .add_progress(FactionId(0), HERDING_DISCOVERY_ID, scalar_one());
+}
+
+/// Teach faction 0 **Penning** — the unlock gate on the **`Corral`** verb (rung 3) since the §4.3
+/// reshuffle, so a Corral assignment actually accrues pen progress. Earned in play by working a
+/// *pastoral* herd; granted directly here, as these tests are about the pen, not the climb to it.
+fn grant_penning(app: &mut App) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), PENNING_DISCOVERY_ID, scalar_one());
 }
 
 /// The `Corral`-kind command-feed entries — the pen's whole life (completion AND escape) rides this
@@ -1264,7 +1272,7 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
     );
 
     // A keeper returns under the Corral policy: it must REBUILD, not snap straight back to penned.
-    grant_herding(&mut app);
+    grant_penning(&mut app);
     spawn_hunter(&mut app, &id, FollowPolicy::Corral);
     run_turns_with_hunt(&mut app, 1);
 
@@ -1339,7 +1347,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     }
-    grant_herding(&mut app);
+    grant_penning(&mut app);
     let band = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
 
     run_turns_with_hunt(&mut app, 5);
@@ -1396,5 +1404,133 @@ fn sub_unit_pastoral_yield_credits_larder() {
     assert!(
         larder > 0.0 && larder < 1.0,
         "a sub-1 pastoral yield must credit a positive fractional amount (got {larder})"
+    );
+}
+
+// --- The full climb (intensification ladder slice 4) ----------------------------------------------
+
+/// Faction 0's ledger progress on `discovery`.
+fn ladder_knowledge(app: &App, discovery: u32) -> f32 {
+    app.world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(FactionId(0), discovery)
+        .to_f32()
+}
+
+/// Switch the band's (only) Hunt assignment onto `policy` — the sim-side of the client's policy
+/// picker, which is what the player does at each rung of the climb.
+fn set_hunt_policy(
+    app: &mut App,
+    band: bevy::prelude::Entity,
+    herd_id: &str,
+    policy: FollowPolicy,
+) {
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists");
+    allocation.assignments[0].target = LaborTarget::Hunt {
+        fauna_id: herd_id.to_string(),
+        policy,
+    };
+}
+
+/// Run turns until `done`, returning how many it took. Capped so a leg that can never complete fails
+/// loudly with its own name instead of hanging the suite.
+fn turns_until(app: &mut App, leg: &str, cap: u32, done: impl Fn(&App) -> bool) -> u32 {
+    for turn in 1..=cap {
+        run_turns_with_hunt(app, 1);
+        if done(app) {
+            return turn;
+        }
+    }
+    panic!("the '{leg}' leg never completed within {cap} turns");
+}
+
+/// **The pacing consequence of the knowledge pattern, measured end-to-end** (slice 4,
+/// `docs/plan_intensification_ladder.md` §4/§4.3).
+///
+/// Reaching a pen is now a **four-leg climb**, and each leg is paced by *practising the rung below*:
+///
+/// | leg | what the player does | gated by / earns |
+/// |---|---|---|
+/// | 1 | Sustain-hunt the **wild** herd | earns **Herding** (~20 turns) |
+/// | 2 | **`Tame`** it | needs Herding; fills this herd's meter |
+/// | 3 | Sustain-hunt the **pastoral** herd | earns **Penning** (~20 turns) — *the new leg* |
+/// | 4 | **`Corral`** it | needs Penning; builds the pen |
+///
+/// **Leg 3 is what slice 4 added**: before the §4.3 reshuffle, Herding gated `Corral` directly, so
+/// the climb was legs 1-2-4 and a pen cost ~20 turns less. That is deliberate — one knowledge per
+/// transition, and you cannot skip a rung you have not practised.
+///
+/// Asserted as **bands, not exact turn counts**: this pins the shape of the climb (and that no leg
+/// silently collapses to zero — e.g. a gate accidentally left open, or rung 2 teaching the wrong
+/// knowledge) without becoming a change-detector for the `knowledge`/`build` playtest dials.
+#[test]
+fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    // A `pen`-ceiling species that actually reaches the top of the ladder, at `taming_rate` 0.8.
+    rebadge_as(&mut app, &id, "boar");
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+
+    // Leg 1 — practise the WILD rung: a Sustain hunt teaches Herding, and nothing else.
+    let leg1 = turns_until(&mut app, "learn Herding", 60, |app| {
+        ladder_knowledge(app, HERDING_DISCOVERY_ID) >= RUNG_COMPLETE
+    });
+    assert_eq!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID),
+        0.0,
+        "a WILD herd teaches Herding only — Penning must NOT come free with it, or the climb \
+         skips the rung the reshuffle exists to add"
+    );
+
+    // Leg 2 — `Tame` fills this herd's meter (Herding is the gate the leg above just opened).
+    set_hunt_policy(&mut app, band, &id, FollowPolicy::Tame);
+    let leg2 = turns_until(&mut app, "tame the herd", 120, |app| {
+        herd_of(app, &id).is_domesticated()
+    });
+
+    // Leg 3 — **the new leg**: practise the PASTORAL rung. The same Sustain hunt now teaches
+    // Penning, because the herd stands on a different rung.
+    assert!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID) < RUNG_COMPLETE,
+        "Penning cannot already be known — taming a WILD herd practises rung 1, not rung 2"
+    );
+    set_hunt_policy(&mut app, band, &id, FollowPolicy::Sustain);
+    let leg3 = turns_until(&mut app, "learn Penning", 60, |app| {
+        ladder_knowledge(app, PENNING_DISCOVERY_ID) >= RUNG_COMPLETE
+    });
+
+    // Leg 4 — `Corral`, gated on the Penning the leg above just earned.
+    set_hunt_policy(&mut app, band, &id, FollowPolicy::Corral);
+    let leg4 = turns_until(&mut app, "build the pen", 60, |app| {
+        herd_of(app, &id).is_corralled()
+    });
+
+    let total = leg1 + leg2 + leg3 + leg4;
+    println!(
+        "wild -> pen climb (Wild Boar): Herding {leg1} + Tame {leg2} + Penning {leg3} + Corral \
+         {leg4} = {total} turns"
+    );
+
+    // Each knowledge leg is ~20 turns of practice (threshold / progress_per_turn).
+    for (leg, turns) in [("Herding", leg1), ("Penning", leg3)] {
+        assert!(
+            (18..=22).contains(&turns),
+            "the {leg} leg should be ~20 turns of practice, got {turns}"
+        );
+    }
+    // The two build legs: ~31 turns to tame a boar (25 / 0.8) and ~25 to fence it.
+    assert!(
+        (28..=34).contains(&leg2),
+        "taming a boar ~31 turns, got {leg2}"
+    );
+    assert!((23..=27).contains(&leg4), "fencing ~25 turns, got {leg4}");
+    // The headline: a pen is now a ~95-turn commitment, ~20 turns longer than the pre-slice-4
+    // climb (which had no Penning leg). Broad band — these are playtest dials.
+    assert!(
+        (85..=110).contains(&total),
+        "the whole climb should run ~95 turns, got {total}"
     );
 }

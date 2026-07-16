@@ -124,6 +124,7 @@ pub use fauna::{
     herd_ecology, hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
     repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
     HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
+    PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
@@ -136,6 +137,7 @@ pub use food::{
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
     spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+    SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};

@@ -399,17 +399,30 @@ pub struct ForagePatchState {
     pub tended_yield: f32,
 }
 
-/// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
-/// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
-/// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
-/// learning/known meters.
+/// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
+/// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
+/// renders learning/known meters.
+///
+/// One field per rung-transition — *"practice rung N unlocks rung N+1"*
+/// (`docs/plan_intensification_ladder.md` §4) — so the struct reads as the ladder itself:
+/// `wild --cultivation--> tended --seed_selection--> field` and
+/// `wild --herding--> pastoral --penning--> pen`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct IntensificationKnowledgeState {
     pub faction: u32,
+    /// Gates `cultivate`. Earned by working a **wild** patch under a stewardship policy.
     #[serde(default)]
     pub cultivation: f32,
+    /// Gates `tame` — and `tame` **only**, since the §4.3 reshuffle. Earned by working a **wild** herd.
     #[serde(default)]
     pub herding: f32,
+    /// Gates `sow` (slice 5 — earned now, spent later). Earned by working a **tended** patch.
+    #[serde(default)]
+    pub seed_selection: f32,
+    /// Gates `corral` + `extend_pen` (the §4.3 reshuffle took this off `herding`). Earned by working
+    /// a **pastoral** herd.
+    #[serde(default)]
+    pub penning: f32,
 }
 
 /// Shared depletable-ecology record round-tripped through the rollback snapshot. Mirrors the
@@ -3523,6 +3536,8 @@ fn create_intensification_knowledge<'a>(
                 faction: state.faction,
                 cultivation: state.cultivation,
                 herding: state.herding,
+                seedSelection: state.seed_selection,
+                penning: state.penning,
             },
         );
         entries.push(entry);

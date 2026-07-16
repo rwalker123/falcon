@@ -88,19 +88,16 @@ const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 /// *per-biomass* rate is lower than the gather rate, but tended harvests the whole standing crop every
 /// turn, not just the regrowth skim.)
 const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
-const DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN: f32 = 0.05;
-/// Ledger progress (`0..=1`) at which the faction **knows** Cultivation and patches may accrue
-/// cultivation under the Cultivate policy. `1.0` = the ledger's completion value
-/// (`DiscoveryProgressLedger` clamps accrual to `1.0`).
-const DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD: f32 = 1.0;
 
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
 /// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
 /// investment dip it pays while preparing) moved to the shared ladder,
 /// `data/intensification_ladder.json` → the `plant:tended` rung's `build` block
-/// (`crate::intensification`), because plants and animals must climb on the *same* numbers. What
-/// stays here is the plant web's own economy: the tended-harvest rate and the earned-knowledge
-/// levers.
+/// (`crate::intensification`), because plants and animals must climb on the *same* numbers — and, as
+/// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn` /
+/// `knowledge_completion_threshold` → the ladder's `knowledge` block): once the earn path became one
+/// rung-driven seam, a per-web copy of "20 turns to learn a rung" was pure duplication. What stays
+/// here is the plant web's own economy: the tended-harvest rate.
 ///
 /// A patch worked under the explicit **Cultivate** policy (`FollowPolicy::Cultivate`) — faction knows
 /// Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's `progress_per_turn` toward
@@ -122,22 +119,12 @@ pub struct CultivationConfig {
     /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
     /// `provisions_per_biomass`.
     pub tended_provisions_per_biomass: f32,
-    /// **Rung 1b — earned knowledge.** Faction-level Cultivation knowledge accrued per turn while a
-    /// band **Sustain**-forages a Thriving patch (into the `DiscoveryProgressLedger`, discovery
-    /// `CULTIVATION_DISCOVERY_ID`). Cultivation is *learned by foraging*, never start-granted; a patch
-    /// cannot accrue `cultivation_progress` (under Cultivate) until the faction knows it.
-    pub knowledge_progress_per_turn: f32,
-    /// Ledger progress (`0..=1`) at which the faction **knows** Cultivation: patches may then accrue
-    /// cultivation under the Cultivate policy. `1.0` = the ledger's completion value.
-    pub knowledge_completion_threshold: f32,
 }
 
 impl Default for CultivationConfig {
     fn default() -> Self {
         Self {
             tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
-            knowledge_progress_per_turn: DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN,
-            knowledge_completion_threshold: DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD,
         }
     }
 }
@@ -593,10 +580,6 @@ mod tests {
         // dials — progress vs decay, and the preparing dip — moved to the ladder, where
         // `LadderConfig::validate` bounds them on every load path.)
         assert!(config.forage.cultivation.tended_provisions_per_biomass > 0.0);
-        // Rung 1b (earned knowledge): positive accrual, completion threshold in (0, 1].
-        assert!(config.forage.cultivation.knowledge_progress_per_turn > 0.0);
-        assert!(config.forage.cultivation.knowledge_completion_threshold > 0.0);
-        assert!(config.forage.cultivation.knowledge_completion_threshold <= 1.0);
         // A tended patch (harvested on its full standing biomass, ~cap) out-yields the same patch's
         // wild MSY skim (regrowth at K/2 = regrowth_rate × K/4, × the gather provisions rate) — the
         // intensification incentive. Compare per-biomass factors: tended pays on ~K, wild MSY on

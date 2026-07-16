@@ -30,11 +30,11 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         self, herd_capacity, herd_ecology, hunt_policy_ceiling, hunt_provisions, pen_upkeep,
-        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
+        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
     },
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
-    forage::{forage_take, tended_provisions, ForageRegistry, CULTIVATION_DISCOVERY_ID},
+    forage::{forage_take, patch_rung, tended_provisions, ForageRegistry},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,

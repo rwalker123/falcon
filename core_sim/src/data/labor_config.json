@@ -64,11 +64,9 @@
     "eradicate": {
       "take_fraction": 0.30
     },
-    "_comment_cultivation": "The plant rung-2 BUILD dials (progress_per_turn, decay_per_turn and the old cultivating_yield_fraction) live in intensification_ladder.json -> the plant:tended rung's `build` block: both food webs climb on the same numbers. What remains here is the plant web's own economy.",
+    "_comment_cultivation": "The plant rung-2 BUILD dials (progress_per_turn, decay_per_turn and the old cultivating_yield_fraction) live in intensification_ladder.json -> the plant:tended rung's `build` block, and as of slice 4 so do the earned-knowledge dials (the old knowledge_progress_per_turn 0.05 / knowledge_completion_threshold 1.0 -> the ladder's `knowledge` block, same values, previously duplicated verbatim in fauna_config's husbandry). Both food webs climb — and now LEARN — on the same numbers. What remains here is the plant web's own economy.",
     "cultivation": {
-      "tended_provisions_per_biomass": 0.01,
-      "knowledge_progress_per_turn": 0.05,
-      "knowledge_completion_threshold": 1.0
+      "tended_provisions_per_biomass": 0.01
     },
     "_comment_navigable_river": "The capacity_by_biome NavigableRiver row (130) is VESTIGIAL — a navigable hex now reads its UNDERLYING biome (resource_terrain) plus navigable_river_forage_bonus, so the row is bypassed. Left only to keep the table total.",
     "navigable_river_forage_bonus": 80.0

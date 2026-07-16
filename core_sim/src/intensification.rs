@@ -45,8 +45,12 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    components::FollowPolicy, fauna::HERDING_DISCOVERY_ID, fauna_config::HusbandryCeiling,
-    forage::CULTIVATION_DISCOVERY_ID, orders::FactionId, resources::DiscoveryProgressLedger,
+    components::FollowPolicy,
+    fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
+    fauna_config::HusbandryCeiling,
+    forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
+    orders::FactionId,
+    resources::DiscoveryProgressLedger,
     scalar::scalar_from_f32,
 };
 
@@ -276,6 +280,39 @@ impl RungDef {
             .map(|name| discovery_id_for(name).expect("validated at load"))
     }
 
+    /// **THE earn seam — "practice rung N unlocks rung N+1"** (`docs/plan_intensification_ladder.md`
+    /// §4), the exact twin of [`RungDef::build_accrual`]: the rung says *what* is learned, the caller
+    /// applies it to the ledger it owns.
+    ///
+    /// `self` is **the rung the source currently stands on** — *not* the rung whose verb is being
+    /// used. That distinction is the whole model: you learn **herding** by managing **wild** herds and
+    /// **penning** by managing **tamed** ones, so a Sustain hunt teaches Herding on a wild herd and
+    /// **Penning** on a pastoral one — same policy, different rung, different lesson. Callers resolve
+    /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung`].
+    ///
+    /// Returns the discovery to credit, or `None` when:
+    /// - the policy is **not stewardship** ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain and
+    ///   the investment verbs teach; Surplus/Market/Eradicate never do, at any rung), or
+    /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
+    ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
+    ///   sites already had, or
+    /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `animal:pen` rung, whose
+    ///   `selective_breeding` is a future rung's business).
+    ///
+    /// **The two webs cannot cross-teach** (§4.2) and it costs no code to guarantee: the lesson is
+    /// read off the *source's own rung*, and a rung belongs to exactly one [`RungBranch`], so a hunt
+    /// can only ever reach an `animal` rung's `earns_knowledge` and a forage a `plant` one's. A master
+    /// rancher isn't automatically a farmer.
+    ///
+    /// The **amount** is the ladder's single `knowledge.progress_per_turn`
+    /// ([`LadderKnowledge`]) — the rung names the lesson, the ladder paces every lesson alike.
+    pub fn knowledge_earned(&self, policy: FollowPolicy, eligible: bool) -> Option<u32> {
+        if !eligible || !policy.teaches_knowledge() {
+            return None;
+        }
+        self.earns_discovery_id()
+    }
+
     /// **The build seam — the accrual side.** How much this rung's per-source meter advances this
     /// turn: `progress_per_turn × timescale` when `policy` **is** the rung's verb *and* the caller's
     /// rung-specific gates hold (`eligible` — knows the unlock knowledge, the source is healthy, the
@@ -333,9 +370,36 @@ impl RungDef {
     }
 }
 
-/// The whole ladder: every rung of both branches (`data/intensification_ladder.json`).
+/// **How fast the ladder is learned** — the pace of *every* rung's `earns_knowledge`, and the bar at
+/// which a faction may act on one.
+///
+/// These two dials used to be **duplicated, at identical values, in both webs** (`labor_config`'s
+/// `forage.cultivation` and `fauna_config`'s `husbandry`) because each web had its own hard-coded earn
+/// site. Slice 4 made the earn path **one rung-driven seam**
+/// ([`RungDef::knowledge_earned`]), so two per-web copies became a pure DRY hazard — nothing but
+/// discipline kept "20 turns to learn Herding" and "20 turns to learn Cultivation" the same
+/// statement. They live here for the same reason the build dials do: the two ladders must climb on
+/// the same numbers, and the ladder is where a number that describes *both* webs belongs.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct LadderKnowledge {
+    /// Faction knowledge accrued per turn a crew works a source under a **stewardship** policy at a
+    /// rung that teaches (§4.2). `completion_threshold / progress_per_turn` is the lesson's length in
+    /// turns (`1.0 / 0.05` → ~20). Validated `> 0` — a zero would make every knowledge unlearnable,
+    /// silently freezing the whole ladder at rung 1.
+    pub progress_per_turn: f32,
+    /// Ledger progress at which a faction **knows** a discovery and may select the verb it gates
+    /// ([`knows`]). Validated `0 < t <= 1`: at `0` every knowledge would be known before it was
+    /// learned (every gate open from turn 1); above `1` no gate could **ever** open, since
+    /// `DiscoveryProgressLedger` clamps accrual to `1.0`.
+    pub completion_threshold: f32,
+}
+
+/// The whole ladder: every rung of both branches, plus the pace they are learned at
+/// (`data/intensification_ladder.json`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct LadderConfig {
+    /// The knowledge dials shared by **both** webs — see [`LadderKnowledge`].
+    pub knowledge: LadderKnowledge,
     pub rungs: Vec<RungDef>,
 }
 
@@ -382,6 +446,8 @@ impl LadderConfig {
     /// quietly stops a rung being reachable, or reads a rung's dial off the wrong record, which is
     /// exactly the failure mode config validation exists to catch.
     pub fn validate(&self) -> Result<(), LadderConfigError> {
+        validate_knowledge(&self.knowledge)?;
+
         let mut seen_ids: HashSet<(RungBranch, &str)> = HashSet::new();
         let mut seen_orders: HashSet<(RungBranch, u32)> = HashSet::new();
 
@@ -500,8 +566,43 @@ fn discovery_id_for(name: &str) -> Option<u32> {
     match name {
         "cultivation" => Some(CULTIVATION_DISCOVERY_ID),
         "herding" => Some(HERDING_DISCOVERY_ID),
+        // Slice 4's two new rung-3 gates. `seed_selection`'s *consumer* (the `Field`/`Sow` rung) is
+        // slice 5 — it is earned now and spent later, which is the pacing model working as intended,
+        // not a dangling name.
+        "seed_selection" => Some(SEED_SELECTION_DISCOVERY_ID),
+        "penning" => Some(PENNING_DISCOVERY_ID),
         _ => None,
     }
+}
+
+/// Bound the ladder's knowledge dials. Both failure modes are silent rather than loud — the ladder
+/// parses, and then either every gate is open from turn 1 or none can ever open — which is exactly
+/// what config validation is for (the `FaunaConfig::validate` discipline these bounds were moved from,
+/// where each web asserted its own copy of them).
+fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigError> {
+    if !knowledge.progress_per_turn.is_finite() || knowledge.progress_per_turn <= 0.0 {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "teach at a positive rate — at `progress_per_turn <= 0` no knowledge is \
+                         ever learned and the whole ladder silently freezes at rung 1"
+                .to_string(),
+            value: format!("progress_per_turn = {}", knowledge.progress_per_turn),
+        });
+    }
+    if !knowledge.completion_threshold.is_finite()
+        || knowledge.completion_threshold <= 0.0
+        || knowledge.completion_threshold > 1.0
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "complete at a threshold in (0, 1] — at 0 every knowledge is known before \
+                         it is learned, and above 1 no gate can ever open (the ledger clamps \
+                         accrual to 1.0)"
+                .to_string(),
+            value: format!("completion_threshold = {}", knowledge.completion_threshold),
+        });
+    }
+    Ok(())
 }
 
 /// The verb (when named) has to be a real policy, and the knowledge links (when named) real
@@ -591,9 +692,11 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
 /// sit inlined at five call sites (both labor arms, the `cultivate`/`corral` assignment validators,
 /// and `extend_pen`), each spelling `get_progress(..) >= threshold` for itself.
 ///
-/// `threshold` stays a caller-supplied lever because the two food webs still keep their own
-/// `knowledge_completion_threshold` (`labor_config`'s `forage.cultivation`, `fauna_config`'s
-/// `husbandry`) — the helper unifies the *comparison*, not the tuning.
+/// `threshold` stays a **parameter** (rather than being read off the ladder in here) to keep the
+/// helper a pure comparison with no config lookup of its own — but there is now exactly **one** value
+/// any caller passes: [`LadderKnowledge::completion_threshold`]. The per-web copies it used to
+/// reconcile (`labor_config`'s `forage.cultivation`, `fauna_config`'s `husbandry`) are **gone** —
+/// slice 4 moved them onto the ladder when the earn path became one rung-driven seam.
 pub fn knows(
     ledger: &DiscoveryProgressLedger,
     faction: FactionId,
@@ -783,18 +886,23 @@ mod tests {
         assert_eq!(animal_wild.verb_policy(), None);
         assert_eq!(animal_wild.earns_discovery_id(), Some(HERDING_DISCOVERY_ID));
 
-        // Plant rung 2 — the shipped Cultivate investment, gated on Cultivation, teaching nothing.
+        // Plant rung 2 — the shipped Cultivate investment, gated on Cultivation, and (slice 4)
+        // **teaching Seed Selection**: practise the tended patch, learn to select seed.
         let tended = ladder.rung(RungKey::PlantTended);
         assert_eq!(tended.verb_policy(), Some(FollowPolicy::Cultivate));
         assert_eq!(tended.unlock_discovery_id(), Some(CULTIVATION_DISCOVERY_ID));
-        assert_eq!(tended.earns_discovery_id(), None);
+        assert_eq!(
+            tended.earns_discovery_id(),
+            Some(SEED_SELECTION_DISCOVERY_ID)
+        );
 
         // Animal rung 2 — the `Tame` investment: an explicit, Herding-gated, *paid* verb. This is
         // the conflation fix (§4.1): the rung is driven by its own verb, not by a Sustain harvest.
+        // Slice 4: practising it **teaches Penning**, the gate on rung 3.
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
         assert_eq!(pastoral.verb_policy(), Some(FollowPolicy::Tame));
         assert_eq!(pastoral.unlock_discovery_id(), Some(HERDING_DISCOVERY_ID));
-        assert_eq!(pastoral.earns_discovery_id(), None);
+        assert_eq!(pastoral.earns_discovery_id(), Some(PENNING_DISCOVERY_ID));
         assert_eq!(pastoral.ceiling_required, Some(HusbandryCeiling::Pastoral));
         // Taming now costs yield, like every other rung — the `domesticate` early-claim that let a
         // player skip this investment is gone.
@@ -805,12 +913,31 @@ mod tests {
             "the pastoral rung is an investment — it must dip the take while building"
         );
 
-        // Animal rung 3 — the shipped Corral investment, gated on Herding (the §4.3 reshuffle to
-        // Penning is a later slice), fenced only by a `pen`-ceiling species.
+        // Animal rung 3 — the shipped Corral investment, fenced only by a `pen`-ceiling species and,
+        // since the §4.3 reshuffle (slice 4), gated on **Penning** rather than Herding: one
+        // knowledge per transition. It still teaches nothing (`selective_breeding` is rung 4, §6).
         let pen = ladder.rung(RungKey::AnimalPen);
         assert_eq!(pen.verb_policy(), Some(FollowPolicy::Corral));
-        assert_eq!(pen.unlock_discovery_id(), Some(HERDING_DISCOVERY_ID));
+        assert_eq!(pen.unlock_discovery_id(), Some(PENNING_DISCOVERY_ID));
+        assert_eq!(pen.earns_discovery_id(), None);
         assert_eq!(pen.ceiling_required, Some(HusbandryCeiling::Pen));
+
+        // **The §4.3 invariant, stated as one assertion: every transition has its OWN knowledge.**
+        // Herding gating both `tame` and `corral` was the pre-slice-4 defect; a future rung that
+        // re-used a gate would be the same defect returning, and this catches it.
+        let unlocks: Vec<u32> = ladder
+            .rungs
+            .iter()
+            .filter_map(|rung| rung.unlock_discovery_id())
+            .collect();
+        let mut unique = unlocks.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unlocks.len(),
+            unique.len(),
+            "one knowledge per transition — no two rungs may share an unlock gate"
+        );
     }
 
     /// The engine drives a rung only through its own verb, and only when the caller's gates hold.
@@ -996,11 +1123,14 @@ mod tests {
         assert_rejects(err, "plant:tended");
     }
 
+    // Both knowledge-link rejection tests used to reach for `penning` / `seed_selection` as their
+    // *unknown* name. Slice 4 coded both, so they need a name that is still genuinely unmapped —
+    // `selective_breeding` (rung 4, §6: named in the design, deliberately not built).
     #[test]
     fn rejects_an_unknown_unlock_knowledge() {
         let err = reject(|json| {
             let idx = rung_index(json, "animal", "pen");
-            json["rungs"][idx]["unlock_knowledge"] = "penning".into();
+            json["rungs"][idx]["unlock_knowledge"] = "selective_breeding".into();
         });
         assert_rejects(err, "animal:pen");
     }
@@ -1009,7 +1139,7 @@ mod tests {
     fn rejects_an_unknown_earns_knowledge() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "wild");
-            json["rungs"][idx]["earns_knowledge"] = "seed_selection".into();
+            json["rungs"][idx]["earns_knowledge"] = "irrigation".into();
         });
         assert_rejects(err, "plant:wild");
     }
@@ -1057,6 +1187,98 @@ mod tests {
             json["rungs"][idx]["build"]["yield_fraction_while_building"] = (0.0).into();
         });
         assert_rejects(err, "animal:pen");
+    }
+
+    // --- The ladder's knowledge dials. These bounds (and their rejection tests) **moved here from
+    // `fauna_config::validate`** in slice 4, along with the dials themselves: both webs kept an
+    // identical copy back when each had its own hard-coded earn site, and the ladder now states each
+    // bound **once, for both webs**.
+
+    #[test]
+    fn rejects_a_ladder_nobody_could_ever_learn() {
+        let err = reject(|json| json["knowledge"]["progress_per_turn"] = (0.0).into());
+        assert_rejects(err, "knowledge");
+    }
+
+    #[test]
+    fn rejects_a_knowledge_gate_that_is_open_or_shut_from_the_start() {
+        // `0` → every knowledge is "known" before it is learned: every gate open on turn 1.
+        let err = reject(|json| json["knowledge"]["completion_threshold"] = (0.0).into());
+        assert_rejects(err, "knowledge");
+        // `> 1` → unreachable, since the ledger clamps accrual to 1.0: no gate could EVER open.
+        let err = reject(|json| json["knowledge"]["completion_threshold"] = (1.5).into());
+        assert_rejects(err, "knowledge");
+    }
+
+    /// The shipped pace: ~20 turns of stewardship per lesson, one pair of dials for both webs.
+    #[test]
+    fn the_builtin_ladder_is_learned_at_one_shared_pace() {
+        let knowledge = LadderConfig::builtin().knowledge;
+        assert!(knowledge.progress_per_turn > 0.0);
+        assert!(knowledge.completion_threshold > 0.0 && knowledge.completion_threshold <= 1.0);
+        let turns = knowledge.completion_threshold / knowledge.progress_per_turn;
+        assert!(
+            (turns - 20.0).abs() < 1e-3,
+            "a lesson should take ~20 turns of practice, got {turns}"
+        );
+    }
+
+    /// **The earn seam** (§4), asserted at the rung: the lesson is the rung's `earns_knowledge`,
+    /// gated on stewardship + health. The sim-level twin (which rung a real hunt/forage resolves to)
+    /// lives in the labor tests.
+    #[test]
+    fn knowledge_earned_is_the_rungs_lesson_gated_on_stewardship_and_health() {
+        let ladder = LadderConfig::builtin();
+
+        // Rung 1 teaches under every stewardship policy...
+        let wild = ladder.rung(RungKey::AnimalWild);
+        for policy in [
+            FollowPolicy::Sustain,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+            FollowPolicy::Cultivate,
+        ] {
+            assert_eq!(
+                wild.knowledge_earned(policy, true),
+                Some(HERDING_DISCOVERY_ID),
+                "{policy:?} is stewardship — practising the wild rung must teach Herding"
+            );
+        }
+        // ...and under none of the overdrawing ones (§4.2).
+        for policy in [
+            FollowPolicy::Surplus,
+            FollowPolicy::Market,
+            FollowPolicy::Eradicate,
+        ] {
+            assert_eq!(
+                wild.knowledge_earned(policy, true),
+                None,
+                "{policy:?} overdraws — it teaches nothing, at any rung"
+            );
+        }
+        // An unhealthy source teaches nothing: you learn from a healthy source.
+        assert_eq!(wild.knowledge_earned(FollowPolicy::Sustain, false), None);
+
+        // Rung 2 teaches the rung-3 gate — the arc's whole claim, at the seam.
+        assert_eq!(
+            ladder
+                .rung(RungKey::AnimalPastoral)
+                .knowledge_earned(FollowPolicy::Sustain, true),
+            Some(PENNING_DISCOVERY_ID)
+        );
+        assert_eq!(
+            ladder
+                .rung(RungKey::PlantTended)
+                .knowledge_earned(FollowPolicy::Sustain, true),
+            Some(SEED_SELECTION_DISCOVERY_ID)
+        );
+        // A rung that teaches nothing yields nothing even when everything else holds.
+        assert_eq!(
+            ladder
+                .rung(RungKey::AnimalPen)
+                .knowledge_earned(FollowPolicy::Sustain, true),
+            None
+        );
     }
 
     #[test]

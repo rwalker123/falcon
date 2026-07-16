@@ -17,8 +17,10 @@ use super::*;
 ///   and its workers return to the pool (feed entry).
 /// - **Scout**: reveals fog outward from the band. **Warrior**: inert (occupies workers only).
 ///
-/// Husbandry (Phase E) re-homes here: a Sustain hunt on a Thriving herd accrues domestication for
-/// the acting faction, exactly as the retired follow did.
+/// Husbandry (Phase E) re-homes here, but **Sustain no longer tames** (slice 3a): a `Tame` hunt
+/// fills the herd's domestication meter, while any *stewardship* policy on a **Thriving** source
+/// earns the faction the knowledge that source's **current rung** teaches (slice 4 — Herding on a
+/// wild herd, Penning on a pastoral one; Cultivation/Seed Selection on the plant side).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
@@ -46,14 +48,14 @@ pub fn advance_labor_allocation(
     let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
-    // Rung 1b (earned Cultivation knowledge): the per-turn ledger accrual and the "known" threshold,
-    // hoisted out of the per-cohort loop. A **Sustain**-forage on a Thriving patch teaches the faction
-    // Cultivation (knowledge is still learned by ordinary foraging); a patch cannot accrue
-    // `cultivation_progress` until the faction's ledger progress reaches `knowledge_threshold` AND a
-    // band explicitly works it under the **Cultivate** policy.
-    let cultivation = &labor.forage.cultivation;
-    let knowledge_delta = scalar_from_f32(cultivation.knowledge_progress_per_turn);
-    let knowledge_threshold = cultivation.knowledge_completion_threshold;
+    // **The ladder's knowledge dials (§4)** — the per-turn accrual every teaching rung pays, and the
+    // ledger bar at which a faction may act on a knowledge. Hoisted out of the per-cohort loop.
+    // **One pair for BOTH webs**: these used to be duplicated at identical values in
+    // `labor_config.forage.cultivation` and `fauna_config.husbandry`, back when each web had its own
+    // hard-coded earn site. The earn path is one rung-driven seam now, so the dials live on the
+    // ladder with the build dials — the plant and animal ladders can only be paced together.
+    let knowledge_delta = scalar_from_f32(ladder.knowledge.progress_per_turn);
+    let knowledge_threshold = ladder.knowledge.completion_threshold;
     // The two rungs the build engine drives (`crate::intensification`): the plant's tended patch and
     // the animal's pen. Their build dials — accrual rate, feral decay, and the investment dip — are
     // the ladder's, not each web's, so the two paths can never be tuned apart. Hoisted out of the
@@ -68,12 +70,6 @@ pub fn advance_labor_allocation(
     let pen_build_dip = pen_rung
         .yield_fraction_while_building()
         .expect("the pen rung is an investment — it has a build meter");
-    // Rung 1 (earned Herding knowledge, the animal mirror of Cultivation): a Sustain-hunt on a
-    // Thriving herd teaches the faction Herding — the gate on **both** animal investment verbs
-    // today (`Tame` at rung 2, `Corral` at rung 3; §4.3's reshuffle onto a separate `penning`
-    // knowledge is a later slice). Sustain *teaches*; it no longer tames.
-    let herding_knowledge_delta = scalar_from_f32(husbandry.knowledge_progress_per_turn);
-    let herding_knowledge_threshold = husbandry.knowledge_completion_threshold;
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
@@ -140,15 +136,22 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
-                    // Rung 1b — the earned-knowledge ladder (§4b). A **Sustain** forage on a Thriving
-                    // patch **teaches the faction Cultivation** (accrued in the shared
-                    // `DiscoveryProgressLedger`, never start-granted). Knowledge only — it no longer
-                    // tames the patch: cultivation is an **explicit `Cultivate` policy with an
-                    // investment cost** (below), not a free by-product of Sustain.
-                    if matches!(policy, FollowPolicy::Sustain)
-                        && patch.ecology_phase == EcologyPhase::Thriving
+                    // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung N+1.**
+                    // One call, driven entirely by the rung the patch *currently stands on* — a wild
+                    // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
+                    // is a property of the source's rung, not of the verb. The old hard-coded
+                    // `Sustain && Thriving → CULTIVATION_DISCOVERY_ID` branch is gone: `earns_knowledge`
+                    // was declarative when slice 2 landed it, and this is where it goes live.
+                    //
+                    // Knowledge is all that is earned here — working a patch never *tames* it:
+                    // cultivation is an explicit `Cultivate` policy with an investment cost (below).
+                    // The seam owns the §4.2 stewardship rule (Surplus/Market/Eradicate teach
+                    // nothing); `eligible` carries the health gate — **you learn from a healthy
+                    // source** — which is the shipped `Thriving` requirement, unchanged.
+                    if let Some(knowledge) = patch_rung(patch, &ladder)
+                        .knowledge_earned(*policy, patch.ecology_phase == EcologyPhase::Thriving)
                     {
-                        discovery.add_progress(faction, CULTIVATION_DISCOVERY_ID, knowledge_delta);
+                        discovery.add_progress(faction, knowledge, knowledge_delta);
                     }
                     // A cultivated ("tended") patch is worked, not wild-gathered (Rung 1a): the band
                     // whose Forage assignment tends it (≥1 worker here → place-local by construction)
@@ -316,6 +319,27 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // **THE earn path (§4)** — the exact mirror of the Forage arm's call, and the
+                    // heart of this ladder: the lesson is read off **the rung this herd stands on**,
+                    // so the *same* Sustain hunt teaches **Herding** on a wild herd and **Penning** on
+                    // a tamed one ("you learn herding by managing wild herds; penning by managing
+                    // tamed ones"). The old hard-coded `Sustain && Thriving → HERDING_DISCOVERY_ID`
+                    // branch is retired; `earns_knowledge` drives it now.
+                    //
+                    // **Resolved BEFORE the rung branches below** (the corral tend arm `continue`s,
+                    // and the take arm draws biomass), so *every* rung reaches the earn path
+                    // uniformly — including the pen, whose `earns_knowledge` is null today but is
+                    // where rung 4's `selective_breeding` will hang. Moving it ahead of the take is
+                    // behaviour-neutral: `ecology_phase` is written only by `refresh_ecology_phase`
+                    // in Logistics, never by a take, so the gate reads the same value either side.
+                    //
+                    // The two webs cannot cross-teach (§4.2) for free: a herd resolves to an `animal`
+                    // rung, so only an animal knowledge is reachable from here.
+                    if let Some(knowledge) = fauna::herd_rung(herd, &ladder)
+                        .knowledge_earned(*policy, herd.ecology_phase == EcologyPhase::Thriving)
+                    {
+                        discovery.add_progress(faction, knowledge, knowledge_delta);
+                    }
                     // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
@@ -433,21 +457,6 @@ pub fn advance_labor_allocation(
                         f32::INFINITY,
                     );
                     let take = biomass_before - herd.biomass;
-                    // Rung 1 — the earned-knowledge ladder (§4). A **Sustain** hunt on a Thriving
-                    // herd **teaches the faction Herding** (accrued in the shared
-                    // `DiscoveryProgressLedger`, never start-granted). Knowledge only — it no longer
-                    // tames the herd: taming is an **explicit `Tame` policy with an investment
-                    // cost** (below), not a free by-product of Sustain. The exact mirror of the
-                    // plant arm's Sustain→Cultivation branch.
-                    if matches!(policy, FollowPolicy::Sustain)
-                        && herd.ecology_phase == EcologyPhase::Thriving
-                    {
-                        discovery.add_progress(
-                            faction,
-                            HERDING_DISCOVERY_ID,
-                            herding_knowledge_delta,
-                        );
-                    }
                     // **Tame — the investment policy** (the animal twin of Cultivate, and the rung
                     // below Corral). The crew is gentling the herd, not hunting it: `hunt_take`
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
@@ -472,7 +481,7 @@ pub fn advance_labor_allocation(
                         herd.tamed_this_turn = true;
                         let eligible =
                             pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                knows(&discovery, faction, knowledge, herding_knowledge_threshold)
+                                knows(&discovery, faction, knowledge, knowledge_threshold)
                             }) && herd.can_domesticate()
                                 && herd.ecology_phase == EcologyPhase::Thriving;
                         // THE build seam — the same call the plant side's Cultivate arm makes, at
@@ -514,7 +523,7 @@ pub fn advance_labor_allocation(
                         // so this is belt and braces), the herd has climbed the rung below, and the
                         // faction owns it.
                         let eligible = pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                            knows(&discovery, faction, knowledge, herding_knowledge_threshold)
+                            knows(&discovery, faction, knowledge, knowledge_threshold)
                         }) && herd.can_pen()
                             && herd.is_domesticated()
                             && herd.owner == Some(faction);
@@ -818,11 +827,14 @@ mod labor_yield_tests {
     };
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
-        SourceYieldForecast, HERDING_DISCOVERY_ID,
+        SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
     };
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
-    use crate::forage::{advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID};
+    use crate::forage::{
+        advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID,
+        SEED_SELECTION_DISCOVERY_ID,
+    };
     use crate::forage::{ForagePatch, ForageRegistry};
     use crate::intensification::{
         LadderConfig, LadderConfigHandle, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
@@ -1948,10 +1960,11 @@ mod labor_yield_tests {
             .last_yields[0]
             .actual;
 
-        // Corral on a domesticated herd the faction owns + knows Herding for.
+        // Corral on a domesticated herd the faction owns + knows **Penning** for (the §4.3
+        // reshuffle: rung 3's gate moved off Herding, which now gates `tame` alone).
         let (mut world, tile) = world_with_source(CAP);
         reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
-        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
@@ -2046,7 +2059,8 @@ mod labor_yield_tests {
         let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
         assert_eq!(
             herd.corral_progress, 0.0,
-            "Corral without Herding knowledge builds nothing"
+            "Corral without PENNING knowledge builds nothing (the §4.3 gate reshuffle — Herding \
+             is no longer enough)"
         );
         assert!(!herd.is_corralled());
     }
@@ -2055,7 +2069,7 @@ mod labor_yield_tests {
     #[test]
     fn corral_accrues_nothing_on_a_wild_herd() {
         let (mut world, tile) = world_with_source(CAP);
-        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         spawn_band(
             &mut world,
             tile,
@@ -2072,6 +2086,247 @@ mod labor_yield_tests {
         assert_eq!(
             herd.corral_progress, 0.0,
             "a wild herd cannot be penned — tame it first"
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The knowledge pattern (slice 4, `docs/plan_intensification_ladder.md` §4): **practising a rung
+    // teaches the knowledge that unlocks the next rung's verb** — where "practising rung N" means
+    // *working a source that currently STANDS ON rung N*, not "using rung N's verb".
+    // ---------------------------------------------------------------------------------------------
+
+    /// A herd big enough that a Sustain/Tame take never scrapes it out of the `Thriving` band
+    /// mid-test — the earn gate reads the phase, so a starved fixture would pass for the wrong
+    /// reason. (Mirrors the local const the corral/tame yield tests use.)
+    const TEACHING_HERD_CAP: f32 = 1_000.0;
+
+    /// Faction 0's ledger progress on `discovery`.
+    fn knowledge(world: &World, discovery: u32) -> f32 {
+        world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(BAND_FACTION, discovery)
+            .to_f32()
+    }
+
+    /// Staff a band on the source herd under `policy` and resolve one turn.
+    fn hunt_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+        spawn_band(
+            world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+    }
+
+    /// Staff a band on the source patch under `policy` and resolve one turn.
+    fn forage_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+        spawn_band(
+            world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+    }
+
+    /// **Rung 1 is unchanged by the refactor.** A Sustain hunt on a Thriving *wild* herd still earns
+    /// Herding — the shipped §0 behaviour — now driven by the `animal:wild` rung's `earns_knowledge`
+    /// rather than a hard-coded branch. It teaches **Herding and nothing else**: Penning is the rung
+    /// above, and rung 1 must not skip it.
+    #[test]
+    fn sustain_hunting_a_wild_herd_still_earns_herding_only() {
+        let (mut world, tile) = world_with_source(CAP);
+        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+
+        assert!(
+            knowledge(&world, HERDING_DISCOVERY_ID) > 0.0,
+            "a Sustain hunt on a Thriving wild herd still earns Herding"
+        );
+        assert_eq!(
+            knowledge(&world, PENNING_DISCOVERY_ID),
+            0.0,
+            "a WILD herd teaches Herding — Penning comes from keeping TAMED ones"
+        );
+    }
+
+    /// **The heart of the arc.** The *same* Sustain hunt on a herd that has climbed to **pastoral**
+    /// earns **Penning** instead — "you learn herding by managing wild herds; penning by managing
+    /// tamed ones". Same verb, different rung, different lesson.
+    #[test]
+    fn sustain_hunting_a_pastoral_herd_earns_penning() {
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+            assert!(
+                registry.herds[0].is_domesticated(),
+                "the herd stands on rung 2"
+            );
+        }
+        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+
+        assert!(
+            knowledge(&world, PENNING_DISCOVERY_ID) > 0.0,
+            "working a PASTORAL herd earns Penning — the rung it stands on decides the lesson"
+        );
+    }
+
+    /// The plant twin: working a **tended** patch earns **Seed Selection**. The rung decides, not the
+    /// verb — a tended patch pays its managed harvest under Sustain, and tending it *is* the practice.
+    #[test]
+    fn working_a_tended_patch_earns_seed_selection() {
+        let (mut world, _tile) = world_with_source(CAP);
+        let tile = world.resource::<TileRegistry>().tiles[0];
+        {
+            let mut registry = world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(SOURCE).expect("seeded patch");
+            patch.accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+            assert!(patch.is_cultivated(), "the patch stands on rung 2");
+        }
+        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+
+        assert!(
+            knowledge(&world, SEED_SELECTION_DISCOVERY_ID) > 0.0,
+            "working a TENDED patch earns Seed Selection"
+        );
+    }
+
+    /// **§4.2 — only stewardship teaches.** The overdrawing policies earn **nothing, at any rung**:
+    /// you learn husbandry by managing, not by slaughtering. Swept across both webs and both of the
+    /// rungs that teach, so a future rung cannot quietly opt out of the rule.
+    #[test]
+    fn the_overdrawing_policies_teach_nothing_at_any_rung() {
+        for policy in [
+            FollowPolicy::Surplus,
+            FollowPolicy::Market,
+            FollowPolicy::Eradicate,
+        ] {
+            // Animal rung 1 (wild) and rung 2 (pastoral).
+            for tamed in [false, true] {
+                let (mut world, tile) = world_with_source(CAP);
+                reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
+                if tamed {
+                    world.resource_mut::<HerdRegistry>().herds[0]
+                        .accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+                }
+                hunt_one_turn(&mut world, tile, policy);
+                assert_eq!(
+                    knowledge(&world, HERDING_DISCOVERY_ID),
+                    0.0,
+                    "{policy:?} must teach no Herding (tamed={tamed})"
+                );
+                assert_eq!(
+                    knowledge(&world, PENNING_DISCOVERY_ID),
+                    0.0,
+                    "{policy:?} must teach no Penning (tamed={tamed})"
+                );
+            }
+
+            // Plant rung 1 (wild) and rung 2 (tended).
+            for cultivated in [false, true] {
+                let (mut world, _) = world_with_source(CAP);
+                let tile = world.resource::<TileRegistry>().tiles[0];
+                if cultivated {
+                    world
+                        .resource_mut::<ForageRegistry>()
+                        .patch_mut(SOURCE)
+                        .expect("seeded patch")
+                        .accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+                }
+                forage_one_turn(&mut world, tile, policy);
+                assert_eq!(
+                    knowledge(&world, CULTIVATION_DISCOVERY_ID),
+                    0.0,
+                    "{policy:?} must teach no Cultivation (cultivated={cultivated})"
+                );
+                assert_eq!(
+                    knowledge(&world, SEED_SELECTION_DISCOVERY_ID),
+                    0.0,
+                    "{policy:?} must teach no Seed Selection (cultivated={cultivated})"
+                );
+            }
+        }
+    }
+
+    /// **You learn from a HEALTHY source** — the `Thriving` gate both shipped earn sites had, and the
+    /// refactor preserves. A collapsing herd teaches nothing even under Sustain.
+    #[test]
+    fn a_source_that_is_not_thriving_teaches_nothing() {
+        let (mut world, tile) = world_with_source(CAP);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].ecology_phase = EcologyPhase::Collapsing;
+        }
+        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        assert_eq!(
+            knowledge(&world, HERDING_DISCOVERY_ID),
+            0.0,
+            "a collapsing herd teaches nothing — you learn from a healthy source"
+        );
+
+        let (mut world, _) = world_with_source(CAP);
+        let tile = world.resource::<TileRegistry>().tiles[0];
+        {
+            let mut registry = world.resource_mut::<ForageRegistry>();
+            registry
+                .patch_mut(SOURCE)
+                .expect("seeded patch")
+                .ecology_phase = EcologyPhase::Collapsing;
+        }
+        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        assert_eq!(
+            knowledge(&world, CULTIVATION_DISCOVERY_ID),
+            0.0,
+            "a collapsing patch teaches nothing"
+        );
+    }
+
+    /// **§4.2 — the two food webs learn separately.** Hunting only ever advances the animal track and
+    /// foraging the plant track: a master rancher isn't automatically a farmer. This falls out of the
+    /// rung's branch, but it is the claim the design makes, so it is asserted directly.
+    #[test]
+    fn the_two_food_webs_do_not_cross_teach() {
+        // Hunting a wild herd teaches Herding and touches NEITHER plant knowledge.
+        let (mut world, tile) = world_with_source(CAP);
+        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        assert!(knowledge(&world, HERDING_DISCOVERY_ID) > 0.0);
+        assert_eq!(
+            knowledge(&world, CULTIVATION_DISCOVERY_ID),
+            0.0,
+            "hunting must not teach Cultivation"
+        );
+        assert_eq!(
+            knowledge(&world, SEED_SELECTION_DISCOVERY_ID),
+            0.0,
+            "hunting must not teach Seed Selection"
+        );
+
+        // Foraging a wild patch teaches Cultivation and touches NEITHER animal knowledge.
+        let (mut world, _) = world_with_source(CAP);
+        let tile = world.resource::<TileRegistry>().tiles[0];
+        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        assert!(knowledge(&world, CULTIVATION_DISCOVERY_ID) > 0.0);
+        assert_eq!(
+            knowledge(&world, HERDING_DISCOVERY_ID),
+            0.0,
+            "foraging must not teach Herding"
+        );
+        assert_eq!(
+            knowledge(&world, PENNING_DISCOVERY_ID),
+            0.0,
+            "foraging must not teach Penning"
         );
     }
 }
