@@ -314,8 +314,8 @@ pub(crate) fn herd_snapshot_entries(
 /// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
 /// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
 /// all, which is exactly what such a tile offers. **That is a reachable state since slice 5**: `Sow`
-/// places a Field on any naturally food-bearing biome, module or not, and a Field's managed harvest is
-/// biomass-based and seasonless, so it forecasts correctly regardless. Captured at
+/// places a Field on any ground the `plant:field` rung's `site_requirement` accepts — module or not —
+/// and a Field's managed harvest is biomass-based and seasonless, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,

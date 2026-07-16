@@ -58,19 +58,48 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
         .expect("band tile")
         .position;
 
-    // Pen the biggest herd standing on the band's own tile-neighbourhood: domesticate it for the
-    // band's faction and corral it where it stands, so the band's Hunt assignment TENDS it (and pays
-    // its feed) rather than hunting it.
+    // Pen the biggest **pennable** herd: domesticate it for the band's faction and corral it on the
+    // band's own tile, so the band's Hunt assignment TENDS it (and pays its feed) rather than hunting
+    // it.
+    //
+    // **`can_pen()` is load-bearing, not defensive.** Picking the biggest herd outright picks a
+    // **mammoth** (8000–12000 biomass dwarfs every other species; the best `pen`-ceiling animal, the
+    // aurochs, tops out at 1300) — and a mammoth is `husbandry_ceiling: wild`, so
+    // `accrue_domestication` early-returns and it can be neither tamed nor owned. This fixture used to
+    // stand on a **wild, unowned, penned mammoth**: a state the real sim cannot produce, which only
+    // existed because `corral_at` had no ceiling guard (it does now, and would refuse). Filtering to
+    // `can_pen()` first is what makes the ledger identity below an assertion about the *game*.
     let herd_id = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry
             .herds
             .iter_mut()
-            .max_by(|a, b| a.biomass.total_cmp(&b.biomass))
-            .expect("herds spawn");
+            .filter(|herd| herd.can_pen())
+            // Biggest first — the largest feed demand, so the identity has the most to reconcile.
+            // Tie-broken by position then id (the `graze::richest_patch` precedent): `herds` is an
+            // ordered `Vec` and `SEED` is pinned, so this is not seed-dependent — but a `max_by` that
+            // leans on iteration order is one roster edit away from becoming so.
+            .max_by(|a, b| {
+                a.biomass
+                    .total_cmp(&b.biomass)
+                    .then_with(|| b.position().y.cmp(&a.position().y))
+                    .then_with(|| b.position().x.cmp(&a.position().x))
+                    .then_with(|| b.id.cmp(&a.id))
+            })
+            .expect("the map must spawn at least one pennable herd");
         herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        assert!(
+            herd.is_domesticated(),
+            "{} must actually tame — a pen is built on a herd you own",
+            herd.species
+        );
         herd.biomass = herd.carrying_capacity; // at capacity → the largest possible feed demand
-        herd.corral_at(band_pos); // pen it ON the band's tile: in reach, and it no longer roams
+                                               // Pen it ON the band's tile: in reach, and it no longer roams.
+        assert!(
+            herd.corral_at(band_pos),
+            "{} must actually pen — the ledger identity is about a REAL pen",
+            herd.species
+        );
         herd.id.clone()
     };
 

@@ -175,7 +175,7 @@ pub struct SpeciesDef {
     pub taming_rate: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
     /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
-    /// domestication accrual + the `domesticate` / `corral` / `extend_pen` paths. Defaults to `pen`
+    /// domestication accrual + the `tame` / `corral` / `extend_pen` paths. Defaults to `pen`
     /// (the full ladder) when omitted. See [`HusbandryCeiling`].
     #[serde(default)]
     pub husbandry_ceiling: HusbandryCeiling,
@@ -436,13 +436,17 @@ impl Default for FollowConfig {
 /// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` — a sustainable draw, so the
 /// herd stays healthy — accruing its `progress_per_turn` each turn; at `1.0` the herd is penned
 /// (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass` per unit
-/// of biomass in feed. What stays here is the animal web's own economy. `knowledge_progress_per_turn` /
-/// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
-/// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
-/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate **both** animal
-/// investment verbs check today — `Tame` at rung 2 and `Corral` at rung 3. **The cultivation
-/// asymmetry is gone:** taming is no longer ungated, and a Sustain hunt no longer tames anything —
-/// it only *teaches*, exactly as a Sustain forage only teaches Cultivation.
+/// of biomass in feed. What stays here is the animal web's own economy.
+///
+/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn` /
+/// `knowledge_completion_threshold` moved to `intensification_ladder.json`'s ladder-level `knowledge`
+/// block, which `labor_config` had duplicated verbatim — once the earn path became one rung-driven
+/// seam (`RungDef::knowledge_earned`), a number that paces *both* food webs belonged to the ladder,
+/// exactly like the build dials. **And the gate they pace reshuffled with them:** Herding gates `Tame`
+/// (rung 2) and **only** `Tame`; `Corral` (rung 3) is gated on **Penning**, which is earned by working
+/// an already-tamed herd — one knowledge per rung-transition. **The cultivation asymmetry is gone:**
+/// taming is no longer ungated, and a Sustain hunt no longer tames anything — it only *teaches*,
+/// exactly as a Sustain forage only teaches Cultivation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HusbandryConfig {

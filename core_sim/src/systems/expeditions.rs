@@ -417,12 +417,19 @@ pub fn advance_expeditions(
                             FollowPolicy::Market => (false, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
-                            // The investment policies are **not an expedition concept**: taming and
-                            // penning are place-bound work a resident band does, and
+                            // The investment policies are **not an expedition concept**: every
+                            // rung-transition is place-bound work a resident band does, and
                             // `send_hunt_expedition` rejects them at launch — so this is unreachable (and
                             // `hunt_expedition_ceiling` `debug_assert!`s if it ever is reached). It
                             // takes nothing (ceiling `0.0`), so end the trip immediately rather than
                             // loop forever taking zero: the party comes home empty and says so.
+                            //
+                            // **Listed rather than `is_investment()`-derived, deliberately**: this is an
+                            // EXHAUSTIVE match, so a new `FollowPolicy` **fails to compile** here until
+                            // someone says how a trip under it ends. A predicate guard would need a
+                            // catch-all and would silently hand a new verb this behaviour — trading the
+                            // compiler's forcing for the very rot that broke `hunt_expedition_ceiling`.
+                            // Exhaustive matches don't drift; `matches!` lists do.
                             FollowPolicy::Cultivate
                             | FollowPolicy::Sow
                             | FollowPolicy::Tame
@@ -577,10 +584,12 @@ fn hunt_expedition_ceiling(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    if matches!(
-        policy,
-        FollowPolicy::Cultivate | FollowPolicy::Sow | FollowPolicy::Corral
-    ) {
+    // **Derived, never re-listed** (`FollowPolicy::is_investment`). The hand-written `matches!` this
+    // replaces had rotted: it omitted `Tame`, so a Tame expedition sailed straight past this assert
+    // and fell through to `hunt_policy_ceiling`, which handed back a real pastoral-dip ceiling — a
+    // *plausible* number hiding the hole this arm exists to make loud. That is the whole reason the
+    // grouping has one home now.
+    if policy.is_investment() {
         debug_assert!(
             false,
             "investment policy {} reached a hunting expedition — send_hunt_expedition must reject it",
@@ -619,6 +628,8 @@ fn hunt_expedition_floor(
         // Sustain is a flow (no floor). The investment rungs are unreachable on an expedition — see
         // `hunt_expedition_ceiling`, which rejects them before this is reached; treating them as
         // "no floor" here keeps the O(1) fill bound conservative (it never under-estimates).
+        // Exhaustive, for `hunt_expedition_ceiling`'s reason above: a new verb must fail to compile
+        // here rather than inherit "no floor" from a catch-all.
         FollowPolicy::Sustain
         | FollowPolicy::Cultivate
         | FollowPolicy::Sow
@@ -1130,6 +1141,51 @@ mod hunt_trip_bound_tests {
             }
         }
         rejected
+    }
+
+    /// **The regression this whole seam exists for.** `hunt_expedition_ceiling`'s hand-written
+    /// `matches!` omitted `Tame`, so a Tame expedition sailed *past* the `debug_assert!` meant to
+    /// catch it and fell through to `hunt_policy_ceiling`, which handed back a real pastoral-dip
+    /// ceiling — a plausible-looking number hiding the hole. Now that the guard derives from
+    /// `FollowPolicy::is_investment`, Tame trips it like every other rung-transition verb.
+    ///
+    /// Asserted as a **panic** because that is the contract: a debug build must scream (release
+    /// degrades to `0.0` rather than panicking inside the turn loop). Before the fix this call
+    /// returned a positive ceiling and did not panic at all.
+    #[test]
+    #[should_panic(expected = "investment policy tame reached a hunting expedition")]
+    fn a_tame_expedition_trips_the_investment_guard_like_its_siblings() {
+        let fauna = FaunaConfig::builtin();
+        let ecology = fauna.ecology;
+        let _ = hunt_expedition_ceiling(
+            FollowPolicy::Tame,
+            500.0,
+            1000.0,
+            &ecology,
+            &fauna,
+            &LadderConfig::builtin(),
+        );
+    }
+
+    /// Every investment verb reaches the guard, derived from the grouping rather than re-listed — so
+    /// a future rung-transition verb is covered here the day it exists.
+    #[test]
+    fn every_investment_policy_is_refused_a_hunting_expedition_ceiling() {
+        for policy in [
+            FollowPolicy::Cultivate,
+            FollowPolicy::Sow,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+        ] {
+            assert!(
+                policy.is_investment(),
+                "{policy:?} must read as an investment rung — that predicate IS the guard"
+            );
+        }
+        // ...and no extractive policy is caught by it (the guard must not swallow a real trip).
+        for policy in FollowPolicy::EXTRACTIVE {
+            assert!(!policy.is_investment());
+        }
     }
 
     #[test]

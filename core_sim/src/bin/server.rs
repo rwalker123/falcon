@@ -1590,10 +1590,12 @@ fn seed_source_yield(
 /// 1. **Kind.** The *investment* policies are kind-exclusive: `Cultivate`/`Sow` are Forage-only,
 ///    `Tame`/`Corral` are Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid
 ///    combo is rejected outright rather than silently coerced.
-/// 2. **Gates.** Cultivate requires the faction to **know Cultivation** and the patch to be
-///    **Thriving** (and not already tended, and not someone else's). Corral requires the faction to
-///    **know Herding** and to own the **domesticated** herd (and it not already be penned). These are
-///    the same gates the retired early-claim commands enforced — they now guard the *policy* instead.
+/// 2. **Gates — one knowledge per rung-transition** (§4.3). Each investment verb resolves its gate off
+///    its OWN rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving**
+///    patch (not already tended, not someone else's); **`Sow`** needs **Seed Selection** + ground the
+///    `plant:field` rung's `site_requirement` accepts (see `validate_sow`); `Tame` needs **Herding**
+///    (see `validate_tame`); and `Corral` needs **Penning** — *not* Herding, which gates `tame` alone —
+///    plus an owned, **domesticated**, not-yet-penned herd of a `pen`-ceiling species.
 ///
 /// The extractive policies (Sustain/Surplus/Market/Eradicate) are always valid on either kind.
 fn validate_labor_policy(
@@ -2252,14 +2254,14 @@ fn handle_send_hunt_expedition(
         // cannot tame a herd, pen it, or sow a field and walk home — so they are rejected here
         // alongside an unparseable token.
         //
-        // **Derived from the grouping, never re-listed.** `EXTRACTIVE` *is* the expedition's whole
-        // axis (`FollowPolicy::EXTRACTIVE`'s own docs say so, and the snapshot's trip-estimate export
-        // already walks exactly it), so asking whether the policy is in it cannot drift. The old
-        // hand-written `matches!(Cultivate | Corral)` had already drifted: it silently **accepted
-        // `tame`**, which would have reached `hunt_expedition_ceiling`'s unreachable arm — the exact
-        // "a parallel list rots" hazard `teaches_knowledge` is an exhaustive match to avoid.
+        // **Derived from the grouping, never re-listed** (`FollowPolicy::is_investment` — the one
+        // home for that question). `EXTRACTIVE` *is* the expedition's whole axis (its own docs say so,
+        // and the snapshot's trip-estimate export already walks exactly it), so this cannot drift. The
+        // hand-written `matches!(Cultivate | Corral)` it replaced had already drifted — it silently
+        // **accepted `tame`**, which then sailed past `hunt_expedition_ceiling`'s `debug_assert!` and
+        // took a plausible-looking pastoral-dip ceiling.
         Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) if FollowPolicy::EXTRACTIVE.contains(&parsed) => parsed,
+            Ok(parsed) if !parsed.is_investment() => parsed,
             _ => {
                 emit_command_failure(
                     app,
@@ -2783,18 +2785,22 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 /// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
 /// what the client's policy picker does; it **sows nothing outright**.
 ///
-/// What makes it the interesting verb: `Sow` **places** a food source. Any naturally food-bearing tile
-/// will take seed — *including one that carries no forage site at all* — so a crew can put a Field on
-/// the floodplain they chose rather than the stand the wild chose for them. That is the whole
-/// sedentarization pull, and it is the one place the two food webs legitimately differ (`Corral` needs
-/// a herd you already tamed; seed travels). The seed itself goes into the ground in the labor arm, on
-/// the first turn a crew actually works the tile under this policy — so `assign_labor … sow` and this
-/// command place a Field on exactly the same terms.
+/// What makes it the interesting verb: `Sow` **places** a food source — *including on ground that
+/// carries no forage site at all* — so a crew can put a Field on the floodplain they chose rather than
+/// the stand the wild chose for them. That is the one place the two food webs legitimately differ
+/// (`Corral` needs a herd you already tamed; seed travels). The seed itself goes into the ground in
+/// the labor arm, on the first turn a crew actually works the tile under this policy — so
+/// `assign_labor … sow` and this command place a Field on exactly the same terms.
 ///
-/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the ground must bear food
-/// naturally (rock/ice/desert need **rung 4, Worked Land**), the faction must know **Seed Selection**,
-/// and the tile must not already be a Field or another people's — plus the rejection when **no band is
-/// foraging** it.
+/// **And the ground is scarce, which is the point**: rung 3 carries seed but not water or fertilizer,
+/// so the `plant:field` rung's `site_requirement` demands land that is *already* very fertile and near
+/// fresh water — **46 of 4160 tiles** on the standard map. *Which* tile a band can farm is therefore a
+/// real decision, and a band may have to **move** to farm at all: that is the sedentarization pull.
+///
+/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the **land** must take seed —
+/// too thin and/or too dry ground waits for **rung 4, Worked Land** — the faction must know **Seed
+/// Selection**, and the tile must not already be a Field or another people's — plus the rejection when
+/// **no band is foraging** it.
 fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     let target = LaborTarget::Forage {
         tile,
@@ -2950,7 +2956,8 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
 /// The pen's whole life rides `CommandEventKind::Corral`, so the extend feed lines reuse it.
 ///
 /// Validates: a herd penned **exactly at `tile`** (`corralled_at`, the fixed pen anchor — not the
-/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Herding**,
+/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Penning** (a ring
+/// rides the same `animal:pen` rung as the initial build, so it takes that rung's gate — not Herding),
 /// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
 /// keeping it (or the ring never accrues, and an untended pen escapes anyway).
 fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
@@ -5888,7 +5895,7 @@ mod tests {
         assert!(!herd_is_corralled(&app, &id));
     }
 
-    /// The repurposed `corral`: a faction that knows Herding and owns the domesticated herd on the
+    /// The repurposed `corral`: a faction that knows Penning and owns the domesticated herd on the
     /// tile **sets the Corral policy** on the band already hunting it. The pen is not built yet — that
     /// costs `1 / corral_build_progress_per_turn` turns of the reduced Corral take.
     #[test]
@@ -6095,7 +6102,10 @@ mod tests {
         let id = seed_herd(app, coord, owner);
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.corral_at(coord);
+        assert!(
+            herd.corral_at(coord),
+            "the fixture species must be pennable"
+        );
         id
     }
 
@@ -6203,7 +6213,7 @@ mod tests {
         assert_eq!(herd_pen_state(&app, &id), (0, false));
     }
 
-    /// The happy path: an owned, kept, Herding-known pen below the max enters the extending state.
+    /// The happy path: an owned, kept, Penning-known pen below the max enters the extending state.
     #[test]
     fn extend_pen_sets_the_extending_state() {
         let mut app = build_headless_app();

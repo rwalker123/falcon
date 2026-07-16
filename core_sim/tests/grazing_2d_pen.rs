@@ -130,7 +130,7 @@ fn seat_pen(
         r,
     );
     herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
-    herd.corral_at(tile);
+    assert!(herd.corral_at(tile), "the fixture species must be pennable");
     herd.pen_radius = radius;
     registry.herds.push(herd);
     "pen_0".to_string()

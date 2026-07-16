@@ -746,7 +746,7 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     herd.biomass = herd.carrying_capacity;
     herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     let tile = herd.position();
-    herd.corral_at(tile);
+    assert!(herd.corral_at(tile), "the fixture species must be pennable");
     tile
 }
 

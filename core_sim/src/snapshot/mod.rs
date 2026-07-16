@@ -1433,7 +1433,10 @@ mod tests {
             0.0,
             0.05,
         );
-        penned.corral_at(UVec2::new(4, 4));
+        assert!(
+            penned.corral_at(UVec2::new(4, 4)),
+            "the fixture species must be pennable"
+        );
         registry.herds.push(penned);
         // A second, un-penned herd stays mobile (corralled = false).
         registry.herds.push(Herd::new(
@@ -1587,7 +1590,10 @@ mod tests {
             0.0,
             0.05,
         );
-        penned.corral_at(UVec2::new(4, 4));
+        assert!(
+            penned.corral_at(UVec2::new(4, 4)),
+            "the fixture species must be pennable"
+        );
         // The keeper could only pay half the feed last turn → the herd is starving.
         penned.pen_fed_fraction = HALF_FED;
         registry.herds.push(penned);
@@ -1680,7 +1686,10 @@ mod tests {
             0.05,
         );
         penned.accrue_domestication(FactionId(0), RUNG_COMPLETE);
-        penned.corral_at(UVec2::new(3, 3));
+        assert!(
+            penned.corral_at(UVec2::new(3, 3)),
+            "the fixture species must be pennable"
+        );
         registry.herds.push(penned);
 
         let telemetry = HerdTelemetry {

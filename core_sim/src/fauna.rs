@@ -241,14 +241,14 @@ pub struct Herd {
     /// `Some` = the herd does NOT roam (`advance_herds` skips its movement — it stays put) and is
     /// paid its keeper **place-local** at the higher corral rate (via the tending Hunt assignment in
     /// `advance_labor_allocation`), not the mobile even-split husbandry yield. Only a *domesticated*
-    /// herd whose owner knows Herding can be corralled (`corral` command). Authoritative sim state —
+    /// herd whose owner knows **Penning** can be corralled (`corral` command). Authoritative sim state —
     /// snapshot-persisted. The animal mirror of a cultivated patch being a fixed tended patch;
     /// contrast the deliberate asymmetry — an *un*corralled domesticated herd stays mobile
     /// (pastoralism travels with the band).
     pub corralled_at: Option<UVec2>,
     /// Pen-construction progress in `[0.0, 1.0]`; `1.0` = the pen is built (and `corralled_at` is set
     /// that same turn). Accrues **only** while a band works this herd under the explicit
-    /// `FollowPolicy::Corral` policy (faction knows Herding + owns the *domesticated* herd), at
+    /// `FollowPolicy::Corral` policy (faction knows **Penning** + owns the *domesticated* herd), at
     /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
     /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
     /// buys. Authoritative sim state — snapshot-persisted (`HerdState.corral_progress`), so a rollback
@@ -401,7 +401,7 @@ impl Herd {
     }
 
     /// **Can this herd be tamed** (Grazing 2d-δ)? Gated by the species' `husbandry_ceiling` — a `Wild`
-    /// species is hunt-only, so domestication accrual and the `domesticate` claim no-op / reject.
+    /// species is hunt-only, so domestication accrual and the `tame` verb no-op / reject.
     pub fn can_domesticate(&self) -> bool {
         self.husbandry_ceiling.allows_domestication()
     }
@@ -465,12 +465,42 @@ impl Herd {
     /// Fixes its position and grants a one-turn "tended" grace (`corralled_tended_this_turn = true`)
     /// so the first `advance_husbandry` pass after penning spares it — the keeper's Hunt assignment
     /// then re-marks it tended each Population stage to keep it penned.
-    pub fn corral_at(&mut self, tile: UVec2) {
+    ///
+    /// **Returns `false` and pens NOTHING if the species' `husbandry_ceiling` forbids a pen**
+    /// (Grazing 2d-δ). The ceiling was enforced at the *commands* (`validate_labor_policy`,
+    /// `handle_extend_pen`) and at the `Corral` accrual, but **not here — at the state mutation** —
+    /// so this method would happily pen a **mammoth**: `wild`-ceiling, so `accrue_domestication`
+    /// early-returns and it can never be tamed or owned, yet `corralled_at`/`corral_progress` were
+    /// set unconditionally and the tend branch only checks `is_corralled()`. That produced a **wild,
+    /// unowned, penned herd** — a state the real sim cannot reach, which a test fixture nonetheless
+    /// stood on for real. This is the same hole slice 3a found when the `domesticate` early-claim let
+    /// you claim a mammoth, and it is closed the same way: **`accrue_domestication` self-guards on
+    /// `can_domesticate()`, so `corral_at` self-guards on `can_pen()`** — the invariant is structural
+    /// and holds regardless of call site.
+    ///
+    /// **Loud in debug, honest in release**, the `hunt_expedition_ceiling` convention: every shipped
+    /// path already gates on `can_pen()`, so reaching here with a non-`pen` species is a bug and a
+    /// debug build screams; release refuses rather than fabricating the impossible state. It returns
+    /// `bool` rather than no-op'ing silently — a caller left believing it penned something is worse
+    /// than a loud failure.
+    #[must_use = "a pen may be refused by the species' husbandry ceiling — do not assume it was built"]
+    pub fn corral_at(&mut self, tile: UVec2) -> bool {
+        if !self.can_pen() {
+            debug_assert!(
+                false,
+                "{} cannot be penned (husbandry_ceiling = {}) — every corral path must gate on \
+                 `can_pen()` before reaching `corral_at`",
+                self.species,
+                self.husbandry_ceiling.as_str()
+            );
+            return false;
+        }
         self.corralled_at = Some(tile);
         self.current_pos = tile;
         self.next_pos = None;
         self.corral_progress = 1.0;
         self.corralled_tended_this_turn = true;
+        true
     }
 
     /// Accrue pen-construction progress for `faction` (the keeper band, working the herd under
@@ -485,8 +515,9 @@ impl Herd {
         }
         self.corral_progress = (self.corral_progress + amount).min(1.0);
         if self.corral_progress >= 1.0 {
-            self.corral_at(tile);
-            return true;
+            // The ceiling is already gated upstream (the `Corral` policy accrual + the commands), so
+            // this can only refuse on a bug — and then the pen is genuinely not built, so say so.
+            return self.corral_at(tile);
         }
         false
     }

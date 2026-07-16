@@ -135,8 +135,9 @@ pub fn advance_labor_allocation(
                     // The **gather** season is the food module's. A tile with no module offers no
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
-                    // `Sow` places a Field on any naturally food-bearing biome, module or not, and a
-                    // Field's harvest is biomass-based and seasonless.
+                    // `Sow` places a Field on ground the `plant:field` rung's `site_requirement`
+                    // accepts (rich + watered), module or not, and a Field's harvest is biomass-based
+                    // and seasonless.
                     let seasonal = food_modules
                         .get(tile_entity)
                         .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
@@ -622,7 +623,8 @@ pub fn advance_labor_allocation(
                     // **Corral — the investment policy** (the animal twin of Cultivate). The crew is
                     // building the pen, not hunting: `hunt_take` above already paid only the reduced
                     // Corral ceiling (the rung's `yield_fraction_while_building × MSY` — the up-front
-                    // cost), and here the pen accrues. Gates: the faction must **know Herding** and **own a
+                    // cost), and here the pen accrues. Gates: the faction must **know Penning** (the
+                    // rung's own `unlock_knowledge` — Herding gates `tame` alone since §4.3) and **own a
                     // domesticated herd**. A gate that lapses mid-build just stops accrual that turn
                     // (progress is kept — a half-built pen is materials on the ground). Accrued
                     // **after** the take, so this turn pays exactly what the pre-commit forecast
@@ -1435,7 +1437,10 @@ mod labor_yield_tests {
         // Pen the herd in place (Rung 1c) so a Hunt assignment tends rather than hunts it.
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].corral_at(UVec2::new(0, 0));
+            assert!(
+                registry.herds[0].corral_at(UVec2::new(0, 0)),
+                "the fixture species must be pennable"
+            );
         }
 
         let forager = spawn_band(
@@ -1685,7 +1690,10 @@ mod labor_yield_tests {
         cultivate_source_patch(&mut world, patch_cap);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].corral_at(SOURCE);
+            assert!(
+                registry.herds[0].corral_at(SOURCE),
+                "the fixture species must be pennable"
+            );
         }
 
         let patch = world

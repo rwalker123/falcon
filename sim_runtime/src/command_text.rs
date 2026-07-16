@@ -166,19 +166,19 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "sow",
         aliases: &[],
-        summary: "Set the Sow policy on the bands foraging a tile: an investment that builds a Field, out-yielding a tended patch. It PLACES the source — any naturally food-bearing tile will take seed, even one with no forage site on it — but it cannot farm rock, ice or desert (needs Seed Selection knowledge, earned by working tended patches).",
+        summary: "Set the Sow policy on the bands foraging a tile: an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
         usage: "sow <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "corral",
         aliases: &[],
-        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Herding knowledge, earned by Sustain hunting).",
+        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
         usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
-        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (needs Herding, an owned penned herd, and room below the pen-radius max).",
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (a ring rides the same rung as the pen, so it needs Penning too — plus an owned penned herd and room below the pen-radius max).",
         usage: "extend_pen <faction_id> <x> <y>",
     },
     CommandVerbHelp {

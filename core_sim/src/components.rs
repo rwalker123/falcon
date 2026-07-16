@@ -979,11 +979,22 @@ pub enum FollowPolicy {
     /// **Forage-only.** Prepare the patch into a tended crop (see the enum docs).
     Cultivate,
     /// **Forage-only.** Sow a **Field** — the plant rung-3 verb, the twin of `Corral`
-    /// (`docs/plan_intensification_ladder.md` §2). It **places** a food source: on naturally
-    /// food-bearing ground (`forage.capacity_by_biome > 0`) it builds a Field *even where no patch
-    /// existed*, because seed travels — the one asymmetry with the animal branch, where `Corral`
-    /// needs a herd you already tamed. It cannot make rock, ice or desert farmable; that is rung 4
-    /// (Worked Land), a later arc.
+    /// (`docs/plan_intensification_ladder.md` §2). It **places** a food source: it builds a Field
+    /// *even where no patch existed*, because seed travels — the one asymmetry with the animal
+    /// branch, where `Corral` needs a herd you already tamed.
+    ///
+    /// **But only on ground the land itself will farm, and that is SCARCE.** Rung 3 knows how to move
+    /// seed, not how to *fertilize*, so the ground must already do the fertilizing: the
+    /// `plant:field` rung's **`site_requirement`** demands **very fertile** ground (`min_forage_capacity`
+    /// 195 — the river-deposit class: delta / floodplain / alluvial plain) that is **near fresh water**
+    /// (`requires_fresh_water` — a river along one of its sides, fresh-water ground, or a lake/channel
+    /// next door; a salt coast does **not** count). Measured on the standard map: **46 sowable tiles of
+    /// 4160**. Merely bearing *some* food is nowhere near enough (2328 tiles do). Making thin or dry
+    /// ground farmable is rung 4 (Worked Land), a later arc — which will be a **looser copy of that
+    /// same record**.
+    ///
+    /// The rule lives on the rung, never here: `forage::rung_site_refusal` is the one seam the `sow`
+    /// command, the labor arm and the wire all resolve through.
     Sow,
     /// **Hunt-only.** Tame a wild herd into pastoral livestock (see the enum docs) — the animal
     /// rung-2 verb. Sustain no longer tames anything: it only *teaches* the faction Herding.
@@ -1019,6 +1030,30 @@ impl FollowPolicy {
         FollowPolicy::Tame,
         FollowPolicy::Corral,
     ];
+
+    /// **Is this an INVESTMENT rung — a rung-transition verb rather than a way of taking?**
+    ///
+    /// **THE definition, and the one place any site may ask.** "Investment" is defined as *the
+    /// complement of [`FollowPolicy::EXTRACTIVE`]* — the enum docs already say so ("they are exactly
+    /// the policies **not** in `EXTRACTIVE`"), so deriving it here rather than re-listing the verbs is
+    /// the *statement*, not a shortcut.
+    ///
+    /// **It exists because hand-written lists of these verbs rot.** Two had already rotted before this
+    /// was factored out: `send_hunt_expedition`'s launch gate silently accepted `tame`, and
+    /// `hunt_expedition_ceiling`'s `matches!` was missing it too — so a Tame expedition sailed past the
+    /// `debug_assert!` meant to catch it and quietly computed a *plausible* pastoral-dip ceiling, which
+    /// is precisely the "fallback hiding the hole" the assert exists to prevent. Every predicate site
+    /// now routes through here; a **new investment verb needs no edit at any of them**.
+    ///
+    /// Note the complement of a *const list* is deliberate here where
+    /// [`FollowPolicy::teaches_knowledge`] is deliberately an exhaustive `match`: teaching is a
+    /// *judgement* about a new verb that someone must make (so it should fail to compile), whereas
+    /// "is it an investment" is a *fact* about which grouping it is in — and
+    /// `follow_policy_teaching_matches_the_extractive_grouping` pins the two together, so they cannot
+    /// disagree.
+    pub fn is_investment(self) -> bool {
+        !Self::EXTRACTIVE.contains(&self)
+    }
 
     /// **Does working a source under this policy teach the faction anything?**
     /// (`docs/plan_intensification_ladder.md` §4.2 — *"only stewardship policies teach"*.) THE single
@@ -1266,6 +1301,14 @@ mod tests {
                 "{policy:?}: within EXTRACTIVE, Sustain alone is stewardship — the rest overdraw"
             );
         }
+        // Every extractive rung is, by definition, NOT an investment — `is_investment` and
+        // `EXTRACTIVE` are the same statement and must stay so.
+        for policy in FollowPolicy::EXTRACTIVE {
+            assert!(
+                !policy.is_investment(),
+                "{policy:?} is in EXTRACTIVE — it cannot also be an investment rung"
+            );
+        }
         // The investment rungs: everything HUNT_POLICIES/forage offer that isn't extractive.
         for policy in [
             FollowPolicy::Cultivate,
@@ -1276,6 +1319,20 @@ mod tests {
             assert!(
                 !FollowPolicy::EXTRACTIVE.contains(&policy),
                 "{policy:?} is an investment rung — it must not be in EXTRACTIVE"
+            );
+            assert!(
+                policy.is_investment(),
+                "{policy:?} is a rung-transition verb — `is_investment` is what every launch gate and \
+                 unreachable-arm asks, so it must say so"
+            );
+            // **Kind-exclusivity, pinned.** Every investment rung is place-bound work on ONE food web
+            // (`Cultivate`/`Sow` prepare ground; `Tame`/`Corral` work a herd) — never both. The two
+            // `valid_for_*` predicates are hand-written `!matches!` complements, so a NEW investment
+            // verb would default to legal on *both* kinds; this is what catches that.
+            assert_ne!(
+                policy.valid_for_forage(),
+                policy.valid_for_hunt(),
+                "{policy:?} is an investment rung — it must be legal on exactly ONE kind"
             );
             assert!(
                 policy.teaches_knowledge(),

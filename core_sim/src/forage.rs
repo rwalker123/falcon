@@ -43,12 +43,17 @@
 //!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
 //!   below the cultivated threshold, reverting it to a wild gather patch).
 //!
-//! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` on naturally food-bearing
-//! ground (non-zero `capacity_by_biome`) fills `field_progress`, and a completed Field pays its
-//! workers `biomass × field_provisions_per_biomass` — the tended patch's shape at twice the rate.
-//! Unlike every other rung, **it needs no source below it**: seed travels, so sowing a hospitable tile
-//! with no spawned patch *creates* one (`ForagePatch::sown`), at that tile's own biome capacity. It
-//! still cannot farm rock, ice or desert — that is rung 4 (Worked Land). Design:
+//! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` fills `field_progress`, and a
+//! completed Field pays its workers `biomass × field_provisions_per_biomass` — the tended patch's
+//! shape at twice the rate. Unlike every other rung, **it needs no source below it**: seed travels, so
+//! sowing a qualifying tile with no spawned patch *creates* one (`ForagePatch::sown`), at that tile's
+//! own biome capacity.
+//!
+//! **Where it may be sown is SCARCE, and that is the mechanic** — rung 3 moves seed but cannot
+//! fertilize, so the land must already be **very fertile** *and* **near fresh water** (the
+//! `plant:field` rung's `site_requirement`; `rung_site_refusal` + `tile_is_fresh_watered` are the one
+//! seam the command, the labor arm and the wire all judge through). **46 of 4160 tiles** on the
+//! standard map — the river valleys. Thin or dry ground waits for rung 4 (Worked Land). Design:
 //! `docs/plan_intensification_ladder.md` §2.
 
 use std::collections::HashMap;
@@ -103,8 +108,9 @@ pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
 /// scales a forager's *throughput* (`forage_per_worker_biomass`), so a zero here means no worker can
 /// gather anything there, which is exactly right for ground the wild put no food site on.
 ///
-/// It became a reachable reading in slice 5: `Sow` places a Field on any naturally food-bearing biome,
-/// module or not, so a patch may now stand on a tile with no module. Such a patch offers nothing to
+/// It became a reachable reading in slice 5: `Sow` places a Field on any ground the `plant:field`
+/// rung's `site_requirement` accepts — module or not — so a patch may now stand on a tile with no
+/// module. Such a patch offers nothing to
 /// **gather** — the only thing to work there is the crop you sowed, whose managed harvest is
 /// biomass-based and seasonless (`field_provisions`). Shared by the Forage labor arm, the assign-time
 /// yield seed and the snapshot forecast, so all three read the same "no season" answer.
