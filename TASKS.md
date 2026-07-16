@@ -219,6 +219,33 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
 - [x] Integrate tracing/tracing-subscriber metrics dump accessible via CLI.
 - [x] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work). _Status_: Exercised by `snapshot::tests::terrain_overlay_delta_updates_on_biome_change` covering biome/tag mutation delta emission.
+- [ ] **Config Tuning panel (inspector) — collapse the playtest turnaround loop.** Every balance
+  question this project asks ("does 0.16 consumption feel right?", "is 125 turns to tame a Steppe
+  Runner too long?", "should `pen_gain` be higher?") is answered by *editing a JSON file, rebuilding,
+  and replaying from turn 0*. That edit→rebuild→replay cycle is now the slowest part of design
+  iteration, and the dial count keeps growing (`demographics_config`, `fauna_config`, `labor_config`,
+  `intensification_ladder`, `graze`, `map_presets`, …). Build a Godot inspector panel that **lists the
+  tunable parameters, lets you edit them, and restarts the sim with the overrides** — no rebuild, no
+  hand-editing JSON.
+  - **Restart-scoped is enough** (the ask): tune → restart → observe. Live hot-reload is a non-goal;
+    most of these dials only make sense applied from turn 0, and several configs deliberately are not
+    on the reload path.
+  - **Ride the existing seam, don't invent one:** each config already loads via `from_json_str` with a
+    `*_CONFIG_PATH` / `*_PATH` env override and its own `validate()` that logs
+    `<config>.invalid_rejected` and falls back to the builtin. The panel should write an override file
+    (or push overrides to the server) and use that same path, so **validation is enforced for free and
+    a bad dial can't silently corrupt a run** — surface the rejection in the panel rather than failing
+    quietly.
+  - **Discoverability is the real design question:** the configs are hand-written JSON with rich
+    `_comment_*` documentation (deliberately — see the no-magic-numbers rule). A panel that drops those
+    comments loses the *why* behind each dial. Prefer surfacing the comment as help text over inventing
+    a parallel schema; consider whether the server should serve a config catalog (name, current value,
+    bounds from `validate()`, comment) the way `great_discovery_definitions` is streamed, so the client
+    doesn't re-read local JSON.
+  - Scope to decide when picked up: which configs are in (start with the balance-heavy ones —
+    `demographics_config`, `fauna_config`, `intensification_ladder`, `labor_config`), whether values
+    persist to disk or live only for the session, and whether a "reset to builtin" is per-dial or
+    per-config. (Owner: TBD, Estimate: 2–3d; Deps: none — every config seam it needs already exists.)
 
 ## Core Simulation Roadmap
 - [x] Implement per-faction order submission and turn resolution phases (Owner: Sam, Estimate: 4d).
