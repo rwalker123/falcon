@@ -66,6 +66,7 @@ pub fn advance_expeditions(
     visibility_config: Res<crate::visibility_config::VisibilityConfigHandle>,
     fauna_config: Res<FaunaConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tick: Res<SimulationTick>,
@@ -95,6 +96,7 @@ pub fn advance_expeditions(
     let cfg = expedition_config.get();
     let fauna = fauna_config.get();
     let labor = labor_config.get();
+    let ladder = ladder_config.get();
     let vis_cfg = visibility_config.0.as_ref();
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     let grid_width = tile_registry.width;
@@ -230,6 +232,7 @@ pub fn advance_expeditions(
                         FollowPolicy::Sustain,
                         per_worker_biomass,
                         &fauna,
+                        &ladder,
                         1.0,
                         carry_room_biomass,
                     );
@@ -340,6 +343,7 @@ pub fn advance_expeditions(
                             carrying_capacity,
                             &ecology,
                             &fauna,
+                            &ladder,
                         );
                         let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
                         // Conservation: a delivering party can only take the biomass it can actually
@@ -363,6 +367,7 @@ pub fn advance_expeditions(
                             carrying_capacity,
                             &ecology,
                             &fauna,
+                            &ladder,
                         )
                         .min(carry_room_biomass.max(0.0));
                         herd.biomass -= take_biomass;
@@ -567,6 +572,7 @@ fn hunt_expedition_ceiling(
     carrying_capacity: f32,
     ecology: &EcologyConfig,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
 ) -> f32 {
     if matches!(policy, FollowPolicy::Cultivate | FollowPolicy::Corral) {
         debug_assert!(
@@ -578,7 +584,9 @@ fn hunt_expedition_ceiling(
     }
     match hunt_expedition_floor(policy, carrying_capacity, ecology) {
         // A flow, not a stock target — defer to the shared per-policy ceiling.
-        None => fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, ecology, fauna),
+        None => {
+            fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, ecology, fauna, ladder)
+        }
         Some(floor) => (biomass - floor).max(0.0),
     }
 }
@@ -614,6 +622,7 @@ fn hunt_expedition_floor(
 /// Hunting` arm, the launch forecast, and the exported ceiling all resolve through this one function
 /// (or its provisions wrappers below), so a preview can never quote a different ceiling than the take
 /// — the bug that made a Surplus trip read ~34 turns when it really filled in ~5.
+#[allow(clippy::too_many_arguments)] // the ecology, the ladder and the party's caps are all levers
 fn expedition_take_biomass(
     workers: u32,
     per_worker_biomass_capacity: f32,
@@ -622,8 +631,10 @@ fn expedition_take_biomass(
     carrying_capacity: f32,
     ecology: &EcologyConfig,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
 ) -> f32 {
-    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, fauna);
+    let ceiling =
+        hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, fauna, ladder);
     (workers as f32 * per_worker_biomass_capacity)
         .min(ceiling)
         .max(0.0)
@@ -636,6 +647,7 @@ fn expedition_take_biomass(
 /// accounts for that). `0` for a policy that [`FollowPolicy::delivers_food`] says carries nothing
 /// home (Eradicate — denial). This is what the client's pre-launch readout is pinned to
 /// (`core_sim/tests/expedition_hunt.rs`).
+#[allow(clippy::too_many_arguments)] // the ecology, the ladder and the labor tier are all levers
 pub fn expedition_take_provisions(
     workers: u32,
     policy: FollowPolicy,
@@ -643,6 +655,7 @@ pub fn expedition_take_provisions(
     carrying_capacity: f32,
     ecology: &EcologyConfig,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     labor: &LaborConfig,
 ) -> f32 {
     if !policy.delivers_food() {
@@ -656,6 +669,7 @@ pub fn expedition_take_provisions(
         carrying_capacity,
         ecology,
         fauna,
+        ladder,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
     scalar_from_f32(fauna::hunt_provisions(
@@ -683,19 +697,21 @@ pub fn expedition_take_provisions(
 /// (the exported `huntPolicyCeilings`, projected from [`fauna::hunt_forecast`]). That is the client's
 /// local-hunt yield preview; it is pinned to
 /// this function by `core_sim/tests/expedition_hunt.rs`.
+#[allow(clippy::too_many_arguments)] // the ecology, the ladder and the caller's caps are all levers
 pub fn hunt_take(
     herd: &mut Herd,
     workers: u32,
     policy: FollowPolicy,
     per_worker_biomass_capacity: f32,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     output_multiplier: f32,
     carry_room_biomass: f32,
 ) -> Scalar {
     // Per-policy ecology ceiling — THE single source ([`fauna::hunt_policy_ceiling`]): Sustain = the
     // MSY flow (a collapsing group gives nothing), Surplus = that × multiplier, Market = a commercial
-    // share, Eradicate = max take, Corral = the `corralling_yield_fraction × MSY` investment dip while
-    // the pen is built. Shared with the pre-commit forecast (`fauna::hunt_forecast`) and the
+    // share, Eradicate = max take, Corral = the `animal:pen` rung's `yield_fraction_while_building ×
+    // MSY` investment dip while the pen is built. Shared with the pre-commit forecast (`fauna::hunt_forecast`) and the
     // expedition, so no two hunters of the same herd can disagree about what a policy means.
     // The ceiling is resolved against the herd's OWN ecology + capacity (`herd_ecology` /
     // `herd_capacity` — the single source of the husbandry ladder's rung → growth-rate mapping), never
@@ -707,6 +723,7 @@ pub fn hunt_take(
         herd_capacity(herd, fauna),
         &herd_ecology(herd, fauna),
         fauna,
+        ladder,
     );
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
     // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
@@ -861,11 +878,13 @@ fn hunt_trip_provisions_bound(
 /// stationary, so the number means "turns spent *hunting* once you arrive" — the herd's position is
 /// never advanced. Eradicate delivers no food at all, so it gets no ETA (`delivers_food = false`).
 /// Pinned to a real party run forward through the real systems by `core_sim/tests/expedition_hunt.rs`.
+#[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
 pub fn hunt_trip_forecast(
     workers: u32,
     herd: &Herd,
     policy: FollowPolicy,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> HuntTripForecast {
@@ -886,18 +905,22 @@ pub fn hunt_trip_forecast(
     } else {
         full_horizon
     };
-    simulate_hunt_trip(workers, herd, policy, fauna, labor, expedition, horizon)
+    simulate_hunt_trip(
+        workers, herd, policy, fauna, ladder, labor, expedition, horizon,
+    )
 }
 
 /// The forecast's forward simulation, over an explicit `horizon` — [`hunt_trip_forecast`]'s body,
 /// split out so the O(1) short-circuit can run it for a single turn *and* so the bound's safety can
 /// be pinned against the **unabridged** run (`hunt_trip_bound_tests`). Everything the doc comment on
 /// `hunt_trip_forecast` promises lives here.
+#[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
 fn simulate_hunt_trip(
     workers: u32,
     herd: &Herd,
     policy: FollowPolicy,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
     horizon: u32,
@@ -948,6 +971,7 @@ fn simulate_hunt_trip(
             capacity,
             &ecology,
             fauna,
+            ladder,
         )
         .min(carry_room_biomass.max(0.0));
         quarry.biomass -= take_biomass;
@@ -1031,6 +1055,7 @@ mod hunt_trip_bound_tests {
         fauna: &FaunaConfig,
         labor: &LaborConfig,
         expedition: &ExpeditionConfig,
+        ladder: &LadderConfig,
     ) -> u32 {
         let mut rejected = 0;
         for domesticated in [false, true] {
@@ -1042,13 +1067,14 @@ mod hunt_trip_bound_tests {
                     for &policy in FollowPolicy::EXTRACTIVE.iter() {
                         for workers in WORKER_SWEEP {
                             let bounded = hunt_trip_forecast(
-                                workers, &herd, policy, fauna, labor, expedition,
+                                workers, &herd, policy, fauna, ladder, labor, expedition,
                             );
                             let full = simulate_hunt_trip(
                                 workers,
                                 &herd,
                                 policy,
                                 fauna,
+                                ladder,
                                 labor,
                                 expedition,
                                 expedition.hunt.forecast_horizon_turns,
@@ -1101,7 +1127,12 @@ mod hunt_trip_bound_tests {
         let fauna = FaunaConfig::builtin();
         let labor = LaborConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let rejected = assert_short_circuit_matches_full_simulation(&fauna, &labor, &expedition);
+        let rejected = assert_short_circuit_matches_full_simulation(
+            &fauna,
+            &labor,
+            &expedition,
+            &LadderConfig::builtin(),
+        );
         // The sweep would be vacuous if the bound never fired — the whole point is that it rejects
         // the bulk of the exported table (small game under every policy, Sustain on most herds).
         assert!(
@@ -1129,7 +1160,12 @@ mod hunt_trip_bound_tests {
                         labor.hunt.per_worker_biomass_capacity = per_worker_biomass_capacity;
                         let mut expedition = (*base_expedition).clone();
                         expedition.hunt.per_worker_carry = per_worker_carry;
-                        assert_short_circuit_matches_full_simulation(&fauna, &labor, &expedition);
+                        assert_short_circuit_matches_full_simulation(
+                            &fauna,
+                            &labor,
+                            &expedition,
+                            &LadderConfig::builtin(),
+                        );
                     }
                 }
             }

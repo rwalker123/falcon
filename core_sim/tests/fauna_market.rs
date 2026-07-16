@@ -11,10 +11,11 @@ use core_sim::{
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
     FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, WellbeingConfigHandle,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -57,6 +58,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());

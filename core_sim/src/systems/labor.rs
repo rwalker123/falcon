@@ -31,6 +31,7 @@ pub fn advance_labor_allocation(
     sim_config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
     food_modules: Query<&FoodModuleTag>,
@@ -38,6 +39,7 @@ pub fn advance_labor_allocation(
 ) {
     let fauna = fauna_config.get();
     let labor = labor_config.get();
+    let ladder = ladder_config.get();
     let wellbeing = wellbeing_config.get();
     let hunt = &fauna.hunt;
     let husbandry = &fauna.husbandry;
@@ -51,12 +53,24 @@ pub fn advance_labor_allocation(
     // band explicitly works it under the **Cultivate** policy.
     let cultivation = &labor.forage.cultivation;
     let knowledge_delta = scalar_from_f32(cultivation.knowledge_progress_per_turn);
-    let knowledge_threshold = scalar_from_f32(cultivation.knowledge_completion_threshold);
+    let knowledge_threshold = cultivation.knowledge_completion_threshold;
+    // The two rungs the build engine drives (`crate::intensification`): the plant's tended patch and
+    // the animal's pen. Their build dials — accrual rate, feral decay, and the investment dip — are
+    // the ladder's, not each web's, so the two paths can never be tuned apart. Hoisted out of the
+    // per-cohort loop alongside the knowledge levers.
+    let tended_rung = ladder.rung(RungKey::PlantTended);
+    let pen_rung = ladder.rung(RungKey::AnimalPen);
+    // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
+    // labor at the same forgone-yield price, so it must never drift from the initial build.
+    let pen_build_rate = pen_rung.build_accrual(FollowPolicy::Corral, true);
+    let pen_build_dip = pen_rung
+        .yield_fraction_while_building()
+        .expect("the pen rung is an investment — it has a build meter");
     // Rung 1c (earned Herding knowledge, the animal mirror): a Sustain-hunt on a Thriving herd
     // teaches the faction Herding, the gate the **Corral** policy checks. Mobile domestication stays
     // ungated (only *penning* needs Herding).
     let herding_knowledge_delta = scalar_from_f32(husbandry.knowledge_progress_per_turn);
-    let herding_knowledge_threshold = scalar_from_f32(husbandry.knowledge_completion_threshold);
+    let herding_knowledge_threshold = husbandry.knowledge_completion_threshold;
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
@@ -167,15 +181,22 @@ pub fn advance_labor_allocation(
                         continue;
                     }
                     let biomass_before = patch.biomass;
-                    let provisions =
-                        forage_take(patch, workers, *policy, &labor.forage, mult_f, seasonal);
+                    let provisions = forage_take(
+                        patch,
+                        workers,
+                        *policy,
+                        &labor.forage,
+                        &ladder,
+                        mult_f,
+                        seasonal,
+                    );
                     let take = biomass_before - patch.biomass;
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
                     // **Cultivate — the investment policy.** The crew is clearing and planting, not
                     // gathering: `forage_take` above already paid only the reduced Cultivate ceiling
-                    // (`cultivating_yield_fraction × MSY` — the up-front cost), and here the patch
+                    // (the rung's `yield_fraction_while_building × MSY` — the up-front cost), and here the patch
                     // accrues toward becoming a tended crop. Gates: the faction must **know
                     // Cultivation** (earned by Sustain-foraging, above) and the patch must be
                     // **Thriving**. If a gate lapses mid-run (e.g. another band overdraws the patch to
@@ -191,11 +212,17 @@ pub fn advance_labor_allocation(
                         // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
                         // under active preparation neither goes feral nor bleeds its partial progress.
                         patch.tended_this_turn = true;
-                        let knows_cultivation = discovery
-                            .get_progress(faction, CULTIVATION_DISCOVERY_ID)
-                            >= knowledge_threshold;
-                        if knows_cultivation && patch.ecology_phase == EcologyPhase::Thriving {
-                            patch.accrue_cultivation(faction, cultivation.progress_per_turn);
+                        // The rung's own gates, resolved for the engine: the faction must know the
+                        // rung's unlock knowledge (Cultivation) and the patch must be Thriving.
+                        let eligible = tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                            knows(&discovery, faction, knowledge, knowledge_threshold)
+                        }) && patch.ecology_phase == EcologyPhase::Thriving;
+                        // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
+                        // rung's verb and the gates hold); the patch owns its meter and the
+                        // side-effects of completing it.
+                        let accrual = tended_rung.build_accrual(*policy, eligible);
+                        if accrual > 0.0 {
+                            patch.accrue_cultivation(faction, accrual);
                             if patch.is_cultivated() {
                                 event_log.push(CommandEventEntry::new(
                                     tick.0,
@@ -345,12 +372,13 @@ pub fn advance_labor_allocation(
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
                         // **While EXTENDING the pen (2d-β) the keeper is fencing, not fully
-                        // harvesting**, so the take is DIPPED to `corralling_yield_fraction` — the
-                        // forgone yield IS the labor cost of the ring (the same dip the corral *build*
-                        // pays), consistent with §4 "worked by the keeper band's labor, no materials".
+                        // harvesting**, so the take is DIPPED to the pen rung's
+                        // `yield_fraction_while_building` — the forgone yield IS the labor cost of the
+                        // ring, and it is literally the same dip the corral *build* pays because both
+                        // read the one rung (§4 "worked by the keeper band's labor, no materials").
                         let mut take_biomass = fauna::pen_yield_biomass(herd, &fauna);
                         if herd.pen_extending {
-                            take_biomass *= husbandry.corralling_yield_fraction;
+                            take_biomass *= pen_build_dip;
                         }
                         herd.biomass -= take_biomass;
                         let provisions =
@@ -363,10 +391,7 @@ pub fn advance_labor_allocation(
                         // this turn pays exactly the dipped yield the forecast promised; the completed
                         // larger footprint's higher K arrives on the next `advance_herds`.
                         if herd.pen_extending
-                            && herd.accrue_pen_extension(
-                                husbandry.corral_build_progress_per_turn,
-                                husbandry.pen_radius_max,
-                            )
+                            && herd.accrue_pen_extension(pen_build_rate, husbandry.pen_radius_max)
                         {
                             let pen_tile = herd.corralled_at.unwrap_or_else(|| herd.position());
                             event_log.push(CommandEventEntry::new(
@@ -406,6 +431,7 @@ pub fn advance_labor_allocation(
                         *policy,
                         labor.hunt.per_worker_biomass_capacity,
                         &fauna,
+                        &ladder,
                         mult_f,
                         f32::INFINITY,
                     );
@@ -426,29 +452,29 @@ pub fn advance_labor_allocation(
                     }
                     // **Corral — the investment policy** (the animal twin of Cultivate). The crew is
                     // building the pen, not hunting: `hunt_take` above already paid only the reduced
-                    // Corral ceiling (`corralling_yield_fraction × MSY` — the up-front cost), and here
-                    // the pen accrues. Gates: the faction must **know Herding** and **own a
+                    // Corral ceiling (the rung's `yield_fraction_while_building × MSY` — the up-front
+                    // cost), and here the pen accrues. Gates: the faction must **know Herding** and **own a
                     // domesticated herd**. A gate that lapses mid-build just stops accrual that turn
                     // (progress is kept — a half-built pen is materials on the ground). Accrued
                     // **after** the take, so this turn pays exactly what the pre-commit forecast
                     // promised; the corral yield starts the turn after the pen completes.
                     if matches!(policy, FollowPolicy::Corral) {
-                        let knows_herding = discovery.get_progress(faction, HERDING_DISCOVERY_ID)
-                            >= herding_knowledge_threshold;
-                        // Grazing 2d-δ: only a `Pen`-ceiling species may build a pen. A `Wild`/`Pastoral`
-                        // herd never accrues corral progress (the command path also rejects it, so this
-                        // is unreachable for a legitimately-assigned Corral policy — belt and braces).
-                        if knows_herding
-                            && herd.can_pen()
+                        // The rung's own gates, resolved for the engine: the faction knows the rung's
+                        // unlock knowledge (Herding today), the species' husbandry ceiling reaches
+                        // this rung (Grazing 2d-δ: only a `Pen`-ceiling species may build a pen — a
+                        // `Wild`/`Pastoral` herd never accrues, and the command path rejects it too,
+                        // so this is belt and braces), the herd has climbed the rung below, and the
+                        // faction owns it.
+                        let eligible = pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                            knows(&discovery, faction, knowledge, herding_knowledge_threshold)
+                        }) && herd.can_pen()
                             && herd.is_domesticated()
-                            && herd.owner == Some(faction)
-                        {
+                            && herd.owner == Some(faction);
+                        // THE build seam — the same call the plant side's Cultivate arm makes.
+                        let accrual = pen_rung.build_accrual(*policy, eligible);
+                        if accrual > 0.0 {
                             let pen_tile = herd.position();
-                            if herd.accrue_corral(
-                                faction,
-                                husbandry.corral_build_progress_per_turn,
-                                pen_tile,
-                            ) {
+                            if herd.accrue_corral(faction, accrual, pen_tile) {
                                 event_log.push(CommandEventEntry::new(
                                     tick.0,
                                     CommandEventKind::Corral,
@@ -747,6 +773,7 @@ mod labor_yield_tests {
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
     use crate::forage::{advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID};
     use crate::forage::{ForagePatch, ForageRegistry};
+    use crate::intensification::{LadderConfig, LadderConfigHandle, RungKey};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
@@ -782,6 +809,7 @@ mod labor_yield_tests {
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(LadderConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
@@ -1314,8 +1342,13 @@ mod labor_yield_tests {
                     .cloned()
                     .expect("seeded patch");
                 let labor = world.resource::<LaborConfigHandle>().get();
-                let forecast =
-                    forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+                let forecast = forage_forecast(
+                    &patch,
+                    &labor.forage,
+                    &LadderConfig::builtin(),
+                    SEASONAL_WEIGHT,
+                    NEUTRAL_OUTPUT_MULT,
+                );
                 drop(labor);
 
                 let band = spawn_band(
@@ -1376,7 +1409,13 @@ mod labor_yield_tests {
                     .get()
                     .hunt
                     .per_worker_biomass_capacity;
-                let forecast = hunt_forecast(&herd, &fauna, per_worker, NEUTRAL_OUTPUT_MULT);
+                let forecast = hunt_forecast(
+                    &herd,
+                    &fauna,
+                    &LadderConfig::builtin(),
+                    per_worker,
+                    NEUTRAL_OUTPUT_MULT,
+                );
                 drop(fauna);
 
                 let band = spawn_band(
@@ -1437,8 +1476,13 @@ mod labor_yield_tests {
             .cloned()
             .expect("seeded patch");
         let labor = world.resource::<LaborConfigHandle>().get();
-        let patch_forecast =
-            forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+        let patch_forecast = forage_forecast(
+            &patch,
+            &labor.forage,
+            &LadderConfig::builtin(),
+            SEASONAL_WEIGHT,
+            NEUTRAL_OUTPUT_MULT,
+        );
         let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
         drop(labor);
         let herd = world
@@ -1447,7 +1491,13 @@ mod labor_yield_tests {
             .cloned()
             .expect("seeded herd");
         let fauna = world.resource::<FaunaConfigHandle>().get();
-        let herd_forecast = hunt_forecast(&herd, &fauna, hunt_per_worker, NEUTRAL_OUTPUT_MULT);
+        let herd_forecast = hunt_forecast(
+            &herd,
+            &fauna,
+            &LadderConfig::builtin(),
+            hunt_per_worker,
+            NEUTRAL_OUTPUT_MULT,
+        );
         drop(fauna);
 
         // One worker suffices, and no policy changes the managed yield (including the investment
@@ -1698,18 +1748,21 @@ mod labor_yield_tests {
     }
 
     /// **Cultivate is an investment.** With Cultivation known and the patch Thriving, working it under
-    /// the `Cultivate` policy pays only `cultivating_yield_fraction × the Sustain (MSY) yield` (the
-    /// dip) while accruing progress each turn; once progress reaches `1.0` the patch is cultivated and
+    /// the `Cultivate` policy pays only the `plant:tended` rung's `yield_fraction_while_building ×
+    /// the Sustain (MSY) yield` (the dip) while accruing progress each turn; once progress reaches `1.0` the patch is cultivated and
     /// pays the full tended yield instead — strictly more than the wild Sustain skim.
     #[test]
     fn cultivate_policy_pays_the_dip_then_the_tended_yield() {
         let (mut world, tile) = world_with_source(CAP);
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
         let (fraction, progress_per_turn) = {
-            let labor = world.resource::<LaborConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let tended = ladder.rung(RungKey::PlantTended);
             (
-                labor.forage.cultivation.cultivating_yield_fraction,
-                labor.forage.cultivation.progress_per_turn,
+                tended
+                    .yield_fraction_while_building()
+                    .expect("the tended rung is an investment"),
+                tended.build_accrual(FollowPolicy::Cultivate, true),
             )
         };
 
@@ -1805,10 +1858,12 @@ mod labor_yield_tests {
         const BIG_HERD_CAP: f32 = 1_000.0;
         let (fraction, build_per_turn) = {
             let (world, _) = world_with_source(CAP);
-            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let pen = ladder.rung(RungKey::AnimalPen);
             (
-                fauna.husbandry.corralling_yield_fraction,
-                fauna.husbandry.corral_build_progress_per_turn,
+                pen.yield_fraction_while_building()
+                    .expect("the pen rung is an investment"),
+                pen.build_accrual(FollowPolicy::Corral, true),
             )
         };
 

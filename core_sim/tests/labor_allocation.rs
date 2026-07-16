@@ -14,8 +14,8 @@ use core_sim::{
     CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
     FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
     HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
 };
@@ -56,6 +56,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());

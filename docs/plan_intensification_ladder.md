@@ -225,7 +225,12 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
 
 - [x] **1 — Manual-first + reconciliation.** Manual §2a "The Intensification Ladder" landed (and the
   stale Wildlife & Hunting verb/policy list corrected); §0a rulings and §2a vocabulary settled.
-- [ ] **2 — The rung engine + ladder config.** Extract today's bespoke rung logic into a generic engine
+- [x] **2 — The rung engine + ladder config.** **Landed, behavior-preserving** —
+  `core_sim/src/data/intensification_ladder.json` + `core_sim/src/intensification.rs` (`LadderConfig` /
+  `RungDef` / `validate()` / the `RungDef::build_accrual`-`build_decay`-`yield_fraction_while_building`
+  seam / the `knows` gate helper). Plant `tended` (Cultivate) and animal `pen` (Corral) are migrated onto
+  the engine and their build dials moved into the ladder verbatim; animal rung 2 stays bespoke for slice
+  3. Behavior primitives parse + validate, nothing reads them. Spec: Extract today's bespoke rung logic into a generic engine
   driven by `intensification_ladder.json`; define the behavior primitive enums (§5). **Land it
   behavior-preserving first** (same rungs, same numbers, now data) so the refactor is separable from the
   design change. Fold in the **shared knowledge-gate helper** (retires the 5 inlined

@@ -397,11 +397,14 @@ impl Default for FollowConfig {
 /// printed food forever (~48× the Sustain baseline).
 ///
 /// **Corral (Rung 1c) levers.** Corralling is an **explicit `Corral` policy with an investment
-/// cost**, the animal twin of Cultivate: while the pen is being built (`Herd::corral_progress` < 1.0)
-/// the crew takes only `corralling_yield_fraction × the herd's Sustain (MSY) ceiling` — a sustainable
-/// draw, so the herd stays healthy — accruing `corral_build_progress_per_turn` each turn; at `1.0` the
-/// herd is penned (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass`
-/// per unit of biomass in feed. `knowledge_progress_per_turn` /
+/// cost**, the animal twin of Cultivate. Its **build dials moved to the shared ladder**,
+/// `data/intensification_ladder.json` → the `animal:pen` rung's `build` block
+/// (`crate::intensification`), so both food webs climb on the same numbers: while the pen is being
+/// built (`Herd::corral_progress` < 1.0) the crew takes only that rung's
+/// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` — a sustainable draw, so the
+/// herd stays healthy — accruing its `progress_per_turn` each turn; at `1.0` the herd is penned
+/// (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass` per unit
+/// of biomass in feed. What stays here is the animal web's own economy. `knowledge_progress_per_turn` /
 /// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
 /// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
 /// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `Corral` policy
@@ -418,15 +421,6 @@ pub struct HusbandryConfig {
     pub pastoral: PastoralConfig,
     /// The **penned** rung: the ecology a corralled herd lives under, plus what the pen costs to run.
     pub pen: PenConfig,
-    /// **The investment cost of corralling** (the animal twin of `cultivating_yield_fraction`): while
-    /// the pen is being built, the Hunt take ceiling is this fraction of the herd's **Sustain (MSY)**
-    /// ceiling — the crew is building, not hunting. A fraction of MSY is a sustainable draw, so the
-    /// herd stays Thriving (which the accrual gate wants). Validated `0 < f < 1`.
-    pub corralling_yield_fraction: f32,
-    /// Pen construction accrued per turn a band works a domesticated herd it owns under the **Corral**
-    /// policy (`Herd::corral_progress`, `1.0` = penned). At `0.04` a pen takes 25 turns to build,
-    /// matching the plant side's `cultivation.progress_per_turn`.
-    pub corral_build_progress_per_turn: f32,
     /// **Per-species husbandry growth (Grazing 2d §3).** The mobile-domesticated (pastoral) rung grows
     /// at `min(husbandry_regrowth_cap, wild_r × pastoral_gain)` — a MULTIPLE of the herd's own wild
     /// breeding rate, not a flat rate, so a tamed rabbit and a tamed mammoth are different economies.
@@ -462,8 +456,6 @@ impl Default for HusbandryConfig {
             claim_threshold: 0.6,
             pastoral: PastoralConfig::default(),
             pen: PenConfig::default(),
-            corralling_yield_fraction: DEFAULT_CORRALLING_YIELD_FRACTION,
-            corral_build_progress_per_turn: DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN,
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
             pen_gain: DEFAULT_PEN_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
@@ -567,21 +559,6 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// can act), fast enough that neglecting the feed for a decade of turns really does reduce the pen to
 /// a remnant.
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
-
-/// **The investment cost of corralling**: while the pen is being built, a Corral hunt takes only this
-/// fraction of the herd's Sustain (MSY) ceiling — and, because the passive pastoral rung is skipped for
-/// a herd a band is working (`Herd::worked_this_turn`), that dip is the builder's *whole* income from
-/// the animal. At `0.50` a Red Deer build pays **0.75/turn against the 1.50** of walking away — ~19
-/// provisions forgone over the 25 turns, recouped ~9 turns after the pen opens.
-///
-/// **Retuned from 0.25** (the plant side's `labor_config::DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION`):
-/// measured, that dip forced the band to fund the build out of a *famine* and crashed its population
-/// ~50% before the pen completed. The cost must be paid from a **surplus**, not a starvation.
-const DEFAULT_CORRALLING_YIELD_FRACTION: f32 = 0.50;
-/// Pen construction per turn under the Corral policy → 25 turns to build, matching the plant side's
-/// `cultivation.progress_per_turn`. A dedicated lever (not the taming `progress_per_turn`) so pen
-/// speed and tame speed can be tuned independently.
-const DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN: f32 = 0.04;
 
 /// Market-hunting tuning: the commercial Follow policy over-harvests a large fixed share
 /// of biomass each turn (`take_fraction`) and sells it, yielding `trade_goods_multiplier`×
@@ -890,16 +867,8 @@ impl FaunaConfig {
             });
         }
 
-        // --- Corral / husbandry accrual. A `0` build rate never finishes a pen; a `0` (or `1`)
-        // yield fraction makes the "investment dip" either total or free.
-        require_open_unit_fraction(
-            "husbandry.corralling_yield_fraction",
-            self.husbandry.corralling_yield_fraction,
-        )?;
-        require_positive_finite(
-            "husbandry.corral_build_progress_per_turn",
-            self.husbandry.corral_build_progress_per_turn,
-        )?;
+        // --- Husbandry accrual. (The pen's *build* dials — its rate and its investment dip — are
+        // bounded by `LadderConfig::validate`, which owns the `animal:pen` rung's `build` block.)
         require_positive_finite(
             "husbandry.knowledge_progress_per_turn",
             self.husbandry.knowledge_progress_per_turn,
@@ -1492,13 +1461,9 @@ mod tests {
         assert_rejects_field(err, "husbandry.pen.starve_shrink_rate");
     }
 
-    #[test]
-    fn validate_rejects_a_broken_corral_investment() {
-        let err = reject(|json| json["husbandry"]["corralling_yield_fraction"] = (1.0).into());
-        assert_rejects_field(err, "husbandry.corralling_yield_fraction");
-        let err = reject(|json| json["husbandry"]["corral_build_progress_per_turn"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.corral_build_progress_per_turn");
-    }
+    // The pen's *build* dials moved to the ladder — their rejection tests moved with them, to
+    // `crate::intensification`'s `rejects_a_free_investment` / `rejects_a_starving_investment` /
+    // `rejects_a_non_building_progress_rate`.
 
     #[test]
     fn validate_rejects_an_unlearnable_or_pre_learned_herding_gate() {

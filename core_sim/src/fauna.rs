@@ -19,6 +19,7 @@ use crate::{
     graze::GrazeRegistry,
     grid_utils::{hex_distance_wrapped, hex_neighbor, hex_range_tiles, HEX_DIRECTION_COUNT},
     hashing::FnvHasher,
+    intensification::{LadderConfig, RungKey},
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{
@@ -2218,12 +2219,19 @@ pub(crate) fn forecast_source_yield(
 pub fn hunt_source_yield_preview(
     herd: &Herd,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
 ) -> SourceYield {
-    let forecast = hunt_forecast(herd, fauna, per_worker_biomass_capacity, output_multiplier);
+    let forecast = hunt_forecast(
+        herd,
+        fauna,
+        ladder,
+        per_worker_biomass_capacity,
+        output_multiplier,
+    );
     let sustainable = hunt_provisions(
         sustainable_yield(
             herd.biomass,
@@ -2247,8 +2255,8 @@ pub fn hunt_source_yield_preview(
 /// - **Surplus** — that × `follow.surplus_multiplier` (overdraw → slow decline).
 /// - **Market** — a commercial share `market.take_fraction × biomass` (fast decline).
 /// - **Eradicate** — the one-shot max take `hunt.take_from(biomass)` (drives extinction).
-/// - **Corral** — the *investment dip* while the pen is built: `husbandry.corralling_yield_fraction ×`
-///   the MSY ceiling (reusing the same [`sustainable_yield`] helper — never a second ecology), so the
+/// - **Corral** — the *investment dip* while the pen is built: the `animal:pen` rung's
+///   `yield_fraction_while_building ×` the MSY ceiling (reusing the same [`sustainable_yield`] helper — never a second ecology), so the
 ///   preparing take is sustainable and the herd stays healthy while the crew builds.
 /// - **Cultivate** — Forage-only; a *hunt* ceiling for it is meaningless. Yields `0.0`, the symmetric
 ///   defensive case to `forage::forage_policy_ceiling`'s `Corral` arm (both are rejected at
@@ -2267,6 +2275,7 @@ pub fn hunt_policy_ceiling(
     carrying_capacity: f32,
     ecology: &EcologyConfig,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
 ) -> f32 {
     match policy {
         FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
@@ -2275,9 +2284,14 @@ pub fn hunt_policy_ceiling(
         }
         FollowPolicy::Market => fauna.market.take_fraction * biomass,
         FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
+        // The investment dip, read off the ladder's `animal:pen` rung — the same seam the plant
+        // side's Cultivate dip reads, so the two ladders' investment costs are tuned together.
         FollowPolicy::Corral => {
             sustainable_yield(biomass, carrying_capacity, ecology)
-                * fauna.husbandry.corralling_yield_fraction
+                * ladder
+                    .rung(RungKey::AnimalPen)
+                    .yield_fraction_while_building()
+                    .expect("the pen rung is an investment — it has a build meter")
         }
         FollowPolicy::Cultivate => 0.0,
     }
@@ -2312,6 +2326,7 @@ pub(crate) fn corral_provisions(herd: &Herd, fauna: &FaunaConfig, output_multipl
 pub(crate) fn hunt_forecast(
     herd: &Herd,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
@@ -2323,7 +2338,7 @@ pub(crate) fn hunt_forecast(
     let capacity = herd_capacity(herd, fauna);
     let ceiling = |policy| {
         hunt_provisions(
-            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, fauna)
+            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, fauna, ladder)
                 .clamp(0.0, herd.biomass),
             fauna,
             output_multiplier,
@@ -2946,7 +2961,7 @@ mod tests {
         }
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let before = world.resource::<HerdRegistry>().herds[0].clone();
-        let forecast_before = hunt_forecast(&before, &fauna, 40.0, 1.0);
+        let forecast_before = hunt_forecast(&before, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
 
         world.run_system_once(advance_herd_grazing);
 
@@ -2961,7 +2976,7 @@ mod tests {
         );
         // K is still the species constant, not a graze-derived value.
         assert_eq!(herd_capacity(after, &fauna), after.carrying_capacity);
-        let forecast_after = hunt_forecast(after, &fauna, 40.0, 1.0);
+        let forecast_after = hunt_forecast(after, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
         assert_eq!(
             forecast_before.ceiling_sustain, forecast_after.ceiling_sustain,
             "the Sustain hunt ceiling is unchanged by grazing (inert on the hunting economy)"

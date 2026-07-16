@@ -69,6 +69,7 @@ use crate::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
     },
+    intensification::LadderConfig,
     knowledge_ledger::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
@@ -1379,7 +1380,12 @@ mod tests {
         registry.patches.insert(tended.tile, tended);
 
         let labor = LaborConfig::builtin();
-        let patches = snapshot_forage_patches(&registry, &labor.forage, &HashMap::new());
+        let patches = snapshot_forage_patches(
+            &registry,
+            &labor.forage,
+            &LadderConfig::builtin(),
+            &HashMap::new(),
+        );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
         assert_eq!((patches[0].x, patches[0].y), (1, 0));
@@ -1451,6 +1457,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1516,6 +1523,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1604,6 +1612,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1684,6 +1693,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),

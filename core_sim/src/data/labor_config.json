@@ -64,10 +64,8 @@
     "eradicate": {
       "take_fraction": 0.30
     },
+    "_comment_cultivation": "The plant rung-2 BUILD dials (progress_per_turn, decay_per_turn and the old cultivating_yield_fraction) live in intensification_ladder.json -> the plant:tended rung's `build` block: both food webs climb on the same numbers. What remains here is the plant web's own economy.",
     "cultivation": {
-      "progress_per_turn": 0.04,
-      "decay_per_turn": 0.01,
-      "cultivating_yield_fraction": 0.25,
       "tended_provisions_per_biomass": 0.01,
       "knowledge_progress_per_turn": 0.05,
       "knowledge_completion_threshold": 1.0

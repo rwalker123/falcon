@@ -34,7 +34,8 @@
 //!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
 //!   Sustain **never** accrues a patch's `cultivation_progress`.
 //! - Taming a patch means **paying the `Cultivate` policy's investment**: a reduced take
-//!   (`cultivating_yield_fraction ×` the Sustain/MSY ceiling) while `cultivation_progress` accrues
+//!   (the `plant:tended` rung's `yield_fraction_while_building ×` the Sustain/MSY ceiling — read off
+//!   the shared ladder, `crate::intensification`) while `cultivation_progress` accrues
 //!   toward `1.0`. The `cultivate` command only **sets that policy** on bands already foraging the
 //!   tile; it claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
@@ -55,6 +56,7 @@ use crate::{
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
+    intensification::{LadderConfig, LadderConfigHandle, RungKey},
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
@@ -323,16 +325,18 @@ pub fn advance_forage_regrowth(
 /// `fauna::advance_husbandry`'s decay side.
 pub fn advance_cultivation(
     mut registry: ResMut<ForageRegistry>,
-    labor_config: Res<LaborConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
 ) {
-    let labor = labor_config.get();
-    let cultivation = &labor.forage.cultivation;
+    let ladder = ladder_config.get();
+    // The feral rate is the `plant:tended` rung's own build decay — the shared ladder seam
+    // (`crate::intensification`), not a plant-only lever.
+    let decay = ladder.rung(RungKey::PlantTended).build_decay();
     for patch in registry.patches.values_mut() {
         // Spare any patch a band worked as an improvement this turn (tending a completed patch, or
         // preparing one under Cultivate). Everything else decays: an untended cultivated patch goes
         // feral (reverts to wild once < 1.0), and an abandoned part-prepared patch reverts toward 0.
         if !patch.tended_this_turn {
-            patch.decay_cultivation(cultivation.decay_per_turn);
+            patch.decay_cultivation(decay);
         }
         // Clear the transient per-turn flag after reading it (re-set next Population stage if worked).
         patch.tended_this_turn = false;
@@ -375,7 +379,8 @@ fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_f
 /// **Surplus** = that × `surplus_multiplier` (overdraws a healthy
 /// patch → slow decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast
 /// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
-/// biomass` (strip the patch, no floor); **Cultivate** = `cultivating_yield_fraction × MSY` — the
+/// biomass` (strip the patch, no floor); **Cultivate** = the `plant:tended` rung's
+/// `yield_fraction_while_building × MSY` — the
 /// investment dip while the ground is being prepared. All are then throughput-capped and clamped to
 /// biomass.
 pub(crate) fn forage_take(
@@ -383,13 +388,19 @@ pub(crate) fn forage_take(
     workers: u32,
     policy: FollowPolicy,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     output_multiplier: f32,
     seasonal: f32,
 ) -> Scalar {
     // Per-policy ecology ceiling + gather throughput, both from the shared helpers the pre-commit
     // forecast (`forage_forecast`) reads — the take and the forecast can never disagree.
-    let policy_ceiling =
-        forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage);
+    let policy_ceiling = forage_policy_ceiling(
+        policy,
+        patch.biomass,
+        patch.carrying_capacity,
+        forage,
+        ladder,
+    );
     let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
     let take = worker_cap
         .min(policy_ceiling)
@@ -405,15 +416,16 @@ pub(crate) fn forage_take(
 /// and `forage_forecast` (the pre-commit forecast). Sustain = Maximum Sustainable Yield (regrowth at
 /// K/2, so a full patch still yields and a collapsed one yields nothing), Surplus = that ×
 /// `surplus_multiplier`, Market = `market.take_fraction × biomass`, Eradicate =
-/// `eradicate.take_fraction × biomass`, **Cultivate** = `cultivation.cultivating_yield_fraction ×`
-/// the *same* `sustainable_yield` MSY ceiling (the preparing dip — reusing the shared helper, never a
-/// second formula). Not yet clamped to biomass — callers do that alongside their own throughput cap.
-/// The plant mirror of `fauna::hunt_policy_ceiling`.
+/// `eradicate.take_fraction × biomass`, **Cultivate** = the `plant:tended` rung's
+/// `yield_fraction_while_building ×` the *same* `sustainable_yield` MSY ceiling (the preparing dip —
+/// reusing the shared helper, never a second formula). Not yet clamped to biomass — callers do that
+/// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_ceiling`.
 pub(crate) fn forage_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
 ) -> f32 {
     let ecology = &forage.ecology;
     match policy {
@@ -424,10 +436,15 @@ pub(crate) fn forage_policy_ceiling(
         FollowPolicy::Market => forage.market.take_fraction * biomass,
         FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
         // The investment dip: a *fraction* of the MSY ceiling, so the preparing take is sustainable
-        // and the patch stays Thriving (which the progress gate requires).
+        // and the patch stays Thriving (which the progress gate requires). Read off the ladder's
+        // `plant:tended` rung — the same seam the animal side's pen dip reads, so the two ladders'
+        // investment costs can only ever be tuned together.
         FollowPolicy::Cultivate => {
             sustainable_yield(biomass, carrying_capacity, ecology)
-                * forage.cultivation.cultivating_yield_fraction
+                * ladder
+                    .rung(RungKey::PlantTended)
+                    .yield_fraction_while_building()
+                    .expect("the tended rung is an investment — it has a build meter")
         }
         // `Corral` is an animal-only policy — rejected on a Forage assignment at `assign_labor`
         // (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively yields nothing
@@ -475,6 +492,7 @@ pub(crate) fn tended_provisions(
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
@@ -487,8 +505,14 @@ pub(crate) fn forage_forecast(
     }
     let ceiling = |policy| {
         forage_provisions(
-            forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage)
-                .clamp(0.0, patch.biomass),
+            forage_policy_ceiling(
+                policy,
+                patch.biomass,
+                patch.carrying_capacity,
+                forage,
+                ladder,
+            )
+            .clamp(0.0, patch.biomass),
             forage,
             output_multiplier,
         )
@@ -518,12 +542,13 @@ pub(crate) fn forage_forecast(
 pub fn forage_source_yield_preview(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
 ) -> SourceYield {
-    let forecast = forage_forecast(patch, forage, seasonal, output_multiplier);
+    let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
     let sustainable = forage_provisions(
         sustainable_yield(patch.biomass, patch.carrying_capacity, &forage.ecology),
         forage,
@@ -634,7 +659,15 @@ mod tests {
         // First Sustain gather off the full patch: take equals MSY (positive), no longer 0.
         let biomass_before = patch.biomass;
         let expected_sustainable = sustainable_yield(biomass_before, cap, &forage.ecology);
-        let provisions = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
+        let provisions = forage_take(
+            &mut patch,
+            20,
+            FollowPolicy::Sustain,
+            &forage,
+            &LadderConfig::builtin(),
+            1.0,
+            1.0,
+        );
         let take = biomass_before - patch.biomass;
         assert!(
             take > 0.0,
@@ -655,7 +688,15 @@ mod tests {
         let mut last_take = take;
         for turn in 0..200 {
             let before = patch.biomass;
-            let _ = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
+            let _ = forage_take(
+                &mut patch,
+                20,
+                FollowPolicy::Sustain,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             last_take = before - patch.biomass;
             regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             if turn >= 190 {
@@ -698,7 +739,15 @@ mod tests {
         let mut last = patch.biomass;
         let mut saw_stressed = false;
         for _ in 0..40 {
-            let _ = forage_take(&mut patch, 3, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
+            let _ = forage_take(
+                &mut patch,
+                3,
+                FollowPolicy::Eradicate,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             assert!(patch.biomass < last + 1e-3, "biomass must trend downward");
             last = patch.biomass;
@@ -729,7 +778,15 @@ mod tests {
         let take_under = |policy: FollowPolicy| -> (f32, f32) {
             let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
             patch.biomass = start;
-            let provisions = forage_take(&mut patch, workers, policy, &forage, 1.0, 1.0);
+            let provisions = forage_take(
+                &mut patch,
+                workers,
+                policy,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             let take = start - patch.biomass;
             (take, provisions.to_f32())
         };
@@ -844,7 +901,15 @@ mod tests {
         // Hammer with Eradicate + regrowth: biomass crashes but never sits at 0 — it floats at/above
         // the reseed floor while still reading Collapsing (a hard crash, not extinction).
         for _ in 0..60 {
-            let _ = forage_take(&mut patch, 50, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
+            let _ = forage_take(
+                &mut patch,
+                50,
+                FollowPolicy::Eradicate,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             assert!(
                 patch.biomass > 0.0,
@@ -1002,7 +1067,10 @@ mod tests {
     #[test]
     fn tended_patch_spared_untended_goes_feral() {
         let forage = test_forage_config();
-        let decay = forage.cultivation.decay_per_turn;
+        // The feral rate is the `plant:tended` rung's build decay — the same value
+        // `advance_cultivation` bleeds.
+        let ladder = LadderConfig::builtin();
+        let decay = ladder.rung(RungKey::PlantTended).build_decay();
         assert!(decay > 0.0);
 
         // Tended every turn → never decays, stays cultivated.
@@ -1033,7 +1101,7 @@ mod tests {
             "one untended turn reverts a farm to wild"
         );
         // Over ~1/decay_per_turn total turns it fully decays and clears ownership.
-        let turns_to_zero = (1.0 / decay).ceil() as usize + 2;
+        let turns_to_zero = (1.0_f32 / decay).ceil() as usize + 2;
         for _ in 0..turns_to_zero {
             if !(feral.is_cultivated() && feral.tended_this_turn) {
                 feral.decay_cultivation(decay);

@@ -107,7 +107,8 @@ pub(crate) fn snapshot_sedentarization(
 /// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus `Corral`** (a legitimate
 /// Hunt policy whose dipped yield is exactly what a player must see *before* committing to the pen).
 /// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
-/// forecast, `Corral` is automatically **phase-correct**: the `corralling_yield_fraction × MSY` dip
+/// forecast, `Corral` is automatically **phase-correct**: the `animal:pen` rung's
+/// `yield_fraction_while_building × MSY` dip
 /// while the pen is being built, and the full corral yield once the herd `is_corralled()` (the
 /// forecast reports a penned herd as `SourceYieldForecast::tended`, every ceiling = the managed yield).
 ///
@@ -140,6 +141,7 @@ pub(crate) fn hunt_policy_ceiling_entries(
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> Vec<HuntTripEstimateState> {
@@ -150,8 +152,15 @@ pub(crate) fn hunt_trip_estimate_entries(
     // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
     for &policy in FollowPolicy::EXTRACTIVE.iter() {
         for party_workers in 1..=expedition.max_party_size {
-            let forecast =
-                hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
+            let forecast = hunt_trip_forecast(
+                party_workers,
+                herd,
+                policy,
+                fauna,
+                ladder,
+                labor,
+                expedition,
+            );
             entries.push(HuntTripEstimateState {
                 policy: policy.as_str().to_string(),
                 party_workers,
@@ -174,10 +183,12 @@ pub(crate) fn hunt_trip_estimate_entries(
 ///
 /// The scalar `ceiling*` fields and the `hunt_policy_ceilings` list are two views of the **same**
 /// `SourceYieldForecast` — one forecast per herd, projected twice — so they can never disagree.
+#[allow(clippy::too_many_arguments)] // every config the exported forecast reads is a lever
 pub(crate) fn herd_snapshot_entries(
     telemetry: &HerdTelemetry,
     registry: &HerdRegistry,
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
     grid_size: UVec2,
@@ -195,6 +206,7 @@ pub(crate) fn herd_snapshot_entries(
                     hunt_forecast(
                         herd,
                         fauna,
+                        ladder,
                         labor.hunt.per_worker_biomass_capacity,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
@@ -242,7 +254,7 @@ pub(crate) fn herd_snapshot_entries(
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
-                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
+                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, ladder, labor, expedition))
                     .unwrap_or_default(),
                 // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
                 // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,
@@ -300,6 +312,7 @@ pub(crate) fn herd_snapshot_entries(
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
@@ -310,7 +323,8 @@ pub(crate) fn snapshot_forage_patches(
                 .get(&patch.tile)
                 .copied()
                 .unwrap_or(NO_SEASONAL_WEIGHT);
-            let forecast = forage_forecast(patch, forage, seasonal, FORECAST_OUTPUT_MULTIPLIER);
+            let forecast =
+                forage_forecast(patch, forage, ladder, seasonal, FORECAST_OUTPUT_MULTIPLIER);
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,

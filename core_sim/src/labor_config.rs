@@ -87,38 +87,28 @@ const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 /// `0.25 × 48.75 × 0.05` = **0.61 prov/turn** vs tended `195 × 0.01` = **1.95 prov/turn**. (The tended
 /// *per-biomass* rate is lower than the gather rate, but tended harvests the whole standing crop every
 /// turn, not just the regrowth skim.)
-const DEFAULT_CULTIVATION_PROGRESS_PER_TURN: f32 = 0.04;
-const DEFAULT_CULTIVATION_DECAY_PER_TURN: f32 = 0.01;
 const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
-/// **The investment cost of cultivating.** While a patch is being prepared (worked under the
-/// `Cultivate` policy, progress < 1.0) the crew is clearing and planting, not gathering: its take
-/// ceiling is only this fraction of the patch's **Sustain (MSY)** ceiling. Drawn at a fraction of
-/// MSY the take is sustainable, so the patch stays Thriving (which the accrual gate requires) —
-/// the cost is a pure **yield dip**, not a depletion.
-///
-/// **Break-even at the shipped defaults** (`0.25`, `progress_per_turn` 0.04 → 25 turns to prepare):
-/// preparing costs ~75% of that patch's Sustain yield for ~25 turns ≈ `0.75 × 0.375 × 25` ≈ **7
-/// prov** forgone; a tended patch then out-pays wild Sustain by `1.2 − 0.375` = **0.825 prov/turn**,
-/// so the investment is recouped ~8-9 turns after completion. Cultivating is therefore only correct
-/// when you intend to stay — the decision the free auto-accrual used to erase.
-const DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION: f32 = 0.25;
-/// Faction **Cultivation** knowledge earned per turn a band Sustain-forages a Thriving patch
-/// (Rung 1b). At `0.05`/turn the knowledge completes (`>= knowledge_completion_threshold`) in ~20
-/// Sustain-forage turns — so the knowledge is in hand before a player has any reason to pay the
-/// Cultivate dip.
 const DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN: f32 = 0.05;
 /// Ledger progress (`0..=1`) at which the faction **knows** Cultivation and patches may accrue
 /// cultivation under the Cultivate policy. `1.0` = the ledger's completion value
 /// (`DiscoveryProgressLedger` clamps accrual to `1.0`).
 const DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD: f32 = 1.0;
 
-/// Cultivation tuning (Intensification Phase 1a): a patch worked under the explicit **Cultivate**
-/// policy (`FollowPolicy::Cultivate`) — faction knows Cultivation, patch is **Thriving** — accrues
-/// `progress_per_turn` toward cultivation (`1.0` = cultivated) while yielding only
-/// `cultivating_yield_fraction × its Sustain (MSY) ceiling` (the investment cost). A cultivated patch
-/// that isn't tended any given turn goes **feral**, its progress decaying by `decay_per_turn` back
-/// below `1.0` (reverting to a wild gather patch). A tended patch pays the band that tends it
-/// `biomass × tended_provisions_per_biomass` provisions each turn **without** drawing the patch down
+/// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
+/// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
+/// investment dip it pays while preparing) moved to the shared ladder,
+/// `data/intensification_ladder.json` → the `plant:tended` rung's `build` block
+/// (`crate::intensification`), because plants and animals must climb on the *same* numbers. What
+/// stays here is the plant web's own economy: the tended-harvest rate and the earned-knowledge
+/// levers.
+///
+/// A patch worked under the explicit **Cultivate** policy (`FollowPolicy::Cultivate`) — faction knows
+/// Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's `progress_per_turn` toward
+/// cultivation (`1.0` = cultivated) while yielding only that rung's `yield_fraction_while_building ×
+/// its Sustain (MSY) ceiling` (the investment cost). A cultivated patch that isn't tended any given
+/// turn goes **feral**, its progress decaying by the rung's `decay_per_turn` back below `1.0`
+/// (reverting to a wild gather patch). A tended patch pays the band that tends it `biomass ×
+/// tended_provisions_per_biomass` provisions each turn **without** drawing the patch down
 /// (place-local — see `advance_labor_allocation`). The plant mirror of fauna's `HusbandryConfig`.
 ///
 /// There is **no early claim**: a `claim_threshold` that snapped progress to `1.0` would let the
@@ -127,17 +117,6 @@ const DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD: f32 = 1.0;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CultivationConfig {
-    /// Cultivation gained per turn while a band works the patch under the **Cultivate** policy (and
-    /// the faction knows Cultivation and the patch is Thriving).
-    pub progress_per_turn: f32,
-    /// Cultivation lost per turn on a patch that isn't being actively worked (neither tended nor
-    /// under Cultivate) — the feral-reversion rate. An untended tended patch drops below `1.0`
-    /// (→ wild) the first turn and fully decays to 0 over ~`1/decay_per_turn` turns.
-    pub decay_per_turn: f32,
-    /// **The investment cost** (see `DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION`): while
-    /// preparing, the patch's take ceiling is this fraction of its Sustain (MSY) ceiling.
-    /// Validated `0 < f < 1`.
-    pub cultivating_yield_fraction: f32,
     /// **Tended-harvest** rate: a tended patch pays the tending band `biomass × this` provisions/turn
     /// on its full standing crop, without depleting biomass. Tuned so a tended patch out-yields the
     /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
@@ -156,9 +135,6 @@ pub struct CultivationConfig {
 impl Default for CultivationConfig {
     fn default() -> Self {
         Self {
-            progress_per_turn: DEFAULT_CULTIVATION_PROGRESS_PER_TURN,
-            decay_per_turn: DEFAULT_CULTIVATION_DECAY_PER_TURN,
-            cultivating_yield_fraction: DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION,
             tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
             knowledge_progress_per_turn: DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN,
             knowledge_completion_threshold: DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD,
@@ -613,14 +589,9 @@ mod tests {
         assert!(config.forage.market.trade_goods_per_biomass > 0.0);
         assert!(config.forage.eradicate.take_fraction > 0.0);
         assert!(config.forage.eradicate.take_fraction <= 1.0);
-        // Cultivation (Phase 1a): progress outruns decay so a patch under Cultivate nets forward,
-        // the preparing yield is a strict *dip* (a positive fraction of MSY, but less than it), and
-        // the steady tended-yield is positive.
-        assert!(
-            config.forage.cultivation.progress_per_turn > config.forage.cultivation.decay_per_turn
-        );
-        assert!(config.forage.cultivation.cultivating_yield_fraction > 0.0);
-        assert!(config.forage.cultivation.cultivating_yield_fraction < 1.0);
+        // Cultivation (Phase 1a): the steady tended-yield is positive. (The plant rung's *build*
+        // dials — progress vs decay, and the preparing dip — moved to the ladder, where
+        // `LadderConfig::validate` bounds them on every load path.)
         assert!(config.forage.cultivation.tended_provisions_per_biomass > 0.0);
         // Rung 1b (earned knowledge): positive accrual, completion threshold in (0, 1].
         assert!(config.forage.cultivation.knowledge_progress_per_turn > 0.0);

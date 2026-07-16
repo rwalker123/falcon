@@ -180,9 +180,7 @@
       "_comment_starve_shrink_rate": "STARVATION: an underfed pen shrinks by starve_shrink_rate * (1 - fed_fraction) * biomass each turn, floored at ecology.extinction_floor * K_pen — the herd withers to a remnant and RECOVERS when fed again (it never despawns and never loses the pen). 0.10 = a fully-unfed herd loses 10%/turn: slow enough that a bad winter is survivable and visibly recoverable, fast enough that sustained neglect really does reduce the pen to a remnant.",
       "starve_shrink_rate": 0.10
     },
-    "_comment_corralling_yield_fraction": "THE INVESTMENT COST: while the pen is being built the crew takes only this fraction of the herd's Sustain (MSY) ceiling. 0.50 = the build costs HALF the pastoral yield for 25 turns (Red Deer: 0.75/turn against 1.50 walking away, ~19 provisions forgone) — a real, deliberate cost paid from a SURPLUS. Retuned from 0.25, which forced the band to pay it out of a famine and crashed its population ~50% before the pen completed.",
-    "corralling_yield_fraction": 0.50,
-    "corral_build_progress_per_turn": 0.04,
+    "_comment_corral_build": "The pen's BUILD dials (the old corralling_yield_fraction 0.50 and corral_build_progress_per_turn 0.04) live in intensification_ladder.json -> the animal:pen rung's `build` block: both food webs climb on the same numbers. What remains here is the animal web's own economy.",
     "knowledge_progress_per_turn": 0.05,
     "knowledge_completion_threshold": 1.0
   },

@@ -26,10 +26,10 @@ use core_sim::{
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
     ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
@@ -84,6 +84,7 @@ fn base_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);

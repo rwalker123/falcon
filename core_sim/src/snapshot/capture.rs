@@ -52,6 +52,11 @@ pub struct SnapshotContext<'w> {
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
+    /// The intensification ladder. Read at capture because both food webs' **pre-commit yield
+    /// forecasts** quote the investment rungs' dipped ceiling (`Cultivate` / `Corral`) off the
+    /// rung's `yield_fraction_while_building` — the same seam the take pays with, so forecast ==
+    /// actual (see `core_sim/CLAUDE.md` → The Intensification Ladder).
+    pub ladder: Res<'w, crate::intensification::LadderConfigHandle>,
     /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture for each herd's
     /// **pre-commit yield forecast** (`fauna::hunt_forecast` — the client's live "Expected yield" +
     /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`), the per-cohort hunt
@@ -1243,6 +1248,7 @@ pub fn capture_snapshot(
         demographics,
         wellbeing,
         labor,
+        ladder,
         fauna,
         expedition,
         settlement_stage,
@@ -1266,6 +1272,7 @@ pub fn capture_snapshot(
     // Forage potential (per-tile) is read from the biome table here, so the labor config is resolved
     // ahead of the tile loop (it is reused for the labor/expedition readouts further down).
     let labor_config = labor.get();
+    let ladder_config = ladder.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     let start_position = start_location.position();
@@ -1629,6 +1636,7 @@ pub fn capture_snapshot(
         &herds,
         &herd_registry,
         &fauna_config,
+        &ladder_config,
         &labor_config,
         &expedition_cfg,
         config.grid_size,
@@ -1653,8 +1661,12 @@ pub fn capture_snapshot(
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
-    let forage_patches_state =
-        snapshot_forage_patches(&forage_registry, &labor_config.forage, &seasonal_weights);
+    let forage_patches_state = snapshot_forage_patches(
+        &forage_registry,
+        &labor_config.forage,
+        &ladder_config,
+        &seasonal_weights,
+    );
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);

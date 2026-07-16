@@ -36,6 +36,7 @@ pub mod hashing;
 mod heightfield;
 mod hydrology;
 mod influencers;
+mod intensification;
 mod knowledge_ledger;
 mod labor_config;
 pub mod log_stream;
@@ -150,6 +151,11 @@ pub use hydrology::{debug_drainage_census, DrainageCensus};
 pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
+};
+pub use intensification::{
+    knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
+    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
+    RungKey, RungMovement, BUILTIN_INTENSIFICATION_LADDER, RUNG_COMPLETE,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -370,6 +376,8 @@ pub fn build_headless_app() -> App {
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
+    let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
+    let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
     let (sedentarization_config, sedentarization_metadata) =
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
@@ -444,6 +452,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(fauna_metadata)
         .insert_resource(labor_handle)
         .insert_resource(labor_metadata)
+        .insert_resource(ladder_handle)
+        .insert_resource(ladder_metadata)
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())

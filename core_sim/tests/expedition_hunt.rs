@@ -20,11 +20,11 @@ use core_sim::{
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, Scalar, SimulationConfig, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
-    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
+    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    VisibilityConfig, VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -66,6 +66,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
@@ -348,7 +349,14 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
         let registry = app.world.resource::<HerdRegistry>();
         herd_ecology(registry.find(&id).expect("herd present"), &fauna)
     };
-    let expected = hunt_policy_ceiling(FollowPolicy::Sustain, before, cap, &ecology, &fauna);
+    let expected = hunt_policy_ceiling(
+        FollowPolicy::Sustain,
+        before,
+        cap,
+        &ecology,
+        &fauna,
+        &LadderConfig::builtin(),
+    );
     assert!(expected > 0.0, "a half-capacity herd has a positive MSY");
 
     app.world.run_system_once(advance_expeditions);
@@ -475,6 +483,7 @@ fn hunt_trip_forecast_reports_viability() {
             herd,
             FollowPolicy::Sustain,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &cfg,
         );
@@ -503,6 +512,7 @@ fn hunt_trip_forecast_reports_viability() {
         herd,
         FollowPolicy::Eradicate,
         &fauna,
+        &LadderConfig::builtin(),
         &labor,
         &cfg,
     );
@@ -516,6 +526,7 @@ fn hunt_trip_forecast_reports_viability() {
         herd,
         FollowPolicy::Surplus,
         &fauna,
+        &LadderConfig::builtin(),
         &labor,
         &cfg,
     );
@@ -941,7 +952,15 @@ fn party_fills_on_the_forecast_turn() {
         let forecast = {
             let registry = app.world.resource::<HerdRegistry>();
             let herd = registry.find(&id).expect("herd present");
-            hunt_trip_forecast(PARTY_WORKERS, herd, policy, &fauna, &labor, &cfg)
+            hunt_trip_forecast(
+                PARTY_WORKERS,
+                herd,
+                policy,
+                &fauna,
+                &LadderConfig::builtin(),
+                &labor,
+                &cfg,
+            )
         };
         let carry_cap = PARTY_WORKERS as f32 * cfg.hunt.per_worker_carry;
         let cap = scalar_from_f32(carry_cap);
@@ -1110,6 +1129,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     policy,
                     labor.hunt.per_worker_biomass_capacity,
                     &fauna,
+                    &LadderConfig::builtin(),
                     output_multiplier,
                     f32::INFINITY,
                 )
@@ -1185,7 +1205,8 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
             depleted_biomass,
             depleted_cap,
             &fauna.ecology,
-            &fauna
+            &fauna,
+            &LadderConfig::builtin(),
         ) > depleted_biomass,
         "the depleted-herd case must actually exercise the biomass clamp"
     );

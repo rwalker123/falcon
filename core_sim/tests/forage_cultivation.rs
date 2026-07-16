@@ -20,9 +20,9 @@ use core_sim::{
     CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
     GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     CULTIVATION_DISCOVERY_ID, FOOD,
 };
@@ -80,6 +80,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -199,13 +200,18 @@ fn provisions_f32(app: &mut App) -> f32 {
     total
 }
 
+/// The plant rung-2 build dials — the investment dip, the build rate and the feral rate — read off
+/// the ladder's `plant:tended` rung (`intensification_ladder.json`), the same seam the sim drives
+/// cultivation with.
 fn cultivation_config(app: &App) -> (f32, f32, f32) {
-    let labor = app.world.resource::<LaborConfigHandle>().get();
-    let cultivation = &labor.forage.cultivation;
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let tended = ladder.rung(RungKey::PlantTended);
     (
-        cultivation.cultivating_yield_fraction,
-        cultivation.progress_per_turn,
-        cultivation.decay_per_turn,
+        tended
+            .yield_fraction_while_building()
+            .expect("the tended rung is an investment"),
+        tended.build_accrual(FollowPolicy::Cultivate, true),
+        tended.build_decay(),
     )
 }
 

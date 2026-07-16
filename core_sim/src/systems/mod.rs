@@ -39,6 +39,7 @@ use crate::{
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    intensification::{knows, LadderConfig, LadderConfigHandle, RungKey},
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,
     mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},

@@ -1,0 +1,106 @@
+{
+  "_comment": "THE INTENSIFICATION LADDER (docs/plan_intensification_ladder.md §5). Both food webs climb the same ladder: rung 1 = the wild source, rung 2 = you manage it in place, rung 3 = you control its reproduction. A rung is a RECORD; the ladder is a LIST; adding a rung is appending a record. THIS FILE DESCRIBES WHAT THE SIM DOES TODAY, not the target model — later slices change behaviour by EDITING it (that is the whole thesis). A rung whose `verb` is null is not driven by a policy today and the build engine skips it.",
+  "_comment_branches": "`plant` = the human food web (forage patches, forage.rs). `animal` = the animal food web (herds, fauna.rs). The two learn separately (§4.2) and never share a rung.",
+  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs; and animal `pastoral`, whose dials still live in fauna_config.json — slice 3 moves them).",
+  "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam. `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all). NOTHING READS THESE YET — they are parsed and validated only.",
+  "rungs": [
+    {
+      "id": "wild",
+      "branch": "plant",
+      "order": 1,
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "SHIPPED (§0): a Sustain forage on a Thriving patch teaches the faction Cultivation (CULTIVATION_DISCOVERY_ID 2003, accrued in systems/labor.rs). Declarative here — the accrual is still driven by labor_config's `cultivation.knowledge_progress_per_turn`; slice 4 wires the earn path through this field.",
+      "earns_knowledge": "cultivation",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_take"
+      }
+    },
+    {
+      "id": "tended",
+      "branch": "plant",
+      "order": 2,
+      "verb": "cultivate",
+      "unlock_knowledge": "cultivation",
+      "_comment_earns_knowledge": "TODAY: practising Cultivate teaches nothing (§0). Slice 4 gives this rung `earns_knowledge: \"seed_selection\"` — a config edit.",
+      "earns_knowledge": null,
+      "requires_rung": "wild",
+      "ceiling_required": null,
+      "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns; yield_fraction_while_building 0.25 = the old `cultivating_yield_fraction`).",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.25
+      },
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_tend"
+      }
+    },
+    {
+      "id": "wild",
+      "branch": "animal",
+      "order": 1,
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "SHIPPED (§0), the animal mirror: a Sustain hunt on a Thriving herd teaches the faction Herding (HERDING_DISCOVERY_ID 2004). Declarative here — the accrual is still driven by fauna_config's `husbandry.knowledge_progress_per_turn`.",
+      "earns_knowledge": "herding",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "build": null,
+      "behavior": {
+        "movement": "roam",
+        "feeding": "forage",
+        "harvest": "worker_take"
+      }
+    },
+    {
+      "id": "pastoral",
+      "branch": "animal",
+      "order": 2,
+      "_comment_verb": "TODAY: accrues implicitly from a Sustain hunt and is claimable early via `domesticate` — the conflation slice 3 fixes by giving this rung the `tame` verb + `herding` gate. See plan_intensification_ladder.md §0. Because `verb` is null the build engine does not drive this rung; `accrue_domestication` and the `domesticate` claim still run bespoke, and their dials still live in fauna_config.json `husbandry` (progress_per_turn / decay_per_turn / claim_threshold).",
+      "verb": null,
+      "unlock_knowledge": null,
+      "earns_knowledge": null,
+      "requires_rung": "wild",
+      "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_tame).",
+      "ceiling_required": "pastoral",
+      "build": null,
+      "_comment_behavior": "TODAY a pastoral herd pays its owner passively, with no workers — the `passive` primitive. Slice 3 retires it (worker-driven-but-efficient) and switches `movement` to `drift_to_owner`.",
+      "behavior": {
+        "movement": "roam",
+        "feeding": "forage",
+        "harvest": "passive"
+      }
+    },
+    {
+      "id": "pen",
+      "branch": "animal",
+      "order": 3,
+      "verb": "corral",
+      "_comment_unlock_knowledge": "TODAY Herding gates the PEN (rung 3) and taming is ungated — the gate reshuffle of §4.3 (Herding gates Tame; a new Penning gates Corral) is slices 3/4.",
+      "unlock_knowledge": "herding",
+      "earns_knowledge": null,
+      "requires_rung": "pastoral",
+      "_comment_ceiling_required": "Grazing 2d-delta: only a `pen`-ceiling species may be fenced (Herd::can_pen).",
+      "ceiling_required": "pen",
+      "_comment_build": "Today's shipped values, moved here verbatim from fauna_config.json `husbandry` (progress_per_turn 0.04 = the old `corral_build_progress_per_turn` -> 25 turns per pen / per extension ring; decay_per_turn 0.0 because pen construction does NOT bleed today — an untended pen escapes outright, zeroing corral_progress in advance_husbandry, rather than decaying; yield_fraction_while_building 0.50 = the old `corralling_yield_fraction`, the dip the keeper pays while building AND while extending the fence).",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.0,
+        "yield_fraction_while_building": 0.5
+      },
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "self_graze",
+        "harvest": "worker_tend"
+      }
+    }
+  ]
+}

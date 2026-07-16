@@ -22,10 +22,10 @@ use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     apply_port_base_override, available_workers, forage_source_yield_preview,
-    hunt_source_yield_preview, output_multiplier, resolve_active_profile, ActiveStartProfile,
-    BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget, LocalStore, ResidentBand,
-    StartProfileOverrides, WellbeingConfigHandle,
+    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
+    ActiveStartProfile, BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget,
+    LadderConfigHandle, LocalStore, ResidentBand, StartProfileOverrides, WellbeingConfigHandle,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -1529,9 +1529,11 @@ fn seed_source_yield(
             let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
                 return; // unseeded patch → the turn pays 0.
             };
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             forage_source_yield_preview(
                 patch,
                 &labor.forage,
+                &ladder,
                 seasonal,
                 output_mult,
                 workers,
@@ -1549,9 +1551,11 @@ fn seed_source_yield(
                 return;
             }
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             hunt_source_yield_preview(
                 herd,
                 &fauna,
+                &ladder,
                 labor.hunt.per_worker_biomass_capacity,
                 output_mult,
                 workers,
@@ -1598,11 +1602,12 @@ fn validate_labor_policy(
                 .forage
                 .cultivation
                 .clone();
-            let knows_cultivation = app
-                .world
-                .resource::<DiscoveryProgressLedger>()
-                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
-                >= scalar_from_f32(cultivation.knowledge_completion_threshold);
+            let knows_cultivation = knows(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                CULTIVATION_DISCOVERY_ID,
+                cultivation.knowledge_completion_threshold,
+            );
             if !knows_cultivation {
                 return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
             }
@@ -1645,11 +1650,12 @@ fn validate_labor_policy(
                 .get()
                 .husbandry
                 .knowledge_completion_threshold;
-            let knows_herding = app
-                .world
-                .resource::<DiscoveryProgressLedger>()
-                .get_progress(faction, HERDING_DISCOVERY_ID)
-                >= scalar_from_f32(knowledge_threshold);
+            let knows_herding = knows(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                HERDING_DISCOVERY_ID,
+                knowledge_threshold,
+            );
             if !knows_herding {
                 return Err("Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it.".to_string());
             }
@@ -2122,11 +2128,12 @@ fn handle_send_hunt_expedition(
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
-        registry
-            .find(&fauna_id)
-            .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
+        registry.find(&fauna_id).map(|herd| {
+            hunt_trip_forecast(party_workers, herd, policy, &fauna, &ladder, &labor, &cfg)
+        })
     };
     let (viability_note, viability_detail) = match &forecast {
         // A denial mission (Eradicate) brings nothing home, so a "turns to fill" number would be
@@ -2731,11 +2738,12 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     let (owns, knows_herding, can_pen, species, at_max, already_extending, pen_radius_max) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let pen_radius_max = fauna.husbandry.pen_radius_max;
-        let knows = app
-            .world
-            .resource::<DiscoveryProgressLedger>()
-            .get_progress(faction, HERDING_DISCOVERY_ID)
-            >= scalar_from_f32(fauna.husbandry.knowledge_completion_threshold);
+        let knows_herding = knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            HERDING_DISCOVERY_ID,
+            fauna.husbandry.knowledge_completion_threshold,
+        );
         let herd = app
             .world
             .resource::<HerdRegistry>()
@@ -2743,7 +2751,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
             .expect("herd resolved above");
         (
             herd.owner == Some(faction),
-            knows,
+            knows_herding,
             herd.can_pen(),
             herd.species.clone(),
             herd.pen_radius >= pen_radius_max,
@@ -5642,9 +5650,11 @@ mod tests {
         );
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let expected = forage_source_yield_preview(
             patch,
             &labor.forage,
+            &ladder,
             1.0,
             1.0,
             BAND_WORKERS,
@@ -5700,9 +5710,11 @@ mod tests {
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let expected = hunt_source_yield_preview(
             herd,
             &fauna,
+            &ladder,
             labor.hunt.per_worker_biomass_capacity,
             1.0,
             BAND_WORKERS,

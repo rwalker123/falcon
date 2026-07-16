@@ -14,11 +14,11 @@ use core_sim::{
     CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
     FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
     GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
-    HERDING_DISCOVERY_ID,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -61,6 +61,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -417,10 +418,11 @@ fn building_a_corral_costs_more_than_walking_away() {
 
     let dip_fraction = app
         .world
-        .resource::<FaunaConfigHandle>()
+        .resource::<LadderConfigHandle>()
         .get()
-        .husbandry
-        .corralling_yield_fraction;
+        .rung(RungKey::AnimalPen)
+        .yield_fraction_while_building()
+        .expect("the pen rung is an investment");
     assert!(
         (building - dip_fraction * walk_away).abs() < walk_away * 0.05,
         "building pays only the dip ({dip_fraction} × the pastoral MSY {walk_away}): got {building}"
@@ -1004,10 +1006,10 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
     corral_herd(&mut app, &id);
     let build_per_turn = app
         .world
-        .resource::<FaunaConfigHandle>()
+        .resource::<LadderConfigHandle>()
         .get()
-        .husbandry
-        .corral_build_progress_per_turn;
+        .rung(RungKey::AnimalPen)
+        .build_accrual(FollowPolicy::Corral, true);
 
     // No keeper: the grace turn is consumed, then the herd breaks out.
     run_turns_untended(&mut app, 3);
