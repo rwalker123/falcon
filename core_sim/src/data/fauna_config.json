@@ -91,6 +91,30 @@
       "fodder_per_biomass": 0.09,
       "regrowth_rate": 0.35,
       "husbandry_ceiling": "pen"
+    },
+    "aurochs": {
+      "display_name": "Wild Aurochs",
+      "size_class": "big",
+      "migratory": false,
+      "route_len": [2, 3],
+      "biomass": [600, 1300],
+      "host_biomes": ["savanna_grassland", "temperate_forest", "mixed_woodland"],
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.05,
+      "regrowth_rate": 0.09,
+      "husbandry_ceiling": "pen"
+    },
+    "crag_goat": {
+      "display_name": "Crag Goats",
+      "size_class": "small",
+      "migratory": false,
+      "route_len": [1, 1],
+      "biomass": [150, 400],
+      "host_biomes": ["montane_highland", "semi_arid_scrub"],
+      "dwell_turns": 1,
+      "fodder_per_biomass": 0.05,
+      "regrowth_rate": 0.22,
+      "husbandry_ceiling": "pen"
     }
   },
   "abundance": {

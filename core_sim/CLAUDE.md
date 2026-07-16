@@ -622,8 +622,12 @@ keyword, e.g. "Red Deer" → 🦌), `size_class` (`migratory`/`big`/`small`),
 `migratory` flag, `route_len` `[min,max]` (= roaming range), `biomass` `[min,max]`
 (group size), and `host_biomes` (a list of **`FoodModule` keys**, reusing
 `classify_food_module`). Shipped species: migratory mammoth/steppe_runner/
-marsh_grazer (long routes); big game deer/boar (2–3 tiles); small game rabbit/fowl
-(~1 tile, stationary).
+marsh_grazer (long routes); big game deer/boar/**aurochs** (2–3 tiles); small game
+rabbit/fowl/**crag_goat** (~1 tile, stationary). The two **pennable grazer livestock**
+(Grazing 2d) are `pen`-ceiling: **Wild Aurochs** (🦬, wild r 0.09 → slow ranch cattle) on
+grass + woodland edge (`savanna_grassland`/`temperate_forest`/`mixed_woodland`), **Crag
+Goats** (🐐, wild r 0.22 → fast hardy hill stock) on highland/dry-upland
+(`montane_highland`/`semi_arid_scrub`).
 
 **Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
 `HerdRegistry`.
