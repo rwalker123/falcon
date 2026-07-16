@@ -1,7 +1,7 @@
 {
   "_comment": "THE INTENSIFICATION LADDER (docs/plan_intensification_ladder.md §5). Both food webs climb the same ladder: rung 1 = the wild source, rung 2 = you manage it in place, rung 3 = you control its reproduction. A rung is a RECORD; the ladder is a LIST; adding a rung is appending a record. THIS FILE DESCRIBES WHAT THE SIM DOES TODAY, not the target model — later slices change behaviour by EDITING it (that is the whole thesis). A rung whose `verb` is null is not driven by a policy today and the build engine skips it.",
   "_comment_branches": "`plant` = the human food web (forage patches, forage.rs). `animal` = the animal food web (herds, fauna.rs). The two learn separately (§4.2) and never share a rung.",
-  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs; and animal `pastoral`, whose dials still live in fauna_config.json — slice 3 moves them).",
+  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs — there is nothing to build about a wild source).",
   "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam. `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all). NOTHING READS THESE YET — they are parsed and validated only.",
   "rungs": [
     {
@@ -64,15 +64,22 @@
       "id": "pastoral",
       "branch": "animal",
       "order": 2,
-      "_comment_verb": "TODAY: accrues implicitly from a Sustain hunt and is claimable early via `domesticate` — the conflation slice 3 fixes by giving this rung the `tame` verb + `herding` gate. See plan_intensification_ladder.md §0. Because `verb` is null the build engine does not drive this rung; `accrue_domestication` and the `domesticate` claim still run bespoke, and their dials still live in fauna_config.json `husbandry` (progress_per_turn / decay_per_turn / claim_threshold).",
-      "verb": null,
-      "unlock_knowledge": null,
+      "_comment_verb": "The `tame` verb — the animal twin of `cultivate`. Taming is an EXPLICIT, gated investment, no longer a hidden side effect of a Sustain hunt (the §4.1 conflation, fixed): Sustain now only TEACHES the faction Herding, and `tame` is what fills this herd's meter. The `domesticate` early-claim is gone (it existed to skip the investment — the same reason the plant side removed its own).",
+      "verb": "tame",
+      "_comment_unlock_knowledge": "§4.3: Herding gates rung 2 (`tame`). It is still ALSO the `animal:pen` rung's gate today — the reshuffle that moves rung 3 onto a new `penning` knowledge is slice 4.",
+      "unlock_knowledge": "herding",
+      "_comment_earns_knowledge": "TODAY: practising Tame teaches nothing. Slice 4 gives this rung `earns_knowledge: \"penning\"` — a config edit.",
       "earns_knowledge": null,
       "requires_rung": "wild",
-      "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_tame).",
+      "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_domesticate).",
       "ceiling_required": "pastoral",
-      "build": null,
-      "_comment_behavior": "TODAY a pastoral herd pays its owner passively, with no workers — the `passive` primitive. Slice 3 retires it (worker-driven-but-efficient) and switches `movement` to `drift_to_owner`.",
+      "_comment_build": "progress_per_turn 0.04 (-> 25 turns to tame) and decay_per_turn 0.01 (an abandoned herd goes feral over ~100 turns) are today's shipped values, MOVED here verbatim from fauna_config.json `husbandry`. yield_fraction_while_building 0.50 is NEW — taming now costs yield, like every other rung; 0.50 mirrors the animal-side `corral` dip precedent. A PLAYTEST DIAL.",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.5
+      },
+      "_comment_behavior": "TODAY a pastoral herd pays its owner passively, with no workers — the `passive` primitive. Slice 3b retires it (worker-driven-but-efficient) and switches `movement` to `drift_to_owner`.",
       "behavior": {
         "movement": "roam",
         "feeding": "forage",

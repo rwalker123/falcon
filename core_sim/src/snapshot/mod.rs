@@ -180,6 +180,7 @@ where
 mod tests {
     use super::*;
     use crate::{
+        intensification::RUNG_COMPLETE,
         labor_config::LaborConfig,
         orders::FactionId,
         power::PowerIncidentSeverity as GridIncidentSeverity,
@@ -1666,7 +1667,7 @@ mod tests {
             0.0,
             0.05,
         );
-        mobile.claim_domestication(FactionId(0));
+        mobile.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         registry.herds.push(mobile);
         // The same herd, penned — its upkeep must read the same at the same biomass.
         let mut penned = Herd::new(
@@ -1679,7 +1680,7 @@ mod tests {
             0.0,
             0.05,
         );
-        penned.claim_domestication(FactionId(0));
+        penned.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         penned.corral_at(UVec2::new(3, 3));
         registry.herds.push(penned);
 

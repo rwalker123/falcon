@@ -871,6 +871,71 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 `knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold ≤ 1`,
 `progress_per_turn > decay_per_turn`, `hunt.provisions_per_biomass > 0`, and the follow/market bounds.
 
+### The `Tame` verb (Intensification rung 2) — the grammar fix
+
+**The animal twin of `Cultivate`**, and the correction the plant side already made
+(`docs/plan_intensification_ladder.md` §4.1). Taming used to be a **hidden side effect of a harvest
+policy**: one `Sustain` branch in `advance_labor_allocation` advanced Herding knowledge *and*
+`accrue_domestication`, so the same action both taught and tamed, invisibly and for free — while the
+*visible* verb (`Corral`) was disabled until the herd was already tame. Rung 2 is now an explicit,
+gated, **paid** verb, so both food webs read the same:
+
+| | plants | animals |
+|---|---|---|
+| rung 1 Sustain | earns **Cultivation** — *and tames nothing* | earns **Herding** — *and tames nothing* |
+| rung 2 verb | `Cultivate` → tended patch | **`Tame`** → pastoral herd |
+| rung 3 verb | *(`Sow` — a later slice)* | `Corral` → pen |
+
+- **`FollowPolicy::Tame`** (wire key `"tame"`) — **Hunt-only** (`valid_for_hunt`; a Forage assignment
+  carrying it is rejected at `assign_labor`, exactly as `Corral` is). It is an **investment** rung, so
+  it is in [`FollowPolicy::HUNT_POLICIES`] (the herd's policy list the client previews) but **not** in
+  `EXTRACTIVE` — an expedition can only take, never invest, so `send_hunt_expedition` rejects it and no
+  `huntTripEstimates` row is emitted for it.
+- **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
+  `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` (`hunt_policy_ceiling`, through
+  the *same* shared MSY helper — the crew is gentling the herd, not harvesting it; a fraction of MSY is
+  a sustainable draw, so the herd stays healthy), and `domestication_progress` accrues that rung's
+  `progress_per_turn` (0.04 → 25 turns) via the shared `RungDef::build_accrual` seam. **Gates:** the
+  faction knows **Herding**, the species' `husbandry_ceiling` allows domestication (Grazing 2d-δ), and
+  the herd is **Thriving**. A gate that lapses mid-run just **stops accrual that turn** — progress is
+  neither lost nor silently switched, and the herd is marked `tamed_this_turn` so it does not decay
+  either. Ownership is **not** in the gate: `accrue_domestication` owns the
+  `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
+  Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
+- **Feral if abandoned.** `advance_husbandry` spares a herd worked under `Tame` **last** turn
+  (`Herd::tamed_this_turn` — a transient, non-persisted flag, the animal twin of
+  `ForagePatch::tended_this_turn` with the same deliberate Logistics-reads-what-Population-wrote lag);
+  an abandoned part-tamed herd bleeds the `animal:pastoral` rung's `decay_per_turn`, its owner lapsing
+  at zero. **Distinct from `worked_this_turn`**, which any hunt policy sets: a Sustain hunt *harvests*
+  a herd, it must not hold the taming meter up.
+- **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
+  `CommandEventKind::Tame`) — **sets the `Tame` policy** on the bands already hunting the herd, the
+  command form of the client's policy picker. It **tames nothing outright**. It targets a **herd id**
+  (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
+  follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, shared with
+  the `assign_labor … tame` path): faction hasn't learned Herding / no such herd / the species is wild
+  game (hunt-only) / already domesticated (corral it instead) / another people are taming it / **no
+  band is hunting it** (staff it first). Deliberately **not** gated on Thriving, unlike the patch — a
+  herd's phase swings as it is hunted, and the labor arm pauses accrual gracefully.
+- **The `domesticate` early-claim is REMOVED** — command, `claim_threshold` lever, its validate bound,
+  and `Herd::claim_domestication`. It let the player snap progress to `1.0` and skip the investment,
+  which is the entire decision (the plant side removed its twin for that exact reason). **Proto field
+  30 is reserved and must never be reused.** Tests that needed a tamed-herd fixture now run the real
+  `accrue_domestication(faction, RUNG_COMPLETE)`, which obeys the husbandry ceiling — you cannot
+  fabricate a domesticated `wild` herd.
+- **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
+  `unlock_knowledge: "herding"`, `earns_knowledge: null` (slice 4 wires it to `penning`),
+  `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn 0.01,
+  yield_fraction_while_building 0.50 }`. The first two **moved verbatim** from `fauna_config.json`
+  `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the animal-side `corral` precedent).
+- **Not in this slice:** passive-free pastoral still pays exactly what it paid before, and the
+  `drift_to_owner` movement primitive is unbuilt (slice 3b); `earns_knowledge` / the `Penning`
+  knowledge / the §4.3 gate reshuffle are slice 4 — so **Herding currently gates both `tame` and
+  `corral`**.
+
+See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2 this now mirrors exactly), "Corral
+(Intensification Rung 1c)" (the rung above), "The Intensification Ladder" (the engine + the config).
+
 ### Corral (Intensification Rung 1c)
 
 The **animal mirror of the tended patch** (`docs/plan_intensification.md` §4b) — the place-bound form
@@ -1126,16 +1191,17 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
 - **`build_accrual`** returns `progress_per_turn` **only** when `policy` **is** the rung's own `verb`
   *and* the caller's rung-specific gates hold (`eligible` — knows the unlock knowledge, source healthy,
   species ceiling allows, faction owns it); otherwise `0`. **A rung with `verb: null` is never driven** —
-  which is exactly how today's animal `pastoral` rung stays on its bespoke `accrue_domestication` path.
-- **The per-source state does not move.** `ForagePatch::cultivation_progress` and `Herd::corral_progress`
-  stay where they live: the engine supplies the *amount*, and the source owns its meter, the clamp to
+  which is what keeps the two `wild` rungs (nothing to build) out of the engine.
+- **The per-source state does not move.** `ForagePatch::cultivation_progress`,
+  `Herd::domestication_progress` and `Herd::corral_progress` stay where they live: the engine supplies the *amount*, and the source owns its meter, the clamp to
   `RUNG_COMPLETE`, and the side-effects of completing it (ownership, `corralled_at`, the feed line).
-- **Callers.** Accrual: the `Cultivate` arm and the `Corral` arm of `advance_labor_allocation`
-  (Population) — the *same* pair of calls, one per web. Decay: `forage::advance_cultivation` (Logistics;
-  **the one-turn lag is deliberate** — it reads a `tended_this_turn` flag the labor arm wrote *last*
-  turn, see "Cultivation"); the pen has **no** decay (`decay_per_turn: 0.0` — an untended pen escapes
-  outright rather than bleeding). The dip: `forage::forage_policy_ceiling`'s `Cultivate` arm and
-  `fauna::hunt_policy_ceiling`'s `Corral` arm — so **forecast == actual** for free (see "Pre-commit Yield
+- **Callers.** Accrual: the `Cultivate`, **`Tame`** and `Corral` arms of `advance_labor_allocation`
+  (Population) — the *same* call, once per rung. Decay: `forage::advance_cultivation` and
+  `fauna::advance_husbandry` (both Logistics; **the one-turn lag is deliberate** — each reads a flag
+  the labor arm wrote *last* turn: `ForagePatch::tended_this_turn` / `Herd::tamed_this_turn`); the pen
+  has **no** decay (`decay_per_turn: 0.0` — an untended pen escapes outright rather than bleeding).
+  The dip: `forage::forage_policy_ceiling`'s `Cultivate` arm and `fauna::hunt_policy_ceiling`'s
+  **`Tame`** and `Corral` arms — so **forecast == actual** for free (see "Pre-commit Yield
   Forecast"). **Extending** a pen (2d-β) reads the *same* `animal:pen` rung, so a ring can never drift
   from the initial build.
 
@@ -1143,7 +1209,8 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
 
 `intensification::knows(ledger, faction, discovery, threshold)` is **THE** knowledge check — it retired
 the five inlined `get_progress(faction, ID) >= threshold` spellings (both labor arms, the
-`cultivate`/`corral` assignment validators, and `extend_pen`). `threshold` stays caller-supplied because
+`cultivate`/`corral` assignment validators, and `extend_pen`), and the `tame` validator + the `Tame`
+labor arm were built on it from the start. `threshold` stays caller-supplied because
 the two webs still keep their own `knowledge_completion_threshold` (`labor_config`'s
 `forage.cultivation`, `fauna_config`'s `husbandry` — **identical values, duplicated**; a later slice may
 unify them). The helper unifies the *comparison*, not the tuning.

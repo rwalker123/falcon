@@ -1089,7 +1089,9 @@ pub enum CommandEventKind {
     CampaignVictory,
     Forage,
     Hunt,
-    Domesticate,
+    /// The animal rung-2 verb (`tame`) — the whole taming life: the command, and the meter
+    /// completing. Replaces the retired `Domesticate` early-claim's kind.
+    Tame,
     Cultivate,
     Corral,
     CancelOrder,
@@ -1112,7 +1114,7 @@ impl CommandEventKind {
             CommandEventKind::CampaignVictory => "campaign_victory",
             CommandEventKind::Forage => "forage",
             CommandEventKind::Hunt => "hunt",
-            CommandEventKind::Domesticate => "domesticate",
+            CommandEventKind::Tame => "tame",
             CommandEventKind::Cultivate => "cultivate",
             CommandEventKind::Corral => "corral",
             CommandEventKind::CancelOrder => "cancel_order",

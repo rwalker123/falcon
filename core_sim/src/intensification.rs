@@ -16,17 +16,17 @@
 //!   are **the** build seam. Both tracks call them instead of reaching for their own bespoke
 //!   accrue/decay/dip levers, so the plant and animal ladders can never drift apart numerically.
 //!   The per-source *state* is unchanged and stays where it lives (`ForagePatch::cultivation_progress`,
-//!   `Herd::corral_progress`) — the engine supplies the amounts, the source owns its meter and the
-//!   side-effects of completing it (ownership, `corralled_at`, …).
+//!   `Herd::domestication_progress`, `Herd::corral_progress`) — the engine supplies the amounts, the
+//!   source owns its meter and the side-effects of completing it (ownership, `corralled_at`, …).
 //! - [`knows`] is the one knowledge gate. It retires the inlined
 //!   `ledger.get_progress(faction, ID) >= threshold` checks that used to sit in the labor arms and
 //!   the command handlers.
 //!
 //! **The config describes what the sim does TODAY**, deliberately — a later slice changes behaviour
-//! by *editing the JSON*, which is the whole point of extracting it. So animal `pastoral` currently
-//! carries `verb: null` (taming still accrues implicitly from a Sustain hunt and is claimable early
-//! via `domesticate` — the conflation slice 3 fixes), and the engine simply **does not drive** a rung
-//! with no verb.
+//! by *editing the JSON*, which is the whole point of extracting it. Slice 3a proved that: giving
+//! animal `pastoral` its `tame` verb + `herding` gate + build dials was (on the config side) a
+//! one-record edit. The engine simply **does not drive** a rung with no verb — which is all the
+//! `wild` rungs are now.
 //!
 //! **Behavior primitives are parsed and validated, but nothing reads them yet** ([`RungBehavior`]).
 //! They are the bounded coded set §5 calls for: a future rung that recombines them is pure config; a
@@ -91,7 +91,8 @@ pub enum RungKey {
     PlantTended,
     /// A wild herd.
     AnimalWild,
-    /// A **pastoral** (mobile domesticated) herd — still bespoke today (`accrue_domestication`).
+    /// A **pastoral** (mobile domesticated) herd — the `Tame` investment
+    /// (`Herd::domestication_progress`).
     AnimalPastoral,
     /// A **penned** herd — the `Corral` investment (`Herd::corral_progress`).
     AnimalPen,
@@ -254,13 +255,12 @@ impl RungDef {
     /// rung-specific gates hold (`eligible` — knows the unlock knowledge, the source is healthy, the
     /// species' ceiling allows it, the faction owns it), otherwise `0`.
     ///
-    /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0`, which
-    /// is exactly how today's `pastoral` rung stays on its bespoke `accrue_domestication` path until
-    /// slice 3 migrates it.
+    /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
+    /// is what keeps the `wild` rungs (nothing to build) out of the engine.
     ///
     /// The caller applies the amount to its own meter (`ForagePatch::accrue_cultivation` /
-    /// `Herd::accrue_corral`), which owns the clamp to [`RUNG_COMPLETE`] and the side-effects of
-    /// completing.
+    /// `Herd::accrue_domestication` / `Herd::accrue_corral`), which owns the clamp to
+    /// [`RUNG_COMPLETE`] and the side-effects of completing.
     pub fn build_accrual(&self, policy: FollowPolicy, eligible: bool) -> f32 {
         let Some(build) = self.build.as_ref() else {
             return 0.0;
@@ -745,12 +745,21 @@ mod tests {
         assert_eq!(tended.unlock_discovery_id(), Some(CULTIVATION_DISCOVERY_ID));
         assert_eq!(tended.earns_discovery_id(), None);
 
-        // Animal rung 2 — TODAY still the conflated implicit accrual off a Sustain hunt, driven by
-        // no verb and gated by no knowledge. Slice 3 gives it `tame` + `herding`.
+        // Animal rung 2 — the `Tame` investment: an explicit, Herding-gated, *paid* verb. This is
+        // the conflation fix (§4.1): the rung is driven by its own verb, not by a Sustain harvest.
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
-        assert_eq!(pastoral.verb_policy(), None);
-        assert_eq!(pastoral.unlock_discovery_id(), None);
-        assert!(pastoral.build.is_none());
+        assert_eq!(pastoral.verb_policy(), Some(FollowPolicy::Tame));
+        assert_eq!(pastoral.unlock_discovery_id(), Some(HERDING_DISCOVERY_ID));
+        assert_eq!(pastoral.earns_discovery_id(), None);
+        assert_eq!(pastoral.ceiling_required, Some(HusbandryCeiling::Pastoral));
+        // Taming now costs yield, like every other rung — the `domesticate` early-claim that let a
+        // player skip this investment is gone.
+        assert!(
+            pastoral
+                .yield_fraction_while_building()
+                .is_some_and(|dip| dip > 0.0 && dip < 1.0),
+            "the pastoral rung is an investment — it must dip the take while building"
+        );
 
         // Animal rung 3 — the shipped Corral investment, gated on Herding (the §4.3 reshuffle to
         // Penning is a later slice), fenced only by a `pen`-ceiling species.
@@ -782,12 +791,58 @@ mod tests {
         );
     }
 
-    /// A rung with **no verb** is never driven — that is exactly how today's `pastoral` rung stays
-    /// on its bespoke `accrue_domestication` path until slice 3 migrates it.
+    /// A rung with **no verb** is never driven — the `wild` rungs, which are nothing to *build*:
+    /// you take what is there. (Retargeted from `pastoral`, which used to be the verbless example
+    /// because taming accrued implicitly off a Sustain hunt; it now has the `tame` verb, so `wild`
+    /// is what is left to make this point with.)
     #[test]
     fn a_verbless_rung_is_never_driven() {
         let ladder = LadderConfig::builtin();
+        for key in [RungKey::AnimalWild, RungKey::PlantWild] {
+            let wild = ladder.rung(key);
+            for policy in [
+                FollowPolicy::Sustain,
+                FollowPolicy::Surplus,
+                FollowPolicy::Market,
+                FollowPolicy::Eradicate,
+                FollowPolicy::Cultivate,
+                FollowPolicy::Tame,
+                FollowPolicy::Corral,
+            ] {
+                assert_eq!(wild.build_accrual(policy, true), 0.0);
+            }
+            assert_eq!(wild.build_decay(), 0.0);
+            assert_eq!(wild.yield_fraction_while_building(), None);
+        }
+    }
+
+    /// **Taming must out-run its own decay**, or no herd could ever be tamed by sustained work.
+    /// Relocated from `fauna_config::tests::validate_rejects_taming_that_cannot_outrun_its_decay`
+    /// with the dials themselves: the bound now lives on the rung that owns them, and
+    /// `LadderConfig::validate` applies it to every rung of both webs rather than each web
+    /// re-asserting its own copy.
+    #[test]
+    fn rejects_taming_that_cannot_outrun_its_decay() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pastoral");
+            json["rungs"][idx]["build"]["decay_per_turn"] = (0.04).into();
+        });
+        assert_rejects(err, "animal:pastoral");
+    }
+
+    /// **Sustain is not a taming verb** — the §4.1 de-conflation, asserted at the engine seam: the
+    /// `pastoral` rung's meter advances under `Tame` and under nothing else. The sim-level twin of
+    /// this (a Sustain hunt leaves `domestication_progress` at zero) lives in the labor tests.
+    #[test]
+    fn the_pastoral_rung_is_driven_by_tame_and_only_by_tame() {
+        let ladder = LadderConfig::builtin();
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        let build = pastoral.build.as_ref().expect("the pastoral rung builds");
+
+        assert_eq!(
+            pastoral.build_accrual(FollowPolicy::Tame, true),
+            build.progress_per_turn
+        );
         for policy in [
             FollowPolicy::Sustain,
             FollowPolicy::Surplus,
@@ -796,10 +851,14 @@ mod tests {
             FollowPolicy::Cultivate,
             FollowPolicy::Corral,
         ] {
-            assert_eq!(pastoral.build_accrual(policy, true), 0.0);
+            assert_eq!(
+                pastoral.build_accrual(policy, true),
+                0.0,
+                "{policy:?} must not tame a herd — only Tame does"
+            );
         }
-        assert_eq!(pastoral.build_decay(), 0.0);
-        assert_eq!(pastoral.yield_fraction_while_building(), None);
+        // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
+        assert_eq!(pastoral.build_accrual(FollowPolicy::Tame, false), 0.0);
     }
 
     #[test]

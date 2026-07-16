@@ -58,7 +58,7 @@ impl SizeClass {
 /// §4a). The ladder is a *sequence* (wild → pastoral → pen), so a species' reach is a single ceiling,
 /// not two independent flags — which makes the incoherent "pennable but not tameable" state
 /// unrepresentable (no `validate()` combination guard needed). `Wild` is hunt-only (domestication never
-/// accrues, `domesticate`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
+/// accrues, `tame`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
 /// (`corral`/`extend_pen` reject); `Pen` is the full ladder. **Default `Pen`** preserves the pre-δ
 /// universal-full-ladder behaviour for any untagged/future species.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -359,10 +359,13 @@ impl Default for FollowConfig {
     }
 }
 
-/// Husbandry / domestication tuning: a sustained Sustain-follow on a Thriving herd
-/// accrues `progress_per_turn` toward taming (1.0 = domesticated); progress that isn't
-/// being actively sustained decays by `decay_per_turn`. The explicit `domesticate`
-/// command may claim a herd early once progress reaches `claim_threshold`.
+/// Husbandry tuning — **the animal web's own economy**. Taming's own dials are *not* here: the
+/// **`Tame` policy**'s build meter (`progress_per_turn` / `decay_per_turn` /
+/// `yield_fraction_while_building`) lives on `intensification_ladder.json`'s `animal:pastoral` rung,
+/// alongside the pen's on `animal:pen`, so both food webs climb on the same numbers
+/// (`crate::intensification`). The retired `claim_threshold` — the `domesticate` command's
+/// early-claim — is **gone with the command**: it existed to skip the taming investment, which is
+/// the entire decision.
 ///
 /// **The husbandry yield ladder is FLOW-BASED — every rung pays MSY**
 /// (`docs/plan_corral_managed_population.md`). Management does not buy a licence to eat the standing
@@ -407,16 +410,13 @@ impl Default for FollowConfig {
 /// of biomass in feed. What stays here is the animal web's own economy. `knowledge_progress_per_turn` /
 /// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
 /// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
-/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `Corral` policy
-/// checks. Note the asymmetry vs. cultivation — mobile *domestication* stays ungated; only corralling
-/// needs Herding. `claim_threshold` remains the **`domesticate`** command's early-claim gate on
-/// *mobile* taming (unrelated to corralling, which has no early claim).
+/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate **both** animal
+/// investment verbs check today — `Tame` at rung 2 and `Corral` at rung 3. **The cultivation
+/// asymmetry is gone:** taming is no longer ungated, and a Sustain hunt no longer tames anything —
+/// it only *teaches*, exactly as a Sustain forage only teaches Cultivation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HusbandryConfig {
-    pub progress_per_turn: f32,
-    pub decay_per_turn: f32,
-    pub claim_threshold: f32,
     /// The **mobile domesticated** (pastoral) rung: the ecology a tamed, roaming herd lives under.
     pub pastoral: PastoralConfig,
     /// The **penned** rung: the ecology a corralled herd lives under, plus what the pen costs to run.
@@ -451,9 +451,6 @@ pub struct HusbandryConfig {
 impl Default for HusbandryConfig {
     fn default() -> Self {
         Self {
-            progress_per_turn: 0.04,
-            decay_per_turn: 0.01,
-            claim_threshold: 0.6,
             pastoral: PastoralConfig::default(),
             pen: PenConfig::default(),
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
@@ -879,17 +876,6 @@ impl FaunaConfig {
             "husbandry.knowledge_completion_threshold",
             self.husbandry.knowledge_completion_threshold,
         )?;
-        // Taming must out-run its own decay, or no herd can ever be domesticated by sustained work.
-        require_greater_than(
-            "husbandry.progress_per_turn",
-            self.husbandry.progress_per_turn,
-            "husbandry.decay_per_turn",
-            self.husbandry.decay_per_turn,
-        )?;
-        require_non_negative_finite("husbandry.decay_per_turn", self.husbandry.decay_per_turn)?;
-        // The `domesticate` command's early-claim gate: at `0` every herd is claimable instantly, at
-        // `>= 1` the "early" claim is never early.
-        require_open_unit_fraction("husbandry.claim_threshold", self.husbandry.claim_threshold)?;
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
         require_greater_than(
@@ -1473,11 +1459,10 @@ mod tests {
         assert_rejects_field(err, "husbandry.knowledge_completion_threshold");
     }
 
-    #[test]
-    fn validate_rejects_taming_that_cannot_outrun_its_decay() {
-        let err = reject(|json| json["husbandry"]["decay_per_turn"] = (0.04).into());
-        assert_rejects_field(err, "husbandry.progress_per_turn");
-    }
+    // NB: "taming must out-run its own decay" is still guarded — it moved to
+    // `intensification::tests::rejects_taming_that_cannot_outrun_its_decay` along with the dials
+    // themselves (the `animal:pastoral` rung's `build` block), where `LadderConfig::validate` now
+    // owns the bound for *every* rung of *both* food webs rather than each web re-asserting it.
 
     #[test]
     fn validate_rejects_a_zero_provisions_rate() {

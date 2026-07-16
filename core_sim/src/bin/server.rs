@@ -25,7 +25,8 @@ use core_sim::{
     hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
     ActiveStartProfile, BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, ResidentBand, StartProfileOverrides, WellbeingConfigHandle,
+    LadderConfigHandle, LocalStore, ResidentBand, RungKey, StartProfileOverrides,
+    WellbeingConfigHandle,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -563,8 +564,8 @@ fn main() {
             } => {
                 handle_found_settlement(&mut app, faction, target_x, target_y);
             }
-            Command::Domesticate { faction, herd_id } => {
-                handle_domesticate(&mut app, faction, herd_id);
+            Command::Tame { faction, herd_id } => {
+                handle_tame(&mut app, faction, herd_id);
             }
             Command::Cultivate {
                 faction,
@@ -718,7 +719,7 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
-    Domesticate {
+    Tame {
         faction: FactionId,
         herd_id: String,
     },
@@ -1641,6 +1642,9 @@ fn validate_labor_policy(
                     policy.as_str()
                 ));
             }
+            if matches!(policy, FollowPolicy::Tame) {
+                return validate_tame(app, faction, fauna_id);
+            }
             if !matches!(policy, FollowPolicy::Corral) {
                 return Ok(());
             }
@@ -1682,6 +1686,74 @@ fn validate_labor_policy(
         }
         LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
     }
+}
+
+/// The **`Tame`** policy's gates — the animal rung-2 twin of the `Cultivate` arm above, in the same
+/// order and with the same shape. Split out because the Hunt arm now validates two investment rungs
+/// and one inline `if` chain for both would read as a maze.
+///
+/// Each rejection is distinct, and the order is deliberate:
+/// 1. **Herding** — the rung's own `unlock_knowledge`, read off the ladder rather than hard-coded, so
+///    a config edit to the gate can't leave a stale check here. (§4.3 will move rung 3 to `penning`;
+///    this arm keeps naming its own rung's knowledge whatever that becomes.)
+/// 2. **The herd exists.**
+/// 3. **The species' `husbandry_ceiling` allows domestication** (Grazing 2d-δ) — checked *before*
+///    ownership, because it is a property of the *animal*, not of who is hunting it (the rule the
+///    retired `domesticate` handler established).
+/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb.
+/// 5. **Not another faction's** — mirrors the plant side's "another people are cultivating it".
+///
+/// Deliberately **not** gated on the herd being Thriving, unlike the patch: a herd's phase swings as
+/// it is hunted, and the labor arm already handles a lapsed phase gracefully (accrual pauses, the
+/// meter holds, work resumes on recovery). Rejecting the *policy* for a transient dip would be a
+/// worse experience than letting the player commit and wait.
+fn validate_tame(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    fauna_id: &str,
+) -> Result<(), String> {
+    let (knowledge_threshold, pastoral_unlock) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            fauna.husbandry.knowledge_completion_threshold,
+            ladder.rung(RungKey::AnimalPastoral).unlock_discovery_id(),
+        )
+    };
+    let knows_unlock = pastoral_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_unlock {
+        return Err(
+            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
+                .to_string(),
+        );
+    }
+    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+        return Err(format!("No herd '{}' to tame.", fauna_id));
+    };
+    // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed — a property of the animal.
+    if !herd.can_domesticate() {
+        return Err(format!(
+            "{} is wild game — hunt-only, it cannot be tamed.",
+            herd.species
+        ));
+    }
+    if herd.is_domesticated() {
+        return Err(format!(
+            "{} is already domesticated — corral it to pen it.",
+            fauna_id
+        ));
+    }
+    if herd.owner.is_some_and(|owner| owner != faction) {
+        return Err(format!("Another people are taming {}.", fauna_id));
+    }
+    Ok(())
 }
 
 /// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
@@ -2420,120 +2492,75 @@ fn handle_cancel_order(
     );
 }
 
-/// Claim a herd as domesticated livestock. Requires the faction to have built husbandry
-/// progress by Sustain-following it (so it owns the herd) and for that progress to have
-/// reached `husbandry.claim_threshold`; otherwise the command is rejected. On success the
-/// herd is finalized to domesticated (`claim_domestication`), after which it yields steady
-/// provisions and is collapse-immune.
-fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
-    enum Outcome {
-        UnknownHerd,
-        AlreadyDomesticated,
-        /// Grazing 2d-δ: a `Wild`-ceiling species is hunt-only — carries the species display name.
-        WildGame(String),
-        NotOwner,
-        NotTame(f32),
-        Claimed,
+/// **Set the `Tame` policy** on the herd `herd_id` for the band(s) already hunting it — the animal
+/// rung-2 verb, and the exact twin of `handle_cultivate`. This is the command form of what the
+/// client's policy picker does; it **tames nothing outright**.
+///
+/// It **replaces the retired `domesticate` early-claim**, which snapped `domestication_progress` to
+/// `1.0` once past a `claim_threshold`. That claim existed to *skip the investment*, which is the
+/// entire decision — the same reason the plant side removed its own claim first. Taming now costs a
+/// real yield dip (the `animal:pastoral` rung's `yield_fraction_while_building × the herd's Sustain
+/// (MSY) ceiling`) and takes `1 / progress_per_turn` turns of sustained work.
+///
+/// Targets a **herd id** (as `domesticate` did) rather than a tile: taming is the verb you reach for
+/// on a *roaming* wild herd, which is identified by who is following it, not by where it stands this
+/// turn. (`corral`, by contrast, keys off a tile — a pen is a place.)
+///
+/// Gates (via the shared `validate_labor_policy`): the faction must know **Herding**, the species'
+/// `husbandry_ceiling` must allow domestication, and the herd must not already be domesticated or
+/// another faction's — plus the rejection when **no band is hunting it**.
+fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    let target = LaborTarget::Hunt {
+        fauna_id: herd_id.clone(),
+        policy: FollowPolicy::Tame,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "tame",
+            faction = %faction.0,
+            herd = %herd_id,
+            reason = %reason,
+            "command.tame.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Tame, faction, reason);
+        return;
     }
 
-    let claim_threshold = app
-        .world
-        .resource::<FaunaConfigHandle>()
-        .get()
-        .husbandry
-        .claim_threshold;
-
-    // Decide (and, on success, mutate the herd) inside a scope so the registry borrow ends
-    // before we emit command events through `app`.
-    let outcome = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        match registry.herds.iter_mut().find(|herd| herd.id == herd_id) {
-            None => Outcome::UnknownHerd,
-            Some(herd) if herd.is_domesticated() => Outcome::AlreadyDomesticated,
-            // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed (checked before ownership —
-            // it is a property of the animal, not of who is hunting it).
-            Some(herd) if !herd.can_domesticate() => Outcome::WildGame(herd.species.clone()),
-            // Only the tending faction may claim; report ownership and tameness distinctly.
-            Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
-            Some(herd) if herd.domestication_progress < claim_threshold => {
-                Outcome::NotTame(herd.domestication_progress)
-            }
-            Some(herd) => {
-                herd.claim_domestication(faction);
-                Outcome::Claimed
-            }
-        }
-    };
-
-    match outcome {
-        Outcome::UnknownHerd => {
-            warn!(
-                target: "shadow_scale::command",
-                command = "domesticate",
-                faction = %faction.0,
-                herd = %herd_id,
-                "command.domesticate.rejected=unknown_herd"
-            );
-            emit_command_failure(
-                app,
-                CommandEventKind::Domesticate,
-                faction,
-                format!("Herd '{}' no longer exists.", herd_id),
-            );
-        }
-        Outcome::AlreadyDomesticated => emit_command_failure(
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
             app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!("{} is already domesticated.", herd_id),
-        ),
-        Outcome::WildGame(species) => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!("{species} is wild game — hunt-only, it cannot be domesticated."),
-        ),
-        Outcome::NotOwner => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
+            CommandEventKind::Tame,
             faction,
             format!(
-                "You are not tending {}. Sustain-hunt it to build husbandry before claiming it.",
+                "No band is hunting {} — assign herders to it first, then tame it.",
                 herd_id
             ),
-        ),
-        Outcome::NotTame(progress) => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!(
-                "{} is not tame enough to domesticate ({}%). Keep Sustain-hunting it to build husbandry.",
-                herd_id,
-                (progress * 100.0).round() as i64
-            ),
-        ),
-        Outcome::Claimed => {
-            let tick = app.world.resource::<SimulationTick>().0;
-            info!(
-                target: "shadow_scale::command",
-                command = "domesticate",
-                faction = %faction.0,
-                herd = %herd_id,
-                "command.domesticate.claimed"
-            );
-            push_command_event(
-                app,
-                tick,
-                CommandEventKind::Domesticate,
-                faction,
-                format!("Domesticated {}", herd_id),
-                Some(format!(
-                    "status=complete action=domesticate herd={}",
-                    herd_id
-                )),
-            );
-        }
+        );
+        return;
     }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "tame",
+        faction = %faction.0,
+        herd = %herd_id,
+        bands = switched,
+        "command.tame.taming"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Tame,
+        faction,
+        format!("Taming {}", herd_id),
+        Some(format!(
+            "status=taming action=tame herd={} bands={}",
+            herd_id, switched
+        )),
+    );
 }
 
 /// **Set the Cultivate policy** on the forage patch at `tile` for the band(s) already working it
@@ -3599,10 +3626,10 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             );
             None
         }
-        ProtoCommandPayload::Domesticate {
+        ProtoCommandPayload::Tame {
             faction_id,
             herd_id,
-        } => Some(Command::Domesticate {
+        } => Some(Command::Tame {
             faction: FactionId(faction_id),
             herd_id,
         }),
@@ -3961,7 +3988,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CampaignVictory => "Campaign victory",
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
-        CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::Tame => "Tame",
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::CancelOrder => "Cancel order",
@@ -4783,7 +4810,7 @@ fn handle_rollback(
 mod tests {
     use super::*;
     use bevy::math::UVec2;
-    use core_sim::{build_headless_app, ForagePatch};
+    use core_sim::{build_headless_app, ForagePatch, RUNG_COMPLETE};
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
     /// more; progress must be earned under the Cultivate policy).
@@ -5010,7 +5037,7 @@ mod tests {
             0.05,
         );
         if let Some(faction) = owner {
-            herd.claim_domestication(faction);
+            herd.accrue_domestication(faction, RUNG_COMPLETE);
         }
         let id = herd.id.clone();
         app.world.resource_mut::<HerdRegistry>().herds.push(herd);
@@ -5143,6 +5170,156 @@ mod tests {
         handle_corral(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    // --- Tame (the intensification ladder's animal rung-2 verb) ----------------------------------
+
+    /// Rung-2 gate (§4.3): `tame` is refused until the faction has learned **Herding**. Taming used
+    /// to be ungated (a free side effect of Sustain); it is now paced by practice.
+    #[test]
+    fn tame_rejected_when_herding_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        // Owner `None` — a wild, untamed herd, which is what `tame` targets.
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(
+            &app,
+            "have not learned Herding"
+        ));
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sustain,
+            "a refused tame must not switch the band's policy"
+        );
+    }
+
+    /// The happy path: with Herding known and herders already on the herd, `tame` **sets the Tame
+    /// policy** on them. It tames nothing outright — the investment must still be worked off (this is
+    /// exactly what the retired `domesticate` early-claim let the player skip).
+    #[test]
+    fn tame_sets_the_tame_policy_on_the_working_band() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        grant_herding(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Tame,
+            "tame switches the working band onto the investment policy"
+        );
+        assert!(
+            !app.world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .unwrap()
+                .is_domesticated(),
+            "tame claims nothing — there is no early claim any more"
+        );
+    }
+
+    /// An already-domesticated herd has climbed this rung — `corral` is the next verb, not `tame`.
+    #[test]
+    fn tame_rejected_when_already_domesticated() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(&app, "already domesticated"));
+    }
+
+    /// You cannot tame a herd another people are already taming.
+    #[test]
+    fn tame_rejected_for_another_factions_herd() {
+        let mut app = build_headless_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        // Part-tamed by faction 0 — enough to own it, not enough to be domesticated.
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .find(|h| h.id == id)
+            .unwrap()
+            .accrue_domestication(owner, 0.2);
+        grant_herding(&mut app, intruder);
+        spawn_working_band(
+            &mut app,
+            intruder,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, intruder, id.clone());
+
+        assert!(tame_failure_detail_contains(
+            &app,
+            "Another people are taming"
+        ));
+    }
+
+    /// `tame` is a policy switch, so it needs someone to switch: staff the herd first.
+    #[test]
+    fn tame_rejected_when_no_band_is_hunting_the_herd() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let id = seed_herd(&mut app, UVec2::new(1, 1), None);
+        grant_herding(&mut app, faction);
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    /// An unknown herd id is rejected by name.
+    #[test]
+    fn tame_rejected_for_an_unknown_herd() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        grant_herding(&mut app, faction);
+
+        handle_tame(&mut app, faction, "game_nonexistent".to_string());
+
+        assert!(tame_failure_detail_contains(&app, "No herd"));
     }
 
     // --- ExtendPen (Grazing 2d-β) — the command form of growing a built pen's fenced footprint. ------
@@ -5302,19 +5479,32 @@ mod tests {
             .husbandry_ceiling = ceiling;
     }
 
-    /// A `wild` species is hunt-only — the `domesticate` claim rejects it. (A wild herd never even
-    /// accrues husbandry, so this is the realistic path: an untamed wild herd the player tries to claim.)
+    /// A `wild`-ceiling species (deer, mammoth) is hunt-only — **`tame` rejects it**, and it is
+    /// refused for being the wrong *animal*, not for anything about the hunter: the faction here
+    /// knows Herding and has herders on the herd, so the ceiling is the only thing left to fail.
+    ///
+    /// Retargeted from the retired `domesticate_rejects_a_wild_species`: the guarantee ("a wild
+    /// species can never be tamed") is unchanged — only the verb that must enforce it moved.
     #[test]
-    fn domesticate_rejects_a_wild_species() {
+    fn tame_rejects_a_wild_species() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         // Owner `None` so `seed_herd` doesn't auto-domesticate it (the ceiling check is what matters).
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
         set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Wild);
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
 
-        handle_domesticate(&mut app, faction, id.clone());
+        handle_tame(&mut app, faction, id.clone());
 
-        assert!(domesticate_failure_detail_contains(&app, "wild game"));
+        assert!(tame_failure_detail_contains(&app, "wild game"));
         assert!(
             !app.world
                 .resource::<HerdRegistry>()
@@ -5325,9 +5515,9 @@ mod tests {
         );
     }
 
-    fn domesticate_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+    fn tame_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
         app.world.resource::<CommandEventLog>().iter().any(|entry| {
-            matches!(entry.kind, CommandEventKind::Domesticate)
+            matches!(entry.kind, CommandEventKind::Tame)
                 && entry
                     .detail
                     .as_deref()

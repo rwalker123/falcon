@@ -152,10 +152,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "hunt_fauna <faction_id> <herd_id> [band_entity_bits]",
     },
     CommandVerbHelp {
-        verb: "domesticate",
+        verb: "tame",
         aliases: &[],
-        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain hunt).",
-        usage: "domesticate <faction_id> <herd_id>",
+        summary: "Set the Tame policy on the bands hunting a wild herd: an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
+        usage: "tame <faction_id> <herd_id>",
     },
     CommandVerbHelp {
         verb: "cultivate",
@@ -737,15 +737,15 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 },
             })
         }
-        "domesticate" => {
+        "tame" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            Ok(CommandPayload::Domesticate {
-                faction_id: parse_u32(faction_str, "domesticate faction")?,
+            Ok(CommandPayload::Tame {
+                faction_id: parse_u32(faction_str, "tame faction")?,
                 herd_id: herd_id.to_string(),
             })
         }
@@ -1144,19 +1144,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_domesticate_command() {
+    fn parse_tame_command() {
         assert_eq!(
-            parse_command_line("domesticate 0 game_deer_07").unwrap(),
-            CommandPayload::Domesticate {
+            parse_command_line("tame 0 game_deer_07").unwrap(),
+            CommandPayload::Tame {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
             }
         );
         // herd_id is required.
         assert!(matches!(
-            parse_command_line("domesticate 0"),
+            parse_command_line("tame 0"),
             Err(CommandParseError::MissingArgument("herd_id"))
         ));
+    }
+
+    /// `tame` **replaced** the `domesticate` early-claim — it is not an alias for it. The claim
+    /// existed to skip the taming investment, which is the whole decision, so the verb is gone: a
+    /// script still sending it must fail loudly rather than silently doing something adjacent.
+    #[test]
+    fn the_domesticate_early_claim_verb_no_longer_exists() {
+        assert!(matches!(
+            parse_command_line("domesticate 0 game_deer_07"),
+            Err(CommandParseError::UnknownCommand(verb)) if verb == "domesticate"
+        ));
+        assert!(
+            !COMMAND_VERBS
+                .iter()
+                .any(|help| help.verb == "domesticate" || help.aliases.contains(&"domesticate")),
+            "the retired early-claim must not linger in the help listing"
+        );
     }
 
     #[test]

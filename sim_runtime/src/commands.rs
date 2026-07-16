@@ -140,7 +140,7 @@ pub enum CommandPayload {
         herd_id: String,
         band_entity_bits: Option<u64>,
     },
-    Domesticate {
+    Tame {
         faction_id: u32,
         herd_id: String,
     },
@@ -503,10 +503,10 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 band_entity_bits: *band_entity_bits,
             }),
-            CommandPayload::Domesticate {
+            CommandPayload::Tame {
                 faction_id,
                 herd_id,
-            } => pb::command_envelope::Command::Domesticate(pb::DomesticateCommand {
+            } => pb::command_envelope::Command::Tame(pb::TameCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
             }),
@@ -817,7 +817,7 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
                 band_entity_bits: cmd.band_entity_bits,
             },
-            pb::command_envelope::Command::Domesticate(cmd) => CommandPayload::Domesticate {
+            pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
             },

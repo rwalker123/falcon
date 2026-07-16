@@ -18,7 +18,7 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID,
+    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID, RUNG_COMPLETE,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -184,7 +184,7 @@ fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
 fn domesticate(app: &mut App, id: &str) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    herd.claim_domestication(FactionId(0));
+    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
 }
 
 /// The single band's FOOD larder.
@@ -254,26 +254,106 @@ fn provisions_f32(app: &mut App) -> f32 {
     total
 }
 
-/// A sustained Sustain hunt on a Thriving herd tames it: progress climbs to 1.0 (domesticated) and
-/// the hunter's faction owns it.
+/// **The `Tame` verb tames** — sustained work under `FollowPolicy::Tame` on a Thriving herd climbs
+/// `domestication_progress` to 1.0 and the taming faction owns it.
+///
+/// **Retargeted from `sustain_hunt_domesticates_thriving_herd`.** The guarantee "sustained work on a
+/// Thriving herd domesticates it, and the worker owns it" is *preserved verbatim* — only the verb
+/// that earns it changed, from the `Sustain` harvest policy to the explicit `Tame` investment
+/// (`plan_intensification_ladder.md` §4.1: taming was a hidden side effect of a harvest policy; it is
+/// now a paid verb). Its inverse — that Sustain *no longer* does this — is
+/// `sustain_hunt_no_longer_tames_it_only_teaches_herding` below.
 #[test]
-fn sustain_hunt_domesticates_thriving_herd() {
+fn tame_policy_domesticates_thriving_herd() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    grant_herding(&mut app);
+    spawn_hunter(&mut app, &id, FollowPolicy::Tame);
 
-    // net accrual = progress_per_turn(0.04) - decay(0.01) = 0.03/turn → ~34 turns to 1.0.
-    run_turns_with_hunt(&mut app, 45);
+    // A herd under active taming is spared the decay pass (`tamed_this_turn`, mirroring a patch under
+    // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns to 1.0.
+    run_turns_with_hunt(&mut app, 30);
 
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).expect("domesticated herd persists");
     assert!(
         herd.is_domesticated(),
-        "sustained Sustain hunt should domesticate: progress {}",
+        "sustained Tame work should domesticate: progress {}",
         herd.domestication_progress
     );
-    assert_eq!(herd.owner, Some(FactionId(0)), "the hunter owns the herd");
+    assert_eq!(herd.owner, Some(FactionId(0)), "the tamer owns the herd");
     assert_eq!(registry.domesticated_count(FactionId(0)), 1);
+}
+
+/// **Sustain no longer tames anything — it only TEACHES.** The §4.1 de-conflation, at the sim level:
+/// the one `Sustain` branch that used to advance Herding knowledge *and* `accrue_domestication` now
+/// does only the former, exactly mirroring the plant side's Sustain→Cultivation branch.
+///
+/// This is the inverse half of the retargeted `sustain_hunt_domesticates_thriving_herd`: run the
+/// *same* herd under the *same* policy for well past the old ~34-turn taming horizon and assert the
+/// meter never moves — while the knowledge it *does* earn climbs to complete.
+#[test]
+fn sustain_hunt_no_longer_tames_it_only_teaches_herding() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+
+    // Far past the 34 turns that used to be a full taming under the old conflated branch.
+    run_turns_with_hunt(&mut app, 45);
+
+    let herd = herd_of(&app, &id);
+    assert_eq!(
+        herd.domestication_progress, 0.0,
+        "a Sustain hunt must never tame — Tame is the taming verb"
+    );
+    assert_eq!(
+        herd.owner, None,
+        "a Sustain hunt must not claim ownership of a wild herd either"
+    );
+    // ...but it DOES teach, which is the whole point: Sustain is how you earn the Tame verb.
+    assert!(
+        app.world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), HERDING_DISCOVERY_ID)
+            >= scalar_one(),
+        "Sustain-hunting a Thriving herd must still teach the faction Herding"
+    );
+}
+
+/// **The Tame take dips to the rung's fraction.** Taming costs yield — the crew is gentling the herd,
+/// not harvesting it — so the take ceiling is the `animal:pastoral` rung's
+/// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling`. Asserted against the *same*
+/// herd state under Sustain, so it is a true ratio and not a pinned magic number.
+#[test]
+fn the_tame_take_dips_to_the_rungs_yield_fraction() {
+    let dip = {
+        let app = spawn_world();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        ladder
+            .rung(RungKey::AnimalPastoral)
+            .yield_fraction_while_building()
+            .expect("the pastoral rung is an investment")
+    };
+
+    // One turn of Sustain (the MSY baseline) vs one turn of Tame, from an identical start.
+    let harvest = |policy: FollowPolicy| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        grant_herding(&mut app);
+        spawn_hunter(&mut app, &id, policy);
+        let before = provisions_f32(&mut app);
+        run_turns_with_hunt(&mut app, 1);
+        provisions_f32(&mut app) - before
+    };
+
+    let sustained = harvest(FollowPolicy::Sustain);
+    let tamed = harvest(FollowPolicy::Tame);
+    assert!(sustained > 0.0, "the Sustain baseline must pay something");
+    assert!(
+        (tamed - sustained * dip).abs() < sustained * 0.02,
+        "Tame must pay the rung's dip: expected ~{}, got {tamed}",
+        sustained * dip
+    );
 }
 
 /// Only a Sustain hunt tames; an Eradicate hunt never accrues husbandry.
@@ -290,12 +370,19 @@ fn eradicate_hunt_does_not_domesticate() {
     );
 }
 
-/// Husbandry progress decays and ownership lapses once the herd isn't being tended.
+/// **Abandoning a taming decays the meter**, and ownership lapses at zero — the herd goes feral, the
+/// animal mirror of an abandoned Cultivate patch reverting.
+///
+/// **Retargeted from `progress_decays_without_sustained_hunt`:** the guarantee (partial taming bleeds
+/// away when you walk off, and a herd at zero progress keeps no stale owner) is unchanged; the meter
+/// is now *built* by `Tame` rather than by `Sustain`, so that is what gets abandoned. The decay rate
+/// itself now comes off the `animal:pastoral` rung, not `fauna_config.husbandry`.
 #[test]
-fn progress_decays_without_sustained_hunt() {
+fn abandoning_a_tame_decays_the_progress() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    grant_herding(&mut app);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Tame);
     run_turns_with_hunt(&mut app, 6);
     let built = progress_of(&app, &id);
     assert!(built > 0.0, "some progress should have accrued");
@@ -326,8 +413,8 @@ fn domesticated_herd_is_collapse_immune() {
     let low = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.claim_domestication(FactionId(0)); // sets owner + progress = 1.0 → domesticated
-                                                // Below the 15% collapse threshold — a wild herd here would crash.
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE); // sets owner + progress = 1.0 → domesticated
+                                                                // Below the 15% collapse threshold — a wild herd here would crash.
         let low = herd.carrying_capacity * 0.10;
         herd.biomass = low;
         low
@@ -445,7 +532,7 @@ fn domesticated_herd_harvests_its_pastoral_msy_and_draws_the_herd_down() {
     let (biomass_before, cap) = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.claim_domestication(FactionId(0));
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         // At capacity: MSY = r·K/4 (the ceiling plateaus above K/2).
         herd.biomass = herd.carrying_capacity;
         (herd.biomass, herd.carrying_capacity)
@@ -491,6 +578,8 @@ fn herding_knowledge(app: &App) -> f32 {
 
 /// Complete faction 0's **Herding** knowledge — the `Corral` policy's gate — so a Corral assignment
 /// actually accrues pen progress.
+/// Teach faction 0 **Herding** — the unlock gate on *both* animal investment verbs (`Tame` at rung
+/// 2, `Corral` at rung 3). Taming is no longer ungated, so a taming test must grant it too.
 fn grant_herding(app: &mut App) {
     app.world
         .resource_mut::<DiscoveryProgressLedger>()
@@ -523,7 +612,7 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.biomass = herd.carrying_capacity;
-    herd.claim_domestication(FactionId(0));
+    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     let tile = herd.position();
     herd.corral_at(tile);
     tile
@@ -1094,7 +1183,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.claim_domestication(FactionId(0));
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     }
     grant_herding(&mut app);
     let band = spawn_hunter(&mut app, &id, FollowPolicy::Corral);

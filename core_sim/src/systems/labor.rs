@@ -59,6 +59,7 @@ pub fn advance_labor_allocation(
     // the ladder's, not each web's, so the two paths can never be tuned apart. Hoisted out of the
     // per-cohort loop alongside the knowledge levers.
     let tended_rung = ladder.rung(RungKey::PlantTended);
+    let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
     let pen_rung = ladder.rung(RungKey::AnimalPen);
     // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
     // labor at the same forgone-yield price, so it must never drift from the initial build.
@@ -66,9 +67,10 @@ pub fn advance_labor_allocation(
     let pen_build_dip = pen_rung
         .yield_fraction_while_building()
         .expect("the pen rung is an investment — it has a build meter");
-    // Rung 1c (earned Herding knowledge, the animal mirror): a Sustain-hunt on a Thriving herd
-    // teaches the faction Herding, the gate the **Corral** policy checks. Mobile domestication stays
-    // ungated (only *penning* needs Herding).
+    // Rung 1 (earned Herding knowledge, the animal mirror of Cultivation): a Sustain-hunt on a
+    // Thriving herd teaches the faction Herding — the gate on **both** animal investment verbs
+    // today (`Tame` at rung 2, `Corral` at rung 3; §4.3's reshuffle onto a separate `penning`
+    // knowledge is a later slice). Sustain *teaches*; it no longer tames.
     let herding_knowledge_delta = scalar_from_f32(husbandry.knowledge_progress_per_turn);
     let herding_knowledge_threshold = husbandry.knowledge_completion_threshold;
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
@@ -436,10 +438,12 @@ pub fn advance_labor_allocation(
                         f32::INFINITY,
                     );
                     let take = biomass_before - herd.biomass;
-                    // Phase E husbandry + Rung 1c Herding knowledge: a Sustain hunt on a Thriving
-                    // group tames it over time AND teaches the faction Herding (the **Corral** policy's
-                    // gate, accrued in the shared `DiscoveryProgressLedger`, never start-granted).
-                    // Taming stays ungated — mobile pastoralism needs no knowledge; only penning does.
+                    // Rung 1 — the earned-knowledge ladder (§4). A **Sustain** hunt on a Thriving
+                    // herd **teaches the faction Herding** (accrued in the shared
+                    // `DiscoveryProgressLedger`, never start-granted). Knowledge only — it no longer
+                    // tames the herd: taming is an **explicit `Tame` policy with an investment
+                    // cost** (below), not a free by-product of Sustain. The exact mirror of the
+                    // plant arm's Sustain→Cultivation branch.
                     if matches!(policy, FollowPolicy::Sustain)
                         && herd.ecology_phase == EcologyPhase::Thriving
                     {
@@ -448,7 +452,48 @@ pub fn advance_labor_allocation(
                             HERDING_DISCOVERY_ID,
                             herding_knowledge_delta,
                         );
-                        herd.accrue_domestication(faction, husbandry.progress_per_turn);
+                    }
+                    // **Tame — the investment policy** (the animal twin of Cultivate, and the rung
+                    // below Corral). The crew is gentling the herd, not hunting it: `hunt_take`
+                    // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
+                    // `yield_fraction_while_building × MSY` — the up-front cost), and here the herd
+                    // accrues toward pastoral. Gates: the faction must **know Herding** (earned by
+                    // Sustain-hunting, above), the species' husbandry ceiling must allow taming
+                    // (Grazing 2d-δ — a `wild`-ceiling species never tames; `accrue_domestication`
+                    // self-guards too, and the command path rejects it, so this is belt and braces),
+                    // and the herd must be **Thriving**. A gate that lapses mid-run just stops
+                    // accrual that turn — progress is neither lost nor silently switched, and the
+                    // herd is marked tamed-this-turn below so it doesn't decay either.
+                    //
+                    // **Ownership is NOT in `eligible`** — `accrue_domestication` owns the
+                    // `owner is None || owner == faction` rule (and sets ownership on first accrual),
+                    // exactly as `accrue_cultivation` owns it on the plant side. One rule, one place.
+                    //
+                    // **Ordering: accrue AFTER the take** (mirrors Cultivate/Corral), so this turn
+                    // pays exactly the dipped yield the pre-commit forecast promised.
+                    if matches!(policy, FollowPolicy::Tame) {
+                        // Marked worked-as-improvement so `advance_husbandry` spares it: a herd
+                        // under active taming neither goes feral nor bleeds its partial progress.
+                        herd.tamed_this_turn = true;
+                        let eligible =
+                            pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                knows(&discovery, faction, knowledge, herding_knowledge_threshold)
+                            }) && herd.can_domesticate()
+                                && herd.ecology_phase == EcologyPhase::Thriving;
+                        // THE build seam — the same call the plant side's Cultivate arm makes.
+                        let accrual = pastoral_rung.build_accrual(*policy, eligible);
+                        if accrual > 0.0 {
+                            herd.accrue_domestication(faction, accrual);
+                            if herd.is_domesticated() {
+                                event_log.push(CommandEventEntry::new(
+                                    tick.0,
+                                    CommandEventKind::Tame,
+                                    faction,
+                                    format!("Tamed the {} herd", herd.species),
+                                    Some(format!("status=complete action=tame herd={}", herd.id)),
+                                ));
+                            }
+                        }
                     }
                     // **Corral — the investment policy** (the animal twin of Cultivate). The crew is
                     // building the pen, not hunting: `hunt_take` above already paid only the reduced
@@ -773,7 +818,7 @@ mod labor_yield_tests {
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
     use crate::forage::{advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID};
     use crate::forage::{ForagePatch, ForageRegistry};
-    use crate::intensification::{LadderConfig, LadderConfigHandle, RungKey};
+    use crate::intensification::{LadderConfig, LadderConfigHandle, RungKey, RUNG_COMPLETE};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
@@ -1875,7 +1920,7 @@ mod labor_yield_tests {
         reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].claim_domestication(BAND_FACTION);
+            registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
         }
         let sustain_band = spawn_band(
             &mut world,
@@ -1901,7 +1946,7 @@ mod labor_yield_tests {
         grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].claim_domestication(BAND_FACTION);
+            registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
         }
         let band = spawn_band(
             &mut world,
@@ -1976,7 +2021,7 @@ mod labor_yield_tests {
         let (mut world, tile) = world_with_source(CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].claim_domestication(BAND_FACTION);
+            registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
         }
         spawn_band(
             &mut world,

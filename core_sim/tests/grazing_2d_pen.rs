@@ -30,6 +30,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    RUNG_COMPLETE,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
@@ -128,7 +129,7 @@ fn seat_pen(
         fodder,
         r,
     );
-    herd.claim_domestication(FactionId(0));
+    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     herd.corral_at(tile);
     herd.pen_radius = radius;
     registry.herds.push(herd);

@@ -446,10 +446,10 @@ pub(crate) fn forage_policy_ceiling(
                     .yield_fraction_while_building()
                     .expect("the tended rung is an investment — it has a build meter")
         }
-        // `Corral` is an animal-only policy — rejected on a Forage assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively yields nothing
-        // rather than silently gathering under a nonsense policy.
-        FollowPolicy::Corral => 0.0,
+        // `Tame`/`Corral` are animal-only policies — rejected on a Forage assignment at
+        // `assign_labor` (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively
+        // yield nothing rather than silently gathering under a nonsense policy.
+        FollowPolicy::Tame | FollowPolicy::Corral => 0.0,
     }
 }
 
@@ -530,6 +530,10 @@ pub(crate) fn forage_forecast(
         // The investment rung: what the patch pays *while preparing* (Cultivate), and what it will
         // pay *once prepared* — so the client can show "preparing X → then Y" before committing.
         ceiling_prepare: ceiling(FollowPolicy::Cultivate),
+        // `Tame` is animal-only — a patch has no taming rung, and `forage_policy_ceiling` yields `0`
+        // for it. Resolved through the same `ceiling` closure rather than a literal, so the "not a
+        // forage policy" rule stays stated in exactly one place.
+        ceiling_tame: ceiling(FollowPolicy::Tame),
         managed_yield: tended_provisions(patch.biomass, forage, output_multiplier),
     }
 }

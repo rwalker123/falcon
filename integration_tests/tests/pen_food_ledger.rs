@@ -21,7 +21,7 @@ use bevy::prelude::Entity;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, FactionId, FollowPolicy, GrazeRegistry,
     HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, Tile, FOOD,
+    SimulationConfig, SnapshotHistory, Tile, FOOD, RUNG_COMPLETE,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -68,7 +68,7 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
             .iter_mut()
             .max_by(|a, b| a.biomass.total_cmp(&b.biomass))
             .expect("herds spawn");
-        herd.claim_domestication(FactionId(0));
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         herd.biomass = herd.carrying_capacity; // at capacity → the largest possible feed demand
         herd.corral_at(band_pos); // pen it ON the band's tile: in reach, and it no longer roams
         herd.id.clone()

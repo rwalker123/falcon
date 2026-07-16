@@ -159,9 +159,6 @@
   },
   "husbandry": {
     "_comment_ladder": "THE HUSBANDRY YIELD LADDER IS FLOW-BASED: every rung pays MSY (= r*K/4 * hunt.provisions_per_biomass), and the rungs differ in the r that MSY is computed against — management buys a GROWTH RATE, not a licence to eat the standing stock. Since Grazing 2d the managed r is PER-SPECIES: pastoral r = min(husbandry_regrowth_cap, wild_r * pastoral_gain), pen r = min(husbandry_regrowth_cap, wild_r * pen_gain) — a penned rabbit (r 0.75, booms) and a penned mammoth (r 0.12, a long-haul investment) are different economies, retiring the retired flat 0.25/0.90. A penned herd's K is its FENCED FOOTPRINT's graze flow (capacity_fraction is retired), so it grazes its own land and the larder only pays what the pasture can't cover. Every managed harvest DRAWS THE HERD DOWN: the herd converges on K/2 and pays r*K/4 forever. See docs/plan_grazing_2d.md and docs/plan_corral_managed_population.md.",
-    "progress_per_turn": 0.04,
-    "decay_per_turn": 0.01,
-    "claim_threshold": 0.6,
     "_comment_gains": "PER-SPECIES HUSBANDRY GROWTH (Grazing 2d §3): the managed rungs scale each herd's OWN wild r rather than flattening every animal to one rate. pastoral_gain 1.5 (mobile-tamed grows 1.5x wild) < pen_gain 3.0 (penned grows 3x wild — protected, fed, bred), both clamped to husbandry_regrowth_cap 0.75 so a fast breeder stays in the stable logistic band (no overshoot/oscillation). Playtest levers — expect to tune (like the consumption dial).",
     "pastoral_gain": 1.5,
     "pen_gain": 3.0,

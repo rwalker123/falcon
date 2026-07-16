@@ -19,7 +19,7 @@ use crate::{
     graze::GrazeRegistry,
     grid_utils::{hex_distance_wrapped, hex_neighbor, hex_range_tiles, HEX_DIRECTION_COUNT},
     hashing::FnvHasher,
-    intensification::{LadderConfig, RungKey},
+    intensification::{LadderConfig, LadderConfigHandle, RungKey},
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{
@@ -207,8 +207,8 @@ pub struct Herd {
     pub regrowth_rate: f32,
     /// **How far up the husbandry ladder this herd's species can climb** (Grazing 2d-δ), cached from
     /// the `SpeciesDef` at spawn (mirroring `regrowth_rate` / `fodder_per_biomass`). Gates the three
-    /// husbandry seams without re-resolving config: domestication accrual (a `Wild` herd never tames),
-    /// the `domesticate` claim, and the `corral` / `extend_pen` paths (only a `Pen` herd pens).
+    /// husbandry seams without re-resolving config: taming accrual + the `tame` command (a `Wild` herd
+    /// never tames), and the `corral` / `extend_pen` paths (only a `Pen` herd pens).
     /// Round-tripped through `HerdState.husbandry_ceiling` and exported as `husbandryCeiling`.
     pub husbandry_ceiling: HusbandryCeiling,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
@@ -305,6 +305,20 @@ pub struct Herd {
     /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false`, so a rollback can only
     /// grant one extra passive payment, never withhold one forever.
     pub worked_this_turn: bool,
+    /// **Was this herd actively TAMED this turn** — set by the `Tame` arm of
+    /// `advance_labor_allocation`, read by `advance_husbandry` to spare it from `decay_domestication`.
+    /// The animal twin of `ForagePatch::tended_this_turn`, with the same **deliberate one-turn lag**
+    /// (Logistics reads what Population wrote last turn) and the same rule: a herd under active taming
+    /// neither goes feral nor bleeds its partial progress, so the investment accrues at the **full**
+    /// `progress_per_turn` rather than net-of-decay. It is set even when a gate lapses mid-run
+    /// (mirroring the plant side) — a crew that showed up and worked keeps the herd from reverting.
+    ///
+    /// Distinct from [`Herd::worked_this_turn`], which is set by **any** hunt policy: a Sustain hunt
+    /// harvests a herd, it does not tame it, so it must not hold the taming meter up.
+    ///
+    /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false` ("untended"), so a
+    /// rollback can only *delay* a decay turn by one, never invent progress.
+    pub tamed_this_turn: bool,
 }
 
 impl Herd {
@@ -364,6 +378,7 @@ impl Herd {
             pen_fed_fraction: PEN_FULLY_FED,
             pen_starving: false,
             worked_this_turn: false,
+            tamed_this_turn: false,
         }
     }
 
@@ -397,12 +412,22 @@ impl Herd {
         self.husbandry_ceiling.allows_pen()
     }
 
-    /// Accrue husbandry progress for `faction` (the tending band). Sets ownership on the
-    /// first accrual; only the owner makes progress. Clamped to 1.0 (auto-domestication).
+    /// Accrue taming progress for `faction` (the band working this herd under `FollowPolicy::Tame`).
+    /// Sets ownership on the first accrual; only the owner makes progress. Clamped to 1.0
+    /// (auto-domestication at [`crate::intensification::RUNG_COMPLETE`]). Mirrors
+    /// `ForagePatch::accrue_cultivation`.
     ///
     /// **A `Wild`-ceiling species never accrues** (Grazing 2d-δ) — self-guarded here so the "hunt-only"
     /// invariant holds regardless of the call site (and no wild herd ever picks up an `owner`).
-    pub(crate) fn accrue_domestication(&mut self, faction: FactionId, amount: f32) {
+    ///
+    /// **`pub` so tests can build a tamed herd** by running the *real* path to completion
+    /// (`accrue_domestication(f, RUNG_COMPLETE)`). It replaces the retired `claim_domestication`,
+    /// which snapped progress to `1.0` for the `domesticate` early-claim: with that command gone the
+    /// primitive had no production caller, and a "skip the investment" method left lying in the API
+    /// is precisely what the ladder exists to delete. Going through the accrual instead means a test
+    /// fixture obeys the husbandry ceiling like everything else — you cannot fabricate a
+    /// domesticated `wild` herd.
+    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32) {
         if self.is_domesticated() || !self.can_domesticate() {
             return;
         }
@@ -427,15 +452,6 @@ impl Herd {
         if self.domestication_progress <= 0.0 {
             self.owner = None;
         }
-    }
-
-    /// Finalize domestication for `faction` (the `domesticate` command's early claim): set
-    /// ownership and snap progress to 1.0 so `is_domesticated()` latches. Taking the faction
-    /// here makes the `owner is Some ⟺ progress > 0` invariant impossible to violate (no
-    /// ownerless domesticated herd).
-    pub fn claim_domestication(&mut self, faction: FactionId) {
-        self.owner = Some(faction);
-        self.domestication_progress = 1.0;
     }
 
     /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
@@ -804,6 +820,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         pen_fed_fraction: PEN_FULLY_FED,
         pen_starving: false,
         worked_this_turn: false,
+        tamed_this_turn: false,
     }
 }
 
@@ -1852,14 +1869,18 @@ pub fn repopulate_fauna(
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
+    let ladder = ladder_config.get();
     let wellbeing = wellbeing_config.get();
-    let husbandry = &fauna.husbandry;
+    // The go-feral rate is the `animal:pastoral` rung's own build decay — the shared ladder seam
+    // (`crate::intensification`), exactly as `advance_cultivation` reads the `plant:tended` rung's.
+    let pastoral_decay = ladder.rung(RungKey::AnimalPastoral).build_decay();
     // Accumulate each owner's managed-livestock yield, then feed it into that faction's bands'
     // larders — the pastoral counterpart of foraging income. Food is band-local from day one;
     // an even split across the owner's bands is a v1 (Phase 3 corrals will make it place-local).
@@ -1872,6 +1893,10 @@ pub fn advance_husbandry(
         // Population). Cleared for *every* herd, tame or wild, so it can never go stale.
         let worked_by_labor = herd.worked_this_turn;
         herd.worked_this_turn = false;
+        // Same one-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
+        // and cleared for every herd so it can never go stale.
+        let tamed_last_turn = herd.tamed_this_turn;
+        herd.tamed_this_turn = false;
         if herd.is_domesticated() {
             // Corral (Rung 1c): a penned herd's keeper harvests the **pen's** MSY place-local
             // (`advance_labor_allocation`), NOT the pastoral even-split below — and it **escapes** if
@@ -1984,8 +2009,13 @@ pub fn advance_husbandry(
                     provisions = %provisions,
                 );
             }
-        } else {
-            herd.decay_domestication(husbandry.decay_per_turn);
+        } else if !tamed_last_turn {
+            // **Feral if untamed** — the animal mirror of `advance_cultivation`. A herd a crew
+            // worked under `Tame` last turn is **spared**; an abandoned part-tamed herd bleeds the
+            // `animal:pastoral` rung's own `decay_per_turn` back toward wild (its owner lapsing at
+            // zero). Reading the rate off the ladder is what keeps the two food webs' abandon-decay
+            // tuned together — it is the shared build seam's, not a fauna-only lever.
+            herd.decay_domestication(pastoral_decay);
         }
     }
     if yields.is_empty() {
@@ -2111,12 +2141,24 @@ pub struct SourceYieldForecast {
     pub ceiling_market: f32,
     /// Food/turn cap under **Eradicate**.
     pub ceiling_eradicate: f32,
-    /// Food/turn cap under the source's **investment** policy — `Cultivate` for a forage patch,
-    /// `Corral` for a herd (the two are kind-exclusive, so one field serves both). This is the
-    /// **preparing** yield: `fraction × the Sustain (MSY) ceiling`, the up-front cost of the
-    /// improvement. Crosses the wire as `ForagePatchState.ceilingCultivate` /
-    /// `HerdTelemetryState.ceilingCorral`.
+    /// Food/turn cap under the source's **top investment** policy — `Cultivate` for a forage patch,
+    /// `Corral` for a herd. This is the **preparing** yield: `yield_fraction_while_building × the
+    /// Sustain (MSY) ceiling`, the up-front cost of the improvement. Crosses the wire as
+    /// `ForagePatchState.ceilingCultivate` / `HerdTelemetryState.ceilingCorral`.
     pub ceiling_prepare: f32,
+    /// Food/turn cap under **`Tame`** — the animal rung-2 dip (the `animal:pastoral` rung's
+    /// `yield_fraction_while_building × MSY`). `0` on a forage patch, where `Tame` is not a legal
+    /// policy.
+    ///
+    /// **Its own field, deliberately.** The animal branch now has *two* investment rungs, so
+    /// [`SourceYieldForecast::ceiling_prepare`] can no longer serve "the investment policy" — it is
+    /// Corral's. The two dips are *coincidentally* equal on today's shipped levers (both 0.50), and
+    /// folding Tame onto Corral's field would pass every forecast==actual test **by that
+    /// coincidence** while silently lying the moment either rung's dial is retuned — exactly the
+    /// "two copies agreeing with each other while both disagree with the take" failure this
+    /// codebase has already paid for once. Reaches the client through the free-form
+    /// `huntPolicyCeilings` list (no schema change), not a scalar field.
+    pub ceiling_tame: f32,
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`) / the corral harvest (`corral_provisions`) at its current biomass. Lets
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
@@ -2137,25 +2179,29 @@ impl SourceYieldForecast {
             ceiling_market: yield_per_turn,
             ceiling_eradicate: yield_per_turn,
             // The improvement is already built — "preparing" and "once complete" are both just the
-            // managed yield it pays now.
+            // managed yield it pays now. (A source at this rung is past taming too.)
             ceiling_prepare: yield_per_turn,
+            ceiling_tame: yield_per_turn,
             managed_yield: yield_per_turn,
         }
     }
 
     /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
-    /// exposed ceilings (wire: `ceilingSustain`/…). The two **investment** policies are kind-exclusive
-    /// and share the one `ceiling_prepare` field (wire: `ceilingCultivate` / `ceilingCorral`): while
-    /// the improvement is being prepared the source pays the reduced
-    /// `cultivating_yield_fraction`/`corralling_yield_fraction` bite. Once the improvement *completes*
-    /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
-    /// lookup covers both sides of the investment without a second formula.
+    /// exposed ceilings (wire: `ceilingSustain`/…). While an improvement is being prepared the source
+    /// pays that rung's reduced `yield_fraction_while_building` bite: `Cultivate`/`Corral` (the
+    /// top investment rung of each branch, and kind-exclusive with each other) read `ceiling_prepare`
+    /// (wire: `ceilingCultivate` / `ceilingCorral`); `Tame` reads its **own** `ceiling_tame`, because
+    /// the animal branch has two investment rungs whose dips are independently tunable. Once an
+    /// improvement *completes* the source is `tended()`, whose every ceiling already **is**
+    /// `managed_yield` — so this one lookup covers both sides of every investment without a second
+    /// formula.
     pub fn ceiling_for(&self, policy: FollowPolicy) -> f32 {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
             FollowPolicy::Surplus => self.ceiling_surplus,
             FollowPolicy::Market => self.ceiling_market,
             FollowPolicy::Eradicate => self.ceiling_eradicate,
+            FollowPolicy::Tame => self.ceiling_tame,
             FollowPolicy::Cultivate | FollowPolicy::Corral => self.ceiling_prepare,
         }
     }
@@ -2255,9 +2301,10 @@ pub fn hunt_source_yield_preview(
 /// - **Surplus** — that × `follow.surplus_multiplier` (overdraw → slow decline).
 /// - **Market** — a commercial share `market.take_fraction × biomass` (fast decline).
 /// - **Eradicate** — the one-shot max take `hunt.take_from(biomass)` (drives extinction).
-/// - **Corral** — the *investment dip* while the pen is built: the `animal:pen` rung's
-///   `yield_fraction_while_building ×` the MSY ceiling (reusing the same [`sustainable_yield`] helper — never a second ecology), so the
-///   preparing take is sustainable and the herd stays healthy while the crew builds.
+/// - **Tame** / **Corral** — the *investment dips* while the herd is gentled / the pen is built: the
+///   `animal:pastoral` / `animal:pen` rung's `yield_fraction_while_building ×` the MSY ceiling
+///   (reusing the same [`sustainable_yield`] helper — never a second ecology), so the preparing take
+///   is sustainable and the herd stays healthy while the crew works.
 /// - **Cultivate** — Forage-only; a *hunt* ceiling for it is meaningless. Yields `0.0`, the symmetric
 ///   defensive case to `forage::forage_policy_ceiling`'s `Corral` arm (both are rejected at
 ///   `assign_labor` by [`FollowPolicy::valid_for_hunt`] / `valid_for_forage`).
@@ -2284,8 +2331,15 @@ pub fn hunt_policy_ceiling(
         }
         FollowPolicy::Market => fauna.market.take_fraction * biomass,
         FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
-        // The investment dip, read off the ladder's `animal:pen` rung — the same seam the plant
-        // side's Cultivate dip reads, so the two ladders' investment costs are tuned together.
+        // The two investment dips, read off the ladder's own rungs — the same seam the plant side's
+        // Cultivate dip reads, so every rung's investment cost is tuned in one file.
+        FollowPolicy::Tame => {
+            sustainable_yield(biomass, carrying_capacity, ecology)
+                * ladder
+                    .rung(RungKey::AnimalPastoral)
+                    .yield_fraction_while_building()
+                    .expect("the pastoral rung is an investment — it has a build meter")
+        }
         FollowPolicy::Corral => {
             sustainable_yield(biomass, carrying_capacity, ecology)
                 * ladder
@@ -2359,6 +2413,8 @@ pub(crate) fn hunt_forecast(
         // `corral_provisions` takes the raw capacity rather than a penned herd) — so the client can
         // show "preparing X → then Y" before the player commits to the 25-turn cost.
         ceiling_prepare: ceiling(FollowPolicy::Corral),
+        // The rung below: what the herd pays *while it is being tamed* (the `animal:pastoral` dip).
+        ceiling_tame: ceiling(FollowPolicy::Tame),
         managed_yield: corral_provisions(herd, fauna, output_multiplier),
     }
 }

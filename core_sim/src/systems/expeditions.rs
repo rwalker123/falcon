@@ -417,13 +417,15 @@ pub fn advance_expeditions(
                             FollowPolicy::Market => (false, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
-                            // The investment policies are **not an expedition concept**: penning is
-                            // place-bound work a resident band does, and `send_hunt_expedition`
-                            // rejects them at launch — so this is unreachable (and
+                            // The investment policies are **not an expedition concept**: taming and
+                            // penning are place-bound work a resident band does, and
+                            // `send_hunt_expedition` rejects them at launch — so this is unreachable (and
                             // `hunt_expedition_ceiling` `debug_assert!`s if it ever is reached). It
                             // takes nothing (ceiling `0.0`), so end the trip immediately rather than
                             // loop forever taking zero: the party comes home empty and says so.
-                            FollowPolicy::Cultivate | FollowPolicy::Corral => (true, false),
+                            FollowPolicy::Cultivate | FollowPolicy::Tame | FollowPolicy::Corral => {
+                                (true, false)
+                            }
                         };
 
                         if done {
@@ -610,10 +612,13 @@ fn hunt_expedition_floor(
             Some(ecology.collapse_fraction * carrying_capacity)
         }
         FollowPolicy::Eradicate => Some(0.0),
-        // Sustain is a flow (no floor). Cultivate/Corral are unreachable on an expedition — see
+        // Sustain is a flow (no floor). Cultivate/Tame/Corral are unreachable on an expedition — see
         // `hunt_expedition_ceiling`, which rejects them before this is reached; treating them as
         // "no floor" here keeps the O(1) fill bound conservative (it never under-estimates).
-        FollowPolicy::Sustain | FollowPolicy::Cultivate | FollowPolicy::Corral => None,
+        FollowPolicy::Sustain
+        | FollowPolicy::Cultivate
+        | FollowPolicy::Tame
+        | FollowPolicy::Corral => None,
     }
 }
 

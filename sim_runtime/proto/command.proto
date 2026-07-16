@@ -203,7 +203,12 @@ message HuntFaunaCommand {
   optional uint64 band_entity_bits = 3;
 }
 
-message DomesticateCommand {
+// The intensification ladder's animal rung-2 verb: set the Tame policy on the bands already hunting
+// this herd (needs Herding knowledge, earned by Sustain-hunting a Thriving herd, and a species whose
+// husbandry_ceiling allows domestication). Taming pays a reduced take while the herd is gentled,
+// then the herd becomes pastoral livestock. Replaces the retired DomesticateCommand early-claim,
+// which let the player skip that investment.
+message TameCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
 }
@@ -294,8 +299,13 @@ message ExportMapCommand {
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
-  reserved 24;
-  reserved "found_camp";
+  // Retired field numbers. Never reuse one: a stale client's message would silently decode as the
+  // wrong command.
+  //   24 `found_camp`  — retired.
+  //   30 `domesticate` — the intensification ladder's animal rung-2 EARLY-CLAIM, retired in favour
+  //      of `tame` (field 40), which makes the player actually pay the taming investment.
+  reserved 24, 30;
+  reserved "found_camp", "domesticate";
 
   oneof command {
     TurnCommand turn = 1;
@@ -325,7 +335,6 @@ message CommandEnvelope {
     FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
     HuntFaunaCommand hunt_fauna = 29;
-    DomesticateCommand domesticate = 30;
     CancelOrderCommand cancel_order = 31;
     AssignLaborCommand assign_labor = 32;
     MoveBandCommand move_band = 33;
@@ -335,5 +344,6 @@ message CommandEnvelope {
     CultivateCommand cultivate = 37;
     CorralCommand corral = 38;
     ExtendPenCommand extend_pen = 39;
+    TameCommand tame = 40;
   }
 }
