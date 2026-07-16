@@ -36,7 +36,8 @@ use crate::{
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
         field_provisions, field_yield_fraction_while_building, forage_take, patch_rung,
-        tended_provisions, tile_forage_capacity, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
+        rung_site_refusal, tended_provisions, tile_forage_capacity, tile_is_fresh_watered,
+        ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
@@ -45,7 +46,7 @@ use crate::{
     intensification::{
         knows, LadderConfig, LadderConfigHandle, RungDef, RungKey, RUNG_TIMESCALE_UNSCALED,
     },
-    labor_config::{LaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
+    labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,
     mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},
     orders::{FactionId, FactionRegistry},

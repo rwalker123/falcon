@@ -19,6 +19,7 @@
       "earns_knowledge": "cultivation",
       "requires_rung": null,
       "ceiling_required": null,
+      "site_requirement": null,
       "build": null,
       "behavior": {
         "movement": "fixed",
@@ -36,6 +37,7 @@
       "earns_knowledge": "seed_selection",
       "requires_rung": "wild",
       "ceiling_required": null,
+      "site_requirement": null,
       "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns; yield_fraction_while_building 0.25 = the old `cultivating_yield_fraction`).",
       "build": {
         "progress_per_turn": 0.04,
@@ -59,8 +61,13 @@
       "earns_knowledge": null,
       "_comment_requires_rung": "`requires_rung` states WHERE THIS RUNG SITS ON THE LADDER (directly above `tended`) — it is not a per-source precondition, and no code reads it as one (see RungDef::requires_rung). The per-source rule is each verb's own gate, and it is exactly where the two webs legitimately differ (§2): `corral` demands a herd you already tamed, while `sow` demands NO prior patch — seed travels, so a hospitable tile with no spawned forage site can be sown into a genuinely new source.",
       "requires_rung": "tended",
-      "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so the plant ladder has no ceiling; the tile's forage capacity is the plant analog and it gates the VERB (see `_comment_verb`), not the rung record.",
+      "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so there is no species ceiling here; the LAND is what this rung is choosy about, and that is `site_requirement` below — the plant twin of the same idea.",
       "ceiling_required": null,
+      "_comment_site_requirement": "THE SCARCITY DIAL, and the reason rung 3 is a decision rather than 'tended but 2x'. Rung 3 is: I know how to take seed from a plant and put it somewhere else — but I do NOT know fertilization, so the land must ALREADY be very fertile, and near fresh water. `min_forage_capacity` 195 is a floor on the tile's own `forage.capacity_by_biome`: it admits exactly the river-deposit class (RiverDelta 210, Floodplain 205, AlluvialPlain 195) and stops just above ordinary MixedWoodland (190) — the naturally rich, watered ground of every real first agriculture. `requires_fresh_water` demands a river along one of the hex's sides, fresh-water ground, or a lake/channel/marsh next door (a SALT coast does not count — you do not plant a field in the sea spray). MEASURED on earthlike 80x52 seed 119304647: 2328 tiles bear food at all, 337 clear the fertility floor, and only 46 clear BOTH — ~1.1% of the map, in the river valleys and deltas. The conjunction is doing the work: the floor alone would leave 337, so the water rule cuts 86% of it. BOTH ARE PLAYTEST DIALS — raise the floor or drop the water rule to make farmland commoner. RUNG 4 (Worked Land: plows, irrigation, terracing) IS A LOOSER COPY OF THIS RECORD and nothing else — a lower floor and `requires_fresh_water: false`.",
+      "site_requirement": {
+        "min_forage_capacity": 195.0,
+        "requires_fresh_water": true
+      },
       "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.25 = the same investment dip a Cultivate pays). Note what the dip means on BARE ground: there is no standing crop to take a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it is the familiar 0.25 x MSY bite.",
       "build": {
         "progress_per_turn": 0.04,
@@ -84,6 +91,7 @@
       "earns_knowledge": "herding",
       "requires_rung": null,
       "ceiling_required": null,
+      "site_requirement": null,
       "build": null,
       "behavior": {
         "movement": "roam",
@@ -104,6 +112,7 @@
       "requires_rung": "wild",
       "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_domesticate).",
       "ceiling_required": "pastoral",
+      "site_requirement": null,
       "_comment_build": "progress_per_turn 0.04 (-> 25 turns to tame) and decay_per_turn 0.01 (an abandoned herd goes feral over ~100 turns) are today's shipped values, MOVED here verbatim from fauna_config.json `husbandry`. yield_fraction_while_building 0.50 is NEW — taming now costs yield, like every other rung; 0.50 mirrors the animal-side `corral` dip precedent. A PLAYTEST DIAL.",
       "build": {
         "progress_per_turn": 0.04,
@@ -129,6 +138,7 @@
       "requires_rung": "pastoral",
       "_comment_ceiling_required": "Grazing 2d-delta: only a `pen`-ceiling species may be fenced (Herd::can_pen).",
       "ceiling_required": "pen",
+      "site_requirement": null,
       "_comment_build": "Today's shipped values, moved here verbatim from fauna_config.json `husbandry` (progress_per_turn 0.04 = the old `corral_build_progress_per_turn` -> 25 turns per pen / per extension ring; decay_per_turn 0.0 because pen construction does NOT bleed today — an untended pen escapes outright, zeroing corral_progress in advance_husbandry, rather than decaying; yield_fraction_while_building 0.50 = the old `corralling_yield_fraction`, the dip the keeper pays while building AND while extending the fence).",
       "build": {
         "progress_per_turn": 0.04,

@@ -65,7 +65,8 @@ use crate::{
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
     intensification::{
-        LadderConfig, LadderConfigHandle, RungDef, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+        LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, RUNG_COMPLETE,
+        RUNG_TIMESCALE_UNSCALED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
@@ -359,6 +360,73 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
         // Transient (not persisted) — a rehydrated patch is "untended" until worked again.
         tended_this_turn: false,
     }
+}
+
+/// **Is this tile on or beside FRESH water?** — the water half of a rung's
+/// [`RungSiteRequirement`], and the reason rung 3 lands in river valleys.
+///
+/// Three ways to be watered, all read off **existing** hydrology seams (`hydrology.rs` — this
+/// invents no adjacency concept of its own):
+/// 1. **The tile is fresh-water ground** (`TerrainTags::FRESHWATER`) — a floodplain, a river delta,
+///    an oasis basin, a marsh, a lake, a navigable channel.
+/// 2. **A river runs along one of its six sides** (`Tile::has_any_river_edge`) — the riverbank. This
+///    is *the* edge-river primitive, and `generate_hydrology` sets it on **both** hexes flanking every
+///    traced edge, so "I am on the river" needs no neighbour lookup at all.
+/// 3. **A fresh-water hex is next door** — the lake shore, the bank of a navigable trunk. Odd-r hex
+///    adjacency (`hex_neighbors_wrapped`, wrap-aware), the same adjacency gameplay and the client use.
+///
+/// **A salt coast is NOT water for this purpose.** `ContinentalShelf`, `TidalFlat`, `MangroveSwamp`
+/// and `CoralShelf` are `COASTAL` without `FRESHWATER`; you cannot farm on sea spray, and admitting
+/// them would hand every shoreline the rung-3 gate the rule exists to withhold.
+///
+/// `neighbor_tags` resolves a coord to that tile's tags (`None` = off-map / no tile). A closure rather
+/// than a `&TileRegistry` + query pair because the two callers reach tiles differently — the `sow`
+/// command through `&App`, the labor arm through its `Query` — and the *rule* must live in one place
+/// even though the lookup cannot.
+pub fn tile_is_fresh_watered(
+    tile: &Tile,
+    grid_width: u32,
+    grid_height: u32,
+    wrap_horizontal: bool,
+    neighbor_tags: impl Fn(UVec2) -> Option<sim_runtime::TerrainTags>,
+) -> bool {
+    if tile
+        .terrain_tags
+        .contains(sim_runtime::TerrainTags::FRESHWATER)
+        || tile.has_any_river_edge()
+    {
+        return true;
+    }
+    crate::grid_utils::hex_neighbors_wrapped(
+        tile.position.x,
+        tile.position.y,
+        grid_width,
+        grid_height,
+        wrap_horizontal,
+    )
+    .any(|(x, y)| {
+        neighbor_tags(UVec2::new(x, y))
+            .is_some_and(|tags| tags.contains(sim_runtime::TerrainTags::FRESHWATER))
+    })
+}
+
+/// **Does `rung`'s site requirement admit this tile?** — the one place the two readings a
+/// [`RungSiteRequirement`] judges (the tile's own forage capacity, and whether it is fresh-watered)
+/// are gathered, so the `sow` command's rejection and the labor arm's placement gate cannot drift into
+/// disagreeing about which ground is farmable.
+///
+/// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
+/// way the ground fell short, so the caller can phrase *too poor* and *too dry* distinctly (they are
+/// different problems with different answers — move, or wait for rung 4).
+pub fn rung_site_refusal(
+    rung: &RungDef,
+    tile: &Tile,
+    forage: &ForageLaborConfig,
+    fresh_water: bool,
+) -> Option<SiteRefusal> {
+    rung.site_requirement
+        .as_ref()?
+        .refusal(tile_forage_capacity(forage, tile), fresh_water)
 }
 
 /// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,

@@ -135,8 +135,8 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
-    spawn_initial_forage, tile_forage_capacity, ForagePatch, ForageRegistry,
+    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview, rung_site_refusal,
+    spawn_initial_forage, tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry,
     CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
@@ -157,7 +157,8 @@ pub use influencers::{
 pub use intensification::{
     knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, BUILTIN_INTENSIFICATION_LADDER, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
+    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

@@ -49,6 +49,7 @@ use crate::{
     fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
     forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
+    labor_config::NO_FORAGE_CAPACITY,
     orders::FactionId,
     resources::DiscoveryProgressLedger,
     scalar::scalar_from_f32,
@@ -205,6 +206,68 @@ pub struct RungBehavior {
     pub harvest: RungHarvest,
 }
 
+/// **What the LAND must be for a rung to be placed on it** — the plant branch's twin of
+/// [`RungDef::ceiling_required`], keyed on the ground rather than on the species
+/// (`docs/plan_intensification_ladder.md` §2).
+///
+/// It exists because rung 3 is *"I know how to take seed from a plant and put it somewhere else — but
+/// I do not know fertilization, so the land must already be very fertile, and near fresh water"*.
+/// **Scarcity is the point, not a side effect**: few sowable tiles ⇒ *which* tile matters ⇒ a band may
+/// have to **move** to farm at all. That friction is the design pillar the requirement exists to
+/// create, so both dials are levers rather than constants.
+///
+/// **And they are exactly the dials rung 4 relaxes.** Worked Land (plows, irrigation, terracing — a
+/// future arc) is *"now I can make lesser ground farmable"*, which on this record is a **looser
+/// `site_requirement`** and nothing else: a lower floor, `requires_fresh_water: false`. That is the
+/// arc's config-driven thesis paying out — a rung whose *placement rule* differs is a config edit.
+///
+/// `None` on a rung that may be built anywhere its source already is — i.e. every rung but this one
+/// today. The animal rungs need no such record: a herd carries its own site with it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RungSiteRequirement {
+    /// **The fertility floor**: the tile's own human-food carrying capacity
+    /// (`forage.capacity_by_biome`, via `forage::tile_forage_capacity` — the *same* number that sizes
+    /// a wild patch, never a rung-specific table) must reach this for the rung to be placed there.
+    /// `0` = no floor.
+    pub min_forage_capacity: f32,
+    /// **The water rule**: the tile must be on or beside **fresh** water — a river along one of its
+    /// sides, fresh-water ground, or a lake/channel/marsh next door (`forage::tile_is_fresh_watered`).
+    /// A salt coast is **not** water for this purpose; you do not plant a field in the sea spray.
+    pub requires_fresh_water: bool,
+}
+
+/// **Why the land refuses a rung** — the shape of [`RungSiteRequirement::refusal`], so the *rung*
+/// says what is wrong with the ground and the caller only phrases it. Both failures are real and
+/// distinct (rich-but-dry upland vs. watered-but-thin scrub), and a tile can fail both at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiteRefusal {
+    /// The ground is watered, but too thin to take a crop without fertilization.
+    TooPoor,
+    /// The ground is rich, but too dry to farm without irrigation.
+    TooDry,
+    /// Both.
+    TooPoorAndTooDry,
+}
+
+impl RungSiteRequirement {
+    /// **THE site seam** — the twin of [`RungDef::build_accrual`]: the rung states the rule, the
+    /// caller supplies the two readings it judges and phrases the answer. Pure (no ECS, no config
+    /// lookup), so the `sow` command's rejection and the labor arm's placement gate resolve the *same*
+    /// rule and can never drift into disagreeing about which ground is farmable.
+    ///
+    /// `None` = the land permits it.
+    pub fn refusal(&self, forage_capacity: f32, fresh_water: bool) -> Option<SiteRefusal> {
+        let too_poor = forage_capacity < self.min_forage_capacity;
+        let too_dry = self.requires_fresh_water && !fresh_water;
+        match (too_poor, too_dry) {
+            (false, false) => None,
+            (true, false) => Some(SiteRefusal::TooPoor),
+            (false, true) => Some(SiteRefusal::TooDry),
+            (true, true) => Some(SiteRefusal::TooPoorAndTooDry),
+        }
+    }
+}
+
 /// The **per-source build meter** dials of one rung: what it costs to climb it, in labor and in
 /// forgone yield.
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -267,6 +330,10 @@ pub struct RungDef {
     /// The per-species `husbandry_ceiling` a herd needs to reach this rung (Grazing 2d-δ). Animal
     /// branch only — a plant has no species ceiling.
     pub ceiling_required: Option<HusbandryCeiling>,
+    /// **What the LAND must be** for this rung to be placed on a tile ([`RungSiteRequirement`]) — the
+    /// plant twin of `ceiling_required`, keyed on the ground instead of the species. `None` = the rung
+    /// asks nothing of the site (every rung but `plant:field` today).
+    pub site_requirement: Option<RungSiteRequirement>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
     /// The coded primitives this rung recombines. **Not read yet.**
@@ -492,6 +559,7 @@ impl LadderConfig {
             self.validate_sequence(rung, &where_)?;
             validate_links(rung, &where_)?;
             validate_build(rung, &where_)?;
+            validate_site_requirement(rung, &where_)?;
         }
 
         for branch in [RungBranch::Plant, RungBranch::Animal] {
@@ -654,6 +722,34 @@ fn validate_links(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
                 value: format!("{field} = '{knowledge}'"),
             });
         }
+    }
+    Ok(())
+}
+
+/// Bound the site requirement, in the same spirit as the build dials: its failure modes are **silent**
+/// — the rung parses, and then either it can be placed on ground it was meant to refuse, or on none at
+/// all. Since scarcity is the whole point of the rule, a requirement that quietly stops constraining is
+/// exactly the bug this catches.
+fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+    let Some(site) = rung.site_requirement.as_ref() else {
+        return Ok(());
+    };
+    if !site.min_forage_capacity.is_finite() || site.min_forage_capacity < NO_FORAGE_CAPACITY {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: format!(
+                "set a finite fertility floor of at least {NO_FORAGE_CAPACITY} — the floor is                  compared against a tile's `forage.capacity_by_biome`, which is never negative"
+            ),
+            value: format!("min_forage_capacity = {}", site.min_forage_capacity),
+        });
+    }
+    if site.min_forage_capacity <= NO_FORAGE_CAPACITY && !site.requires_fresh_water {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "require SOMETHING of the site, or state `site_requirement: null` — a                          requirement that admits every tile reads as a placement rule while being                          none, which is how a rung's scarcity silently evaporates"
+                .to_string(),
+            value: "min_forage_capacity = 0 with requires_fresh_water = false".to_string(),
+        });
     }
     Ok(())
 }
@@ -1299,6 +1395,101 @@ mod tests {
                 .knowledge_earned(FollowPolicy::Sustain, true),
             None
         );
+    }
+
+    // --- The `plant:field` rung's SITE requirement (the twin of `ceiling_required`, keyed on the
+    // land): the scarcity dial that makes rung 3 a decision rather than "tended but 2x".
+
+    /// The shipped rule, pinned: rung 3 asks for **very fertile ground near fresh water**, and it is
+    /// the **only** rung that asks anything of the site (a herd carries its own site with it).
+    #[test]
+    fn only_the_field_rung_asks_anything_of_the_land() {
+        let ladder = LadderConfig::builtin();
+        let site = ladder
+            .rung(RungKey::PlantField)
+            .site_requirement
+            .expect("rung 3 must be choosy about the land — that IS the rung");
+        assert!(
+            site.min_forage_capacity > 0.0,
+            "the fertility floor is what 'already very fertile' means"
+        );
+        assert!(
+            site.requires_fresh_water,
+            "rung 3 can carry seed but not water — the field must be near fresh water"
+        );
+        for key in RungKey::ALL {
+            if key == RungKey::PlantField {
+                continue;
+            }
+            assert!(
+                ladder.rung(key).site_requirement.is_none(),
+                "{key:?} must ask nothing of the site — only rung 3 chooses its ground"
+            );
+        }
+    }
+
+    /// **The site seam**, asserted at the rung: the rung judges the two readings and names *which* way
+    /// the ground fell short, so the caller only phrases it. Too poor and too dry are different
+    /// problems with different answers.
+    #[test]
+    fn the_site_requirement_names_which_way_the_land_refuses() {
+        let site = LadderConfig::builtin()
+            .rung(RungKey::PlantField)
+            .site_requirement
+            .expect("rung 3 has a site requirement");
+        let rich = site.min_forage_capacity;
+        let thin = site.min_forage_capacity - 1.0;
+
+        assert_eq!(site.refusal(rich, true), None, "rich + watered takes seed");
+        assert_eq!(site.refusal(thin, true), Some(SiteRefusal::TooPoor));
+        assert_eq!(site.refusal(rich, false), Some(SiteRefusal::TooDry));
+        assert_eq!(
+            site.refusal(thin, false),
+            Some(SiteRefusal::TooPoorAndTooDry),
+            "a tile that fails both must say so once, not one fault at a time"
+        );
+    }
+
+    /// **Rung 4 (Worked Land) is a LOOSER COPY of this record** — the arc's config-driven thesis, and
+    /// the reason both dials are levers rather than constants. Irrigation and the plow relax exactly
+    /// these two, and nothing else has to change.
+    #[test]
+    fn a_looser_site_requirement_is_a_pure_config_edit() {
+        let worked_land = RungSiteRequirement {
+            min_forage_capacity: 40.0,
+            requires_fresh_water: false,
+        };
+        // Ground rung 3 refuses on both counts — thin scrub, far from water — is farmable at rung 4.
+        assert_eq!(
+            LadderConfig::builtin()
+                .rung(RungKey::PlantField)
+                .site_requirement
+                .expect("rung 3 has a site requirement")
+                .refusal(40.0, false),
+            Some(SiteRefusal::TooPoorAndTooDry)
+        );
+        assert_eq!(worked_land.refusal(40.0, false), None);
+    }
+
+    #[test]
+    fn rejects_a_negative_fertility_floor() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "plant", "field");
+            json["rungs"][idx]["site_requirement"]["min_forage_capacity"] = (-1.0).into();
+        });
+        assert_rejects(err, "plant:field");
+    }
+
+    /// A `site_requirement` that admits every tile is a placement rule that places no rule — say
+    /// `null` instead. This is the bound that stops the rung's scarcity evaporating silently.
+    #[test]
+    fn rejects_a_site_requirement_that_requires_nothing() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "plant", "field");
+            json["rungs"][idx]["site_requirement"]["min_forage_capacity"] = (0.0).into();
+            json["rungs"][idx]["site_requirement"]["requires_fresh_water"] = false.into();
+        });
+        assert_rejects(err, "plant:field");
     }
 
     #[test]

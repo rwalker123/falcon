@@ -79,6 +79,7 @@ pub fn advance_labor_allocation(
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
+    let grid_height = tile_registry.height;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
     for (mut cohort, mut allocation) in cohorts.iter_mut() {
@@ -139,35 +140,51 @@ pub fn advance_labor_allocation(
                     let seasonal = food_modules
                         .get(tile_entity)
                         .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
-                    // **Does this faction know how to sow?** — the `plant:field` rung's own gate,
-                    // resolved off the rung record. Read here because it gates *two* things below: the
-                    // seed going into the ground at all, and the build meter it then fills.
-                    let knows_sowing = field_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                        knows(&discovery, faction, knowledge, knowledge_threshold)
-                    });
+                    // **May this faction sow THIS ground?** — the `plant:field` rung's two gates,
+                    // both resolved off the rung record, both read here because each gates the *same*
+                    // two things below: the seed going into the ground at all, and the build meter it
+                    // then fills.
+                    //  - **the knowledge**: does the faction know Seed Selection?
+                    //  - **the SITE** (`site_requirement`): is the land already very fertile, and near
+                    //    fresh water? Rung 3 knows how to move seed, not how to fertilize — so it can
+                    //    only place a Field where the land does the fertilizing itself. That is the
+                    //    scarcity the rung is *made of*, and the ground the `sow` command refuses up
+                    //    front with the reason (too poor / too dry / both).
+                    let sow_permitted = matches!(policy, FollowPolicy::Sow)
+                        && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                            knows(&discovery, faction, knowledge, knowledge_threshold)
+                        })
+                        && tiles.get(tile_entity).is_ok_and(|ground| {
+                            let fresh_water = tile_is_fresh_watered(
+                                ground,
+                                grid_width,
+                                grid_height,
+                                wrap_horizontal,
+                                |coord| {
+                                    tile_registry
+                                        .index(coord.x, coord.y)
+                                        .and_then(|entity| tiles.get(entity).ok())
+                                        .map(|neighbor| neighbor.terrain_tags)
+                                },
+                            );
+                            rung_site_refusal(field_rung, ground, &labor.forage, fresh_water)
+                                .is_none()
+                        });
                     // **`Sow` PLACES the source** (§2 — the one rung that needs no source below it:
                     // seed travels, unlike a herd you never tamed). The first turn a crew works
-                    // naturally food-bearing ground under `Sow`, the seed goes in and the patch exists
-                    // from here on — at the tile's **own** biome capacity (`tile_forage_capacity`, the
-                    // same source a wild patch is seeded from — there is no Field-specific table) and
-                    // at the reseed floor's standing crop. Ground that bears nothing (`rock`, ice,
-                    // desert — a stated zero in `capacity_by_biome`) takes no seed: that is rung 4
-                    // (Worked Land), and the `sow` command refuses it up front with that reason.
-                    if matches!(policy, FollowPolicy::Sow)
-                        && knows_sowing
-                        && forage_registry.patch(*tile).is_none()
-                    {
+                    // sowable ground, the seed goes in and the patch exists from here on — at the
+                    // tile's **own** biome capacity (`tile_forage_capacity`, the same source a wild
+                    // patch is seeded from — there is no Field-specific table) and at the reseed
+                    // floor's standing crop.
+                    if sow_permitted && forage_registry.patch(*tile).is_none() {
                         if let Ok(sown_tile) = tiles.get(tile_entity) {
-                            let capacity = tile_forage_capacity(&labor.forage, sown_tile);
-                            if capacity > NO_FORAGE_CAPACITY {
-                                let mut patch = ForagePatch::sown(
-                                    *tile,
-                                    capacity,
-                                    labor.forage.reseed_floor_fraction,
-                                );
-                                patch.refresh_ecology_phase(&labor.forage.ecology);
-                                forage_registry.patches.insert(*tile, patch);
-                            }
+                            let mut patch = ForagePatch::sown(
+                                *tile,
+                                tile_forage_capacity(&labor.forage, sown_tile),
+                                labor.forage.reseed_floor_fraction,
+                            );
+                            patch.refresh_ecology_phase(&labor.forage.ecology);
+                            forage_registry.patches.insert(*tile, patch);
                         }
                     }
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
@@ -246,7 +263,7 @@ pub fn advance_labor_allocation(
                                 patch,
                                 field_rung,
                                 *policy,
-                                knows_sowing,
+                                sow_permitted,
                                 faction,
                                 &mut event_log,
                                 tick.0,
@@ -332,7 +349,7 @@ pub fn advance_labor_allocation(
                             patch,
                             field_rung,
                             *policy,
-                            knows_sowing,
+                            sow_permitted,
                             faction,
                             &mut event_log,
                             tick.0,

@@ -100,16 +100,26 @@ Every rung-transition is a **Cultivate-shaped verb**: pick it → **lower** yiel
 gentle-policy cost) → **per-source build meter** climbs → decays if you abandon it → on completion the
 source steps up a rung. Plants run it twice (Cultivate → Sow); animals run it twice (Tame → Corral).
 
-**Rung 3 places, but does not conjure.** `Sow` puts a Field on ground that will *already* take seed
-(non-zero `forage.capacity_by_biome`) — the floodplain, the river garden, the fat grassland. It can
-create a source where none existed (a hospitable tile with no spawned forage site), but it cannot farm
-rock, ice or desert; that is rung 4. So rung 3 **pulls you toward good country** — which is exactly the
-sedentarization pull — and only rung 4 frees you from it. Real order: gather → tend wild stands → plant
-the floodplains → irrigate the desert.
+**Rung 3 places, but does not conjure — and scarcity is the point.** Rung 3 is *"I know how to take
+seed from a plant and put it somewhere else — but I don't know fertilization yet, so the land must be
+**very fertile already, near sources of water**"*. `Sow` puts a Field only on that ground: the
+floodplain, the river delta, the alluvial valley. It can create a source where none existed (a
+qualifying tile with no spawned forage site), but it cannot farm thin ground or dry ground; that is
+rung 4 (**Worked Land** — plows and irrigation), which relaxes exactly those two constraints.
+
+**Few sowable tiles is the mechanic, not a side effect**: it means *which* tile matters, and a band may
+have to **move** to farm at all. Measured on the standard map (earthlike 80×52, seed 119304647): **46
+sowable tiles of 4160 (1.1%)** — AlluvialPlain 31 + RiverDelta 15 — against 2328 tiles that merely bear
+food. (An earlier cut of this spec said "any tile with non-zero forage capacity", which was **56% of the
+map**: the constraint did no work and rung 3 collapsed into "tended but 2×".) So rung 3 **pulls you into
+the river valleys** — which is exactly the sedentarization pull — and only rung 4 frees you from them.
+Real order: gather → tend wild stands → plant the floodplains → irrigate the desert.
 
 **Where the two webs legitimately differ** (grammar is unified; products are not):
 - **Plants create from nothing at rung 3; animals must climb.** Seed travels; a herd you never tamed
-  does not. `Sow` needs no prior patch; `Corral` needs a pastoral herd.
+  does not. `Sow` needs no prior patch; `Corral` needs a pastoral herd. **But plants are choosy about
+  the *land* where animals are choosy about the *species*** — `site_requirement` is the plant twin of
+  `ceiling_required`: a herd carries its site with it, a field cannot.
 - **There is no "extend the tended patch".** The pen needs `ExtendPen` because ONE herd has ONE
   appetite and needs more grazing land. A patch has no such problem — you don't extend a field, **you
   sow another field**. Each tile is its own patch, so expansion is already free-form.
@@ -193,11 +203,17 @@ is a record; the ladder is a list; adding a rung after farm/pen is appending a r
   "unlock_knowledge": "penning",           // gate to select the verb
   "earns_knowledge": "selective_breeding",  // practicing THIS rung teaches the next
   "requires_rung": "pastoral",
-  "ceiling_required": "pen",               // husbandry_ceiling gate
+  "ceiling_required": "pen",               // husbandry_ceiling gate — WHICH SPECIES may climb
+  "site_requirement": null,                // WHAT LAND it may be placed on (the plant twin; null = anywhere)
   "build": { "progress_per_turn": …, "decay_per_turn": …, "yield_fraction_while_building": … },
   "effects": { "regrowth_mult": 3.0, "yield_per_worker_mult": …, "ceiling_mult": … },
   "behavior": { "movement": "fixed", "feeding": "self_graze", "harvest": "worker_tend" } }
 ```
+
+**`site_requirement` is where the *scarcity* of a rung lives**, and it is why rung 4 is a config edit.
+`plant:field` declares `{ min_forage_capacity: 195, requires_fresh_water: true }` — rung 3 moves seed
+but cannot fertilize, so the land must do it. **Worked Land (rung 4) is that record, looser**: a lower
+floor and `requires_fresh_water: false`. Nothing else changes.
 
 - **Dials = pure config** — the numbers and the links (unlock/earns knowledge, prev rung, ceiling,
   build/decay/yield rates, effect multipliers). A rung that's "the pen but more so" is a one-record edit.
@@ -301,15 +317,28 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
   patch. `requires_rung` kept `tended` and `validate()` untouched: it states where the rung *sits on the
   ladder*, never a per-source precondition (nothing reads it as one — each verb's own gate does that,
   and that is exactly where the two webs differ).
+  - **Slice 5b tightened the site rule — the original "any tile with non-zero forage capacity" was
+    56% of the map and did no work.** The rung now carries a **`site_requirement`** on its record
+    (`{ min_forage_capacity: 195, requires_fresh_water: true }`, `RungSiteRequirement` — the plant twin
+    of `ceiling_required`, keyed on the land): the fertility floor admits the river-deposit class
+    (RiverDelta 210 / Floodplain 205 / AlluvialPlain 195) and stops just above ordinary MixedWoodland
+    (190); the water rule wants a river along one of the hex's sides, fresh-water ground, or a
+    lake/channel/marsh next door — **salt coast does not count**. **Measured: 46 sowable tiles of 4160
+    (1.1%)**, AlluvialPlain 31 + RiverDelta 15, against 2328 food-bearing. **The conjunction is doing
+    the work**: 337 clear the floor, and the water rule cuts 291 of them (86%) — so the water check is
+    **not** redundant and stays. Refusals name the fault (too poor / too dry / both) and point at rung
+    4. **Rung 4 (Worked Land) is now a looser copy of this one record** — the config-driven thesis paying
+    out.
   - **MEASURED CAVEAT — the create-from-nothing case cannot occur on a generated map.**
     `classify_food_module` tags essentially every biome and `spawn_initial_forage` seeds a patch on every
     module tile with positive capacity, so **every** food-bearing tile already carries a `ForagePatch`
-    (earthlike 80×52, seed 119304647: **2317 food-bearing tiles, 2317 patches, zero bare**). `Sow`
-    therefore always *upgrades* an existing wild patch today; the "hospitable tile with no spawned forage
-    site" of §2 above does not exist. (The CLAUDE.md claim that "~95% of tiles carry no `ForagePatch`" is
-    **stale** — it predates the per-biome capacity table.) The path is built and tested against a
-    constructed bare tile; whether to make forage sites genuinely sparse, or to restate §2 as "rung 3 lets
-    you choose *which* hospitable tile", is an open design call.
+    (standard map: **2328 food-bearing tiles, 2328 patches, zero bare**). `Sow` therefore always
+    *upgrades* an existing wild patch today; the "qualifying tile with no spawned forage site" of §2
+    above does not exist. (The CLAUDE.md claim that "~95% of tiles carry no `ForagePatch`" was **stale**
+    — it predates the per-biome capacity table — and is **corrected**.) The path is built and tested
+    against a constructed bare tile. Still an open design call: make forage sites genuinely sparse, or
+    accept that rung 3's freedom is "choose *which* qualifying tile" (which the tightened site rule now
+    makes a real choice — 46 tiles, not 2317).
   - *Remaining:* the client (slice 6) — `ForagePatchState` has no `fieldProgress`/`isField`, and the
     `Sow` dip + Field payoff live on `SourceYieldForecast::ceiling_sow` without a wire field.
 - [ ] **6 — Client.** Both new verbs + the two-meter split + the ladder readouts; ui_preview-verified.

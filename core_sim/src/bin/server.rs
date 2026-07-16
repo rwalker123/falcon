@@ -22,11 +22,11 @@ use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     apply_port_base_override, available_workers, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
-    tile_forage_capacity, ActiveStartProfile, BandTravel, CampaignLabel, Expedition,
+    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile, rung_site_refusal,
+    tile_is_fresh_watered, ActiveStartProfile, BandTravel, CampaignLabel, Expedition,
     ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation,
-    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, StartProfileOverrides,
-    WellbeingConfigHandle, NO_FORAGE_CAPACITY, NO_FORAGE_SEASON,
+    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
+    StartProfileOverrides, WellbeingConfigHandle, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -1726,13 +1726,15 @@ fn validate_labor_policy(
 ///
 /// Each rejection is distinct, and the order is deliberate:
 /// 1. **The tile exists.** A coordinate off the map names no ground at all.
-/// 2. **The ground bears food naturally** (`tile_forage_capacity > 0` — the *same* helper that sizes
-///    a wild patch and the wire's `forageCapacity`, never a Field-specific table). This is the rung's
-///    defining limit: `Sow` **places** a source but does not conjure one, so rock, ice and salt take
-///    no seed. The rejection **points at why** — making unwilling ground farmable is **rung 4, Worked
-///    Land**, a later arc — rather than reading as an arbitrary refusal. Checked *before* knowledge,
-///    because it is a property of the *place*, not of the player (the `validate_tame` rule: the
-///    animal's own nature outranks who is hunting it).
+/// 2. **The LAND will take seed** — the rung's own `site_requirement` (`RungSiteRequirement`), read
+///    off the ladder record and judged by the *rung*, not restated here: the ground must already be
+///    **very fertile** *and* **near fresh water**. This is the rung's defining limit and the whole of
+///    its scarcity: rung 3 knows how to move seed but not how to *fertilize*, so it can only place a
+///    Field where the land does the fertilizing itself. The two failures are **distinct** and phrased
+///    distinctly — **too poor** and **too dry** are different problems with different answers — and
+///    each points at **rung 4, Worked Land** (plows and irrigation, a later arc) rather than reading
+///    as an arbitrary refusal. Checked *before* knowledge, because it is a property of the *place*,
+///    not of the player (the `validate_tame` rule: the animal's own nature outranks who is hunting it).
 /// 3. **Seed Selection** — the rung's own `unlock_knowledge`, read off the ladder rather than
 ///    hard-coded, naming both the knowledge and how it is learned.
 /// 4. **Not already a Field** — this rung is already climbed; work it, don't re-sow it.
@@ -1740,7 +1742,7 @@ fn validate_labor_policy(
 ///    it".
 ///
 /// **There is deliberately no "the tile already has a patch" requirement, and no health gate.** Both
-/// are the point of the rung: seed travels, so hospitable ground with *no* forage site is a legal —
+/// are the point of the rung: seed travels, so qualifying ground with *no* forage site is a legal —
 /// indeed the interesting — target (§2, "where the two webs legitimately differ": `Corral` needs a
 /// herd you already tamed, `Sow` needs nothing), and freshly sown ground starts at the reseed floor,
 /// i.e. Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
@@ -1752,21 +1754,47 @@ fn validate_sow(app: &bevy::prelude::App, faction: FactionId, tile: UVec2) -> Re
         return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
     };
     let labor = app.world.resource::<LaborConfigHandle>().get();
-    if tile_forage_capacity(&labor.forage, ground) <= NO_FORAGE_CAPACITY {
-        return Err(format!(
-            "Nothing will take seed at ({}, {}) — that ground bears no food of its own. Sow the \
-             floodplains and the fat grassland; making barren ground farmable is not yet within your \
-             people's reach.",
-            tile.x, tile.y
-        ));
-    }
-    let (knowledge_threshold, field_unlock) = {
+    let (grid_width, grid_height) = {
+        let registry = app.world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fresh_water =
+        tile_is_fresh_watered(ground, grid_width, grid_height, wrap_horizontal, |coord| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|neighbor| neighbor.terrain_tags)
+        });
+    let (knowledge_threshold, field_unlock, site_refusal) = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let field = ladder.rung(RungKey::PlantField);
         (
             ladder.knowledge.completion_threshold,
-            ladder.rung(RungKey::PlantField).unlock_discovery_id(),
+            field.unlock_discovery_id(),
+            rung_site_refusal(field, ground, &labor.forage, fresh_water),
         )
     };
+    // The land's own answer, phrased. Rung 4 (Worked Land) is what will change it — say so, so the
+    // refusal reads as a rung the player has yet to climb rather than an arbitrary "no".
+    if let Some(refusal) = site_refusal {
+        let fault = match refusal {
+            SiteRefusal::TooPoor => "that ground is too thin to take a crop",
+            SiteRefusal::TooDry => "that ground is too dry to take a crop",
+            SiteRefusal::TooPoorAndTooDry => "that ground is too thin and too dry to take a crop",
+        };
+        return Err(format!(
+            "Nothing will grow at ({}, {}) — {}. Your people can carry seed, but not yet water or \
+             feed the land: sow the rich, well-watered ground along the rivers until they learn to \
+             work the land itself.",
+            tile.x, tile.y, fault
+        ));
+    }
     let knows_seed_selection = field_unlock.is_none_or(|knowledge| {
         knows(
             app.world.resource::<DiscoveryProgressLedger>(),
@@ -5262,13 +5290,47 @@ mod tests {
         app
     }
 
+    /// **The land's own verdict on every tile**, resolved through the *real* seam the sim uses
+    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+    /// `site_requirement`) — never a restatement of the rule. `None` = the ground will take seed.
+    fn site_verdict(app: &bevy::prelude::App, coord: UVec2) -> Option<Option<SiteRefusal>> {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)?;
+        let ground = app.world.get::<Tile>(entity)?;
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        let wrap = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let fresh_water = tile_is_fresh_watered(ground, width, height, wrap, |neighbor| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(neighbor.x, neighbor.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|tile| tile.terrain_tags)
+        });
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Some(rung_site_refusal(
+            ladder.rung(RungKey::PlantField),
+            ground,
+            &labor.forage,
+            fresh_water,
+        ))
+    }
+
     /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
     /// iteration order, so no seed/hash flake (the lesson of `7c09c7e`).
     fn find_tile(
         app: &bevy::prelude::App,
-        accept: impl Fn(f32, Option<&ForagePatch>) -> bool,
-    ) -> UVec2 {
-        let labor = app.world.resource::<LaborConfigHandle>().get();
+        accept: impl Fn(Option<SiteRefusal>, Option<&ForagePatch>) -> bool,
+    ) -> Option<UVec2> {
         let (width, height) = {
             let registry = app.world.resource::<TileRegistry>();
             (registry.width, registry.height)
@@ -5276,36 +5338,29 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let coord = UVec2::new(x, y);
-                let Some(entity) = app.world.resource::<TileRegistry>().index(x, y) else {
+                let Some(verdict) = site_verdict(app, coord) else {
                     continue;
                 };
-                let Some(tile) = app.world.get::<Tile>(entity) else {
-                    continue;
-                };
-                let capacity = tile_forage_capacity(&labor.forage, tile);
-                if accept(
-                    capacity,
-                    app.world.resource::<ForageRegistry>().patch(coord),
-                ) {
-                    return coord;
+                if accept(verdict, app.world.resource::<ForageRegistry>().patch(coord)) {
+                    return Some(coord);
                 }
             }
         }
-        panic!("no tile on the earthlike map matched");
+        None
     }
 
-    /// Ground that bears human food naturally — a legal `sow` target — and carries **no forage site
-    /// at all**: the create-from-nothing case, and the tile most of these tests want.
-    fn find_bare_hospitable_tile(app: &bevy::prelude::App) -> UVec2 {
-        find_tile(app, |capacity, patch| {
-            capacity > NO_FORAGE_CAPACITY && patch.is_none()
-        })
+    /// **Ground the ladder will take seed on** — rich *and* watered. On the pinned map this is the
+    /// river-valley set (~46 tiles of 4160), which is the scarcity the rung is made of.
+    fn find_sowable_tile(app: &bevy::prelude::App) -> UVec2 {
+        find_tile(app, |verdict, _| verdict.is_none())
+            .expect("the pinned map must carry sowable river-valley ground")
     }
 
-    /// Ground that bears nothing (rock / ice / salt / deep ocean) — what `sow` must refuse, pointing
-    /// at rung 4.
-    fn find_barren_tile(app: &bevy::prelude::App) -> UVec2 {
-        find_tile(app, |capacity, _| capacity <= NO_FORAGE_CAPACITY)
+    /// Ground the land refuses, in the *specific* way named — the two failures are different problems
+    /// and the messages must say which.
+    fn find_refused_tile(app: &bevy::prelude::App, refusal: SiteRefusal) -> UVec2 {
+        find_tile(app, |verdict, _| verdict == Some(refusal))
+            .unwrap_or_else(|| panic!("the pinned map must carry ground that is {refusal:?}"))
     }
 
     /// **The gate the slice-4 knowledge finally spends.** Without Seed Selection there is no `sow`,
@@ -5315,7 +5370,7 @@ mod tests {
     fn sow_rejected_when_seed_selection_unknown() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_bare_hospitable_tile(&app);
+        let coord = find_sowable_tile(&app);
         let band = spawn_working_band(
             &mut app,
             faction,
@@ -5342,14 +5397,15 @@ mod tests {
         );
     }
 
-    /// **Sow places, it does not conjure.** Ground that bears no food of its own takes no seed — and
-    /// the refusal points at *why* (that is rung 4, Worked Land) rather than reading as arbitrary.
-    /// Checked even with the knowledge in hand: it is a property of the place, not the player.
+    /// **Sow places, it does not conjure — and rung 3 cannot fertilize.** Ground too **thin** to take
+    /// a crop is refused *even when it is watered*, and the refusal names the fault and points at rung
+    /// 4 (Worked Land). Checked with the knowledge in hand: it is a property of the place, not the
+    /// player.
     #[test]
-    fn sow_rejected_on_ground_that_bears_no_food() {
+    fn sow_rejected_on_ground_that_is_too_poor() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_barren_tile(&app);
+        let coord = find_refused_tile(&app, SiteRefusal::TooPoor);
         grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -5363,20 +5419,84 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert!(
-            sow_failure_detail_contains(&app, "take seed"),
-            "barren ground must be refused"
+            sow_failure_detail_contains(&app, "too thin to take a crop"),
+            "thin ground must be refused, and the message must name the fault"
         );
         assert!(
-            sow_failure_detail_contains(&app, "bears no food of its own"),
-            "...naming why: the ground itself, not the player's skill"
+            !sow_failure_detail_contains(&app, "too dry"),
+            "...and must NOT blame the water on watered ground"
+        );
+        assert!(
+            sow_failure_detail_contains(&app, "work the land itself"),
+            "...pointing at rung 4, so the refusal reads as a rung not yet climbed"
+        );
+    }
+
+    /// **The water rule, and it is not redundant.** Ground rich enough to farm but **dry** is refused:
+    /// rung 3 can carry seed, not water. This is what pulls the first fields into the river valleys.
+    #[test]
+    fn sow_rejected_on_ground_that_is_too_dry() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::TooDry);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "too dry to take a crop"),
+            "dry ground must be refused, and the message must name the fault"
+        );
+        assert!(
+            !sow_failure_detail_contains(&app, "too thin"),
+            "...and must NOT blame the soil on rich ground"
         );
         assert!(
             app.world
                 .resource::<ForageRegistry>()
                 .patch(coord)
-                .is_none(),
-            "a refused sow must not seed a patch"
+                .is_none()
+                || !app
+                    .world
+                    .resource::<ForageRegistry>()
+                    .patch(coord)
+                    .unwrap()
+                    .is_field(),
+            "a refused sow must not build a field"
         );
+    }
+
+    /// A tile that fails **both** says so in one line, rather than making the player fix one problem
+    /// only to discover the other.
+    #[test]
+    fn sow_rejected_naming_both_faults_on_poor_dry_ground() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::TooPoorAndTooDry);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(
+            &app,
+            "too thin and too dry to take a crop"
+        ));
     }
 
     #[test]
@@ -5400,7 +5520,7 @@ mod tests {
     fn sow_rejected_on_a_patch_that_is_already_a_field() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_bare_hospitable_tile(&app);
+        let coord = find_sowable_tile(&app);
         seed_thriving_patch(&mut app, coord);
         {
             // Set the meter straight (the accrual is `pub(crate)`): this test is about the command's
@@ -5430,7 +5550,7 @@ mod tests {
     fn sow_rejected_on_another_factions_ground() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_bare_hospitable_tile(&app);
+        let coord = find_sowable_tile(&app);
         seed_thriving_patch(&mut app, coord);
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -5460,7 +5580,7 @@ mod tests {
     fn sow_rejected_when_no_band_is_foraging_the_tile() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_bare_hospitable_tile(&app);
+        let coord = find_sowable_tile(&app);
         grant_seed_selection(&mut app, faction);
 
         handle_sow(&mut app, faction, coord);
@@ -5468,22 +5588,18 @@ mod tests {
         assert!(sow_failure_detail_contains(&app, "No band is foraging"));
     }
 
-    /// **The happy path — and the point of the slice.** `sow` on hospitable ground that carries **no
-    /// forage site at all** is accepted: seed travels, so rung 3 needs no source below it (unlike
-    /// `Corral`, which needs a herd you already tamed). It sets the policy and claims nothing — the
-    /// seed itself goes in when the crew works the tile.
+    /// **The happy path.** On ground the land accepts — rich *and* watered, the river-valley set —
+    /// `sow` is accepted: it sets the policy and claims nothing, exactly like `cultivate`. The seed
+    /// itself goes in when the crew works the ground.
+    ///
+    /// (`Sow`'s *create-from-nothing* half — hospitable ground carrying no forage site at all — cannot
+    /// be reached on a generated map, since worldgen seeds a patch on every food-bearing tile; it is
+    /// exercised against constructed bare ground in `forage_field.rs`.)
     #[test]
-    fn sow_sets_the_sow_policy_on_hospitable_ground_with_no_patch() {
+    fn sow_sets_the_sow_policy_on_qualifying_ground() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_bare_hospitable_tile(&app);
-        assert!(
-            app.world
-                .resource::<ForageRegistry>()
-                .patch(coord)
-                .is_none(),
-            "the create-from-nothing case needs ground with no spawned patch"
-        );
+        let coord = find_sowable_tile(&app);
         grant_seed_selection(&mut app, faction);
         let band = spawn_working_band(
             &mut app,
@@ -5502,11 +5618,11 @@ mod tests {
             "sow switches the working band onto the investment policy"
         );
         assert!(
-            app.world
+            !app.world
                 .resource::<ForageRegistry>()
                 .patch(coord)
-                .is_none(),
-            "the command claims nothing — the seed goes in when the crew works the ground"
+                .is_some_and(|patch| patch.is_field()),
+            "the command claims nothing — the field must still be worked off"
         );
     }
 

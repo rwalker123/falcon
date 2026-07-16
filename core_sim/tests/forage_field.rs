@@ -21,17 +21,17 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, tile_forage_capacity,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
-    FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
-    TileRegistry, WellbeingConfigHandle, FOOD, NO_FORAGE_CAPACITY, RUNG_TIMESCALE_UNSCALED,
-    SEED_SELECTION_DISCOVERY_ID,
+    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, rung_site_refusal,
+    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
+    tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
+    RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -106,71 +106,113 @@ fn spawn_world() -> App {
     app
 }
 
-/// A `FoodModuleTag` tile carrying a seeded patch, primed to half its cap (Thriving, with regrowth
-/// headroom). The ground a *wild* stand already grows on — what rung 2 and an upgrade-sow work with.
-fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
-    let coord = {
-        let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
-        let registry = app.world.resource::<ForageRegistry>();
-        let mut candidates: Vec<UVec2> = query
-            .iter(&app.world)
-            .map(|(tile, _)| tile.position)
-            .filter(|pos| registry.patch(*pos).is_some())
-            .collect();
-        // Total order — never rely on query/map iteration order for a choice a test asserts on.
-        candidates.sort_unstable_by_key(|pos| (pos.y, pos.x));
-        *candidates.first().expect("a food-module tile with a patch")
-    };
-    {
-        let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = registry.patch_mut(coord).unwrap();
-        patch.biomass = patch.carrying_capacity * 0.5;
-        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
-    }
+/// **The land's own verdict on a tile**, resolved through the *real* seam the sim uses
+/// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+/// `site_requirement`) — never a restatement of the rule, so a retune of the floor or the water rule
+/// moves these fixtures with the game. `None` = the ground will take seed.
+fn site_verdict(app: &App, coord: UVec2) -> Option<SiteRefusal> {
     let entity = app
         .world
         .resource::<TileRegistry>()
         .index(coord.x, coord.y)
         .expect("tile entity resolves");
-    (entity, coord)
-}
-
-/// **Ground with no forage site** — the create-from-nothing target, *constructed*.
-///
-/// **Read this before using it.** `Sow`'s headline case is hospitable ground carrying no forage site
-/// at all (§2 — seed travels). **No such tile exists on a generated map today**: `classify_food_module`
-/// tags essentially every biome, and `spawn_initial_forage` seeds a patch on every module tile with a
-/// positive capacity — measured, this map: **2317 food-bearing tiles, 2317 patches, zero bare**. So the
-/// state is built here by taking a real hospitable tile and *removing* its patch, which is exactly the
-/// world the code path is written for. The path is real and correct; only worldgen currently never
-/// produces its input. See the slice-5 report / `docs/plan_intensification_ladder.md` §2.
-fn find_bare_hospitable_tile(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
+    let ground = app.world.get::<Tile>(entity).expect("tile exists");
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
         (registry.width, registry.height)
     };
-    // Totally-ordered `(y, x)` sweep — the answer is the map's, never a hash's.
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fresh_water = tile_is_fresh_watered(ground, width, height, wrap, |neighbor| {
+        app.world
+            .resource::<TileRegistry>()
+            .index(neighbor.x, neighbor.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+            .map(|tile| tile.terrain_tags)
+    });
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    rung_site_refusal(
+        ladder.rung(RungKey::PlantField),
+        ground,
+        &labor.forage,
+        fresh_water,
+    )
+}
+
+/// **The ground the ladder will take seed on** — rich *and* watered — scanned in a totally-ordered
+/// `(y, x)` sweep (never map iteration order, the lesson of `7c09c7e`). Scarce by design: this is the
+/// river-valley set, which is exactly why *which* tile a band can farm is a decision.
+fn find_sowable_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
+    let (width, height) = {
+        let registry = app.world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
     for y in 0..height {
         for x in 0..width {
             let coord = UVec2::new(x, y);
             let Some(entity) = app.world.resource::<TileRegistry>().index(x, y) else {
                 continue;
             };
-            let Some(tile) = app.world.get::<Tile>(entity) else {
-                continue;
-            };
-            if tile_forage_capacity(&labor.forage, tile) <= NO_FORAGE_CAPACITY {
-                continue;
+            if app.world.get::<Tile>(entity).is_some() && site_verdict(app, coord).is_none() {
+                return (entity, coord);
             }
-            app.world
-                .resource_mut::<ForageRegistry>()
-                .patches
-                .remove(&coord);
-            return (entity, coord);
         }
     }
-    panic!("the earthlike map must carry food-bearing ground somewhere");
+    panic!("the pinned map must carry sowable ground — rung 3 is unreachable without it");
+}
+
+/// **Sowable ground carrying a live patch**, primed to half its cap (Thriving, with regrowth
+/// headroom) — the wild stand rung 2 works and rung 3 upgrades.
+fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
+    let (entity, coord) = find_sowable_tile(app);
+    if app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .is_none()
+    {
+        // Sowable ground with no patch is (measurably) unreachable on a generated map, but the
+        // fixture must not silently depend on that: seed one at the tile's own capacity.
+        let capacity = {
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let ground = app.world.get::<Tile>(entity).expect("tile exists");
+            tile_forage_capacity(&labor.forage, ground)
+        };
+        let patch = ForagePatch::new(coord, capacity);
+        app.world
+            .resource_mut::<ForageRegistry>()
+            .patches
+            .insert(coord, patch);
+    }
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).unwrap();
+        patch.biomass = patch.carrying_capacity * 0.5;
+        patch.ecology_phase = EcologyPhase::Thriving;
+    }
+    (entity, coord)
+}
+
+/// **Sowable ground with NO forage site** — the create-from-nothing target, *constructed*.
+///
+/// **Read this before using it.** `Sow`'s headline case is qualifying ground carrying no forage site
+/// at all (§2 — seed travels). **No such tile exists on a generated map today**: `classify_food_module`
+/// tags essentially every biome, and `spawn_initial_forage` seeds a patch on every module tile with a
+/// positive capacity — measured on the standard map: **2328 food-bearing tiles, 2328 patches, zero
+/// bare**. So the state is built here by taking a real sowable tile and *removing* its patch, which is
+/// exactly the world the code path is written for. The path is real and correct; only worldgen
+/// currently never produces its input. See `docs/plan_intensification_ladder.md` §2.
+fn find_bare_sowable_tile(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
+    let (entity, coord) = find_sowable_tile(app);
+    app.world
+        .resource_mut::<ForageRegistry>()
+        .patches
+        .remove(&coord);
+    (entity, coord)
 }
 
 fn spawn_forager(
@@ -278,7 +320,7 @@ fn field_build(app: &App) -> (f32, f32) {
 #[test]
 fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     let mut app = spawn_world();
-    let (tile, coord) = find_bare_hospitable_tile(&mut app);
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
 
@@ -336,7 +378,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
 #[test]
 fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     let mut app = spawn_world();
-    let (tile, coord) = find_bare_hospitable_tile(&mut app);
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
 
@@ -491,7 +533,7 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
 #[test]
 fn an_abandoned_field_goes_feral_and_fully_lapses() {
     let mut app = spawn_world();
-    let (tile, coord) = find_bare_hospitable_tile(&mut app);
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
     let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
     let (progress_per_turn, decay_per_turn) = field_build(&app);
@@ -547,7 +589,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
 #[test]
 fn sow_seeds_nothing_without_seed_selection() {
     let mut app = spawn_world();
-    let (tile, coord) = find_bare_hospitable_tile(&mut app);
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
 
     run_turns_with_forage(&mut app, 30);
