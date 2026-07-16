@@ -293,8 +293,9 @@ pub struct HerdTelemetryState {
     /// unpenned herd. Appended (append-only).
     #[serde(default)]
     pub pen_pasture_fraction: f32,
-    /// **The in-flight ring's build meter** `0..1` for a "Fencing N%" badge (`ExtendPen`, 2d-β). `0.0`
-    /// this slice (β populates it). Appended last (append-only).
+    /// **The in-flight `ExtendPen` ring's build meter** for a "Fencing N%" badge: `0.0` when the pen is
+    /// not extending, otherwise the ring's build progress (`0..1`, completing at `1.0` → `pen_radius`
+    /// grows by one). Appended last (append-only).
     #[serde(default)]
     pub pen_extend_progress: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ): `wild` | `pastoral` |

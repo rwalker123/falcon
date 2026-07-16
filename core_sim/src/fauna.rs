@@ -1834,9 +1834,12 @@ pub fn repopulate_fauna(
 /// harvests the *pen's* MSY place-locally (`advance_labor_allocation`) — and this pass instead runs its
 /// two neglect checks. Logistics runs before Population, so both flags were written **last** turn (the
 /// deliberate one-turn lag, mirroring `ForagePatch::tended_this_turn`):
-/// - **No keeper → escape.** An untended pen clears `corralled_at` **and zeroes `corral_progress`**
-///   (the pen is lost with the herd that roamed off it) and pushes a `CommandEventKind::Corral` feed
-///   line, so a destroyed 25-turn investment is never silent. Nobody was minding the gate.
+/// - **No keeper → escape.** An untended pen clears `corralled_at`, **zeroes `corral_progress`, and
+///   resets the whole fenced-footprint state** (`pen_radius` / `pen_extend_progress` / `pen_extending`,
+///   Grazing 2d — the pen is lost with the herd that roamed off it, so re-penning rebuilds every
+///   ExtendPen ring from scratch and no stale radius teleports onto the next tile), and pushes a
+///   `CommandEventKind::Corral` feed line, so a destroyed investment is never silent. Nobody was
+///   minding the gate.
 /// - **A keeper who cannot pay the feed → starvation.** An underfed pen (`pen_fed_fraction < 1`)
 ///   **shrinks** by `pen.starve_shrink_rate × (1 − fed) × biomass`, floored at
 ///   `pen.ecology.extinction_floor × K_pen`. It does **not** despawn and does **not** lose the pen: the
@@ -1881,17 +1884,26 @@ pub fn advance_husbandry(
                 } else {
                     let pen = herd.corralled_at;
                     herd.corralled_at = None;
-                    // The pen is LOST, not merely opened: zero the build progress so re-penning pays
-                    // the full `corral_build_progress_per_turn` investment again. **A patch is a
-                    // place and a herd is not** — `cultivation_progress` may decay gradually because
-                    // the improvement sits on a tile that cannot move, so partial progress still
-                    // refers to the same patch; `corral_progress` lives on the *herd*, which roams,
-                    // so any retained progress would re-materialize the pen at whatever tile the
-                    // animal has since wandered to (a teleporting corral) and make abandoning a pen
-                    // cost one turn instead of the rebuild. Contrast the **mid-build** gate lapse,
-                    // which is NOT this branch (it only fires on a completed pen): a half-built pen
-                    // keeps its progress — materials on the ground at a tile the herd is still at.
+                    // The pen is LOST, not merely opened: zero the build progress **and the whole
+                    // fenced-footprint state** (Grazing 2d — `pen_radius`, `pen_extend_progress`,
+                    // `pen_extending`) so re-penning pays the full `corral_build_progress_per_turn`
+                    // investment again AND rebuilds every ExtendPen ring from scratch (~25 turns/ring).
+                    // **A patch is a place and a herd is not** — `cultivation_progress` may decay
+                    // gradually because the improvement sits on a tile that cannot move, so partial
+                    // progress still refers to the same patch; `corral_progress` and the fence live on
+                    // the *herd*, which roams, so any retained state would re-materialize the pen (and
+                    // its grown radius) at whatever tile the animal has since wandered to (a teleporting
+                    // corral inheriting its old fence for free) and make abandoning a pen cost one turn
+                    // instead of the rebuild. Resetting here — the single place a completed pen's
+                    // `corralled_at` is cleared — also clears the stale `penRadius`/`penExtendProgress`
+                    // the wire would otherwise export on the now-mobile herd (a phantom "Fencing N%"
+                    // badge). Contrast the **mid-build** gate lapse, which is NOT this branch (it only
+                    // fires on a completed pen): a half-built pen keeps its progress — materials on the
+                    // ground at a tile the herd is still at.
                     herd.corral_progress = 0.0;
+                    herd.pen_radius = 0;
+                    herd.pen_extend_progress = 0.0;
+                    herd.pen_extending = false;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",

@@ -1,6 +1,6 @@
 # Grazing Phase 2d — The Pen Economy: Pens Become Land
 
-**Status:** design, pre-implementation. Completes the deferred `(e)` from
+**Status:** implemented (PR #127). Completes the deferred `(e)` from
 `docs/plan_grazing_2b.md` §7 ("Pens: `K_pen` becomes the fenced tiles' graze flow, retiring
 `capacity_fraction`") and the "pen *extension*" and per-species husbandry `r` items flagged there.
 

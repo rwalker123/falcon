@@ -1091,8 +1091,9 @@ table HerdTelemetryState {
   // pasture feeds it for free; 0.0 = a barren footprint pays the full larder bill. With `penUpkeep`
   // the client renders "fed by pasture NN% · larder N/turn". 0.0 if unpenned.
   penPastureFraction:float = 0;
-  // `penExtendProgress` = the in-flight fence ring's build meter (0..1) for a "Fencing N%" badge.
-  // 0 this slice (2d-β populates it).
+  // `penExtendProgress` = the in-flight ExtendPen ring's build meter for a "Fencing N%" badge: 0 when
+  // the pen is not extending, otherwise the ring's build progress (0..1, completes at 1.0 → pen_radius
+  // grows by one).
   penExtendProgress:float = 0;
   // --- Husbandry ceiling (Grazing 2d-δ, appended last) --- how far up the ladder this species climbs:
   // "wild" (hunt-only) | "pastoral" (tames + roams, never pens) | "pen" (the full ladder). The client

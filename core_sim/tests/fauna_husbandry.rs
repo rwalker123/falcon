@@ -1035,6 +1035,47 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
     );
 }
 
+/// **The lost pen tears down its whole FENCE, not just the build meter** (Grazing 2d). A completed pen
+/// with a grown radius (and even a ring mid-extension) that escapes untended resets `pen_radius` /
+/// `pen_extend_progress` / `pen_extending` to defaults, so a re-corralled herd starts at radius 0 —
+/// it does NOT inherit its old fenced radius for free (skipping the ~25-turn-per-ring ExtendPen labor).
+#[test]
+fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    // Give the completed pen a grown, mid-extension fence.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.pen_radius = 2;
+        herd.pen_extend_progress = 0.5;
+        herd.pen_extending = true;
+    }
+
+    // No keeper: the grace turn is consumed, then the herd breaks out.
+    run_turns_untended(&mut app, 3);
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(!herd.is_corralled(), "an untended corral escapes");
+    assert_eq!(
+        herd.pen_radius, 0,
+        "the lost pen's fence is torn down to radius 0"
+    );
+    assert!(!herd.pen_extending, "its in-flight extension is cancelled");
+    assert_eq!(herd.pen_extend_progress, 0.0, "with zero ring progress");
+
+    // Re-corralling comes back at radius 0 — the old fence is NOT inherited for free.
+    corral_herd(&mut app, &id);
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(herd.is_corralled(), "the herd re-pens");
+    assert_eq!(
+        herd.pen_radius, 0,
+        "a re-corralled herd starts at radius 0 — no free extension"
+    );
+    assert!(!herd.pen_extending);
+    assert_eq!(herd.pen_extend_progress, 0.0);
+}
+
 /// Guard against over-reaching the escape fix: a **half-built** pen whose gate lapses (its keeper
 /// leaves mid-build) **keeps** its progress — materials on the ground at a tile the herd is still at.
 /// Only a *completed* pen that escapes loses it.
