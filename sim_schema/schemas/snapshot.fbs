@@ -1084,6 +1084,28 @@ table HerdTelemetryState {
   // sim uses (not `sizeClass`, since migratory depends on `loiter_radius`, which is not on the wire)
   // lets the client reproduce it with `hex_range_tiles`, so the two never disagree. Appended last.
   grazeRangeRadius:uint = 0;
+  // --- The pen economy (Grazing 2d, appended last) --- a pen is a piece of FENCED LAND: the herd
+  // grazes its footprint and the larder pays only what the pasture can't cover.
+  // `penRadius` = the fenced-footprint hex radius (0 = the single corralled tile; the ExtendPen
+  // command grows it). 0 for an unpenned herd.
+  penRadius:uint = 0;
+  // `penFootprintTiles` = the count of IN-BOUNDS fenced tiles the sim computes over
+  // (`hex_range_tiles(corralled_at, penRadius)` length). The client must NOT reconstruct the
+  // closed-form disk count 1,7,19,… — it is wrong at map edges (the 2b HUD lesson). 0 if unpenned.
+  penFootprintTiles:uint = 0;
+  // `penPastureFraction` = the share of the pen's feed its footprint covered (0..1). 1.0 = the fenced
+  // pasture feeds it for free; 0.0 = a barren footprint pays the full larder bill. With `penUpkeep`
+  // the client renders "fed by pasture NN% · larder N/turn". 0.0 if unpenned.
+  penPastureFraction:float = 0;
+  // `penExtendProgress` = the in-flight ExtendPen ring's build meter for a "Fencing N%" badge: 0 when
+  // the pen is not extending, otherwise the ring's build progress (0..1, completes at 1.0 → pen_radius
+  // grows by one).
+  penExtendProgress:float = 0;
+  // --- Husbandry ceiling (Grazing 2d-δ, appended last) --- how far up the ladder this species climbs:
+  // "wild" (hunt-only) | "pastoral" (tames + roams, never pens) | "pen" (the full ladder). The client
+  // hides the corral/extend affordance on a non-"pen" herd and the whole domestication track on a
+  // "wild" one. A free-form string like `species`/`sizeClass` (empty → "pen", the full ladder).
+  husbandryCeiling:string;
 }
 
 table CommandEventState {

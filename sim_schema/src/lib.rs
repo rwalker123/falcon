@@ -278,6 +278,32 @@ pub struct HerdTelemetryState {
     /// last.
     #[serde(default)]
     pub graze_range_radius: u32,
+    /// **The pen's fenced-footprint radius** (Grazing 2d) — `0` = the single corralled tile; each ring
+    /// the `ExtendPen` command works off raises it. `0` for an unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_radius: u32,
+    /// **The count of in-bounds fenced tiles** in the pen's footprint — server-computed
+    /// (`hex_range_tiles(corralled_at, pen_radius)` length), NOT the closed-form disk count `1,7,19,…`
+    /// (which is wrong at map edges). `0` for an unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_footprint_tiles: u32,
+    /// **The share of a penned herd's feed its footprint covered** (`pasture_fraction`, Grazing 2d
+    /// §2.3): `1.0` = the fenced pasture feeds it for free, `0.0` = a barren footprint pays the full
+    /// larder bill. With `penUpkeep` the client shows "fed by pasture NN% · larder N/turn". `0.0` for an
+    /// unpenned herd. Appended (append-only).
+    #[serde(default)]
+    pub pen_pasture_fraction: f32,
+    /// **The in-flight `ExtendPen` ring's build meter** for a "Fencing N%" badge: `0.0` when the pen is
+    /// not extending, otherwise the ring's build progress (`0..1`, completing at `1.0` → `pen_radius`
+    /// grows by one). Appended last (append-only).
+    #[serde(default)]
+    pub pen_extend_progress: f32,
+    /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ): `wild` | `pastoral` |
+    /// `pen`. The client hides the corral/extend affordance on a non-`pen` herd and the whole
+    /// domestication track on a `wild` one. A free-form string like `species` (empty → `pen`, the full
+    /// ladder). Appended last (append-only).
+    #[serde(default)]
+    pub husbandry_ceiling: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -311,6 +337,11 @@ impl Default for HerdTelemetryState {
             pen_fed_fraction: pen_fully_fed(),
             carrying_capacity: 0.0,
             graze_range_radius: 0,
+            pen_radius: 0,
+            pen_footprint_tiles: 0,
+            pen_pasture_fraction: 0.0,
+            pen_extend_progress: 0.0,
+            husbandry_ceiling: String::new(),
         }
     }
 }
@@ -452,6 +483,19 @@ pub struct HerdState {
     /// investment.
     #[serde(default)]
     pub corral_progress: f32,
+    /// The pen's **footprint radius** (Grazing 2d) — the fenced land a penned herd grazes / derives K
+    /// over (`hex_range_tiles(corralled_at, pen_radius)`). `0` = the single corralled tile. Persisted so
+    /// a rollback preserves a fence the `ExtendPen` command (2d-β) grew.
+    #[serde(default)]
+    pub pen_radius: u32,
+    /// Pen-**extension** build progress `0..1` for the in-flight ring (2d-β). Persisted alongside
+    /// `pen_radius` so a rollback rewinds a partly-fenced ring.
+    #[serde(default)]
+    pub pen_extend_progress: f32,
+    /// The `ExtendPen` "extending" state (2d-β) — `true` while a ring is being worked off. Persisted so
+    /// a rollback preserves the in-flight extension rather than stranding a half-progress meter.
+    #[serde(default)]
+    pub pen_extending: bool,
     /// Per-species fodder demand per unit biomass (Grazing Phase 2b-i), cached on the live `Herd` at
     /// spawn from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire)
     /// so a rollback restores the eating rate rather than leaving a rehydrated herd grazing at `0`.
@@ -463,6 +507,11 @@ pub struct HerdState {
     /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
     #[serde(default)]
     pub regrowth_rate: f32,
+    /// How far up the husbandry ladder the herd's species climbs (Grazing 2d-δ): `wild` | `pastoral` |
+    /// `pen` (`HusbandryCeiling::as_str`/`from_key`). Cached on the live `Herd` at spawn; round-tripped
+    /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).
+    #[serde(default)]
+    pub husbandry_ceiling: String,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -3341,6 +3390,7 @@ fn create_herds<'a>(
         let species = builder.create_string(herd.species.as_str());
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
+        let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
         let hunt_policy_ceilings = if herd.hunt_policy_ceilings.is_empty() {
             None
         } else {
@@ -3414,6 +3464,13 @@ fn create_herds<'a>(
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
                 grazeRangeRadius: herd.graze_range_radius,
+                // The pen economy (Grazing 2d) — appended last.
+                penRadius: herd.pen_radius,
+                penFootprintTiles: herd.pen_footprint_tiles,
+                penPastureFraction: herd.pen_pasture_fraction,
+                penExtendProgress: herd.pen_extend_progress,
+                // Husbandry ceiling (Grazing 2d-δ) — appended last.
+                husbandryCeiling: Some(husbandry_ceiling),
             },
         );
         entries.push(entry);

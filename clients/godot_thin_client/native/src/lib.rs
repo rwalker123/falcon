@@ -3167,6 +3167,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // Grazing 2d-δ — how far up the husbandry ladder THIS species can climb ("wild" hunt-only /
+        // "pastoral" tame+roam-but-never-penned / "pen" the full ladder). Empty/absent ⇒ the client
+        // treats it as "pen" (the full ladder). Same string convention as `species`/`ecologyPhase`;
+        // the herd drawer gates its domestication + corral/extend affordances on it.
+        if let Some(husbandry_ceiling) = herd.husbandryCeiling() {
+            let _ = dict.insert("husbandry_ceiling", husbandry_ceiling);
+        }
         let _ = dict.insert("domestication", herd.domestication());
         // Per-policy BAND / local-hunt take ceilings (provisions/turn) for this herd's CURRENT state.
         // Surfaced as a `{policy -> provisions_per_turn}` Dictionary. With the cohort's
@@ -3254,6 +3261,23 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // (`biomass > carrying_capacity`), and MapView draws the EXACT ring the sim grazes over.
         let _ = dict.insert("carrying_capacity", herd.carryingCapacity());
         let _ = dict.insert("graze_range_radius", herd.grazeRangeRadius() as i64);
+        // The pen as a piece of fenced LAND (docs/plan_grazing_2d.md §7). A penned herd grazes its own
+        // fenced footprint and the grass it eats offsets the larder bill:
+        //   `pen_radius`           = the footprint hex radius (0 = the single corralled tile).
+        //   `pen_footprint_tiles`  = the count of IN-BOUNDS fenced tiles the SIM computes over
+        //                            (`hex_range_tiles(corralled_at, penRadius)` length). Display as-is —
+        //                            the client must NOT reconstruct the closed-form hex-disk count, which
+        //                            is wrong at map edges.
+        //   `pen_pasture_fraction` = the share of the pen's feed its footprint covered (0..1); with
+        //                            `pen_upkeep` (the OFFSET larder bill) this drives the "Fed by pasture
+        //                            NN% · larder N.N food/turn" split in the herd drawer.
+        //   `pen_extend_progress`  = the in-flight fence ring's build meter (0..1) for a "Fencing N%" badge.
+        // Read by Hud's herd drawer (feed-split + footprint rows, Extend affordance) and MapView's pen
+        // footprint highlight.
+        let _ = dict.insert("pen_radius", herd.penRadius() as i64);
+        let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
+        let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
+        let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
         array.push(&dict.to_variant());
     }
     array

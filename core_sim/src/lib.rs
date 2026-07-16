@@ -126,7 +126,7 @@ pub use fauna::{
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
-    GrazeConfig, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
+    GrazeConfig, HusbandryCeiling, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,

@@ -40,7 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: `pastoral.ecology` (`r` 0.25, the passive mobile-domesticated rung) and `pen` (`ecology.r` 0.90 / `capacity_fraction` / **`upkeep_per_biomass`** — the pen's feed — / `starve_shrink_rate`), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 1.5 / `pen_gain` 3.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 0.75, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -639,8 +639,12 @@ keyword, e.g. "Red Deer" → 🦌), `size_class` (`migratory`/`big`/`small`),
 `migratory` flag, `route_len` `[min,max]` (= roaming range), `biomass` `[min,max]`
 (group size), and `host_biomes` (a list of **`FoodModule` keys**, reusing
 `classify_food_module`). Shipped species: migratory mammoth/steppe_runner/
-marsh_grazer (long routes); big game deer/boar (2–3 tiles); small game rabbit/fowl
-(~1 tile, stationary).
+marsh_grazer (long routes); big game deer/boar/**aurochs** (2–3 tiles); small game
+rabbit/fowl/**crag_goat** (~1 tile, stationary). The two **pennable grazer livestock**
+(Grazing 2d) are `pen`-ceiling: **Wild Aurochs** (🦬, wild r 0.09 → slow ranch cattle) on
+grass + woodland edge (`savanna_grassland`/`temperate_forest`/`mixed_woodland`), **Crag
+Goats** (🐐, wild r 0.22 → fast hardy hill stock) on highland/dry-upland
+(`montane_highland`/`semi_arid_scrub`).
 
 **Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
 `HerdRegistry`.
@@ -793,16 +797,31 @@ Authoritative design: `docs/plan_corral_managed_population.md`. **Management buy
 a licence to eat the standing stock.** Every rung of the ladder pays the Maximum Sustainable Yield; the
 rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you:
 
-| Rung | Ecology | `r` | Costs | Red Deer (K=1200) |
-|---|---|---|---|---|
-| Wild, Sustain hunt | `ecology` | 0.05 | a worker | **0.30** food/turn |
-| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | 0.25 | **none — passive** | **1.50** |
-| Corral, building | `corralling_yield_fraction × MSY` | — | a worker, 25 turns | 0.75 |
-| Corral, finished (**pen**) | `husbandry.pen.ecology` | 0.90 | a worker + **food upkeep** + pinned | **5.40** gross / **≈3.66** net at `B*` |
+| Rung | Ecology | `r` (Grazing 2d — **per-species**) | Costs |
+|---|---|---|---|
+| Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
+| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.5) | **none — passive** |
+| Corral, building | `corralling_yield_fraction × MSY` | — | a worker, 25 turns |
+| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 3.0, cap 0.75) | a worker + **feed (footprint-offset)** + pinned |
 
+- **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
+  **own wild `r`** by `husbandry.pastoral_gain` (1.5) / `pen_gain` (3.0), clamped to
+  `husbandry_regrowth_cap` (0.75) — a penned rabbit (`r` 0.75, booms) and a penned mammoth (`r` 0.12, a
+  long-haul investment) are different economies. This also fixes the fast-breeder pastoral inversion
+  (pastoral `r` = `wild_r × 1.5 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
+  rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
+  gain → capped` map.
+- **A penned herd's `K` is its FENCED FOOTPRINT's graze flow** (`hex_range_tiles(corralled_at,
+  pen_radius)`), recomputed each turn — penned herds are no longer frozen and `pen.capacity_fraction` /
+  `pen_capacity` are **deleted** (a penned herd's `K` is just `herd.carrying_capacity`, so
+  `herd_capacity` collapses to that field for every herd). A penned herd **grazes its footprint**
+  (escapement-floored, like a wild herd) and the grass it eats **offsets its keeper's larder bill**:
+  `larder_upkeep = pen.upkeep_per_biomass × biomass × (1 − pasture_fraction)`, `pasture_fraction =
+  clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`. A pen on lush steppe feeds itself for
+  free (`pasture_fraction → 1`, larder → 0); a **wholly-barren** footprint keeps the herd's frozen `K`
+  and pays the full larder bill (the pre-2d worst case, preserved). See "Phase 2d".
 - **`fauna::herd_ecology(herd, fauna)` and `fauna::herd_capacity(herd, fauna)` are THE single source of
-  that mapping** (a penned herd is bounded by the *pen*, `pen.capacity_fraction × carrying_capacity`,
-  not by the land). `regrow_biomass`, `hunt_policy_ceiling`, `hunt_forecast`, `refresh_ecology_phase`,
+  that mapping.** `regrow_biomass`, `hunt_policy_ceiling`, `hunt_forecast`, `refresh_ecology_phase`,
   the expedition ceiling/bound/simulation — **every** consumer resolves through them. **No call site may
   re-derive an ecology or a capacity**: a second copy of this mapping is exactly how a forecast starts
   promising a number the take won't pay (see "Pre-commit Yield Forecast").
@@ -824,7 +843,7 @@ rungs differ *only* in the **ecology** that MSY is computed against, and in what
   harvests in Population, so a constant-catch take is evaluated at the **post**-regrowth biomass; above
   `K/2` that is harmless (both forms cap at MSY and converge on `K/2`), but **below `K/2` it takes
   `g(B + g(B)) > g(B)`** — strictly more than the herd grew. At the wild `r` = 0.05 that leak is a
-  rounding error; at the pen's `r` = 0.90 it is fatal: a **fully fed** pen knocked below `K/2` spirals
+  rounding error; at the pen's fast per-species `r` (up to 0.75) it is fatal: a **fully fed** pen knocked below `K/2` spirals
   to zero in ~12 turns and can never recover. Escapement never takes a herd below `K/2`, so a depleted
   managed herd **rebuilds** (yielding less, or nothing, while it does) and then pays `r·K/4` forever —
   stable from *both* sides, same yield at capacity and at the operating point.
@@ -840,11 +859,12 @@ Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fra
 — builtin, default file, `FAUNA_CONFIG_PATH` override — is covered; the `expedition_config.rs` /
 `crisis_config.rs` convention). A broken invariant is logged at **error** level
 (`fauna_config.invalid_rejected`) and the known-good builtin is used instead. Enforced: **the pen's
-net-positive bound** (`pen.upkeep_per_biomass < pen.ecology.regrowth_rate × hunt.provisions_per_biomass
-/ (2 + pen.ecology.regrowth_rate)` — a pen that eats more than it yields is a *trap*), **the ladder is monotone**
-(`pen.r > pastoral.r > wild.r` — invert it and penning *lowers* your yield), ordered ecology phase
+best-case net-positive floor** (Grazing 2d §2.4 — `pen.upkeep_per_biomass < r_pen · p / (2 + r_pen)`
+for the **fastest** species' `r_pen = min(cap, max_wild_r × pen_gain)`; a slow breeder or poor-pasture
+pen may run at a **loss by design**, so the old every-pen guarantee is retired for a best-case sanity
+floor), **the ladder is monotone as gains** (`pen_gain > pastoral_gain > 1`), ordered ecology phase
 bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all three ecologies, every
-`regrowth_rate > 0`, `pen.capacity_fraction > 0`, `0 ≤ pen.starve_shrink_rate ≤ 1`,
+`regrowth_rate > 0`, `husbandry_regrowth_cap > 0`, `0 ≤ pen.starve_shrink_rate ≤ 1`,
 `0 < corralling_yield_fraction < 1`, `corral_build_progress_per_turn > 0`,
 `knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold ≤ 1`,
 `progress_per_turn > decay_per_turn`, `hunt.provisions_per_biomass > 0`, and the follow/market bounds.
@@ -895,18 +915,21 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   one-off 25-turn build that then printed food forever is now a **sustained commitment with a running
   cost**. Corralled = fixed + place-local worker-tended + **fed** + escapes-if-untended:
   - *Fixed* — `advance_herds` skips a corralled herd's `advance_herd_roam` (it stays at `corralled_at`,
-    no heading arrow); it still grazes/regrows (ecology is independent of movement).
+    no heading arrow); it still grazes its footprint + regrows toward the footprint's `K` (Grazing 2d).
   - *Place-local worker-tended* — a **Hunt assignment on a corralled herd** is herding/tending it, and
     the turn has two halves (the tend branch of `advance_labor_allocation`'s Hunt arm, which `continue`s
     before `hunt_take` — a corralled herd is never both hunt-drawn AND paid):
-    1. **FEED.** The pen demands `pen.upkeep_per_biomass × biomass` from the **keeper's own larder** —
-       a penned herd is confined and cannot graze, so the keeper must bring it food. `LocalStore::take`
-       returns what it *actually* took, so `pen_fed_fraction = paid / demand` is the partial-payment
-       primitive (a transient flag, read one turn later by `advance_husbandry`). The upkeep is not an
-       arbitrary tax; it is the physical price of the thing that makes a pen a pen — **and it is the
-       tether that gives "the pen pins the band" its teeth**.
+    1. **FEED (footprint-offset, Grazing 2d §2.3).** The pen grazes its fenced footprint
+       (`advance_herd_grazing` → `footprint_intake`), and the larder pays only what the pasture can't
+       cover: `demand = pen.upkeep_per_biomass × biomass × (1 − pasture_fraction)`,
+       `pasture_fraction = clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`.
+       `LocalStore::take` returns what it *actually* took; `pen_fed_fraction = pasture_fraction +
+       (1 − pasture_fraction) × (paid / demand)` (the total fed share — pasture plus the paid part of
+       the reduced larder bill). A lush footprint feeds the pen for free; a barren one pays the full
+       bill — **the tether that gives "the pen pins the band" its teeth**, now cheap on good land.
     2. **HARVEST.** The keeper takes the **pen's MSY** (`fauna::pen_yield_biomass` →
-       `managed_yield_biomass` under `pen.ecology`, `r` = 0.90, against `K_pen`), which **draws the herd
+       `managed_yield_biomass` under the herd's per-species pen ecology (`pen_ecology_for`), against its
+       footprint `K` = `herd.carrying_capacity`), which **draws the herd
        down** — exactly what makes it sustainable (see "The husbandry yield ladder"). The credited yield
        is **gross**: the feed is a separate debit, so the player sees both halves of the trade rather
        than one netted number.
@@ -914,7 +937,7 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     could not pay, shrinks the herd by `pen.starve_shrink_rate × (1 − fed) × biomass`, floored at
     `pen.ecology.extinction_floor × K_pen`. **The pen's growth is what the feed buys**: `regrow_biomass`
     scales a penned herd's growth by `pen_fed_fraction`, so an unfed pen does **not** grow (without this
-    the pen's own `r` = 0.90 out-runs the 10%/turn wasting several times over — an "unfed" herd would keep
+    the pen's own fast `r` out-runs the 10%/turn wasting several times over — an "unfed" herd would keep
     growing and quietly pay a yield for feed nobody bought). The herd **withers to a remnant and
     recovers when fed again**: it does **not** despawn (a penned herd is exempt from `advance_herds`'
     dispersal retention — dispersal is the *mechanism* of local extinction, and a confined herd cannot
@@ -949,16 +972,20 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
     tend it. **This binary escape is the *no-keeper* case only** — nobody is minding the gate. A keeper
     who is present but *broke* starves the herd instead (above); it never breaks out.
-- **Persistence** — `corralled_at` **and `corral_progress`** round-trip through the rollback snapshot on
-  `HerdState` (authoritative sim state), so a rollback rewinds a half-built pen rather than losing the
-  investment; `corralled_tended_this_turn`, **`pen_fed_fraction` and `pen_starving`** are transient (not
-  persisted) — a rehydrated pen reads "untended, fully fed", so a rollback can only *delay* an escape or
-  a starvation turn by one turn, never resurrect a broken-out herd nor invent a famine.
-- **Config** (`fauna_config.json` `husbandry`): the **`pen`** block — `ecology.regrowth_rate` (**0.90**,
-  the ladder's top growth rate: 18× wild, 3.6× pastoral), `capacity_fraction` (**1.0** — `K_pen =
-  capacity_fraction × carrying_capacity`, so the pen scales per-species with no new absolute),
-  **`upkeep_per_biomass` (0.002 — the feed)** and `starve_shrink_rate` (**0.10** — a fully-unfed herd
-  loses 10%/turn) — plus the **`pastoral`** block (`ecology.regrowth_rate` **0.25**),
+- **Persistence** — `corralled_at`, `corral_progress`, **and `pen_radius` / `pen_extend_progress` /
+  `pen_extending` (Grazing 2d)** round-trip through the rollback snapshot on `HerdState` (authoritative
+  sim state), so a rollback rewinds a half-built pen (or an in-flight fence extension) rather than losing
+  the investment;
+  `corralled_tended_this_turn`, **`pen_fed_fraction`, `pen_starving`, `footprint_intake` and
+  `pen_pasture_fraction`** are transient (not persisted) — a rehydrated pen reads "untended, fully fed",
+  so a rollback can only *delay* an escape or a starvation turn by one turn, never invent a famine.
+- **Config** (`fauna_config.json` `husbandry`): the **`pen`** block — `ecology` carries **phase bands
+  only** now (its `regrowth_rate` is unused; the pen `r` is per-species — Grazing 2d),
+  **`upkeep_per_biomass` (0.002 — the feed, now footprint-offset)** and `starve_shrink_rate` (**0.10** —
+  a fully-unfed herd loses 10%/turn); `capacity_fraction` is **deleted** (`K_pen` is the fenced
+  footprint's graze flow). Plus the **per-species growth gains** `pastoral_gain` (1.5) / `pen_gain`
+  (3.0) / `husbandry_regrowth_cap` (0.75), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
+  validated `>= 1`), the **`pastoral`** block (phase bands only),
   **`corralling_yield_fraction` (0.50 — the investment cost, the animal twin of
   `cultivating_yield_fraction`)**, **`corral_build_progress_per_turn` (0.04 → 25 turns to build; a
   dedicated lever so pen speed and *tame* speed tune independently)**, `knowledge_progress_per_turn`
@@ -976,13 +1003,13 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     pen's dip be paid from it. **`upkeep_per_biomass` was deliberately NOT touched** — the running cost
     is the point of the arc, and weakening it to fix balance would delete the mechanic.
   - **Every invariant above is enforced by `FaunaConfig::validate()`** — most importantly
-    the pen's **net-positive bound** (`upkeep_per_biomass < pen.ecology.regrowth_rate ×
-    hunt.provisions_per_biomass / (2 + pen.ecology.regrowth_rate)` ≈ 0.0062; shipped 0.002, a ~3.1×
-    margin): derivation — at the settled operating point the pen yields `r·K/4 · p` and eats
-    `u · K·(2 + r)/4` (the feed is charged on the *post-regrowth* biomass: you feed every animal in the
-    pen, including the ones you are about to harvest), so `net > 0 ⟺ u < r·p/(2 + r)`. A violating
-    override would silently make corralling a permanent **net food loss**. See "The husbandry yield
-    ladder" for the full validated list.
+    the pen's **best-case net-positive floor** (Grazing 2d §2.4 — `upkeep_per_biomass < r_pen · p /
+    (2 + r_pen)` for the **fastest** species' `r_pen = min(husbandry_regrowth_cap, max_wild_r ×
+    pen_gain)` = `0.75 × 0.02 / 2.75 ≈ 0.0055`; shipped 0.002): derivation — at the operating point the
+    pen yields `r·K/4 · p` and eats `u · K·(2 + r)/4`, so `net > 0 ⟺ u < r·p/(2 + r)`. **This inverts
+    the old every-pen guarantee:** with per-species `r` and pasture-dependent feed, a slow breeder or a
+    poor-pasture pen may run at a **loss by design** (a placement decision), so validate only guarantees
+    the best pen (fastest breeder, fully larder-fed) still pays. See "The husbandry yield ladder".
 - **The band's food ledger — `PopulationCohortState.penFeedUpkeep` (the per-band roll-up).** A pen's
   feed is taken straight off `cohort.stores` (`LocalStore::take`, the corral-tend branch), so it lands
   in **neither** `foodIncome` (Σ per-source `actual`) **nor** `foodConsumption` (the food the *people*
@@ -1432,9 +1459,9 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   not the fallback biome. See "The two food webs" for the joint (graze + forage) measurement.
 - **Follow-ups:** the **client** pasture overlay + tile-card readout — and the twin **Forage overlay**
   off `TileState.forageCapacity` (both are client-dev slices: the data is on the wire; note each overlay
-  must be built from `TileState`, since neither graze nor forage is a raster channel). Then **Phase 2b**
-  — herds eat it, and `K_herd` becomes `range graze flow / fodder_per_biomass`, retiring
-  `pen.capacity_fraction` and per-species `K`.
+  must be built from `TileState`, since neither graze nor forage is a raster channel). **Phase 2b**
+  (herds eat it, `K_herd` = `range graze flow / fodder_per_biomass`) and **Phase 2d** (the pen becomes
+  fenced land, retiring `pen.capacity_fraction`) have since landed.
 
 ### Phase 2b-i — herds eat their range, movement is graze-aware (INERT on K)
 
@@ -1498,10 +1525,11 @@ oscillates or crashes if built carelessly.
   down) biomass. So overgrazing a range lowers its flow → lowers `K` → shrinks the herd (the emergent
   overgrazing spiral); a range held at/above its MSY point yields full flow → `K` at max. This is the
   **one** write; `herd_capacity(herd, fauna)` still reads the cached field, so **every downstream
-  consumer is unchanged** (no `&GrazeRegistry` threaded through the ~15 capacity call sites). A
-  **corralled** herd is **skipped** — it keeps `carrying_capacity` frozen at pen time and
-  `herd_capacity`'s corral branch still applies `pen.capacity_fraction` (pen `K` is 2d, not this
-  slice). A non-grazing herd (`fodder ≤ 0`) or an absent graze layer keeps the constant `K`.
+  consumer is unchanged** (no `&GrazeRegistry` threaded through the ~15 capacity call sites). Since
+  **Grazing 2d** a **corralled** herd's `K` is likewise recomputed — over its *fenced footprint*
+  (`hex_range_tiles(corralled_at, pen_radius)`), via the same `ecological_carrying_capacity` seam (a
+  wholly-barren footprint keeps the frozen `K` and is fully larder-fed). A non-grazing herd
+  (`fodder ≤ 0`) or an absent graze layer keeps the constant `K`.
 - **`graze_sustainable_flow` — NOT `sustainable_yield`.** The K flow is pure logistic at the MSY-clamped
   biomass (`logistic_regrowth(min(G, cap/2), cap, r_graze)`), deliberately **without** the Allee cutoff
   `sustainable_yield` applies — **grass has no depensation**, so a heavily-but-recoverably grazed tile
@@ -1545,16 +1573,100 @@ oscillates or crashes if built carelessly.
   (both `r` and `K` up) and rose **~5.7×** for rabbit (**0.05 → 0.285** food/turn) — the **small-game
   viability reversal**: a rabbit warren is now a fast provisioner (and the small/Market hunting
   expedition, which never filled under the old uniform `r`, now completes).
-- **The fast-breeder ladder inversion — flagged for 2d.** A wild rabbit's `r`=0.35 **exceeds** the
-  pastoral rung's flat 0.25, so taming a rabbit is a growth *downgrade* (pastoral MSY < wild MSY). The
-  pen rung (0.90) still tops every species, so only the passive mobile rung inverts (a mobility /
-  collapse-immunity trade, not a yield gain). The pastoral/pen rungs keep their shipped absolute `r`
-  this slice (design §7); making the pastoral rung a *multiple* of the species' wild `r` is the 2d
-  retune. `fauna_husbandry::the_husbandry_ladder_is_monotone_for_every_species` now asserts the ladder
-  per-species according to which regime it is in.
+- **The fast-breeder ladder inversion — FIXED in 2d.** A wild rabbit's `r`=0.35 exceeded the retired
+  flat pastoral 0.25, so taming a rabbit *used* to be a growth downgrade. Grazing 2d makes the managed
+  rungs a *multiple* of each species' own wild `r` (§ "Phase 2d"), so pastoral `r = wild_r × 1.5 >
+  wild_r` for every species and the inversion is gone.
+  `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder` asserts the per-species
+  gross growth-rate ladder.
 
 See Also: `docs/plan_grazing_2b.md` §2.2 (the convergence risk), §9 (the measure list),
 `docs/plan_corral_managed_population.md` §3 (the constant-escapement lesson this reuses).
+
+### Phase 2d — the pen economy: a pen becomes fenced land
+
+The pen slice (`docs/plan_grazing_2d.md`). A pen stops being a special case (a single frozen tile fed
+entirely from the larder) and becomes **a piece of fenced land the herd grazes**:
+
+- **`Herd.pen_radius`** (default `0` = today's single tile) — the pen's footprint is
+  `hex_range_tiles(corralled_at, pen_radius)`. All footprint logic (`herd_footprint`) reads it; the
+  `ExtendPen` command grows it (2d-β, below).
+- **Footprint `K`** — `advance_herds` recomputes a penned herd's `K` over its footprint via the same
+  `ecological_carrying_capacity` seam a mobile herd uses (penned herds stop being frozen). A
+  **wholly-barren** footprint keeps the frozen `K` and is fully larder-fed (§2.3's preserved worst case).
+- **Penned grazing** — `advance_herd_grazing` no longer skips corralled herds; a pen draws its footprint
+  down with the same `graze_take` + `overgraze_escapement_fraction` (0.25) floor as a wild herd,
+  capturing `footprint_intake`.
+- **The larder offset** (§2.3) — the FEED phase pays only `pen.upkeep_per_biomass × biomass ×
+  (1 − pasture_fraction)`, `pasture_fraction = clamp(footprint_intake / (fodder_per_biomass × biomass),
+  0, 1)`; `pen_fed_fraction` = the total fed share (pasture + the paid part of the reduced bill). The
+  food-ledger identity (`penFeedUpkeep`) is untouched — it draws the *actual* paid amount.
+- **Per-species husbandry `r`** (§3) — retires flat pastoral 0.25 / pen 0.90 for `min(cap, wild_r ×
+  gain)` (`pastoral_gain` 1.5, `pen_gain` 3.0, `husbandry_regrowth_cap` 0.75). `capacity_fraction` /
+  `pen_capacity` are **deleted**; `herd_capacity` collapses to `herd.carrying_capacity`.
+- **The net-positive invariant** is reworked to a **best-case floor** (§2.4): validate guarantees only
+  the *fastest* species' pen nets positive when fully larder-fed; a slow breeder or poor-pasture pen may
+  run at a **loss by design** (it pays off only when self-feeding drives upkeep → 0).
+- **Wire** (append-only on `HerdTelemetryState`): `penRadius`, `penFootprintTiles` (server in-bounds
+  count), `penPastureFraction`, `penExtendProgress`. Convergence gated by
+  `core_sim/tests/grazing_2d_pen.rs` (a pen converges at radius 0/1; lush → free, barren → full bill).
+
+**2d-β — the `ExtendPen` command + build ladder** (§4). Growing a pen's fenced footprint is a labor
+investment worked off over turns, reusing the corral build ladder — no materials economy:
+
+- **`Command::ExtendPen { faction, target_x, target_y }`** (full proto/runtime/text/server plumbing —
+  `ExtendPenCommand` proto field **39**, verb `extend_pen <faction> <x> <y>`), routed like `Corral`
+  through `handle_extend_pen`. It reuses `CommandEventKind::Corral` (one kind for the pen's whole life).
+  Validation (each with a clear rejection): a herd **penned exactly at that tile** (`corralled_at`, the
+  fixed anchor — *not* the roaming `position()` `corral` keys off), owned by the faction, the faction
+  knows **Herding**, `pen_radius < husbandry.pen_radius_max`, **no extension already in flight**, and a
+  band is **keeping** it (a Hunt assignment on the herd — else the ring never accrues and an untended
+  pen escapes anyway). On success it sets the herd's **`pen_extending`** state via
+  `Herd::begin_pen_extension` (which re-checks penned / not-extending / below-max, so the command's
+  validation and the mutation can never disagree).
+- **The build ladder** rides the corral-tend branch of `advance_labor_allocation`: while `pen_extending`,
+  the keeper's HARVEST is **dipped to `corralling_yield_fraction`** (the forgone yield *is* the labor
+  cost of the ring, the same dip the corral *build* pays), and `Herd::accrue_pen_extension` adds
+  `husbandry.corral_build_progress_per_turn` (0.04 → ~25 turns/ring) to `pen_extend_progress` **after**
+  the take. At `1.0` the ring completes: `pen_radius += 1` (saturating at `pen_radius_max`),
+  `pen_extend_progress` resets, `pen_extending` clears, and a `Corral` feed line fires; the larger
+  footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
+  extending — self-feeding and the harvest dip are orthogonal.
+- **Config:** `husbandry.pen_radius_max` (**2** → up to a 19-tile footprint; validated `>= 1`). The only
+  new lever. **`pen_extending`** persists on `HerdState` alongside `pen_radius` / `pen_extend_progress`,
+  so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire now carries the live ring
+  meter (α left it at 0) for a client "Fencing N%" badge.
+- **Tests:** `grazing_2d_pen::extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max` (the
+  ring accrues over ~25 turns, flips `pen_radius` 0→1, K rises with the 7-tile footprint, and caps at
+  `pen_radius_max`); `server::tests::extend_pen_*` (the five validation rejections + the happy path).
+- **Deferred (2d-γ, client):** the footprint highlight, the feed-split readout (`penPastureFraction` +
+  `penUpkeep`), and the extend affordance / "Fencing N%" badge (`penExtendProgress`).
+
+**2d-δ — the husbandry ceiling: which species climb the ladder** (§4a). Not every animal can be herded,
+and not every herdable one can be penned. The ladder is a **sequence** (wild → pastoral → pen), so a
+species' reach is a single **enum** (`fauna_config::HusbandryCeiling` = `Wild | Pastoral | Pen`), not
+two flags — which makes the incoherent "pennable but not tameable" state unrepresentable (no
+`validate()` combo guard).
+
+- **`SpeciesDef.husbandry_ceiling`** (`#[serde(default)]` = `Pen`, so an untagged/future species keeps
+  the full ladder) is **cached onto `Herd` at spawn** (mirroring `regrowth_rate`/`fodder_per_biomass`),
+  round-tripped through `HerdState.husbandry_ceiling`, and read by the gates via `Herd::can_domesticate()`
+  / `can_pen()`. Roster: **mammoth/deer = `wild`** (hunt-only), **steppe_runner/marsh_grazer =
+  `pastoral`** (nomadic herding — follow, don't fence), **boar/rabbit/fowl = `pen`** (pigs/hutches/poultry).
+- **Three gates.** (1) **Domestication accrual** — `Herd::accrue_domestication` self-guards on
+  `can_domesticate()`, so a `wild` species never tames and never picks up an `owner` (robust regardless
+  of call site). (2) **The `domesticate` claim** — `handle_domesticate` rejects a `wild` species
+  ("{Species} is wild game — hunt-only…"). (3) **The `corral` / `extend_pen` commands + the `Corral`
+  policy accrual** — `validate_labor_policy` (shared by `handle_corral` and `assign_labor … corral`) and
+  the `Corral` accrual in `advance_labor_allocation` both require `can_pen()` (only `pen`), so a
+  `pastoral` species tames and roams but the pen path is closed ("{Species} cannot be penned").
+  `handle_extend_pen` carries the same check belt-and-braces (unreachable via the gated corral path).
+- **Wire:** `HerdTelemetryState.husbandryCeiling:string` (`wild`|`pastoral`|`pen`; append-only, mirrors
+  `sizeClass`/`ecologyPhase`) so the client can hide the corral/extend affordance on a non-`pen` herd and
+  the whole domestication track on a `wild` one.
+- **Note — a mid-build gate change:** the `Corral` accrual gate is checked each turn, so a
+  (command-unreachable) non-`pen` herd mid-corral-build would simply **stop progressing** — a soft
+  stall, not a crash — and there are no shipped saves to carry such a state.
 
 ---
 

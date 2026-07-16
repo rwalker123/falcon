@@ -612,6 +612,45 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral_starving")
 
+	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
+	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
+	# amber Pen-feed debit row is gone. With no ring in flight, `_build_herd_assign_controls` shows the
+	# "Extend pen" button (issues extend_pen at the pen anchor). Also carries the "Pen: radius 2 · 19
+	# tiles" footprint row.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_self_feeding_pen_herd_fixture())
+	_hud._build_herd_assign_controls(_self_feeding_pen_herd_fixture())
+	await _settle()
+	await _save("herd_pen_self_feeding")
+
+	# State 2d-γ extending pen — the SAME pen mid-extension (`pen_extend_progress` 0.6): the keeper is
+	# fencing the next ring, so the "Extend pen" button is replaced by a WARN-amber "Fencing 60%" badge
+	# (the pen twin of the corral-build "Building N%" meter). Partial pasture → "Fed by pasture 60% ·
+	# larder 0.7 food/turn".
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_extending_pen_herd_fixture())
+	_hud._build_herd_assign_controls(_extending_pen_herd_fixture())
+	await _settle()
+	await _save("herd_pen_extending")
+
+	# State 2d-δ wild ceiling — a hunt-only species. NO husbandry track in the drawer (no
+	# domestication / corral / pen rows), just the dim "Wild game — hunt only" hint, and the hunt policy
+	# picker offers the extractive four with NO Corral rung.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_wild_herd_fixture())
+	_hud._build_herd_assign_controls(_wild_herd_fixture())
+	await _settle()
+	await _save("herd_ceiling_wild")
+
+	# State 2d-δ pastoral ceiling — tameable + roams, never pennable. The drawer KEEPS the "Husbandry
+	# Domesticating 60%" row but shows "Herdable, not pennable" where the Corral rows would sit; the hunt
+	# policy picker again drops the Corral rung.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_pastoral_herd_fixture())
+	_hud._build_herd_assign_controls(_pastoral_herd_fixture())
+	await _settle()
+	await _save("herd_ceiling_pastoral")
+
 	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
 	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
 	# tamed): the MULTI-reason layout — a "🐄 Corral needs:" header with one indented "· <reason>" bullet
@@ -1926,6 +1965,37 @@ func _herd_fixture() -> Dictionary:
 		"tile_info": _food_tile_fixture(),
 	}
 
+## A WILD-ceiling herd (Grazing 2d-δ): hunt-only. The drawer shows NO husbandry track (no
+## domestication / corral / pen rows) — just the "Wild game — hunt only" hint — and the hunt policy
+## picker drops the Corral rung.
+func _wild_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## A compact NON-food tile_info (like the domesticated/hunt-distance herds) so the tile card stays
+## short and the herd drawer's husbandry rows land in-frame rather than below the dock scroll fold.
+func _compact_herd_tile_fixture() -> Dictionary:
+	return {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
+
+## A PASTORAL-ceiling herd (Grazing 2d-δ): tameable + roams, but never pennable. The drawer keeps the
+## domestication (Husbandry) row but shows "Herdable, not pennable" where the Corral rows would sit, and
+## the hunt policy picker drops the Corral rung.
+func _pastoral_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["husbandry_ceiling"] = "pastoral"
+	fixture["domestication"] = 0.6
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
 func _occupied_tile_fixture() -> Dictionary:
 	return {
@@ -2075,6 +2145,12 @@ func _domesticated_herd_fixture() -> Dictionary:
 	# amber "Pen feed: -1.74 /turn" standing debit.
 	fixture["pen_upkeep"] = PEN_UPKEEP_RED_DEER
 	fixture["pen_fed_fraction"] = 1.0
+	# Grazing 2d-γ — a radius-1 pen on POOR footprint: its fenced land covers NONE of the feed, so the
+	# feed-split reads "Fed by pasture 0% · larder 1.7 food/turn" and the full larder bill still stands.
+	fixture["pen_radius"] = 1
+	fixture["pen_footprint_tiles"] = 7
+	fixture["pen_pasture_fraction"] = 0.0
+	fixture["pen_extend_progress"] = 0.0
 	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
 	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
 	fixture["tile_info"] = {
@@ -2114,6 +2190,33 @@ func _starving_pen_herd_fixture() -> Dictionary:
 	var fixture := _domesticated_herd_fixture()
 	fixture["biomass"] = 310.0
 	fixture["pen_fed_fraction"] = PEN_FED_STARVING
+	return fixture
+
+## A SELF-FEEDING pen on lush land (Grazing 2d-γ): a radius-2 fenced footprint (19 tiles) whose grazing
+## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the offset larder bill `pen_upkeep`
+## is 0. The feed-split row reads "Fed by pasture 100% · larder 0.0 food/turn" and the amber Pen-feed
+## debit row disappears (nothing left to haul). This is the state the Extend-pen affordance renders on —
+## a built pen, no ring in flight (`pen_extend_progress` 0), so `_build_herd_assign_controls` shows the
+## "Extend pen" button.
+func _self_feeding_pen_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["pen_radius"] = 2
+	fixture["pen_footprint_tiles"] = 19
+	fixture["pen_pasture_fraction"] = 1.0
+	fixture["pen_upkeep"] = 0.0
+	fixture["pen_extend_progress"] = 0.0
+	return fixture
+
+## The SAME pen mid-EXTENSION (Grazing 2d-γ): the keeper is fencing the next ring, so
+## `pen_extend_progress` is 0.6 and `_build_herd_assign_controls` replaces the "Extend pen" button with
+## a WARN-amber "Fencing 60%" badge. Partial pasture (60%) so the feed-split reads "60% · larder N.N".
+func _extending_pen_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["pen_radius"] = 1
+	fixture["pen_footprint_tiles"] = 7
+	fixture["pen_pasture_fraction"] = 0.6
+	fixture["pen_upkeep"] = 0.70
+	fixture["pen_extend_progress"] = 0.6
 	return fixture
 
 ## A base terrain legend (key == "terrain") shaped exactly like

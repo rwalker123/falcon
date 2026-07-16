@@ -223,6 +223,16 @@ message CorralCommand {
   uint32 target_y = 3;
 }
 
+// Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
+// over turns by the keeper band's labor (the corral build ladder). Needs Herding knowledge, an owned
+// penned herd whose corral tile is (target_x, target_y), pen_radius below the configured max, and no
+// extension already in flight.
+message ExtendPenCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+}
+
 message CancelOrderCommand {
   uint32 faction_id = 1;
   optional uint64 band_entity_bits = 2;
@@ -324,5 +334,6 @@ message CommandEnvelope {
     SendHuntExpeditionCommand send_hunt_expedition = 36;
     CultivateCommand cultivate = 37;
     CorralCommand corral = 38;
+    ExtendPenCommand extend_pen = 39;
   }
 }

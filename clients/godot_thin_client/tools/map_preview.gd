@@ -744,6 +744,19 @@ func _ready() -> void:
 	await _save("map_pasture_herd_range")
 	_map.selected_herd_id = ""
 
+	# State "pasture pen footprint" — the SAME frame, but the herd is CORRALLED with pen_radius 1 (Grazing
+	# 2d-γ). A penned herd draws no roam-range ring; instead its fenced FOOTPRINT (the 7-tile hex disk of
+	# radius 1 around the pen anchor) reads in the distinct enclosure-GREEN tint — deliberately NOT the gold
+	# of the roam-range above, so a fenced footprint is unmistakably a different thing. Read it against
+	# map_pasture_herd_range.png: same herd tile, green disc instead of gold.
+	_map.display_snapshot(_snapshot_pasture_pen())
+	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
+	_map.selected_herd_id = PASTURE_HERD_ID
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_pasture_pen_footprint")
+	_map.selected_herd_id = ""
+
 	# State "forage" — THE HUMAN-FOOD DISTRIBUTION, the twin of "pasture". Same earthlike shape, the
 	# OTHER food web: it must look VISIBLY DIFFERENT from the pasture frame (that divergence is the whole
 	# point of the two-table split). Read against map_pasture.png:
@@ -1078,6 +1091,32 @@ func _snapshot_pasture_herd() -> Dictionary:
 		"biomass": 1480.0,
 		"carrying_capacity": 2150.0,
 		"graze_range_radius": PASTURE_HERD_RANGE_RADIUS,
+	}]
+	return snapshot
+
+## The pasture snapshot with a CORRALLED herd (pen_radius 1) at the same tile — for the pen-footprint
+## state. Same herd position as `_snapshot_pasture_herd()`, but penned: MapView draws the fenced
+## footprint disc (enclosure green) instead of the roam-range ring.
+func _snapshot_pasture_pen() -> Dictionary:
+	var snapshot := _snapshot_pasture()
+	snapshot["herds"] = [{
+		"id": PASTURE_HERD_ID,
+		"label": "Red Deer (%s)" % PASTURE_HERD_ID,
+		"species": "Red Deer",
+		"size_class": "big",
+		"huntable": true,
+		"ecology_phase": "thriving",
+		"x": PASTURE_HERD_COL,
+		"y": PASTURE_HERD_ROW,
+		"biomass": 1480.0,
+		"carrying_capacity": 2150.0,
+		"graze_range_radius": PASTURE_HERD_RANGE_RADIUS,
+		"corralled": true,
+		"corral_progress": 1.0,
+		"pen_radius": 1,
+		"pen_footprint_tiles": 7,
+		"pen_pasture_fraction": 1.0,
+		"pen_fed_fraction": 1.0,
 	}]
 	return snapshot
 

@@ -408,6 +408,15 @@ mechanic that supersedes the reverted flat carry-cap) and the **plant** path (fo
 farming), as a near-mechanical transpose of the shipped herd depletion + husbandry/domestication
 systems. Realizes the Settlement arc's food-tending improvement class (tended patches / corrals).
 
+- [ ] **Interaction + knowledge model — `docs/plan_intensification_ladder.md` (NEXT ARC, design done).**
+  Unifies the two paths into one grammar: symmetric 3-rung ladders (forage→tended→farm /
+  hunt→pastoral→pen), every transition a direct Cultivate-shaped verb (incl. a new **Tame** verb), all
+  rungs **worker-driven** (retires passive-free pastoral; intensifying raises yield-per-worker + regen
+  + ceiling + proximity), and a **practice-earns-next-knowledge** pattern (working rung N unlocks rung
+  N+1's verb; two distinct meters — faction knowledge vs per-source progress — which is the fix to the
+  hunting-vs-cultivate UX inconsistency). Core deliverable: a **generic rung engine + config ladder**
+  (`intensification_ladder.json`) replacing today's bespoke pastoral/pen branches, so new rungs
+  (selective breeding, irrigation) are config. Manual-first; reconcile with this section's Phase 0/1.
 - [ ] **Phase 0 — Forage parity with hunting.** Make forage tiles **depletable**: transpose the herd
   `biomass`/`carrying_capacity`/logistic-regrowth (+ ecology phases) onto forage, moved into
   **persisted** state (`FoodModuleTag` is an unpersisted worldgen tag today — step zero). Forage take
@@ -443,6 +452,10 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
     the one honesty wrinkle Phase 1 cannot (with a single food scalar, food-in/food-out is a physically
     backwards conversion; real livestock is calorie-*negative* and worth it because it eats what we
     can't). `ForageRegistry`/`regrow_patch` already exist, so this is plumbing, not new modeling.
+    **UPDATE (grazing 2d):** the *animal* side of this is now shipped — penned herds self-feed from
+    the **graze** layer (`GrazePatch`), and only the shortfall is hauled from the larder
+    (`pasture_fraction` offset; `docs/plan_grazing_2d.md` §2.3). What remains here is the *plant/forage*
+    (`ForagePatch`) transpose for the cultivation side, not the pen.
 - [ ] **Cross-cutting — command yield-vector + pre-commit forecast.** Model a command's
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no
@@ -450,6 +463,42 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
 - [ ] Deferred (documented): full improvement catalog (dwellings/storage/defense), larder spoilage +
   storage tiers, richer crop/livestock variety, settlement-cluster derivation — owned by
   `plan_settlement_population.md`; this arc delivers the food-tending seam that feeds them.
+
+### Fauna Roster & Ecology (data-driven species)
+
+The grazing arc (2b pasture/graze layer, 2d pen economy + per-species husbandry ceiling) exposed that
+the **start-game animal roster is thin** — after 2d only three species were pennable, none a true
+pasture grazer. Grazing 2d added **Wild Aurochs** (→ cattle, grassland, `pen`) and **Crag Goats**
+(hill/upland, `pen`) as the showcase livestock. This arc is the *considered* pass that fills the roster
+out in totality with a coherent biome-ecology.
+
+**Key finding — adding a species is already PURE CONFIG** (verified 2026-07-15). The old hardcoded
+species enum is retired; a new animal is one `species` entry in `core_sim/src/data/fauna_config.json`
+(id, `display_name`, `size_class`, `migratory`, `route_len`/`biomass`/`host_biomes`,
+`fodder_per_biomass`, `regrowth_rate`, `husbandry_ceiling`). Spawn placement reads `host_biomes` (keys
+into the 10 `FoodModule` buckets, `food.rs:41`), the client renders herds generically (icon inferred
+from `display_name`; keywords for aurochs/bison/horse/goat/sheep already mapped in `FoodIcons.gd`), and
+`species`/`sizeClass`/`husbandryCeiling` are free-form wire strings — **no Rust, client, or schema edit
+to add an animal whose fields fit the existing enums.**
+
+- [ ] **Fill out the start-game roster (config).** Add the missing animals as `fauna_config.json`
+  entries with designed ecology (biome affinity via `host_biomes`, stat block, husbandry ceiling):
+  **Bison** (migratory, `pastoral` — the plains counterpart to Steppe Runners); **Wild Horse**
+  (grassland; decide `pastoral` vs `pen`); more **regional game** to give each biome a distinct fauna
+  signature (currently many biomes share a short game list). Manual-first (new gameplay content →
+  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
+  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
+  never spawns.
+- [ ] **(Optional) Predators / threat fauna.** Wolves/big cats etc. are NOT husbandry — they need the
+  M1 predator-pressure model (see Early-Game Labor → *M1-threats*), not a `SpeciesDef` alone. Scope
+  with that arc, not this one.
+- [ ] **(Optional) Remove the residual hardcoding — only if the roster needs it.** Two enums still bake
+  behaviour: `SizeClass` (`fauna_config.rs:29`) fixes the movement cadence + `graze_range_radius` to
+  three bands, and `FoodModule` + `classify_food_module_from_traits` (`food.rs:14`, `:164`) bucket
+  TerrainType into 10 groups (so `host_biomes` can't target one exact terrain). To express a species
+  with a *new* movement style, or biome affinity keyed on raw `TerrainType`, make those config-driven
+  (movement fields on `SpeciesDef`; a data table or terrain-keyed affinity). The named roster above
+  (bison/horse/caprines/aurochs) needs **none** of this — defer until a species actually requires it.
 
 ### Exploration & Wondrous Sites
 

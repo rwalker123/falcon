@@ -9,14 +9,14 @@ use bevy::MinimalPlugins;
 
 use bevy::math::UVec2;
 use core_sim::{
-    advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventEntry, CommandEventKind,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_husbandry, advance_labor_allocation, herd_ecology, scalar_from_f32,
+    scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventEntry,
+    CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
+    GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     HERDING_DISCOVERY_ID,
 };
@@ -453,7 +453,8 @@ fn domesticated_herd_harvests_its_pastoral_msy_and_draws_the_herd_down() {
     app.world.run_system_once(advance_husbandry);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let pastoral_r = fauna.husbandry.pastoral.ecology.regrowth_rate;
+    // Per-species pastoral rate (Grazing 2d): read the same seam the sim harvests through.
+    let pastoral_r = herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate;
     let expected_take = pastoral_r * cap / 4.0;
     let expected_provisions = expected_take * fauna.hunt.provisions_per_biomass;
     drop(fauna);
@@ -586,8 +587,9 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
     let cap = herd_of(&app, &id).carrying_capacity;
     let (pen_r, prov_rate) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        // Per-species pen rate (Grazing 2d): the corralled herd's own rung, via the shared seam.
         (
-            fauna.husbandry.pen.ecology.regrowth_rate,
+            herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate,
             fauna.hunt.provisions_per_biomass,
         )
     };
@@ -636,7 +638,8 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         (
             fauna.husbandry.pen.upkeep_per_biomass,
-            fauna.husbandry.pen.ecology.regrowth_rate,
+            // Per-species pen rate (Grazing 2d): the corralled herd's own rung.
+            herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate,
             fauna.hunt.provisions_per_biomass,
         )
     };
@@ -682,7 +685,7 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
     let cap = herd_of(&app, &id).carrying_capacity;
     let floor = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        fauna.husbandry.pen.ecology.extinction_floor * cap * fauna.husbandry.pen.capacity_fraction
+        fauna.husbandry.pen.ecology.extinction_floor * cap
     };
     let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
 
@@ -742,24 +745,31 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
     assert!(recovered.is_corralled(), "and it still has its pen");
 }
 
-/// **The husbandry ladder, per species — and the fast-breeder inversion Grazing 2b-ii introduces.**
+/// **The husbandry ladder, per species — now a per-species GROWTH-RATE ladder (Grazing 2d §3).**
 /// Rabbit Warren (K=200) → Red Deer (K=1200) → Thunder Mammoths (K=12000), each measured at its **own
-/// per-species wild `r`** (2b-ii: rabbit 0.35, deer 0.10, mammoth 0.04 — no longer the single global
-/// 0.05 the pre-2b-ii test could ignore by reseating only the cap). Every number below is **measured
-/// from a real sim run** (a band's actual take / a real larder debit), never arithmetic.
+/// per-species wild `r`** (rabbit 0.35, deer 0.10, mammoth 0.04). Every number below is **measured from
+/// a real sim run** (a band's actual take / a real larder debit), never arithmetic.
 ///
-/// The ladder is `wild Sustain MSY < pastoral < pen net of upkeep` **only while the species' wild `r`
-/// is below the pastoral rung's 0.25** (deer, mammoth). For a **fast breeder whose wild `r` ≥ 0.25**
-/// (rabbit/fowl), taming to the flat pastoral 0.25 is a growth *downgrade*, so the pastoral rung
-/// **inverts** — a KNOWN tension flagged for the 2d pen/pastoral retune (the pastoral/pen rungs keep
-/// their shipped absolute `r` this slice, per `docs/plan_grazing_2b.md` §7). The **pen** rung
-/// (`r` = 0.90) still tops every species, so the top of the ladder is never inverted; only the passive
-/// mobile rung is, and there the trade is mobility/collapse-immunity, not raw yield. Asserted per
-/// species according to which regime it is in — the invariant is not silently dropped, it is made
-/// conditional on the (measured) wild `r`.
+/// **2d retires the flat pastoral 0.25 / pen 0.90 and the fast-breeder pastoral inversion with them.**
+/// The managed rungs now scale each species' own wild `r` (`pastoral_gain` 1.5, `pen_gain` 3.0, capped
+/// at 0.75), so `pastoral_r = wild_r × 1.5 > wild_r` for **every** species — the pastoral rung out-pays
+/// wild Sustain unconditionally, and the pen's GROSS growth-rate tops pastoral unconditionally. That
+/// GROSS ladder (`wild < pastoral < pen_gross`) is what "management buys a growth rate" means, and it is
+/// the invariant asserted here.
+///
+/// **What 2d does NOT guarantee at the BARREN worst case** (this harness runs no graze layer, so the pen
+/// is fully larder-fed): the pen's *net* payoff over pastoral. A penned herd normally grazes its fenced
+/// footprint and the larder pays only the shortfall (§2.3), so on real pasture `upkeep → 0` and
+/// `pen_net → pen_gross`, topping pastoral. Fully larder-fed, the feed is a real cost that can erase the
+/// advantage — and for a slow breeder the barren pen is a **net loss by design** (§2.4: mammoth pen
+/// `r ≈ 0.12`, feed > yield). `FaunaConfig::validate` enforces only a best-case floor (the *fastest*
+/// breeder stays net-positive even fully larder-fed); the rest is a placement decision, not a config
+/// error. So this test asserts the GROSS growth-rate ladder + that the barren pen costs real feed, and
+/// records `pen_net` for observability rather than asserting it tops pastoral (which self-feeding, not
+/// this harness, delivers).
 #[test]
-fn the_husbandry_ladder_is_monotone_for_every_species() {
-    const MEASURE_STOCK: f32 = 5_000.0;
+fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
+    const MEASURE_STOCK: f32 = 50_000.0;
 
     // (display, cap, per-species wild r) — the wild rung must be measured at each species' OWN r.
     let species_caps: Vec<(String, f32, f32)> = {
@@ -777,12 +787,6 @@ fn the_husbandry_ladder_is_monotone_for_every_species() {
             })
             .collect()
     };
-    let pastoral_r = FaunaConfigHandle::default()
-        .get()
-        .husbandry
-        .pastoral
-        .ecology
-        .regrowth_rate;
 
     // Measured twice: **at capacity** (a freshly-penned herd, `B = K`) and at the **settled operating
     // point** (`B* = K/2` — where a harvested herd actually converges; the point the pen's
@@ -846,25 +850,21 @@ fn the_husbandry_ladder_is_monotone_for_every_species() {
                 "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
             );
 
-            assert_ladder_is_monotone(
-                &species, wild_r, pastoral_r, wild, pastoral, pen_gross, upkeep, pen_net,
-            );
+            assert_growth_rate_ladder(&species, wild_r, wild, pastoral, pen_gross, upkeep, pen_net);
         }
     }
     println!();
 }
 
-/// The ladder's ordering, asserted on **measured** numbers, **conditioned on the species' wild `r`**
-/// (Grazing 2b-ii). The pen rung (`r` = 0.90) must top every species and cost real food — that never
-/// inverts. The **pastoral** rung out-pays wild Sustain **iff** the species breeds slower than the flat
-/// pastoral 0.25; a fast breeder (`wild_r ≥ pastoral_r`) instead reads a documented inversion (taming
-/// it to 0.25 is a growth downgrade — the 2d retune target), and there we assert the inversion is
-/// *exactly* that and nothing worse (the pen still tops wild).
-#[allow(clippy::too_many_arguments)] // the ladder's measured columns + the two rates that gate them
-fn assert_ladder_is_monotone(
+/// The **per-species GROWTH-RATE ladder** (Grazing 2d §3), asserted on **measured** numbers. Since the
+/// managed rungs now scale each species' own wild `r` (`pastoral_gain` 1.5 < `pen_gain` 3.0, capped),
+/// the ladder is monotone in GROSS yield for **every** species — the old fast-breeder pastoral
+/// inversion is gone. The pen's *net* payoff over pastoral is realized by SELF-FEEDING (this barren
+/// harness runs the pen fully larder-fed, so it only asserts the pen costs real feed; the net-positive
+/// floor for the fastest breeder lives in `fauna_config`'s validate tests).
+fn assert_growth_rate_ladder(
     species: &str,
     wild_r: f32,
-    pastoral_r: f32,
     wild: f32,
     pastoral: f32,
     pen_gross: f32,
@@ -875,36 +875,23 @@ fn assert_ladder_is_monotone(
         wild > 0.0,
         "{species}: a thriving wild herd has a positive Sustain MSY ({wild})"
     );
-    if wild_r < pastoral_r {
-        // The intended ladder: management (a faster growth rate) buys yield.
-        assert!(
-            pastoral > wild,
-            "{species}: pastoral ({pastoral}) must out-pay wild Sustain ({wild}) when wild r \
-             ({wild_r}) < pastoral r ({pastoral_r})"
-        );
-        assert!(
-            pen_net > pastoral,
-            "{species}: the pen NET of upkeep ({pen_net}) must out-pay the free pastoral rung \
-             ({pastoral}) — otherwise penning is irrational"
-        );
-    } else {
-        // The fast-breeder inversion (2b-ii): the flat pastoral rate is a downgrade, so the passive
-        // rung is a mobility/collapse-immunity trade, not a yield gain. Flagged for the 2d retune.
-        assert!(
-            pastoral <= wild,
-            "{species}: fast breeder (wild r {wild_r} ≥ pastoral r {pastoral_r}) — the pastoral rung \
-             ({pastoral}) is expected to sit AT/BELOW wild Sustain ({wild}); if it now out-pays wild, \
-             the inversion has been fixed and this branch should become the monotone one"
-        );
-        assert!(
-            pen_net > wild,
-            "{species}: even for a fast breeder the PEN net of upkeep ({pen_net}) must still top wild \
-             Sustain ({wild}) — the top of the ladder is never inverted"
-        );
-    }
+    // The fast-breeder pastoral inversion is FIXED (2d §3): pastoral r = wild_r × 1.5 > wild_r for
+    // every species, so the pastoral rung out-pays wild Sustain unconditionally.
     assert!(
-        upkeep > 0.0 && upkeep < pen_gross,
-        "{species}: the pen must cost real food ({upkeep}) and still net positive (gross {pen_gross})"
+        pastoral > wild,
+        "{species}: pastoral ({pastoral}) out-pays wild Sustain ({wild}) — per-species pastoral r = \
+         wild r ({wild_r}) × pastoral_gain > wild r"
+    );
+    // Management buys a growth rate: the pen's GROSS yield tops the pastoral rung for every species.
+    assert!(
+        pen_gross > pastoral,
+        "{species}: the pen's GROSS yield ({pen_gross}) tops the pastoral rung ({pastoral})"
+    );
+    // The barren pen costs real feed — the worst-case cost self-feeding removes (§2.3). `pen_net` is
+    // recorded (it may sit below pastoral, or negative for a slow breeder, BY DESIGN — §2.4).
+    assert!(
+        upkeep > 0.0,
+        "{species}: the barren pen costs real feed ({upkeep}); net of it = {pen_net}"
     );
 }
 
@@ -1046,6 +1033,53 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
         "re-penning restarts the investment from zero: {} after one turn",
         herd.corral_progress
     );
+}
+
+/// **The lost pen tears down its whole FENCE, not just the build meter** (Grazing 2d). A completed pen
+/// with a grown radius (and even a ring mid-extension) that escapes untended resets `pen_radius` /
+/// `pen_extend_progress` / `pen_extending` to defaults, so a re-corralled herd starts at radius 0 —
+/// it does NOT inherit its old fenced radius for free (skipping the ~25-turn-per-ring ExtendPen labor).
+#[test]
+fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    // Give the completed pen a grown, mid-extension fence.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.pen_radius = 2;
+        herd.pen_extend_progress = 0.5;
+        herd.pen_extending = true;
+        // A lush pasture share left over from being penned — must not survive going mobile.
+        herd.pen_pasture_fraction = 1.0;
+    }
+
+    // No keeper: the grace turn is consumed, then the herd breaks out.
+    run_turns_untended(&mut app, 3);
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(!herd.is_corralled(), "an untended corral escapes");
+    assert_eq!(
+        herd.pen_radius, 0,
+        "the lost pen's fence is torn down to radius 0"
+    );
+    assert!(!herd.pen_extending, "its in-flight extension is cancelled");
+    assert_eq!(herd.pen_extend_progress, 0.0, "with zero ring progress");
+    assert_eq!(
+        herd.pen_pasture_fraction, 0.0,
+        "and the stale penned pasture share is cleared (the wire's '0.0 when unpenned' contract)"
+    );
+
+    // Re-corralling comes back at radius 0 — the old fence is NOT inherited for free.
+    corral_herd(&mut app, &id);
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(herd.is_corralled(), "the herd re-pens");
+    assert_eq!(
+        herd.pen_radius, 0,
+        "a re-corralled herd starts at radius 0 — no free extension"
+    );
+    assert!(!herd.pen_extending);
+    assert_eq!(herd.pen_extend_progress, 0.0);
 }
 
 /// Guard against over-reaching the escape fix: a **half-built** pen whose gate lapses (its keeper

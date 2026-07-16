@@ -215,11 +215,17 @@ mod tests {
             // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
             corralled_at: Some((5, 6)),
             corral_progress: 1.0,
+            // Grazing 2d: the pen's fenced footprint radius + the in-flight extend meter/state round-trip.
+            pen_radius: 1,
+            pen_extend_progress: 0.5,
+            pen_extending: true,
             // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
             // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
             fodder_per_biomass: 0.05,
             // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
             regrowth_rate: 0.04,
+            // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
+            husbandry_ceiling: "wild".to_string(),
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -256,6 +262,9 @@ mod tests {
             // Mid-build: the pen is not finished, so the herd is still mobile.
             corralled_at: None,
             corral_progress: HALF_BUILT,
+            // Set explicitly (like `size_class`): an empty default normalizes to "pen" and would break
+            // the round-trip identity.
+            husbandry_ceiling: "pen".to_string(),
             ecology: EcologyState {
                 biomass: 60.0,
                 carrying_capacity: 100.0,
@@ -1438,7 +1447,15 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+        let states = herd_snapshot_entries(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &expedition,
+            bevy::math::UVec2::new(64, 64),
+            false,
+        );
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
@@ -1495,7 +1512,15 @@ mod tests {
         let telemetry = HerdTelemetry {
             entries: registry.snapshot_entries(),
         };
-        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+        let states = herd_snapshot_entries(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &expedition,
+            bevy::math::UVec2::new(64, 64),
+            false,
+        );
 
         for herd in &registry.herds {
             let exported = states.iter().find(|h| h.id == herd.id).unwrap();
@@ -1575,7 +1600,15 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+        let states = herd_snapshot_entries(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &expedition,
+            bevy::math::UVec2::new(64, 64),
+            false,
+        );
 
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
         let expected_upkeep = fauna.husbandry.pen.upkeep_per_biomass * PEN_BIOMASS;
@@ -1647,7 +1680,15 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+        let states = herd_snapshot_entries(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &expedition,
+            bevy::math::UVec2::new(64, 64),
+            false,
+        );
 
         let expected = fauna.husbandry.pen.upkeep_per_biomass * BIOMASS;
         assert!(expected > 0.0);
