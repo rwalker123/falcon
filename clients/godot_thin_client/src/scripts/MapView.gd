@@ -1126,6 +1126,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			food_sites.append(site)
 			var x_site: int = int(site.get("x", -1))
 			var y_site: int = int(site.get("y", -1))
+			# Stamp the tile's terrain so both consumers (map marker + HUD Forage row) resolve the
+			# terrain-aware FoodIcons.for_site split from one source and can't disagree (riverine_delta
+			# splits fish↔reeds by terrain). Unconditional: for x<0 it's harmless (-1 → fish default).
+			site["terrain_id"] = _terrain_id_at(x_site, y_site)
 			if x_site >= 0 and y_site >= 0:
 				food_site_lookup[Vector2i(x_site, y_site)] = site
 		discovered_sites = []
@@ -3875,7 +3879,7 @@ func _install_province_overlay() -> void:
 		province_norm,
 		province_raw,
 		"Provinces",
-        "Province/territory partitions"
+		"Province/territory partitions"
 	)
 
 func _resolve_province_for_layer(layer_id: int, regional_owner: Dictionary) -> int:

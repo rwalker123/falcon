@@ -9,6 +9,11 @@ class_name FoodIcons
 ## a species keyword in the herd label — the snapshot's `species` display name is
 ## embedded in the label (e.g. "Red Deer (game_deer_03)"), so wild game reads with
 ## the right animal glyph.
+##
+## The `riverine_delta` food module spans three terrains (Floodplain/AlluvialPlain/
+## NavigableRiver → one module in `core_sim/src/food.rs`), so its site glyph is
+## split by tile terrain in `for_site`: real open water (navigable_river) reads as
+## 🐟 (fish), dry floodplain LAND (alluvial_plain/floodplain) reads as 🎋 (reeds).
 
 const DEFAULT := "🌿"
 const HUNT := "🦌"
@@ -105,8 +110,16 @@ const STATUS_ICONS := {
 static func for_status(status: String) -> String:
 	return String(STATUS_ICONS.get(status.strip_edges().to_lower(), ""))
 
+const RIVERINE_DELTA_MODULE := "riverine_delta"
+const RIVERINE_REED_ICON := "🎋"
+# riverine_delta terrains that are dry floodplain LAND (reed/cattail beds + tubers), not open river
+# water — they read as reeds, not fish. NavigableRiver is real open water you fish → keeps 🐟.
+# Terrain config `name`s (terrain_config.json): floodplain=9, alluvial_plain=10, navigable_river=37.
+const RIVERINE_REED_TERRAINS := ["alluvial_plain", "floodplain"]
+
 const ICONS := {
 	"coastal_littoral": "🐚",
+	# riverine_delta default (legend/for_module path); for_site splits this fish↔reeds (🎋) by terrain.
 	"riverine_delta": "🐟",
 	"savanna_grassland": "🌾",
 	"temperate_forest": "🌰",
@@ -123,11 +136,28 @@ static func for_module(module_key: String) -> String:
 	return String(ICONS.get(module_key.strip_edges(), DEFAULT))
 
 ## Icon for a food site, using the game-trail (hunt) icon when the site is hunted
-## rather than gathered.
-static func for_site(module_key: String, is_hunt: bool) -> String:
+## rather than gathered. `terrain_id` (>=0) splits the riverine_delta module's glyph
+## by tile terrain — dry floodplain LAND reads as reeds (🎋), open river keeps 🐟;
+## terrain_id < 0 (unknown) or any other module falls through to the plain module glyph.
+static func for_site(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
 	if is_hunt:
 		return HUNT
-	return for_module(module_key)
+	var key := module_key.strip_edges()
+	if key == RIVERINE_DELTA_MODULE and terrain_id >= 0:
+		if RIVERINE_REED_TERRAINS.has(_terrain_name(terrain_id)):
+			return RIVERINE_REED_ICON
+	return for_module(key)
+
+# Terrain id → config `name`, memoized. Uses `get_names_dict()` (not the `get_name(id)` static): a
+# script resource's built-in 0-arg `get_name` shadows that static when called via the global class, so
+# the whole codebase reads terrain names through the dict. `for_site` runs per-marker per-frame, so the
+# dict is fetched once and cached (terrain config is fixed at runtime).
+static var _terrain_names: Dictionary = {}
+
+static func _terrain_name(terrain_id: int) -> String:
+	if _terrain_names.is_empty():
+		_terrain_names = TerrainDefinitions.get_names_dict()
+	return String(_terrain_names.get(terrain_id, ""))
 
 # Species keywords sorted longest-first, built once on first use. `for_herd`
 # runs per herd from the map draw loop, so this avoids re-sorting every frame.
