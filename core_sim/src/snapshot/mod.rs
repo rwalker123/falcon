@@ -57,7 +57,7 @@ use crate::{
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
     forage::{
-        forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+        forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
         SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
@@ -148,11 +148,6 @@ const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 /// (`PopulationCohortState.output_multiplier`) that scales every forecast field linearly, so the
 /// snapshot exports the un-scaled forecast and the client multiplies by the acting band's own.
 const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
-
-/// Seasonal gather weight assumed for a forage patch whose tile carries no `FoodModuleTag` (not
-/// reachable today — patches are seeded from those tiles — so it forecasts nothing rather than
-/// inventing a weight).
-const NO_SEASONAL_WEIGHT: f32 = 0.0;
 
 fn diff_new<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<T>
 where

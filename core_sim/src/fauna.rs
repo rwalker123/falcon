@@ -2269,6 +2269,18 @@ pub struct SourceYieldForecast {
     /// codebase has already paid for once. Reaches the client through the free-form
     /// `huntPolicyCeilings` list (no schema change), not a scalar field.
     pub ceiling_tame: f32,
+    /// Food/turn cap under **`Sow`** — the plant rung-3 dip (the `plant:field` rung's
+    /// `yield_fraction_while_building × MSY`). `0` on a herd, where `Sow` is not a legal policy.
+    ///
+    /// **Its own field, for [`SourceYieldForecast::ceiling_tame`]'s reason**, now on the plant side:
+    /// the plant branch has *two* investment rungs, so `ceiling_prepare` can no longer serve "the
+    /// investment policy" — it is Cultivate's. The two dips are *coincidentally* equal on today's
+    /// shipped levers (both 0.25); folding Sow onto Cultivate's field would pass every
+    /// forecast==actual test by that coincidence and lie the moment either rung is retuned.
+    ///
+    /// **Not on the wire yet** — the client's patch card is slice 6, which needs a `ceilingSow` (and
+    /// a `fieldYield`) beside today's `ceilingCultivate`/`tendedYield`.
+    pub ceiling_sow: f32,
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`) / the corral harvest (`corral_provisions`) at its current biomass. Lets
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
@@ -2292,19 +2304,22 @@ impl SourceYieldForecast {
             // managed yield it pays now. (A source at this rung is past taming too.)
             ceiling_prepare: yield_per_turn,
             ceiling_tame: yield_per_turn,
+            ceiling_sow: yield_per_turn,
             managed_yield: yield_per_turn,
         }
     }
 
     /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
     /// exposed ceilings (wire: `ceilingSustain`/…). While an improvement is being prepared the source
-    /// pays that rung's reduced `yield_fraction_while_building` bite: `Cultivate`/`Corral` (the
-    /// top investment rung of each branch, and kind-exclusive with each other) read `ceiling_prepare`
-    /// (wire: `ceilingCultivate` / `ceilingCorral`); `Tame` reads its **own** `ceiling_tame`, because
-    /// the animal branch has two investment rungs whose dips are independently tunable. Once an
-    /// improvement *completes* the source is `tended()`, whose every ceiling already **is**
-    /// `managed_yield` — so this one lookup covers both sides of every investment without a second
-    /// formula.
+    /// pays that rung's reduced `yield_fraction_while_building` bite, and **every investment rung has
+    /// its own field**: `ceiling_prepare` is the one each branch already puts on the wire
+    /// (`Cultivate` → `ceilingCultivate` on a patch, `Corral` → `ceilingCorral` on a herd — the two
+    /// are kind-exclusive, so one field serves both), while each branch's *other* investment rung
+    /// carries its own (`ceiling_tame`, `ceiling_sow`). Two rungs never share a field just because
+    /// today's levers agree — that coincidence is how a preview starts lying under a retune. Once an
+    /// improvement *completes*
+    /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
+    /// lookup covers both sides of every investment without a second formula.
     pub fn ceiling_for(&self, policy: FollowPolicy) -> f32 {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
@@ -2312,6 +2327,7 @@ impl SourceYieldForecast {
             FollowPolicy::Market => self.ceiling_market,
             FollowPolicy::Eradicate => self.ceiling_eradicate,
             FollowPolicy::Tame => self.ceiling_tame,
+            FollowPolicy::Sow => self.ceiling_sow,
             FollowPolicy::Cultivate | FollowPolicy::Corral => self.ceiling_prepare,
         }
     }
@@ -2457,7 +2473,11 @@ pub fn hunt_policy_ceiling(
                     .yield_fraction_while_building()
                     .expect("the pen rung is an investment — it has a build meter")
         }
-        FollowPolicy::Cultivate => 0.0,
+        // The plant-only investment rungs — rejected on a Hunt assignment at `assign_labor`
+        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; defensively yield nothing rather
+        // than silently hunting under a nonsense policy. The symmetric twin of
+        // `forage_policy_ceiling`'s `Tame | Corral` arm.
+        FollowPolicy::Cultivate | FollowPolicy::Sow => 0.0,
     }
 }
 
@@ -2525,6 +2545,11 @@ pub(crate) fn hunt_forecast(
         ceiling_prepare: ceiling(FollowPolicy::Corral),
         // The rung below: what the herd pays *while it is being tamed* (the `animal:pastoral` dip).
         ceiling_tame: ceiling(FollowPolicy::Tame),
+        // `Sow` is plant-only — a herd has no field rung, and `hunt_policy_ceiling` yields `0` for
+        // it. Resolved through the same `ceiling` closure rather than a literal, so the "not a hunt
+        // policy" rule stays stated in exactly one place (the mirror of `forage_forecast`'s
+        // `ceiling_tame`).
+        ceiling_sow: ceiling(FollowPolicy::Sow),
         managed_yield: corral_provisions(herd, fauna, output_multiplier),
     }
 }

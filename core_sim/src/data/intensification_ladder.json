@@ -49,6 +49,32 @@
       }
     },
     {
+      "id": "field",
+      "branch": "plant",
+      "order": 3,
+      "_comment_verb": "SLICE 5 — the plant twin of `corral`: `sow` PLACES a food source where you want it. Gated on Seed Selection, which the tended rung has been teaching since slice 4 (earned then, spent now — the pacing model working as designed). `Sow` is only legal on NATURALLY FOOD-BEARING ground (non-zero forage.capacity_by_biome): the floodplain, the river garden, the fat grassland. It CANNOT farm rock/ice/desert — making unwilling ground farmable is rung 4 (Worked Land), a future arc. So rung 3 pulls you toward good country, which IS the sedentarization pull.",
+      "verb": "sow",
+      "unlock_knowledge": "seed_selection",
+      "_comment_earns_knowledge": "Null: practising the field would teach `irrigation`/`rotation` (rung 4 — Worked Land, §2a), a parked follow-on. Exactly where the animal ladder's `pen` rung stands with `selective_breeding`. The engine already reads this field, so adding that rung is a config edit plus one id.",
+      "earns_knowledge": null,
+      "_comment_requires_rung": "`requires_rung` states WHERE THIS RUNG SITS ON THE LADDER (directly above `tended`) — it is not a per-source precondition, and no code reads it as one (see RungDef::requires_rung). The per-source rule is each verb's own gate, and it is exactly where the two webs legitimately differ (§2): `corral` demands a herd you already tamed, while `sow` demands NO prior patch — seed travels, so a hospitable tile with no spawned forage site can be sown into a genuinely new source.",
+      "requires_rung": "tended",
+      "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so the plant ladder has no ceiling; the tile's forage capacity is the plant analog and it gates the VERB (see `_comment_verb`), not the rung record.",
+      "ceiling_required": null,
+      "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.25 = the same investment dip a Cultivate pays). Note what the dip means on BARE ground: there is no standing crop to take a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it is the familiar 0.25 x MSY bite.",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.25
+      },
+      "_comment_behavior": "A field is a place that photosynthesises and is harvested by its tenders without being drawn down — the same primitives the tended patch recombines. Rung 3 of the plant ladder changes WHERE the source is, not how it behaves; `movement: fixed` is exactly the point (`Sow` fixes the source at a tile of YOUR choosing rather than the one the wild put it on).",
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_tend"
+      }
+    },
+    {
       "id": "wild",
       "branch": "animal",
       "order": 1,

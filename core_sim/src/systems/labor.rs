@@ -61,8 +61,14 @@ pub fn advance_labor_allocation(
     // the ladder's, not each web's, so the two paths can never be tuned apart. Hoisted out of the
     // per-cohort loop alongside the knowledge levers.
     let tended_rung = ladder.rung(RungKey::PlantTended);
+    let field_rung = ladder.rung(RungKey::PlantField);
     let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
     let pen_rung = ladder.rung(RungKey::AnimalPen);
+    // The `plant:field` dip, for the one case `forage_take` cannot express: sowing a patch that is
+    // **already managed** (a tended patch being upgraded to a Field) — its harvest is the rung's flat
+    // biomass rate, not an MSY ceiling, so the dip lands on that instead. Resolved through the same
+    // shared helper the forecast uses, so the two cannot quote different dips.
+    let field_dip = field_yield_fraction_while_building(&ladder);
     // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
     // labor at the same forgone-yield price, so it must never drift from the initial build.
     let pen_build_rate =
@@ -125,14 +131,50 @@ pub fn advance_labor_allocation(
                     let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
                         continue;
                     };
-                    let Ok(module) = food_modules.get(tile_entity) else {
-                        continue; // module lost → 0 this turn.
-                    };
-                    let seasonal = module.seasonal_weight.max(0.0);
+                    // The **gather** season is the food module's. A tile with no module offers no
+                    // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
+                    // exactly right — and, since slice 5, a real state rather than an impossible one:
+                    // `Sow` places a Field on any naturally food-bearing biome, module or not, and a
+                    // Field's harvest is biomass-based and seasonless.
+                    let seasonal = food_modules
+                        .get(tile_entity)
+                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                    // **Does this faction know how to sow?** — the `plant:field` rung's own gate,
+                    // resolved off the rung record. Read here because it gates *two* things below: the
+                    // seed going into the ground at all, and the build meter it then fills.
+                    let knows_sowing = field_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                        knows(&discovery, faction, knowledge, knowledge_threshold)
+                    });
+                    // **`Sow` PLACES the source** (§2 — the one rung that needs no source below it:
+                    // seed travels, unlike a herd you never tamed). The first turn a crew works
+                    // naturally food-bearing ground under `Sow`, the seed goes in and the patch exists
+                    // from here on — at the tile's **own** biome capacity (`tile_forage_capacity`, the
+                    // same source a wild patch is seeded from — there is no Field-specific table) and
+                    // at the reseed floor's standing crop. Ground that bears nothing (`rock`, ice,
+                    // desert — a stated zero in `capacity_by_biome`) takes no seed: that is rung 4
+                    // (Worked Land), and the `sow` command refuses it up front with that reason.
+                    if matches!(policy, FollowPolicy::Sow)
+                        && knows_sowing
+                        && forage_registry.patch(*tile).is_none()
+                    {
+                        if let Ok(sown_tile) = tiles.get(tile_entity) {
+                            let capacity = tile_forage_capacity(&labor.forage, sown_tile);
+                            if capacity > NO_FORAGE_CAPACITY {
+                                let mut patch = ForagePatch::sown(
+                                    *tile,
+                                    capacity,
+                                    labor.forage.reseed_floor_fraction,
+                                );
+                                patch.refresh_ecology_phase(&labor.forage.ecology);
+                                forage_registry.patches.insert(*tile, patch);
+                            }
+                        }
+                    }
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
-                    // seeded a patch at Startup; a missing one (a dynamically-tagged tile) is skipped
-                    // this turn. Gather per the assignment's policy (§0-iii, parity with hunting).
+                    // seeded a patch at Startup; a missing one (a dynamically-tagged tile, or ground
+                    // nobody has sown) is skipped this turn. Gather per the assignment's policy
+                    // (§0-iii, parity with hunting).
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
@@ -153,37 +195,64 @@ pub fn advance_labor_allocation(
                     {
                         discovery.add_progress(faction, knowledge, knowledge_delta);
                     }
-                    // A cultivated ("tended") patch is worked, not wild-gathered (Rung 1a): the band
-                    // whose Forage assignment tends it (≥1 worker here → place-local by construction)
-                    // is paid `biomass × tended_provisions_per_biomass` — a **managed harvest** of the
-                    // full standing crop, WITHOUT drawing biomass down (a tended patch regrows freely,
-                    // so biomass sits near cap and the yield out-runs the same patch's wild MSY skim,
-                    // the intensification incentive). This is maintenance labor: the amount is
-                    // biomass-based (presence, not head-count, gates it beyond the `workers == 0`
-                    // check above). Marking the patch tended-this-turn stops `advance_cultivation`
-                    // taking it feral. Sustainable == actual (a managed harvest never overdraws → no
-                    // ⚠). Mirrors a domesticated herd's husbandry income, but paid place-local here
-                    // instead of split across the owner's bands.
-                    if patch.is_cultivated() {
+                    // A **managed** patch — a sown Field (rung 3) or a cultivated "tended" patch
+                    // (rung 2) — is worked, not wild-gathered: the band whose Forage assignment works
+                    // it (≥1 worker here → place-local by construction) is paid `biomass × the rung's
+                    // rate` — a **managed harvest** of the full standing crop, WITHOUT drawing biomass
+                    // down (it regrows freely, so biomass sits near cap and the yield out-runs the
+                    // same patch's wild MSY skim: the intensification incentive, and a Field's rate is
+                    // the higher of the two, which is the whole point of the rung). This is
+                    // maintenance labor: the amount is biomass-based (presence, not head-count, gates
+                    // it beyond the `workers == 0` check above). Marking the patch tended-this-turn
+                    // stops `advance_cultivation` taking it feral. Sustainable == actual (a managed
+                    // harvest never overdraws → no ⚠). Mirrors a penned herd's keeper income, but paid
+                    // place-local here.
+                    if patch.is_managed() {
                         patch.tended_this_turn = true;
                         // Shared with the pre-commit forecast (`forage::forage_forecast`) so the
-                        // client's "expected yield" for a tended patch is exactly what it is paid.
-                        let provisions = scalar_from_f32(tended_provisions(
-                            patch.biomass,
-                            &labor.forage,
-                            mult_f,
-                        ));
+                        // client's "expected yield" for a managed patch is exactly what it is paid.
+                        let managed = if patch.is_field() {
+                            field_provisions(patch.biomass, &labor.forage, mult_f)
+                        } else {
+                            tended_provisions(patch.biomass, &labor.forage, mult_f)
+                        };
+                        // **Sowing a patch that is already tended still costs the rung's dip.** The
+                        // crew is upgrading rung 2 → rung 3, so — exactly like every other
+                        // rung-transition — the source pays only a fraction of what it would
+                        // otherwise hand them while the work goes on. (Once it *is* a Field there is
+                        // nothing left to build, so the dip stops and the full field yield lands.)
+                        let paid = if matches!(policy, FollowPolicy::Sow) && !patch.is_field() {
+                            managed * field_dip
+                        } else {
+                            managed
+                        };
+                        let provisions = scalar_from_f32(paid);
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
-                        let tended = provisions.to_f32();
-                        // A tended patch is maintenance labor (biomass-based payout, presence-gated),
-                        // not scaling gather → a fixed one-worker "need" (never overstaffed by count).
+                        let paid = provisions.to_f32();
+                        // A managed patch is maintenance labor (biomass-based payout,
+                        // presence-gated), not scaling gather → a fixed one-worker "need" (never
+                        // overstaffed by count).
                         yields[idx] = SourceYield {
-                            actual: tended,
-                            sustainable: tended,
+                            actual: paid,
+                            sustainable: paid,
                             workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
                         };
+                        // The rung-3 build on a tended patch: same seam, same gate, same
+                        // accrue-after-the-take ordering as the wild-patch case below.
+                        if matches!(policy, FollowPolicy::Sow) {
+                            accrue_field(
+                                patch,
+                                field_rung,
+                                *policy,
+                                knows_sowing,
+                                faction,
+                                &mut event_log,
+                                tick.0,
+                                *tile,
+                            );
+                        }
                         continue;
                     }
                     let biomass_before = patch.biomass;
@@ -243,6 +312,32 @@ pub fn advance_labor_allocation(
                                 ));
                             }
                         }
+                    }
+                    // **Sow — the rung-3 investment policy**, the twin of Cultivate above and the
+                    // same shape: `forage_take` has already paid only the `plant:field` rung's dip,
+                    // and here the patch accrues toward becoming a Field. On ground the crew *just*
+                    // sowed that dip is honestly ~0 (there is no standing crop to take a fraction of):
+                    // a bare-ground field is pure investment, paid entirely in the 25 turns of labor.
+                    //
+                    // **Not gated on Thriving, unlike Cultivate** — and that is load-bearing, not a
+                    // relaxation: freshly sown ground starts at the reseed floor, i.e. *Collapsing* by
+                    // construction, so a health gate would make sowing bare ground impossible. You
+                    // *tend* a healthy wild stand; you *plant* bare ground. (The animal side already
+                    // draws the same line — `Tame` has no health gate either.)
+                    if matches!(policy, FollowPolicy::Sow) {
+                        // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
+                        // under active preparation neither goes feral nor bleeds its partial progress.
+                        patch.tended_this_turn = true;
+                        accrue_field(
+                            patch,
+                            field_rung,
+                            *policy,
+                            knows_sowing,
+                            faction,
+                            &mut event_log,
+                            tick.0,
+                            *tile,
+                        );
                     }
                     // Market forage = gathered goods sold: convert the raw take to trade goods
                     // (mirror of the Hunt-Market arm). Only Market sells — Sustain/Surplus/Eradicate
@@ -610,6 +705,47 @@ pub fn advance_labor_allocation(
         }
         allocation.last_yields = yields;
         allocation.last_pen_feed_upkeep = pen_feed_paid;
+    }
+}
+
+/// **The `plant:field` rung's build step**, factored out because the Forage arm reaches it from two
+/// places — sowing a *wild/bare* patch (the take path) and sowing an *already tended* one (the managed
+/// path) — and the two must not drift into different gates, rates or completion side-effects.
+///
+/// THE build seam: the rung supplies the accrual (`0` unless `Sow` is the rung's verb and `eligible`
+/// holds); the patch owns its meter, the clamp, and ownership. `RUNG_TIMESCALE_UNSCALED` because
+/// sowing is a flat 25 turns — the only per-source timescale on the ladder is a species' `taming_rate`
+/// (a plant has no species).
+///
+/// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
+/// for the turn: progress is neither lost nor silently switched.
+#[allow(clippy::too_many_arguments)] // the rung, the gate, the actor and the feed line are all inputs
+fn accrue_field(
+    patch: &mut ForagePatch,
+    field_rung: &RungDef,
+    policy: FollowPolicy,
+    eligible: bool,
+    faction: FactionId,
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    tile: UVec2,
+) {
+    let accrual = field_rung.build_accrual(policy, eligible, RUNG_TIMESCALE_UNSCALED);
+    if accrual <= 0.0 {
+        return;
+    }
+    patch.accrue_field(faction, accrual);
+    if patch.is_field() {
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::Sow,
+            faction,
+            format!("Field sown at ({}, {})", tile.x, tile.y),
+            Some(format!(
+                "status=complete action=sow x={} y={}",
+                tile.x, tile.y
+            )),
+        ));
     }
 }
 

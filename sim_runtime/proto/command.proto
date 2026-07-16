@@ -219,6 +219,17 @@ message CultivateCommand {
   uint32 target_y = 3;
 }
 
+// The intensification ladder's plant rung-3 verb: set the Sow policy on the bands already foraging
+// this tile (needs Seed Selection knowledge, earned by working tended patches). Sow PLACES a food
+// source — it builds a Field on any NATURALLY FOOD-BEARING tile (non-zero forage.capacity_by_biome),
+// including one that carries no forage site at all, because seed travels. It cannot make rock, ice or
+// desert farmable; that is rung 4 (Worked Land).
+message SowCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+}
+
 // Rung 1c: pen the domesticated herd standing on the target tile into a fixed corral (needs Herding
 // knowledge, built by Sustain-hunting a Thriving herd). A corralled herd stops roaming and pays its
 // keeper place-local.
@@ -345,5 +356,6 @@ message CommandEnvelope {
     CorralCommand corral = 38;
     ExtendPenCommand extend_pen = 39;
     TameCommand tame = 40;
+    SowCommand sow = 41;
   }
 }

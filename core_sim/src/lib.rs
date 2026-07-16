@@ -136,8 +136,8 @@ pub use food::{
 };
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
-    spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
-    SEED_SELECTION_DISCOVERY_ID,
+    spawn_initial_forage, tile_forage_capacity, ForagePatch, ForageRegistry,
+    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -166,7 +166,7 @@ pub use knowledge_ledger::{
 };
 pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
-    BUILTIN_LABOR_CONFIG,
+    BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use sedentarization::{

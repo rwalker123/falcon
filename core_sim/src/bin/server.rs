@@ -23,10 +23,10 @@ use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer}
 use core_sim::{
     apply_port_base_override, available_workers, forage_source_yield_preview,
     hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
-    ActiveStartProfile, BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, ResidentBand, RungKey, StartProfileOverrides,
-    WellbeingConfigHandle,
+    tile_forage_capacity, ActiveStartProfile, BandTravel, CampaignLabel, Expedition,
+    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation,
+    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, StartProfileOverrides,
+    WellbeingConfigHandle, NO_FORAGE_CAPACITY, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -573,6 +573,13 @@ fn main() {
             } => {
                 handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
             }
+            Command::Sow {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_sow(&mut app, faction, UVec2::new(target_x, target_y));
+            }
             Command::Corral {
                 faction,
                 target_x,
@@ -723,6 +730,11 @@ enum Command {
         herd_id: String,
     },
     Cultivate {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    Sow {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
@@ -1522,12 +1534,17 @@ fn seed_source_yield(
             else {
                 return;
             };
-            let Some(module) = app.world.get::<FoodModuleTag>(tile_entity) else {
-                return; // no food module on the tile → the turn pays 0.
-            };
-            let seasonal = module.seasonal_weight.max(0.0);
+            // No food module → no wild **gather** season (`NO_FORAGE_SEASON`), exactly as the labor
+            // arm reads it. Not an early return: since slice 5 a sown Field may stand on a
+            // module-less tile, and its managed harvest is biomass-based and seasonless — returning
+            // here would seed that Field a `0` row and reintroduce the `+0.00`-then-jump bug the seed
+            // exists to kill.
+            let seasonal = app
+                .world
+                .get::<FoodModuleTag>(tile_entity)
+                .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
             let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
-                return; // unseeded patch → the turn pays 0.
+                return; // unseeded patch → the turn pays 0 (a bare-ground sow's honest opening row).
             };
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             forage_source_yield_preview(
@@ -1570,9 +1587,9 @@ fn seed_source_yield(
 /// Validate a labor target's **policy** against the source it names, returning a player-facing
 /// rejection reason (`Err`) or `Ok`. Two independent checks:
 ///
-/// 1. **Kind.** The two *investment* policies are kind-exclusive: `Cultivate` is Forage-only,
-///    `Corral` is Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid combo
-///    is rejected outright rather than silently coerced.
+/// 1. **Kind.** The *investment* policies are kind-exclusive: `Cultivate`/`Sow` are Forage-only,
+///    `Tame`/`Corral` are Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid
+///    combo is rejected outright rather than silently coerced.
 /// 2. **Gates.** Cultivate requires the faction to **know Cultivation** and the patch to be
 ///    **Thriving** (and not already tended, and not someone else's). Corral requires the faction to
 ///    **know Herding** and to own the **domesticated** herd (and it not already be penned). These are
@@ -1591,6 +1608,9 @@ fn validate_labor_policy(
                     "'{}' is not a foraging policy — it applies to herds.",
                     policy.as_str()
                 ));
+            }
+            if matches!(policy, FollowPolicy::Sow) {
+                return validate_sow(app, faction, *tile);
             }
             if !matches!(policy, FollowPolicy::Cultivate) {
                 return Ok(());
@@ -1699,6 +1719,86 @@ fn validate_labor_policy(
         }
         LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
     }
+}
+
+/// The **`Sow`** policy's gates — the plant **rung-3** verb (`docs/plan_intensification_ladder.md`
+/// §2), split out for `validate_tame`'s reason: the Forage arm now validates two investment rungs.
+///
+/// Each rejection is distinct, and the order is deliberate:
+/// 1. **The tile exists.** A coordinate off the map names no ground at all.
+/// 2. **The ground bears food naturally** (`tile_forage_capacity > 0` — the *same* helper that sizes
+///    a wild patch and the wire's `forageCapacity`, never a Field-specific table). This is the rung's
+///    defining limit: `Sow` **places** a source but does not conjure one, so rock, ice and salt take
+///    no seed. The rejection **points at why** — making unwilling ground farmable is **rung 4, Worked
+///    Land**, a later arc — rather than reading as an arbitrary refusal. Checked *before* knowledge,
+///    because it is a property of the *place*, not of the player (the `validate_tame` rule: the
+///    animal's own nature outranks who is hunting it).
+/// 3. **Seed Selection** — the rung's own `unlock_knowledge`, read off the ladder rather than
+///    hard-coded, naming both the knowledge and how it is learned.
+/// 4. **Not already a Field** — this rung is already climbed; work it, don't re-sow it.
+/// 5. **Not another faction's ground** — mirrors the Cultivate arm's "another people are cultivating
+///    it".
+///
+/// **There is deliberately no "the tile already has a patch" requirement, and no health gate.** Both
+/// are the point of the rung: seed travels, so hospitable ground with *no* forage site is a legal —
+/// indeed the interesting — target (§2, "where the two webs legitimately differ": `Corral` needs a
+/// herd you already tamed, `Sow` needs nothing), and freshly sown ground starts at the reseed floor,
+/// i.e. Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
+fn validate_sow(app: &bevy::prelude::App, faction: FactionId, tile: UVec2) -> Result<(), String> {
+    let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y) else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let Some(ground) = app.world.get::<Tile>(tile_entity) else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    if tile_forage_capacity(&labor.forage, ground) <= NO_FORAGE_CAPACITY {
+        return Err(format!(
+            "Nothing will take seed at ({}, {}) — that ground bears no food of its own. Sow the \
+             floodplains and the fat grassland; making barren ground farmable is not yet within your \
+             people's reach.",
+            tile.x, tile.y
+        ));
+    }
+    let (knowledge_threshold, field_unlock) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.rung(RungKey::PlantField).unlock_discovery_id(),
+        )
+    };
+    let knows_seed_selection = field_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_seed_selection {
+        return Err(
+            "Your people have not learned Seed Selection yet. Work tended patches to learn \
+                    it."
+            .to_string(),
+        );
+    }
+    // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
+    // patch can be in a state that refuses the seed.
+    if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
+        if patch.is_field() {
+            return Err(format!(
+                "The field at ({}, {}) is already sown — forage it to work it.",
+                tile.x, tile.y
+            ));
+        }
+        if patch.owner.is_some_and(|owner| owner != faction) {
+            return Err(format!(
+                "Another people are working the ground at ({}, {}).",
+                tile.x, tile.y
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The **`Tame`** policy's gates — the animal rung-2 twin of the `Cultivate` arm above, in the same
@@ -2124,7 +2224,12 @@ fn handle_send_hunt_expedition(
         // then tends — a detached expedition can't pen a herd and walk home, so they are rejected here
         // alongside an unparseable token (the four extractive rungs are the expedition's whole axis).
         Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) if !matches!(parsed, FollowPolicy::Cultivate | FollowPolicy::Corral) => {
+            Ok(parsed)
+                if !matches!(
+                    parsed,
+                    FollowPolicy::Cultivate | FollowPolicy::Sow | FollowPolicy::Corral
+                ) =>
+            {
                 parsed
             }
             _ => {
@@ -2641,6 +2746,78 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
         ),
         Some(format!(
             "status=preparing action=cultivate x={} y={} bands={}",
+            tile.x, tile.y, switched
+        )),
+    );
+}
+
+/// **Set the `Sow` policy** on the tile at `tile` for the band(s) already foraging it — the plant
+/// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
+/// what the client's policy picker does; it **sows nothing outright**.
+///
+/// What makes it the interesting verb: `Sow` **places** a food source. Any naturally food-bearing tile
+/// will take seed — *including one that carries no forage site at all* — so a crew can put a Field on
+/// the floodplain they chose rather than the stand the wild chose for them. That is the whole
+/// sedentarization pull, and it is the one place the two food webs legitimately differ (`Corral` needs
+/// a herd you already tamed; seed travels). The seed itself goes into the ground in the labor arm, on
+/// the first turn a crew actually works the tile under this policy — so `assign_labor … sow` and this
+/// command place a Field on exactly the same terms.
+///
+/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the ground must bear food
+/// naturally (rock/ice/desert need **rung 4, Worked Land**), the faction must know **Seed Selection**,
+/// and the tile must not already be a Field or another people's — plus the rejection when **no band is
+/// foraging** it.
+fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    let target = LaborTarget::Forage {
+        tile,
+        policy: FollowPolicy::Sow,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "sow",
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.sow.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Sow, faction, reason);
+        return;
+    }
+
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Sow,
+            faction,
+            format!(
+                "No band is foraging ({}, {}). Assign foragers to the ground first, then sow it.",
+                tile.x, tile.y
+            ),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "sow",
+        faction = %faction.0,
+        x = tile.x,
+        y = tile.y,
+        bands = switched,
+        "command.sow.sowing"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Sow,
+        faction,
+        format!("Sowing a field at ({}, {})", tile.x, tile.y),
+        Some(format!(
+            "status=sowing action=sow x={} y={} bands={}",
             tile.x, tile.y, switched
         )),
     );
@@ -3671,6 +3848,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::Sow {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Sow {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::Corral {
             faction_id,
             target_x,
@@ -4019,6 +4205,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Tame => "Tame",
         CommandEventKind::Cultivate => "Cultivate",
+        CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
@@ -4843,7 +5030,7 @@ mod tests {
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
         build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -5039,6 +5226,288 @@ mod tests {
             &app,
             "No band is foraging"
         ));
+    }
+
+    // --- `sow` (the plant rung-3 verb, slice 5). The rejections are the contract: each one names a
+    // different thing the player must fix, and the barren-ground one has to point at *why*.
+
+    fn grant_seed_selection(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, SEED_SELECTION_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn sow_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Sow)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// The map every `sow` test stands on. The shipped `map_seed` is **0 = entropy**, so a test that
+    /// wants a reproducible map must pin one — otherwise "is there hospitable ground here?" is a
+    /// coin flip per run.
+    const SOW_TEST_MAP_SEED: u64 = 119304647;
+
+    /// A **real world** — `build_headless_app` builds the app, `update` runs the Startup chain, so
+    /// the map, its `Tile`s and its seeded forage patches all exist. `sow` needs them: its defining
+    /// gate is a property of the *ground*.
+    fn build_world_app() -> bevy::prelude::App {
+        let mut app = build_headless_app();
+        app.world.resource_mut::<SimulationConfig>().map_seed = SOW_TEST_MAP_SEED;
+        app.update();
+        app
+    }
+
+    /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
+    /// iteration order, so no seed/hash flake (the lesson of `7c09c7e`).
+    fn find_tile(
+        app: &bevy::prelude::App,
+        accept: impl Fn(f32, Option<&ForagePatch>) -> bool,
+    ) -> UVec2 {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                let Some(entity) = app.world.resource::<TileRegistry>().index(x, y) else {
+                    continue;
+                };
+                let Some(tile) = app.world.get::<Tile>(entity) else {
+                    continue;
+                };
+                let capacity = tile_forage_capacity(&labor.forage, tile);
+                if accept(
+                    capacity,
+                    app.world.resource::<ForageRegistry>().patch(coord),
+                ) {
+                    return coord;
+                }
+            }
+        }
+        panic!("no tile on the earthlike map matched");
+    }
+
+    /// Ground that bears human food naturally — a legal `sow` target — and carries **no forage site
+    /// at all**: the create-from-nothing case, and the tile most of these tests want.
+    fn find_bare_hospitable_tile(app: &bevy::prelude::App) -> UVec2 {
+        find_tile(app, |capacity, patch| {
+            capacity > NO_FORAGE_CAPACITY && patch.is_none()
+        })
+    }
+
+    /// Ground that bears nothing (rock / ice / salt / deep ocean) — what `sow` must refuse, pointing
+    /// at rung 4.
+    fn find_barren_tile(app: &bevy::prelude::App) -> UVec2 {
+        find_tile(app, |capacity, _| capacity <= NO_FORAGE_CAPACITY)
+    }
+
+    /// **The gate the slice-4 knowledge finally spends.** Without Seed Selection there is no `sow`,
+    /// and the refusal must *name* the knowledge and say how it is learned — a gate the player cannot
+    /// see is indistinguishable from a bug.
+    #[test]
+    fn sow_rejected_when_seed_selection_unknown() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_bare_hospitable_tile(&app);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "Seed Selection"),
+            "the refusal must name the knowledge that gates sowing"
+        );
+        assert!(
+            sow_failure_detail_contains(&app, "tended patches"),
+            "...and say how it is learned"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sustain,
+            "a rejected sow must not touch the band's policy"
+        );
+    }
+
+    /// **Sow places, it does not conjure.** Ground that bears no food of its own takes no seed — and
+    /// the refusal points at *why* (that is rung 4, Worked Land) rather than reading as arbitrary.
+    /// Checked even with the knowledge in hand: it is a property of the place, not the player.
+    #[test]
+    fn sow_rejected_on_ground_that_bears_no_food() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_barren_tile(&app);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "take seed"),
+            "barren ground must be refused"
+        );
+        assert!(
+            sow_failure_detail_contains(&app, "bears no food of its own"),
+            "...naming why: the ground itself, not the player's skill"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none(),
+            "a refused sow must not seed a patch"
+        );
+    }
+
+    #[test]
+    fn sow_rejected_on_a_tile_off_the_map() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        grant_seed_selection(&mut app, faction);
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+
+        handle_sow(&mut app, faction, UVec2::new(width + 5, height + 5));
+
+        assert!(sow_failure_detail_contains(&app, "There is no tile at"));
+    }
+
+    /// A Field is already sown — there is nothing left to build, so re-sowing it is refused (the
+    /// twin of "the patch is already cultivated").
+    #[test]
+    fn sow_rejected_on_a_patch_that_is_already_a_field() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_bare_hospitable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        {
+            // Set the meter straight (the accrual is `pub(crate)`): this test is about the command's
+            // gate, not about how a Field gets built.
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.field_progress = RUNG_COMPLETE;
+            patch.owner = Some(faction);
+        }
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "already sown"));
+    }
+
+    /// The ownership gate, mirroring Cultivate's: you cannot sow ground another people are working.
+    #[test]
+    fn sow_rejected_on_another_factions_ground() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_bare_hospitable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_progress = 0.5;
+            patch.owner = Some(FactionId(1));
+        }
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "Another people"));
+    }
+
+    /// With nobody foraging the ground there is no assignment to re-point: `sow` is rejected and
+    /// tells the player to staff it first (the `cultivate` rule — the command sets a policy, it does
+    /// not conjure labor).
+    #[test]
+    fn sow_rejected_when_no_band_is_foraging_the_tile() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_bare_hospitable_tile(&app);
+        grant_seed_selection(&mut app, faction);
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "No band is foraging"));
+    }
+
+    /// **The happy path — and the point of the slice.** `sow` on hospitable ground that carries **no
+    /// forage site at all** is accepted: seed travels, so rung 3 needs no source below it (unlike
+    /// `Corral`, which needs a herd you already tamed). It sets the policy and claims nothing — the
+    /// seed itself goes in when the crew works the tile.
+    #[test]
+    fn sow_sets_the_sow_policy_on_hospitable_ground_with_no_patch() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_bare_hospitable_tile(&app);
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none(),
+            "the create-from-nothing case needs ground with no spawned patch"
+        );
+        grant_seed_selection(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sow,
+            "sow switches the working band onto the investment policy"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none(),
+            "the command claims nothing — the seed goes in when the crew works the ground"
+        );
     }
 
     fn grant_cultivation(app: &mut bevy::prelude::App, faction: FactionId) {

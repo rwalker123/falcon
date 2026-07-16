@@ -44,6 +44,7 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
     ForageState {
         x: patch.tile.x,
         y: patch.tile.y,
+        field_progress: patch.field_progress,
         ecology: EcologyState {
             biomass: patch.biomass,
             carrying_capacity: patch.carrying_capacity,
@@ -306,8 +307,10 @@ pub(crate) fn herd_snapshot_entries(
 ///
 /// `seasonal_weights` maps tile coord → that tile's `FoodModuleTag::seasonal_weight`, folded into the
 /// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
-/// patch whose tile carries no food module (not reachable today — patches are seeded from
-/// `FoodModuleTag` tiles) forecasts at a zero seasonal weight, i.e. no per-worker yield. Captured at
+/// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
+/// all, which is exactly what such a tile offers. **That is a reachable state since slice 5**: `Sow`
+/// places a Field on any naturally food-bearing biome, module or not, and a Field's managed harvest is
+/// biomass-based and seasonless, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
@@ -322,7 +325,7 @@ pub(crate) fn snapshot_forage_patches(
             let seasonal = seasonal_weights
                 .get(&patch.tile)
                 .copied()
-                .unwrap_or(NO_SEASONAL_WEIGHT);
+                .unwrap_or(NO_FORAGE_SEASON);
             let forecast =
                 forage_forecast(patch, forage, ladder, seasonal, FORECAST_OUTPUT_MULTIPLIER);
             ForagePatchState {

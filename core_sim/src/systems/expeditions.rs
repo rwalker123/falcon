@@ -423,9 +423,10 @@ pub fn advance_expeditions(
                             // `hunt_expedition_ceiling` `debug_assert!`s if it ever is reached). It
                             // takes nothing (ceiling `0.0`), so end the trip immediately rather than
                             // loop forever taking zero: the party comes home empty and says so.
-                            FollowPolicy::Cultivate | FollowPolicy::Tame | FollowPolicy::Corral => {
-                                (true, false)
-                            }
+                            FollowPolicy::Cultivate
+                            | FollowPolicy::Sow
+                            | FollowPolicy::Tame
+                            | FollowPolicy::Corral => (true, false),
                         };
 
                         if done {
@@ -576,7 +577,10 @@ fn hunt_expedition_ceiling(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    if matches!(policy, FollowPolicy::Cultivate | FollowPolicy::Corral) {
+    if matches!(
+        policy,
+        FollowPolicy::Cultivate | FollowPolicy::Sow | FollowPolicy::Corral
+    ) {
         debug_assert!(
             false,
             "investment policy {} reached a hunting expedition — send_hunt_expedition must reject it",
@@ -612,11 +616,12 @@ fn hunt_expedition_floor(
             Some(ecology.collapse_fraction * carrying_capacity)
         }
         FollowPolicy::Eradicate => Some(0.0),
-        // Sustain is a flow (no floor). Cultivate/Tame/Corral are unreachable on an expedition — see
+        // Sustain is a flow (no floor). The investment rungs are unreachable on an expedition — see
         // `hunt_expedition_ceiling`, which rejects them before this is reached; treating them as
         // "no floor" here keeps the O(1) fill bound conservative (it never under-estimates).
         FollowPolicy::Sustain
         | FollowPolicy::Cultivate
+        | FollowPolicy::Sow
         | FollowPolicy::Tame
         | FollowPolicy::Corral => None,
     }

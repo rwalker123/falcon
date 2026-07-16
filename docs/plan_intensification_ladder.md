@@ -49,6 +49,7 @@ plumbing, the yield-vector). **This doc owns the interaction + knowledge model.*
 | The animal `domesticate` early-claim (`claim_threshold` 0.6) | **Removed**, mirroring the plant early-claim it already removed for the same stated reason. |
 | Its "preserve the **product asymmetry** — mobile livestock vs fixed patch; the asymmetry *is* the sedentarization pull" (`:133-140`) | **Upheld — no conflict.** This doc unifies the **grammar** (how you drive a rung), not the **product**. Rung 2 stays asymmetric: pastoral is *mobile* (nomadism keeps working), a tended patch is *a place*. Rung 3 pins **both** (Field, Pen) — which is exactly when you sedentarize. The ladder now *tells* that story rather than eroding it. |
 | Its plant rung names — "Seed Germination" (`:152-159`) | **Superseded by the manual's vocabulary:** **Seed Selection** (knowledge) → **Field** (rung). See §2a. |
+| Its "plant crops on **arbitrary** tiles" (`:152-159`) | **NOT superseded — it moves to rung 4** (corrected 2026-07-16). Rung 3 (`Sow`) places a Field only on **naturally food-bearing** ground; making unwilling ground farmable is **Worked Land**, rung 4. The earlier ruling here was wrong: it conflated "place a source" with "place it anywhere". |
 | Its rung-4 name "**Husbandry**" (`:262`) | **Rejected — name collision.** `husbandry` already names the whole animal subsystem in code (`HusbandryConfig`, `advance_husbandry`, `husbandry_ceiling`). Rung 4 is **Selective Breeding**. |
 | Its corral flat-rate tuning (`:296-301`, self-described "a stopgap") | **Stale — already resolved** upstream by grazing 2d. |
 | Its §§1-2 (depletion, forage parity), §5 (yield vector), §6 (carrying capacity), Phase-0 persistence | **Untouched and complementary.** |
@@ -60,7 +61,7 @@ Player-facing names come from the **manual** (authoritative), which already had 
 
 | | rung 1 | rung 2 | rung 3 | rung 4 (future) |
 |---|---|---|---|---|
-| **Plants** | wild forage patch | **Tended Patch** — verb `Cultivate` *(shipped)*, knowledge **Cultivation** *(2003, shipped)* | **Field** — verb **`Sow`** *(new)*, knowledge **Seed Selection** *(new, id 2005)* | *(irrigation / rotation — unnamed)* |
+| **Plants** | wild forage patch | **Tended Patch** — verb `Cultivate` *(shipped)*, knowledge **Cultivation** *(2003, shipped)* | **Field** — verb **`Sow`** *(new)*, knowledge **Seed Selection** *(new, id 2005)*; **only on naturally food-bearing ground** | **Worked Land** — make unwilling ground farmable (irrigation / clearing / terracing). The true "arbitrary tiles" capability. |
 | **Animals** | wild herd | **Pastoral** herd — verb **`Tame`** *(new; replaces the `domesticate` early-claim)*, knowledge **Herding** *(2004, shipped)* | **Pen** (manual: "corrals") — verb `Corral` *(shipped)*, knowledge **Penning** *(new, id 2006)* | **Selective Breeding** |
 
 Next free discovery id is **2005** (existing: `nomadic_wayfinding` 2001, `portable_forge` 2002,
@@ -84,19 +85,34 @@ of which is undiscoverable. This arc unifies them.
 
 ---
 
-## 2. The unified model: symmetric 3-rung ladders
+## 2. The unified model: parallel ladders, one grammar
 
-Both food webs are **three rungs**, fully parallel:
+Both food webs climb the same shape (3 shipped rungs + a 4th deepening the mastery):
 
 | rung | plants | animals | what you control |
 |---|---|---|---|
 | 1 — wild | forage patch | wild herd | nothing — take what's there |
 | 2 — tended/tamed | tended patch | pastoral herd | you *manage the wild source in place* |
-| 3 — farm/pen | seeded farm | corralled pen | you control its *reproduction* (sow / breed) |
+| 3 — placed | **Field** — sown on *already food-bearing* ground | corralled **Pen** | you control its *reproduction* **and its location** |
+| 4 — mastery *(future)* | **Worked Land** — make unwilling ground farmable | **Selective Breeding** — better stock | you stop being limited by *where* / by *what* |
 
 Every rung-transition is a **Cultivate-shaped verb**: pick it → **lower** yield while you work (the
 gentle-policy cost) → **per-source build meter** climbs → decays if you abandon it → on completion the
 source steps up a rung. Plants run it twice (Cultivate → Sow); animals run it twice (Tame → Corral).
+
+**Rung 3 places, but does not conjure.** `Sow` puts a Field on ground that will *already* take seed
+(non-zero `forage.capacity_by_biome`) — the floodplain, the river garden, the fat grassland. It can
+create a source where none existed (a hospitable tile with no spawned forage site), but it cannot farm
+rock, ice or desert; that is rung 4. So rung 3 **pulls you toward good country** — which is exactly the
+sedentarization pull — and only rung 4 frees you from it. Real order: gather → tend wild stands → plant
+the floodplains → irrigate the desert.
+
+**Where the two webs legitimately differ** (grammar is unified; products are not):
+- **Plants create from nothing at rung 3; animals must climb.** Seed travels; a herd you never tamed
+  does not. `Sow` needs no prior patch; `Corral` needs a pastoral herd.
+- **There is no "extend the tended patch".** The pen needs `ExtendPen` because ONE herd has ONE
+  appetite and needs more grazing land. A patch has no such problem — you don't extend a field, **you
+  sow another field**. Each tile is its own patch, so expansion is already free-form.
 
 ---
 
@@ -269,11 +285,39 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
   Boar — Herding 20 → Tame 32 → **Penning 20 (the new leg)** → Corral 25 — vs ~77 before.
   *Remaining:* the **two-meter UI split** (§4.1) is client-side (slice 6); the server exports both
   meters distinctly (`IntensificationKnowledgeState` gained `seedSelection`/`penning`, append-only).
-- [ ] **5 — Plant rung 3: Field + `Sow`.** New gameplay (not just parity): sow a **Field** on a chosen
-  tile — a food source where none existed — gated on **Seed Selection**, riding the engine from slice 2.
-  The animal twin of "place a source where you want it" is the Pen, so this completes the symmetry.
+- [x] **5 — Plant rung 3: Field + `Sow`.** **Server landed.** A **Field** is a `ForagePatch` at rung 3
+  (its own `field_progress` meter beside `cultivation_progress`, exactly as a herd carries
+  `corral_progress` beside `domestication_progress`), driven by the slice-2 engine and gated on **Seed
+  Selection** — the consumer slice 4 earned that knowledge for. **Placed, not conjured:** `sow` is legal
+  only on naturally food-bearing ground (`tile_forage_capacity > 0` — the same helper that sizes a wild
+  patch), and refuses rock/ice/desert with a rejection that points at **rung 4**. It needs no prior patch
+  (seed travels) — the create-from-nothing path is live (`ForagePatch::sown`: the tile's own biome
+  capacity, biomass at the reseed floor). **Sow's accrual is deliberately NOT gated on Thriving** (unlike
+  Cultivate): sown ground starts at the reseed floor, i.e. Collapsing, so a health gate would forbid the
+  case the rung exists for — the same line `Tame` draws. **Payout:** `biomass ×
+  field_provisions_per_biomass` (0.02 = **2× tended**; measured on one tile at one biomass, K 130 / B 65:
+  wild Sustain 0.41 → tended 0.65 → **Field 1.30**). **Feral:** one rule for the whole plant web — an
+  untended patch bleeds *both* meters, so an abandoned Field reverts to **wild**, not to a free tended
+  patch. `requires_rung` kept `tended` and `validate()` untouched: it states where the rung *sits on the
+  ladder*, never a per-source precondition (nothing reads it as one — each verb's own gate does that,
+  and that is exactly where the two webs differ).
+  - **MEASURED CAVEAT — the create-from-nothing case cannot occur on a generated map.**
+    `classify_food_module` tags essentially every biome and `spawn_initial_forage` seeds a patch on every
+    module tile with positive capacity, so **every** food-bearing tile already carries a `ForagePatch`
+    (earthlike 80×52, seed 119304647: **2317 food-bearing tiles, 2317 patches, zero bare**). `Sow`
+    therefore always *upgrades* an existing wild patch today; the "hospitable tile with no spawned forage
+    site" of §2 above does not exist. (The CLAUDE.md claim that "~95% of tiles carry no `ForagePatch`" is
+    **stale** — it predates the per-biome capacity table.) The path is built and tested against a
+    constructed bare tile; whether to make forage sites genuinely sparse, or to restate §2 as "rung 3 lets
+    you choose *which* hospitable tile", is an open design call.
+  - *Remaining:* the client (slice 6) — `ForagePatchState` has no `fieldProgress`/`isField`, and the
+    `Sow` dip + Field payoff live on `SourceYieldForecast::ceiling_sow` without a wire field.
 - [ ] **6 — Client.** Both new verbs + the two-meter split + the ladder readouts; ui_preview-verified.
-- [ ] Parked (§6) as follow-on config rungs: secondary products, reliability, Selective Breeding (rung 4).
+- [ ] **Rung 4 (future, own arc): Worked Land** (plants) — irrigation / clearing / terracing makes
+  unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"
+  actually lives. Its animal twin is **Selective Breeding**. Both should be config-shaped rungs on the
+  slice-2 engine; Worked Land likely needs one new behavior primitive (mutating a tile's suitability).
+- [ ] Parked (§6) as follow-on config rungs: secondary products, reliability.
 
 ---
 

@@ -1093,6 +1093,10 @@ pub enum CommandEventKind {
     /// completing. Replaces the retired `Domesticate` early-claim's kind.
     Tame,
     Cultivate,
+    /// The plant rung-3 verb (`sow`) — the whole life of a Field: the command, and the build meter
+    /// completing. Its own kind rather than `Cultivate`'s, because a Field and a tended patch are
+    /// different rungs the player chooses between (the animal side's `Tame` set the precedent).
+    Sow,
     Corral,
     CancelOrder,
     SedentarizationPrompt,
@@ -1116,6 +1120,7 @@ impl CommandEventKind {
             CommandEventKind::Hunt => "hunt",
             CommandEventKind::Tame => "tame",
             CommandEventKind::Cultivate => "cultivate",
+            CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",

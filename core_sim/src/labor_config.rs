@@ -89,6 +89,19 @@ const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 /// turn, not just the regrowth skim.)
 const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
 
+/// The **Field**-harvest rate (the plant ladder's rung 3, slice 5): a sown Field pays its workers
+/// `biomass × this` provisions/turn on its full standing crop, without being drawn down — the tended
+/// patch's shape one rung up.
+///
+/// **It must exceed [`DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS`], or rung 3 is pointless.**
+/// Both rungs pay `K × rate` at their settled biomass, so the ratio *is* the ratio of the two levers —
+/// scale-free across every biome, exactly like the tended-vs-wild incentive above. Shipped at **2× the
+/// tended rate**: on an `AlluvialPlain` (`K` = 195) a Field pays `195 × 0.02` = **3.9 prov/turn**
+/// against a tended patch's 1.95 and a wild Sustain skim's 0.61. Both plant rates are **playtest
+/// dials** — the ladder's shape (each rung roughly doubles the last) is the claim; the exact numbers
+/// are for measurement.
+const DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS: f32 = 0.02;
+
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
 /// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
 /// investment dip it pays while preparing) moved to the shared ladder,
@@ -119,12 +132,18 @@ pub struct CultivationConfig {
     /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
     /// `provisions_per_biomass`.
     pub tended_provisions_per_biomass: f32,
+    /// **Field-harvest** rate (rung 3): a sown Field pays its workers `biomass × this` provisions/turn
+    /// on its full standing crop, without depleting biomass — the tended rate's twin one rung up, and
+    /// deliberately **higher** than it (see
+    /// [`DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS`]), or climbing to rung 3 would buy nothing.
+    pub field_provisions_per_biomass: f32,
 }
 
 impl Default for CultivationConfig {
     fn default() -> Self {
         Self {
             tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
+            field_provisions_per_biomass: DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS,
         }
     }
 }

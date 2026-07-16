@@ -103,6 +103,9 @@ pub enum RungKey {
     PlantWild,
     /// A **tended** patch — the `Cultivate` investment (`ForagePatch::cultivation_progress`).
     PlantTended,
+    /// A **Field** — the `Sow` investment (`ForagePatch::field_progress`), the plant branch's rung 3
+    /// and the twin of [`RungKey::AnimalPen`].
+    PlantField,
     /// A wild herd.
     AnimalWild,
     /// A **pastoral** (mobile domesticated) herd — the `Tame` investment
@@ -114,9 +117,10 @@ pub enum RungKey {
 
 impl RungKey {
     /// Every rung a system names today — what `validate` requires the config to define.
-    pub const ALL: [RungKey; 5] = [
+    pub const ALL: [RungKey; 6] = [
         RungKey::PlantWild,
         RungKey::PlantTended,
+        RungKey::PlantField,
         RungKey::AnimalWild,
         RungKey::AnimalPastoral,
         RungKey::AnimalPen,
@@ -124,7 +128,7 @@ impl RungKey {
 
     pub fn branch(self) -> RungBranch {
         match self {
-            RungKey::PlantWild | RungKey::PlantTended => RungBranch::Plant,
+            RungKey::PlantWild | RungKey::PlantTended | RungKey::PlantField => RungBranch::Plant,
             RungKey::AnimalWild | RungKey::AnimalPastoral | RungKey::AnimalPen => {
                 RungBranch::Animal
             }
@@ -136,6 +140,7 @@ impl RungKey {
         match self {
             RungKey::PlantWild | RungKey::AnimalWild => "wild",
             RungKey::PlantTended => "tended",
+            RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
         }
@@ -245,7 +250,19 @@ pub struct RungDef {
     /// The knowledge **practising this rung** teaches the faction (§4 — "practice rung N unlocks rung
     /// N+1"). `None` = this rung teaches nothing today.
     pub earns_knowledge: Option<String>,
-    /// The rung below this one, which a source must have climbed first. `None` iff `order == 1`.
+    /// **The rung directly below this one on the ladder** — a statement about the ladder's *shape*,
+    /// asserted by [`LadderConfig::validate_sequence`] (same branch, `order - 1`; `None` iff
+    /// `order == 1`). It is what makes the ladder a sequence rather than a bag of rungs.
+    ///
+    /// **It is deliberately NOT a per-source precondition, and nothing reads it as one.** Whether
+    /// *this* source may start *this* rung is a coded gate the rung's own verb owns (`corral` refuses
+    /// a herd that isn't pastoral; `cultivate` refuses a patch that is already tended), because the
+    /// rule genuinely differs per branch: `Corral` needs a herd you already tamed, while **`Sow`
+    /// needs no prior patch at all** — seed travels, so rung 3 of the plant ladder can create a
+    /// source where none existed (`docs/plan_intensification_ladder.md` §2, "where the two webs
+    /// legitimately differ"). Both facts are true at once: `plant:field` still sits directly above
+    /// `plant:tended` on the ladder, and sowing bare ground still skips no *step of the ladder* — it
+    /// starts from a tile, not from a source.
     pub requires_rung: Option<String>,
     /// The per-species `husbandry_ceiling` a herd needs to reach this rung (Grazing 2d-δ). Animal
     /// branch only — a plant has no species ceiling.
@@ -511,8 +528,11 @@ impl LadderConfig {
     }
 
     /// The ladder is strictly sequential: rung 1 requires nothing, and every rung above it names the
-    /// rung directly below it (same branch, `order - 1`). You cannot skip a rung you haven't
-    /// practised (`plan_intensification_ladder.md` §4).
+    /// rung directly below it (same branch, `order - 1`). A ladder with a hole in it — or with a rung
+    /// pointing at something two steps down — is not a ladder (`plan_intensification_ladder.md` §4).
+    /// See [`RungDef::requires_rung`] for why this is a claim about the *ladder's shape* and not a
+    /// per-source precondition (which is each verb's own coded gate — and which `Sow` deliberately
+    /// does not have).
     fn validate_sequence(&self, rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
         match (rung.order, rung.requires_rung.as_deref()) {
             (FIRST_RUNG_ORDER, None) => Ok(()),

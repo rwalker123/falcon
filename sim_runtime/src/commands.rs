@@ -149,6 +149,11 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    Sow {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
     Corral {
         faction_id: u32,
         target_x: u32,
@@ -519,6 +524,15 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::Sow {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Sow(pb::SowCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::Corral {
                 faction_id,
                 target_x,
@@ -822,6 +836,11 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
             },
             pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Sow(cmd) => CommandPayload::Sow {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,

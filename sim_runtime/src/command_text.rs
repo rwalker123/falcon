@@ -164,6 +164,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "sow",
+        aliases: &[],
+        summary: "Set the Sow policy on the bands foraging a tile: an investment that builds a Field, out-yielding a tended patch. It PLACES the source — any naturally food-bearing tile will take seed, even one with no forage site on it — but it cannot farm rock, ice or desert (needs Seed Selection knowledge, earned by working tended patches).",
+        usage: "sow <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
         verb: "corral",
         aliases: &[],
         summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Herding knowledge, earned by Sustain hunting).",
@@ -765,6 +771,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y: parse_u32(y_str, "cultivate target_y")?,
             })
         }
+        "sow" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::Sow {
+                faction_id: parse_u32(faction_str, "sow faction")?,
+                target_x: parse_u32(x_str, "sow target_x")?,
+                target_y: parse_u32(y_str, "sow target_y")?,
+            })
+        }
         "corral" => {
             let faction_str = parts
                 .next()
@@ -1189,6 +1211,25 @@ mod tests {
         // Both coordinates are required.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    /// The plant rung-3 verb: same `<faction> <x> <y>` shape as `cultivate`, because a Field — like a
+    /// tended patch and unlike a herd — **is a place**.
+    #[test]
+    fn parse_sow_command() {
+        assert_eq!(
+            parse_command_line("sow 0 7 3").unwrap(),
+            CommandPayload::Sow {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        // Both coordinates are required.
+        assert!(matches!(
+            parse_command_line("sow 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
     }

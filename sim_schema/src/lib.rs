@@ -531,8 +531,8 @@ pub struct HerdState {
 
 /// Authoritative mirror of a live depletable forage patch (`ForageRegistry`), round-tripped through
 /// the rollback snapshot so a rollback rewinds patch biomass / phase — the forage counterpart of
-/// `HerdState`. Reuses the shared `EcologyState` (biomass / carrying_capacity / phase); `progress`
-/// and `owner` stay `0.0` / `None` in Phase 0 (cultivation is a later intensification slice). The
+/// `HerdState`. Reuses the shared `EcologyState` (biomass / carrying_capacity / phase), whose
+/// `progress` / `owner` carry the patch's **cultivation** meter (rung 2) and its tending faction. The
 /// `(x, y)` tile key is the patch's location.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ForageState {
@@ -540,6 +540,13 @@ pub struct ForageState {
     pub x: u32,
     #[serde(default)]
     pub y: u32,
+    /// **Field**-build progress `0..1` accrued under the `Sow` policy (`1.0` = a sown Field, the
+    /// plant ladder's rung 3). Its own field rather than a second `EcologyState.progress`, exactly as
+    /// `HerdState.corral_progress` sits beside the herd's `ecology.progress` (domestication): a source
+    /// on a two-investment branch carries **two** meters, one per rung. Persisted so a rollback
+    /// rewinds a half-sown field rather than losing the investment.
+    #[serde(default)]
+    pub field_progress: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
