@@ -1051,6 +1051,8 @@ fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
         herd.pen_radius = 2;
         herd.pen_extend_progress = 0.5;
         herd.pen_extending = true;
+        // A lush pasture share left over from being penned — must not survive going mobile.
+        herd.pen_pasture_fraction = 1.0;
     }
 
     // No keeper: the grace turn is consumed, then the herd breaks out.
@@ -1063,6 +1065,10 @@ fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
     );
     assert!(!herd.pen_extending, "its in-flight extension is cancelled");
     assert_eq!(herd.pen_extend_progress, 0.0, "with zero ring progress");
+    assert_eq!(
+        herd.pen_pasture_fraction, 0.0,
+        "and the stale penned pasture share is cleared (the wire's '0.0 when unpenned' contract)"
+    );
 
     // Re-corralling comes back at radius 0 — the old fence is NOT inherited for free.
     corral_herd(&mut app, &id);

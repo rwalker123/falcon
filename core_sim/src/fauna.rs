@@ -1904,6 +1904,13 @@ pub fn advance_husbandry(
                     herd.pen_radius = 0;
                     herd.pen_extend_progress = 0.0;
                     herd.pen_extending = false;
+                    // Also clear the last penned pasture share: it is written only in the corral-tend
+                    // branch (never for a mobile herd), so without this the escaped herd would keep its
+                    // last value (~1.0 on lush pasture) and the wire would re-export it, violating the
+                    // "0.0 for an unpenned herd" contract on `penPastureFraction`. (`footprint_intake`
+                    // needs no reset — it is recomputed for every herd each turn in `advance_herd_grazing`
+                    // and is not on the wire.)
+                    herd.pen_pasture_fraction = 0.0;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",
