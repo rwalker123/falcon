@@ -169,7 +169,7 @@ func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var is_hunt := kind == "game_trail"
-	var icon := FoodIcons.for_site(module_key, is_hunt)
+	var icon := FoodIcons.for_site(module_key, is_hunt, int(site.get("terrain_id", -1)))
 	if _view._food_harvest_active(x, y):
 		_view.draw_arc(icon_center, radius * _view.FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), _view.FOOD_HARVEST_RING_WIDTH)
 	_view._draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)

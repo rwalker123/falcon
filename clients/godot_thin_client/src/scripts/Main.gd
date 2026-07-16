@@ -234,9 +234,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.has("grid"):
         _hud_invoke("set_grid_dimensions", [snapshot["grid"]])
     if snapshot.has("food_modules"):
-        # The HUD needs the tile→food-module map to lead each Current-actions Forage row with the
-        # SAME resource glyph the map draws on that tile. Same array MapView ingests.
-        _hud_invoke("update_food_modules", [snapshot["food_modules"]])
+        # Forward MapView's ingested food sites (each stamped with terrain_id) rather than the raw wire
+        # array, so the HUD Forage-row glyph resolves the SAME terrain-aware icon the map marker draws
+        # (riverine_delta splits fish↔reeds by terrain — see FoodIcons). display_snapshot ran above.
+        var food_sites: Variant = map_view.food_sites if map_view != null else snapshot["food_modules"]
+        _hud_invoke("update_food_modules", [food_sites])
     if snapshot.has("herds"):
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.

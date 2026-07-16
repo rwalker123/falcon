@@ -1696,12 +1696,15 @@ func _find_world_herd(herd_id: String) -> Dictionary:
             return herd
     return {}
 
-## The world's food modules captured each snapshot (Main forwards the snapshot `food_modules` key,
-## the same array `MapView` ingests into `food_site_lookup`). Keyed by tile so a forage assignment's
-## `target_x/target_y` resolves to the module the map draws there — that's how a Current-actions
-## Forage row shows the SAME resource glyph as the map marker (`FoodIcons.for_site`).
+## The world's food modules captured each snapshot (Main forwards MapView's ingested food sites —
+## the same dicts in `MapView.food_site_lookup`, each stamped with `terrain_id`). Keyed by tile so a
+## forage assignment's `target_x/target_y` resolves to the module the map draws there — that's how a
+## Current-actions Forage row shows the SAME resource glyph as the map marker (`FoodIcons.for_site`,
+## including the riverine_delta fish↔reeds split that reads the stamped `terrain_id`).
 var _food_module_by_tile: Dictionary = {}
 
+## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
+## the Forage row reads, so its glyph matches the map marker (riverine split included).
 func update_food_modules(modules_variant: Variant) -> void:
     if not (modules_variant is Array):
         return
@@ -1729,7 +1732,7 @@ func _food_module_icon(x: int, y: int) -> String:
         return ""
     var module_key := String((site as Dictionary).get("module", ""))
     var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
-    return FoodIcons.for_site(module_key, is_hunt)
+    return FoodIcons.for_site(module_key, is_hunt, int((site as Dictionary).get("terrain_id", -1)))
 
 ## The band's current tile (col,row), reading the raw cohort `current_x/y` (snapshot entries) or the
 ## MapView marker's `pos` fallback; (-1,-1) when unknown.

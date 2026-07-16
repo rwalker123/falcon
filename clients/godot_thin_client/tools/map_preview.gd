@@ -281,6 +281,16 @@ const RIVER_DIR_OFFSETS := [
 	[0, 1, -1],   # 5 NE
 ]
 
+# State "riverine split" — proof of the terrain-aware riverine_delta food glyph (FoodIcons.for_site).
+# Two riverine_delta food sites in one frame on DIFFERENT terrains: an open navigable river (37 → 🐟)
+# and a dry alluvial-plain floodplain (10 → 🎋), so the fish↔reeds split reads side by side. MapView
+# stamps each site's terrain_id, which the map marker (and the HUD Forage row) resolve through for_site.
+const RIVERINE_NAV_TERRAIN_ID := 37    # navigable_river → real open water → 🐟
+const RIVERINE_LAND_TERRAIN_ID := 10   # alluvial_plain → dry floodplain LAND → 🎋
+const RIVERINE_FISH_X := 6             # column of the open-water (fish) site
+const RIVERINE_REED_X := 10            # column of the dry-floodplain (reed) site
+const RIVERINE_SITE_Y := 6            # shared row so both markers sit at the same height, easy to compare
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -428,6 +438,19 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_mixed_hex")
+
+	# State "riverine split" — the terrain-aware riverine_delta food glyph. Two riverine_delta food
+	# sites on different terrains in one frame: the LEFT marker sits on an open navigable river (🐟),
+	# the RIGHT marker on a dry alluvial-plain floodplain (🎋). Proof that FoodIcons.for_site splits
+	# fish↔reeds off the terrain MapView stamps onto each site (so the map marker + HUD row can't disagree).
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_riverine_split())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_riverine_split")
 
 	# State I — far-zoom level-of-detail: a large grid makes fitted hexes tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS), so secondary edge icons + count/overflow chips are suppressed — only
@@ -1259,6 +1282,23 @@ func _snapshot_stack(n: int) -> Dictionary:
 		"overlays": {"terrain": _terrain_array()},
 		"populations": bands,
 		"herds": [],
+	}
+
+## Two riverine_delta food sites on different terrains — an open navigable river (🐟) and a dry
+## alluvial-plain floodplain (🎋) — so the terrain-aware FoodIcons.for_site split reads side by side.
+func _snapshot_riverine_split() -> Dictionary:
+	var terrain := _terrain_array()
+	terrain[RIVERINE_SITE_Y * GRID_W + RIVERINE_FISH_X] = RIVERINE_NAV_TERRAIN_ID
+	terrain[RIVERINE_SITE_Y * GRID_W + RIVERINE_REED_X] = RIVERINE_LAND_TERRAIN_ID
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [],
+		"herds": [],
+		"food_modules": [
+			{"x": RIVERINE_FISH_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
+			{"x": RIVERINE_REED_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
+		],
 	}
 
 ## One band sharing (BAND_X, BAND_Y) with 1 herd + 1 food site + 3 wonders → 3 edge slots + `+2` chip.
