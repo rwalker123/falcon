@@ -1,5 +1,24 @@
 # Plan: Intensification — Resource Depletion → Domestication → Agriculture
 
+> **⚠ PARTIALLY SUPERSEDED — read `docs/plan_intensification_ladder.md` first.**
+> This doc remains authoritative for the **content/pressure** arc: forage depletion + parity (§§1–2),
+> the yield-vector (§5), the carrying-capacity thesis (§6), and the Phase-0 persistence work.
+> Its **interaction and knowledge model is superseded** by the ladder doc (see that doc's §0a for the
+> full rulings):
+> - **§4b's ladder and the animal path (~§"Sustain-hunt → accrue Domestication *and* Herding")** —
+>   Sustain now teaches knowledge **only**; a direct, Cultivate-shaped **`Tame`** verb fills the taming
+>   meter. The animal **`domesticate` early-claim is removed**, mirroring the plant early-claim this doc
+>   already removed for the same reason.
+> - **"Herding gates only corralling; mobile domestication stays ungated"** — replaced by one knowledge
+>   per transition: **Herding** gates `Tame`, a new **Penning** gates `Corral`.
+> - **Naming:** "Seed Germination" → **Seed Selection** (knowledge) + **Field** (rung), per the manual.
+>   Rung 4 "Husbandry" → **Selective Breeding** (`husbandry` already names the whole animal subsystem).
+> - **The corral flat-rate tuning** (self-described "a stopgap") is **stale** — resolved by grazing 2d.
+>
+> **Upheld, not superseded:** this doc's *product asymmetry* thesis (mobile livestock vs fixed patch =
+> the sedentarization pull). The ladder unifies the **grammar**, not the product: rung 2 stays mobile
+> (pastoral) vs rooted (tended patch); rung 3 pins both (Pen, Field) — which is when you settle.
+
 Status: **Design draft, not yet implemented.** The authoritative spec for how a nomadic band is
 pushed — mechanically, never by a scripted gate — from foraging/hunting into **cultivation and
 pastoralism**, and thence toward settlement. It completes the Neolithic transition the game half-has

@@ -1,14 +1,68 @@
 # Unified Intensification Ladder — One Grammar for Plants and Animals
 
-**Status:** design, pre-implementation. The **next arc after grazing 2d** (pen economy). Manual-first
-when built (new player-facing gameplay grammar). Sits on top of the 2d pen economy and the
-[[grazing-foundation]] two-food-web model.
+**Status:** **arc open** (branch `worktree-intensification-ladder`). Follows grazing 2d (pen economy,
+PR #127, merged). Manual section landed in
+`shadow_scale_strategy_game_concept_technical_plan_v_0.md` §2a ("The Intensification Ladder").
+Sits on the 2d pen economy and the `docs/plan_grazing_foundation.md` two-food-web model.
 
-**Relationship to `docs/plan_intensification.md`:** that doc owns the *content* arc
-(depletion → domestication → agriculture — making forage depletable and transposing husbandry to
-plants). **This doc refines its *interaction and knowledge model*** — how the player drives
-intensification and how the tech unlocks. A reconciliation pass against `plan_intensification.md` is
-required when this arc starts (flagged in §8).
+**Scope decision:** **full symmetry** — this arc builds the plant rung 3 (**Field**/`Sow`) as well as
+the animal rework, so both ladders ship complete. (`plan_intensification.md` deferred "plant crops on
+arbitrary tiles" to "the next arc" — this is that arc.)
+
+## 0. What is already shipped (recon, 2026-07-16) — read before planning work
+
+The arc is **smaller than it looks**: it largely *finishes a correction the plant side already made*.
+
+- **Practice-earns-knowledge is SHIPPED for rung 1, on both tracks.** Sustain-forage on a Thriving
+  patch earns **Cultivation** (`CULTIVATION_DISCOVERY_ID = 2003`, `forage.rs:71`); Sustain-hunt on a
+  Thriving herd earns **Herding** (`HERDING_DISCOVERY_ID = 2004`, `fauna.rs:60`) —
+  `systems/labor.rs:131-135` and `:417-425`. Neither is start-granted (deliberate, `forage.rs:65-68`).
+  Levers: `knowledge_progress_per_turn` 0.05 / `knowledge_completion_threshold` 1.0 (~20 turns) in both
+  `labor_config.rs:150-153` and `fauna_config.rs:451-454`. **We extend this to rung 2; we do not build it.**
+- **The plant side already de-conflated Sustain.** `plan_intensification.md:109`: "*Sustain no longer
+  tames anything. It only teaches the faction Cultivation knowledge*", and `:107-108` removed the plant
+  early-claim ("*it existed to skip the investment*"). `Cultivate` is already the direct, gated,
+  Cultivate-shaped investment verb (`components.rs:971-982`, `server.rs:1569-1614`, `forage.rs:145-166`).
+- **The animal side is the laggard — that is this arc's core fix.** `systems/labor.rs:417-425` still has
+  ONE Sustain branch advancing **both** Herding knowledge **and** `accrue_domestication` (the §4.1
+  conflation), and `domesticate` is still an **early-claim at `claim_threshold` 0.6**
+  (`fauna_config.rs:416`) — the exact twin of the plant claim already removed. So: **apply the plant
+  side's own correction to animals.**
+- **Plant rung 3 does not exist.** Only forage → tended is built (grep: no `sow`/`germination`/
+  `plant_crop` gameplay hits). In scope per the decision above.
+- **No shared knowledge-gate helper** — the check is inlined 5× as `get_progress(faction, ID) >=
+  threshold` (`labor.rs:194-196`, `:436-437`; `server.rs:1604-1605`, `:1647`, `:2737-2738`). A gate
+  helper is the natural DRY seam for this arc.
+
+## 0a. Reconciliation with `docs/plan_intensification.md` — the rulings
+
+That doc owns the *content/pressure* arc (forage depletion, carrying capacity, sedentarization
+plumbing, the yield-vector). **This doc owns the interaction + knowledge model.** Rulings:
+
+| Topic | Ruling |
+|---|---|
+| Its animal path (`:161-169`) — "Sustain-hunt → accrue Domestication *and* Herding" | **Superseded.** Sustain teaches knowledge only; `Tame` fills the taming meter (§2, §4.1). |
+| Its "**Herding gates only corralling**; mobile domestication stays **ungated**" (`:168-169`) | **Superseded.** One knowledge per transition: Herding gates `Tame`; **Penning** gates `Corral` (§4.3). |
+| The animal `domesticate` early-claim (`claim_threshold` 0.6) | **Removed**, mirroring the plant early-claim it already removed for the same stated reason. |
+| Its "preserve the **product asymmetry** — mobile livestock vs fixed patch; the asymmetry *is* the sedentarization pull" (`:133-140`) | **Upheld — no conflict.** This doc unifies the **grammar** (how you drive a rung), not the **product**. Rung 2 stays asymmetric: pastoral is *mobile* (nomadism keeps working), a tended patch is *a place*. Rung 3 pins **both** (Field, Pen) — which is exactly when you sedentarize. The ladder now *tells* that story rather than eroding it. |
+| Its plant rung names — "Seed Germination" (`:152-159`) | **Superseded by the manual's vocabulary:** **Seed Selection** (knowledge) → **Field** (rung). See §2a. |
+| Its rung-4 name "**Husbandry**" (`:262`) | **Rejected — name collision.** `husbandry` already names the whole animal subsystem in code (`HusbandryConfig`, `advance_husbandry`, `husbandry_ceiling`). Rung 4 is **Selective Breeding**. |
+| Its corral flat-rate tuning (`:296-301`, self-described "a stopgap") | **Stale — already resolved** upstream by grazing 2d. |
+| Its §§1-2 (depletion, forage parity), §5 (yield vector), §6 (carrying capacity), Phase-0 persistence | **Untouched and complementary.** |
+
+## 2a. Settled vocabulary
+
+Player-facing names come from the **manual** (authoritative), which already had most of them
+("*Farming path: tending patches → seed selection → fields*" / "*Pastoral path: herd growth + corrals*").
+
+| | rung 1 | rung 2 | rung 3 | rung 4 (future) |
+|---|---|---|---|---|
+| **Plants** | wild forage patch | **Tended Patch** — verb `Cultivate` *(shipped)*, knowledge **Cultivation** *(2003, shipped)* | **Field** — verb **`Sow`** *(new)*, knowledge **Seed Selection** *(new, id 2005)* | *(irrigation / rotation — unnamed)* |
+| **Animals** | wild herd | **Pastoral** herd — verb **`Tame`** *(new; replaces the `domesticate` early-claim)*, knowledge **Herding** *(2004, shipped)* | **Pen** (manual: "corrals") — verb `Corral` *(shipped)*, knowledge **Penning** *(new, id 2006)* | **Selective Breeding** |
+
+Next free discovery id is **2005** (existing: `nomadic_wayfinding` 2001, `portable_forge` 2002,
+`cultivation` 2003, `herding` 2004). New ids need a `data/start_profile_knowledge_tags.json` mapping and
+must **not** appear in any start profile's `starting_knowledge_tags` (nothing is start-granted).
 
 ---
 
@@ -167,19 +221,28 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
 
 ---
 
-## 8. Slice plan (rough — sequence when the arc opens)
+## 8. Slice plan
 
-1. **Reconcile with `plan_intensification.md`** and draft the manual section (manual-first). Settle the
-   rung/knowledge names across both food webs.
-2. **The rung engine + ladder config** — extract today's bespoke pastoral/pen (and cultivate) logic
-   into the generic engine driven by `intensification_ladder.json`; define the primitive enums. This is
-   the load-bearing refactor; land it behavior-preserving first (same rungs, now data), then …
-3. **Tame verb + worker-driven pastoral + proximity** — the animal rung-2 rework (retire passive-free,
-   add the direct verb, the drift-to-owner movement primitive).
-4. **The knowledge pattern** — practice-earns-next-knowledge wiring on both tracks; the two-meter UI
-   split (the root UX fix); the gate reshuffle.
-5. **Plant parity** — confirm forage → tended → farm rides the same engine/verbs/knowledge grammar.
-6. **Parked ideas** as follow-on config rungs (secondary products, selective breeding).
+- [x] **1 — Manual-first + reconciliation.** Manual §2a "The Intensification Ladder" landed (and the
+  stale Wildlife & Hunting verb/policy list corrected); §0a rulings and §2a vocabulary settled.
+- [ ] **2 — The rung engine + ladder config.** Extract today's bespoke rung logic into a generic engine
+  driven by `intensification_ladder.json`; define the behavior primitive enums (§5). **Land it
+  behavior-preserving first** (same rungs, same numbers, now data) so the refactor is separable from the
+  design change. Fold in the **shared knowledge-gate helper** (retires the 5 inlined
+  `get_progress(..) >= threshold` checks, §0). The load-bearing slice.
+- [ ] **3 — Tame verb + worker-driven pastoral + proximity (animals).** Split the conflated Sustain
+  branch (`labor.rs:417-425`): Sustain teaches **Herding** only; the new `Tame` verb fills
+  `domestication_progress`. **Remove the `domesticate` early-claim** (`claim_threshold`). Retire
+  passive-free pastoral → worker-driven-but-efficient. Add the `drift_to_owner` movement primitive.
+- [ ] **4 — The knowledge pattern, rung 2.** Practicing rung 2 earns the rung-3 knowledge: `Tame` earns
+  **Penning** (2006), `Cultivate` earns **Seed Selection** (2005). Gate reshuffle (§4.3). The
+  **two-meter UI split** (faction knowledge vs per-source progress — the root UX fix, §4.1). Only
+  stewardship policies teach (§4.2).
+- [ ] **5 — Plant rung 3: Field + `Sow`.** New gameplay (not just parity): sow a **Field** on a chosen
+  tile — a food source where none existed — gated on **Seed Selection**, riding the engine from slice 2.
+  The animal twin of "place a source where you want it" is the Pen, so this completes the symmetry.
+- [ ] **6 — Client.** Both new verbs + the two-meter split + the ladder readouts; ui_preview-verified.
+- [ ] Parked (§6) as follow-on config rungs: secondary products, reliability, Selective Breeding (rung 4).
 
 ---
 
