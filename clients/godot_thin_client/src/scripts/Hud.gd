@@ -24,7 +24,10 @@ signal move_band_requested(payload: Dictionary)
 signal send_expedition_requested(payload: Dictionary)
 ## Hunting expedition (docs/plan_exploration_and_sites.md §2b). Sent after the player outfits a party
 ## on a resident band and clicks a target herd. Payload keys: { faction, band, party_workers,
-## fauna_id }. Main formats the `send_hunt_expedition …` command.
+## fauna_id, fauna_label }. `fauna_id` is the DATABASE KEY the command line addresses the herd with;
+## `fauna_label` is its player-facing species name (via `_herd_display_name`), which is what the
+## command-feed note must read — a feed line naming `game_deer_07` is a key leaking into the game UI.
+## Main formats the `send_hunt_expedition …` command.
 signal send_hunt_expedition_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
@@ -3189,6 +3192,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 "band": int(band.get("entity", -1)),
                 "party_workers": _hunt_assign_count,
                 "fauna_id": herd_id,
+                "fauna_label": _herd_display_name(herd),
                 "policy": _hunt_assign_policy if _hunt_assign_policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
             }))
     else:
@@ -3735,6 +3739,7 @@ func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
         "band": int(band.get("entity", -1)),
         "party_workers": int(_pending_send_hunt_expedition.get("party_workers", 0)),
         "fauna_id": fauna_id,
+        "fauna_label": _herd_display_name(herd),
         "policy": String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY)),
     })
     _pending_send_hunt_expedition = {}
@@ -4283,12 +4288,10 @@ func _build_herd_row(herd: Dictionary) -> Button:
     var glyph := FoodIcons.for_herd(label)
     var name_text := String(herd.get("species", label))
     row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
-    # The fauna id as a DIM meta suffix (the roster's existing muted-ink convention, same label the
-    # size class uses). It appears nowhere else in the UI and it is the handle the command feed
-    # names, so it must survive the `Herd: Red Deer (game_deer_07)` row's removal — as secondary
-    # text beside the name, not as a detail row restating it.
-    if herd_id != "":
-        row.add_child(_roster_meta_label(herd_id))
+    # The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
+    # code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
+    # `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
+    # shows the two things a player can act on — the species and its size class.
     var size_class := String(herd.get("size_class", "")).strip_edges()
     if size_class != "":
         row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))

@@ -1373,17 +1373,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
-  activity glyph; a **wildlife** row also carries the **fauna id** as a dim meta suffix
-  (`🦌 Red Deer   game_deer_07   Big game`). **A detail row never restates what its
+  activity glyph; a **wildlife** row reads **species + size class** and nothing else
+  (`🦌 Red Deer   Big game`). **A detail row never restates what its
   roster row already shows** (the same rule the Band/City panel header follows). The roster
-  row IS the identity line — name + size (+ the herd's fauna id) — so every drawer dropped
+  row IS the identity line — name + size — so every drawer dropped
   the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species` / `Size`
   (the name appeared three times, the size twice); expedition → `Unit` + `Party` (`Party`
-  printed the same `size` field the row's meta shows). The herd's **fauna id moved INTO the
-  row** as a dim meta — it appears nowhere else in the UI and the command feed names herds
-  by it, so it had to survive the `Herd:` row; nothing else was load-bearing (an expedition
-  rides `_roster_units`, so `_build_band_row` already prints the very `id` its `Unit` line
-  did). What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
+  printed the same `size` field the row's meta shows). **THE FAUNA ID IS A DATABASE KEY AND IS
+  NEVER RENDERED** (`game_fowl_27` means nothing to a player and crowded out the two things that
+  do). It briefly rode the row as a dim meta on the theory that the command feed named herds by
+  it — the right fix was to stop the FEED leaking it (`Main._on_hud_send_hunt_expedition` now
+  notes `fauna_label`, the species, while the command line keeps `fauna_id`), not to teach the
+  player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
+  `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
+  (`_herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
+  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
   Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
   Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
   Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
