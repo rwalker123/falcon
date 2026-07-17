@@ -214,6 +214,53 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
 - [x] Formalize the scripting manifest contract: publish JSON schema, add lint/validation tooling against `CapabilitySpec`, document host runtime checks, and sync manual/architecture references (Owner: TBD, Estimate: 2d; Deps: capability registry finalized). _Status_: Schema emitted to `docs/scripting_manifest.schema.json`, `cargo xtask validate-manifests` enforces shape + capability coverage, and docs/manual sections reference the contract + runtime checks.
 - [ ] Decide and document the distribution model for inspector scripts/mods (signed bundles vs Workshop-style feeds), outline load/unload flows, and sync the plan between `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §Next Steps (Frontend) and `docs/architecture.md` Shared Scripting Capability Model (Owner: TBD, Estimate: 2d; Deps: stakeholder interviews, packaging spike).
 
+## Core Simulation — Bugs
+
+- [ ] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** Strongly evidenced,
+  **not yet proven end-to-end** — verify through a real snapshot round-trip before fixing.
+  **The mechanism:** `tended_this_turn` (and the pen's `corralled_tended_this_turn`) are **transient**,
+  and the restore path seeds them `false` (`forage.rs:377`, `fauna.rs:850`). The maintenance writer that
+  spares a source from decay is gated on `is_managed()` (`labor.rs:233`). So on the first Logistics pass
+  after a restore:
+  - **Tended patch / Field** — decays one tick → `is_cultivated()` flips false → the `is_managed()` gate
+    **never re-fires** → the improvement is lost *even with a band working it every turn*, bleeding to 0
+    over ~100 turns.
+  - **Pen** — worse: `advance_husbandry` doesn't decay an untended pen, it **escapes** it outright
+    (`corralled_at = None`, `pen_radius` zeroed) — the full ~25-turn rebuild *plus* every ExtendPen ring.
+  **Pre-existing** — the pre-slice-7 managed branch used the identical `is_managed()` predicate; the
+  intensification arc only surfaced it (a probe accidentally constructed the rollback state and
+  "proved" a bug that turns out to be real only *after* a restore).
+  **Minimal fix:** have the restore path seed the flag `true` — a one-turn grace, exactly the precedent
+  `corral_at` already sets (`fauna.rs:502`). **Add a regression test that survives a real
+  capture→restore→advance cycle**, since that's the only thing that would have caught this.
+  (Owner: TBD, Estimate: 0.5d; Deps: none.)
+
+- [ ] **Hunting expeditions never say a hunter is idle — and party size means opposite things per
+  policy.** Playtest: 1 worker → 6 turns/4 food, 2 → 11/8, 3 → 16/12. Adding hunters didn't hunt faster,
+  it just made the trip longer. **Not a bug — the model is right and the UI is silent.**
+  `expedition_take_biomass` (`expeditions.rs:650-666`) is `min(workers × per_worker_biomass_capacity,
+  policy_ceiling)`, so throughput *does* scale with the party; it just wasn't binding:
+  - **Sustain** → ceiling = the herd's MSY (`hunt_policy_ceiling`, a *herd* property). The measured herd's
+    MSY was **40.0 biomass — exactly one hunter's throughput** (`per_worker_biomass_capacity` 40), a live
+    coincidence of tuning (K is dynamic), so hunter #2 was idle *by construction* and only grew the pack
+    (`workers × hunt.per_worker_carry` 4.0) → a longer trip at the same rate.
+  - **Surplus/Market** → the expedition ceiling is **stock headroom to the Allee floor** (`0.15·K`, via
+    `hunt_expedition_floor:621-637`) — **not** the resident band's `MSY × surplus_multiplier`; the two
+    paths deliberately disagree (documented `expeditions.rs:568-572`). So the *hunters* bind: rate scales
+    linearly and **trip length stays flat** (bag and rate both ×N) until the stock is stripped, then the
+    party crawls on the regrowth trickle. (That regime change is why the forecast simulates instead of
+    dividing — see the 4-workers-on-a-rabbit-warren note at `expeditions.rs:879-891`.)
+  So the same slider is *dead weight* on one policy and *the main lever* on another, and nothing says so.
+  **Scope:** there is **no max-useful-workers concept in the expedition path at all** —
+  `workers_needed_for_take` (`expeditions.rs:552-560`) exists but every caller is in-place labor
+  (`labor.rs`, `fauna::forecast_source_yield`); `HuntTripForecast` carries only `turns_to_fill` /
+  `delivers_food` / `first_turn_provisions`. Add it as a field on `HuntTripForecast`, populated in
+  `simulate_hunt_trip` from the `expedition_take_biomass` result the sim already computes, exported
+  beside `turns_to_fill` in `HuntTripEstimateState` (the outfit UI is a pure lookup by design — see
+  `native/src/lib.rs:4117`, "Band = flow arithmetic; expedition = lookup"). Then surface *why* a hunter
+  is idle, and that Surplus is the answer to "more food, faster — at the herd's expense".
+  (Owner: TBD, Estimate: 1d; Deps: none.)
+
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
