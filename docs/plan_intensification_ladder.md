@@ -94,7 +94,23 @@ Both food webs climb the same shape (3 shipped rungs + a 4th deepening the maste
 | 1 — wild | forage patch | wild herd | nothing — take what's there |
 | 2 — tended/tamed | tended patch | pastoral herd | you *manage the wild source in place* |
 | 3 — placed | **Field** — sown on *already food-bearing* ground | corralled **Pen** | you control its *reproduction* **and its location** |
-| 4 — mastery *(future)* | **Worked Land** — make unwilling ground farmable | **Selective Breeding** — better stock | you stop being limited by *where* / by *what* |
+| 4 — mastery *(future)* | **Worked Land** — irrigate/clear, and unwilling ground takes seed | **Fodder / Hay** — grow the feed, and the pen stops depending on its tile · *(**Selective Breeding** — better stock — is a separate rung-4 escape: *what*, not *where*)* | you stop being limited by *where* (both webs) / by *what* (animals) |
+
+**The land decides; the rung only multiplies.** A pen's `K` is **its footprint's graze flow ÷ fodder** (2d);
+`r` is the rung's (pen = 3× wild); the pulse is `body_mass ÷ (r·K/4)`. **Both terms matter, and the land
+is the one that can go to zero.** A cattle pen on an alpine mountain grows nothing: `K` collapses,
+`pasture_fraction` → 0 so you pay the *full* larder bill every turn, and the herd starves to the
+extinction floor — the pen makes it *worse*, because now you're feeding it too. So "pens are steady" is
+**false as stated**: a pen on good land slaughters continuously, a pen on poor land pulses, a pen on dead
+land is a hole you pour food into. (This doc has repeatedly mistaken a measurement taken on good pasture
+for a property of pens. It isn't one.)
+
+**Rung 4 is where the two food webs finally couple.** They have been strictly parallel since 2b — human
+`ForagePatch` vs animal `GrazePatch`, two stocks that never touch. **Fodder is the moment your fields feed
+your herds**: the pen's ceiling stops coming from its tile and starts coming from your farming. That is
+mixed farming, it is historically the step that let livestock leave the pasture, and it is a far bigger
+deal than a rung-4 stat bump — it makes the plant ladder a *prerequisite* for the animal one's top rung.
+Design it as a coupling, not as a lever.
 
 Every rung-transition is a **Cultivate-shaped verb**: pick it → **lower** yield while you work (the
 gentle-policy cost) → **per-source build meter** climbs → decays if you abandon it → on completion the
