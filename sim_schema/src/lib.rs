@@ -312,6 +312,13 @@ pub struct HerdTelemetryState {
     /// (append-only). `0` if unknown.
     #[serde(default)]
     pub body_mass: f32,
+    /// **One whole animal's worth of yield, in provisions** (`SourceYieldForecast::body_mass_yield` =
+    /// `body_mass × provisions_per_biomass`, the same conversion every other yield field uses). The
+    /// client's kill-rhythm is `food_per_animal / sustainable_yield` — both provisions, dimensionally
+    /// clean — and it doubles as a "a mammoth is ~16 food" display. Appended last (append-only). `0` if
+    /// unknown.
+    #[serde(default)]
+    pub food_per_animal: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -351,6 +358,7 @@ impl Default for HerdTelemetryState {
             pen_extend_progress: 0.0,
             husbandry_ceiling: String::new(),
             body_mass: 0.0,
+            food_per_animal: 0.0,
         }
     }
 }
@@ -3551,6 +3559,8 @@ fn create_herds<'a>(
                 husbandryCeiling: Some(husbandry_ceiling),
                 // Body mass (slice 8b) — appended last (append-only wire).
                 bodyMass: herd.body_mass,
+                // Food per animal (slice 8b) — appended last (append-only wire).
+                foodPerAnimal: herd.food_per_animal,
             },
         );
         entries.push(entry);

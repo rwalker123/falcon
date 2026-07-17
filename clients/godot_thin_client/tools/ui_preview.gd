@@ -1258,6 +1258,49 @@ func _ready() -> void:
 	await _settle()
 	await _save("terrain_legend_persist")
 
+	# ---- Hunt/husbandry render-honesty pass (intensification ladder client UX) ----------------------
+	# Fix #1 + #5 — CURRENT ACTIONS rows: the honest per-turn RATE (sustainable, not the 0.00 pulse)
+	# paired with the kill-RHYTHM from body_mass (a fast animal "≈1.3 Marsh Fowl/turn"; a big one "≈1
+	# Woolly Mammoth / 7 turns"), and the muted "· 1.9 wasted" under-crewed note on the big-game row.
+	_hud.update_herds(_hunt_rhythm_herds_fixture())
+	_hud.show_unit_selection(_hunt_actions_band_fixture())
+	await _settle()
+	await _save("hunt_actions_rhythm")
+	_hud.update_herds(_world_herds_fixture())
+
+	# Fix #2 + #1(forecast) + #6 — the LOCAL hunt compose view: the policy picker shows each rung's
+	# per-turn take so Sustain < Surplus < Market < Eradicate reads as ASCENDING, and the live preview
+	# pairs its rate with the kill-rhythm. (The stepper on a WILD herd reads "Hunters".)
+	# A compact NON-food tile so the herd drawer (not a full forage tile card) lands in-frame.
+	var picker_herd := _herd_fixture()
+	picker_herd["tile_info"] = _compact_herd_tile_fixture()
+	_hud._player_band = _band_fixture()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_policy = "sustain"
+	_hud._hunt_assign_count = 3
+	_hud.show_herd_selection(picker_herd)
+	_hud._build_herd_assign_controls(picker_herd)
+	await _settle()
+	await _save("hunt_picker_ascending")
+
+	# Fix #6 — a MANAGED (corralled) herd's local crew are HERDERS, not a hunt party: the stepper reads
+	# "Herders" so a pen whose workersNeeded scales with the herd doesn't look like a hunt-party bug.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_domesticated_herd_fixture())
+	_hud._build_herd_assign_controls(_domesticated_herd_fixture())
+	await _settle()
+	await _save("hunt_crew_herders")
+
+	# Fix #4 — LEARNING knowledge visibility: Penning at 34% (0 < value < 1) must climb WITH its % in
+	# the top-bar strip, not be absent-until-100. Seed Selection mid-climb too; Cultivation/Herding ✔.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "seed_selection": 0.6, "herding": 1.0, "penning": 0.34}])
+	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	await _save("knowledge_penning_climbing")
+	# Restore the default strip for any later frame.
+	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()
@@ -1979,6 +2022,9 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"ecology_phase": phase,
 		"x": 66, "y": 10,
 		"biomass": 820.0,
+		# One animal's worth of FOOD (provisions), `HerdTelemetryState.foodPerAnimal` — drives the
+		# kill-rhythm on the local-hunt preview (food ÷ food).
+		"food_per_animal": 2.0,
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
 		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
@@ -2138,8 +2184,39 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 ## state swaps in its own list and must restore this one.
 func _world_herds_fixture() -> Array:
 	return [
-		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed", "food_per_animal": 2.0},
 	]
+
+## Two herds a band works at once — a FAST animal (several a turn) and a BIG one (one every several
+## turns) — so the Current-actions rows can show both kill-RHYTHMs. `food_per_animal` is in PROVISIONS
+## (`HerdTelemetryState.foodPerAnimal`, the decoded key), matched to the assignment's food rate:
+## mammoth 16 food/animal ÷ 2.4 food/turn ≈ 7 turns; fowl 2.0 ÷ 2.6 ≈ 1.3/turn.
+func _hunt_rhythm_herds_fixture() -> Array:
+	return [
+		{"id": "game_fowl_01", "species": "Marsh Fowl", "x": 71, "y": 18, "food_per_animal": 2.0},
+		{"id": "game_mammoth_01", "species": "Woolly Mammoth", "x": 70, "y": 17, "food_per_animal": 16.0},
+	]
+
+## A band worked on TWO hunt sources — the render-honesty frame for the kill-RHYTHM (fix #1) and the
+## under-crewed `wastedYield` note (fix #5). Row 1 is a FAST animal (its honest per-turn rate reads as
+## several a turn); row 2 a BIG animal whose `actualYield` is 0.00 THIS turn — the "+0.00 /turn" lie
+## the row used to headline — and which is under-crewed, so the muted "· N wasted" note shows.
+func _hunt_actions_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["labor_assignments"] = [
+		# Fast: honest rate 2.60/turn, body 2.0 → 1.3 animals/turn → "≈1.3 Marsh Fowl/turn". A fast
+		# Sustain animal takes several a turn, so actual ≈ sustainable (no overdraw ⚠).
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_fowl_01", "policy": "sustain",
+			"target_x": 71, "target_y": 18, "actual_yield": 2.60, "sustainable_yield": 2.60,
+			"workers_needed": 3},
+		# Big: honest rate 2.40/turn (the sim's measured Mammoth Sustain), 16 food/animal → ceil(16/2.4)
+		# = 7 → "≈1 Woolly Mammoth / 7 turns". actual_yield 0.00 = a wait turn of the kill pulse (the old
+		# lie the row used to headline). Under-crewed → the muted "· 1.9 wasted".
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_mammoth_01", "policy": "sustain",
+			"target_x": 70, "target_y": 17, "actual_yield": 0.00, "sustainable_yield": 2.40,
+			"workers_needed": 5, "wasted_yield": 1.9},
+	]
+	return band
 
 func _herd_fixture() -> Dictionary:
 	return {
@@ -2159,6 +2236,10 @@ func _herd_fixture() -> Dictionary:
 		"carrying_capacity": 2150.0,
 		"graze_range_radius": 1,
 		"route_length": 3,
+		# One animal's worth of FOOD (provisions) — `HerdTelemetryState.foodPerAnimal`, the exact key the
+		# decoder now emits. The kill-rhythm divides it by the food rate (both provisions): 2.0
+		# food/animal vs a 0.90/turn Sustain take reads "≈1 Red Deer / 3 turns".
+		"food_per_animal": 2.0,
 		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
 		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
 		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this

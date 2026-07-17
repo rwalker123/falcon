@@ -297,6 +297,10 @@ pub(crate) fn herd_snapshot_entries(
                     .unwrap_or_default(),
                 // Body mass (slice 8b) — the client turns a per-turn rate into a kill-rhythm with it.
                 body_mass: herd.map(|herd| herd.body_mass).unwrap_or(0.0),
+                // One animal's worth of yield in provisions (slice 8b) — the rhythm's numerator
+                // (`food_per_animal / sustainable_yield`), already converted the same way every other
+                // yield field is.
+                food_per_animal: forecast.body_mass_yield,
             }
         })
         .collect()

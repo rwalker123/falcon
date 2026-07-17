@@ -1172,6 +1172,12 @@ table HerdTelemetryState {
   // rhythm ("~1 animal / N turns") from `sustainableYield` (or a `huntPolicyCeilings` row) ÷ this,
   // NOT the raw per-turn `actualYield`, which is 0 on the wait turns of the pulse. 0 if unknown.
   bodyMass:float = 0;
+  // --- Food per animal (intensification ladder slice 8b, appended last) --- one whole animal's worth
+  // of yield in PROVISIONS (`SourceYieldForecast::body_mass_yield` = body_mass × provisions_per_biomass,
+  // the same conversion every other yield field uses). The client's kill-rhythm is `foodPerAnimal /
+  // sustainableYield` — both in provisions, so dimensionally clean — and it doubles as a "a mammoth is
+  // ~16 food" display. 0 if unknown.
+  foodPerAnimal:float = 0;
 }
 
 table CommandEventState {

@@ -3278,6 +3278,17 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
+        // Body mass = the biomass of ONE animal of this species (intensification ladder slice 8b). A
+        // real appended wire field (was being dropped — decoder audit), surfaced for completeness /
+        // future "N animals" readouts. NOTE: it is BIOMASS, so it CANNOT drive the kill-rhythm — that
+        // divides a FOOD rate (`sustainable_yield`, provisions), and food ÷ biomass is a unit error
+        // (~50× too long at provisions_per_biomass 0.02). `food_per_animal` below is the food-unit twin.
+        let _ = dict.insert("body_mass", herd.bodyMass());
+        // Food per animal = one animal's worth of YIELD in provisions (= body_mass ×
+        // provisions_per_biomass, the sim's `SourceYieldForecast::body_mass_yield`). This is what the
+        // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
+        // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
+        let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
         array.push(&dict.to_variant());
     }
     array
@@ -4049,6 +4060,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The allocation row surfaces that as the "only N of M working" overstaffing note.
             // 0 on a rehydrated save ⇒ the note degrades to hidden, never wrong.
             let _ = entry.insert("workers_needed", assignment.workersNeeded() as i64);
+            // Provisions this source OFFERED that the crew could not collect (production − actual):
+            // the UNDERSTAFFING signal, the exact mirror of workers_needed. > 0 ⇒ the party is
+            // under-crewed for the kill (an animal too big to fully carry, or an over-abundant pulse)
+            // and food is being left standing — the allocation row surfaces it as a muted "· N.N
+            // wasted". 0 on a rehydrated save ⇒ hidden, never wrong.
+            let _ = entry.insert("wasted_yield", assignment.wastedYield() as f64);
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }

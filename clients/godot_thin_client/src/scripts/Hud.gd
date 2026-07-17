@@ -434,6 +434,8 @@ const DOMESTICATION_COMPLETE := 1.0
 # the penned badge — the herd twin of the tile card's "Cultivation N%" → "🌾 Tended Patch" row.
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const CORRAL_BUILDING_LABEL := "Building"
+# The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
+const CULTIVATION_PREPARING_LABEL := "Preparing"
 const CORRAL_GLYPH := "🐄"
 # Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
 # "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
@@ -625,6 +627,33 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
+# Kill-RHYTHM: a hunt takes WHOLE animals, so a per-turn RATE reads as a rhythm, not a smooth flow.
+# animals/turn = rate ÷ food_per_animal, and BOTH terms must be PROVISIONS: the honest rate is the
+# assignment's `sustainable_yield` (a hunt row's `actual_yield` is the quantized PULSE — 0 on wait
+# turns, a spike on kill turns — and must NEVER headline the row); `food_per_animal` is the wire's
+# `HerdTelemetryState.foodPerAnimal` (= body_mass × provisions_per_biomass, the sim's
+# `SourceYieldForecast::body_mass_yield`). Dividing the food rate by `bodyMass` (BIOMASS) would be a
+# UNIT ERROR — ~50× too long at provisions_per_biomass 0.02 — so we divide food by food instead.
+#   ≥ 1 → a fast animal, several a turn → "≈1.3 Fowl/turn" (the multiple)
+#   < 1 → a big animal, one every few turns → "≈1 Mammoth / 7 turns" (ceil(food_per_animal ÷ rate))
+const HUNT_RHYTHM_FAST_FORMAT := "≈%s %s/turn"
+const HUNT_RHYTHM_SLOW_FORMAT := "≈1 %s / %d turns"
+const HUNT_RHYTHM_SEPARATOR := " · "
+const HUNT_RHYTHM_DECIMALS := 1
+# UNDERSTAFFING (`LaborAssignment.wastedYield`): provisions the source OFFERED that the crew could not
+# collect — the party is under-crewed for the kill (an animal too big to fully carry, or an
+# over-abundant pulse) and food is left standing. Muted (INK_FAINT), the low-key mirror of the
+# WARN-amber overstaff note. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
+const WASTED_NOTE_FORMAT := " · %s wasted"
+const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party couldn't carry home. Add workers to collect it."
+# A MANAGED hunt source's crew are HERDERS, not a hunt party (`workersNeeded` = max(herders, haulers),
+# scaling with herd size). The local stepper labels them so a pen needing several keepers doesn't read
+# as a hunt-party bug. See `_is_managed_hunt_source`.
+const HUNT_CREW_LABEL := "Hunters"
+const HERD_CREW_LABEL := "Herders"
+# One policy button's per-turn take on the hunt picker, so the four extractive rungs read as ASCENDING
+# (Sustain < Surplus < Market < Eradicate). A compact second line under the policy name.
+const POLICY_TAKE_FORMAT := "%s/turn"
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
 # forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
@@ -1414,6 +1443,45 @@ func _hunt_policy_ceiling(herd: Dictionary, policy: String) -> float:
         return HUNT_RATE_UNAVAILABLE
     return float((ceilings_variant as Dictionary)[policy])
 
+## Turn a per-turn take RATE into the honest kill-RHYTHM against one animal's worth of FOOD. BOTH
+## inputs must be in the SAME unit — PROVISIONS: `rate` is `sustainable_yield` / a `hunt_policy_ceilings`
+## row (food/turn), and `food_per_animal` is the sim's `SourceYieldForecast::body_mass_yield`
+## (= body_mass × provisions_per_biomass, food per animal). Dividing food by food is dimensionless
+## (animals/turn); dividing the food rate by `body_mass` (BIOMASS) is NOT — with provisions_per_biomass
+## 0.02 it reads ~50× too long, so we never do it. "" when either input is unknown (0), so the caller
+## shows the bare rate with no rhythm (a herd whose `foodPerAnimal` the wire couldn't resolve).
+func _hunt_kill_rhythm(rate: float, food_per_animal: float, animal: String) -> String:
+    if food_per_animal <= 0.0 or rate <= 0.0:
+        return ""
+    var per_turn := rate / food_per_animal
+    if per_turn >= 1.0:
+        return HUNT_RHYTHM_FAST_FORMAT % [
+            String.num(per_turn, HUNT_RHYTHM_DECIMALS).pad_decimals(HUNT_RHYTHM_DECIMALS), animal]
+    return HUNT_RHYTHM_SLOW_FORMAT % [animal, int(ceil(food_per_animal / rate))]
+
+## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
+## fully tamed (pastoral), or being penned under the composed Corral policy. `workersNeeded` on such a
+## source scales with the HERD (max herders, haulers), so the crew label must read as herders.
+func _is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
+    return bool(herd.get("corralled", false)) \
+        or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
+        or policy == LABOR_POLICY_CORRAL
+
+## Each hunt policy's per-turn BAND take (provisions/turn), keyed policy → display string, for the
+## picker's ascending readout. Read straight off the herd's sim-exported `hunt_policy_ceilings` — never
+## re-derived. Empty when the herd carries no ceilings (older snapshot / non-huntable).
+func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
+    var takes := {}
+    var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
+    if not (ceilings_variant is Dictionary):
+        return takes
+    for policy in (ceilings_variant as Dictionary):
+        var rate := float((ceilings_variant as Dictionary)[policy])
+        if rate < 0.0:
+            continue
+        takes[String(policy)] = POLICY_TAKE_FORMAT % _format_signed(rate)
+    return takes
+
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
 ## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its
 ## `output_multiplier` (morale/discontent productivity) at payout, so the preview is the take rate
@@ -1430,11 +1498,18 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
     var actual := rate * output
     var sustainable := sustain_ceiling * output
     var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
+    # Pair the per-turn rate with the honest kill-RHYTHM so a big animal reads "one every N turns"
+    # rather than a smooth flow that never quite arrives. `food_per_animal` (provisions) keeps the
+    # division dimensionless; 0/unknown → no suffix.
+    var rhythm := _hunt_kill_rhythm(
+        actual, float(herd.get("food_per_animal", 0.0)), _herd_display_name(herd))
+    var rhythm_suffix := HUNT_RHYTHM_SEPARATOR + rhythm if rhythm != "" else ""
     if _is_overdraw(actual, sustainable):
-        return "[color=#%s]%s %s%s[/color]" % [
-            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_HUNT_OVERDRAW_SUFFIX,
+        return "[color=#%s]%s %s%s%s[/color]" % [
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, rhythm_suffix, LOCAL_HUNT_OVERDRAW_SUFFIX,
         ]
-    return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
+    return "[color=#%s]%s%s%s[/color]" % [
+        HudStyle.HEALTHY_HEX, text, rhythm_suffix, YIELD_TOOLTIP_RENEWABLE]
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
@@ -2213,6 +2288,8 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "has_yield": a.has("actual_yield"),
             # Min workers that produced this turn's take — drives the overstaffing note.
             "workers_needed": int(a.get("workers_needed", 0)),
+            # Provisions offered but not collected (under-crewed) — drives the muted "· N wasted" note.
+            "wasted_yield": float(a.get("wasted_yield", 0.0)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -2326,7 +2403,7 @@ func _policy_hint(kind: String, policy: String) -> String:
 ## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
 ## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
 ## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "") -> HBoxContainer:
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -2374,6 +2451,16 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         if row_tooltip != "":
             note_label.tooltip_text = row_tooltip
         row.add_child(note_label)
+    # Understaffing note ("· 1.7 wasted"): MUTED (INK_FAINT), the low-key mirror of the WARN overstaff
+    # note — it says "the source offered more than the crew carried home" (add workers), a softer nudge
+    # than the ecological ⚠. Fed by `wasted_yield`; tooltip carries the full explanation.
+    if muted_note != "":
+        var muted_label := Label.new()
+        muted_label.text = muted_note
+        muted_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        if row_tooltip != "":
+            muted_label.tooltip_text = row_tooltip
+        row.add_child(muted_label)
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
     var spacer := Control.new()
@@ -2450,6 +2537,8 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var label_suffix := ""
     var warn := false
     var tooltip := ""
+    # The honest per-turn rate the row headlines (and the caller derives the kill-rhythm from).
+    var rate := 0.0
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
@@ -2467,7 +2556,13 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % _format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        label_suffix = " %s" % _format_yield(actual)
+        # HEADLINE the row with the honest per-turn RATE, never the pulse. A HUNT source's
+        # `actual_yield` is the kill-credit PULSE (0 on wait turns, a spike on kill turns), so its
+        # smoothed rate is `sustainable_yield` (the herd's per-turn throughput); the pulse's overdraw
+        # is still carried by the ⚠ flag + tooltip. Forage has no pulse (actual == sustainable), so it
+        # keeps `actual`. The caller pairs a hunt headline with the kill-rhythm from `body_mass`.
+        rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        label_suffix = " %s" % _format_yield(rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -2477,7 +2572,19 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
-    return {"label_suffix": label_suffix, "warn": warn, "note": note, "tooltip": tooltip}
+    # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the
+    # party is under-crewed for the kill. A muted note (the low-key mirror of the overstaff note); the
+    # tooltip spells it out. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
+    var muted_note := ""
+    var wasted := float(m.get("wasted_yield", 0.0))
+    if wasted >= FOOD_FLOW_MIN:
+        muted_note = WASTED_NOTE_FORMAT % _format_magnitude(wasted)
+        var wasted_tip := WASTED_TOOLTIP % _format_yield(wasted)
+        tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
+    return {
+        "label_suffix": label_suffix, "warn": warn, "note": note,
+        "muted_note": muted_note, "tooltip": tooltip, "rate": rate,
+    }
 
 ## PRE-COMMIT FORECAST (the compose-time counterpart to `_source_yield_readout`'s post-hoc note).
 ## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
@@ -2784,7 +2891,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING))
+                FoodIcons.STATUS_WORKING, yld.muted_note))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -2797,9 +2904,15 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # label/species) — the panel row and the map marker read as the same animal.
             var herd_label := _herd_label_for_id(herd_id)
             var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
+            # Pair the honest per-turn rate (yld.rate = sustainable, not the pulse) with the kill-rhythm
+            # from the herd's `food_per_animal` (provisions — same unit as the rate, never the
+            # dimensionally-wrong food÷biomass division). Unknown herd → no suffix (graceful degrade).
+            var hunt_rhythm := _hunt_kill_rhythm(
+                float(yld.rate), float(_find_world_herd(herd_id).get("food_per_animal", 0.0)), herd_label)
+            var hunt_rhythm_suffix := HUNT_RHYTHM_SEPARATOR + hunt_rhythm if hunt_rhythm != "" else ""
             actions_block.add_child(_build_worker_stepper(
-                "%sHunt %s%s%s" % [
-                    hunt_icon, herd_label, yld.label_suffix,
+                "%sHunt %s%s%s%s" % [
+                    hunt_icon, herd_label, yld.label_suffix, hunt_rhythm_suffix,
                     _row_glyph_suffix(FoodIcons.for_policy(policy))],
                 workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
@@ -2809,7 +2922,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),
                 # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING))
+                FoodIcons.STATUS_WORKING, yld.muted_note))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -3023,7 +3136,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     var current := _effective_hunt_workers(band, herd_id)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
     var title := Label.new()
-    title.text = "Assign hunters" + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
+    # A MANAGED (corralled/pastoral) herd's crew are keepers, not a hunt party (fix #6) — so the title
+    # reads "Assign herders" to match the stepper's crew label below.
+    var title_noun := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
+        else HUNT_CREW_LABEL
+    title.text = "Assign %s" % title_noun.to_lower() \
+        + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     herd_assign_controls.add_child(title)
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
@@ -3098,8 +3216,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # stepping UP can turn a working trip impossible) — warn on the row itself when the next size up is.
     var stepper_tooltip := _hunt_step_up_tooltip(band, herd, _hunt_assign_policy, _hunt_assign_count) \
         if is_expedition else ""
+    # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
+    # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
+    var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
+        else HUNT_CREW_LABEL
     herd_assign_controls.add_child(_build_worker_stepper(
-        "Party" if is_expedition else "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
+        "Party" if is_expedition else crew_label, _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
             _build_herd_assign_controls(herd),
@@ -3107,9 +3229,13 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     var cap_note := String(capped["note"])
     if cap_note != "":
         herd_assign_controls.add_child(_alloc_hint_label(cap_note))
+    # Ascending per-turn takes under the LOCAL hunt picker (Sustain < Surplus < Market < Eradicate),
+    # off the herd's sim-exported ceilings. An expedition's take is a carry-cap trip, not a per-turn
+    # rate, so it gets no take line.
+    var policy_takes := {} if is_expedition else _hunt_policy_takes(herd)
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
-        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates))
+        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
     # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
@@ -3481,7 +3607,8 @@ func _build_policy_picker(
     on_pick: Callable,
     selected: String = "",
     options: Array = LABOR_HUNT_POLICIES,
-    gates: Dictionary = {}) -> VBoxContainer:
+    gates: Dictionary = {},
+    takes: Dictionary = {}) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -3493,8 +3620,11 @@ func _build_policy_picker(
         var reasons := _gate_reasons(gates, policy_key)
         var btn := Button.new()
         # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
-        # append, so a policy reads identically on the picker and on the worked tile/herd.
-        btn.text = "%s%s" % [_source_icon_prefix(icon), policy_key.capitalize()]
+        # append, so a policy reads identically on the picker and on the worked tile/herd. When the
+        # caller supplies per-policy takes (the hunt picker), a compact per-turn number rides a second
+        # line so the four extractive rungs read as ASCENDING (Sustain < Surplus < Market < Eradicate).
+        var take_line := "\n%s" % String(takes[policy_key]) if takes.has(policy_key) else ""
+        btn.text = "%s%s%s" % [_source_icon_prefix(icon), policy_key.capitalize(), take_line]
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
         btn.disabled = not reasons.is_empty()
         if btn.disabled:
@@ -5345,7 +5475,9 @@ func _husbandry_value_hex(value: String) -> String:
 func _cultivation_label(progress: float, cultivated: bool) -> String:
     if cultivated or progress >= 1.0:
         return "🌾 Tended Patch"
-    return "%d%%" % int(round(progress * 100.0))
+    # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
+    # percentage buried in the tile card was easy to miss and broke parity with the animal side.
+    return "%s %d%%" % [CULTIVATION_PREPARING_LABEL, int(round(progress * 100.0))]
 
 ## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink
 ## while it's still being cultivated. Matched on the label from `_cultivation_label`.

@@ -1830,7 +1830,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       complete on first snapshot / a rehydrated save is silent), player faction only, keyed per
       faction+track.
     - **Wire fields decoded in `native/src/lib.rs`** (snapshot + delta share `herds_to_array` /
-      `forage_patches_to_array`). **This decoder has now three times silently dropped appended fields
+      `forage_patches_to_array`). **This decoder has now FOUR times silently dropped appended fields
       — check it FIRST when a new field "arrives as zero".** `ForagePatchState`: `ceilingCultivate` /
       `tendedYield` → `patch_ceiling_cultivate` / `patch_tended_yield`, and the five slice-6a fields
       `fieldProgress` / `isField` / `ceilingSow` / `fieldYield` / `sowSiteRefusal` →
@@ -1838,9 +1838,39 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `patch_sow_site_refusal` (MapView cross-refs all onto `tile_info` with the `patch_` prefix; ALL
       are in `FOW_DISCOVERED_HIDDEN_KEYS`, mirroring their rung-2 twins). `HerdTelemetryState`:
       `ceilingCorral` / `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
-      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) →
-      bare keys on the herd dict. `IntensificationKnowledgeState`: `cultivation` / `herding` +
-      slice-4's `seedSelection` / `penning` → `seed_selection` / `penning`.
+      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
+      **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
+      completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
+      `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) → bare keys
+      on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
+      **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) → per-assignment keys
+      inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
+      slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
+      playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
+    - **The hunt row headlines the honest RATE, never the kill-credit PULSE, and pairs it with the
+      kill-RHYTHM** (`Hud._source_yield_readout` / `_hunt_kill_rhythm`, slice 8b UX): a Hunt
+      allocation row + the local-hunt preview show `sustainable_yield` (the smoothed per-turn take), not
+      `actual_yield` (0 on a wait turn, a spike on a kill turn — the "+0.00 /turn" lie), and append the
+      rhythm as `≈N.N Fowl/turn` (fast, rate ≥ 1 animal/turn) or `≈1 Mammoth / N turns`
+      (big, `ceil(food_per_animal ÷ rate)`). **The rhythm divides FOOD by FOOD** — the rate
+      (`sustainable_yield`, provisions) by **`food_per_animal`** (`HerdTelemetryState.foodPerAnimal`,
+      slot 72 = `body_mass × provisions_per_biomass` = the sim's `SourceYieldForecast::body_mass_yield`,
+      one animal's worth of yield in provisions). It must **NOT** divide by `body_mass` (BIOMASS): with
+      `provisions_per_biomass 0.02` that reads ~50× too long. A herd whose `foodPerAnimal` is 0/unknown
+      → no rhythm drawn (the honest rate still shows). The **hunt policy picker** (`_build_policy_picker(…, takes)`,
+      fed `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's per-turn take so
+      Sustain < Surplus < Market < Eradicate reads as ASCENDING. `wasted_yield > 0` renders a muted
+      "· N.N wasted" understaffing note (the low-key mirror of the WARN overstaff note). A MANAGED
+      (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
+      (`_is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
+      the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
+      row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
+    - ui_preview (slice-8b UX): `hunt_actions_rhythm` (two Current-actions Hunt rows — fast
+      `≈1.3 Marsh Fowl/turn`, big-game `≈1 Woolly Mammoth / 7 turns` + the muted `· 1.90 wasted`) /
+      `hunt_picker_ascending` (the local picker's ascending per-turn takes + the preview's
+      `+0.90 /turn · ≈1 Red Deer / 5 turns`, "Hunters" stepper on a wild herd) / `hunt_crew_herders`
+      (a corralled herd → "Herders" stepper + "Assign herders") / `knowledge_penning_climbing`
+      (Penning 34% climbing in the top strip) / `food_tile` (the "Cultivation Preparing 60%" row).
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
       `forage_cultivate_locked` (1 reason — knowledge + its Sustain-forage remedy) /
       `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
