@@ -5777,6 +5777,11 @@ mod tests {
     }
 
     /// Seed a herd standing on `coord`, optionally domesticated + owned by `owner`. Returns its id.
+    /// One test deer (slice 8). These are **command-validation** tests — they assert which verbs a
+    /// herd accepts and which rejections it names, never what a take pays — so the quantum is kept
+    /// small enough that it can never be the reason a fixture herd yields nothing.
+    const CORRAL_TEST_BODY_MASS: f32 = 1.0;
+
     fn seed_herd(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) -> String {
         use core_sim::{Herd, SizeClass};
         let mut herd = Herd::new(
@@ -5788,6 +5793,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            CORRAL_TEST_BODY_MASS,
         );
         if let Some(faction) = owner {
             herd.accrue_domestication(faction, RUNG_COMPLETE);

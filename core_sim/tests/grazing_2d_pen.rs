@@ -108,6 +108,7 @@ fn richest_pasture(app: &App) -> (UVec2, f32) {
 /// Seat a single **penned** herd at `tile` with the given fenced `radius`, wild `r` / metabolic
 /// `fodder`, spawn `carrying_capacity` and starting `biomass`. Domesticated (collapse-immune) so it is
 /// a managed population, not a wild one. Returns its id.
+#[allow(clippy::too_many_arguments)] // every knob of the pen's ecology is a lever under test
 fn seat_pen(
     app: &mut App,
     tile: UVec2,
@@ -116,6 +117,7 @@ fn seat_pen(
     r: f32,
     cap: f32,
     biomass: f32,
+    body_mass: f32,
 ) -> String {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     registry.herds.clear();
@@ -128,6 +130,7 @@ fn seat_pen(
         cap,
         fodder,
         r,
+        body_mass,
     );
     herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     assert!(herd.corral_at(tile), "the fixture species must be pennable");
@@ -228,11 +231,27 @@ fn tail_spread(series: &[f32]) -> f32 {
     }
 }
 
+/// The fixture species' per-animal body mass — a **rabbit** (2), matching the `Rabbit Warren` display
+/// name and the `r = 0.35` these fixtures use. The pen quantises to whole animals like every other rung
+/// (slice 8), so the fixture has to declare a real one: at the pen's `r = min(0.75, 0.35 × 3) = 0.75`
+/// on `cap = 300` its MSY is ~56, i.e. ~28 rabbits a turn — the pen never has to wait, which is exactly
+/// the *emergent* steadiness `the_pen_slaughters_whole_animals_every_turn` measures across the roster.
+const PEN_BODY_MASS: f32 = 2.0;
+
 /// Run a penned herd (radius `r`, start biomass `start`) to convergence and return its settled biomass.
 fn run_pen_to_settle(radius: u32, start: f32, cap: f32, fodder: f32, wild_r: f32) -> f32 {
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, radius, fodder, wild_r, cap, start);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        radius,
+        fodder,
+        wild_r,
+        cap,
+        start,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
 
     let mut series = Vec::with_capacity(TURNS as usize);
@@ -320,7 +339,16 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     // pays. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
     for _ in 0..SETTLE_TURNS {
         run_pen_turn(&mut app, keeper);
@@ -344,7 +372,16 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     // preserved worst case. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     app.world
         .resource_mut::<GrazeRegistry>()
         .patches
@@ -418,7 +455,16 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
     // Seat a radius-0 pen at equilibrium-ish so K is stable before the extension.
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
     for _ in 0..60 {
         run_pen_turn(&mut app, keeper);

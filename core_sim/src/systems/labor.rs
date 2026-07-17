@@ -262,6 +262,8 @@ pub fn advance_labor_allocation(
                                 managed_per_worker_yield(&labor.forage, mult_f),
                                 workers,
                             ),
+                            // A managed rung-3 harvest cannot overdraw — no ⚠, whatever the policy.
+                            overdraws: false,
                         };
                         continue;
                     }
@@ -403,6 +405,10 @@ pub fn advance_labor_allocation(
                             mult_f,
                         ),
                         workers_needed,
+                        // Plants stay flow-based (slice 8), so the wild/tended gather ⚠ is unchanged:
+                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Market/Eradicate
+                        // draw the patch down.
+                        overdraws: policy.overdraws(),
                     };
                 }
                 LaborTarget::Hunt { fauna_id, policy } => {
@@ -483,6 +489,23 @@ pub fn advance_labor_allocation(
                     // player sees both halves of the trade rather than one netted number. Marks the
                     // herd tended so it doesn't escape in `advance_husbandry`. The animal mirror of
                     // the tended-patch arm in Forage.
+                    // **The standing herder cost — owed by EVERY managed rung, every turn** (slice
+                    // 8), resolved *before* the rung branches so a pastoral herd and a pen are charged
+                    // by the same rule. `herders_needed` scales with the herd (`ceil(animals /
+                    // animals_per_herder)`), retiring "a pen of 2 and a pen of 200 need one keeper".
+                    //
+                    // **It is owed on WAIT turns too.** A herd that cannot spare a whole animal this
+                    // turn still has to be watched, kept from running off, and its fences kept up — so
+                    // this is written from the assignment's head-count, never from whether a take
+                    // happened. `advance_husbandry` reads it next turn (the `pen_fed_fraction` lag) and
+                    // degrades an under-herded herd **proportionally** — never a binary escape.
+                    //
+                    // A **wild** herd writes nothing here: it isn't yours to maintain
+                    // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
+                    let herders_needed = fauna::herd_herders_needed(herd, &fauna);
+                    if herders_needed > 0 {
+                        herd.herded_fraction = fauna::herded_fraction(workers, herders_needed);
+                    }
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
                         // **The larder offset (Grazing 2d §2.3).** A penned herd grazes its fenced
@@ -531,15 +554,25 @@ pub fn advance_labor_allocation(
                         // collapses the *policy* axis (the herd is yours), never the worker cap; one
                         // keeper used to collect the whole pen however big it grew.
                         //
-                        // What they cannot carry **stays on the hoof** — an uncollected pen harvest is
-                        // not slaughtered — so the herd simply sits above its `K/2` escapement point
-                        // and pays again next turn. Escapement is stable from above, so that is a
-                        // standing surplus, not a spiral.
+                        // **And it is butchered in WHOLE ANIMALS** (slice 8 — the same
+                        // `quantise_animal_take` a wild hunt runs): you cannot slaughter half a cow
+                        // any more than you can half-kill a mammoth. A keeper who cannot haul a whole
+                        // beast still takes one and wastes the rest.
+                        //
+                        // **The pen nonetheless reads steady — emergently, not by exemption.** It
+                        // breeds at up to 3× the wild rate (`pen_gain`), so its MSY clears one body's
+                        // worth every turn for every pennable species and `affordable >= 1` always
+                        // holds. A herd that breeds fast enough to slaughter from continuously never
+                        // has to wait — that is the real-world reason a pen is a steady supply, and
+                        // rung 3's actual payoffs are the faster `r`, no chasing, the self-feeding
+                        // footprint and a `K` you control. On poor enough range a pen *will* pulse
+                        // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
                         let collection = workers as f32 * labor.hunt.per_worker_biomass_capacity;
-                        let take_biomass = production.min(collection).max(0.0);
-                        herd.biomass -= take_biomass;
+                        let take =
+                            fauna::quantise_animal_take(production, collection, herd.body_mass);
+                        herd.biomass -= take.killed_biomass();
                         let provisions =
-                            scalar_from_f32(hunt_provisions(take_biomass, &fauna, mult_f));
+                            scalar_from_f32(hunt_provisions(take.carried, &fauna, mult_f));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -568,41 +601,42 @@ pub fn advance_labor_allocation(
                         // A *managed* harvest never overdraws — it takes at most the escapement MSY —
                         // so `sustainable == actual` (no overdraw ⚠). The two staffing signals are
                         // derived like every other rung's: how many keepers the take really needed,
-                        // and how much of the pen's offered harvest went uncollected for want of
-                        // hands.
+                        // and how much of the harvest went uncollected for want of hands. **`wasted`
+                        // is measured against the animals SLAUGHTERED, not against the pen's offered
+                        // escapement** (slice 8): a beast the keeper never killed is still standing in
+                        // the pen, alive and breeding — it was never produced, so it cannot have been
+                        // wasted. What `killed_biomass − carried` measures is meat that really rotted.
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
-                            wasted: hunt_provisions(
-                                (production - take_biomass).max(0.0),
-                                &fauna,
-                                mult_f,
-                            ),
-                            workers_needed: workers_needed_for_take(
-                                take_biomass,
-                                labor.hunt.per_worker_biomass_capacity,
-                                workers,
-                            ),
+                            wasted: hunt_provisions(take.wasted, &fauna, mult_f),
+                            // **ONE need, not two** (slice 8): the herders who mind the pen are the
+                            // ones who butcher it, so the staffing signal is the *maintenance* count —
+                            // not a second, harvest-side `workers_needed_for_take`. It is also the
+                            // honest answer on a **wait** turn, where a take-derived count would read
+                            // `0` ("nobody needed here") for a pen that in fact demands its full crew.
+                            workers_needed: herders_needed,
+                            overdraws: false,
                         };
                         continue;
                     }
-                    // Take food via the shared primitive (per-policy ceiling + worker-cap +
-                    // biomass→provisions, × the band's productivity multiplier). Read biomass
-                    // before/after for the raw take that trade goods + husbandry are scaled from.
+                    // Take food via the shared primitive: the per-policy escapement ceiling, rounded
+                    // to **whole animals** against the crew's collection (slice 8). It hands back the
+                    // kill in biomass — killed / carried / wasted — and has already drawn every animal
+                    // killed off the herd.
                     let biomass_before = herd.biomass;
-                    // The band has no carry room — it eats/banks the whole take, so pass an
+                    // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
-                    let provisions = hunt_take(
+                    let take = hunt_take(
                         herd,
                         workers,
                         *policy,
                         labor.hunt.per_worker_biomass_capacity,
                         &fauna,
                         &ladder,
-                        mult_f,
                         f32::INFINITY,
                     );
-                    let take = biomass_before - herd.biomass;
+                    let provisions = scalar_from_f32(hunt_provisions(take.carried, &fauna, mult_f));
                     // **Tame — the investment policy** (the animal twin of Cultivate, and the rung
                     // below Corral). The crew is gentling the herd, not hunting it: `hunt_take`
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
@@ -704,21 +738,28 @@ pub fn advance_labor_allocation(
                         1.0
                     };
                     // FOOD income is fully fractional; trade goods stay integer → FactionInventory.
+                    // Scaled off the meat actually **carried home**, not the animals killed: you
+                    // cannot trade a hide you left on the range.
                     let trade_goods =
-                        (take * hunt.trade_goods_per_biomass * trade_multiplier * mult_f).round()
-                            as i64;
+                        (take.carried * hunt.trade_goods_per_biomass * trade_multiplier * mult_f)
+                            .round() as i64;
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
                     if trade_goods > 0 {
                         inventory.add_stockpile(faction, "trade_goods", trade_goods);
                     }
-                    // Sustainable take = one turn's net regrowth of the herd at its **pre-take**
-                    // biomass, in provisions (same `provisions_per_biomass` + output multiplier as
-                    // the actual take). An overdraw (Surplus/Eradicate) reads `actual > sustainable`;
-                    // a Sustain draw reads `actual ≈ sustainable`.
-                    // The herd's OWN ecology/capacity (`herd_ecology`/`herd_capacity` — a tamed herd
-                    // grows 3× faster, so its sustainable skim is 3× a wild one's).
+                    // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
+                    // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×
+                    // faster, so its sustainable skim is 1.5× a wild one's).
+                    //
+                    // Since slice 8 this is deliberately **not** comparable to `actual` turn by turn:
+                    // a whole-animal take pays in lumps (nothing for 6 turns, then a whole mammoth),
+                    // so `actual` swings around this rate rather than tracking it. That swing is
+                    // *true* and it is the mechanic — so `sustainable` keeps reporting the honest
+                    // average ("this herd sustains ~0.78/turn"), and whether the take **overdraws** is
+                    // answered by the policy's own floor (`overdraws` below) instead of by comparing
+                    // the two. See `SourceYield`.
                     let sustainable = sustainable_yield(
                         biomass_before,
                         herd_capacity(herd, &fauna),
@@ -726,28 +767,34 @@ pub fn advance_labor_allocation(
                     ) * hunt.provisions_per_biomass
                         * mult_f;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the
-                    // biomass take by the per-hunter throughput (hunt has no seasonal factor, unlike
-                    // forage). **Understaffing** (`wasted`): what the policy ceiling offered beyond
-                    // what these hunters could take — left standing on the range, not lost.
-                    let workers_needed = workers_needed_for_take(
-                        take,
-                        labor.hunt.per_worker_biomass_capacity,
-                        workers,
-                    );
-                    let production = hunt_policy_ceiling(
-                        *policy,
-                        biomass_before,
-                        fauna::herd_capacity(herd, &fauna),
-                        &fauna::herd_ecology(herd, &fauna),
-                        &fauna,
-                        &ladder,
-                    )
-                    .clamp(0.0, biomass_before);
+                    // carried biomass by the per-hunter throughput (hunt has no seasonal factor,
+                    // unlike forage). **Understaffing** (`wasted`): the meat the crew killed but could
+                    // not haul — **a real loss**, left to rot on the range. Measured against the
+                    // animals *slaughtered*, never against the escapement the herd could have spared:
+                    // an animal nobody killed is still alive out there, so it was never produced and
+                    // cannot have been wasted (`fauna::forecast_production_and_take`).
+                    //
+                    // **A MANAGED herd reports its herder count instead** (slice 8) — ONE need, not
+                    // two: the crew minding a tamed herd is the crew taking from it, the cost is
+                    // standing (owed on wait turns, when a take-derived count would read a nonsense
+                    // `0`), and it scales with the herd. A **wild** herd keeps the take-derived count
+                    // unchanged: you owe a wild herd no maintenance, only the carry home
+                    // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
+                    let workers_needed = if herders_needed > 0 {
+                        herders_needed
+                    } else {
+                        workers_needed_for_take(
+                            take.carried,
+                            labor.hunt.per_worker_biomass_capacity,
+                            workers,
+                        )
+                    };
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
-                        wasted: hunt_provisions((production - take).max(0.0), &fauna, mult_f),
+                        wasted: hunt_provisions(take.wasted, &fauna, mult_f),
                         workers_needed,
+                        overdraws: policy.overdraws(),
                     };
                 }
                 LaborTarget::Scout => {
@@ -1019,12 +1066,19 @@ mod labor_yield_tests {
     //! provisions_per_biomass × output_multiplier` (MSY-based — regrowth at the most-productive
     //! biomass K/2, so a resource at carrying capacity still reads a positive sustainable harvest;
     //! a Sustain gather skims exactly that, so `actual ≈ sustainable`); a hunt's `sustainable` uses
-    //! the same formula; and an overdraw reads `actual > sustainable`.
+    //! the same formula.
+    //!
+    //! **Slice 8 split the two webs here, deliberately.** A *gather* is still continuous, so the plant
+    //! rows keep `actual ≈ sustainable` under Sustain. A *hunt* takes **whole animals**, so its
+    //! `actual` pays in lumps around that rate instead of tracking it, and comparing the two per turn
+    //! is no longer the overdraw question — `SourceYield::overdraws` answers it from the policy's own
+    //! escapement floor. See `SourceYield`.
     use super::advance_labor_allocation;
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, Tile,
     };
+    use crate::fauna::hunt_provisions;
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
         SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
@@ -1055,6 +1109,12 @@ mod labor_yield_tests {
 
     const HERD_ID: &str = "game_test";
     const CAP: f32 = 100.0;
+    /// One test animal (slice 8). Deliberately **big enough to bind**: at `CAP = 100` the Sustain
+    /// escapement at full capacity is 50, so a 5-unit body quantises the take to at most 10 animals
+    /// and a lightly-staffed crew genuinely rounds down. A `1.0` here would have made every take
+    /// effectively continuous again and quietly stopped these forecast==actual sweeps from covering
+    /// the quantiser at all.
+    const TEST_GAME_BODY_MASS: f32 = 5.0;
     /// The faction every `spawn_band` band belongs to in this harness.
     const BAND_FACTION: FactionId = FactionId(0);
     /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
@@ -1115,6 +1175,7 @@ mod labor_yield_tests {
             CAP,
             0.0,
             fauna.ecology.regrowth_rate,
+            TEST_GAME_BODY_MASS,
         );
         herd.refresh_ecology_phase(&fauna);
         drop(fauna);
@@ -1173,12 +1234,23 @@ mod labor_yield_tests {
     }
 
     /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals
-    /// the MSY-based `sustainable_yield` value at the pre-take biomass, and a Sustain draw under a
-    /// binding regrowth ceiling skims exactly that (`actual ≈ sustainable`); (c) forage
+    /// the MSY-based `sustainable_yield` value at the pre-take biomass; (c) forage
     /// `sustainable ≡ actual`.
+    ///
+    /// **RETARGETED IN SLICE 8 on both the start state and the hunt assertion.** It used to start the
+    /// herd at *exactly* `CAP * 0.5` ("half cap → clear positive regrowth") and assert the Sustain
+    /// take skimmed exactly that regrowth. Both halves were flow-model artifacts:
+    /// - `K/2` **is** the Sustain escapement point, so a herd standing there spares **nothing** — the
+    ///   fixture was seeding the one biomass at which the hunt correctly takes `0` and then asserting
+    ///   it took something. Started above the point, so the herd genuinely has animals to spare.
+    /// - `actual ≈ sustainable` is no longer what Sustain means. The take is whole animals off the
+    ///   escapement, so it pays in **lumps** around the long-run MSY rate rather than tracking it turn
+    ///   by turn. `sustainable` is still asserted to be that honest rate — it is just no longer the
+    ///   same question as "did this overdraw", which `overdraws` now answers directly.
     #[test]
     fn forage_and_sustain_hunt_capture_yields() {
-        let start = CAP * 0.5; // half cap → clear positive regrowth.
+        // Above the escapement point, so the herd has whole animals to spare this turn.
+        let start = CAP * 0.9;
         let (mut world, tile) = world_with_source(start);
         let band = spawn_band(
             &mut world,
@@ -1234,11 +1306,15 @@ mod labor_yield_tests {
             hunt.sustainable,
             expected_sustainable
         );
+        // A Sustain hunt is escapement to K/2: it is sustainable **by construction** (it cannot land
+        // the herd below its most-productive biomass), whatever this turn's lump happens to be.
         assert!(
-            (hunt.actual - hunt.sustainable).abs() < 1e-6,
-            "a Sustain draw under the regrowth ceiling skims exactly the regrowth: {} vs {}",
-            hunt.actual,
-            hunt.sustainable
+            !hunt.overdraws,
+            "a Sustain hunt never overdraws — it stops at the MSY point: {hunt:?}"
+        );
+        assert!(
+            !forage.overdraws,
+            "a Sustain gather never overdraws: {forage:?}"
         );
     }
 
@@ -1316,11 +1392,41 @@ mod labor_yield_tests {
             hunt.sustainable,
             expected_sustainable
         );
+        // **RETARGETED IN SLICE 8: a full herd gives a BURST, not a skim.** This used to assert
+        // `actual ≈ sustainable` — that a Sustain draw off a herd at capacity took exactly MSY. That
+        // was the flow model: `sustainable_yield` clamps its argument to `K/2`, so it read the same
+        // `r·K/4` however much surplus was standing there. Sustain is escapement now, so a herd at
+        // capacity is `K/2` **over** its escapement point and hands the whole surplus over as fast as
+        // the crew can carry it — the fresh-herd burst, which is the honest answer to "there are twice
+        // as many animals here as this land can sustain".
+        //
+        // `sustainable` is still the long-run MSY rate (asserted above) — it is now a *rate to compare
+        // against over time*, not a per-turn prediction. `overdraws` carries the ⚠ question.
+        let escapement_provisions = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            hunt_provisions(start - CAP * 0.5, &fauna, 1.0)
+        };
+        let collection_provisions = {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            hunt_provisions(
+                WORKERS as f32 * labor.hunt.per_worker_biomass_capacity,
+                &fauna,
+                1.0,
+            )
+        };
         assert!(
-            (hunt.actual - hunt.sustainable).abs() < 1e-6,
-            "a Sustain draw off a full herd skims exactly MSY: {} vs {}",
-            hunt.actual,
-            hunt.sustainable
+            hunt.actual > hunt.sustainable,
+            "a full herd is far above its escapement point, so the burst beats the long-run rate: \
+             {hunt:?}"
+        );
+        assert!(
+            hunt.actual <= escapement_provisions.min(collection_provisions) + 1e-4,
+            "the burst is bounded by what the herd can spare AND what the crew can carry: {hunt:?}"
+        );
+        assert!(
+            !hunt.overdraws,
+            "the burst still stops at K/2 — it never overdraws: {hunt:?}"
         );
     }
 
@@ -1410,7 +1516,10 @@ mod labor_yield_tests {
     /// needs a **single** worker even with 5 assigned, so `workers_needed == 1 < assigned`.
     #[test]
     fn sustain_source_overstaffed_reports_one_worker_needed() {
-        let (mut world, tile) = world_with_source(CAP * 0.5); // half cap → clear positive MSY skim.
+        // **Above the escapement point** (slice 8): `K/2` is exactly where a Sustain hunt spares
+        // nothing, so the old `CAP * 0.5` ("half cap → clear positive MSY skim" — a flow-model
+        // reading) now seeds the one biomass at which this test's premise cannot hold.
+        let (mut world, tile) = world_with_source(CAP * 0.9);
         let assigned = 5;
         let band = spawn_band(
             &mut world,
@@ -1502,10 +1611,18 @@ mod labor_yield_tests {
         );
     }
 
-    /// A tended (cultivated) patch and a corralled herd are maintenance labor, not scaling gather, so
-    /// each reports `workers_needed == 1` regardless of how many workers tend it.
+    /// A tended (cultivated) patch and a corralled herd both pay out, and each reports an honest
+    /// staffing need — **but they no longer report the same KIND of need**, and that is the point.
+    ///
+    /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
+    /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
+    /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
+    /// `fauna::herders_needed` — `ceil(animals / animals_per_herder)`, the crew that minds the animals
+    /// **and** butchers them (one need, not two), owed every turn including turns it spares nothing.
+    /// It is deliberately **not** the take-derived `ceil(actual / per_worker_throughput)` a *wild* hunt
+    /// reports: hunt = reach + carry, harvest = maintain + take.
     #[test]
-    fn tended_patch_and_corral_report_one_worker_needed() {
+    fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);
         let patch_cap = world
             .resource::<LaborConfigHandle>()
@@ -1557,9 +1674,22 @@ mod labor_yield_tests {
             tended.workers_needed, 1,
             "a tended patch needs one tending presence: {tended:?}"
         );
+        // **The pen's staffing need is its HERDER count** (slice 8) — how many hands the *animals*
+        // demand, not how many the *take* needed. Asserted against the shared helper rather than a
+        // magic number, so it tracks a roster retune.
+        let expected_keepers = {
+            let world_fauna = world.resource::<FaunaConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna)
+        };
+        assert!(
+            expected_keepers >= 1,
+            "the fixture pen must demand at least one keeper, or this asserts nothing"
+        );
         assert_eq!(
-            corral.workers_needed, 1,
-            "a corralled herd needs one keeper: {corral:?}"
+            corral.workers_needed, expected_keepers,
+            "the pen reports the crew that MINDS it (ceil(animals / animals_per_herder)), not the crew \
+             its take happened to need: {corral:?}"
         );
     }
 
@@ -2305,6 +2435,11 @@ mod labor_yield_tests {
     #[test]
     fn corral_policy_pays_the_dip_then_pens_and_pays_the_corral_yield() {
         const BIG_HERD_CAP: f32 = 1_000.0;
+        /// Seat the herd a little **above** its `K/2` escapement point: enough spare biomass that a
+        /// Sustain take is a real, ceiling-bound number, few enough animals that 10 hunters can carry
+        /// all of them. Both halves of the comparison must be ceiling-bound or the dip identity is
+        /// measuring the carry cap instead (see below).
+        const DIP_TEST_ESCAPEMENT_FRACTION: f32 = 0.55;
         let (fraction, build_per_turn) = {
             let (world, _) = world_with_source(CAP);
             let ladder = world.resource::<LadderConfigHandle>().get();
@@ -2316,12 +2451,26 @@ mod labor_yield_tests {
             )
         };
 
-        // Baseline Sustain hunt yield on the same herd (ample hunters → ceiling-bound = MSY).
+        // Baseline Sustain hunt yield on the same herd (ample hunters → **ceiling**-bound).
         // **It must be DOMESTICATED too**: Corral can only be worked on a domesticated herd, and the
         // husbandry ladder means a tamed herd lives on the *pastoral* ecology (`r` = 0.15, 3× wild).
         // Comparing the dip against a *wild* herd's MSY would compare two different rungs.
+        //
+        // **RETARGETED IN SLICE 8 — the herd is seated JUST ABOVE its escapement point, not at
+        // capacity.** "The dip pays `fraction ×` the Sustain yield" is only true when **both** takes
+        // are ceiling-bound; the moment Sustain becomes *collection*-bound the dip is a fraction of a
+        // ceiling the baseline never reached, and the identity is arithmetically false rather than
+        // broken. At capacity that is now exactly what happens: escapement is `K/2` = 500 biomass, so
+        // 10 hunters (400) are no longer "ample" — Sustain reads 8, Corral reads its full ceiling 5,
+        // and `0.5 × 8 = 4 ≠ 5`. Seating the herd at `0.55 × K` restores the fixture's own stated
+        // premise (a small escapement the crew can comfortably carry), so the test measures the dip
+        // instead of measuring the carry cap.
         let (mut world, tile) = world_with_source(CAP);
-        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        reseat_herd(
+            &mut world,
+            BIG_HERD_CAP * DIP_TEST_ESCAPEMENT_FRACTION,
+            BIG_HERD_CAP,
+        );
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
@@ -2347,7 +2496,11 @@ mod labor_yield_tests {
         // Corral on a domesticated herd the faction owns + knows **Penning** for (the §4.3
         // reshuffle: rung 3's gate moved off Herding, which now gates `tame` alone).
         let (mut world, tile) = world_with_source(CAP);
-        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        reseat_herd(
+            &mut world,
+            BIG_HERD_CAP * DIP_TEST_ESCAPEMENT_FRACTION,
+            BIG_HERD_CAP,
+        );
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
@@ -2366,10 +2519,26 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        // **RETARGETED IN SLICE 8: the dip is exact in BIOMASS, and it cannot be exact in ANIMALS.**
+        // The take is `floor(dip × escapement / body_mass)` whole animals, and `floor` does not
+        // distribute over a scale: `floor(0.5 × 9 animals)` is 4, not 4.5. So asserting
+        // `preparing == fraction × sustain_yield` to a float epsilon is asserting that a rounding
+        // artifact doesn't exist. The **contract** the dip actually has is that it is the rung's
+        // fraction of the Sustain take *to within the one animal quantisation can cost*, and that it
+        // is strictly less than Sustain — the investment must visibly cost something.
+        let one_animal = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            hunt_provisions(TEST_GAME_BODY_MASS, &fauna, 1.0)
+        };
         assert!(
-            (preparing - fraction * sustain_yield).abs() < FORECAST_EPSILON,
-            "building the pen pays fraction × the Sustain yield: {preparing} vs {}",
+            (preparing - fraction * sustain_yield).abs() <= one_animal + FORECAST_EPSILON,
+            "building the pen pays fraction × the Sustain yield, to within one whole animal: \
+             {preparing} vs {} (one animal = {one_animal})",
             fraction * sustain_yield
+        );
+        assert!(
+            preparing < sustain_yield,
+            "the pen build must cost real yield against Sustain: {preparing} vs {sustain_yield}"
         );
 
         let turns_to_build = (1.0 / build_per_turn).ceil() as u32;

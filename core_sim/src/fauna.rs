@@ -223,6 +223,15 @@ pub struct Herd {
     /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Round-tripped through
     /// the rollback snapshot (`HerdState.regrowth_rate`, sim-side only — not on the client wire).
     pub regrowth_rate: f32,
+    /// **The biomass of ONE animal** ([`crate::fauna_config::SpeciesDef::body_mass`]), cached from the
+    /// `SpeciesDef` at spawn exactly as `regrowth_rate` / `fodder_per_biomass` are. The quantum every
+    /// hunt take is floored to ([`quantise_animal_take`]): a herd holds `biomass / body_mass` animals,
+    /// **derived on demand, never stored** — biomass stays the authoritative stock.
+    ///
+    /// Round-tripped through the rollback snapshot (`HerdState.body_mass`, sim-side only — not on the
+    /// client wire) so a rehydrated herd keeps its quantum rather than reading `0` and being stripped
+    /// whole in one turn.
+    pub body_mass: f32,
     /// **How far up the husbandry ladder this herd's species can climb** (Grazing 2d-δ), cached from
     /// the `SpeciesDef` at spawn (mirroring `regrowth_rate` / `fodder_per_biomass`). Gates the three
     /// husbandry seams without re-resolving config: taming accrual + the `tame` command (a `Wild` herd
@@ -301,6 +310,17 @@ pub struct Herd {
     /// **Not** snapshot-persisted (derived): a rehydrated herd reads `1.0` (fed), so a rollback can
     /// only *delay* a starvation turn, never invent one.
     pub pen_fed_fraction: f32,
+    /// Transient per-turn signal: how well this managed herd was **staffed** last turn — `min(1,
+    /// assigned / herders_needed)`, written by the Hunt arm of `advance_labor_allocation` (Population)
+    /// and read one turn later by `advance_husbandry` (Logistics), the same deliberate lag as
+    /// [`Herd::pen_fed_fraction`], whose shape this mirrors exactly.
+    ///
+    /// **Understaffing degrades proportionally — it never triggers an escape** (see
+    /// [`herded_fraction`]). `1.0` = fully herded (and the value for a herd nobody needs to herd).
+    ///
+    /// **Not** snapshot-persisted (derived): a rehydrated herd reads `1.0` (fully herded), so a
+    /// rollback can only *delay* a decay turn, never invent one — exactly the `pen_fed_fraction` rule.
+    pub herded_fraction: f32,
     /// Transient edge-gate for the starving-pen feed line: `true` while the herd is *already known* to
     /// be starving, so `advance_husbandry` announces the famine **once** on the turn it starts rather
     /// than every turn it continues. Cleared when the pen is fed again (so a *second* famine is
@@ -324,7 +344,7 @@ pub struct Herd {
 
 impl Herd {
     // A constructor that mirrors the herd's identity + spawn-state fields (id/species/size/route/
-    // biomass/K/fodder/regrowth) — bundling them into a struct would just move the noise.
+    // biomass/K/fodder/regrowth/body_mass) — bundling them into a struct would just move the noise.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
@@ -335,6 +355,7 @@ impl Herd {
         carrying_capacity: f32,
         fodder_per_biomass: f32,
         regrowth_rate: f32,
+        body_mass: f32,
     ) -> Self {
         let label = format!("{} ({})", species_display, id);
         let current_pos = route.first().copied().unwrap_or_else(|| UVec2::new(0, 0));
@@ -360,6 +381,7 @@ impl Herd {
             carrying_capacity,
             fodder_per_biomass,
             regrowth_rate,
+            body_mass,
             // Full ladder by default; the real spawn resolves the species' ceiling from its `SpeciesDef`
             // right after construction (`spawn_short_range_game` / the migratory spawn). A test-built
             // herd keeps the default `Pen` = the pre-2d-δ universal-full-ladder behaviour.
@@ -377,6 +399,7 @@ impl Herd {
             pen_pasture_fraction: 0.0,
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
+            herded_fraction: FULLY_HERDED,
             pen_starving: false,
             tamed_this_turn: false,
         }
@@ -440,11 +463,22 @@ impl Herd {
     }
 
     /// Decay husbandry progress toward zero when the group isn't being actively tended;
-    /// ownership lapses once progress reaches zero. A domesticated group is left alone.
+    /// ownership lapses once progress reaches zero.
+    ///
+    /// # The `is_domesticated()` early return is GONE (intensification ladder slice 8)
+    ///
+    /// It used to open `if self.is_domesticated() { return; }` — *"a domesticated group is left
+    /// alone"* — which made a fully-tamed herd **permanently tame, forever, for zero labor**. That is
+    /// exactly the claim §3 retired at the *yield* ("a tamed herd is not set-and-forget"), left
+    /// standing at the *meter*: it made "you need constant herders" false at the top of the ladder,
+    /// which is the one place the ladder most needs it to be true.
+    ///
+    /// An **under-herded** pastoral herd now decays proportionally to how badly it is staffed
+    /// ([`herded_fraction`]) — floored at zero and fully recoverable — while a **properly-herded** one
+    /// decays not at all, including a herd you are merely *harvesting* under Sustain/Surplus/Market:
+    /// the crew is there, so the animals stay tame. The caller (`advance_husbandry`) owns that gate;
+    /// this stays a pure "subtract and reconcile".
     pub(crate) fn decay_domestication(&mut self, amount: f32) {
-        if self.is_domesticated() {
-            return;
-        }
         self.domestication_progress = (self.domestication_progress - amount).max(0.0);
         // Reconcile the `owner is Some ⟺ progress > 0` invariant unconditionally, so a
         // group that reaches (or somehow sits at) zero progress never keeps a stale owner
@@ -698,14 +732,39 @@ pub fn pen_upkeep(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// managed harvest *is*.
 ///
 /// It is the **maximum sustainable yield, taken as constant *escapement***: harvest the biomass
-/// standing above the MSY point (`K/2`), never more than one turn's peak regrowth
-/// ([`peak_regrowth`] = `r·K/4` — the same shared curve, no second formula).
+/// standing above the MSY point (`K/2`).
 ///
 /// ```text
-/// take = min(peak_regrowth(K), max(0, B − K/2))
+/// take = max(0, B − K/2)
 /// ```
 ///
-/// **Why escapement, and not the constant-catch `sustainable_yield` a wild `Sustain` hunt takes.**
+/// **This is now literally [`hunt_policy_ceiling`]`(Sustain)` on the pen's ecology — ONE RULE FOR
+/// EVERY TAKE IN THE GAME.** A managed harvest and a wild Sustain hunt are the same act against
+/// different curves, which is what the husbandry ladder always claimed and now actually is.
+///
+/// ## The `min(peak_regrowth(K), …)` cap was REMOVED in slice 8 — do not restore it
+///
+/// It used to read `min(peak_regrowth(K), max(0, B − K/2))`, capping the take at one turn's peak
+/// regrowth (`r·K/4`) so that the yield at capacity equalled the yield at the operating point. That
+/// cap **made whole-animal harvesting impossible**, and not subtly:
+///
+/// A quantised take can only pulse if the herd's spare biomass **accumulates** across the turns it
+/// waits. The cap bounds the ceiling by the constant `r·K/4` *however long the herd is left alone* —
+/// so `floor(ceiling / body_mass)` is `0` on turn 1 and still `0` on turn 500 whenever
+/// `r·K/4 < body_mass`. The herd grows to `K` and sits there while the keeper pays feed **forever and
+/// collects nothing**. Measured at a radius-0 pen (the default) on the best pasture in the game: the
+/// **boar** (`peak_regrowth` 30 vs body 50) and the **aurochs** (32.4 vs 80) — *the two species the
+/// grazing-2d arc added for penning* — yielded zero permanently. That is not a pulse, it is a silent
+/// trap on a 25-turn investment.
+///
+/// Removing it costs nothing at equilibrium: at the settled operating point `B* = K/2` the spare
+/// biomass **is** one turn's regrowth, so the cap was already inactive and the pen's net-positive
+/// bound (`upkeep < r_pen × provisions / (2 + r_pen)`, `FaunaConfig::validate`) is untouched. All the
+/// cap ever suppressed was the *fresh-pen burst* — which is exactly the behaviour the wild rungs
+/// have, and honest: a pen holding twice what its footprint sustains should hand over the surplus.
+///
+/// **Why escapement, and not constant catch** (the `sustainable_yield` a wild `Sustain` hunt *used*
+/// to take — before slice 8 made every rung escapement for this very reason).
 /// The sim regrows in Logistics and harvests in Population, so a constant-catch MSY take is evaluated
 /// at the *post*-regrowth biomass. Above `K/2` that is harmless (the take is capped at MSY either
 /// way, and both converge on `K/2` paying `r·K/4`). **Below `K/2` it takes `g(B + g(B))`, which is
@@ -721,14 +780,144 @@ pub fn pen_upkeep(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// A managed harvest therefore **never overdraws** (`actual == sustainable`, no ⚠), and a starved pen's
 /// yield falls with its herd instead of finishing it off.
 ///
+/// ## The pen is quantised too — and reads steady *emergently*, not by stipulation
+///
+/// Slice 8's [`quantise_animal_take`] applies here exactly as it does to a wild hunt: **you cannot
+/// slaughter half a cow any more than you can half-kill a mammoth.** This helper is unchanged by that
+/// — it still hands back the *biomass the pen can spare*, and the corral-tend branch rounds it to
+/// animals.
+///
+/// **The pen nonetheless has no wait turns, and that is a consequence of its ecology rather than a
+/// rule.** A pen runs at `r_pen = min(husbandry_regrowth_cap, wild_r × pen_gain)` — up to **3× the
+/// wild rate** — so its MSY clears one body's worth of meat *every turn* for every pennable species
+/// (measured in `grazing_2d_pen::the_pen_slaughters_whole_animals_every_turn`). A herd that breeds
+/// fast enough to slaughter from continuously simply never has to wait. **That is the real-world
+/// reason a pen reads steady where a hunt pulses**, and it is why the `peak_regrowth` cap above needs
+/// no slice-8 change: `floor(peak_regrowth / body_mass) >= 1` is all quantisation asks of it.
+///
+/// So rung 3's payoffs are the ones it actually earns — a faster `r`, no chasing (the herd is at your
+/// fence), a self-feeding footprint, and a `K` you control — **not** an exemption from butchery.
+/// A pen on poor enough range *will* pulse (the aurochs is the closest: pen MSY ≈ `0.0675 × K` against
+/// body mass 80, so it waits below `K ≈ 1185`), and that is honest rather than a bug.
+///
 /// Takes the raw `(biomass, capacity, ecology)` rather than a `&Herd` because the forecast must also
 /// answer it for a herd that is **not penned yet** ("what will this pay once the pen is built?").
-pub(crate) fn managed_yield_biomass(biomass: f32, capacity: f32, ecology: &EcologyConfig) -> f32 {
-    let escapement = capacity * MSY_BIOMASS_FRACTION;
-    (biomass - escapement)
-        .max(0.0)
-        .min(peak_regrowth(capacity, ecology))
+pub(crate) fn managed_yield_biomass(biomass: f32, capacity: f32, _ecology: &EcologyConfig) -> f32 {
+    // The pen harvests on **Sustain's doctrine** — the one escapement rule, shared verbatim so the
+    // keeper and the hunter can never disagree about what "leave the productive stock standing" means.
+    sustain_escapement(biomass, capacity)
 }
+
+/// **The herders a managed herd demands, every turn** (intensification ladder slice 8):
+/// `ceil((biomass / body_mass) / animals_per_herder)`, at least 1 for any herd that still has an
+/// animal in it.
+///
+/// *Just because you aren't killing an animal doesn't mean you aren't tending them, making sure they
+/// don't run off, repairing fences.* Before this, a pen of 2 and a pen of 200 needed the same single
+/// keeper — only the **feed** scaled with the herd.
+///
+/// # ONE need, not two — the herders mind the herd AND slaughter it
+///
+/// A managed rung has **no separate harvest-side worker need**. The crew standing in the pen is the
+/// crew that butchers, so `workers_needed` on a pastoral/penned source *is* this number, and the
+/// standing cost is owed on **wait turns** too (a herd that cannot spare an animal still has to be
+/// fed, watched and fenced). Contrast [`quantise_animal_take`]'s `carryable`, which is a *hunt*
+/// concept.
+///
+/// # Wild hunting has NO maintenance, and that asymmetry is deliberate — do not "unify" them
+///
+/// A wild herd isn't yours: you don't mind it, you *find* it. So a wild hunt pays no standing cost —
+/// and keeps its **carry cap** (`workers × per_worker_biomass_capacity`), because you must haul the
+/// kill home across the range. A managed herd is the mirror: you pay every turn to keep it, and the
+/// meat is already standing where your people are. **The models differ because the products differ:**
+///
+/// ```text
+/// hunt    = reach + carry
+/// harvest = maintain + take
+/// ```
+///
+/// Collapsing them would either charge a hunter rent on an animal they do not own, or hand a rancher
+/// their herd for free.
+///
+/// # Herding is HEADS, not tonnes
+///
+/// The denominator is per-**animal** ([`SpeciesDef::animals_per_herder`]), never per-biomass: a
+/// shepherd minds ~300 sheep and a cowherd ~80 cattle, because you watch individuals and a heavier
+/// beast is not proportionally more work. See that field for the unit error this replaced.
+///
+/// A herd with no `body_mass` (impossible — `validate()` requires it positive) or no animals left
+/// needs nobody; the `max(1)` floor otherwise means *some* crew is always on the books, so a herd can
+/// never be fully staffed by zero people.
+pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> u32 {
+    // NaN-safe by construction: every guard is a positive test, so a NaN input falls through to `0`
+    // (nobody needed) rather than sneaking past a negated comparison.
+    let sane = biomass > 0.0 && body_mass > 0.0 && animals_per_herder > 0.0;
+    if !sane {
+        return 0;
+    }
+    let animals = biomass / body_mass;
+    ((animals / animals_per_herder).ceil() as u32).max(1)
+}
+
+/// [`herders_needed`] for a herd, resolving its species' `animals_per_herder` live off the config (the
+/// `taming_rate_for` path — a retune reaches herds already on the map). `0` for a herd that is not on
+/// a managed rung: a **wild** herd has no keepers, by design (see [`herders_needed`]).
+///
+/// # "Managed" is `is_corralled() || owner.is_some()` — a herd you have STARTED to tame, not only a
+/// finished one
+///
+/// **Herders maintain the meter at whatever level it sits; `Tame` is what pushes it up.** Scoping
+/// maintenance to `is_domesticated()` (progress *exactly* `1.0`) instead looks right and is a trap:
+/// the flag is a **threshold**, so the first under-herded turn drops the herd under it, after which it
+/// is no longer "managed", the proportional rule stops applying, and it decays at the **full**
+/// abandonment rate **no matter how many herders you assign**. The proportional regime would be
+/// measure-zero, and "understaffing degrades proportionally, floored, and **recoverable**" would be
+/// false — re-staffing could not stop the bleed, only re-`Tame`-ing could. Pinned by
+/// `fauna_husbandry::an_under_herded_tamed_herd_decays_proportionally_and_recovers`.
+///
+/// `owner.is_some()` ⟺ `domestication_progress > 0` (the invariant `decay_domestication` reconciles),
+/// so this is exactly "somebody's herd". A **wild** herd — no owner, no pen — reads `0` and is
+/// untouched. `corral_at` does **not** require domestication (it gates on `can_pen()` only), so the
+/// `is_corralled()` half keeps a penned-but-untamed fixture staffed.
+pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
+    if !(herd.is_corralled() || herd.owner.is_some()) {
+        return 0;
+    }
+    herders_needed(
+        herd.biomass,
+        herd.body_mass,
+        fauna.animals_per_herder_for(&herd.species),
+    )
+}
+
+/// **How well a managed herd is staffed this turn** — `min(1, assigned / needed)`, the herding twin of
+/// `Herd::pen_fed_fraction`.
+///
+/// **Understaffing degrades PROPORTIONALLY; it never triggers an escape.** A binary threshold would
+/// destroy a 25-turn investment on *rounding*, as a herd's biomass breathes across a herder boundary
+/// — that is an accident, not a decision. So this scales the damage exactly the way an underfed pen's
+/// `pen_fed_fraction` scales `pen.starve_shrink_rate`: half the herders you need, half the tending,
+/// and the rung's meter bleeds proportionally — floored, and recoverable the moment you staff it
+/// again. **Binary escape survives for total abandonment only** (zero herders — nobody is minding the
+/// gate), which is the one case where "it broke out" is the honest model.
+///
+/// A herd that needs nobody (wild, or empty) is trivially fully herded.
+pub fn herded_fraction(assigned: u32, needed: u32) -> f32 {
+    if needed == 0 {
+        return FULLY_HERDED;
+    }
+    (assigned as f32 / needed as f32).clamp(0.0, FULLY_HERDED)
+}
+
+/// A fully-staffed managed herd — the neutral value of [`herded_fraction`], and what a herd with no
+/// herder demand reads. Mirrors [`PEN_FULLY_FED`].
+pub const FULLY_HERDED: f32 = 1.0;
+
+/// **A managed herd nobody worked** — what `advance_husbandry` resets a domesticated herd's
+/// `herded_fraction` to each turn, so a herd whose keeper never showed up reads "unherded" rather than
+/// inheriting last turn's staffing. The *wild* rungs reset to [`FULLY_HERDED`] instead: they demand no
+/// herders, so "unstaffed" would be a lie that decays them for free.
+pub const NOT_HERDED: f32 = 0.0;
 
 /// The **gross managed harvest a PEN yields**, in biomass: [`managed_yield_biomass`] against the herd's
 /// per-species pen ecology ([`pen_ecology_for`]) and the pen's capacity (the herd's
@@ -833,6 +1022,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         carrying_capacity: state.ecology.carrying_capacity,
         fodder_per_biomass: state.fodder_per_biomass,
         regrowth_rate: state.regrowth_rate,
+        body_mass: state.body_mass,
         husbandry_ceiling: HusbandryCeiling::from_key(&state.husbandry_ceiling),
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
@@ -849,6 +1039,7 @@ fn herd_from_state(state: &HerdState) -> Herd {
         pen_pasture_fraction: 0.0,
         corralled_tended_this_turn: false,
         pen_fed_fraction: PEN_FULLY_FED,
+        herded_fraction: FULLY_HERDED,
         pen_starving: false,
         tamed_this_turn: false,
     }
@@ -1065,6 +1256,7 @@ fn spawn_migratory_herds(
             carrying_capacity,
             def.fodder_per_biomass,
             def.regrowth_rate_or(fauna.ecology.regrowth_rate),
+            def.body_mass,
         );
         // Start loitering at the spawn anchor for a randomized window (rather than migrating off
         // immediately from `Loiter { turns_left: 0 }`).
@@ -1183,6 +1375,7 @@ fn spawn_game_group_at(
         carrying_capacity,
         def.fodder_per_biomass,
         def.regrowth_rate_or(fauna.ecology.regrowth_rate),
+        def.body_mass,
     );
     // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
     herd.husbandry_ceiling = def.husbandry_ceiling;
@@ -2102,6 +2295,15 @@ pub fn advance_husbandry(
         // cleared for every herd so it can never go stale.
         let tamed_last_turn = herd.tamed_this_turn;
         herd.tamed_this_turn = false;
+        // **How well the herd was STAFFED last turn** (slice 8) — the same Population→Logistics lag as
+        // `pen_fed_fraction`, read here and reset so it can never go stale. A herd nobody worked reads
+        // the `0.0` its keeper never wrote, which is exactly right: no crew, no herding.
+        let herded_last_turn = herd.herded_fraction;
+        herd.herded_fraction = if herd.is_corralled() || herd.owner.is_some() {
+            NOT_HERDED
+        } else {
+            FULLY_HERDED
+        };
         if herd.is_domesticated() {
             // **A tamed herd is paid NOTHING here** — passive-free pastoral is retired (§3): it
             // yields only through a worker's `Hunt` assignment, at the pastoral rung's better `r`.
@@ -2114,6 +2316,17 @@ pub fn advance_husbandry(
                 if herd.corralled_tended_this_turn {
                     herd.corralled_tended_this_turn = false;
                     starve_underfed_pen(herd, &fauna, &mut event_log, tick.0);
+                    // **A penned herd still has to be HERDED, not just fed** (slice 8). Understaffing
+                    // is proportional and never an escape — the fence is up and someone is at the
+                    // gate, there are simply too few hands, so the herd's taming bleeds exactly as an
+                    // under-herded pastoral herd's does. It cannot lose the pen this way; only total
+                    // abandonment (the `else` arm) does that.
+                    decay_under_herded(
+                        herd,
+                        herded_last_turn,
+                        pastoral_rung,
+                        fauna.taming_rate_for(&herd.species),
+                    );
                 } else {
                     let pen = herd.corralled_at;
                     herd.corralled_at = None;
@@ -2174,19 +2387,72 @@ pub fn advance_husbandry(
                         ));
                     }
                 }
+            } else {
+                // **A PASTORAL herd must be herded too** (slice 8) — the case
+                // `decay_domestication`'s deleted `is_domesticated()` early return used to hide
+                // entirely, and the reason it was deleted: a fully-tamed roaming herd was permanently
+                // tame, forever, for **zero labor**, which makes "you need constant herders" false at
+                // the top of the ladder. Under-herd it and it forgets, proportionally and
+                // recoverably; herd it properly — even under a plain harvest policy — and it does not
+                // decay at all.
+                decay_under_herded(
+                    herd,
+                    herded_last_turn,
+                    pastoral_rung,
+                    fauna.taming_rate_for(&herd.species),
+                );
             }
         } else if !tamed_last_turn {
-            // **Feral if untamed** — the animal mirror of `advance_cultivation`. A herd a crew
-            // worked under `Tame` last turn is **spared**; an abandoned part-tamed herd bleeds the
-            // `animal:pastoral` rung's own `decay_per_turn` back toward wild (its owner lapsing at
-            // zero), **at its species' own taming timescale**. Reading the rate off the ladder is what
-            // keeps the two food webs' abandon-decay tuned together — it is the shared build seam's,
-            // not a fauna-only lever.
-            herd.decay_domestication(
-                pastoral_rung.build_decay(fauna.taming_rate_for(&herd.species)),
+            // **Feral if unworked** — the animal mirror of `advance_cultivation`. A herd a crew worked
+            // under `Tame` last turn is **spared** outright; otherwise it bleeds the `animal:pastoral`
+            // rung's own `decay_per_turn` back toward wild (its owner lapsing at zero), **at its
+            // species' own taming timescale**. Reading the rate off the ladder is what keeps the two
+            // food webs' abandon-decay tuned together — it is the shared build seam's, not a
+            // fauna-only lever.
+            //
+            // **Scaled by staffing (slice 8), for the same reason the finished rung is**: an *owned*
+            // herd with enough herders on it does not re-wild, whatever policy those hands are working
+            // under — they are living with the animals. Only an **abandoned** one (no crew ⇒
+            // `herded_fraction` 0) takes the full rate, which is the pre-slice-8 behaviour exactly. A
+            // herd with no owner has no progress to lose, so this is a no-op for wild game.
+            decay_under_herded(
+                herd,
+                herded_last_turn,
+                pastoral_rung,
+                fauna.taming_rate_for(&herd.species),
             );
         }
     }
+}
+
+/// **An under-herded PASTORAL herd forgets, proportionally** (intensification ladder slice 8) — the
+/// herding twin of [`starve_underfed_pen`], and the consumer of `decay_domestication`'s deleted
+/// `is_domesticated()` early return.
+///
+/// A tamed herd used to be **permanently tame, forever, for zero labor**: the decay path returned
+/// early the moment `domestication_progress` hit `1.0`, so the top of the ladder cost nothing to hold.
+/// §3 retired "set and forget" at the *yield*; this retires it at the *meter*.
+///
+/// The rule is the one this file already uses for feed: **proportional, floored, recoverable.** A herd
+/// staffed at `herded_fraction` bleeds `(1 − herded_fraction) ×` the `animal:pastoral` rung's own
+/// `decay_per_turn` (at the species' `taming_rate`, so a Steppe Runner forgets as slowly as it
+/// learned). So:
+///
+/// - **Fully herded ⇒ no decay at all** — including a herd you are merely *harvesting* under
+///   Sustain/Surplus/Market. The crew is standing there; the animals stay tame. Harvesting your own
+///   herd must never rot it.
+/// - **Half-staffed ⇒ half the decay** — visible, reversible, and *nothing snaps*.
+/// - **Zero herders ⇒ full decay**, which is the abandonment case and the only place a cliff belongs.
+///
+/// **No binary escape lives here**, deliberately: a threshold would void a long investment on
+/// *rounding*, as biomass breathes across a herder boundary. (The pen's escape-on-abandonment is a
+/// separate, deliberate cliff — nobody is minding the gate — and it stays in `advance_husbandry`.)
+fn decay_under_herded(herd: &mut Herd, herded: f32, rung: &RungDef, taming_rate: f32) {
+    let shortfall = (FULLY_HERDED - herded).clamp(0.0, FULLY_HERDED);
+    if shortfall <= 0.0 {
+        return;
+    }
+    herd.decay_domestication(rung.build_decay(taming_rate) * shortfall);
 }
 
 /// **A keeper who cannot pay the feed starves the herd.** Reads the `pen_fed_fraction` its keeper
@@ -2317,6 +2583,20 @@ pub struct SourceYieldForecast {
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
     /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
     pub managed_yield: f32,
+    /// **One animal's worth of yield** — `body_mass` through the same biomass→provisions conversion
+    /// every other field here uses — or **`0.0` for a source that does not quantise**
+    /// (intensification ladder slice 8).
+    ///
+    /// It is what makes the *preview* lumpy in the same places the take is: [`forecast_expected_take`]
+    /// runs [`quantise_animal_take`] against it, so the client's "Expected yield" shows the same
+    /// pulse (and the same 0 on a waiting turn) the sim will pay. Because the conversion is linear and
+    /// positive, `floor(ceiling / this)` in provisions-space is the same animal count as
+    /// `floor(ceiling / body_mass)` in biomass-space — no second quantiser, no unit mismatch.
+    ///
+    /// **`0.0` = continuous, deliberately, and it is the plant web's value.** You harvest grain by the
+    /// handful; you cannot half-kill a deer. Quantisation is animal-only because *the products differ*
+    /// — the same reason seed travels and a herd doesn't. Do not "fix" this into a plant body mass.
+    pub body_mass_yield: f32,
 }
 
 impl SourceYieldForecast {
@@ -2332,9 +2612,10 @@ impl SourceYieldForecast {
     /// `min(workers × per_worker_yield, production)` — so a rich Field genuinely needs more hands and
     /// says how many. **The policy axis collapses at rung 3; the worker cap never does — you always
     /// have to carry the harvest home.**
-    pub(crate) fn managed(production: f32, per_worker_yield: f32) -> Self {
+    pub(crate) fn managed(production: f32, per_worker_yield: f32, body_mass_yield: f32) -> Self {
         Self {
             per_worker_yield,
+            body_mass_yield,
             ceiling_sustain: production,
             ceiling_surplus: production,
             ceiling_market: production,
@@ -2374,19 +2655,58 @@ impl SourceYieldForecast {
     }
 }
 
-/// **The expected take**: the food/turn `workers` will produce at this source under `policy` —
-/// `min(workers × per_worker_yield, ceiling(policy))`, the exact composition the take path
-/// (`forage_take` / `hunt_take`, both `min(worker_cap, policy_ceiling)` clamped to biomass — the
-/// clamp is already folded into every `ceiling_*`) pays and the client's "Expected yield" row
-/// promises. The one place that formula lives: the client's compose-time preview, the assign-time
-/// telemetry seed (`SourceYield` — so a brand-new assignment displays its yield before the turn
-/// resolves), and the forecast==actual tests all call it.
+/// **The expected take**: the food/turn `workers` will produce at this source under `policy`, and the
+/// exact composition the take path pays — the client's "Expected yield" row, the assign-time telemetry
+/// seed (`SourceYield`), and the forecast==actual tests all call it. The one place the formula lives.
+///
+/// **Two shapes, because the two food webs' products differ** (slice 8):
+/// - **Continuous** (`body_mass_yield == 0` — every plant source): `min(collection, ceiling)`, the
+///   composition `forage_take` pays. You gather grain by the handful.
+/// - **Quantised** (an animal source): [`quantise_animal_take`]'s `carried`, the composition
+///   `systems::hunt_take` / `expedition_take_biomass` / the pen's corral-tend branch pay. You take
+///   whole animals — so the preview shows the same **pulse**, including the honest `0.00` on a turn
+///   the herd cannot spare one, rather than a smooth average the sim never actually hands over.
+///
+/// `collection` is `workers × per_worker_yield`. Both branches are in **provisions**-space; the
+/// biomass→provisions conversion is linear and positive, so it factors out of every `min`/`floor` and
+/// the quantised branch counts exactly the animals the biomass-space take kills.
 pub fn forecast_expected_take(
     forecast: &SourceYieldForecast,
     workers: u32,
     policy: FollowPolicy,
 ) -> f32 {
-    (workers as f32 * forecast.per_worker_yield).min(forecast.ceiling_for(policy))
+    forecast_production_and_take(forecast, workers, policy).1
+}
+
+/// **What the source hands over, and what of it the crew keeps** — `(production, actual)`, the pair
+/// [`forecast_expected_take`] and [`forecast_source_yield`] both need, resolved once so the take and
+/// the waste can never be computed against different productions.
+///
+/// **`production` is what the source ACTUALLY GIVES UP this turn, not what it could offer** — and on a
+/// quantised source those differ, which is the whole point of splitting this out (slice 8):
+/// - **Continuous**: `production` is the policy ceiling. What the crew can't gather stays standing.
+/// - **Quantised**: `production` is the **biomass of the animals killed**, not the escapement the herd
+///   *could* have spared. An animal you didn't kill was never produced — it is still alive. So a lone
+///   hunter on a fresh mammoth herd reports `production = 800` (one mammoth) and wastes 760, **not**
+///   `production = 6000` (the whole escapement) wasting 5960, which would be a nonsense reading of a
+///   herd standing peacefully on the range.
+///
+/// That keeps `wasted = production − actual` — slice 7's one formula — meaning exactly one thing at
+/// every rung: *food this source gave up that the crew did not bring home*. On the drawn-down plant
+/// rungs it stays in the stock and regrows; on an animal rung it is meat left to rot.
+fn forecast_production_and_take(
+    forecast: &SourceYieldForecast,
+    workers: u32,
+    policy: FollowPolicy,
+) -> (f32, f32) {
+    let collection = workers as f32 * forecast.per_worker_yield;
+    let ceiling = forecast.ceiling_for(policy);
+    if forecast.body_mass_yield > 0.0 {
+        let take = quantise_animal_take(ceiling, collection, forecast.body_mass_yield);
+        (take.killed_biomass(), take.carried)
+    } else {
+        (ceiling, collection.min(ceiling))
+    }
 }
 
 /// Compose the **seeded** `SourceYield` telemetry row for a source from its pre-commit forecast —
@@ -2398,16 +2718,18 @@ pub fn forecast_expected_take(
 ///   output_multiplier`, the same value the resolution path records) — except a **`managed`** source
 ///   (a rung-3 Field / Pen), whose harvest never draws the stock down, so `sustainable == actual`
 ///   (no ⚠), exactly as the Field/corral arms record it,
-/// - `wasted` = the understaffing signal: the production the crew could not collect,
+/// - `wasted` = the uncollected signal ([`forecast_production_and_take`]): the production the crew
+///   could not carry home,
 /// - `workers_needed` = the overstaffing signal, inverted from the expected take by the per-worker
-///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result).
+///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result),
+/// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
 ///
 /// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
 /// the rungs you own qualify. A *tended* patch is still a wild stand on a better curve — it draws
 /// down and can be over-farmed — so it takes the ordinary branch, ⚠ and all.
 ///
-/// Both signals are computed for **every** rung, from the one expected take: the two rung-kinds differ
-/// in what their ceilings mean, never in whether the crew has to carry the food home.
+/// Every signal is computed for **every** rung, from the one expected take: the rung-kinds differ in
+/// what their ceilings mean, never in whether the crew has to carry the food home.
 pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
@@ -2415,13 +2737,13 @@ pub(crate) fn forecast_source_yield(
     workers: u32,
     policy: FollowPolicy,
 ) -> SourceYield {
-    let production = forecast.ceiling_for(policy);
-    let actual = forecast_expected_take(forecast, workers, policy);
+    let (production, actual) = forecast_production_and_take(forecast, workers, policy);
     SourceYield {
         actual,
         sustainable: if managed { actual } else { sustainable },
         wasted: (production - actual).max(0.0),
         workers_needed: workers_needed_for_take(actual, forecast.per_worker_yield, workers),
+        overdraws: !managed && policy.overdraws(),
     }
 }
 
@@ -2458,68 +2780,259 @@ pub fn hunt_source_yield_preview(
     forecast_source_yield(&forecast, sustainable, herd.is_corralled(), workers, policy)
 }
 
+/// **The biomass a SUSTAIN hunt may take** — constant escapement to the MSY point: everything standing
+/// above `K/2`, and nothing else.
+///
+/// **This is the ONE rule slice 8 changed, and it changed it for ONE policy.** Ruling 4 briefly made
+/// *every* hunt policy escapement to a per-policy floor; that was reverted (see
+/// [`hunt_policy_ceiling`]). Sustain alone is escapement, because Sustain alone is the policy whose
+/// meaning *is* "leave the most productive stock standing".
+///
+/// *Take the animals standing above the most-productive biomass, then wait for the herd to recover.*
+/// Post-take the herd lands **exactly** at `K/2`, so it is **sustainable by construction** and stable
+/// from **both** sides — the constant-escapement lesson `docs/plan_corral_managed_population.md` §2.2
+/// learned at the pen and `graze.overgraze_escapement_fraction` applies to grass, finally applied to
+/// wild game.
+///
+/// **Why Sustain had to stop being a flow.** It used to be `sustainable_yield` = `r·K/4`, which clamps
+/// its argument to `K/2` — so above the MSY point the ceiling was the flat constant `r·K/4` no matter
+/// how long the herd was left alone. **Waiting never raised it.** Once the take quantised to whole
+/// animals, `floor(r·K/4 / body_mass)` was `0` **forever** for every animal heavier than its herd's
+/// one-turn MSY (boar, deer, aurochs, mammoth…) and they became permanently unhuntable under Sustain.
+/// A quantised take needs an **accumulator**, and the herd's own standing biomass is the only honest
+/// one — which means the ceiling has to *read* it. There is no credit meter; the biomass **is** the
+/// meter.
+///
+/// The investment rungs [`FollowPolicy::Tame`] / [`FollowPolicy::Corral`] draw on this same escapement
+/// (they are dips on a *sustainable* draw — the crew is gentling the herd / building the fence, not
+/// overdrawing), and [`managed_yield_biomass`] is the pen's copy of it.
+pub fn sustain_escapement(biomass: f32, carrying_capacity: f32) -> f32 {
+    (biomass - carrying_capacity * MSY_BIOMASS_FRACTION).max(0.0)
+}
+
 /// **THE single source of the per-policy hunt take ceiling** (in *biomass*) at a herd's current
 /// stock, shared by every hunter of a herd: the band's Hunt labor arm and the scout's opportunistic
 /// replenish (via `systems::hunt_take`), the hunting expedition (via
 /// `systems::hunt_expedition_ceiling` / `hunt_trip_forecast`), and the pre-commit forecast
-/// (`hunt_forecast`). One word, one meaning:
-/// - **Sustain** — the **Maximum Sustainable Yield** flow ([`sustainable_yield`]): regrowth at the
-///   most-productive biomass (K/2), so a herd at capacity still yields a positive skim and a
-///   collapsing (sub-Allee) herd yields nothing. This is a *flow* ceiling, not a stock target.
-/// - **Surplus** — that × `follow.surplus_multiplier` (overdraw → slow decline).
-/// - **Market** — a commercial share `market.take_fraction × biomass` (fast decline).
-/// - **Eradicate** — the one-shot max take `hunt.take_from(biomass)` (drives extinction).
-/// - **Tame** / **Corral** — the *investment dips* while the herd is gentled / the pen is built: the
-///   `animal:pastoral` / `animal:pen` rung's `yield_fraction_while_building ×` the MSY ceiling
-///   (reusing the same [`sustainable_yield`] helper — never a second ecology), so the preparing take
-///   is sustainable and the herd stays healthy while the crew works.
-/// - **Cultivate** — Forage-only; a *hunt* ceiling for it is meaningless. Yields `0.0`, the symmetric
-///   defensive case to `forage::forage_policy_ceiling`'s `Corral` arm (both are rejected at
-///   `assign_labor` by [`FollowPolicy::valid_for_hunt`] / `valid_for_forage`).
+/// (`hunt_forecast`). One word, one meaning.
 ///
-/// `ecology` + `carrying_capacity` are **the herd's own** — resolved by [`herd_ecology`] /
-/// [`herd_capacity`], never by the caller reaching for `fauna.ecology` or `herd.carrying_capacity`
-/// directly. The husbandry ladder is expressed *entirely* by handing this function a different
-/// ecology (wild `r` = 0.05 / pastoral 0.15 / pen 0.60), so a call site that re-derives one silently
-/// hunts a tame herd on the wild curve.
+// # TWO doctrines, and EVERYTHING is stock-based. Nothing here is a flow — that is load-bearing
+///
+/// | policy | rule | doctrine |
+/// |---|---|---|
+/// | **Sustain** | [`sustain_escapement`] — `max(0, B − K/2)` | **management**: a stock *target* |
+/// | **Surplus** | `surplus.take_fraction × B` = `0.10 × B` | **extraction**, gentle |
+/// | **Market** | `market.take_fraction × B` = `0.20 × B` | **extraction**, commercial |
+/// | **Eradicate** | `hunt.take_from(B)` | extinction |
+/// | **Tame / Corral** | the rung's `yield_fraction_while_building` × Sustain's escapement | management, dipped |
+///
+/// **Sustain manages** (leave the productive stock standing); **Surplus and Market extract** (take a
+/// share of what's there, gently or commercially). Every rule reads the **standing biomass**.
+///
+/// ## Why no rule may be a FLOW — the mammoth test
+///
+/// A flow ceiling (`multiplier × MSY`) is a **constant in `biomass`**: it does not rise while the herd
+/// regrows, so waiting never raises it and it **can never accumulate**. Once the take quantises to
+/// whole animals, `floor(ceiling / body_mass)` that is `0` on turn 1 is `0` on turn 500 — the animal
+/// is *permanently unhuntable* under that policy. Both flow rules this axis used to have died of it:
+///
+/// - **Sustain** was `r·K/4`, which made **7 of 9 shipped species** (boar, deer, aurochs, mammoth…)
+///   permanently unhuntable. Fixed by escapement — the herd's own biomass is the accumulator.
+/// - **Surplus** was `1.6 × MSY`. Mammoth: MSY 415 → ceiling **664**, `body_mass` **800** ⇒
+///   `floor(664/800) = 0`, **forever**. Fixed by making it a skim.
+///
+/// A **proportional skim is safe** precisely because it reads the stock: `0.10 × B` grows as `B`
+/// regrows, so it always eventually clears one body. **Do not "simplify" a skim back into a flow.**
+///
+/// ## Why Surplus is a skim and not escapement-to-a-lower-floor
+///
+/// Escapement **converges** on its floor: it would strip the herd once and then *hold* it there
+/// forever. That is not *"take extra to sell and it slowly declines"* (the manual) — and giving
+/// Surplus and Market two floors made them **numerically identical**, collapsing the 4-way axis to 3.
+/// (The test that should have caught that passed on `body_mass` rounding noise between two *different
+/// species* — see `fauna_market::COMPARISON_BODY_MASS`.) A 10% skim genuinely out-takes a slow
+/// breeder's regrowth turn over turn, which is exactly what the manual describes.
+///
+/// Market's *"crashes slow breeders **fastest**"* is emergent from the same shape: a fast breeder
+/// refills a 20% skim and settles at a lower stock; a slow one cannot and spirals past the Allee
+/// threshold into the depensation collapse. No separate depletion state, no floor to tune.
+///
+/// **The resident and expedition paths now agree on Sustain, Surplus AND Market** — the long-standing
+/// disagreement (band takes a per-turn rule, expedition strips stock headroom) survives only for
+/// **Eradicate**, whose expedition arm still floors at `0`.
+///
+/// # At `B = K`, Sustain out-yields Surplus. That is CORRECT — do not "fix" it
+///
+/// A herd at capacity hands Sustain the whole `K/2` standing above the MSY point, while Surplus takes
+/// `0.10 × K`. So on a *full* herd the gentle policy pays more — which reads like an inversion and is
+/// not one. A herd at capacity is **above its most productive biomass**: cropping it down to `K/2` is
+/// a **one-time stock correction that leaves the herd breeding faster**, not a policy out-earning a
+/// greedier one. The comparison that matters is the long run, and there Sustain settles at the MSY
+/// rate and holds forever while Surplus keeps out-taking regrowth **and declining the herd**.
+///
+/// # The `ecology` argument is GONE, and its absence is the thesis
+///
+/// This used to take the herd's `EcologyConfig` and the docs said *"the husbandry ladder is expressed
+/// **entirely** by handing this function a different ecology"*. Not any more: **no rule on the axis
+/// reads `r`.** Every ceiling reads *standing stock* — `B − K/2`, `fraction × B`, `take_from(B)` —
+/// because a rule that reads a *rate* cannot accumulate and so cannot afford a whole animal (above).
+///
+/// So the ladder does **not** touch what a herd can spare this turn; it touches **how fast the herd
+/// refills**, which is `regrow_biomass`'s business. That is *"management buys a growth rate"* made
+/// literal and exclusive — the claim is no longer smeared across the take. `carrying_capacity` is
+/// still **the herd's own** ([`herd_capacity`]), never re-derived at a call site.
 ///
 /// Not clamped to biomass — the caller does that alongside its own throughput / carry-room cap.
 pub fn hunt_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
-    ecology: &EcologyConfig,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
 ) -> f32 {
     match policy {
-        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(biomass, carrying_capacity, ecology) * fauna.follow.surplus_multiplier
-        }
+        // The ONE escapement rule (slice 8). See `sustain_escapement`.
+        FollowPolicy::Sustain => sustain_escapement(biomass, carrying_capacity),
+        // **The extraction pair — the same proportional stock skim at two intensities.** Gentle
+        // (0.10) vs commercial (0.20); what else separates them is what they do with the meat
+        // (`market.trade_goods_multiplier`). Both read the *standing stock*, which is what lets them
+        // accumulate and quantise — see the "everything is stock-based" note above.
+        FollowPolicy::Surplus => fauna.surplus.take_fraction * biomass,
         FollowPolicy::Market => fauna.market.take_fraction * biomass,
         FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
         // The two investment dips, read off the ladder's own rungs — the same seam the plant side's
-        // Cultivate dip reads, so every rung's investment cost is tuned in one file.
+        // Cultivate dip reads, so every rung's investment cost is tuned in one file. They ride
+        // **Sustain's escapement**: the crew is gentling the herd / building the fence, so the draw
+        // must be a sustainable one.
         FollowPolicy::Tame => {
-            sustainable_yield(biomass, carrying_capacity, ecology)
+            sustain_escapement(biomass, carrying_capacity)
                 * ladder
                     .rung(RungKey::AnimalPastoral)
                     .yield_fraction_while_building()
                     .expect("the pastoral rung is an investment — it has a build meter")
         }
         FollowPolicy::Corral => {
-            sustainable_yield(biomass, carrying_capacity, ecology)
+            sustain_escapement(biomass, carrying_capacity)
                 * ladder
                     .rung(RungKey::AnimalPen)
                     .yield_fraction_while_building()
                     .expect("the pen rung is an investment — it has a build meter")
         }
-        // The plant-only investment rungs — rejected on a Hunt assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; defensively yield nothing rather
-        // than silently hunting under a nonsense policy. The symmetric twin of
-        // `forage_policy_ceiling`'s `Tame | Corral` arm.
+        // The plant-only rungs — rejected on a Hunt assignment at `assign_labor`
+        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; yield nothing rather than
+        // silently hunting under a nonsense policy. The symmetric twin of `forage_policy_ceiling`'s
+        // `Tame | Corral` arm. **Exhaustive** — a new verb must fail to compile here rather than
+        // inherit a plausible ceiling from a catch-all.
         FollowPolicy::Cultivate | FollowPolicy::Sow => 0.0,
+    }
+}
+
+/// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
+///
+/// The herd loses [`AnimalTake::killed_biomass`] (you cannot un-kill an animal you could not carry);
+/// the party banks `carried`; `wasted` is the difference, and it is a **real loss** — meat left to rot
+/// on the range, not stock left standing.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AnimalTake {
+    /// Whole animals killed this turn. `0` = the herd could not spare one and the hunt **waited**.
+    pub killed: u32,
+    /// Biomass carried home — what the larder is paid for.
+    pub carried: f32,
+    /// Biomass killed but **not** carried: the party could not haul the whole animal. The player's
+    /// call, never hidden — it is what `SourceYield.wasted` reports on a hunt.
+    pub wasted: f32,
+}
+
+impl AnimalTake {
+    /// The biomass the **herd** loses: every animal killed, carried home or not.
+    pub fn killed_biomass(&self) -> f32 {
+        self.carried + self.wasted
+    }
+}
+
+/// **THE whole-animal quantiser** (intensification ladder slice 8) — the one place a take is rounded
+/// to animals, shared by **every rung**: `systems::hunt_take` (the resident band + the scout's
+/// replenish), `systems::expedition_take_biomass` (the hunting party + its forward-simulated
+/// forecast), the **pen**'s corral-tend branch of `advance_labor_allocation`, and
+/// [`forecast_expected_take`] (the pre-commit preview) — so no two hunters or keepers of a herd can
+/// disagree about what a kill is.
+///
+/// **Whole animals everywhere — you cannot slaughter half a cow either.** The pen quantises for the
+/// exact reason the hunt does; see [`managed_yield_biomass`] for why it nonetheless *reads* steady.
+///
+/// **A herd is not a fluid.** You kill *whole animals*, and a big animal is a lot of food at once:
+/// ```text
+/// affordable = floor(policy_ceiling / body_mass)   // whole animals the herd can spare
+/// carryable  = floor(collection    / body_mass)    // whole animals the party can haul
+/// killed     = min(affordable, max(1, carryable))  IF affordable >= 1, else 0
+/// carried    = min(killed × body_mass, collection)
+/// wasted     = killed × body_mass − carried
+/// ```
+///
+/// Two clauses carry the whole design:
+/// - **`max(1, carryable)` — you cannot half-kill a mammoth.** A party that cannot carry a whole
+///   animal may still take one and **waste most of it**. That is not forbidden and not hidden: it is
+///   what makes party size mean *"how much of the kill do you keep"* (one hunter keeps 80% of a boar,
+///   33% of a steppe runner, **5%** of a mammoth; ~20 hunters bring a whole mammoth home).
+/// - **`affordable < 1` ⇒ take **nothing** and WAIT.** When the herd cannot yet spare a whole animal
+///   the hunt pauses while it regrows — constant escapement, discretised. The rhythm falls straight
+///   out as `body_mass / MSY` turns per animal at the operating point: small game every turn,
+///   boar/deer ~2, mammoth ~7 — *then you eat for a week*.
+///
+/// `body_mass <= 0` is impossible (`FaunaConfig::validate` requires it finite & positive on every
+/// species) and would mean a herd of infinitely many animals; it takes **nothing** and screams in a
+/// debug build, rather than letting `floor(x / 0) = inf` strip the whole stock in one turn.
+/// **Relative slop when counting whole animals out of a biomass ratio.** Load-bearing, not paranoia —
+/// it is what keeps the *preview* and the *take* counting the same animals.
+///
+/// The take quantises in **biomass** (`2400 / 800`), while the client-facing forecast quantises the
+/// same take in **provisions** (`hunt_provisions` has already scaled both sides by the `f32` constant
+/// `provisions_per_biomass`). Those are the same ratio in exact arithmetic — a positive linear factor
+/// cancels — but **not in `f32`**: `0.02` is stored as `0.019999999552965164`, so 60 hunters on a
+/// mammoth read `2400 / 800 = 3.0` exactly in biomass and `47.999999 / 15.999999 = 2.9999998` in
+/// provisions. `floor` then says **3 animals** one way and **2** the other, and the preview
+/// under-quotes the take by a whole mammoth (caught by `exported_snapshot_fields_reproduce_band_hunt_take`).
+///
+/// `f32` carries ~1.2e-7 relative precision and each side takes a couple of roundings, so `1e-6`
+/// clears the error by an order of magnitude while staying far below any *real* gap: a take genuinely
+/// this close to a whole animal would need `body_mass` tuned to seven significant figures. And it is
+/// self-correcting either way — `carried` is clamped to `collection` regardless, so at worst one more
+/// animal is counted killed and its meat reported wasted.
+const ANIMAL_COUNT_EPSILON: f32 = 1e-6;
+
+/// Whole animals in `available` biomass, at `body_mass` each — `floor`, with
+/// [`ANIMAL_COUNT_EPSILON`] of relative slop so the same take counts the same animals whether it is
+/// quantised in biomass or in provisions.
+fn whole_animals(available: f32, body_mass: f32) -> f32 {
+    let ratio = available / body_mass;
+    (ratio * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
+}
+
+pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32) -> AnimalTake {
+    if !body_mass.is_finite() || body_mass <= 0.0 {
+        debug_assert!(
+            false,
+            "body_mass must be finite and positive (FaunaConfig::validate enforces it); got {body_mass}"
+        );
+        return AnimalTake::default();
+    }
+    let ceiling = policy_ceiling.max(0.0);
+    let collection = collection.max(0.0);
+    let affordable = whole_animals(ceiling, body_mass);
+    if affordable < 1.0 {
+        // The herd cannot spare a whole animal — wait for it to regrow. THE mechanic.
+        return AnimalTake::default();
+    }
+    let carryable = whole_animals(collection, body_mass);
+    // `max(1.0)`: a party that can't carry one still takes one — and wastes the rest.
+    let killed = affordable.min(carryable.max(1.0));
+    let killed_biomass = killed * body_mass;
+    let carried = killed_biomass.min(collection);
+    AnimalTake {
+        // `killed` is bounded by `ceiling / body_mass` and both are finite, so the cast is safe.
+        killed: killed as u32,
+        carried,
+        wasted: (killed_biomass - carried).max(0.0),
     }
 }
 
@@ -2570,13 +3083,21 @@ pub(crate) fn hunt_forecast(
                 fauna,
                 output_multiplier,
             ),
+            // A pen is butchered in whole animals like everything else (slice 8) — it just breeds fast
+            // enough (`pen_gain` ×3) that its MSY clears a body every turn, so it reads steady without
+            // being exempt. See `managed_yield_biomass`.
+            hunt_provisions(herd.body_mass, fauna, output_multiplier),
         );
     }
-    let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
+    // **Clamped to the herd's remaining biomass** — belt-and-braces, and cheap. Every rule on the axis
+    // is a stock rule bounded by `B` (`hunt_policy_ceiling`), so this cannot bite today; it is what
+    // keeps a hot-reloaded lever (a `take_fraction` above 1) from letting the preview quote a take the
+    // herd could never supply. `herd_ecology` is no longer read here at all: the ceiling stopped
+    // depending on `r` when the last flow rule died.
     let ceiling = |policy| {
         hunt_provisions(
-            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, fauna, ladder)
+            hunt_policy_ceiling(policy, herd.biomass, capacity, fauna, ladder)
                 .clamp(0.0, herd.biomass),
             fauna,
             output_multiplier,
@@ -2588,6 +3109,8 @@ pub(crate) fn hunt_forecast(
             fauna,
             output_multiplier,
         ),
+        // The quantum that makes this preview pulse exactly as the take does (slice 8).
+        body_mass_yield: hunt_provisions(herd.body_mass, fauna, output_multiplier),
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_market: ceiling(FollowPolicy::Market),
@@ -2661,7 +3184,14 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
 
 /// The most-productive biomass for logistic regrowth is K/2 (the Maximum Sustainable
 /// Yield point), where `r·B·(1−B/K)` peaks.
-const MSY_BIOMASS_FRACTION: f32 = 0.5;
+///
+/// **Public since slice 8, because it is now the sim's OPERATING POINT and not merely an interior
+/// detail of the regrowth curve.** Every hunt policy is constant escapement to a floor, and
+/// Sustain's floor **is** `K · MSY_BIOMASS_FRACTION` ([`sustain_escapement`]) — so a harvested herd
+/// *lives* here, and any test that wants to measure a rung at the point a running herd actually
+/// stands has to seat against this number. Exporting it is what stops those fixtures from spelling
+/// `0.5` by hand and silently drifting if the curve's peak ever moves.
+pub const MSY_BIOMASS_FRACTION: f32 = 0.5;
 
 /// Max Sustainable Yield ceiling: regrowth evaluated at the most-productive biomass (K/2),
 /// so a resource AT carrying capacity still has a positive sustainable harvest (Sustain draws it
@@ -2962,6 +3492,10 @@ mod tests {
     /// works); the global wild default the retired single ecology used.
     const WILD_TEST_REGROWTH_RATE: f32 = 0.05;
 
+    /// One test beast (slice 8). Small relative to these fixtures' capacities, so a take quantises
+    /// without the *fixture* becoming a study of the pulse — the rhythm has its own dedicated tests.
+    const TEST_BODY_MASS: f32 = 1.0;
+
     fn herd_of_size(size: SizeClass, biomass: f32, cap: f32, fodder: f32) -> Herd {
         Herd::new(
             "game_test".to_string(),
@@ -2972,6 +3506,7 @@ mod tests {
             cap,
             fodder,
             WILD_TEST_REGROWTH_RATE,
+            TEST_BODY_MASS,
         )
     }
 

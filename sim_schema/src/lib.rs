@@ -545,6 +545,12 @@ pub struct HerdState {
     /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
     #[serde(default)]
     pub regrowth_rate: f32,
+    /// **Biomass of one animal** (intensification ladder slice 8), cached on the live `Herd` at spawn
+    /// from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire) so a
+    /// rollback restores the herd's take quantum — a rehydrated herd reading `0` would be a herd with
+    /// infinitely many animals, and `floor(escapement / 0)` would strip it whole in one turn.
+    #[serde(default)]
+    pub body_mass: f32,
     /// How far up the husbandry ladder the herd's species climbs (Grazing 2d-δ): `wild` | `pastoral` |
     /// `pen` (`HusbandryCeiling::as_str`/`from_key`). Cached on the live `Herd` at spawn; round-tripped
     /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).

@@ -18,8 +18,8 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
-    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+    TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -182,10 +182,19 @@ fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
     herd.refresh_ecology_phase(&fauna);
 }
 
+/// Hand a herd a **completed, staffed** pastoral rung — the "give me a tamed herd" fixture.
+///
+/// **Both halves are needed since slice 8.** `accrue_domestication` fills the meter, but a tamed herd
+/// now also demands *herders* every turn (`fauna::herders_needed`), and `advance_husbandry` (Logistics)
+/// runs **before** the labor arm (Population) that would staff it. So a herd handed only the meter is
+/// read as *unherded* on its very first turn, decays a step, drops under the `>= 1.0` bar, and every
+/// row measuring it silently measures a **wild** herd instead. Seating `herded_fraction` too says "a
+/// crew was already with them last turn", which is exactly the state the fixture is claiming.
 fn domesticate(app: &mut App, id: &str) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.herded_fraction = FULLY_HERDED;
 }
 
 /// The single band's FOOD larder.
@@ -647,26 +656,33 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
 fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_down() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (biomass_before, cap) = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
-        // At capacity: MSY = r·K/4 (the ceiling plateaus above K/2) and regrowth is 0, so a single
-        // Population-stage take is measurable against the herd's standing biomass.
-        herd.biomass = herd.carrying_capacity;
-        (herd.biomass, herd.carrying_capacity)
+    domesticate(&mut app, &id);
+
+    let cap = herd_of(&app, &id).carrying_capacity;
+    let (expected_take, expected_provisions) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        // Per-species pastoral rate (Grazing 2d): read the same seam the sim harvests through.
+        let pastoral_r = herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate;
+        let take = pastoral_r * cap / 4.0;
+        (take, take * fauna.hunt.provisions_per_biomass)
     };
+    // **Seated at the OPERATING POINT, not at capacity** (slice 8). A Sustain hunt is constant
+    // escapement to `K/2`, so what a herd hands over is the **standing surplus above that point**,
+    // not a rate. This test is about the *rate* — that the pastoral `r` reaches the worker's take —
+    // so it seats the herd exactly where a converged herd stands when the Population stage runs:
+    // `K/2` **plus the turn's own regrowth** (`r·K/4`, the MSY). The escapement it spares is then
+    // precisely that MSY, and the assertion below measures the thing it was written to measure.
+    //
+    // Seating at `B = K` (as this used to) makes the herd spare `K/2` — the accumulated **stock**,
+    // which is identical for every rung because `r` cancels out of `K − K/2`. That is correct
+    // behaviour and it is exactly why it cannot measure a growth rate; see
+    // `the_husbandry_ladder_is_a_per_species_growth_rate_ladder` for the long-run form.
+    let biomass_before = cap * MSY_BIOMASS_FRACTION + expected_take;
+    reseat(&mut app, &id, cap, biomass_before);
     assert_eq!(provisions(&mut app), 0);
 
     let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
     app.world.run_system_once(advance_labor_allocation);
-
-    let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    // Per-species pastoral rate (Grazing 2d): read the same seam the sim harvests through.
-    let pastoral_r = herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate;
-    let expected_take = pastoral_r * cap / 4.0;
-    let expected_provisions = expected_take * fauna.hunt.provisions_per_biomass;
-    drop(fauna);
 
     let paid = yield_of(&app, band);
     assert!(
@@ -745,6 +761,9 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.biomass = herd.carrying_capacity;
     herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    // A freshly-penned herd has a crew (`corral_at` grants the tending grace for the same reason) —
+    // see `domesticate` for why the meter alone is not enough.
+    herd.herded_fraction = FULLY_HERDED;
     let tile = herd.position();
     assert!(herd.corral_at(tile), "the fixture species must be pennable");
     tile
@@ -849,6 +868,13 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
 
 /// **The pen EATS.** Its keeper's larder is debited exactly `pen.upkeep_per_biomass × biomass` every
 /// turn it tends — a confined herd cannot graze, so the keeper brings it food.
+///
+/// **Seated at the OPERATING POINT (slice 8).** `corral_herd` seats the herd at `B = K`, where the
+/// pen's escapement harvest is the standing **stock** `K/2` — a one-off windfall identical at every
+/// rung, not the `r·K/4` *rate* this test asserts the pen pays. So it re-seats to where a running
+/// pen actually stands (`K/2` + the turn's regrowth) before measuring. The **upkeep** half was never
+/// in doubt (it is charged on biomass, whatever the biomass is); what the reseat restores is the
+/// **gross-yield** half and the `upkeep < gross` net-positive claim underneath it.
 #[test]
 fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
     const STOCK: f32 = 500.0;
@@ -856,7 +882,6 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     corral_herd(&mut app, &id);
-    let biomass = herd_of(&app, &id).biomass;
     let (upkeep_rate, pen_r, prov_rate) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         (
@@ -866,6 +891,12 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
             fauna.hunt.provisions_per_biomass,
         )
     };
+    // Re-seat onto the settled operating point — `corral_herd` leaves the herd at capacity.
+    let cap = herd_of(&app, &id).carrying_capacity;
+    let pen_msy = pen_r * cap / 4.0;
+    reseat(&mut app, &id, cap, cap * MSY_BIOMASS_FRACTION + pen_msy);
+    let biomass = herd_of(&app, &id).biomass;
+
     let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
     stock_larder(&mut app, keeper, STOCK);
 
@@ -874,7 +905,7 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
 
     let expected_upkeep = upkeep_rate * biomass;
     let gross = yield_of(&app, keeper);
-    let expected_gross = pen_r * herd_of(&app, &id).carrying_capacity / 4.0 * prov_rate;
+    let expected_gross = pen_msy * prov_rate;
     assert!(
         (gross - expected_gross).abs() < expected_gross * 0.02,
         "the credited yield is GROSS (upkeep is a separate debit): {gross} vs {expected_gross}"
@@ -987,6 +1018,21 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
 /// `pastoral / wild` ratio is asserted to be exactly `pastoral_gain` — the payoff that replaced
 /// "pastoral = zero workers".
 ///
+/// **Slice 8 makes it a LONG-RUN average, and that is a correction to the MEASUREMENT, not a
+/// weakening of the guarantee.** Every hunt is constant escapement now, so a herd hands over
+/// `B − K/2` — a **stock**, not a rate. At `B = K` that is `K/2` **for every rung**: `r` cancels
+/// clean out of `K − K/2`, so a full herd's first harvest is *identical* wild, pastoral and penned.
+/// That is not a bug and it must not be "fixed": the surplus standing above the escapement point is
+/// **accumulated stock**, and stock does not care how fast you breed. What management buys is that
+/// **the next animal comes sooner** — so the ladder is monotone in the rate a rung sustains over
+/// time, which is exactly `r·K/4`, and the only way to see it is to average a run long enough to
+/// contain the refills. Hence: seat at the operating point, run `MEASURE_TURNS`, average.
+///
+/// A single turn cannot measure this any more, at either biomass. At `B = K` you read the stock
+/// (rung-blind). At `B = K/2` you read *zero* for any species whose one-turn MSY is lighter than one
+/// animal (a wild mammoth: 120 biomass of regrowth against an 800-unit beast) — the herd correctly
+/// **waits**. Both readings are honest; neither is the ladder.
+///
 /// **What 2d does NOT guarantee at the BARREN worst case** (this harness runs no graze layer, so the pen
 /// is fully larder-fed): the pen's *net* payoff over pastoral. A penned herd normally grazes its fenced
 /// footprint and the larder pays only the shortfall (§2.3), so on real pasture `upkeep → 0` and
@@ -1000,11 +1046,22 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
 #[test]
 fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
     const MEASURE_STOCK: f32 = 50_000.0;
+    /// Turns averaged per rung, seeded at the operating point.
+    ///
+    /// Sized by the **slowest pulse the table contains**: a wild Thunder Mammoth sustains
+    /// `r·K/4` = 120 biomass/turn against an **800-unit body**, so it spares one beast roughly every
+    /// 7 turns. 600 turns is ~85 of those cycles — enough that the ≤1 uncollected body still standing
+    /// at the end is a fraction of a percent of the run, so the average reads the rung's rate rather
+    /// than where its last pulse happened to land. Every other row pulses far faster.
+    const MEASURE_TURNS: u32 = 600;
 
     // The pastoral rung's promised multiple of the wild rung — read off the config, never pinned.
     let pastoral_gain = FaunaConfigHandle::default().get().husbandry.pastoral_gain;
-    // (display, cap, per-species wild r) — the wild rung must be measured at each species' OWN r.
-    let species_caps: Vec<(String, f32, f32)> = {
+    // (display, cap, per-species wild r, body_mass) — the wild rung must be measured at each species'
+    // OWN r, and since slice 8 at its own **body**: the take quantises to whole animals, so a
+    // mammoth's `K` measured against the fixture's 1-unit fowl body would be a different economy
+    // entirely (it would never wait).
+    let species_caps: Vec<(String, f32, f32, f32)> = {
         let fauna = FaunaConfigHandle::default().get();
         let wild_default = fauna.ecology.regrowth_rate;
         ["rabbit", "deer", "mammoth"]
@@ -1015,89 +1072,126 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
                     def.display_name.clone(),
                     def.carrying_capacity(),
                     def.regrowth_rate_or(wild_default),
+                    def.body_mass,
                 )
             })
             .collect()
     };
 
-    // Measured twice: **at capacity** (a freshly-penned herd, `B = K`) and at the **settled operating
-    // point** (`B* = K/2` — where a harvested herd actually converges; the point the pen's
-    // net-positive invariant is derived against). Every row runs a **full turn in real stage order**
-    // (Logistics: `advance_herds` regrows → `advance_husbandry`; Population:
-    // `advance_labor_allocation`), so the numbers are what the sim pays, not what a single system does
-    // in isolation. The gross yields match at both biomasses (the MSY ceiling plateaus above `K/2`);
-    // the **feed** is what differs, because the feed follows the herd — and it is charged on the
-    // *post-regrowth* biomass (you feed every animal in the pen, including the ones you are about to
-    // harvest).
-    for (label, biomass_fraction) in [
-        ("at capacity (B = K)", 1.0f32),
-        ("at the settled operating point (B* = K/2)", 0.5f32),
-    ] {
-        println!("\n=== husbandry ladder, MEASURED {label} (provisions/turn) ===");
+    // **Measured once, as a long-run average from the settled operating point** (`B* = K/2` — where a
+    // harvested herd converges, and the point the pen's net-positive invariant is derived against).
+    // The retired "at capacity (B = K)" pass measured the standing **stock** every rung shares (see
+    // the doc comment), not the ladder.
+    //
+    // Every row runs **full turns in real stage order** (Logistics: `advance_herds` regrows →
+    // `advance_husbandry`; Population: `advance_labor_allocation`), so the numbers are what the sim
+    // pays, not what a single system does in isolation. The feed is charged on the *post-regrowth*
+    // biomass (you feed every animal in the pen, including the ones you are about to harvest).
+    println!(
+        "\n=== husbandry ladder, MEASURED as the {MEASURE_TURNS}-turn average from the operating \
+         point (B* = K/2) (provisions/turn) ==="
+    );
+    println!(
+        "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9} {:>9}",
+        "species", "K", "wild", "pastoral", "pen gross", "upkeep", "pen net"
+    );
+    for (species, cap, wild_r, body_mass) in &species_caps {
+        let (species, cap, wild_r, body_mass) = (species.clone(), *cap, *wild_r, *body_mass);
+        let biomass = cap * MSY_BIOMASS_FRACTION;
+
+        // --- Wild Sustain: a band hunting a wild herd — its ACTUAL take, from the yield telemetry.
+        // Seat the herd at THIS species' per-species wild `r` (2b-ii) and body (slice 8), since the
+        // spawned short-range game the harness reuses carries its own.
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        reseat(&mut app, &id, cap, biomass);
+        seat_species_traits(&mut app, &id, wild_r, body_mass);
+        let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+        let wild = average_yield_over_run(&mut app, band, MEASURE_TURNS);
+
+        // --- Pastoral: **the same band, the same head-count, hunting a TAMED herd** — its ACTUAL
+        // take. Passive-free pastoral is retired (slice 3b), so this row is now measured exactly
+        // like the wild one and the three rows are directly comparable **per worker**: same
+        // workers, same `K`, only the rung differs.
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        reseat(&mut app, &id, cap, biomass);
+        seat_species_traits(&mut app, &id, wild_r, body_mass);
+        domesticate(&mut app, &id);
+        let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+        let pastoral = average_yield_over_run(&mut app, band, MEASURE_TURNS);
+
+        // --- Pen: the gross yield credited + the feed debited, both read off the keeper's larder.
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        reseat(&mut app, &id, cap, cap);
+        seat_species_traits(&mut app, &id, wild_r, body_mass);
+        corral_herd(&mut app, &id);
+        reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
+        let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+        let (pen_gross, upkeep) =
+            average_pen_yield_and_upkeep(&mut app, keeper, MEASURE_TURNS, MEASURE_STOCK);
+        let pen_net = pen_gross - upkeep;
+
         println!(
-            "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9} {:>9}",
-            "species", "K", "wild", "pastoral", "pen gross", "upkeep", "pen net"
+            "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
         );
-        for (species, cap, wild_r) in &species_caps {
-            let (species, cap, wild_r) = (species.clone(), *cap, *wild_r);
-            let biomass = cap * biomass_fraction;
 
-            // --- Wild Sustain: a band hunting a wild herd — its ACTUAL take, from the yield telemetry.
-            // Seat the herd at THIS species' per-species wild `r` (2b-ii), since the spawned short-range
-            // game the harness reuses carries its own rate.
-            let mut app = spawn_world();
-            let id = prime_thriving_herd(&mut app);
-            reseat(&mut app, &id, cap, biomass);
-            set_wild_regrowth_rate(&mut app, &id, wild_r);
-            let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
-            run_turns_with_hunt(&mut app, 1);
-            let wild = yield_of(&app, band);
-
-            // --- Pastoral: **the same band, the same head-count, hunting a TAMED herd** — its ACTUAL
-            // take. Passive-free pastoral is retired (slice 3b), so this row is now measured exactly
-            // like the wild one and the three rows are directly comparable **per worker**: same
-            // workers, same `K`, only the rung differs.
-            let mut app = spawn_world();
-            let id = prime_thriving_herd(&mut app);
-            reseat(&mut app, &id, cap, biomass);
-            set_wild_regrowth_rate(&mut app, &id, wild_r);
-            domesticate(&mut app, &id);
-            let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
-            run_turns_with_hunt(&mut app, 1);
-            let pastoral = yield_of(&app, band);
-
-            // --- Pen: the gross yield credited + the feed debited, both read off the keeper's larder.
-            let mut app = spawn_world();
-            let id = prime_thriving_herd(&mut app);
-            reseat(&mut app, &id, cap, cap);
-            set_wild_regrowth_rate(&mut app, &id, wild_r);
-            corral_herd(&mut app, &id);
-            reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
-            let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
-            stock_larder(&mut app, keeper, MEASURE_STOCK);
-            run_turns_with_hunt(&mut app, 1);
-            let pen_gross = yield_of(&app, keeper);
-            // larder = stock − upkeep + gross ⇒ upkeep = stock + gross − larder.
-            let upkeep = MEASURE_STOCK + pen_gross - larder_of(&app, keeper);
-            let pen_net = pen_gross - upkeep;
-
-            println!(
-                "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
-            );
-
-            assert_growth_rate_ladder(
-                &species,
-                wild_r,
-                pastoral_gain,
-                wild,
-                pastoral,
-                pen_gross,
-                upkeep,
-                pen_net,
-            );
-        }
+        assert_growth_rate_ladder(
+            &species,
+            wild_r,
+            pastoral_gain,
+            wild,
+            pastoral,
+            pen_gross,
+            upkeep,
+            pen_net,
+        );
     }
     println!();
+}
+
+/// **One rung's LONG-RUN average take**, in provisions/turn: run the full turn pipeline `turns` times
+/// and average the band's *actual* take off the retained yield telemetry.
+///
+/// This is the only honest way to read a rung since slice 8 made the hunt constant escapement on
+/// whole animals: a single turn reads either the standing **stock** (at `B = K`, identical at every
+/// rung) or a **pulse** (at `B*`, where a herd whose MSY is lighter than one animal takes nothing and
+/// waits). Averaged over many refill cycles, both artifacts wash out and what is left is the rate the
+/// rung sustains — which *is* the thing the ladder claims to raise. See the caller's doc comment.
+fn average_yield_over_run(app: &mut App, band: bevy::prelude::Entity, turns: u32) -> f32 {
+    let mut total = 0.0;
+    for _ in 0..turns {
+        run_turns_with_hunt(app, 1);
+        total += yield_of(app, band);
+    }
+    total / turns as f32
+}
+
+/// [`average_yield_over_run`] for the **pen**, which also has a bill: returns
+/// `(mean gross yield, mean larder upkeep)`.
+///
+/// The larder is topped back up to `stock` **before every turn**, so each turn's debit is readable in
+/// isolation (`upkeep = stock + gross − larder`) *and* the pen never goes hungry mid-run — an unfed
+/// pen shrinks (`starve_shrink_rate`), which would quietly turn this into a measurement of starvation
+/// rather than of the rung.
+fn average_pen_yield_and_upkeep(
+    app: &mut App,
+    keeper: bevy::prelude::Entity,
+    turns: u32,
+    stock: f32,
+) -> (f32, f32) {
+    let mut gross_total = 0.0;
+    let mut upkeep_total = 0.0;
+    for _ in 0..turns {
+        stock_larder(app, keeper, stock);
+        run_turns_with_hunt(app, 1);
+        let gross = yield_of(app, keeper);
+        gross_total += gross;
+        // larder = stock − upkeep + gross ⇒ upkeep = stock + gross − larder.
+        upkeep_total += stock + gross - larder_of(app, keeper);
+    }
+    (gross_total / turns as f32, upkeep_total / turns as f32)
 }
 
 /// The **per-species GROWTH-RATE ladder** (Grazing 2d §3), asserted on **measured** numbers. Since the
@@ -1148,16 +1242,100 @@ fn assert_growth_rate_ladder(
     );
 }
 
-/// Seat a herd's cached per-species **wild** regrowth rate (Grazing 2b-ii) — the wild rung is measured
-/// at each species' own `r`, and the harness reuses one spawned short-range herd for every row.
-fn set_wild_regrowth_rate(app: &mut App, id: &str, r: f32) {
+/// Seat the two cached per-species traits a rung is measured against — the **wild** regrowth rate
+/// (Grazing 2b-ii) and the **body mass** (slice 8) — since the harness reuses one spawned short-range
+/// herd for every row and that herd carries whatever species the map happened to place.
+///
+/// **Both, together, or the row is a different animal.** `r` alone was enough while the take was a
+/// smooth flow; now the take quantises to whole bodies, so `r` and `body_mass` jointly decide the
+/// *rhythm* (`body_mass / (r·K/4)` turns per animal). A mammoth's `K` and `r` measured against a
+/// 1-unit fowl body would never wait for a whole animal — the exact property the slice added.
+fn seat_species_traits(app: &mut App, id: &str, r: f32, body_mass: f32) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.regrowth_rate = r;
+    herd.body_mass = body_mass;
+}
+
+/// **A properly-herded tamed herd does NOT rot — including one you are merely HARVESTING**
+/// (intensification ladder slice 8).
+///
+/// This is the guarantee that had to survive deleting `decay_domestication`'s `is_domesticated()`
+/// early return. That return made a tamed herd permanently tame for **zero labor**; removing it makes
+/// husbandry a standing cost — but it must not make *harvesting your own herd* corrode it. A crew is
+/// standing right there under Sustain: the animals stay gentled.
+///
+/// So the rule is staffing, **not** the verb: enough herders ⇒ no decay under *any* policy. `Tame` is
+/// what makes the meter go *up*; it is not what stops it going down.
+#[test]
+fn a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    // A big crew, so `herders_needed` is comfortably met however the biomass breathes.
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+
+    run_turns_with_hunt(&mut app, 20);
+
+    let herd = herd_of(&app, &id);
+    assert_eq!(
+        herd.domestication_progress, RUNG_COMPLETE,
+        "a fully-staffed Sustain hunt must not rot its own tamed herd: {} after 20 turns",
+        herd.domestication_progress
+    );
+    assert!(herd.is_domesticated(), "and it is still a pastoral herd");
+}
+
+/// **An UNDER-herded tamed herd forgets — proportionally, and it recovers.** The other half of
+/// `a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy`, and the reason the decay is a
+/// *fraction* rather than a threshold: half the herders you need ⇒ half the decay, nothing snaps, and
+/// staffing it again stops the bleed. A binary escape here would void a ~32-turn taming investment on
+/// rounding, as biomass breathes across a herder boundary.
+#[test]
+fn an_under_herded_tamed_herd_decays_proportionally_and_recovers() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+
+    // Nobody herding at all — the abandonment case, full decay.
+    run_turns_untended(&mut app, 6);
+    let abandoned = herd_of(&app, &id).domestication_progress;
+    assert!(
+        abandoned < RUNG_COMPLETE,
+        "an unherded tamed herd starts forgetting: {abandoned}"
+    );
+    assert!(
+        abandoned > 0.9,
+        "but it forgets SLOWLY — the investment is not destroyed: {abandoned}"
+    );
+
+    // A crew returns under a plain harvest policy: the bleed stops dead, with no `Tame` needed.
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    run_turns_with_hunt(&mut app, 1); // one turn to write `herded_fraction`
+    let before = herd_of(&app, &id).domestication_progress;
+    run_turns_with_hunt(&mut app, 6);
+    let after = herd_of(&app, &id).domestication_progress;
+    assert_eq!(
+        after, before,
+        "staffing the herd again stops the decay outright: {before} -> {after}"
+    );
 }
 
 /// A corralled herd left untended **escapes**: `advance_husbandry` clears `corralled_at`, reverting it
-/// to a mobile domesticated herd (which resumes the even-split yield).
+/// to a mobile herd that keeps its taming **investment**.
+///
+/// **What "still domesticated" means changed in slice 8, and the guarantee is stated more precisely
+/// here.** This used to assert `is_domesticated()` outright — true only because
+/// `decay_domestication` opened with an `is_domesticated()` early return, i.e. a tamed herd was
+/// permanently tame for **zero labor**. That return is deleted (§3: every rung is worked), so an
+/// abandoned herd — nobody feeding it, nobody herding it — begins going feral **immediately**, exactly
+/// as an abandoned tended patch does on the plant web (`is_cultivated()` is the same `>= 1.0`
+/// threshold, and `advance_cultivation` drops it below on the first untended turn).
+///
+/// So the escape costs the **pen**, not the **taming**: `corral_progress` is zeroed outright (25 turns
+/// gone) while `domestication_progress` is merely *bleeding* at the rung's `decay_per_turn` — still
+/// ~99% intact after the turn it broke out, and cheap to top back up with `Tame`. That is the real
+/// invariant, and asserting the meter rather than the flag is what makes it legible.
 #[test]
 fn untended_corral_escapes_to_mobile() {
     let mut app = spawn_world();
@@ -1175,9 +1353,16 @@ fn untended_corral_escapes_to_mobile() {
 
     let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
     assert!(!herd.is_corralled(), "an untended corral escapes");
+    // The **taming investment survives the escape** — it is bleeding (nobody is herding them), not
+    // reset. Losing the pen must not also delete the ~32 turns of gentling underneath it.
     assert!(
-        herd.is_domesticated(),
-        "an escaped herd is still domesticated — just mobile again"
+        herd.domestication_progress > 0.9,
+        "the escape costs the PEN, not the taming: domestication still {} after breaking out",
+        herd.domestication_progress
+    );
+    assert!(
+        herd.owner.is_some(),
+        "and it is still the owner's herd — feral takes ~100 turns, not 3"
     );
 }
 
@@ -1272,6 +1457,13 @@ fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
     );
 
     // A keeper returns under the Corral policy: it must REBUILD, not snap straight back to penned.
+    //
+    // **Re-tame first (slice 8).** The abandoned herd has been bleeding its taming since it broke out
+    // (nobody was herding it — `decay_domestication`'s `is_domesticated()` early return is gone), so
+    // it is a hair under the `>= 1.0` bar `Corral` gates on and would accrue nothing. That is real
+    // behaviour and it is `untended_corral_escapes_to_mobile`'s subject; here it is *setup noise*, so
+    // top the meter back up and keep this test on its own question: **does the pen rebuild from zero?**
+    domesticate(&mut app, &id);
     grant_penning(&mut app);
     spawn_hunter(&mut app, &id, FollowPolicy::Corral);
     run_turns_with_hunt(&mut app, 1);
@@ -1379,21 +1571,33 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
 /// **Retargeted to the worker path** (slice 3b retired the passive payout this used to ride), and
 /// re-seated onto a deliberately tiny `K` so the take is sub-unit for **every** shipped species'
 /// `r` rather than for the one the map happened to spawn.
+///
+/// **Re-seated again for whole animals (slice 8).** It used to seat `B = 0.52 · K` and lean on the
+/// take being the *flow* `r·K/4` — a fraction of an animal, which now quantises to **zero** and the
+/// hunt waits. That is correct behaviour and it deletes the case the test exists for, so the seat is
+/// now stated in the unit the take is actually denominated in: **`K/2` plus exactly one body**, so
+/// the herd spares precisely one beast. The credit is then `body_mass × provisions_per_biomass` —
+/// **0.02 on the fixture's 1-unit Wild Fowl**, still emphatically sub-unit, so the i64-rounding
+/// regression is exercised at the smallest take the sim can now produce. (There is no longer *any*
+/// seat that yields a sub-unit take on a heavy species: one mammoth is 16 provisions. The
+/// fractional-credit path is a small-game property now, which is exactly what the quantiser means.)
 #[test]
 fn sub_unit_pastoral_yield_credits_larder() {
-    /// A tiny herd: `r · K / 4` biomass is a fraction of a provision at every species' `r`.
+    /// A tiny herd, so `K/2 + one body` is still a Thriving fraction of `K`.
     const SUB_UNIT_CAP: f32 = 40.0;
-    /// Just above the MSY point (`K/2`) — a genuine sub-unit flow, not a zero.
-    const SUB_UNIT_CAP_FRACTION: f32 = 0.52;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     domesticate(&mut app, &id);
+    // Seat the herd exactly one animal above its Sustain escapement point, so the take is the
+    // **smallest whole take that exists**: one body. `reseat` refreshes the phase, and (20 + 1)/40
+    // is comfortably Thriving.
+    let body_mass = herd_of(&app, &id).body_mass;
     reseat(
         &mut app,
         &id,
         SUB_UNIT_CAP,
-        SUB_UNIT_CAP * SUB_UNIT_CAP_FRACTION,
+        SUB_UNIT_CAP * MSY_BIOMASS_FRACTION + body_mass,
     );
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 

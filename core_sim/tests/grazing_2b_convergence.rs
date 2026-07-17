@@ -117,6 +117,13 @@ fn set_graze(app: &mut App, tile: UVec2, fraction: f32) {
     patch.biomass = (fraction * patch.carrying_capacity).clamp(0.0, patch.carrying_capacity);
 }
 
+/// The fixture's per-animal body mass. **Irrelevant to this proof by construction, and that is worth
+/// stating**: nothing here hunts. These tests couple the herd's *ecology* to the graze layer's — grow,
+/// eat, regrow — and the whole-animal quantiser (slice 8) lives on the **take** path, which this file
+/// never touches. So the convergence proof is unchanged by quantisation, rather than being tuned to
+/// survive it.
+const CONVERGENCE_BODY_MASS: f32 = 1.0;
+
 /// Replace the live herds with `count` identical **Small** (stationary, range-0) herds parked on
 /// `tile`, each with the given metabolic `fodder` and wild `regrowth_rate` and starting `biomass`.
 /// Small herds don't roam (`route_len == 1`), so the range they graze is exactly this one tile — the
@@ -134,6 +141,7 @@ fn seat_herds(app: &mut App, tile: UVec2, count: usize, fodder: f32, r: f32, bio
             biomass, // spawn K; overwritten by the ecological recompute on turn 1
             fodder,
             r,
+            CONVERGENCE_BODY_MASS,
         ));
     }
 }

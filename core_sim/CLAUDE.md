@@ -725,19 +725,88 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 [band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
 (`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
-**auto-hunts each turn per policy** instead of removing the component — a commercial
-spectrum: Sustain takes the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at
-the most-productive biomass K/2, so a group *at carrying capacity* still yields a positive skim and
-a collapsing group yields nothing; Sustain draws the group toward K/2 and holds it there), Surplus
-takes that × `follow.surplus_multiplier`
-(slow decline), **Market** takes `market.take_fraction × biomass` (a large commercial share →
-fast decline into the Phase D collapse) and sells it at `market.trade_goods_multiplier`× the
-normal trade-goods rate, Eradicate takes `hunt.take_from` (drives extinction). The policy is a
-free string parsed via `FollowPolicy::from_str`, so Market needs no schema/proto change. Each
+**auto-hunts each turn per policy** instead of removing the component. The policy is a
+free string parsed via `FollowPolicy::from_str`, so a new policy needs no schema/proto change. Each
 turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pulse
-(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. Config lives in the
-`follow` and `market` blocks of `fauna_config.json`. The old one-shot teleport follow (and its
-`apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. The old one-shot teleport
+follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+
+> #### The hunt policy axis: TWO doctrines, and EVERYTHING is stock-based (slice 8)
+>
+> `fauna::hunt_policy_ceiling` is the one source. **Nothing on this axis is a flow, and that is
+> load-bearing — do not "simplify" a skim back into one.**
+>
+> | policy | rule | doctrine |
+> |---|---|---|
+> | **Sustain** | `fauna::sustain_escapement` — `max(0, B − K/2)` | **management**: a stock *target* |
+> | **Surplus** | `surplus.take_fraction × B` = **0.10** | **extraction**, gentle |
+> | **Market** | `market.take_fraction × B` = **0.20** (+ `trade_goods_multiplier` on the meat) | **extraction**, commercial |
+> | **Eradicate** | `hunt.take_from(B)` | extinction |
+> | **Tame / Corral** | the rung's `yield_fraction_while_building` × Sustain's escapement | management, dipped |
+>
+> **Why no rule may be a flow — the mammoth test.** A flow ceiling (`multiplier × MSY`) is a *constant
+> in biomass*: it never rises while the herd regrows, so it can never accumulate, and once takes
+> quantise to whole animals `floor(ceiling / body_mass)` that is `0` on turn 1 is `0` on turn 500 — the
+> animal is **permanently unhuntable** under that policy. Both flow rules this axis used to carry died
+> of exactly that: **Sustain** (`r·K/4`) made **7 of 9 species** unhuntable, and **Surplus**
+> (`1.6 × MSY`) made the mammoth un-Surplus-huntable forever (ceiling **664** vs `body_mass` **800**).
+> A proportional skim reads the *stock*, so it grows as the herd regrows and always eventually clears
+> one body. The retired levers are `follow.surplus_multiplier` (**stays retired**).
+>
+> **Why Surplus is a skim and not escapement-to-a-lower-floor.** Escapement **converges** on its floor
+> — it would strip the herd once then *hold* it there, which is not "slowly declines" — and giving
+> Surplus and Market two floors made them **numerically identical**, collapsing the axis to 3. Market's
+> *"crashes slow breeders fastest"* (the manual) is emergent from the skim's shape: a fast breeder
+> refills a 20% skim and settles; a slow one spirals past the Allee threshold. No depletion state, no
+> floor to tune.
+>
+> **Measured, one species, K=4000 / r=0.05 / body 60, from `B* = K/2`** (`fauna_market`): Sustain holds
+> ~2020 forever; Surplus bleeds to 1572 by turn 40 and keeps going; Market and Eradicate drive it
+> **extinct**. Four distinct behaviours.
+>
+> **`hunt_policy_ceiling` no longer takes an `ecology` at all** — no rule reads `r`. The husbandry
+> ladder touches **regrowth**, not the take, which is *"management buys a growth rate"* made literal.
+>
+> **The resident and expedition paths now agree on Sustain, Surplus and Market.** Only **Eradicate**
+> still differs (`hunt_expedition_floor` = `0`: a party driving a herd out takes everything it can
+> reach; a resident takes `take_from(B)`). Config: the `surplus`, `market`, `hunt` and `follow` blocks
+> of `fauna_config.json`.
+
+> #### Herding is standing labor, and it scales with the HERD (slice 8)
+>
+> `fauna::herders_needed` — `ceil((biomass / body_mass) / animals_per_herder)` — is owed **every turn**
+> by a pastoral or penned herd, **including wait turns** when it cannot spare an animal. *Just because
+> you aren't killing an animal doesn't mean you aren't tending them, keeping them from running off,
+> repairing fences.* Before this a pen of 2 and a pen of 200 needed the same single keeper; only the
+> feed scaled.
+>
+> - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
+>   per-species: fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
+>   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —
+>   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
+>   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
+>   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
+> - **ONE need, not two.** The herders mind the herd *and* butcher it, so a managed rung's
+>   `workersNeeded` **is** this count — never a second, take-derived one (which would also read a
+>   nonsense `0` on a wait turn).
+> - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
+>   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
+>   maintain + take.**
+> - **Understaffing degrades PROPORTIONALLY — never a binary escape.** `herded_fraction = min(1,
+>   assigned / needed)` scales the `animal:pastoral` rung's `decay_per_turn`, mirroring
+>   `pen_fed_fraction → starve_shrink_rate`. Floored, and **recoverable**: re-staffing stops the bleed
+>   outright, under *any* policy. Binary escape survives **only** for total abandonment (zero herders).
+> - **Maintenance is scoped to `is_corralled() || owner.is_some()`, NOT `is_domesticated()`** — a trap
+>   worth naming: `is_domesticated()` is a threshold at `1.0`, so the first under-herded turn drops the
+>   herd under it, the proportional rule stops applying, and it decays at the **full** abandonment rate
+>   however many herders you assign. The proportional regime would be measure-zero and "recoverable"
+>   would be false.
+> - **`decay_domestication`'s `is_domesticated()` early return is DELETED.** It made a tamed herd
+>   permanently tame, forever, for zero labor — "you need constant herders" was false at the top of the
+>   ladder. A properly-herded herd does not decay (including one you are merely *harvesting*); an
+>   under-herded one does. Pinned by
+>   `fauna_husbandry::{a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy,
+>   an_under_herded_tamed_herd_decays_proportionally_and_recovers}`.
 
 **Retired: single-task model → labor allocation (Early-Game Labor slice 3a).** The
 one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`
@@ -835,6 +904,37 @@ a licence to eat the standing stock.** Every rung of the ladder pays the Maximum
 rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you.
 **Every rung costs a worker** (intensification ladder §3): what climbing buys is **yield per worker**,
 not a rung that works itself.
+
+> #### The ladder is monotone in the LONG-RUN rate, NOT in any single turn — do not "fix" this back
+>
+> Since slice 8 a **Sustain** hunt is **constant escapement on whole animals**: the herd hands over
+> `B − K/2`, which is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2`
+> = **`K/2` for every rung — `r` cancels out entirely**, so a full herd's first harvest is *identical*
+> wild, pastoral and penned. **That is correct and load-bearing.** The surplus standing above the
+> escapement point is *accumulated stock*, and stock does not care how fast you breed. What the ladder
+> buys is that **the next animal comes sooner** — so *"management buys a growth rate"* is now literally
+> and exclusively true, rather than being smeared across a stock term.
+>
+> A single turn therefore cannot see the ladder at **either** biomass: at `B = K` you read the
+> rung-blind stock, and at `B = K/2` you read a **pulse** — zero for any species whose one-turn MSY is
+> lighter than one animal (a wild mammoth regrows 120 biomass against an **800-unit** body, so it
+> correctly **waits** ~7 turns, then pays 16 provisions at once). Both readings are honest; neither is
+> the ladder.
+>
+> So the invariant is asserted as a **long-run average over enough turns to contain the refills**
+> (`fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, 600 turns from `B*`),
+> where the pulses and the stock both wash out and what remains is `r·K/4`. **Measured**
+> (provisions/turn, barren harness ⇒ the pen is fully larder-fed):
+>
+> | species | `K` | wild | pastoral | pen gross | upkeep | pen net |
+> |---|---|---|---|---|---|---|
+> | Rabbit Warren | 200 | 0.350 | 0.525 | 0.750 | 0.280 | **0.470** |
+> | Red Deer | 1200 | 0.598 | 0.896 | 1.794 | 1.432 | **0.362** |
+> | Thunder Mammoths | 12000 | 2.373 | 3.573 | 7.147 | 13.506 | **−6.360** |
+>
+> Monotone in gross at every row, and `pastoral / wild` is exactly `pastoral_gain` (1.5). The mammoth's
+> negative *barren* pen net is the §2.4 slow-breeder loss **by design** (a placement decision — on real
+> pasture the footprint feeds it and `upkeep → 0`), not a regression.
 
 | Rung | Ecology | `r` (Grazing 2d — **per-species**) | Costs |
 |---|---|---|---|
@@ -1980,7 +2080,8 @@ oscillates or crashes if built carelessly.
   rungs a *multiple* of each species' own wild `r` (§ "Phase 2d"), so pastoral `r = wild_r × 1.5 >
   wild_r` for every species and the inversion is gone.
   `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder` asserts the per-species
-  gross growth-rate ladder.
+  gross growth-rate ladder — as a **long-run average**, for the reason set out in "The husbandry yield
+  ladder" (escapement makes a single turn read stock, not rate).
 
 See Also: `docs/plan_grazing_2b.md` §2.2 (the convergence risk), §9 (the measure list),
 `docs/plan_corral_managed_population.md` §3 (the constant-escapement lesson this reuses).

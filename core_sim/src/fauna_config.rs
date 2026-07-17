@@ -118,6 +118,25 @@ pub struct SpeciesDef {
     pub route_len: [u32; 2],
     /// Inclusive `[min, max]` group biomass.
     pub biomass: [f32; 2],
+    /// **Biomass of ONE animal** — the quantum a hunt take is rounded down to (intensification
+    /// ladder slice 8). A herd's animal count is `biomass / body_mass`, **derived, never stored**:
+    /// biomass stays the authoritative stock and the count is a reading of it.
+    ///
+    /// **This is what makes a herd a herd and not a fluid.** Every hunt take is
+    /// [`crate::fauna::quantise_animal_take`]: you kill `floor(escapement / body_mass)` whole
+    /// animals, and a party that cannot carry a whole one still takes it and **wastes** the rest.
+    /// Two consequences fall straight out of the ratio against the herd's MSY (`r × K / 4`):
+    /// - **Rhythm** — `body_mass / MSY` turns per animal at the operating point. Small game
+    ///   (fowl 1 / rabbit 2) is a near-continuous trickle; a mammoth is one kill every ~7 turns and
+    ///   then you eat for a week. When the herd cannot yet spare a whole animal the hunt **pauses**
+    ///   and the herd regrows — the discretised form of constant escapement.
+    /// - **Party size = how much of the kill you keep** — `hunt.per_worker_biomass_capacity` (40)
+    ///   against this: one hunter keeps 80% of a boar, 33% of a steppe runner, 5% of a mammoth.
+    ///   ~20 hunters are needed to bring a whole mammoth home.
+    ///
+    /// **Playtest dials.** Validated finite & `> 0` — at `0` a herd would hold infinitely many
+    /// animals and `floor(x / 0)` would take the whole stock in one turn.
+    pub body_mass: f32,
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
@@ -173,6 +192,33 @@ pub struct SpeciesDef {
     /// would silently never tame, or un-tame while worked).
     #[serde(default = "default_taming_rate")]
     pub taming_rate: f32,
+    /// **How many ANIMALS one herder can mind** — the standing maintenance a managed (pastoral or
+    /// penned) herd demands every turn: `herders_needed = ceil((biomass / body_mass) /
+    /// animals_per_herder)` ([`crate::fauna::herders_needed`]). *Just because you aren't killing an
+    /// animal doesn't mean you aren't tending them, making sure they don't run off, repairing fences.*
+    /// Before this a pen of 2 and a pen of 200 needed the same single keeper; only the **feed** scaled.
+    ///
+    /// # Herding is HEADS, not tonnes — the denominator is load-bearing
+    ///
+    /// A shepherd minds ~300 sheep; a cowherd ~80 cattle. You watch **individuals** — chase strays,
+    /// check each animal — and a heavier beast is not proportionally more work. An earlier cut of this
+    /// dial was `biomass_per_herder` (one global "biomass one herder minds"), which is the same claim
+    /// as *one herder per 100 fowl but one herder per 2 boar*. It also invented a **45-herder steppe
+    /// megaherd** that was a pure artifact of the unit: 4,560 biomass of Steppe Runner is only **38
+    /// animals**, i.e. ~3 herders. Per-species, per-**animal**, is the only unit that reads true.
+    ///
+    /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_rate`] /
+    /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Roster:
+    /// fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12. Deer and
+    /// mammoth omit it — a `wild` [`HusbandryCeiling`] is never herded at all.
+    ///
+    /// Resolved **live** by display name ([`FaunaConfig::animals_per_herder_for`]), never cached on the
+    /// `Herd` — the `taming_rate` path, so retuning reaches herds already on the map (and it needs no
+    /// snapshot field). Defaults to [`DEFAULT_ANIMALS_PER_HERDER`] when omitted. **Playtest dial.**
+    /// Validated finite & `> 0` (at `0` any herd would need infinitely many herders and could never be
+    /// fully staffed).
+    #[serde(default = "default_animals_per_herder")]
+    pub animals_per_herder: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
     /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
     /// domestication accrual + the `tame` / `corral` / `extend_pen` paths. Defaults to `pen`
@@ -198,6 +244,16 @@ pub const DEFAULT_TAMING_RATE: f32 = 1.0;
 
 fn default_taming_rate() -> f32 {
     DEFAULT_TAMING_RATE
+}
+
+/// **Animals one herder minds for a species that does not declare a rate** — mid-roster (between the
+/// aurochs' 12 and the fowl's 50), so an untagged or future species lands on a plausible crew size
+/// rather than a free or an impossible one. Also what an unresolvable species name reads as
+/// ([`FaunaConfig::animals_per_herder_for`]).
+pub const DEFAULT_ANIMALS_PER_HERDER: f32 = 25.0;
+
+fn default_animals_per_herder() -> f32 {
+    DEFAULT_ANIMALS_PER_HERDER
 }
 
 /// Default migratory loiter wander radius (hexes) around an anchor. Also the fallback grazing-range
@@ -270,42 +326,46 @@ impl AbundanceConfig {
     }
 }
 
-/// One-shot hunt tuning: how much biomass a hunt takes, how it converts to
-/// resources, and the pursuit geometry (band closes to `pursuit_radius` tiles).
+/// Hunt tuning: how a take converts to resources, and the pursuit geometry (band closes to
+/// `pursuit_radius` tiles).
+///
+/// **`take_fraction` / `min_take` size Eradicate** — "a fixed share of the standing stock, at least
+/// `min_take`". Slice 8 briefly retired them (Eradicate became escapement to a floor of `0`); that
+/// was reverted with the rest of ruling 4. **Only Sustain is escapement.** The four policies are
+/// four *doctrines*, not one rule with four floors — see [`crate::fauna::hunt_policy_ceiling`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HuntConfig {
-    pub take_fraction: f32,
-    pub min_take: f32,
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
+    pub take_fraction: f32,
+    pub min_take: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
 }
 
+impl HuntConfig {
+    /// Biomass taken from a group of `biomass`, clamped to `[min_take, biomass]` — Eradicate's
+    /// one-shot maximum take. A **stock** rule (it reads `biomass`), which is what lets it quantise
+    /// to whole animals; see [`crate::fauna::hunt_policy_ceiling`].
+    pub fn take_from(&self, biomass: f32) -> f32 {
+        let fraction_take = (biomass * self.take_fraction).max(self.min_take);
+        fraction_take.min(biomass).max(0.0)
+    }
+}
+
 impl Default for HuntConfig {
     fn default() -> Self {
         Self {
-            take_fraction: 0.30,
-            min_take: 40.0,
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
+            take_fraction: 0.30,
+            min_take: 40.0,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
         }
-    }
-}
-
-impl HuntConfig {
-    /// Biomass taken from a group of `biomass`, clamped to `[min_take, biomass]`.
-    pub fn take_from(&self, biomass: f32) -> f32 {
-        if biomass <= 0.0 {
-            return 0.0;
-        }
-        let fraction_take = (biomass * self.take_fraction).max(self.min_take);
-        fraction_take.min(biomass)
     }
 }
 
@@ -365,13 +425,20 @@ impl Default for ImmigrationConfig {
     }
 }
 
-/// Follow tuning: policy draw-rates (Sustain = regrowth, Surplus = regrowth ×
-/// `surplus_multiplier`, Eradicate reuses the one-shot hunt take) plus the small
-/// per-turn non-food tracking benefit (fog reveal pulse + morale).
+/// Follow tuning: the small per-turn non-food tracking benefit (fog reveal pulse + morale).
+///
+/// **`surplus_multiplier` is RETIRED and stays retired** (intensification ladder slice 8). It sized
+/// Surplus as `MSY × 1.6` — a **flow** — and a flow ceiling cannot survive whole-animal quantisation:
+/// it does not grow while the herd regrows, so `floor(ceiling / body_mass)` that is `0` on turn 1 is
+/// `0` on turn 500. A Thunder Mammoth (MSY 415 → Surplus ceiling 664, `body_mass` **800**) could
+/// **never be Surplus-hunted, ever**. That is the same defect that made 7 of 9 species unhuntable
+/// under the old flow-based Sustain.
+///
+/// Surplus is a **proportional stock skim** now — [`SurplusConfig::take_fraction`], the gentle twin of
+/// [`MarketConfig::take_fraction`]. See [`crate::fauna::hunt_policy_ceiling`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FollowConfig {
-    pub surplus_multiplier: f32,
     pub reveal_radius: u32,
     pub reveal_duration_turns: u64,
     pub morale_gain: f32,
@@ -380,7 +447,6 @@ pub struct FollowConfig {
 impl Default for FollowConfig {
     fn default() -> Self {
         Self {
-            surplus_multiplier: 1.6,
             reveal_radius: 2,
             reveal_duration_turns: 3,
             morale_gain: 0.01,
@@ -581,10 +647,56 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// a remnant.
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 
-/// Market-hunting tuning: the commercial Follow policy over-harvests a large fixed share
-/// of biomass each turn (`take_fraction`) and sells it, yielding `trade_goods_multiplier`×
-/// the normal trade-goods rate. The heavy take drives the group past the Allee threshold
-/// into the depensation collapse (no separate depletion state — pure ecology reuse).
+/// Market-hunting tuning: the commercial Follow policy sells its take, yielding
+/// `trade_goods_multiplier`× the normal trade-goods rate. The heavy take drives the group past the
+/// Allee threshold into the depensation collapse (no separate depletion state — pure ecology reuse).
+///
+/// Surplus tuning: the **gentle extraction** rung — *"take extra to sell; the herd slowly declines."*
+///
+/// # It is a proportional STOCK skim, and it must never become a flow again
+///
+/// `take_fraction × biomass`, every turn — structurally identical to [`MarketConfig`], just gentler
+/// (0.10 vs 0.20). Two independent reasons it cannot be `multiplier × MSY`:
+///
+/// - **A flow cannot afford a whole animal.** A flow ceiling is a constant in `biomass`: it does not
+///   rise while the herd regrows, so it never accumulates. `floor(ceiling / body_mass) = 0` on turn 1
+///   is `0` forever — a mammoth (Surplus flow 664 vs `body_mass` **800**) would be permanently
+///   un-Surplus-huntable. A skim reads the standing stock, so it grows with the herd and quantises
+///   correctly. **This is the whole reason the dial changed shape** (see [`FollowConfig`]).
+/// - **A skim is what "slowly declines" means.** A 10% skim genuinely out-takes a slow breeder's
+///   regrowth turn over turn. (Escapement to a *lower floor* was the other candidate and is wrong for
+///   a different reason: escapement **converges** on its floor, so it strips the herd once and then
+///   holds it there forever — not a decline, and it made Surplus numerically identical to Market.)
+///
+/// The whole axis is stock-based now: **Sustain manages** (a stock *target*, `K/2`); **Surplus and
+/// Market extract** (a stock *fraction*, gentle vs commercial); **Eradicate** takes everything.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SurplusConfig {
+    /// The share of standing biomass a Surplus hunt takes each turn. `0.10` — half Market's 0.20, so
+    /// the two read as gentle-vs-commercial extraction of the same shape. Validated `(0, 1)` strictly
+    /// and `< market.take_fraction` (Surplus that out-takes Market is not "surplus").
+    pub take_fraction: f32,
+}
+
+impl Default for SurplusConfig {
+    fn default() -> Self {
+        Self {
+            take_fraction: DEFAULT_SURPLUS_TAKE_FRACTION,
+        }
+    }
+}
+
+/// Surplus's per-turn share of standing stock — half Market's, the gentle end of the extraction pair.
+const DEFAULT_SURPLUS_TAKE_FRACTION: f32 = 0.10;
+
+/// **`take_fraction` is Market's whole mechanic** — a **proportional skim of the standing stock**,
+/// `take_fraction × biomass`, every turn. That is what makes it "crash slow breeders *fastest*"
+/// (the manual): a fast breeder refills a 20% skim and settles, a slow one cannot and spirals past
+/// the Allee threshold. Slice 8 retired it (Market became escapement to the collapse floor); that
+/// was reverted with the rest of ruling 4, because a floor Market never crosses **cannot drive
+/// extinction** — it pinned the herd at `0.15·K` forever and made Market ≡ Surplus.
+/// `trade_goods_multiplier` is what it does with the meat; `take_fraction` is how it hunts.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MarketConfig {
@@ -702,6 +814,9 @@ pub struct FaunaConfig {
     pub follow: FollowConfig,
     pub immigration: ImmigrationConfig,
     pub husbandry: HusbandryConfig,
+    /// The gentle half of the extraction pair — see [`SurplusConfig`]. Beside `market` deliberately:
+    /// the two are the same rule at two intensities.
+    pub surplus: SurplusConfig,
     pub market: MarketConfig,
     /// The per-biome graze (pasture) layer — see [`GrazeConfig`].
     pub graze: GrazeConfig,
@@ -826,6 +941,16 @@ impl FaunaConfig {
             // would silently never tame while reading as tameable; negative would *un*-tame a herd the
             // crew is working, and (via the same decay) push its progress up while it is abandoned.
             require_positive_finite(species_field("taming_rate"), def.taming_rate)?;
+            // At `0`/negative a managed herd of this species would demand infinitely many herders — it
+            // could never be fully staffed, so every pastoral/penned herd would decay forever with no
+            // way for the player to stop it. The dial's *upper* end is a tuning question (how much
+            // waste the collection cap creates), not an invariant — measured, not rejected.
+            require_positive_finite(species_field("animals_per_herder"), def.animals_per_herder)?;
+            // **The animal quantum** (slice 8). Positive is the whole bound, and it is not
+            // cosmetic: `quantise_animal_take` divides by this. At `0` a herd would hold infinitely
+            // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
+            // turn; negative would invert the floor and hand back a negative kill count.
+            require_positive_finite(species_field("body_mass"), def.body_mass)?;
         }
 
         // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the
@@ -902,13 +1027,18 @@ impl FaunaConfig {
         // single statement, instead of each web restating its own copy.)
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
-        require_greater_than(
-            "follow.surplus_multiplier",
-            self.follow.surplus_multiplier,
-            "the Sustain baseline",
-            MAX_FRACTION,
-        )?;
+        // The extraction pair. Both are shares of standing stock, so both are `(0, 1)` strictly
+        // (`1` = Eradicate, `0` = no hunt at all), and Market must out-take Surplus.
+        require_open_unit_fraction("surplus.take_fraction", self.surplus.take_fraction)?;
         require_open_unit_fraction("market.take_fraction", self.market.take_fraction)?;
+        // Gentle < commercial, or "Surplus" is a lie: the two policies are the same proportional skim
+        // and the *only* thing separating their ecology is which share of the stock they remove.
+        require_greater_than(
+            "market.take_fraction",
+            self.market.take_fraction,
+            "surplus.take_fraction",
+            self.surplus.take_fraction,
+        )?;
         require_greater_than(
             "market.trade_goods_multiplier",
             self.market.trade_goods_multiplier,
@@ -967,6 +1097,15 @@ impl FaunaConfig {
     pub fn taming_rate_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(DEFAULT_TAMING_RATE, |def| def.taming_rate)
+    }
+
+    /// **The animals one herder of this species minds** ([`SpeciesDef::animals_per_herder`]), resolved
+    /// by the display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning
+    /// the dial reaches herds already on the map instead of freezing at spawn. A species the table
+    /// cannot resolve (an isolated test fixture) reads [`DEFAULT_ANIMALS_PER_HERDER`].
+    pub fn animals_per_herder_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
     }
 
     /// `(key, def)` pairs for every non-migratory (short-range) game species that
@@ -1338,9 +1477,12 @@ mod tests {
             );
         }
         // An omitted field defaults to `pen` (the full ladder), preserving pre-δ behaviour.
-        let def: SpeciesDef =
-            serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
-                .unwrap();
+        // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
+        // fail to parse rather than default to something.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
     }
 
@@ -1385,9 +1527,12 @@ mod tests {
         }
         // An omitted field taming at the rung's own pace is what keeps an untagged/future species on
         // today's 25 turns.
-        let def: SpeciesDef =
-            serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
-                .unwrap();
+        // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
+        // fail to parse rather than default to something.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
         assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
         // And an unresolvable species reads the same, so a fixture herd can never tame at `0`/turn.
         assert_eq!(config.taming_rate_for("No Such Beast"), DEFAULT_TAMING_RATE);
@@ -1401,6 +1546,18 @@ mod tests {
         for bad in [0.0, -0.2] {
             let err = reject(|json| json["species"]["rabbit"]["taming_rate"] = (bad).into());
             assert_rejects_field(err, "species.rabbit.taming_rate");
+        }
+    }
+
+    /// **A `body_mass` of `0` is a herd of infinitely many animals** — `floor(escapement / 0)` is
+    /// `inf`, so the first hunter would strip the whole stock in one turn while every readout still
+    /// looked sane. A negative one inverts the floor and hands back a negative kill count. Neither is
+    /// a tuning choice; both are the silent-catastrophe failure mode validation exists to catch.
+    #[test]
+    fn validate_rejects_a_non_positive_body_mass() {
+        for bad in [0.0, -50.0] {
+            let err = reject(|json| json["species"]["rabbit"]["body_mass"] = (bad).into());
+            assert_rejects_field(err, "species.rabbit.body_mass");
         }
     }
 
@@ -1438,6 +1595,29 @@ mod tests {
         assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group
         let big = config.hunt.take_from(10_000.0);
         assert!(big >= config.hunt.min_take && big <= 10_000.0);
+    }
+
+    /// **Every species declares a positive body mass** — the quantum a hunt take is floored to
+    /// (slice 8). A missing/zero row would mean a herd of infinitely many animals; `validate()`
+    /// rejects it, and `builtin()` would panic here if the shipped table ever lost one.
+    #[test]
+    fn every_species_declares_a_body_mass() {
+        let config = FaunaConfig::builtin();
+        for (key, def) in &config.species {
+            assert!(
+                def.body_mass.is_finite() && def.body_mass > 0.0,
+                "species {key} must declare a positive body_mass, got {}",
+                def.body_mass
+            );
+            // A body cannot outweigh the whole herd's capacity, or the species could never be hunted
+            // at all (`floor(escapement / body_mass)` would be 0 even at full capacity).
+            assert!(
+                def.body_mass < def.carrying_capacity(),
+                "species {key}'s body_mass {} must be below its carrying capacity {}",
+                def.body_mass,
+                def.carrying_capacity()
+            );
+        }
     }
 
     /// The shipped ladder is monotone (management buys a growth rate) and the pen nets positive at its

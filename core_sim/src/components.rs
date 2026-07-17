@@ -773,14 +773,31 @@ pub struct LaborAssignment {
 /// the policy ceiling at rungs 1–2, the managed rate at rung 3 — and *collection* is
 /// `workers × per_worker_capacity`, so the two signals answer the two halves of "is this source
 /// correctly staffed?": `workers_needed < workers` ⇒ drop some, `wasted > 0` ⇒ add some. Derived
-/// per-turn; on rung 3 (a Field / a pen) it is genuinely food left standing, on the drawn-down rungs
-/// it stays in the stock and regrows.
+/// per-turn; on rung 3 (a Field) it is genuinely food left standing, on the drawn-down plant rungs it
+/// stays in the stock and regrows, and **on any animal rung it is meat left to rot** — a hunt kills
+/// *whole animals* (slice 8), so a party that cannot haul a whole one still takes it and wastes the
+/// rest. On an animal source *production* is therefore the biomass of the animals **killed**, not the
+/// escapement the herd could have spared: an animal you didn't kill was never produced, it is still
+/// alive (`fauna::forecast_production_and_take`).
+///
+/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠, answered by the sim
+/// rather than derived by the client from `actual > sustainable`. That comparison stopped working when
+/// the hunt began taking whole animals (slice 8): a Sustain hunt is **escapement to `K/2`**, so it
+/// lands the herd exactly on its most-productive biomass and is *sustainable by construction* — but it
+/// pays in **lumps** (nothing for 6 turns, then a whole mammoth), so `actual > sustainable` fires on
+/// every kill turn. A ⚠ on the turn you correctly harvest a mammoth trains the player to ignore the
+/// one signal that matters. So `sustainable` keeps reporting the honest **long-run MSY rate** ("this
+/// herd sustains ~0.78/turn on average"), `actual` swings — that swing is *true*, and it is the
+/// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
+/// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
+/// true for Surplus/Market/Eradicate, which genuinely draw down toward the collapse threshold.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
     pub wasted: f32,
     pub workers_needed: u32,
+    pub overdraws: bool,
 }
 
 impl SourceYield {
@@ -793,6 +810,8 @@ impl SourceYield {
         sustainable: 0.0,
         wasted: 0.0,
         workers_needed: 0,
+        // Nothing was taken, so nothing was overdrawn.
+        overdraws: false,
     };
 }
 
@@ -1066,6 +1085,42 @@ impl FollowPolicy {
     /// disagree.
     pub fn is_investment(self) -> bool {
         !Self::EXTRACTIVE.contains(&self)
+    }
+
+    /// **Does a take under this policy draw the stock below what it sustains?** — THE ⚠ predicate
+    /// ([`SourceYield::overdraws`]), and the exact inverse of "is this policy stewardship" (see
+    /// [`FollowPolicy::teaches_knowledge`], which turns on the same restraint/overdraw split — the two
+    /// are pinned against each other by `follow_policy_overdrawing_is_the_inverse_of_stewardship`).
+    ///
+    /// Since slice 8 every hunt policy is **escapement to a floor** (`fauna::hunt_policy_floor`), so
+    /// this is simply *"is that floor below the source's sustainable operating point?"*:
+    /// - **`Sustain`** — floor `K/2`, the MSY point itself. It cannot overdraw: the take lands the
+    ///   herd **exactly** on its most-productive biomass and never below. Sustainable *by
+    ///   construction*, so a ⚠ there would be meaningless — which is the whole reason this predicate
+    ///   exists rather than the client comparing `actual > sustainable` (a lumpy whole-animal take
+    ///   exceeds the long-run MSY rate on every kill turn while being perfectly sustainable).
+    /// - **`Tame` / `Corral`** — the investment rungs sit on Sustain's floor and take a *fraction* of
+    ///   it. Strictly gentler than Sustain; they cannot overdraw either.
+    /// - **`Surplus` / `Market`** — floor at the collapse (Allee) threshold: a real draw-down.
+    /// - **`Eradicate`** — no floor at all.
+    /// - **`Cultivate` / `Sow`** — the plant investment rungs, dips on the patch's MSY. Plants stay
+    ///   flow-based (they don't quantise), but the answer is the same: a fraction of a sustainable
+    ///   draw does not overdraw.
+    ///
+    /// Exhaustive for `teaches_knowledge`'s reason: a new `FollowPolicy` must **fail to compile** here
+    /// rather than inherit a plausible answer from a catch-all.
+    pub fn overdraws(self) -> bool {
+        match self {
+            // Escapement to K/2 — the MSY point. Sustainable by construction.
+            FollowPolicy::Sustain => false,
+            // Fractions of that same sustainable escapement — gentler still.
+            FollowPolicy::Tame
+            | FollowPolicy::Corral
+            | FollowPolicy::Cultivate
+            | FollowPolicy::Sow => false,
+            // Drawn down toward the collapse threshold, or past it.
+            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => true,
+        }
     }
 
     /// **Does working a source under this policy teach the faction anything?**

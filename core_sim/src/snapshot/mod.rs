@@ -176,6 +176,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
+    /// what a take pays, so the quantum is deliberately small enough never to bind.
+    const SNAPSHOT_BODY_MASS: f32 = 1.0;
+
     use super::*;
     use crate::{
         intensification::RUNG_COMPLETE,
@@ -206,6 +210,7 @@ mod tests {
             step_index: 2,
             current_pos: (5, 6),
             dwell_remaining: 3,
+            body_mass: 800.0,
             roam: HerdRoamState {
                 mode: "loiter".to_string(),
                 loiter_turns_left: 9,
@@ -650,12 +655,14 @@ mod tests {
                     sustainable: 2.5,
                     wasted: 0.0,
                     workers_needed: 1,
+                    overdraws: false,
                 },
                 SourceYield {
                     actual: 0.5,
                     sustainable: 0.25,
                     wasted: 0.0,
                     workers_needed: 5,
+                    overdraws: true,
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -1427,6 +1434,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
         assert!(
             penned.corral_at(UVec2::new(4, 4)),
@@ -1443,6 +1451,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1492,6 +1501,7 @@ mod tests {
             163.0,
             0.10,
             0.35,
+            2.0,
         ));
         registry.herds.push(Herd::new(
             "herd_big".to_string(),
@@ -1502,6 +1512,7 @@ mod tests {
             1352.0,
             0.05,
             0.10,
+            60.0,
         ));
         registry.herds.push(Herd::new(
             "herd_migratory".to_string(),
@@ -1512,6 +1523,7 @@ mod tests {
             9000.0,
             0.011,
             0.04,
+            800.0,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1584,6 +1596,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
         assert!(
             penned.corral_at(UVec2::new(4, 4)),
@@ -1601,6 +1614,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1666,6 +1680,7 @@ mod tests {
             CAP,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
         mobile.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         registry.herds.push(mobile);
@@ -1679,6 +1694,7 @@ mod tests {
             CAP,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
         penned.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         assert!(

@@ -66,9 +66,28 @@ fn spawn_world() -> App {
     app
 }
 
-/// Two distinct stationary game herds (route length 1) primed to a large half-capacity size
-/// (Thriving) for side-by-side policy comparison. The size is inflated so the per-turn take is big
-/// enough that integer trade/provisions yields don't quantize to zero.
+/// The **body mass both comparison herds are seated at** (intensification ladder slice 8). Deer-scale
+/// (60) — the "slow breeder, deer/megafauna territory" these tests are about, and heavy enough that
+/// the whole-animal quantiser is genuinely engaged rather than approximating a fluid.
+///
+/// **This is the fix for a FALSE GREEN, and it is the whole reason this constant exists.** The map
+/// hands out the first two route-1 game herds, and they are **different species** — a Wild Fowl
+/// (`body_mass` 1) and a Rabbit Warren (`body_mass` 2). While ruling 4 made Surplus and Market the
+/// same take, `market_declines_faster_and_earns_more_trade_than_surplus` still passed — on **nothing
+/// but the rounding slop between a 1-unit body and a 2-unit body** (600.54 vs 601.61, both pinned at
+/// the identical `0.15·K` floor). It was measuring `body_mass`, not policy. Seating both herds at one
+/// body mass means the **only** difference between the two rows is the policy, so the test fails when
+/// the doctrine breaks and for no other reason.
+const COMPARISON_BODY_MASS: f32 = 60.0;
+
+/// Two distinct stationary game herds (route length 1) primed **identically** — same capacity, same
+/// biomass, same [`COMPARISON_BODY_MASS`] — at a large half-capacity size (Thriving) for side-by-side
+/// policy comparison. The size is inflated so the per-turn take is big enough that integer
+/// trade/provisions yields don't quantize to zero.
+///
+/// **Identical in every respect the take reads** (the callers pin `regrowth_rate` on top, which is the
+/// last one): the two herds must differ *only* by the policy under test. See
+/// [`COMPARISON_BODY_MASS`] for the false green this closes.
 fn prime_two_stationary_herds(app: &mut App) -> (String, String) {
     const CAP: f32 = 4000.0;
     let ids: Vec<String> = {
@@ -87,6 +106,7 @@ fn prime_two_stationary_herds(app: &mut App) -> (String, String) {
         let herd = registry.herds.iter_mut().find(|h| &h.id == id).unwrap();
         herd.carrying_capacity = CAP;
         herd.biomass = CAP * 0.5;
+        herd.body_mass = COMPARISON_BODY_MASS;
     }
     (ids[0].clone(), ids[1].clone())
 }

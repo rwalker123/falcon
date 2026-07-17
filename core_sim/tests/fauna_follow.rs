@@ -183,10 +183,37 @@ fn sustain_hunt_keeps_biomass_stable() {
     );
 }
 
+/// **Surplus slowly declines a herd — a SLOW-breeder claim** (intensification ladder slice 8).
+///
+/// Surplus is a **proportional stock skim** (`surplus.take_fraction × B` = 0.10) now, not the retired
+/// `1.6 × MSY` *flow*. The flow declined *every* herd unconditionally, because it was defined as a
+/// multiple of regrowth; a skim declines one only when it out-takes that herd's regrowth:
+///
+/// ```text
+/// declines  ⟺  0.10 · B  >  r · B · (1 − B/K)   ⟺  r < 0.20  at the B* = K/2 operating point
+/// ```
+///
+/// So a **fast breeder out-breeds a 10% skim and stabilises at a lower stock** — the same real
+/// property Market already has at 20% (`fauna_market`, whose two tests are pinned to a slow `r` for
+/// exactly this reason), and the reason the flow had to go: a flow ceiling never accumulates, so
+/// `floor(ceiling / body_mass)` was `0` forever for every animal heavier than its herd's MSY.
+///
+/// The spawned route-1 game this harness reuses is **fast** (fowl `r` = 0.35, which *grows* under a
+/// 10% skim), so seat it at a slow-breeder rate to exercise the mechanic the test is named for.
+/// Pinning `r` also makes it deterministic — the ambient per-species rate is order-dependent in the
+/// shared test binary.
 #[test]
 fn surplus_hunt_declines() {
+    /// Below the ~0.20 skim-decline threshold — deer/megafauna, the game a 10% skim really does bleed.
+    const SLOW_BREEDER_R: f32 = 0.05;
+
     let mut app = spawn_world();
     let (id, start) = prime_stationary_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.regrowth_rate = SLOW_BREEDER_R;
+    }
     spawn_hunter(&mut app, &id, FollowPolicy::Surplus);
     run_turns(&mut app, 10);
 

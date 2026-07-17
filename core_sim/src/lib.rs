@@ -121,10 +121,11 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, forecast_expected_take, herd_capacity,
-    herd_ecology, hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
-    repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
-    PENNING_DISCOVERY_ID,
+    herd_ecology, herd_herders_needed, herded_fraction, herders_needed, hunt_policy_ceiling,
+    hunt_provisions, hunt_source_yield_preview, pen_upkeep, quantise_animal_take, repopulate_fauna,
+    spawn_initial_herds, sustain_escapement, AnimalTake, EcologyPhase, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,

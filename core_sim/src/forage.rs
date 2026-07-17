@@ -825,6 +825,14 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
         .expect("the field rung is an investment — it has a build meter")
 }
 
+/// `SourceYieldForecast::body_mass_yield` for a plant source (slice 8) — `0` = *do not quantise*.
+///
+/// **A deliberate asymmetry with the animal web, and a principled one — do not "fix" it.** A hunt take
+/// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
+/// harvest grain by the handful. The two food webs quantise differently because *their products
+/// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
+const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
+
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
 /// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same resolved ecology
 /// ([`patch_ecology`]), same per-policy ceilings, same seasonal-folded per-worker throughput, same
@@ -857,6 +865,10 @@ pub(crate) fn forage_forecast(
         return SourceYieldForecast::managed(
             field_provisions(patch.biomass, forage, output_multiplier),
             managed_per_worker_yield(forage, output_multiplier),
+            // Plants never quantise — you harvest grain by the handful (slice 8; see
+            // `SourceYieldForecast::body_mass_yield`). The whole-animal rule is animal-only because
+            // *the products differ*, not by omission.
+            PLANTS_DO_NOT_QUANTISE,
         );
     }
     let ecology = patch_ecology(patch, forage);
@@ -881,6 +893,7 @@ pub(crate) fn forage_forecast(
             forage,
             output_multiplier,
         ),
+        body_mass_yield: PLANTS_DO_NOT_QUANTISE,
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_market: ceiling(FollowPolicy::Market),

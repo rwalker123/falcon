@@ -13,10 +13,11 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, herd_ecology, hunt_policy_ceiling,
-    hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
+    advance_expeditions, advance_herds, build_headless_app, hunt_policy_ceiling, hunt_provisions,
+    hunt_source_yield_preview, hunt_take, hunt_trip_forecast, quantise_animal_take,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
@@ -226,13 +227,20 @@ fn carried(app: &App, party: bevy::prelude::Entity) -> f32 {
 
 /// (1) **The reported bug.** A Sustain party sent at a herd seeded *below* the retired
 /// `0.7 × carrying_capacity` stock floor used to complete on turn 1 with a zero take (the floor was
-/// already crossed). It must now travel, arrive, take a real MSY skim, and keep hunting.
+/// already crossed). It must now travel, arrive, take a real skim, and keep hunting.
+///
+/// **RETARGETED IN SLICE 8: seeded at `0.6 × K`, not `0.5 × K`.** `0.5 × K` is *exactly* Sustain's
+/// escapement point now, so a herd standing there spares nothing **by definition** and the take is
+/// correctly `0` — the fixture would have been asserting that the one biomass at which a Sustain hunt
+/// must take nothing takes something. `0.6 × K` keeps every property the test is actually about: it
+/// is still below the retired `0.7 × K` floor (the regression this pins), still above the Allee
+/// threshold, and now genuinely has animals to spare.
 #[test]
 fn sustain_expedition_below_old_stock_floor_takes_a_real_skim() {
     let mut app = spawn_world();
     let id = stationary_game_herd(&app);
-    // 0.5 × K: below the retired 0.7 × K floor, above the Allee threshold → a positive MSY skim.
-    let (herd_pos, before, _cap) = seed_herd(&mut app, &id, 0.5);
+    // 0.6 × K: below the retired 0.7 × K floor, above the K/2 escapement point → a positive skim.
+    let (herd_pos, before, _cap) = seed_herd(&mut app, &id, 0.6);
     let home = spawn_home_band(&mut app, herd_pos);
     let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
@@ -330,41 +338,69 @@ fn walking_party_never_concludes_the_trip() {
     );
 }
 
-/// (3) **One word, one meaning.** The expedition's Sustain take *is* `hunt_policy_ceiling(Sustain,
-/// …)` — exactly what a resident band's Hunt arm takes from the same herd state.
+/// (3) **One word, one meaning.** The expedition's Sustain take *is* the shared pair
+/// `hunt_policy_ceiling(Sustain, …)` → `quantise_animal_take` — exactly what a resident band's Hunt
+/// arm takes from the same herd state.
+///
+/// **RETARGETED IN SLICE 8 on both halves.** It used to seed `0.5 × K` and assert the take *equalled
+/// the ceiling*. Now:
+/// - `0.5 × K` **is** the escapement point, so the ceiling there is `0` and the fixture's own
+///   `expected > 0` precondition could not hold. Seeded at `0.6 × K` — the herd has a real surplus.
+/// - The take is the ceiling **rounded down to whole animals**, so "take == ceiling" is only true when
+///   the surplus happens to divide evenly. Asserting the take against the *quantiser* keeps the
+///   property the test exists for — the expedition and the band resolve through one shared pair of
+///   helpers, never a private copy — and now pins the quantiser into that contract too.
 #[test]
 fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
     let mut app = spawn_world();
     let id = stationary_game_herd(&app);
-    let (herd_pos, before, cap) = seed_herd(&mut app, &id, 0.5);
+    let (herd_pos, before, cap) = seed_herd(&mut app, &id, 0.6);
     let home = spawn_home_band(&mut app, herd_pos);
     let _party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    // A wild herd → the wild ecology **at this herd's per-species regrowth rate** (Grazing 2b-ii:
-    // `herd_ecology` folds the cached per-species `r` into the wild curve; a tamed/penned herd would
-    // resolve to the pastoral/pen curve instead). Read it from the herd, never `&fauna.ecology` — the
-    // whole point of `herd_ecology` being THE seam is that the expedition take reads the same rate.
-    let ecology = {
-        let registry = app.world.resource::<HerdRegistry>();
-        herd_ecology(registry.find(&id).expect("herd present"), &fauna)
-    };
-    let expected = hunt_policy_ceiling(
+    // **No ecology is threaded in any more** (slice 8): a Sustain ceiling is `B − K/2`, a pure stock
+    // rule, so it does not read the herd's `r` at all — the husbandry ladder moved entirely onto
+    // *regrowth*. The per-species-`r` plumbing this used to assert is now `regrow_biomass`'s subject,
+    // and `grazing_2b_convergence` owns it.
+    let ceiling = hunt_policy_ceiling(
         FollowPolicy::Sustain,
         before,
         cap,
-        &ecology,
         &fauna,
         &LadderConfig::builtin(),
     );
-    assert!(expected > 0.0, "a half-capacity herd has a positive MSY");
+    assert!(
+        ceiling > 0.0,
+        "a herd above its escapement point has animals to spare"
+    );
+    // The party's own collection, exactly as `expedition_take_biomass` composes it.
+    let (body_mass, collection) = {
+        let registry = app.world.resource::<HerdRegistry>();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let herd = registry.find(&id).expect("herd present");
+        (
+            herd.body_mass,
+            PARTY_WORKERS as f32 * labor.hunt.per_worker_biomass_capacity,
+        )
+    };
+    let expected = quantise_animal_take(ceiling, collection, body_mass);
+    assert!(
+        expected.killed >= 1,
+        "the fixture must actually land a kill, or it proves nothing"
+    );
+    drop(fauna);
 
     app.world.run_system_once(advance_expeditions);
 
+    // The herd loses every animal KILLED — carried home or not.
     let taken = before - herd_biomass(&app, &id);
     assert!(
-        (taken - expected).abs() <= expected * 1e-3,
-        "expedition Sustain take {taken} must equal the shared ceiling {expected}"
+        (taken - expected.killed_biomass()).abs() <= expected.killed_biomass() * 1e-3,
+        "expedition Sustain take {taken} must equal the shared quantised take {} ({} animals off a \
+         ceiling of {ceiling})",
+        expected.killed_biomass(),
+        expected.killed
     );
 }
 
@@ -418,9 +454,19 @@ fn depleting_policies_are_unchanged() {
                 expedition_config(&app),
             )
         };
-        let floor = match policy {
-            FollowPolicy::Eradicate => 0.0,
-            _ => fauna.ecology.collapse_fraction * cap,
+        // **The party's ceiling is the BAND's ceiling now, for Surplus and Market** (slice 8): both
+        // are proportional stock skims, identical on either path, so the expedition-specific
+        // "strip the headroom down to the collapse floor" rule they used to carry is **gone** — and
+        // with it the long-standing resident/expedition disagreement. Only **Eradicate** keeps a
+        // party-specific floor of `0` (a resident takes `take_from(B)`; a party driving a herd out
+        // takes everything it can reach — a trip is not a tenancy).
+        //
+        // Read off the shared seam rather than restating a formula: this test must track the
+        // doctrine, not duplicate it. Duplicating it is precisely how the preview once quoted ~34
+        // turns for a trip that filled in ~5.
+        let policy_ceiling = match policy {
+            FollowPolicy::Eradicate => before,
+            _ => hunt_policy_ceiling(policy, before, cap, &fauna, &LadderConfig::builtin()),
         };
         let worker_cap = PARTY_WORKERS as f32 * labor.hunt.per_worker_biomass_capacity;
         let carry_room = if matches!(policy, FollowPolicy::Eradicate) {
@@ -428,17 +474,27 @@ fn depleting_policies_are_unchanged() {
         } else {
             PARTY_WORKERS as f32 * cfg.hunt.per_worker_carry / fauna.hunt.provisions_per_biomass
         };
-        let expected = worker_cap
-            .min((before - floor).max(0.0))
-            .min(carry_room)
-            .clamp(0.0, before);
+        // **Whole animals** — the herd loses what was killed, so the expectation must quantise exactly
+        // as `expedition_take_biomass` does (the shared `quantise_animal_take`, against the party's
+        // collection = throughput bounded by carry room).
+        let body_mass = {
+            let registry = app.world.resource::<HerdRegistry>();
+            registry.find(&id).expect("herd present").body_mass
+        };
+        let expected = quantise_animal_take(
+            policy_ceiling.clamp(0.0, before),
+            worker_cap.min(carry_room),
+            body_mass,
+        )
+        .killed_biomass();
 
         app.world.run_system_once(advance_expeditions);
 
         let taken = before - herd_biomass(&app, &id);
         assert!(
             (taken - expected).abs() <= expected.max(1.0) * 1e-3,
-            "{:?}: stock-headroom take {taken} must equal {expected}",
+            "{:?}: the party's take {taken} must equal the shared policy ceiling, quantised to whole \
+             animals and capped by throughput/carry: {expected}",
             policy
         );
         if matches!(policy, FollowPolicy::Eradicate) {
@@ -1063,9 +1119,23 @@ fn set_fauna_regrowth_rate(app: &mut App, regrowth_rate: f32) {
         .insert_resource(FaunaConfigHandle::new(Arc::new(fauna)));
 }
 
-/// Replay the **client's local-hunt yield preview** — pure arithmetic over exported snapshot fields
-/// — against the provisions `hunt_take` really returns for a resident band, over every worker count
-/// × every policy × each of `herd_ids`.
+/// Pin the **exported local-hunt yield preview** to the provisions `hunt_take` really pays a resident
+/// band, over every worker count × every policy × each of `herd_ids`.
+///
+/// **RETARGETED IN SLICE 8 — the preview is an exported ANSWER now, not client arithmetic.** This used
+/// to replay the client's own formula, `min(workers × huntPerWorkerProvisions, ceiling) ×
+/// outputMultiplier`, which was exact because every term was linear and factored out of the `min`.
+/// A whole-animal take runs through `floor()`, and **`floor` does not factor out of anything**: no
+/// combination of a per-worker rate and a ceiling lets the client re-derive "3 boars, one of them only
+/// half carried". So the sim exports the number (`fauna::hunt_source_yield_preview` →
+/// `SourceYield.actual`, the same seam that seeds the assign-time telemetry) and this asserts THAT
+/// equals the take.
+///
+/// The guard is **stronger, not weaker**: it still pins a client-visible preview to the sim's real
+/// take across the same sweep, and it now pins the *actual* thing the client renders instead of a
+/// formula the client is no longer allowed to use. The exported per-policy `ceiling` rows are still
+/// checked to exist and to exclude the forage-only verbs — they remain the honest "what will this herd
+/// give up at all" readout, they are simply no longer a *staffing* formula's input.
 fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], case: &str) {
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
@@ -1109,10 +1179,36 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 .unwrap_or_else(|| panic!("{case}: {id}: no exported ceiling for {policy:?}"))
                 .provisions_per_turn;
 
+            // A ceiling row must never promise more than the herd is standing there holding.
+            // **Inherent since slice 8** rather than a clamp someone has to remember: every ceiling is
+            // `biomass − floor` with `floor >= 0`.
+            let live_biomass = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(id)
+                .expect("herd present")
+                .biomass;
+            assert!(
+                ceiling <= hunt_provisions(live_biomass, &fauna, 1.0) + TAKE_ABS_EPSILON,
+                "{case}: {id} {policy:?}: exported ceiling {ceiling} exceeds the herd's own biomass"
+            );
+
             for workers in BAND_HUNT_WORKER_COUNTS {
-                // The client's arithmetic, verbatim — no ecology model, just the exported numbers.
-                let client_rate = (workers as f32 * cohort.hunt_per_worker_provisions).min(ceiling)
-                    * output_multiplier;
+                // What the client renders: the sim's own exported preview for this staffing.
+                let preview = {
+                    let registry = app.world.resource::<HerdRegistry>();
+                    let herd = registry.find(id).expect("herd present");
+                    hunt_source_yield_preview(
+                        herd,
+                        &fauna,
+                        &LadderConfig::builtin(),
+                        labor.hunt.per_worker_biomass_capacity,
+                        output_multiplier,
+                        workers,
+                        policy,
+                    )
+                    .actual
+                };
 
                 // The sim's real band take (a resident band has no carry limit — it eats/banks the
                 // whole take, so `carry_room_biomass = INFINITY`, exactly as the Hunt labor arm
@@ -1123,20 +1219,19 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     .find(id)
                     .expect("herd present")
                     .clone();
-                let sim_rate = hunt_take(
+                let take = hunt_take(
                     &mut herd,
                     workers,
                     policy,
                     labor.hunt.per_worker_biomass_capacity,
                     &fauna,
                     &LadderConfig::builtin(),
-                    output_multiplier,
                     f32::INFINITY,
-                )
-                .to_f32();
+                );
+                let sim_rate = hunt_provisions(take.carried, &fauna, output_multiplier);
 
                 assert_provisions_eq(
-                    client_rate,
+                    preview,
                     sim_rate,
                     &format!("{case}: {id} {policy:?} ×{workers} (mult {output_multiplier})"),
                 );
@@ -1194,21 +1289,36 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     set_discontent(&mut app, BAND_DISCONTENT_FRACTION);
     assert_band_preview_matches_hunt_take(&mut app, &herds, "shipped ecology, discontented band");
 
-    // Pass 3: the clamp-binding ecology (see `CLAMP_BINDING_REGROWTH_RATE`) — the depleted herd's
-    // raw policy ceiling now exceeds its remaining biomass, so the exported ceiling MUST be clamped
-    // to the biomass or the preview over-states the take. This is the case the pre-fix code failed.
+    // Pass 3: **the case that used to need a biomass clamp, kept as the proof nothing can make it
+    // fire.** `CLAMP_BINDING_REGROWTH_RATE` is an extreme (hot-reloadable) `r` under which the OLD
+    // **flow** ceilings — `MSY` (Sustain) and `1.6 × MSY` (Surplus) — computed a take *larger than the
+    // herd was standing there holding*, so the exported ceiling had to be explicitly clamped or the
+    // preview over-stated it.
+    //
+    // Slice 8 makes that unreachable **by construction**, and the reason is the same one that killed
+    // both flows: **every rule on the axis is now a STOCK rule bounded by `B`** — Sustain is
+    // `B − K/2`, Surplus/Market are `fraction × B`, Eradicate is `take_from(B)` (itself `.min(B)`). No
+    // `r`, however hot, can lift any of them above the biomass, because none of them reads `r` as a
+    // rate at all.
+    //
+    // The pass is kept (retargeted from "the clamp fires" to "nothing can make it need to fire"): it
+    // still sweeps the whole preview==take matrix at an off-nominal lever, and it now pins the
+    // stronger property. `assert_band_preview_matches_hunt_take` asserts the bound on every row.
     set_fauna_regrowth_rate(&mut app, CLAMP_BINDING_REGROWTH_RATE);
-    let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    assert!(
-        hunt_policy_ceiling(
-            FollowPolicy::Surplus,
-            depleted_biomass,
-            depleted_cap,
-            &fauna.ecology,
-            &fauna,
-            &LadderConfig::builtin(),
-        ) > depleted_biomass,
-        "the depleted-herd case must actually exercise the biomass clamp"
-    );
+    {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        for policy in FollowPolicy::HUNT_POLICIES {
+            assert!(
+                hunt_policy_ceiling(
+                    policy,
+                    depleted_biomass,
+                    depleted_cap,
+                    &fauna,
+                    &LadderConfig::builtin(),
+                ) <= depleted_biomass,
+                "{policy:?}: a stock rule can never exceed the herd's own biomass, at any regrowth rate"
+            );
+        }
+    }
     assert_band_preview_matches_hunt_take(&mut app, &herds, "clamp-binding ecology");
 }

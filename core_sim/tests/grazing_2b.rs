@@ -322,7 +322,9 @@ fn the_2b_ii_measurement_report() {
     }
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let provisions = fauna.hunt.provisions_per_biomass;
-    let market_fraction = fauna.market.take_fraction;
+    // Market is **escapement to the collapse floor** since slice 8 (the retired `market.take_fraction`
+    // was a share-of-stock rate). At a herd sitting at capacity that is `(1 − collapse_fraction)·K`.
+    let collapse_fraction = fauna.ecology.collapse_fraction;
     let wild_default = fauna.ecology.regrowth_rate;
 
     // Group surviving herds by species.
@@ -337,8 +339,19 @@ fn the_2b_ii_measurement_report() {
 
     println!("\n=== 2b-ii K distribution (earthlike seed {MAP_SEED}, 120 turns) ===");
     println!(
-        "  {:<18} {:>4} {:>8} {:>8} {:>8} {:>10} {:>6} {:>8} {:>9} {:>9}",
-        "species", "n", "K min", "K mean", "K max", "old const", "r", "old r", "Sustain", "Market"
+        "  {:<18} {:>4} {:>8} {:>8} {:>8} {:>10} {:>6} {:>8} {:>9} {:>9} {:>7} {:>7}",
+        "species",
+        "n",
+        "K min",
+        "K mean",
+        "K max",
+        "old const",
+        "r",
+        "old r",
+        "Sustain",
+        "Market",
+        "body",
+        "turns/a"
     );
     for (species, caps) in &by_species {
         let n = caps.len();
@@ -354,14 +367,25 @@ fn the_2b_ii_measurement_report() {
         let r = def.and_then(|d| d.regrowth_rate).unwrap_or(wild_default);
         // Sustain MSY and Market take at the MEAN ecological K, in provisions/turn.
         let sustain = r * mean / 4.0 * provisions;
-        let market = market_fraction * mean * provisions;
+        let market = (1.0 - collapse_fraction) * mean * provisions;
+        // **The rhythm** (slice 8): turns of regrowth before the herd can spare one whole animal at
+        // its operating point. `< 1` = a trickle every turn (small game); `~7` = a mammoth, then you
+        // eat for a week.
+        let body_mass = def.map(|d| d.body_mass).unwrap_or(0.0);
+        let turns_per_animal = if sustain > 0.0 {
+            body_mass * provisions / sustain
+        } else {
+            f32::INFINITY
+        };
         println!(
             "  {species:<18} {n:>4} {lo:>8.0} {mean:>8.0} {hi:>8.0} {old_const:>10.0} {r:>6.2} \
-             {wild_default:>8.2} {sustain:>9.3} {market:>9.3}"
+             {wild_default:>8.2} {sustain:>9.3} {market:>9.3} {body_mass:>7.0} \
+             {turns_per_animal:>7.1}"
         );
     }
     println!(
-        "  (Sustain = r·K/4·{provisions}; Market = {market_fraction}·K·{provisions}; old r was the \
-         single global {wild_default})\n"
+        "  (Sustain = r·K/4·{provisions} — the LONG-RUN average, paid in whole-animal lumps; \
+         Market = (1−{collapse_fraction})·K·{provisions} at capacity; old r was the single global \
+         {wild_default}; turns/animal = body_mass/MSY, the slice-8 rhythm)\n"
     );
 }
