@@ -132,9 +132,12 @@ Real order: gather → tend wild stands → plant the floodplains → irrigate t
 "set and forget" — you still work it with people, it's just more productive per worker. This matches
 plants (a farm isn't passive) and keeps every rung engaged. Intensifying up the ladder raises:
 
-1. **Yield per worker** — tamer/managed stock is easier to harvest, so each worker brings back more.
-   (This *is* the "buy freedom" payoff, delivered granularly: more food per worker frees the surplus
-   workers for other tasks, rather than the binary "pastoral = zero workers".)
+1. **Yield per LAND — density, not per-worker freedom.** *(Corrected slice 7 — see §3a; the original
+   claim here was that intensifying raises yield **per worker** and so "buys freedom". Measurement
+   refuted it.)* A rung raises what a patch of ground produces (0.61 → 0.91 → 3.90 on AlluvialPlain
+   K=195) and how many workers it can usefully employ (2 → 3 → 10). It does **not** raise food per
+   person: **production and collection are separate**, and collection is capped by
+   `per_worker_biomass_capacity`, which the rungs never touch.
 2. **Regeneration rate (`r`)** — managed/bred/seeded stock refills faster. This is the per-species
    husbandry-`r` ladder 2d already built (wild → ×`pastoral_gain` → ×`pen_gain`).
 3. **Carrying ceiling (`K`)** — on good pasture the pen's footprint raises K (2d already).
@@ -143,6 +146,34 @@ plants (a farm isn't passive) and keeps every rung engaged. Intensifying up the 
    - **Tamed (pastoral):** the herd **drifts toward the owning band** and stays near — less chasing =
      higher effective yield, and it *reads* as domesticated.
    - **Penned:** range collapses to the fence — zero chasing, fully fixed.
+
+## 3a. Intensifying buys density; tools buy freedom (settled slice 7)
+
+**The thesis this arc started with was wrong, and measurement caught it.** §3 originally claimed
+intensifying raises yield *per worker* — "that's how you buy freedom". Slice 7 separated **production**
+(what the ground offers) from **collection** (`workers × per_worker_biomass_capacity`, the cap the wild
+path always had and the managed path skipped). With both modelled, the per-worker ladder collapses:
+
+| | per-worker yield | what the rungs actually buy |
+|---|---|---|
+| **Plants** wild / tended / Field | **0.40 / 0.40 / 0.40** — flat; the cap already bound at **rung 1** | production 0.61→0.91→3.90; usefully-employable workers 2→3→10 |
+| **Animals** Boar wild / pastoral / pen | 0.50 / 0.75 / **0.80** — the pen step is nearly gone (×1.07) | total production; only small game (Rabbit) stays under the cap |
+
+**The settled model:**
+- **Intensifying buys DENSITY** — more food per *tile*, which is why a band stops walking and settles.
+  (Historically right: early farming was *more* labor per calorie than foraging; it won on calories per
+  acre.) This is the same instinct as [[scarcity-drives-the-real-decision]] — the land is what varies.
+- **TECHNOLOGY buys FREEDOM** — `per_worker_biomass_capacity` (forage 8 / hunt 40) is the only lever
+  that frees hands, and nothing on the ladder touches it. **This makes the M1 equipment/TOE arc
+  load-bearing**: baskets, granaries and plows are what turn density into surplus labor.
+
+**Why not just raise the caps (the rejected option B):** measured — `hunt.per_worker 40 → 100` *would*
+fully restore the animal ladder (×1.5 / ×2.0). But the **plant Field is unreachable by that lever at
+any sane value**: a Field produces `0.02 × K` = 3.90, so per-worker only clears tended at
+`forage.per_worker ≥ 78` (~10× today). Restoring it would mean cutting
+`field_provisions_per_biomass` — trading away the Field's whole reason to exist. Option B was not just
+worse, it was partly *impossible*. It would also defeat the waste mechanic: if nothing ever exceeds
+carry, nothing is ever wasted.
 
 One legible motion up the ladder: **far → near → fixed**, with yield/regen/ceiling climbing alongside.
 
@@ -247,8 +278,9 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
 ## 7. Consequences to honor
 
 - **Retiring passive-free pastoral** changes 2d's shipped pastoral rung (passive/free → worker-driven,
-  more efficient). This is a deliberate re-tune; the "buy freedom" thesis is preserved via yield-per-
-  worker. Measure in playtest.
+  more efficient). A deliberate re-tune. ⚠ **This bullet's original claim — "the 'buy freedom' thesis is
+  preserved via yield-per-worker" — was refuted in slice 7; see §3a.** The rungs buy *density*; tools
+  buy freedom.
 - **Adding a rung-2 knowledge gate** (Herding now gates Tame) means taming is no longer ungated —
   paces the ladder to practice. Intended.
 - The husbandry-ceiling work from 2d ([[grazing-2d-pen-economy]]) already provides the per-species
