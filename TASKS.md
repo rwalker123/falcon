@@ -240,10 +240,18 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
   it just made the trip longer. **Not a bug — the model is right and the UI is silent.**
   `expedition_take_biomass` (`expeditions.rs:650-666`) is `min(workers × per_worker_biomass_capacity,
   policy_ceiling)`, so throughput *does* scale with the party; it just wasn't binding:
-  - **Sustain** → ceiling = the herd's MSY (`hunt_policy_ceiling`, a *herd* property). The measured herd's
-    MSY was **40.0 biomass — exactly one hunter's throughput** (`per_worker_biomass_capacity` 40), a live
-    coincidence of tuning (K is dynamic), so hunter #2 was idle *by construction* and only grew the pack
-    (`workers × hunt.per_worker_carry` 4.0) → a longer trip at the same rate.
+  - **Sustain** → ceiling = the herd's MSY (`hunt_policy_ceiling`, a *herd* property). **This is close to
+    systematic, not a one-off:** one hunter's throughput is **40 biomass/turn**
+    (`hunt.per_worker_biomass_capacity`), and most of the roster's `MSY = r·K/4` sits well under it —
+    Rabbit ~16, Boar ~25, Aurochs ~29, Red Deer ~30. So on Sustain **hunter #2 is idle for nearly every
+    herd in the game**, and only grows the pack (`workers × hunt.per_worker_carry` 4.0) → a longer trip at
+    the same rate. The playtest herd was **Steppe Runners, K 3890, r 0.04 → MSY 38.9** (≈0.78 prov/turn,
+    matching the observed 0.8). Extra hunters only earn their keep where MSY > 40: megafauna, or a
+    migratory herd on rich range (Steppe Runners at the species-median K≈9000 → MSY ~90 → 3 hunters).
+    Since 2b made **K ecological**, a herd's *pasture* decides how many hunters it can support — arguably
+    good design, but wholly invisible. **Worth deciding separately:** whether
+    `hunt.per_worker_biomass_capacity` 40 is simply too high relative to the roster's MSY, which would
+    make the party slider meaningful on Sustain rather than only on Surplus.
   - **Surplus/Market** → the expedition ceiling is **stock headroom to the Allee floor** (`0.15·K`, via
     `hunt_expedition_floor:621-637`) — **not** the resident band's `MSY × surplus_multiplier`; the two
     paths deliberately disagree (documented `expeditions.rs:568-572`). So the *hunters* bind: rate scales
