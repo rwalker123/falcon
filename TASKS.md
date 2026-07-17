@@ -616,14 +616,38 @@ from `display_name`; keywords for aurochs/bison/horse/goat/sheep already mapped 
 `species`/`sizeClass`/`husbandryCeiling` are free-form wire strings — **no Rust, client, or schema edit
 to add an animal whose fields fit the existing enums.**
 
-- [ ] **Fill out the start-game roster (config).** Add the missing animals as `fauna_config.json`
-  entries with designed ecology (biome affinity via `host_biomes`, stat block, husbandry ceiling):
-  **Bison** (migratory, `pastoral` — the plains counterpart to Steppe Runners); **Wild Horse**
-  (grassland; decide `pastoral` vs `pen`); more **regional game** to give each biome a distinct fauna
-  signature (currently many biomes share a short game list). Manual-first (new gameplay content →
-  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
-  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
-  never spawns.
+- [ ] **SHEEP — the missing Neolithic founder. DO THIS FIRST, right after slice 8.** We ship three of the
+  four founder animals — **cattle** (Wild Aurochs), **pig** (Wild Boar), **goat** (Crag Goats) — and no
+  **sheep**. Goats do not cover them: goats *browse* (anything, on rough marginal ground — which is why we
+  put Crag Goats on `montane_highland`/`semi_arid_scrub`), sheep *graze* (they want open grass) and are
+  famously **docile**, which is why one shepherd minds three hundred of them. Proposed entry — **pure
+  config, no code** (and 🐑 is *already* mapped in `FoodIcons.gd`, so it renders on arrival):
+  - `display_name: "Wild Sheep"` — **the name must contain "sheep"** or the icon falls back to the generic
+    grazer; matches the Wild Boar / Wild Fowl / Wild Aurochs pattern.
+  - `size_class`: mirror `crag_goat` · `migratory: false` · `host_biomes: ["savanna_grassland"]` (open
+    grass — deliberately *not* highland/scrub, so it doesn't collapse into the goat's niche; sharing
+    grassland with the aurochs is correct, that's what a pasture is)
+  - `biomass: [300, 700]` · `fodder_per_biomass: 0.05` · `regrowth_rate: 0.20` (between aurochs 0.09 and
+    rabbit 0.35) · `husbandry_ceiling: "pen"` · `body_mass: 25` · `taming_rate: 1.0` (the most docile
+    animal in the roster) · **`animals_per_herder: 50`** (vs aurochs 12 — a shepherd:cowherd ratio of ~4:1,
+    which is the real one)
+  - **Why it's worth doing before the rest of the roster:** sheep are the first species whose *signature*
+    is `animals_per_herder` — not the biggest yield, not the fastest breeder, but **the one you can keep a
+    lot of with almost no labor**. That's a genuinely different answer to "how do I feed people", and it's
+    the clearest test of whether the herder mechanic added in slice 8 earns its keep. **Deps: slice 8**
+    (the lever must exist first). Verify it spawns (live `host_biomes` key + non-zero `abundance.per_biome`).
+- [ ] **Fill out the rest of the start-game roster (config).** Add the remaining animals as
+  `fauna_config.json` entries with designed ecology (biome affinity via `host_biomes`, stat block,
+  husbandry ceiling): **Wild Horse** (grassland; decide `pastoral` vs `pen`); more **regional game** to
+  give each biome a distinct fauna signature (currently many biomes share a short game list). Manual-first
+  (new gameplay content → `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config
+  entries. Verify each actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an
+  unmatched key silently never spawns.
+  **NOTE — Bison is already in the roster.** It was listed here as a gap, but Steppe Runners *are* bison
+  conceptually (settled with the user: 120/head, ~76 head at K — bison/wild-horse scale, not the mammoth's
+  800/head), and they carry the **only** `pastoral` ceiling in the game. Don't add a duplicate; and don't
+  demote them to `wild` — "herd it but never fence it" would become a category with no members, right as
+  the Roaming Bands arc goes to depend on it.
 - [ ] **(Optional) Predators / threat fauna.** Wolves/big cats etc. are NOT husbandry — they need the
   M1 predator-pressure model (see Early-Game Labor → *M1-threats*), not a `SpeciesDef` alone. Scope
   with that arc, not this one.
