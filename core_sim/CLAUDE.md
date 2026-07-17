@@ -786,9 +786,20 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
-> - **ONE need, not two.** The herders mind the herd *and* butcher it, so a managed rung's
->   `workersNeeded` **is** this count — never a second, take-derived one (which would also read a
->   nonsense `0` on a wait turn).
+> - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
+>   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
+>   (`systems::labor::managed_crew_needed`) — but that team must be big enough for **both** jobs, which
+>   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
+>   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
+>   `workersNeeded = max(herders_needed, workers_needed_for_take)` — `+` would be two teams; `max` is
+>   one crew covering its busiest job. **Neither term dominates across the roster** (measured, settled
+>   radius-1 pens): small-bodied species are **herder-bound** (Wild Fowl 9 herders vs 5 haulers; Rabbit
+>   5 vs 4), big-bodied ones are **haul-bound** (Crag Goats 2 vs 7; Boar 1 vs 3; Aurochs 2 vs 3). Do not
+>   "simplify" the `max()` away.
+>
+>   Reporting the herder count *alone* made the UI contradict itself — `workersNeeded: 1` beside
+>   `wastedYield: 0.80`, *drop workers* and *add workers* on the same row, with half an aurochs rotting.
+>   At `max()` staffing **waste measures 0.00 for every species**.
 > - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
 >   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
 >   maintain + take.**

@@ -610,12 +610,16 @@ pub fn advance_labor_allocation(
                             actual: tended,
                             sustainable: tended,
                             wasted: hunt_provisions(take.wasted, &fauna, mult_f),
-                            // **ONE need, not two** (slice 8): the herders who mind the pen are the
-                            // ones who butcher it, so the staffing signal is the *maintenance* count —
-                            // not a second, harvest-side `workers_needed_for_take`. It is also the
-                            // honest answer on a **wait** turn, where a take-derived count would read
-                            // `0` ("nobody needed here") for a pen that in fact demands its full crew.
-                            workers_needed: herders_needed,
+                            // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
+                            // mind the heads *and* to haul the meat.
+                            workers_needed: managed_crew_needed(
+                                herders_needed,
+                                workers_needed_for_take(
+                                    take.carried,
+                                    labor.hunt.per_worker_biomass_capacity,
+                                    workers,
+                                ),
+                            ),
                             overdraws: false,
                         };
                         continue;
@@ -774,21 +778,17 @@ pub fn advance_labor_allocation(
                     // an animal nobody killed is still alive out there, so it was never produced and
                     // cannot have been wasted (`fauna::forecast_production_and_take`).
                     //
-                    // **A MANAGED herd reports its herder count instead** (slice 8) — ONE need, not
-                    // two: the crew minding a tamed herd is the crew taking from it, the cost is
-                    // standing (owed on wait turns, when a take-derived count would read a nonsense
-                    // `0`), and it scales with the herd. A **wild** herd keeps the take-derived count
-                    // unchanged: you owe a wild herd no maintenance, only the carry home
-                    // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
-                    let workers_needed = if herders_needed > 0 {
-                        herders_needed
-                    } else {
-                        workers_needed_for_take(
-                            take.carried,
-                            labor.hunt.per_worker_biomass_capacity,
-                            workers,
-                        )
-                    };
+                    // **A MANAGED herd reports its whole CREW** ([`managed_crew_needed`]) — the
+                    // herders who mind it are the ones who take from it, and the crew must be big
+                    // enough for both jobs. A **wild** herd is untouched: `herders_needed` is `0`
+                    // (it isn't yours to maintain), so the `max` collapses to the take-side count and
+                    // this is verbatim the shipped wild behaviour.
+                    let take_workers = workers_needed_for_take(
+                        take.carried,
+                        labor.hunt.per_worker_biomass_capacity,
+                        workers,
+                    );
+                    let workers_needed = managed_crew_needed(herders_needed, take_workers);
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
@@ -817,6 +817,38 @@ pub fn advance_labor_allocation(
         allocation.last_yields = yields;
         allocation.last_pen_feed_upkeep = pen_feed_paid;
     }
+}
+
+/// **The crew a MANAGED (pastoral or penned) source needs**: `max(herders, take)` — one crew, sized by
+/// whichever of its two jobs binds.
+///
+/// # ONE need, not two — but "one need" means one CREW, not one formula
+///
+/// The same people mind the herd *and* slaughter it, so a managed source reports **one** number and
+/// staffs **one** team. But that team has to be big enough to do **both** jobs, and the two jobs scale
+/// on **different units**:
+///
+/// ```text
+/// herding = per HEAD     — one herder minds 12 aurochs   (animals_per_herder)
+/// hauling = per BIOMASS  — one hauler carries 40 biomass  (per_worker_biomass_capacity)
+/// ```
+///
+/// **That asymmetry is real and must not be "simplified" away.** A shepherd minds ~300 sheep and could
+/// not carry three of them; an aurochs herder minds 12 head (960 biomass) but hauls 40. So neither
+/// count dominates the other across the roster — small-bodied species are herder-bound (a fowl pen
+/// needs 13 pairs of eyes for 3.3 provisions), big-bodied ones are haul-bound (one aurochs herder
+/// would leave half the pen rotting). `max()` is what makes the answer true in both regimes.
+///
+/// **Reporting only the herder count made the UI contradict itself**: `workersNeeded: 1` beside
+/// `wastedYield: 0.80` — *drop workers* and *add workers*, at the same time, on the same row. Two
+/// separate *needs* (staff a herding team **and** a butchering team) is what was ruled out; this is not
+/// that. `+` would be two teams; `max` is one crew that can cover its busiest job.
+///
+/// **Wild hunting is untouched by construction**: a wild herd isn't yours to maintain, so
+/// `fauna::herd_herders_needed` is `0` and this collapses to the take-side count — the shipped
+/// behaviour, verbatim. (`hunt = reach + carry`; `harvest = maintain + take`.)
+fn managed_crew_needed(herders_needed: u32, take_workers: u32) -> u32 {
+    herders_needed.max(take_workers)
 }
 
 /// **The `plant:field` rung's build step**, factored out because the Forage arm reaches it from two
@@ -1617,10 +1649,10 @@ mod labor_yield_tests {
     /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
     /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
     /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
-    /// `fauna::herders_needed` — `ceil(animals / animals_per_herder)`, the crew that minds the animals
-    /// **and** butchers them (one need, not two), owed every turn including turns it spares nothing.
-    /// It is deliberately **not** the take-derived `ceil(actual / per_worker_throughput)` a *wild* hunt
-    /// reports: hunt = reach + carry, harvest = maintain + take.
+    /// [`managed_crew_needed`] — **one crew sized by whichever of its two jobs binds**: enough hands to
+    /// *mind* the heads (`ceil(animals / animals_per_herder)`) **and** to *haul* the meat
+    /// (`ceil(take / per_worker_throughput)`). Herding is per head, hauling is per biomass, so neither
+    /// term dominates across the roster — this fixture's pen happens to be **haul**-bound.
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);
@@ -1674,22 +1706,29 @@ mod labor_yield_tests {
             tended.workers_needed, 1,
             "a tended patch needs one tending presence: {tended:?}"
         );
-        // **The pen's staffing need is its HERDER count** (slice 8) — how many hands the *animals*
-        // demand, not how many the *take* needed. Asserted against the shared helper rather than a
-        // magic number, so it tracks a roster retune.
-        let expected_keepers = {
+        // **The pen's staffing need is its whole CREW** (slice 8): `max(herders, haulers)`. Asserted
+        // against the shared helpers rather than magic numbers, so it tracks a roster retune.
+        let (herders, haulers) = {
             let world_fauna = world.resource::<FaunaConfigHandle>().get();
+            let world_labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
-            crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna)
+            let herders = crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna);
+            let per_worker = hunt_provisions(
+                world_labor.hunt.per_worker_biomass_capacity,
+                &world_fauna,
+                1.0,
+            );
+            (herders, (corral.actual / per_worker).ceil() as u32)
         };
         assert!(
-            expected_keepers >= 1,
+            herders >= 1,
             "the fixture pen must demand at least one keeper, or this asserts nothing"
         );
         assert_eq!(
-            corral.workers_needed, expected_keepers,
-            "the pen reports the crew that MINDS it (ceil(animals / animals_per_herder)), not the crew \
-             its take happened to need: {corral:?}"
+            corral.workers_needed,
+            herders.max(haulers),
+            "the pen reports ONE crew sized by whichever job binds — minding {herders} head vs hauling \
+             the take ({haulers}): {corral:?}"
         );
     }
 
