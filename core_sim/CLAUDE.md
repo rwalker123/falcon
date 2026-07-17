@@ -47,7 +47,7 @@ cargo run -p core_sim --bin server
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — the launch forecast flags a trip NOT VIABLE past this many estimated turns-to-fill; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the trip before reporting "won't fill"; past ~3× `viability_warn_turns` the exact number carries no actionable information, and the bound caps the per-snapshot cost of the exported `huntTripEstimates` table). The retired `sustain_floor_fraction` is **gone**: a Sustain expedition takes the shared MSY *flow* ceiling (`fauna::hunt_policy_ceiling`), not a stock target. The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — the launch forecast flags a trip NOT VIABLE past this many estimated turns-to-fill; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the trip before reporting "won't fill"; past ~3× `viability_warn_turns` the exact number carries no actionable information, and the bound caps the per-snapshot cost of the exported `huntTripEstimates` table). The retired `sustain_floor_fraction` is **gone**: a Sustain expedition earns the shared `fauna::hunt_policy_rate` (Sustain = the sustainable yield) into the herd's kill-credit bank, same as a resident band. The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -731,56 +731,68 @@ turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pu
 (`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. The old one-shot teleport
 follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 
-> #### The hunt policy axis: FOUR ORDERED ESCAPEMENT TARGETS (slice 8)
+> #### The hunt policy axis: FOUR ASCENDING MULTIPLES OF MSY + a kill-credit bank (slice 8b)
 >
-> `fauna::hunt_policy_floor` / `hunt_policy_ceiling` are the one source. Every hunt is constant
-> escapement — `take = max(0, B − floor)`, quantised to whole animals — and the four policies are one
-> rule at four **descending floors**, i.e. four herd-sizes you manage a herd *down to*:
+> `fauna::hunt_policy_rate` (the per-turn take **rate**) + `hunt_credit_ceiling` (what the herd's banked
+> credit can afford this turn) are the one source. Each policy earns a multiple of the sustainable yield
+> (`MSY = r·K/4`, `peak_regrowth`), banked into `Herd::hunt_credit`, and a whole animal is killed only
+> once the bank clears one `body_mass`:
 >
-> | policy | floor | semantics |
+> | policy | rate | herd |
 > |---|---|---|
-> | **Sustain** | `0.50·K` (`MSY_BIOMASS_FRACTION`) | hold at peak productivity |
-> | **Surplus** | `0.30·K` (`ecology.surplus_escapement_fraction`) | run down to a smaller, poorer herd |
-> | **Market** | `0.15·K` (`ecology.collapse_fraction`, the Allee brink) | strip to a collapsed remnant and **hold** |
-> | **Eradicate** | `0` | take everything |
-> | **Tame / Corral** | Sustain's floor × the rung's `yield_fraction_while_building` | management, dipped |
+> | **Sustain** | `sustainable_yield` = `min(MSY, regen(B))` | stable, settles at `K/2` |
+> | **Surplus** | `hunt.surplus_multiplier × MSY` (**1.5**) | slowly declines (reversible) |
+> | **Market** | `hunt.market_multiplier × MSY` (**2.5**) | declines to **extinction** |
+> | **Eradicate** | the whole standing stock (bypasses the bank) | gone |
+> | **Tame / Corral** | Sustain's rate × the rung's `yield_fraction_while_building` | a dip on a sustainable draw |
 >
-> **Monotone in take BY CONSTRUCTION — this is the whole point.** Descending floors ⇒ ascending takes,
-> at **every** biomass and for **every** species: *"each option must take more than the previous, or it
-> looks strange to the player."* `FaunaConfig::validate` pins the floor ordering strictly
-> (`0 = eradicate < market < surplus < sustain = 0.5`, one rejection test per breakable bound —
-> `validate_rejects_a_surplus_floor_at_or_{below_markets_brink,above_sustains_msy}`), and
-> `fauna_market::hunt_policy_takes_are_strictly_ordered_at_every_biomass` sweeps the take order across
-> B ∈ {K, ~K/2, brink} × {fast, slow}. **That test is the regression guard against reintroducing a
-> skim** — do not weaken it.
+> **Monotone in take BY CONSTRUCTION.** Surplus/Market are multiples of the *same* MSY base, so
+> `Sustain ≤ 1× < 1.5× < 2.5× ≤ B` at every biomass and every species — *"each option takes more than
+> the previous."* `FaunaConfig::validate` pins `1 < surplus_multiplier < market_multiplier` (one
+> rejection test per bound: `validate_rejects_a_{surplus_multiplier_at_or_below_one,
+> market_multiplier_at_or_below_surplus}`), and
+> `fauna_market::hunt_policy_takes_are_strictly_ordered_at_every_biomass` sweeps the ordering across
+> B × {fast, slow}. **The regression guard against reintroducing a skim** — do not weaken it.
 >
-> **The invariant a rule here MUST satisfy — keep this comment (`hunt_policy_floor`).** The ceiling has
-> to **grow as the herd regrows**, or it can never accumulate a whole animal. Escapement satisfies it
-> (`B − floor` rises with `B`); a **flow** (`multiplier × MSY`) never does — it is a constant in `B`, so
-> `floor(ceiling / body_mass)` that is `0` on turn 1 is `0` on turn 500 and the animal is *permanently
-> unhuntable*. Two flow rules died of exactly that: Sustain's old `r·K/4` (7 of 9 species) and Surplus's
-> old `1.6 × MSY` (mammoth ceiling 664 vs `body_mass` 800). **Never reintroduce a flow.**
+> **The kill-credit bank is what makes multiples-of-MSY produce whole lumpy animals.** For 7 of 9
+> species MSY < `body_mass`, so a *per-turn ceiling* of that rate would `floor` to **zero forever** (the
+> flow trap that made those species unhuntable under the old `r·K/4` Sustain and `1.6 × MSY` Surplus).
+> Banked, the fractional rate **accumulates** until a body is affordable — a mammoth is a wait-then-one
+> pulse (`body/MSY` turns per kill), a rabbit takes *several per turn* (the credit ceiling never clamps
+> it to one). The bank **carries across policy changes** (earned regrowth toward the next animal;
+> switching Sustain↔Market must not reset it) and is **capped at the standing biomass** (never bank
+> credit for animals that do not exist — that would release a burst on recovery). Measured
+> (`fauna_market::the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game`): a full **Rabbit**
+> (MSY 350, body 2) Sustain-takes ~200 rabbits/turn tapering to `K/2`; a full **Mammoth** (MSY 120, body
+> 800) waits ~7 turns then takes one under Sustain, ~4 under Surplus, ~3 under Market.
 >
-> **Why targets and not proportional skims** (`take_fraction × B`, briefly shipped, retired). A fixed %
-> does not scale with the floors, so it cannot be *ordered* against Sustain's escapement: measured in
-> play on a Wild Fowl (`r` 0.35, B 72, K 122) a 10% Surplus skim paid **0.15 vs Sustain 0.22** — *"take
-> extra"* that took **less**. Monotone-at-the-panel beat the skim.
+> **Sustain's rate is sized against the PRE-regrowth biomass** (`Herd::biomass_before_regrowth`, captured
+> at the top of `regrow_biomass`). The take runs *after* Logistics regrowth, so evaluating
+> `sustainable_yield` at the grown stock takes slightly more than the herd grew (`regen(B_post) >
+> regen(B_pre)`) and slowly **leaks a below-`K/2` herd down**. Reading the pre-regrowth biomass makes
+> Sustain take exactly one turn's growth below `K/2` (the herd **holds/recovers** — pinned by
+> `fauna_market::a_below_half_k_herd_under_sustain_recovers_never_declines`) and a full MSY above it (a
+> **gentle** decline to `K/2`, no escapement burst).
 >
-> **What targets GAVE UP, and where it went.** A skim's `r`-dependent differential — *Market crashes
-> slow breeders fastest; fast ones resist* (the manual) — is **structurally impossible** with floors: an
-> escapement floor converges on itself for every `r`, so Market now **pins** a herd at the Allee brink
-> (`market_hunt_strips_a_herd_to_a_collapsed_remnant`) rather than extinguishing it. That differential
-> crash is **deferred to the depletion arc** (`TASKS.md`), not lost. Manual prose owned by the
-> orchestrator.
+> **Extinction is REAL and on-map.** Constant catch above MSY has no equilibrium: Surplus declines a
+> herd (reversible if switched back), **Market drives it extinct** (`market_hunt_drives_collapse`). The
+> resident band (`systems::hunt_take`) and the hunting expedition (`expedition_take_biomass`) share the
+> same rate + bank, so a herd hunted by either reads one accumulator.
 >
-> **`hunt_policy_ceiling` takes the `ecology` only for the FLOOR fractions, never `r`** — no rule reads
-> the regrowth rate. The husbandry ladder touches **regrowth**, not the take: *"management buys a growth
-> rate"* made literal. **Resident and expedition paths now agree on all four policies** — the separate
-> `hunt_expedition_floor` was deleted (a second copy of the floors would only be somewhere to drift).
+> **Shared herd (chosen handling, reported):** credit advances **per hunt resolution** — once per
+> resident `hunt_take` and once per expedition take. The intended invariant is **one hunter per herd**
+> (a resident band leashes to a nearby herd; expeditions target distant migratory ones), where it is
+> exactly correct. Two *concurrent* hunters on one herd would each bank their rate (more pressure, a
+> faster harvest — realistic and non-crashing, since the bank is capped at the stock and kills at the
+> animal count). Not a per-worker-share split — that would be overbuilding for a case the labor system
+> does not normally produce.
+>
 > **Retired levers** (all stay retired): `follow.surplus_multiplier`, `surplus.take_fraction`,
-> `market.take_fraction`, `hunt.take_fraction` / `min_take` / `take_from` (Eradicate's floor is `0`).
-> Config: `ecology.{collapse_fraction, surplus_escapement_fraction}` + the `market` / `hunt` / `follow`
-> blocks of `fauna_config.json`.
+> `market.take_fraction`, `hunt.take_fraction` / `min_take` / `take_from`; `ecology.
+> surplus_escapement_fraction` and `fauna::hunt_policy_floor` were deleted with the ordered-floors cut.
+> `ecology.collapse_fraction` is once again **only** the Allee/depensation threshold (it briefly doubled
+> as Market's floor). Config: the `hunt.{surplus_multiplier, market_multiplier}` + `market` blocks of
+> `fauna_config.json`.
 
 > #### Herding is standing labor, and it scales with the HERD (slice 8)
 >
@@ -2408,7 +2420,7 @@ mission:
   hunt.per_worker_carry`). Deliver only with a worthwhile load: a full pack **or** `herd_near_band &&
   carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
-- **Per-policy behaviour**: **Sustain** — takes the **shared MSY *flow* ceiling**
+- **Per-policy behaviour**: **Sustain** — earns the **shared sustainable-yield rate** into the kill-credit bank
   (`fauna::hunt_policy_ceiling(Sustain, …)`, the *same* take a resident band's Hunt arm makes from
   the same herd state: "Sustain" has **one meaning** across the sim). It is **not** a stock target —
   there is no sustain floor and no stock-line completion; the trip ends on a full pack, a near-band
@@ -2496,17 +2508,14 @@ mission:
   plausible-looking Sustain trip hiding it. (An unreachable arm must fail loudly, never quietly do
   something plausible.) Guarded by
   `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
-- **Shared take helpers** (`fauna.rs`): **`hunt_policy_ceiling(policy, biomass, cap, ecology, ladder)`**
-  is THE single source of the per-policy take ceiling — one **escapement** rule, `max(0, B − floor) ×
-  dip`, exhaustive over all six policies. The floor is `hunt_policy_floor` (Sustain `0.5·K`, Surplus
-  `ecology.surplus_escapement_fraction` `0.30·K`, Market `ecology.collapse_fraction` `0.15·K`, Eradicate
-  `0` — descending, so takes ascend; see "The hunt policy axis"); the dip is `1.0` except **Tame /
-  Corral**, which ride Sustain's floor × the rung's `yield_fraction_while_building` (the investment dip
-  while the herd is gentled / the pen is built). **Cultivate / Sow** = `0.0`, the forage-only policies'
-  symmetric defensive case, mirroring how `forage_policy_ceiling` yields nothing for `Corral`. The
-  `ecology` is read only for the floor *fractions*, never `r`. And **`hunt_provisions(take, fauna,
-  output_multiplier)`** the single biomass→provisions conversion (an `f32`; the take path quantizes it
-  onto the larder's `Scalar` grid). `hunt_policy_ceiling` is the *building*-phase ceiling: a
+- **Shared take helpers** (`fauna.rs`, slice 8b): **`hunt_policy_rate(policy, biomass_before_regrowth,
+  cap, ecology, fauna, ladder)`** is THE per-turn take **rate** (Sustain `sustainable_yield`, Surplus/
+  Market `mult × MSY`, Eradicate the whole stock, Tame/Corral the dip × Sustain's rate, Cultivate/Sow
+  `0`), and **`hunt_credit_ceiling(policy, biomass, credit, rate)`** turns it into this turn's affordable
+  whole-animal take against the herd's banked `hunt_credit` — see "The hunt policy axis" for the model.
+  **`hunt_provisions(take, fauna, output_multiplier)`** is the single biomass→provisions conversion (an
+  `f32`; the take path quantizes it onto the larder's `Scalar` grid). The rate is the *building*-phase
+  ceiling: a
   **completed** corral is never hunt-drawn at all — the Hunt arm takes the tend branch (paid
   `corral_provisions`, no biomass drawn) — and `fauna::hunt_forecast` is the one place that phase split
   lives (`herd.is_corralled()` → `SourceYieldForecast::tended`). `hunt_take` (`systems.rs` — band Hunt

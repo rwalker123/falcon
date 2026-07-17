@@ -1,6 +1,7 @@
-//! Market hunting: the commercial `FollowPolicy::Market` strips a herd to the Allee brink and holds it
-//! there — the harshest of the four **ordered escapement targets** (Sustain K/2 > Surplus 0.30K >
-//! Market 0.15K > Eradicate 0). Also home to the axis's ordering invariant
+//! Market hunting: the commercial `FollowPolicy::Market` takes `market_multiplier × MSY` (2.5×), the
+//! harshest of the four **ascending multiples of MSY** (Sustain ≤ 1× < Surplus 1.5× < Market 2.5× <
+//! Eradicate = everything) — constant catch this far above MSY has no equilibrium, so it drives a herd
+//! extinct. Also home to the axis's ordering invariant
 //! (`hunt_policy_takes_are_strictly_ordered_at_every_biomass`). Uses the source-centric labor
 //! allocation (a Hunt assignment) that replaced the retired persistent follow.
 
@@ -8,7 +9,6 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
-use core_sim::hunt_policy_ceiling;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
@@ -20,6 +20,7 @@ use core_sim::{
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle,
 };
+use core_sim::{hunt_credit_ceiling, hunt_policy_rate};
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
 /// never binds, so the take is set entirely by the policy ceiling.
@@ -189,13 +190,6 @@ fn biomass_ratio(app: &App, id: &str) -> Option<f32> {
         .map(|h| h.biomass / h.carrying_capacity)
 }
 
-fn biomass_of(app: &App, id: &str) -> Option<f32> {
-    app.world
-        .resource::<HerdRegistry>()
-        .find(id)
-        .map(|h| h.biomass)
-}
-
 fn trade_goods(app: &App, faction: FactionId) -> i64 {
     app.world
         .resource::<FactionInventory>()
@@ -222,65 +216,60 @@ fn market_policy_string_round_trips() {
     assert_eq!(FollowPolicy::Market.as_str(), "market");
 }
 
-/// **Market strips a herd to a LOWER remnant than Surplus, and earns more trade** — the
-/// ordered-escapement form of "Market is the harsher commercial policy".
+/// **Market declines a herd faster than Surplus, both decline it while Sustain holds it steady — and
+/// Market out-earns Surplus on trade** (slice 8b — the multiplier model).
 ///
-/// Retargeted from `market_declines_faster_and_earns_more_trade_than_surplus`. Both policies are
-/// escapement now, differing only in floor: Surplus stops at `0.30·K`, Market at the Allee brink
-/// `0.15·K` (`< Surplus`). So Market takes strictly more each turn (bigger `B − floor`) and settles the
-/// herd at a strictly lower remnant — which is what "declines faster / harsher" *becomes* once neither
-/// is a rate. The `r`-dependent "fast breeders resist, slow breeders crash" story the old name carried
-/// is a proportional-skim property, deferred to the depletion arc (`TASKS.md`); pinning `r` here is now
-/// only for determinism, not to select a regime.
-///
-/// The **trade-goods differential is still real and still tested**: Market's larger take × its
-/// `trade_goods_multiplier` out-earns Surplus. The per-turn take *ordering* itself is pinned
-/// exhaustively by `hunt_policy_takes_are_strictly_ordered_at_every_biomass`.
+/// Every extractive policy is now a constant catch that is a **multiple of MSY**: Surplus 1.5× and
+/// Market 2.5× both exceed the herd's max regrowth (1× MSY), so both decline it — Market faster.
+/// Sustain (≤ 1× MSY, escapement) holds a herd at `K/2`. Measured on the same species (so the take
+/// difference is policy, not `body_mass`), pinned `r` for determinism.
 #[test]
-fn market_settles_a_lower_remnant_and_out_earns_surplus() {
-    /// Immaterial to the escapement floors (fractions of `K`, not `r`); pinned only for determinism —
-    /// the ambient per-species `r` was order-dependent in the shared test binary.
+fn market_and_surplus_decline_faster_than_sustain_holds() {
+    /// Pinned only for determinism (the ambient per-species `r` is order-dependent in the shared
+    /// binary); the multiples scale with MSY, so the ordering is `r`-independent.
     const PINNED_R: f32 = 0.05;
     let mut app = spawn_world();
     let (market_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
+    // A third herd on Sustain, to show it holds while the other two decline.
+    let sustain_herd = {
+        let reg = app.world.resource::<HerdRegistry>();
+        reg.herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.id != market_herd && h.id != surplus_herd)
+            .map(|h| h.id.clone())
+            .expect("a third game herd")
+    };
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        for id in [&market_herd, &surplus_herd] {
-            registry
-                .herds
-                .iter_mut()
-                .find(|h| &h.id == id)
-                .unwrap()
-                .regrowth_rate = PINNED_R;
+        for id in [&market_herd, &surplus_herd, &sustain_herd] {
+            let h = registry.herds.iter_mut().find(|h| &h.id == id).unwrap();
+            h.regrowth_rate = PINNED_R;
+            h.carrying_capacity = 4000.0;
+            h.biomass = 4000.0; // start FULL so the decline is visible
+            h.body_mass = COMPARISON_BODY_MASS;
         }
     }
     spawn_hunter(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
     spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
+    spawn_hunter(&mut app, &sustain_herd, FollowPolicy::Sustain, FactionId(2));
 
-    // Long enough for each to settle at its own floor.
-    run_turns(&mut app, 12);
+    run_turns(&mut app, 10);
 
-    let (collapse, surplus_floor) = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        (
-            fauna.ecology.collapse_fraction,
-            fauna.ecology.surplus_escapement_fraction,
-        )
-    };
-    let market_ratio = biomass_ratio(&app, &market_herd).expect("market herd still a remnant");
-    let surplus_ratio = biomass_ratio(&app, &surplus_herd).expect("surplus herd still a remnant");
+    let market = biomass_ratio(&app, &market_herd).expect("market herd still declining, not gone");
+    let surplus = biomass_ratio(&app, &surplus_herd).expect("surplus herd still declining");
+    let sustain = biomass_ratio(&app, &sustain_herd).expect("sustain herd held");
     assert!(
-        market_ratio < surplus_ratio,
-        "Market settles a lower remnant than Surplus: market {market_ratio} vs surplus {surplus_ratio}"
-    );
-    // Each sits at its own escapement floor, not merely "lower".
-    assert!(
-        (market_ratio - collapse).abs() < 0.05,
-        "Market settles at the collapse brink ({collapse}): {market_ratio}"
+        market < surplus,
+        "Market declines faster than Surplus: {market} vs {surplus}"
     );
     assert!(
-        (surplus_ratio - surplus_floor).abs() < 0.05,
-        "Surplus settles at its escapement floor ({surplus_floor}): {surplus_ratio}"
+        surplus < sustain,
+        "Surplus declines while Sustain holds: surplus {surplus} vs sustain {sustain}"
+    );
+    // Sustain settles a full herd toward K/2 and holds it — well above either extraction floor.
+    assert!(
+        sustain > 0.5,
+        "Sustain holds the herd at/above its K/2 operating point: {sustain}"
     );
     // Commercial harvest: bigger take + boosted trade rate → far more trade goods.
     let market_trade = trade_goods(&app, FactionId(0));
@@ -291,63 +280,37 @@ fn market_settles_a_lower_remnant_and_out_earns_surplus() {
     );
 }
 
-/// **Sustained market hunting strips a herd to a COLLAPSED REMNANT and holds it there** — it does not
-/// extinguish it.
+/// **Sustained market hunting drives a herd EXTINCT** (slice 8b — extinction is real and on-map again).
 ///
-/// This is the ordered-escapement model (intensification ladder slice 8, option 1): Market is
-/// escapement to `ecology.collapse_fraction · K` (0.15·K, the Allee brink), the lowest floor any
-/// *sustaining* policy stops at. A herd under Market is stripped to that brink within a few turns and
-/// **pinned** there — a permanently collapsed, minimal population — for as long as it is hunted. It
-/// never recovers (still hunted) and never extincts (escapement holds *at* the floor; the strict
-/// `biomass < allee` depensation check never fires from exactly the floor).
-///
-/// **This retired `market_hunt_drives_collapse`, and the differential crash it guarded is DEFERRED,
-/// not lost.** Market as a proportional skim (`0.20 × B`) *did* drive slow breeders extinct while fast
-/// ones survived — an `r`-dependent crossover no escapement floor can reproduce (a floor converges on
-/// itself for every `r`). Ordered *targets* were chosen because the panel must read monotone — each
-/// policy takes strictly more than the one below it, at every biomass — and a skim inverts against
-/// Sustain's escapement (measured: Wild Fowl `r` 0.35, Sustain 0.22 vs Surplus 0.15). The
-/// slow-breeder crash moves to the depletion arc (`TASKS.md`). Slow breeder kept here so the "collapsed
-/// remnant, glacial recovery if ever abandoned" reading is the honest one.
+/// Market takes `market_multiplier × MSY` (2.5×) every turn — constant catch 2.5× the herd's *maximum*
+/// regrowth, so there is no equilibrium: the herd declines past the Allee threshold into the
+/// depensation crash and despawns. This is the depletion mechanic the ordered-escapement cut had to
+/// defer (a floor Market never crossed could only *pin* a herd at the brink); multiples of MSY restore
+/// it. A slow breeder makes the extinction unambiguous within the test's horizon.
 #[test]
-fn market_hunt_strips_a_herd_to_a_collapsed_remnant() {
-    /// Deer/megafauna territory — the game commercial hunting actually targets. `r` is immaterial to
-    /// *where* escapement pins the herd (the floor is a fraction of `K`, not of `r`), but a slow
-    /// breeder makes "collapsed remnant that would barely crawl back" the truthful frame.
+fn market_hunt_drives_collapse() {
+    /// Below the ~0.25 collapse threshold — deer/megafauna, the commercially-hunted slow game a 2.5×
+    /// cull cannot outrun. (A fast breeder is driven extinct too, just faster; slow makes the trace
+    /// legible.)
     const SLOW_BREEDER_R: f32 = 0.05;
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    let (cap, brink) = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
         h.regrowth_rate = SLOW_BREEDER_R;
-        h.biomass = h.carrying_capacity; // start FULL, so we watch it get stripped to the brink
-        (
-            h.carrying_capacity,
-            fauna.ecology.collapse_fraction * h.carrying_capacity,
-        )
-    };
+    }
     let band = spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
+    run_turns(&mut app, 40);
 
-    // A few turns to converge from full to the brink.
-    run_turns(&mut app, 8);
-    let stripped = biomass_of(&app, &herd).expect("the herd is a remnant, not gone");
     assert!(
-        (stripped - brink).abs() <= brink * 0.10,
-        "Market strips a full herd ({cap}) to the collapse brink (~{brink}): got {stripped}"
+        app.world.resource::<HerdRegistry>().find(&herd).is_none(),
+        "market hunting should drive the group extinct"
     );
-
-    // ...and HOLDS it there — still hunted, it neither recovers nor extincts.
-    run_turns(&mut app, 32);
-    let held = biomass_of(&app, &herd).expect("a pinned remnant never extincts under escapement");
+    // Once the herd is gone the assignment lapses.
     assert!(
-        (held - brink).abs() <= brink * 0.10,
-        "Market PINS the remnant at the brink (~{brink}) rather than crashing or recovering: got {held}"
-    );
-    assert!(
-        has_hunt_assignment(&app, band),
-        "the herd is still there, so the Hunt assignment persists"
+        !has_hunt_assignment(&app, band),
+        "assignment should lapse after the herd despawns"
     );
 }
 
@@ -375,17 +338,18 @@ fn market_hunt_does_not_domesticate() {
 ///
 /// *"Each option must take more than the previous, or it looks strange to the player."* This is the
 /// property a single-point measurement hid and a proportional skim silently broke (a fixed `%` does not
-/// scale with the escapement floors, so it inverts against Sustain on a fast breeder — measured in play:
-/// Wild Fowl `r` 0.35, Sustain 0.22 vs Surplus 0.15). With four **ordered escapement targets** it holds
-/// by construction — descending floors ⇒ ascending takes — and this test is the regression guard
-/// against anyone reintroducing a skim or reordering the floors.
+/// scale with MSY, so it inverts against Sustain on a fast breeder — measured in play: Wild Fowl `r`
+/// 0.35, Sustain 0.22 vs a 0.10·B Surplus 0.15). With Surplus/Market as **ascending multiples of the
+/// same MSY base** (1.5× / 2.5×) it holds by construction, and this test is the regression guard
+/// against anyone reintroducing a skim or reordering the multipliers.
 ///
-/// Asserted **non-strict** (`≤`): below a policy's floor its take is `0`, so two policies both below
-/// their floors legitimately tie at `0` (a herd at `0.16·K` spares nothing to Sustain *or* Surplus).
-/// Where biomass clears every floor (B = K) the order is checked **strict**.
+/// Asserted **non-strict** (`≤`): Sustain is `0` below `K/2` (escapement), so it legitimately ties
+/// Surplus's clamped-to-tiny-stock take there. Where biomass clears the escapement point (B = K) the
+/// order is checked **strict**.
 ///
-/// `r`-swept because the guarantee must be `r`-independent — the floors are fractions of `K`, and a
-/// take that depended on `r` (a flow, or a skim) is exactly the failure mode this guards.
+/// `r`-swept because the guarantee must be `r`-independent — the multiples are of MSY (which scales
+/// with `r`, so all four scale together), and a take that depended on `r` *differently* per policy (a
+/// skim) is exactly the failure mode this guards.
 #[test]
 fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
     let fauna = FaunaConfigHandle::default().get();
@@ -406,9 +370,16 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
         // B = K (clears every floor → strict), just above K/2, K/2, and down at the brink.
         for frac in [1.0f32, 0.55, 0.51, 0.50, 0.30, 0.16] {
             let biomass = CAP * frac;
+            // The affordable TAKE this turn from an empty bank (credit 0): each policy's rate banked
+            // and clamped to the standing stock (`hunt_credit_ceiling`). Ordering the *takes* is the
+            // guarantee — the raw rate is unclamped, so a small remnant's `2.5×MSY` Market rate can
+            // exceed its whole stock; the take cannot (it is `min(rate, biomass)`, `≤ Eradicate = B`).
             let takes: Vec<f32> = axis
                 .iter()
-                .map(|p| hunt_policy_ceiling(*p, biomass, CAP, &ecology, &ladder))
+                .map(|p| {
+                    let rate = hunt_policy_rate(*p, biomass, CAP, &ecology, &fauna, &ladder);
+                    hunt_credit_ceiling(*p, biomass, 0.0, rate)
+                })
                 .collect();
             for pair in takes.windows(2) {
                 assert!(
@@ -417,17 +388,118 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
                      {takes:?}"
                 );
             }
-            // At full capacity every floor is cleared, so the order is STRICT — the case the player
-            // sees on a healthy herd, and the one the skim inverted.
-            if (frac - 1.0).abs() < f32::EPSILON {
+            // Above K/2 Sustain's rate is a full MSY and the stock dwarfs every multiple, so the order
+            // is STRICT — the healthy-herd case the player reads, and the one the skim inverted. (On a
+            // small remnant the multiples clamp to the stock and tie Eradicate — non-strict.)
+            if frac >= 0.55 {
                 for pair in takes.windows(2) {
                     assert!(
                         pair[0] < pair[1],
-                        "on a FULL herd every option must take strictly more than the last (r={r}): \
-                         {takes:?}"
+                        "on a healthy herd every option must take strictly more than the last \
+                         (r={r}, B={biomass}): {takes:?}"
                     );
                 }
             }
         }
+    }
+}
+
+/// Seat a herd at an explicit `(biomass, cap, r, body)` for a whole-animal measurement, and keep
+/// `biomass_before_regrowth` in sync (Sustain's rate reads it — see `Herd::biomass_before_regrowth`).
+fn seat_measure_herd(app: &mut App, id: &str, biomass: f32, cap: f32, r: f32, body: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.carrying_capacity = cap;
+    herd.biomass = biomass;
+    herd.biomass_before_regrowth = biomass;
+    herd.regrowth_rate = r;
+    herd.body_mass = body;
+    herd.hunt_credit = 0.0;
+}
+
+/// **A below-`K/2` herd under Sustain HOLDS or RECOVERS — it never declines** (slice 8b, the
+/// coordinator's explicit requirement).
+///
+/// Sustain's rate is `min(MSY, regen(B))` sized against the **pre-regrowth** biomass, so below `K/2` it
+/// takes exactly one turn's growth and the herd holds. (Sizing it against the *post-regrowth* stock
+/// would take slightly more than the herd grew — `regen(B_post) > regen(B_pre)` — and slowly leak a
+/// depleted herd down, which is the corner this pins shut.) The kill-credit bank keeps Sustain
+/// *selectable* at any biomass: the sub-MSY rate accumulates and pays a whole animal every few turns.
+#[test]
+fn a_below_half_k_herd_under_sustain_recovers_never_declines() {
+    let mut app = spawn_world();
+    let (herd, _o) = prime_two_stationary_herds(&mut app);
+    const K: f32 = 4000.0;
+    let start = 0.30 * K; // well below K/2
+    seat_measure_herd(&mut app, &herd, start, K, 0.10, 60.0);
+    spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+
+    // Run a long time; the herd must never drift meaningfully below where it started.
+    let mut min_seen = start;
+    for _ in 0..120 {
+        run_turns(&mut app, 1);
+        let b = biomass_ratio(&app, &herd)
+            .map(|r| r * K)
+            .expect("the herd is never hunted out under Sustain");
+        min_seen = min_seen.min(b);
+    }
+    let end = biomass_ratio(&app, &herd).map(|r| r * K).unwrap();
+    assert!(
+        min_seen >= start - 60.0,
+        "a below-K/2 Sustain herd must not decline (start {start}, min over 120 turns {min_seen})"
+    );
+    assert!(
+        end >= start - 60.0,
+        "…and ends at or above where it started (start {start}, end {end})"
+    );
+}
+
+/// **The kill-credit accumulator produces whole lumpy animals** (slice 8b): a fast breeder takes a
+/// MULTIPLE of the animal every turn, a big animal waits then takes one — and the rhythm quickens up
+/// the policy ladder. This is the property that makes multiples-of-MSY huntable where a flow was not.
+#[test]
+fn the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game() {
+    // Rabbit-scale (fast, light body): MSY dwarfs one body, so it kills several per turn from turn one.
+    {
+        let mut app = spawn_world();
+        let (herd, _o) = prime_two_stationary_herds(&mut app);
+        const K: f32 = 4000.0;
+        seat_measure_herd(&mut app, &herd, K, K, 0.35, 2.0); // full, fast, tiny body
+        spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+        let before = biomass_ratio(&app, &herd).unwrap() * K;
+        run_turns(&mut app, 1);
+        let after = biomass_ratio(&app, &herd).unwrap() * K;
+        let killed = ((before + 0.35 * K / 4.0) - after) / 2.0; // grew then took
+        assert!(
+            killed >= 2.0,
+            "a fast breeder's Sustain take is a MULTIPLE of the animal per turn, not clamped to one \
+             (killed ~{killed})"
+        );
+    }
+    // Big-bodied (MSY < one body): waits, then kills exactly one — more often up the ladder.
+    for (policy, max_wait) in [(FollowPolicy::Sustain, 9u32), (FollowPolicy::Market, 5u32)] {
+        let mut app = spawn_world();
+        let (herd, _o) = prime_two_stationary_herds(&mut app);
+        const K: f32 = 12000.0;
+        seat_measure_herd(&mut app, &herd, K, K, 0.04, 800.0); // mammoth-scale
+        spawn_hunter(&mut app, &herd, policy, FactionId(0));
+        // Find the first kill — biomass drops by ~one body.
+        let mut first_kill = None;
+        let mut prev = biomass_ratio(&app, &herd).unwrap() * K;
+        for t in 1..=20 {
+            run_turns(&mut app, 1);
+            let b = biomass_ratio(&app, &herd).map(|r| r * K).unwrap_or(0.0);
+            if prev - b > 400.0 {
+                first_kill = Some(t);
+                break;
+            }
+            prev = b;
+        }
+        let t = first_kill.unwrap_or(u32::MAX);
+        assert!(
+            t <= max_wait,
+            "{policy:?}: a big animal is hunted on a wait-then-one rhythm, quicker up the ladder \
+             (first kill at turn {t}, expected ≤ {max_wait})"
+        );
     }
 }

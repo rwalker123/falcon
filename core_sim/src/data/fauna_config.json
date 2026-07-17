@@ -157,20 +157,20 @@
     "max_total_game": 120,
     "min_spacing": 2
   },
+  "_comment_hunt_policies": "THE FOUR HUNT POLICIES ARE ASCENDING MULTIPLES OF MSY (slice 8b, fauna::hunt_policy_ceiling). Sustain = min(MSY, escapement above K/2) — the sustainable yield, CAPPED so a full herd declines GENTLY at MSY/turn and settles at K/2 (no one-turn burst); takes 0 below K/2 so a depleted herd recovers. Surplus = surplus_multiplier * MSY (1.5). Market = market_multiplier * MSY (2.5). Eradicate = everything. ORDERING IS GUARANTEED BY CONSTRUCTION: they are multiples of the SAME base, so Sustain <= 1x < 1.5x < 2.5x <= B at every biomass and every species — 'each option takes more than the previous', the property that failed under the retired independent skims (a fraction of B could dip below MSY for a fast breeder: measured Wild Fowl Sustain 0.22 vs a 0.10*B Surplus 0.15, inverted). EXTINCTION IS REAL AND ON-MAP: constant catch above MSY has no equilibrium, so Surplus slowly declines a herd (reversible if switched back) and Market drives it extinct. WHY A MULTIPLE OF MSY IS SAFE WHERE A multiplier*MSY FLOW WAS NOT: a flow was the whole take (constant in B, so floor(ceiling/body_mass) that is 0 on turn 1 is 0 forever — 7 of 9 species unhuntable); here MSY sizes only the RATE and the take is still clamped to the standing biomass, so a big animal on a small herd becomes huntable once the herd has grown one body. RETIRED and STAYS retired: follow.surplus_multiplier, surplus.take_fraction, market.take_fraction, hunt.take_fraction/min_take (Eradicate takes everything, no dial). Validate pins 1 < surplus_multiplier < market_multiplier. PLAYTEST DIALS.",
   "hunt": {
     "provisions_per_biomass": 0.02,
     "trade_goods_per_biomass": 0.005,
+    "surplus_multiplier": 1.5,
+    "market_multiplier": 2.5,
     "pursuit_radius": 1,
     "pursuit_tiles_per_turn": 3,
     "max_pursuit_turns": 12
   },
-  "_comment_hunt_floors": "THE HUNT AXIS IS ONE ESCAPEMENT RULE AT FOUR ORDERED FLOORS: take = max(0, biomass - floor), quantised to whole animals. Sustain 0.50*K (the MSY point) > Surplus 0.30*K (surplus_escapement_fraction) > Market 0.15*K (collapse_fraction — run it to the brink) > Eradicate 0. THE FLOORS DESCEND, SO THE TAKES ASCEND BY CONSTRUCTION — at every biomass and for every species. That ordering is the mechanic, not a tuning preference, and validate() pins it. WHY NOT A PROPORTIONAL SKIM (take_fraction * B, briefly shipped and retired): a fixed % does not scale with r, so it cannot be ordered against an escapement rule. Measured in play on a Wild Fowl (r 0.35, B 72, K 122) it paid Sustain 0.22 / Surplus 0.15 / Market 0.29 — 'take extra to sell' took LESS than sustainable, because 0.10*B is gentler than that herd's MSY. The inversion moves with both B and species, so no take_fraction fixes it; the SHAPE was wrong, not the dial. WHAT ANY RULE HERE MUST SATISFY: the ceiling must GROW as the herd regrows, or it can never accumulate a whole animal. Escapement does (B - floor rises with B); the retired skims did too; a FLOW never does — multiplier*MSY is a constant in B, so floor(ceiling/body_mass) that is 0 on turn 1 is 0 on turn 500 and the animal is permanently unhuntable. That killed both flow rules this axis used to carry (Sustain's r*K/4: 7 of 9 species; Surplus's 1.6*MSY: mammoth ceiling 664 vs body 800). NEVER REINTRODUCE A FLOW. The herd's own biomass is the accumulator; there is no credit meter. RETIRED WITH THE SKIMS: follow.surplus_multiplier, surplus.take_fraction, market.take_fraction, hunt.take_fraction/min_take (Eradicate's floor is 0 — no dial needed).",
   "ecology": {
     "regrowth_rate": 0.05,
-    "_comment_collapse_fraction": "Doubles as MARKET's escapement floor (run it to the brink) — one number, two jobs: the commercial policy's character is that it stops exactly where the ecology gives out.",
+    "_comment_collapse_fraction": "The Allee/depensation threshold: below collapse_fraction * K the group declines irreversibly (collapse_rate/turn) even if hunting stops — the overhunting point of no return that turns Surplus/Market's steady overdraw into extinction. (It briefly doubled as Market's escapement floor in slice 8's ordered-floors cut; slice 8b made the hunt policies multiples of MSY, so this is once again ONLY the depensation threshold.)",
     "collapse_fraction": 0.15,
-    "_comment_surplus_escapement_fraction": "SURPLUS's escapement floor: take extra to sell — run the herd down to a smaller, poorer one, but not to the brink. Strictly between Market's 0.15 and Sustain's 0.50; validate() enforces that ordering because the ordering IS the mechanic. PLAYTEST DIAL.",
-    "surplus_escapement_fraction": 0.30,
     "collapse_rate": 0.20,
     "stressed_fraction": 0.40,
     "extinction_floor": 0.02
@@ -207,7 +207,7 @@
     "_comment_corral_build": "The pen's BUILD dials (the old corralling_yield_fraction 0.50 and corral_build_progress_per_turn 0.04) live in intensification_ladder.json -> the animal:pen rung's `build` block: both food webs climb on the same numbers. What remains here is the animal web's own economy.",
     "_comment_knowledge": "The earned-knowledge dials (the old knowledge_progress_per_turn 0.05 / knowledge_completion_threshold 1.0) moved to intensification_ladder.json -> the ladder's `knowledge` block in slice 4, at the same values. They were duplicated VERBATIM in labor_config's forage.cultivation, back when each web had its own hard-coded earn site; the earn path is one rung-driven seam now (RungDef::knowledge_earned), so the pace of a lesson is the LADDER's number, not the animal web's."
   },
-  "_comment_market": "MARKET keeps only its TRADE RATE. Its take is an escapement floor now (ecology.collapse_fraction — run the herd to the brink); take_fraction is retired. See _comment_hunt_floors.",
+  "_comment_market": "MARKET keeps only its TRADE RATE here. Its take is hunt.market_multiplier * MSY (2.5x — the commercial cull that drives a herd extinct); take_fraction is retired. See _comment_hunt_policies.",
   "market": {
     "trade_goods_multiplier": 4.0
   },

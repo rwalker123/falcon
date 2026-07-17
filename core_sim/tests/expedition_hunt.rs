@@ -13,11 +13,11 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, hunt_policy_ceiling, hunt_provisions,
-    hunt_source_yield_preview, hunt_take, hunt_trip_forecast, quantise_animal_take,
-    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
+    advance_expeditions, advance_herds, build_headless_app, hunt_credit_ceiling, hunt_policy_rate,
+    hunt_provisions, hunt_source_yield_preview, hunt_take, hunt_trip_forecast,
+    quantise_animal_take, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
+    CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
@@ -359,31 +359,38 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
     let _party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    // **No ecology is threaded in any more** (slice 8): a Sustain ceiling is `B − K/2`, a pure stock
-    // rule, so it does not read the herd's `r` at all — the husbandry ladder moved entirely onto
-    // *regrowth*. The per-species-`r` plumbing this used to assert is now `regrow_biomass`'s subject,
-    // and `grazing_2b_convergence` owns it.
-    let ceiling = hunt_policy_ceiling(
-        FollowPolicy::Sustain,
-        before,
-        cap,
-        &fauna.ecology,
-        &LadderConfig::builtin(),
-    );
-    assert!(
-        ceiling > 0.0,
-        "a herd above its escapement point has animals to spare"
-    );
-    // The party's own collection, exactly as `expedition_take_biomass` composes it.
-    let (body_mass, collection) = {
+    // **The credit-based first-turn ceiling** (slice 8b): the Sustain rate banked onto the herd's
+    // accumulator, capped at the stock — exactly what `expedition_take_biomass` affords on turn one.
+    // Resolved against the herd's OWN per-species regrowth (a wild herd's `herd_ecology` = the wild
+    // curve at its cached `r`), because the rate now reads `r` where the escapement ceiling did not.
+    let (body_mass, collection, credit, ecology) = {
         let registry = app.world.resource::<HerdRegistry>();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let herd = registry.find(&id).expect("herd present");
+        let mut ecology = fauna.ecology;
+        ecology.regrowth_rate = herd.regrowth_rate;
         (
             herd.body_mass,
             PARTY_WORKERS as f32 * labor.hunt.per_worker_biomass_capacity,
+            herd.hunt_credit,
+            ecology,
         )
     };
+    let ceiling = {
+        let rate = hunt_policy_rate(
+            FollowPolicy::Sustain,
+            before,
+            cap,
+            &ecology,
+            &fauna,
+            &LadderConfig::builtin(),
+        );
+        hunt_credit_ceiling(FollowPolicy::Sustain, before, credit, rate)
+    };
+    assert!(
+        ceiling > 0.0,
+        "a herd above its escapement point has a positive Sustain rate to bank"
+    );
     let expected = quantise_animal_take(ceiling, collection, body_mass);
     assert!(
         expected.killed >= 1,
@@ -454,22 +461,30 @@ fn depleting_policies_are_unchanged() {
                 expedition_config(&app),
             )
         };
-        // **The party's ceiling IS the band's ceiling, for all four policies now.** Every hunt policy
-        // is one escapement rule at an ordered floor (`hunt_policy_floor`), identical on either path —
-        // so the expedition-specific "strip the headroom to the collapse floor" rule the depleting
-        // policies used to carry, and Eradicate's `take_from`, are **both gone**, and with them the
-        // last of the resident/expedition disagreement.
+        // **The party's ceiling IS the band's ceiling, for all four policies now** (slice 8b): each is
+        // its `hunt_policy_rate` banked onto the credit accumulator and capped at the stock, identical
+        // on either path — the last of the resident/expedition disagreement is gone.
         //
         // Read off the shared seam rather than restating a formula: this test must track the doctrine,
-        // not duplicate it. Duplicating it is precisely how the preview once quoted ~34 turns for a
-        // trip that filled in ~5.
-        let policy_ceiling = hunt_policy_ceiling(
-            policy,
-            before,
-            cap,
-            &fauna.ecology,
-            &LadderConfig::builtin(),
-        );
+        // not duplicate it. Resolved against the herd's OWN per-species regrowth (the rate reads `r`).
+        let ecology = {
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("herd present");
+            let mut ecology = fauna.ecology;
+            ecology.regrowth_rate = herd.regrowth_rate;
+            ecology
+        };
+        let policy_ceiling = {
+            let rate = hunt_policy_rate(
+                policy,
+                before,
+                cap,
+                &ecology,
+                &fauna,
+                &LadderConfig::builtin(),
+            );
+            hunt_credit_ceiling(policy, before, 0.0, rate)
+        };
         let worker_cap = PARTY_WORKERS as f32 * labor.hunt.per_worker_biomass_capacity;
         let carry_room = if matches!(policy, FollowPolicy::Eradicate) {
             f32::INFINITY
@@ -558,9 +573,17 @@ fn hunt_trip_forecast_reports_viability() {
 
     // A **big** herd, full: its stock headroom covers a whole pack, so a Surplus party stays
     // throughput-bound and fills fast. (A *small* herd would not — that is the stock-exhaustion case
-    // (7)/(9) cover.)
+    // (7)/(9) cover.) Pin its regrowth to a fast rate so the Surplus rate (2.5 × MSY) clears one body
+    // every turn regardless of which big-game species the map seeded — otherwise a heavy-bodied
+    // slow breeder (aurochs, body 80 vs Surplus 73) would spend turn one *accumulating* credit (slice
+    // 8b), which is correct behaviour but not the throughput-bound case this line is about.
     let big = pinned_game_herd(&mut app, "big");
     seed_herd(&mut app, &big, 1.0);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == big).unwrap();
+        herd.regrowth_rate = 0.35;
+    }
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&big).expect("herd present");
 
@@ -588,7 +611,10 @@ fn hunt_trip_forecast_reports_viability() {
         &labor,
         &cfg,
     );
-    assert!(forecast.first_turn_provisions > 0.0);
+    assert!(
+        forecast.first_turn_provisions > 0.0,
+        "a fast big herd's Surplus rate clears a body every turn — the party lands food on turn one"
+    );
     let turns = forecast
         .turns_to_fill
         .expect("a healthy herd fills a Surplus pack inside the horizon");
@@ -1311,14 +1337,19 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         for policy in FollowPolicy::HUNT_POLICIES {
             assert!(
-                hunt_policy_ceiling(
-                    policy,
-                    depleted_biomass,
-                    depleted_cap,
-                    &fauna.ecology,
-                    &LadderConfig::builtin(),
-                ) <= depleted_biomass,
-                "{policy:?}: a stock rule can never exceed the herd's own biomass, at any regrowth rate"
+                {
+                    let rate = hunt_policy_rate(
+                        policy,
+                        depleted_biomass,
+                        depleted_cap,
+                        &fauna.ecology,
+                        &fauna,
+                        &LadderConfig::builtin(),
+                    );
+                    hunt_credit_ceiling(policy, depleted_biomass, 0.0, rate)
+                } <= depleted_biomass,
+                "{policy:?}: the credit ceiling can never exceed the herd's own biomass, at any \
+                 regrowth rate"
             );
         }
     }

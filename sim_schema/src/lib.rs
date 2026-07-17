@@ -551,6 +551,12 @@ pub struct HerdState {
     /// infinitely many animals, and `floor(escapement / 0)` would strip it whole in one turn.
     #[serde(default)]
     pub body_mass: f32,
+    /// **Kill-credit accumulator** (intensification ladder slice 8b) — biomass a hunt has earned toward
+    /// its next whole animal but not yet spent (`Herd::hunt_credit`). Round-tripped here (sim-side
+    /// rollback only, not on the client wire) so a rollback rewinds a herd's progress toward its next
+    /// kill; a rehydrated herd reading `0` just restarts the wait, never a burst.
+    #[serde(default)]
+    pub hunt_credit: f32,
     /// How far up the husbandry ladder the herd's species climbs (Grazing 2d-δ): `wild` | `pastoral` |
     /// `pen` (`HusbandryCeiling::as_str`/`from_key`). Cached on the live `Herd` at spawn; round-tripped
     /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).

@@ -29,8 +29,8 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     expedition_config::ExpeditionConfig,
     fauna::{
-        self, herd_capacity, herd_ecology, hunt_policy_ceiling, hunt_provisions, pen_upkeep,
-        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
+        self, herd_capacity, herd_ecology, hunt_provisions, pen_upkeep, sustainable_yield,
+        EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
     },
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},

@@ -1312,6 +1312,20 @@ mod labor_yield_tests {
             sustainable_yield(start, CAP, &fauna.ecology) * fauna.hunt.provisions_per_biomass;
         drop(fauna);
 
+        // **Seed the kill-credit bank to one body** (slice 8b) so turn one lands a whole animal. This
+        // test is about a Hunt row *capturing its yield telemetry* alongside a Forage row; a fresh
+        // bank would correctly *wait* for MSY (1.25) to accumulate to a body (5) — that pulse is
+        // `sustain_hunt_at_capacity_yields_msy`'s subject, not this one's.
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|h| h.id == HERD_ID)
+                .expect("seeded herd");
+            herd.hunt_credit = herd.body_mass;
+        }
+
         world.run_system_once(advance_labor_allocation);
 
         let alloc = world.get::<LaborAllocation>(band).unwrap();
@@ -1424,42 +1438,47 @@ mod labor_yield_tests {
             hunt.sustainable,
             expected_sustainable
         );
-        // **RETARGETED IN SLICE 8: a full herd gives a BURST, not a skim.** This used to assert
-        // `actual ≈ sustainable` — that a Sustain draw off a herd at capacity took exactly MSY. That
-        // was the flow model: `sustainable_yield` clamps its argument to `K/2`, so it read the same
-        // `r·K/4` however much surplus was standing there. Sustain is escapement now, so a herd at
-        // capacity is `K/2` **over** its escapement point and hands the whole surplus over as fast as
-        // the crew can carry it — the fresh-herd burst, which is the honest answer to "there are twice
-        // as many animals here as this land can sustain".
+        // **RETARGETED FOR THE KILL-CREDIT MODEL (slice 8b): a full herd yields MSY GENTLY, no burst.**
+        // The escapement *burst* (this used to assert `actual > sustainable`, cropping a full herd to
+        // `K/2` in one turn) is gone: Sustain banks its MSY rate into `hunt_credit` and pays a whole
+        // animal only when the bank clears one body. The fixture's MSY (1.25) is well under one body
+        // (5), so turn one is a **wait** (`actual == 0`) and a kill lands every ~4 turns.
         //
-        // `sustainable` is still the long-run MSY rate (asserted above) — it is now a *rate to compare
-        // against over time*, not a per-turn prediction. `overdraws` carries the ⚠ question.
-        let escapement_provisions = {
-            let fauna = world.resource::<FaunaConfigHandle>().get();
-            hunt_provisions(start - CAP * 0.5, &fauna, 1.0)
-        };
-        let collection_provisions = {
-            let labor = world.resource::<LaborConfigHandle>().get();
-            let fauna = world.resource::<FaunaConfigHandle>().get();
-            hunt_provisions(
-                WORKERS as f32 * labor.hunt.per_worker_biomass_capacity,
-                &fauna,
-                1.0,
-            )
-        };
+        // So the test now pins the two properties the credit model guarantees: **(1) no burst** — the
+        // herd is not slashed to `K/2` on turn one; **(2) the long-run take is MSY** — averaged over
+        // enough turns to contain the pulses. (No `advance_herds` here, so the herd does not regrow;
+        // the standing surplus above `K/2` is what the MSY draw comes out of, gently.)
         assert!(
-            hunt.actual > hunt.sustainable,
-            "a full herd is far above its escapement point, so the burst beats the long-run rate: \
-             {hunt:?}"
+            hunt.actual < hunt.sustainable + 1e-4,
+            "no burst: turn one takes AT MOST the MSY rate, never the whole `B − K/2` surplus: {hunt:?}"
         );
         assert!(
-            hunt.actual <= escapement_provisions.min(collection_provisions) + 1e-4,
-            "the burst is bounded by what the herd can spare AND what the crew can carry: {hunt:?}"
+            world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .biomass
+                > start * 0.9,
+            "no burst: a full herd is not cropped toward K/2 in one turn (still ~full)"
         );
+
+        // Average take over many turns == the MSY rate (the pulses wash out).
+        // 6 whole pulse cycles (body/MSY = 4 turns each), and the herd stays above K/2 throughout
+        // (24 × MSY = 30 killed, 100 → 70), so the rate is a full MSY on every one.
+        const AVG_TURNS: u32 = 24;
+        let mut total = hunt.actual;
+        for _ in 1..AVG_TURNS {
+            world.run_system_once(advance_labor_allocation);
+            total += world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        }
+        let avg = total / AVG_TURNS as f32;
         assert!(
-            !hunt.overdraws,
-            "the burst still stops at K/2 — it never overdraws: {hunt:?}"
+            (avg - expected_sustainable).abs() < expected_sustainable * 0.1,
+            "the long-run Sustain take averages MSY ({expected_sustainable}), realised as a kill every \
+             few turns: got {avg}"
         );
+        let last = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!(!last.overdraws, "Sustain never overdraws: {last:?}");
     }
 
     use crate::components::FOOD;
@@ -1565,6 +1584,18 @@ mod labor_yield_tests {
             }],
         );
 
+        // Seed the kill-credit bank to one body so this turn lands a whole animal (slice 8b) — the
+        // point here is the *overstaffing* readout on a real take, not the accumulation wait.
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|h| h.id == HERD_ID)
+                .expect("seeded herd");
+            herd.hunt_credit = herd.body_mass;
+        }
+
         world.run_system_once(advance_labor_allocation);
 
         let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
@@ -1574,7 +1605,7 @@ mod labor_yield_tests {
         );
         assert_eq!(
             hunt.workers_needed, 1,
-            "the MSY throughput needs a single worker: {hunt:?}"
+            "one animal's throughput needs a single worker: {hunt:?}"
         );
         assert!(
             hunt.workers_needed < assigned,
@@ -1791,6 +1822,9 @@ mod labor_yield_tests {
         let herd = &mut registry.herds[0];
         herd.carrying_capacity = cap;
         herd.biomass = biomass;
+        // Keep the pre-regrowth reading in sync (slice 8b): these tests set the biomass directly
+        // without running `regrow_biomass`, and Sustain's rate reads `biomass_before_regrowth`.
+        herd.biomass_before_regrowth = biomass;
         herd.refresh_ecology_phase(&fauna);
     }
 

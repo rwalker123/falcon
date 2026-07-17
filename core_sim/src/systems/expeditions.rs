@@ -348,9 +348,12 @@ pub fn advance_expeditions(
                         let policy_ceiling = hunt_expedition_ceiling(
                             policy,
                             herd_biomass_before,
+                            herds.herds[idx].biomass_before_regrowth,
                             carrying_capacity,
                             &ecology,
+                            &fauna,
                             &ladder,
+                            herds.herds[idx].hunt_credit,
                         );
                         let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
                         // A delivering party can only take home the biomass it has room for. The room
@@ -370,11 +373,14 @@ pub fn advance_expeditions(
                             per_worker_biomass,
                             policy,
                             herd_biomass_before,
+                            herd.biomass_before_regrowth,
                             carrying_capacity,
                             herd.body_mass,
                             &ecology,
+                            &fauna,
                             &ladder,
                             carry_room_biomass,
+                            &mut herd.hunt_credit,
                         );
                         // The herd loses every animal killed, carried home or not (slice 8).
                         herd.biomass -= take.killed_biomass();
@@ -568,16 +574,12 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 
 /// A hunting expedition's per-turn **biomass take ceiling**, by policy.
 ///
-/// **The resident and expedition paths now agree on ALL FOUR policies**, so this is just
+/// **The resident and expedition paths agree on ALL FOUR policies**, so this is just
 /// [`fauna::hunt_policy_ceiling`] plus the investment guard below. The long-standing disagreement —
 /// the band taking a per-turn *flow* while a detached party stripped standing headroom down to a stock
-/// floor — is **gone**, because the whole axis is that same stock-floor rule now
-/// ([`fauna::hunt_policy_floor`]: four ordered escapement floors). The separate
-/// `hunt_expedition_floor` this file used to carry is deleted with it; a second copy of the floors
-/// would only be somewhere for the two paths to drift apart again.
-///
-/// Even **Eradicate**, the last holdout, agrees: its floor is `0` on both paths (the retired
-/// `hunt.take_from` was the resident's old "a share, at least `min_take`" rule).
+/// floor — is **gone**, because the whole axis is one shared rule now (slice 8b — Sustain's capped
+/// escapement, Surplus/Market's ascending multiples of MSY, Eradicate's whole-stock take). A separate
+/// expedition floor would only be somewhere for the two paths to drift apart.
 ///
 /// The two **investment** policies are **not an expedition concept at all**: `Cultivate`/`Corral` are
 /// place-bound work a *resident* band does (prepare a patch, build a pen and then tend it) — a
@@ -586,16 +588,20 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 /// back to a real ceiling: if that launch validation ever regresses, the party takes *nothing* and the
 /// hole is loud, instead of a plausible-looking trip hiding it. `debug_assert!` makes a debug build
 /// scream; release degrades safely rather than panicking inside the turn loop.
+#[allow(clippy::too_many_arguments)] // the two biomasses, the ecology, the ladder and the credit are all levers
 fn hunt_expedition_ceiling(
     policy: FollowPolicy,
     biomass: f32,
+    sustained_from: f32,
     carrying_capacity: f32,
     ecology: &EcologyConfig,
+    fauna: &FaunaConfig,
     ladder: &LadderConfig,
+    credit: f32,
 ) -> f32 {
     // **Derived, never re-listed** (`FollowPolicy::is_investment`). The hand-written `matches!` this
     // replaces had rotted: it omitted `Tame`, so a Tame expedition sailed straight past this assert
-    // and fell through to `hunt_policy_ceiling`, which handed back a real pastoral-dip ceiling — a
+    // and fell through to the shared ceiling, which handed back a real pastoral-dip ceiling — a
     // *plausible* number hiding the hole this arm exists to make loud. That is the whole reason the
     // grouping has one home now.
     if policy.is_investment() {
@@ -606,7 +612,18 @@ fn hunt_expedition_ceiling(
         );
         return 0.0;
     }
-    fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, ecology, ladder)
+    // The credit-based ceiling (slice 8b): this turn's rate (Sustain sized against the pre-regrowth
+    // `sustained_from`) banked onto the party's credit, capped at the current stock (Eradicate bypasses
+    // the bank). Read-only — the *take* advances/drains it.
+    let rate = fauna::hunt_policy_rate(
+        policy,
+        sustained_from,
+        carrying_capacity,
+        ecology,
+        fauna,
+        ladder,
+    );
+    fauna::hunt_credit_ceiling(policy, biomass, credit, rate)
 }
 
 /// **THE** expedition's per-turn take, in *biomass*, before carry room: the party's throughput capped
@@ -626,19 +643,38 @@ fn expedition_take_biomass(
     per_worker_biomass_capacity: f32,
     policy: FollowPolicy,
     biomass: f32,
+    sustained_from: f32,
     carrying_capacity: f32,
     body_mass: f32,
     ecology: &EcologyConfig,
+    fauna: &FaunaConfig,
     ladder: &LadderConfig,
     carry_room_biomass: f32,
+    credit: &mut f32,
 ) -> AnimalTake {
-    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, ladder);
+    // Slice 8b — bank this turn's rate, take what the bank can afford, drain by the kill. Mirrors
+    // `systems::hunt_take` exactly (the resident band), so a herd hunted by a party and by a band read
+    // the same accumulator. Sustain's rate is sized against the pre-regrowth `sustained_from`; the cap
+    // and drain are against the current (pre-kill) `biomass`.
+    let rate = fauna::hunt_policy_rate(
+        policy,
+        sustained_from,
+        carrying_capacity,
+        ecology,
+        fauna,
+        ladder,
+    );
+    let ceiling = fauna::hunt_credit_ceiling(policy, biomass, *credit, rate);
     // What the party can actually take home this turn: its throughput, bounded by the room left in
     // the pack. Folding the carry room in HERE (rather than clamping the take afterwards) is what
     // stops a nearly-full party killing a whole animal it has no room for.
     let collection =
         (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
-    fauna::quantise_animal_take(ceiling, collection, body_mass)
+    let take = fauna::quantise_animal_take(ceiling, collection, body_mass);
+    if !matches!(policy, FollowPolicy::Eradicate) {
+        *credit = (*credit + rate - take.killed_biomass()).max(0.0);
+    }
+    take
 }
 
 /// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
@@ -662,17 +698,24 @@ pub fn expedition_take_provisions(
     if !policy.delivers_food() {
         return 0.0;
     }
+    // A single-turn preview starting from an empty bank (this readout is the client's per-turn rate,
+    // not a specific banked turn) — the forward-sim `hunt_trip_forecast` is the one pinned to actual.
+    let mut credit = 0.0_f32;
     let take = expedition_take_biomass(
         workers,
         labor.hunt.per_worker_biomass_capacity,
         policy,
         biomass,
+        // A single-turn preview has no separate pre-regrowth reading — use the current biomass.
+        biomass,
         carrying_capacity,
         body_mass,
         ecology,
+        fauna,
         ladder,
         // Carry room bites only on the final partial turn, and `ceil()` already accounts for it.
         f32::INFINITY,
+        &mut credit,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
     scalar_from_f32(fauna::hunt_provisions(
@@ -715,26 +758,27 @@ pub fn hunt_take(
     ladder: &LadderConfig,
     carry_room_biomass: f32,
 ) -> AnimalTake {
-    // Per-policy escapement ceiling — THE single source ([`fauna::hunt_policy_ceiling`]): what the
-    // herd can spare down to this policy's floor (Sustain = K/2, Surplus/Market = the collapse
-    // threshold, Eradicate = nothing; Tame/Corral = a `yield_fraction_while_building` dip on Sustain's
-    // escapement while the herd is gentled / the pen is built). Shared with the pre-commit forecast
-    // (`fauna::hunt_forecast`) and the expedition, so no two hunters of the same herd can disagree
-    // about what a policy means.
-    // The ceiling is resolved against the herd's OWN ecology + capacity (`herd_ecology` /
-    // `herd_capacity` — the single source of the husbandry ladder's rung → growth-rate mapping), never
-    // the raw wild pair: hunting a *tamed* herd draws on the pastoral curve, and a penned one on the
-    // pen's.
-    let policy_ceiling = hunt_policy_ceiling(
+    // **The credit-based take** (slice 8b — the kill-credit accumulator). The policy earns its per-turn
+    // `hunt_policy_rate` into the herd's banked `hunt_credit`, and this turn's affordable biomass is
+    // `min(credit + rate, biomass)` (Eradicate bypasses the bank and takes the whole stock). Resolved
+    // against the herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity` — the single source
+    // of the rung → growth-rate mapping), never the raw wild pair. Shared with the pre-commit forecast
+    // (`fauna::hunt_forecast`), which reads the same credit + rate, so forecast == actual.
+    // Sustain's rate is sized against the **pre-regrowth** biomass (slice 8b — so a below-K/2 herd
+    // holds, not leaks); the credit ceiling then clamps to the current stock.
+    let rate = fauna::hunt_policy_rate(
         policy,
-        herd.biomass,
+        herd.biomass_before_regrowth,
         herd_capacity(herd, fauna),
         &herd_ecology(herd, fauna),
+        fauna,
         ladder,
     );
-    // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the herd can
-    // spare, bounded by what it can haul but never below one — so a party that cannot carry a whole
-    // animal still takes one and wastes the rest, and a herd that cannot spare one is left to regrow.
+    let ceiling = fauna::hunt_credit_ceiling(policy, herd.biomass, herd.hunt_credit, rate);
+    // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the *bank* can
+    // afford, bounded by what it can haul but never below one — so a party that cannot carry a whole
+    // animal still takes one and wastes the rest, and a bank that cannot yet spare one leaves the herd
+    // to keep accumulating.
     //
     // `collection` is the hunting group's throughput, bounded by the biomass the caller can carry home
     // (`carry_room_biomass`); the band Hunt passes `f32::INFINITY` (no carry limit — it eats/banks the
@@ -742,10 +786,17 @@ pub fn hunt_take(
     // keeps a nearly-full party from slaughtering an animal it has no room for.
     let collection =
         (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
-    let take = fauna::quantise_animal_take(policy_ceiling, collection, herd.body_mass);
+    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass);
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();
+    // **Drain the bank by what was killed** (Eradicate never touched it). `credit + rate` is the
+    // pre-kill bank, capped at the pre-kill biomass; killing at most `floor(bank / body)` bodies leaves
+    // `bank − killed·body ≥ 0`, and ≤ the post-kill biomass (the cap and the kill both fall by the same
+    // `killed·body`). So the invariant `0 ≤ hunt_credit ≤ biomass` holds.
+    if !matches!(policy, FollowPolicy::Eradicate) {
+        herd.hunt_credit = (herd.hunt_credit + rate - take.killed_biomass()).max(0.0);
+    }
     take
 }
 
@@ -820,18 +871,11 @@ const CANNOT_FILL_BOUND_MARGIN: f64 = 1e-4;
 /// than re-deriving the ecology:
 /// - **Throughput** — the party can never carry off more than `horizon × workers ×
 ///   per_worker_biomass_capacity`, whatever the herd holds.
-/// - **Ecology** — **every** policy is now *stock* headroom down to [`fauna::hunt_policy_floor`]
-///   (slice 8), so by conservation of biomass everything the party can ever remove is that standing
-///   headroom plus every turn's regrowth — each at most [`fauna::peak_regrowth`], the logistic
-///   curve's maximum.
-///
-/// **This is the branch slice 8 had to fix, not merely tidy.** Sustain used to be bounded by
-/// `horizon × peak_regrowth` alone, on the reasoning that its ceiling was a per-turn *flow* with no
-/// floor. Once Sustain became escapement to `K/2` a party can take the herd's whole standing
-/// headroom (`B − K/2`) on turn **one** — so the flow-only bound is no longer an upper bound at all,
-/// and an unsound bound here doesn't crash: it quietly answers "cannot fill" for trips that *would*
-/// have filled, and the exported `huntTripEstimates` table starts lying. Routing Sustain through
-/// its floor like every other policy restores the bound **by construction**.
+/// - **Ecology** — by conservation of biomass, everything a party can ever remove over the horizon is
+///   the herd's whole standing stock plus every turn's regrowth, each at most [`fauna::peak_regrowth`]
+///   (the logistic curve's maximum). **This holds for every policy regardless of its per-turn rate**:
+///   Market's `2.5 × MSY` can out-take one turn's growth, but only from stock that already existed, so
+///   the running total can never exceed `biomass + horizon × peak_regrowth`.
 ///
 /// Both terms over-estimate by construction (a herd's real regrowth is below the peak), and the
 /// result carries [`CANNOT_FILL_BOUND_MARGIN`] +
@@ -856,16 +900,14 @@ fn hunt_trip_provisions_bound(
     let peak_regrowth = fauna::peak_regrowth(capacity, &ecology).max(0.0) as f64;
     let throughput =
         horizon * workers as f64 * labor.hunt.per_worker_biomass_capacity.max(0.0) as f64;
-    // The **same** floor the take obeys (`fauna::hunt_policy_floor` — the one shared copy, never a
-    // second). Every hunt policy has one now, so the bound is the standing headroom above it plus the
-    // horizon's regrowth; by conservation that is everything the party could ever remove. `None` is
-    // not a hunt policy at all (a plant rung): it takes nothing, so the regrowth term alone bounds it
-    // — conservative, and the bound may **never** under-estimate or it would reject a trip that would
-    // have filled.
-    let ecology_bound = match fauna::hunt_policy_floor(policy, capacity, &ecology) {
-        Some(floor) => (herd.biomass - floor).max(0.0) as f64 + horizon * peak_regrowth,
-        None => horizon * peak_regrowth,
-    };
+    // A **universal conservation bound** on what the party could remove over the whole horizon: the
+    // entire standing stock plus every turn's peak regrowth. No policy can beat it — Eradicate takes
+    // at most the stock, Surplus/Market take a multiple of MSY ≤ peak_regrowth per turn, Sustain less
+    // still — so the bound never under-estimates (it would otherwise reject a trip that would have
+    // filled) and it needs no per-policy floor. The `policy` arg is kept for the signature the caller
+    // shares with the simulation; the bound is deliberately policy-blind.
+    let _ = policy;
+    let ecology_bound = herd.biomass.max(0.0) as f64 + horizon * peak_regrowth;
     let provisions = throughput.min(ecology_bound)
         * fauna.hunt.provisions_per_biomass.max(0.0) as f64
         * EXPEDITION_OUTPUT_MULTIPLIER as f64;
@@ -989,11 +1031,15 @@ fn simulate_hunt_trip(
             labor.hunt.per_worker_biomass_capacity,
             policy,
             quarry.biomass,
+            // The clone just ran `regrow_biomass`, so its pre-regrowth reading is this turn's.
+            quarry.biomass_before_regrowth,
             capacity,
             quarry.body_mass,
             &ecology,
+            fauna,
             ladder,
             carry_room_biomass,
+            &mut quarry.hunt_credit,
         );
         quarry.biomass -= take.killed_biomass();
 
@@ -1166,9 +1212,12 @@ mod hunt_trip_bound_tests {
         let _ = hunt_expedition_ceiling(
             FollowPolicy::Tame,
             500.0,
+            500.0,
             1000.0,
             &ecology,
+            &fauna,
             &LadderConfig::builtin(),
+            0.0,
         );
     }
 

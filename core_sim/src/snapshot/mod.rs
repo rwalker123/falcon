@@ -211,6 +211,9 @@ mod tests {
             current_pos: (5, 6),
             dwell_remaining: 3,
             body_mass: 800.0,
+            // Slice 8b: the kill-credit accumulator round-trips (a rollback rewinds progress toward
+            // the next kill rather than resetting the wait).
+            hunt_credit: 123.0,
             roam: HerdRoamState {
                 mode: "loiter".to_string(),
                 loiter_turns_left: 9,
