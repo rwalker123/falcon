@@ -1165,6 +1165,13 @@ table HerdTelemetryState {
   // hides the corral/extend affordance on a non-"pen" herd and the whole domestication track on a
   // "wild" one. A free-form string like `species`/`sizeClass` (empty → "pen", the full ladder).
   husbandryCeiling:string;
+  // --- Body mass (intensification ladder slice 8b, appended last) --- the biomass of ONE animal of
+  // this species (`Herd::body_mass`). The client needs it to turn a per-turn biomass/food RATE into a
+  // kill-RHYTHM: a hunt take is whole animals, so a herd whose MSY is lighter than one body pays a
+  // kill every `bodyMass / rate` turns (a mammoth ~7, a rabbit several per turn). Render the honest
+  // rhythm ("~1 animal / N turns") from `sustainableYield` (or a `huntPolicyCeilings` row) ÷ this,
+  // NOT the raw per-turn `actualYield`, which is 0 on the wait turns of the pulse. 0 if unknown.
+  bodyMass:float = 0;
 }
 
 table CommandEventState {

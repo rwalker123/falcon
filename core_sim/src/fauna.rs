@@ -2831,7 +2831,7 @@ pub fn hunt_source_yield_preview(
 ///
 /// | policy | rate | herd |
 /// |---|---|---|
-/// | **Sustain** | [`sustainable_yield`] — `min(MSY, regen(B))` | stable, settles at `K/2` |
+/// | **Sustain** | [`sustainable_yield`] — `regen(min(B, K/2))` | stable, settles at `K/2` |
 /// | **Surplus** | `surplus_multiplier × MSY` (**1.5**) | slowly declines (reversible) |
 /// | **Market** | `market_multiplier × MSY` (**2.5**) | declines to **extinction** |
 /// | **Eradicate** | the whole stock (`B`) — bypasses the credit bank | gone |
@@ -2845,12 +2845,17 @@ pub fn hunt_source_yield_preview(
 /// never can**. Extinction is real: constant catch above MSY has no equilibrium, so Surplus declines a
 /// herd and Market drives it extinct.
 ///
-/// # Sustain's TWO-BRANCH rate — never crashes a herd
+/// # Sustain's TWO-BRANCH rate — never crashes a herd, never sticks at `K`
 ///
-/// `sustainable_yield(B)` **is** the coordinator's two-branch rule: `min(MSY, regen(B))` for `B ≥ Allee`
-/// (`= MSY` above `K/2`, `= regen(B)` below — never more than the herd is growing), `0` below the Allee
-/// point. So a full herd declines **gently at MSY/turn and settles at `K/2`** (no escapement burst), and
-/// a **below-`K/2` herd holds or recovers** — the credit still accumulates the sub-MSY rate, so Sustain
+/// `sustainable_yield(B)` is **`regen(min(B, K/2))`** (it clamps the argument to `K/2` before the
+/// logistic), which is the two-branch rule: `= regen(K/2) = MSY` for `B ≥ K/2`, `= regen(B) ≤ MSY`
+/// for `Allee ≤ B < K/2`, `0` below the Allee point. **This is NOT `min(MSY, regen(B))`** — those two
+/// agree below `K/2` but diverge above it, and the difference is a shipped bug: `regen(B)` falls back
+/// to **0 at `B = K`** (`regen(K) = r·K·(1−1) = 0`), so `min(MSY, regen(K)) = 0` would leave a full
+/// herd yielding nothing, never dropping below `K`, stuck forever. `regen(min(B, K/2))` stays at MSY.
+///
+/// So a full herd declines **gently at MSY/turn and settles at `K/2`** (no escapement burst), and a
+/// **below-`K/2` herd holds or recovers** — the credit still accumulates the sub-MSY rate, so Sustain
 /// stays selectable and pays a kill every few turns while the herd grows back.
 ///
 /// **Why the credit bank is what makes the multiples produce whole animals:** the rate is a *fraction*

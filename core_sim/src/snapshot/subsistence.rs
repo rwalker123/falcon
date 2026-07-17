@@ -295,6 +295,8 @@ pub(crate) fn herd_snapshot_entries(
                 husbandry_ceiling: herd
                     .map(|herd| herd.husbandry_ceiling.as_str().to_string())
                     .unwrap_or_default(),
+                // Body mass (slice 8b) — the client turns a per-turn rate into a kill-rhythm with it.
+                body_mass: herd.map(|herd| herd.body_mass).unwrap_or(0.0),
             }
         })
         .collect()

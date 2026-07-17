@@ -1738,3 +1738,52 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         "the whole climb should run ~95 turns, got {total}"
     );
 }
+
+/// **Penning accrues from WORKING a pastoral herd, on EVERY turn — not only on turns an animal is
+/// killed** (slice 8b regression — a playtest report of "Penning stuck at 0%").
+///
+/// The kill-credit model (slice 8b) makes a Sustain hunt of a big-bodied species a pulse: many
+/// **wait-turns** (no kill while the credit bank fills), then a kill. If knowledge earning had been
+/// tied to the kill, learning would stall for big game. It is not — the earn path in
+/// `advance_labor_allocation`'s Hunt arm resolves the herd's rung and credits its `earns_knowledge`
+/// **before** the take branches, gated on the *policy* (stewardship) and the herd being *Thriving*,
+/// never on a kill. This pins that: an **Aurochs** (`body_mass` 80 — Sustain waits several turns per
+/// kill) pastoral herd Sustain-hunted accrues Penning to completion in ~20 turns, and at least one of
+/// those was a 0-kill wait-turn (so the assertion genuinely exercises the decoupling).
+#[test]
+fn penning_accrues_every_worked_turn_not_only_on_kill_turns() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, "aurochs"); // pen-ceiling, heavy body 80 ⇒ Sustain wait-turns
+    domesticate(&mut app, &id); // a completed PASTORAL herd (domesticated, not corralled)
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    let _ = band;
+
+    assert_eq!(
+        herd_of(&app, &id).ecology_phase,
+        core_sim::EcologyPhase::Thriving,
+        "the fixture must be a Thriving pastoral herd, the earning scenario"
+    );
+
+    let mut wait_turns = 0u32;
+    let mut turns = 0u32;
+    while ladder_knowledge(&app, PENNING_DISCOVERY_ID) < RUNG_COMPLETE {
+        let before = herd_of(&app, &id).biomass;
+        run_turns_with_hunt(&mut app, 1);
+        // A wait-turn: the herd's biomass did not fall (no whole animal was spared/killed this turn).
+        if herd_of(&app, &id).biomass >= before - 1e-3 {
+            wait_turns += 1;
+        }
+        turns += 1;
+        assert!(turns <= 30, "Penning must accrue to completion, not stall");
+    }
+    assert!(
+        (18..=22).contains(&turns),
+        "Penning completes in ~20 turns of working the pastoral herd, got {turns}"
+    );
+    assert!(
+        wait_turns > 0,
+        "the fixture must include a 0-kill wait-turn, or it does not exercise the kill-decoupling \
+         (Penning still reached completion across {turns} turns)"
+    );
+}

@@ -304,6 +304,14 @@ pub struct HerdTelemetryState {
     /// ladder). Appended last (append-only).
     #[serde(default)]
     pub husbandry_ceiling: String,
+    /// **Biomass of one animal of this species** (`Herd::body_mass`, slice 8b). The client turns a
+    /// per-turn biomass/food **rate** into a kill-**rhythm** with it: a hunt take is whole animals, so
+    /// a herd whose MSY is lighter than one body pays a kill every `body_mass / rate` turns. Render
+    /// "~1 animal / N turns" from `sustainable_yield` (or a `hunt_policy_ceilings` row) ÷ this — **not**
+    /// the raw per-turn `actual_yield`, which is `0` on the wait turns of the pulse. Appended last
+    /// (append-only). `0` if unknown.
+    #[serde(default)]
+    pub body_mass: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -342,6 +350,7 @@ impl Default for HerdTelemetryState {
             pen_pasture_fraction: 0.0,
             pen_extend_progress: 0.0,
             husbandry_ceiling: String::new(),
+            body_mass: 0.0,
         }
     }
 }
@@ -3540,6 +3549,8 @@ fn create_herds<'a>(
                 penExtendProgress: herd.pen_extend_progress,
                 // Husbandry ceiling (Grazing 2d-δ) — appended last.
                 husbandryCeiling: Some(husbandry_ceiling),
+                // Body mass (slice 8b) — appended last (append-only wire).
+                bodyMass: herd.body_mass,
             },
         );
         entries.push(entry);

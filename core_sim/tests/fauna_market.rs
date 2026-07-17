@@ -417,10 +417,70 @@ fn seat_measure_herd(app: &mut App, id: &str, biomass: f32, cap: f32, r: f32, bo
     herd.hunt_credit = 0.0;
 }
 
+/// **A FULL herd (B = K) under Sustain yields ~MSY and declines gently toward `K/2` — it does NOT
+/// stick at `K` yielding nothing** (slice 8b playtest bug).
+///
+/// The bug: Sustain's rate written as `min(MSY, regen(B))` is `min(MSY, 0) = 0` at `B = K` (regrowth is
+/// zero at capacity), so a full herd yields nothing, never drops below `K`, and stays stuck forever
+/// (observed on full Crag Goat / Red Deer herds). The fix is `regen(min(B, K/2))` = **MSY at capacity**
+/// (the existing `sustainable_yield` semantics). This runs the **full turn** — `advance_herds`
+/// (regrowth, which is 0 at `K`) then the take — so the `regen(K) = 0` interaction is live; the
+/// weaker `sustain_hunt_at_capacity_yields_msy` runs only the take and so cannot exhibit it.
+#[test]
+fn a_full_herd_under_sustain_yields_msy_and_declines_not_stuck_at_k() {
+    for (label, k, r, body) in [
+        ("Crag Goat", 130.0f32, 0.22f32, 20.0f32),
+        ("Red Deer", 1200.0f32, 0.10f32, 60.0f32),
+    ] {
+        let mut app = spawn_world();
+        let (herd, _o) = prime_two_stationary_herds(&mut app);
+        seat_measure_herd(&mut app, &herd, k, k, r, body); // FULL: B = K
+        let band = spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+        let provisions_per_biomass = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            fauna.hunt.provisions_per_biomass
+        };
+        let msy_provisions = r * k / 4.0 * provisions_per_biomass;
+
+        // Long enough for the kill-credit pulse to average out (Crag Goat MSY 7.15 biomass < body 20
+        // waits ~3 turns per kill), stopping above K/2 so the rate is a full MSY throughout. Read the
+        // ACTUAL provisions off the yield telemetry, not inferred from biomass (near K the herd's own
+        // regrowth is below MSY, so a biomass-delta estimate would over-count the take).
+        let mut total = 0.0;
+        for _ in 0..30 {
+            run_turns(&mut app, 1);
+            total += app
+                .world
+                .get::<LaborAllocation>(band)
+                .unwrap()
+                .last_yields
+                .first()
+                .map(|y| y.actual)
+                .unwrap_or(0.0);
+        }
+        let end = biomass_ratio(&app, &herd).map(|x| x * k).unwrap();
+        let avg = total / 30.0;
+
+        assert!(
+            (avg - msy_provisions).abs() < msy_provisions * 0.15,
+            "{label}: a full herd yields ~MSY ({msy_provisions}) on Sustain, NOT 0 — got {avg}/turn"
+        );
+        assert!(
+            end < k * 0.98,
+            "{label}: a full herd declines under Sustain (not stuck at K={k}) — got {end}"
+        );
+        assert!(
+            end > k * 0.5 - body,
+            "{label}: …but only GENTLY, settling toward K/2 ({}), never crashing — got {end}",
+            k * 0.5
+        );
+    }
+}
+
 /// **A below-`K/2` herd under Sustain HOLDS or RECOVERS — it never declines** (slice 8b, the
 /// coordinator's explicit requirement).
 ///
-/// Sustain's rate is `min(MSY, regen(B))` sized against the **pre-regrowth** biomass, so below `K/2` it
+/// Sustain's rate is `regen(min(B, K/2))` sized against the **pre-regrowth** biomass, so below `K/2` it
 /// takes exactly one turn's growth and the herd holds. (Sizing it against the *post-regrowth* stock
 /// would take slightly more than the herd grew — `regen(B_post) > regen(B_pre)` — and slowly leak a
 /// depleted herd down, which is the corner this pins shut.) The kill-credit bank keeps Sustain
