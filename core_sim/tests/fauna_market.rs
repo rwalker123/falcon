@@ -1,17 +1,20 @@
-//! Market hunting: the commercial `FollowPolicy::Market` over-harvests a herd for boosted
-//! trade goods, declining it much faster than Surplus into the Phase D collapse. Uses the
-//! source-centric labor allocation (a Hunt assignment) that replaced the retired persistent follow.
+//! Market hunting: the commercial `FollowPolicy::Market` strips a herd to the Allee brink and holds it
+//! there — the harshest of the four **ordered escapement targets** (Sustain K/2 > Surplus 0.30K >
+//! Market 0.15K > Eradicate 0). Also home to the axis's ordering invariant
+//! (`hunt_policy_takes_are_strictly_ordered_at_every_biomass`). Uses the source-centric labor
+//! allocation (a Hunt assignment) that replaced the retired persistent follow.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
+use core_sim::hunt_policy_ceiling;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
     FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
@@ -186,6 +189,13 @@ fn biomass_ratio(app: &App, id: &str) -> Option<f32> {
         .map(|h| h.biomass / h.carrying_capacity)
 }
 
+fn biomass_of(app: &App, id: &str) -> Option<f32> {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .map(|h| h.biomass)
+}
+
 fn trade_goods(app: &App, faction: FactionId) -> i64 {
     app.world
         .resource::<FactionInventory>()
@@ -212,22 +222,25 @@ fn market_policy_string_round_trips() {
     assert_eq!(FollowPolicy::Market.as_str(), "market");
 }
 
-/// Market declines a herd far faster than Surplus and earns far more trade goods.
+/// **Market strips a herd to a LOWER remnant than Surplus, and earns more trade** — the
+/// ordered-escapement form of "Market is the harsher commercial policy".
 ///
-/// **A SLOW-breeder claim** (Grazing 2b-ii): Market's `0.20 × biomass` stock-skim only out-depletes
-/// Surplus's `1.6 × MSY` flow-cull when regrowth is slow enough that it can't refill the skim
-/// (`r < 0.25`, given the market fraction + regrow-then-take order). The spawned route-1 game the
-/// harness reuses is now *fast* (rabbit/fowl `r` = 0.35), which OUT-breeds the 20% skim, so Surplus's
-/// steady 60%-over-MSY over-harvest actually depletes a fast breeder FASTER than Market — inverting the
-/// claim (this test failed exactly that way: market 0.383 vs surplus 0.170 remaining). Seat both herds
-/// at a slow-breeder rate to exercise the commercial-cull-crashes-slow-game mechanic the test is about
-/// (bison/whale/mammoth territory). Mirrors `market_hunt_drives_collapse`. Pinning `r` also makes the
-/// comparison deterministic — the previous reliance on the ambient per-species `r` was order-dependent
-/// in the shared test binary.
+/// Retargeted from `market_declines_faster_and_earns_more_trade_than_surplus`. Both policies are
+/// escapement now, differing only in floor: Surplus stops at `0.30·K`, Market at the Allee brink
+/// `0.15·K` (`< Surplus`). So Market takes strictly more each turn (bigger `B − floor`) and settles the
+/// herd at a strictly lower remnant — which is what "declines faster / harsher" *becomes* once neither
+/// is a rate. The `r`-dependent "fast breeders resist, slow breeders crash" story the old name carried
+/// is a proportional-skim property, deferred to the depletion arc (`TASKS.md`); pinning `r` here is now
+/// only for determinism, not to select a regime.
+///
+/// The **trade-goods differential is still real and still tested**: Market's larger take × its
+/// `trade_goods_multiplier` out-earns Surplus. The per-turn take *ordering* itself is pinned
+/// exhaustively by `hunt_policy_takes_are_strictly_ordered_at_every_biomass`.
 #[test]
-fn market_declines_faster_and_earns_more_trade_than_surplus() {
-    /// Below the ~0.25 market-collapse threshold — deer/megafauna, the commercially-hunted slow game.
-    const SLOW_BREEDER_R: f32 = 0.05;
+fn market_settles_a_lower_remnant_and_out_earns_surplus() {
+    /// Immaterial to the escapement floors (fractions of `K`, not `r`); pinned only for determinism —
+    /// the ambient per-species `r` was order-dependent in the shared test binary.
+    const PINNED_R: f32 = 0.05;
     let mut app = spawn_world();
     let (market_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
     {
@@ -238,19 +251,36 @@ fn market_declines_faster_and_earns_more_trade_than_surplus() {
                 .iter_mut()
                 .find(|h| &h.id == id)
                 .unwrap()
-                .regrowth_rate = SLOW_BREEDER_R;
+                .regrowth_rate = PINNED_R;
         }
     }
     spawn_hunter(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
     spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
 
-    run_turns(&mut app, 6);
+    // Long enough for each to settle at its own floor.
+    run_turns(&mut app, 12);
 
-    let market_ratio = biomass_ratio(&app, &market_herd).expect("market herd still exists");
-    let surplus_ratio = biomass_ratio(&app, &surplus_herd).expect("surplus herd still exists");
+    let (collapse, surplus_floor) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        (
+            fauna.ecology.collapse_fraction,
+            fauna.ecology.surplus_escapement_fraction,
+        )
+    };
+    let market_ratio = biomass_ratio(&app, &market_herd).expect("market herd still a remnant");
+    let surplus_ratio = biomass_ratio(&app, &surplus_herd).expect("surplus herd still a remnant");
     assert!(
         market_ratio < surplus_ratio,
-        "market should deplete faster than surplus: market {market_ratio} vs surplus {surplus_ratio}"
+        "Market settles a lower remnant than Surplus: market {market_ratio} vs surplus {surplus_ratio}"
+    );
+    // Each sits at its own escapement floor, not merely "lower".
+    assert!(
+        (market_ratio - collapse).abs() < 0.05,
+        "Market settles at the collapse brink ({collapse}): {market_ratio}"
+    );
+    assert!(
+        (surplus_ratio - surplus_floor).abs() < 0.05,
+        "Surplus settles at its escapement floor ({surplus_floor}): {surplus_ratio}"
     );
     // Commercial harvest: bigger take + boosted trade rate → far more trade goods.
     let market_trade = trade_goods(&app, FactionId(0));
@@ -261,37 +291,63 @@ fn market_declines_faster_and_earns_more_trade_than_surplus() {
     );
 }
 
-/// Sustained market hunting drives the group to local extinction (Phase D collapse reuse).
+/// **Sustained market hunting strips a herd to a COLLAPSED REMNANT and holds it there** — it does not
+/// extinguish it.
 ///
-/// **Requires a species the market take can actually out-harvest** (Grazing 2b-ii). The `Market` take
-/// is `0.20 × biomass`; a herd collapses under it only when its per-species wild regrowth cannot refill
-/// that skim (`r < 0.25`, given the market fraction and the regrow-then-take turn order). The harness
-/// reuses spawned **small** game — now a *fast* breeder (rabbit `r` = 0.35) that OUT-breeds a 20% skim
-/// and settles at ~0.29·K rather than collapsing (a real 2b-ii property: fast small game resists market
-/// extinction). So seat this herd at a slow-breeder rate to exercise the collapse mechanic itself.
+/// This is the ordered-escapement model (intensification ladder slice 8, option 1): Market is
+/// escapement to `ecology.collapse_fraction · K` (0.15·K, the Allee brink), the lowest floor any
+/// *sustaining* policy stops at. A herd under Market is stripped to that brink within a few turns and
+/// **pinned** there — a permanently collapsed, minimal population — for as long as it is hunted. It
+/// never recovers (still hunted) and never extincts (escapement holds *at* the floor; the strict
+/// `biomass < allee` depensation check never fires from exactly the floor).
+///
+/// **This retired `market_hunt_drives_collapse`, and the differential crash it guarded is DEFERRED,
+/// not lost.** Market as a proportional skim (`0.20 × B`) *did* drive slow breeders extinct while fast
+/// ones survived — an `r`-dependent crossover no escapement floor can reproduce (a floor converges on
+/// itself for every `r`). Ordered *targets* were chosen because the panel must read monotone — each
+/// policy takes strictly more than the one below it, at every biomass — and a skim inverts against
+/// Sustain's escapement (measured: Wild Fowl `r` 0.35, Sustain 0.22 vs Surplus 0.15). The
+/// slow-breeder crash moves to the depletion arc (`TASKS.md`). Slow breeder kept here so the "collapsed
+/// remnant, glacial recovery if ever abandoned" reading is the honest one.
 #[test]
-fn market_hunt_drives_collapse() {
-    /// A slow breeder (below the ~0.25 market-collapse threshold) — deer/megafauna territory. A fast
-    /// small-game `r` (0.35) would out-breed the skim and never collapse (see the doc comment).
+fn market_hunt_strips_a_herd_to_a_collapsed_remnant() {
+    /// Deer/megafauna territory — the game commercial hunting actually targets. `r` is immaterial to
+    /// *where* escapement pins the herd (the floor is a fraction of `K`, not of `r`), but a slow
+    /// breeder makes "collapsed remnant that would barely crawl back" the truthful frame.
     const SLOW_BREEDER_R: f32 = 0.05;
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    {
+    let (cap, brink) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
         h.regrowth_rate = SLOW_BREEDER_R;
-    }
+        h.biomass = h.carrying_capacity; // start FULL, so we watch it get stripped to the brink
+        (
+            h.carrying_capacity,
+            fauna.ecology.collapse_fraction * h.carrying_capacity,
+        )
+    };
     let band = spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
-    run_turns(&mut app, 40);
 
+    // A few turns to converge from full to the brink.
+    run_turns(&mut app, 8);
+    let stripped = biomass_of(&app, &herd).expect("the herd is a remnant, not gone");
     assert!(
-        app.world.resource::<HerdRegistry>().find(&herd).is_none(),
-        "market hunting should drive the group extinct"
+        (stripped - brink).abs() <= brink * 0.10,
+        "Market strips a full herd ({cap}) to the collapse brink (~{brink}): got {stripped}"
     );
-    // Once the herd is gone the assignment lapses.
+
+    // ...and HOLDS it there — still hunted, it neither recovers nor extincts.
+    run_turns(&mut app, 32);
+    let held = biomass_of(&app, &herd).expect("a pinned remnant never extincts under escapement");
     assert!(
-        !has_hunt_assignment(&app, band),
-        "assignment should lapse after the herd despawns"
+        (held - brink).abs() <= brink * 0.10,
+        "Market PINS the remnant at the brink (~{brink}) rather than crashing or recovering: got {held}"
+    );
+    assert!(
+        has_hunt_assignment(&app, band),
+        "the herd is still there, so the Hunt assignment persists"
     );
 }
 
@@ -312,4 +368,66 @@ fn market_hunt_does_not_domesticate() {
         progress, 0.0,
         "market hunting must not accrue domestication"
     );
+}
+
+/// **THE ordering invariant the whole rework exists to guarantee: `Sustain ≤ Surplus ≤ Market ≤
+/// Eradicate` in per-turn take, at every biomass and for every species.**
+///
+/// *"Each option must take more than the previous, or it looks strange to the player."* This is the
+/// property a single-point measurement hid and a proportional skim silently broke (a fixed `%` does not
+/// scale with the escapement floors, so it inverts against Sustain on a fast breeder — measured in play:
+/// Wild Fowl `r` 0.35, Sustain 0.22 vs Surplus 0.15). With four **ordered escapement targets** it holds
+/// by construction — descending floors ⇒ ascending takes — and this test is the regression guard
+/// against anyone reintroducing a skim or reordering the floors.
+///
+/// Asserted **non-strict** (`≤`): below a policy's floor its take is `0`, so two policies both below
+/// their floors legitimately tie at `0` (a herd at `0.16·K` spares nothing to Sustain *or* Surplus).
+/// Where biomass clears every floor (B = K) the order is checked **strict**.
+///
+/// `r`-swept because the guarantee must be `r`-independent — the floors are fractions of `K`, and a
+/// take that depended on `r` (a flow, or a skim) is exactly the failure mode this guards.
+#[test]
+fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
+    let fauna = FaunaConfigHandle::default().get();
+    let ladder = LadderConfig::builtin();
+    const CAP: f32 = 4000.0;
+    // The four *sustaining/extracting* policies in ascending harshness — the ladder the player reads.
+    let axis = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+    ];
+
+    // Fast AND slow: the ordering must not depend on the breeding rate at all.
+    for r in [0.35f32, 0.05] {
+        let mut ecology = fauna.ecology;
+        ecology.regrowth_rate = r;
+        // B = K (clears every floor → strict), just above K/2, K/2, and down at the brink.
+        for frac in [1.0f32, 0.55, 0.51, 0.50, 0.30, 0.16] {
+            let biomass = CAP * frac;
+            let takes: Vec<f32> = axis
+                .iter()
+                .map(|p| hunt_policy_ceiling(*p, biomass, CAP, &ecology, &ladder))
+                .collect();
+            for pair in takes.windows(2) {
+                assert!(
+                    pair[0] <= pair[1] + 1e-3,
+                    "hunt takes must ascend Sustain≤Surplus≤Market≤Eradicate (r={r}, B={biomass}): \
+                     {takes:?}"
+                );
+            }
+            // At full capacity every floor is cleared, so the order is STRICT — the case the player
+            // sees on a healthy herd, and the one the skim inverted.
+            if (frac - 1.0).abs() < f32::EPSILON {
+                for pair in takes.windows(2) {
+                    assert!(
+                        pair[0] < pair[1],
+                        "on a FULL herd every option must take strictly more than the last (r={r}): \
+                         {takes:?}"
+                    );
+                }
+            }
+        }
+    }
 }

@@ -803,9 +803,9 @@ pub fn pen_upkeep(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// Takes the raw `(biomass, capacity, ecology)` rather than a `&Herd` because the forecast must also
 /// answer it for a herd that is **not penned yet** ("what will this pay once the pen is built?").
 pub(crate) fn managed_yield_biomass(biomass: f32, capacity: f32, _ecology: &EcologyConfig) -> f32 {
-    // The pen harvests on **Sustain's doctrine** — the one escapement rule, shared verbatim so the
+    // The pen harvests on **Sustain's floor** — the same `MSY_BIOMASS_FRACTION` the hunt uses, so the
     // keeper and the hunter can never disagree about what "leave the productive stock standing" means.
-    sustain_escapement(biomass, capacity)
+    (biomass - capacity * MSY_BIOMASS_FRACTION).max(0.0)
 }
 
 /// **The herders a managed herd demands, every turn** (intensification ladder slice 8):
@@ -2780,151 +2780,122 @@ pub fn hunt_source_yield_preview(
     forecast_source_yield(&forecast, sustainable, herd.is_corralled(), workers, policy)
 }
 
-/// **The biomass a SUSTAIN hunt may take** — constant escapement to the MSY point: everything standing
-/// above `K/2`, and nothing else.
+/// **The standing biomass a hunt under `policy` LEAVES BEHIND** — its escapement floor, and THE thing
+/// that separates one hunt policy from another. `None` = "not a hunt policy at all" (the plant rungs).
 ///
-/// **This is the ONE rule slice 8 changed, and it changed it for ONE policy.** Ruling 4 briefly made
-/// *every* hunt policy escapement to a per-policy floor; that was reverted (see
-/// [`hunt_policy_ceiling`]). Sustain alone is escapement, because Sustain alone is the policy whose
-/// meaning *is* "leave the most productive stock standing".
+/// # ONE rule, FOUR ORDERED FLOORS. The ordering is the mechanic
 ///
-/// *Take the animals standing above the most-productive biomass, then wait for the herd to recover.*
-/// Post-take the herd lands **exactly** at `K/2`, so it is **sustainable by construction** and stable
-/// from **both** sides — the constant-escapement lesson `docs/plan_corral_managed_population.md` §2.2
-/// learned at the pen and `graze.overgraze_escapement_fraction` applies to grass, finally applied to
-/// wild game.
+/// Every hunt is constant escapement: `take = max(0, B − floor)`, quantised to whole animals. The
+/// policies differ *only* in where they stop, and the floors **descend**:
 ///
-/// **Why Sustain had to stop being a flow.** It used to be `sustainable_yield` = `r·K/4`, which clamps
-/// its argument to `K/2` — so above the MSY point the ceiling was the flat constant `r·K/4` no matter
-/// how long the herd was left alone. **Waiting never raised it.** Once the take quantised to whole
-/// animals, `floor(r·K/4 / body_mass)` was `0` **forever** for every animal heavier than its herd's
-/// one-turn MSY (boar, deer, aurochs, mammoth…) and they became permanently unhuntable under Sustain.
-/// A quantised take needs an **accumulator**, and the herd's own standing biomass is the only honest
-/// one — which means the ceiling has to *read* it. There is no credit meter; the biomass **is** the
-/// meter.
+/// | policy | floor | semantics |
+/// |---|---|---|
+/// | **Sustain** | `0.50·K` ([`MSY_BIOMASS_FRACTION`]) | hold the herd at peak productivity |
+/// | **Surplus** | `0.30·K` (`ecology.surplus_escapement_fraction`) | run it down to a smaller, poorer herd |
+/// | **Market** | `0.15·K` (`ecology.collapse_fraction`) | run it to the brink |
+/// | **Eradicate** | `0` | gone |
+/// | **Tame / Corral** | Sustain's floor, × the rung's `yield_fraction_while_building` | a dip on a sustainable draw |
 ///
-/// The investment rungs [`FollowPolicy::Tame`] / [`FollowPolicy::Corral`] draw on this same escapement
-/// (they are dips on a *sustainable* draw — the crew is gentling the herd / building the fence, not
-/// overdrawing), and [`managed_yield_biomass`] is the pen's copy of it.
-pub fn sustain_escapement(biomass: f32, carrying_capacity: f32) -> f32 {
-    (biomass - carrying_capacity * MSY_BIOMASS_FRACTION).max(0.0)
+/// Descending floors ⇒ **ascending takes, by construction, at every `B` and for every species**
+/// (`FaunaConfig::validate` pins the ordering). That is the property the player needs, and no
+/// proportional rule can supply it.
+///
+/// ## Why not a proportional skim — it INVERTED in play
+///
+/// Surplus and Market were briefly `take_fraction × B` (0.10 / 0.20). A fixed % does not scale with
+/// `r`, so it cannot be ordered against an escapement rule. Measured on a **Wild Fowl** (`r` 0.35,
+/// B 72, K 122): **Sustain 0.22, Surplus 0.15, Market 0.29** — *"take extra to sell"* paid **less than
+/// sustainable**, because `0.10·B` is simply gentler than that herd's MSY. The inversion moves with
+/// both `B` and species, so no `take_fraction` fixes it; the shape was wrong, not the dial.
+///
+/// ## What a rule must satisfy to survive quantisation — keep this
+///
+/// **The ceiling must GROW as the herd regrows**, or it can never accumulate a whole animal.
+/// Escapement satisfies it (`B − floor` rises with `B`); the retired skims did too (`f × B`); a
+/// **flow** never does — `multiplier × MSY` is a constant in `B`, so `floor(ceiling / body_mass)` that
+/// is `0` on turn 1 is `0` on turn 500 and the animal is **permanently unhuntable**. That killed both
+/// flow rules this axis used to carry: Sustain's `r·K/4` (7 of 9 species unhuntable) and Surplus's
+/// `1.6 × MSY` (mammoth: ceiling **664** vs `body_mass` **800**, forever). **Never reintroduce a flow.**
+///
+/// The herd's own biomass is the accumulator; there is no credit meter.
+pub fn hunt_policy_floor(
+    policy: FollowPolicy,
+    carrying_capacity: f32,
+    ecology: &EcologyConfig,
+) -> Option<f32> {
+    let fraction = match policy {
+        // Hold at peak productivity — sustainable **by construction** and stable from *both* sides
+        // (the constant-escapement lesson `docs/plan_corral_managed_population.md` §2.2 learned at the
+        // pen, and `graze.overgraze_escapement_fraction` applies to grass, finally applied to game).
+        // The investment rungs draw on the same sustainable escapement: the crew is gentling the herd
+        // / building the fence, not overdrawing.
+        FollowPolicy::Sustain | FollowPolicy::Tame | FollowPolicy::Corral => MSY_BIOMASS_FRACTION,
+        FollowPolicy::Surplus => ecology.surplus_escapement_fraction,
+        // Market stops exactly where the ecology gives out — one number, two jobs (see
+        // `EcologyConfig::collapse_fraction`).
+        FollowPolicy::Market => ecology.collapse_fraction,
+        FollowPolicy::Eradicate => 0.0,
+        // The plant-only rungs — rejected on a Hunt assignment at `assign_labor`
+        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; `None` makes
+        // `hunt_policy_ceiling` yield nothing rather than silently hunting under a nonsense policy.
+        // **Exhaustive** — a new verb must fail to compile here rather than inherit a plausible floor.
+        FollowPolicy::Cultivate | FollowPolicy::Sow => return None,
+    };
+    Some(carrying_capacity * fraction)
 }
 
-/// **THE single source of the per-policy hunt take ceiling** (in *biomass*) at a herd's current
-/// stock, shared by every hunter of a herd: the band's Hunt labor arm and the scout's opportunistic
-/// replenish (via `systems::hunt_take`), the hunting expedition (via
-/// `systems::hunt_expedition_ceiling` / `hunt_trip_forecast`), and the pre-commit forecast
-/// (`hunt_forecast`). One word, one meaning.
+/// **THE single source of the per-policy hunt take ceiling** (in *biomass*) at a herd's current stock,
+/// shared by every hunter of a herd: the band's Hunt labor arm and the scout's opportunistic replenish
+/// (via `systems::hunt_take`), the hunting expedition (via `systems::hunt_expedition_ceiling` /
+/// `hunt_trip_forecast`), and the pre-commit forecast (`hunt_forecast`). One word, one meaning.
 ///
-// # TWO doctrines, and EVERYTHING is stock-based. Nothing here is a flow — that is load-bearing
+/// It is `(B − floor(policy)) × dip(policy)` — see [`hunt_policy_floor`] for the axis and why it is
+/// floors rather than skims or flows.
 ///
-/// | policy | rule | doctrine |
-/// |---|---|---|
-/// | **Sustain** | [`sustain_escapement`] — `max(0, B − K/2)` | **management**: a stock *target* |
-/// | **Surplus** | `surplus.take_fraction × B` = `0.10 × B` | **extraction**, gentle |
-/// | **Market** | `market.take_fraction × B` = `0.20 × B` | **extraction**, commercial |
-/// | **Eradicate** | `hunt.take_from(B)` | extinction |
-/// | **Tame / Corral** | the rung's `yield_fraction_while_building` × Sustain's escapement | management, dipped |
+/// # The `ecology`'s `r` is NOT read, and that is the thesis
 ///
-/// **Sustain manages** (leave the productive stock standing); **Surplus and Market extract** (take a
-/// share of what's there, gently or commercially). Every rule reads the **standing biomass**.
+/// The floors are fractions of `K`; nothing here reads the regrowth rate. So the husbandry ladder does
+/// **not** touch what a herd can spare this turn — it touches **how fast the herd refills**
+/// (`regrow_biomass`). *"Management buys a growth rate"* is literal and exclusive rather than smeared
+/// across the take. (`ecology` is still threaded for `surplus_escapement_fraction` /
+/// `collapse_fraction`, which are the herd's own rung's bands.)
 ///
-/// ## Why no rule may be a FLOW — the mammoth test
+/// `ecology` + `carrying_capacity` are **the herd's own** — resolved by [`herd_ecology`] /
+/// [`herd_capacity`], never by the caller reaching for `fauna.ecology` or `herd.carrying_capacity`.
 ///
-/// A flow ceiling (`multiplier × MSY`) is a **constant in `biomass`**: it does not rise while the herd
-/// regrows, so waiting never raises it and it **can never accumulate**. Once the take quantises to
-/// whole animals, `floor(ceiling / body_mass)` that is `0` on turn 1 is `0` on turn 500 — the animal
-/// is *permanently unhuntable* under that policy. Both flow rules this axis used to have died of it:
-///
-/// - **Sustain** was `r·K/4`, which made **7 of 9 shipped species** (boar, deer, aurochs, mammoth…)
-///   permanently unhuntable. Fixed by escapement — the herd's own biomass is the accumulator.
-/// - **Surplus** was `1.6 × MSY`. Mammoth: MSY 415 → ceiling **664**, `body_mass` **800** ⇒
-///   `floor(664/800) = 0`, **forever**. Fixed by making it a skim.
-///
-/// A **proportional skim is safe** precisely because it reads the stock: `0.10 × B` grows as `B`
-/// regrows, so it always eventually clears one body. **Do not "simplify" a skim back into a flow.**
-///
-/// ## Why Surplus is a skim and not escapement-to-a-lower-floor
-///
-/// Escapement **converges** on its floor: it would strip the herd once and then *hold* it there
-/// forever. That is not *"take extra to sell and it slowly declines"* (the manual) — and giving
-/// Surplus and Market two floors made them **numerically identical**, collapsing the 4-way axis to 3.
-/// (The test that should have caught that passed on `body_mass` rounding noise between two *different
-/// species* — see `fauna_market::COMPARISON_BODY_MASS`.) A 10% skim genuinely out-takes a slow
-/// breeder's regrowth turn over turn, which is exactly what the manual describes.
-///
-/// Market's *"crashes slow breeders **fastest**"* is emergent from the same shape: a fast breeder
-/// refills a 20% skim and settles at a lower stock; a slow one cannot and spirals past the Allee
-/// threshold into the depensation collapse. No separate depletion state, no floor to tune.
-///
-/// **The resident and expedition paths now agree on Sustain, Surplus AND Market** — the long-standing
-/// disagreement (band takes a per-turn rule, expedition strips stock headroom) survives only for
-/// **Eradicate**, whose expedition arm still floors at `0`.
-///
-/// # At `B = K`, Sustain out-yields Surplus. That is CORRECT — do not "fix" it
-///
-/// A herd at capacity hands Sustain the whole `K/2` standing above the MSY point, while Surplus takes
-/// `0.10 × K`. So on a *full* herd the gentle policy pays more — which reads like an inversion and is
-/// not one. A herd at capacity is **above its most productive biomass**: cropping it down to `K/2` is
-/// a **one-time stock correction that leaves the herd breeding faster**, not a policy out-earning a
-/// greedier one. The comparison that matters is the long run, and there Sustain settles at the MSY
-/// rate and holds forever while Surplus keeps out-taking regrowth **and declining the herd**.
-///
-/// # The `ecology` argument is GONE, and its absence is the thesis
-///
-/// This used to take the herd's `EcologyConfig` and the docs said *"the husbandry ladder is expressed
-/// **entirely** by handing this function a different ecology"*. Not any more: **no rule on the axis
-/// reads `r`.** Every ceiling reads *standing stock* — `B − K/2`, `fraction × B`, `take_from(B)` —
-/// because a rule that reads a *rate* cannot accumulate and so cannot afford a whole animal (above).
-///
-/// So the ladder does **not** touch what a herd can spare this turn; it touches **how fast the herd
-/// refills**, which is `regrow_biomass`'s business. That is *"management buys a growth rate"* made
-/// literal and exclusive — the claim is no longer smeared across the take. `carrying_capacity` is
-/// still **the herd's own** ([`herd_capacity`]), never re-derived at a call site.
-///
-/// Not clamped to biomass — the caller does that alongside its own throughput / carry-room cap.
+/// **Inherently clamped to biomass**: every floor is `>= 0`, so `B − floor <= B`. No `r`, however hot,
+/// can lift a ceiling above the stock — the biomass clamp the flow rules needed is now a tautology.
 pub fn hunt_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
-    fauna: &FaunaConfig,
+    ecology: &EcologyConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    match policy {
-        // The ONE escapement rule (slice 8). See `sustain_escapement`.
-        FollowPolicy::Sustain => sustain_escapement(biomass, carrying_capacity),
-        // **The extraction pair — the same proportional stock skim at two intensities.** Gentle
-        // (0.10) vs commercial (0.20); what else separates them is what they do with the meat
-        // (`market.trade_goods_multiplier`). Both read the *standing stock*, which is what lets them
-        // accumulate and quantise — see the "everything is stock-based" note above.
-        FollowPolicy::Surplus => fauna.surplus.take_fraction * biomass,
-        FollowPolicy::Market => fauna.market.take_fraction * biomass,
-        FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
+    let Some(floor) = hunt_policy_floor(policy, carrying_capacity, ecology) else {
+        return 0.0;
+    };
+    let escapement = (biomass - floor).max(0.0);
+    let dip = match policy {
         // The two investment dips, read off the ladder's own rungs — the same seam the plant side's
-        // Cultivate dip reads, so every rung's investment cost is tuned in one file. They ride
-        // **Sustain's escapement**: the crew is gentling the herd / building the fence, so the draw
-        // must be a sustainable one.
-        FollowPolicy::Tame => {
-            sustain_escapement(biomass, carrying_capacity)
-                * ladder
-                    .rung(RungKey::AnimalPastoral)
-                    .yield_fraction_while_building()
-                    .expect("the pastoral rung is an investment — it has a build meter")
-        }
-        FollowPolicy::Corral => {
-            sustain_escapement(biomass, carrying_capacity)
-                * ladder
-                    .rung(RungKey::AnimalPen)
-                    .yield_fraction_while_building()
-                    .expect("the pen rung is an investment — it has a build meter")
-        }
-        // The plant-only rungs — rejected on a Hunt assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; yield nothing rather than
-        // silently hunting under a nonsense policy. The symmetric twin of `forage_policy_ceiling`'s
-        // `Tame | Corral` arm. **Exhaustive** — a new verb must fail to compile here rather than
-        // inherit a plausible ceiling from a catch-all.
-        FollowPolicy::Cultivate | FollowPolicy::Sow => 0.0,
-    }
+        // Cultivate dip reads, so every rung's investment cost is tuned in one file.
+        FollowPolicy::Tame => ladder
+            .rung(RungKey::AnimalPastoral)
+            .yield_fraction_while_building()
+            .expect("the pastoral rung is an investment — it has a build meter"),
+        FollowPolicy::Corral => ladder
+            .rung(RungKey::AnimalPen)
+            .yield_fraction_while_building()
+            .expect("the pen rung is an investment — it has a build meter"),
+        // A harvest rung takes what it spares — no dip.
+        FollowPolicy::Sustain
+        | FollowPolicy::Surplus
+        | FollowPolicy::Market
+        | FollowPolicy::Eradicate
+        | FollowPolicy::Cultivate
+        | FollowPolicy::Sow => 1.0,
+    };
+    escapement * dip
 }
 
 /// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
@@ -3089,15 +3060,15 @@ pub(crate) fn hunt_forecast(
             hunt_provisions(herd.body_mass, fauna, output_multiplier),
         );
     }
+    let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
-    // **Clamped to the herd's remaining biomass** — belt-and-braces, and cheap. Every rule on the axis
-    // is a stock rule bounded by `B` (`hunt_policy_ceiling`), so this cannot bite today; it is what
-    // keeps a hot-reloaded lever (a `take_fraction` above 1) from letting the preview quote a take the
-    // herd could never supply. `herd_ecology` is no longer read here at all: the ceiling stopped
-    // depending on `r` when the last flow rule died.
+    // Escapement is `B − floor` with every floor `>= 0`, so it is **inherently** biomass-clamped — the
+    // explicit clamp the flow-based ceilings needed is a tautology now. The ecology is threaded for the
+    // per-policy *floors* (`surplus_escapement_fraction` / `collapse_fraction`), never for `r`: the
+    // ladder moved entirely onto regrowth. See `hunt_policy_floor`.
     let ceiling = |policy| {
         hunt_provisions(
-            hunt_policy_ceiling(policy, herd.biomass, capacity, fauna, ladder)
+            hunt_policy_ceiling(policy, herd.biomass, capacity, &ecology, ladder)
                 .clamp(0.0, herd.biomass),
             fauna,
             output_multiplier,

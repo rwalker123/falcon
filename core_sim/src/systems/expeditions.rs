@@ -350,7 +350,6 @@ pub fn advance_expeditions(
                             herd_biomass_before,
                             carrying_capacity,
                             &ecology,
-                            &fauna,
                             &ladder,
                         );
                         let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
@@ -374,7 +373,6 @@ pub fn advance_expeditions(
                             carrying_capacity,
                             herd.body_mass,
                             &ecology,
-                            &fauna,
                             &ladder,
                             carry_room_biomass,
                         );
@@ -568,33 +566,31 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
     ((take / per_worker_capacity).ceil() as u32).clamp(1, assigned)
 }
 
-/// A hunting expedition's per-turn **biomass take ceiling**, by policy — the one place the two take
-/// models meet, so a policy can never pick up the wrong one.
+/// A hunting expedition's per-turn **biomass take ceiling**, by policy.
 ///
-/// **The two paths used to disagree on Sustain, Surplus AND Market; slice 8 leaves only Eradicate.**
-/// The band read Sustain as a *flow* (`r·K/4`, no floor) while a detached party stripped standing
-/// headroom down to a stock floor. Now **every** rule on the axis reads standing stock
-/// ([`fauna::hunt_policy_ceiling`]): Sustain is escapement to `K/2`, Surplus and Market are
-/// proportional skims (0.10 / 0.20 × `B`). So all three resolve through the **shared ceiling** on both
-/// paths — one rule, one meaning, no second model to drift.
+/// **The resident and expedition paths now agree on ALL FOUR policies**, so this is just
+/// [`fauna::hunt_policy_ceiling`] plus the investment guard below. The long-standing disagreement —
+/// the band taking a per-turn *flow* while a detached party stripped standing headroom down to a stock
+/// floor — is **gone**, because the whole axis is that same stock-floor rule now
+/// ([`fauna::hunt_policy_floor`]: four ordered escapement floors). The separate
+/// `hunt_expedition_floor` this file used to carry is deleted with it; a second copy of the floors
+/// would only be somewhere for the two paths to drift apart again.
 ///
-/// **Eradicate is the last holdout**, and deliberately: a resident band takes `hunt.take_from(B)` (a
-/// share, floored at `min_take`) while a party driving a herd extinct takes *everything it can reach*
-/// — floor `0`. A trip is not a tenancy.
+/// Even **Eradicate**, the last holdout, agrees: its floor is `0` on both paths (the retired
+/// `hunt.take_from` was the resident's old "a share, at least `min_take`" rule).
 ///
 /// The two **investment** policies are **not an expedition concept at all**: `Cultivate`/`Corral` are
 /// place-bound work a *resident* band does (prepare a patch, build a pen and then tend it) — a
 /// detached party cannot pen a herd and walk home — so `send_hunt_expedition` **rejects** them at
 /// launch and this arm is unreachable. It deliberately yields **`0.0`** rather than quietly falling
-/// back to the Sustain flow: if that launch validation ever regresses, the party takes *nothing* and
-/// the hole is loud, instead of a plausible-looking Sustain trip hiding it. `debug_assert!` makes a
-/// debug build scream; release degrades safely rather than panicking inside the turn loop.
+/// back to a real ceiling: if that launch validation ever regresses, the party takes *nothing* and the
+/// hole is loud, instead of a plausible-looking trip hiding it. `debug_assert!` makes a debug build
+/// scream; release degrades safely rather than panicking inside the turn loop.
 fn hunt_expedition_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
     ecology: &EcologyConfig,
-    fauna: &FaunaConfig,
     ladder: &LadderConfig,
 ) -> f32 {
     // **Derived, never re-listed** (`FollowPolicy::is_investment`). The hand-written `matches!` this
@@ -610,56 +606,7 @@ fn hunt_expedition_ceiling(
         );
         return 0.0;
     }
-    if biomass <= 0.0 {
-        return 0.0;
-    }
-    match hunt_expedition_floor(policy, carrying_capacity, ecology) {
-        // Sustain — the same escapement the resident band takes. One meaning, both paths.
-        None => fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna, ladder),
-        Some(floor) => (biomass - floor).max(0.0),
-    }
-}
-
-/// The **standing biomass an expedition's take leaves behind** under `policy` — the stock floor the
-/// depleting policies draw down toward. Split out of [`hunt_expedition_ceiling`] so its one caller's
-/// twin — the O(1) fill bound ([`hunt_trip_provisions_bound`]) — reads the *same* floor the take obeys
-/// instead of re-deriving it.
-///
-/// **`None` = "not a stock floor at all" — defer to [`fauna::hunt_policy_ceiling`].** That is Sustain,
-/// whose escapement to `K/2` is *already* the resident band's rule, so routing it through the shared
-/// ceiling is what makes the two paths agree rather than a second copy of `K/2` here.
-///
-/// The investment policies are launch-rejected and never reach an expedition (see
-/// [`hunt_expedition_ceiling`]); they are handled there, before this is called, so that the "cannot
-/// be here" decision lives in exactly one place.
-fn hunt_expedition_floor(
-    policy: FollowPolicy,
-    carrying_capacity: f32,
-    _ecology: &EcologyConfig,
-) -> Option<f32> {
-    match policy {
-        // **The one place a party's rule differs from a band's.** A resident takes `take_from(B)`; a
-        // party driving a herd out takes everything it can reach.
-        FollowPolicy::Eradicate => Some(0.0),
-        // Sustain's escapement point — stated as a floor so [`hunt_trip_provisions_bound`] gets a
-        // tight bound from the same `Some(floor)` arm every depleting policy uses, instead of a
-        // special case. It is exactly what the shared ceiling computes, so the two paths agree.
-        FollowPolicy::Sustain => Some(carrying_capacity * fauna::MSY_BIOMASS_FRACTION),
-        // **The extraction pair route through the shared ceiling** — they are proportional skims of
-        // standing stock now, identical on both paths, so there is no expedition-specific floor left
-        // to state. (They used to strip down to the collapse threshold here while the band skimmed a
-        // share per turn — the disagreement this arm existed to hold.)
-        //
-        // The investment rungs are unreachable on an expedition — `hunt_expedition_ceiling` rejects
-        // them before this is reached. Exhaustive: a new verb must fail to compile here rather than
-        // inherit a plausible floor from a catch-all.
-        FollowPolicy::Surplus
-        | FollowPolicy::Market
-        | FollowPolicy::Cultivate
-        | FollowPolicy::Sow
-        | FollowPolicy::Tame
-        | FollowPolicy::Corral => None,
-    }
+    fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, ecology, ladder)
 }
 
 /// **THE** expedition's per-turn take, in *biomass*, before carry room: the party's throughput capped
@@ -682,12 +629,10 @@ fn expedition_take_biomass(
     carrying_capacity: f32,
     body_mass: f32,
     ecology: &EcologyConfig,
-    fauna: &FaunaConfig,
     ladder: &LadderConfig,
     carry_room_biomass: f32,
 ) -> AnimalTake {
-    let ceiling =
-        hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, fauna, ladder);
+    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, ladder);
     // What the party can actually take home this turn: its throughput, bounded by the room left in
     // the pack. Folding the carry room in HERE (rather than clamping the take afterwards) is what
     // stops a nearly-full party killing a whole animal it has no room for.
@@ -725,7 +670,6 @@ pub fn expedition_take_provisions(
         carrying_capacity,
         body_mass,
         ecology,
-        fauna,
         ladder,
         // Carry room bites only on the final partial turn, and `ceil()` already accounts for it.
         f32::INFINITY,
@@ -785,7 +729,7 @@ pub fn hunt_take(
         policy,
         herd.biomass,
         herd_capacity(herd, fauna),
-        fauna,
+        &herd_ecology(herd, fauna),
         ladder,
     );
     // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the herd can
@@ -912,16 +856,15 @@ fn hunt_trip_provisions_bound(
     let peak_regrowth = fauna::peak_regrowth(capacity, &ecology).max(0.0) as f64;
     let throughput =
         horizon * workers as f64 * labor.hunt.per_worker_biomass_capacity.max(0.0) as f64;
-    // The **same** floor the expedition take obeys (`hunt_expedition_floor`), never a second copy.
-    // `Some(floor)` — Sustain's `K/2` and Eradicate's `0` — bounds the take by the standing headroom
-    // above it plus the horizon's regrowth; by conservation that is everything the party could ever
-    // remove. `None` is the **proportional-skim** pair (Surplus/Market), which has no floor to name:
-    // bound them by the whole stock plus regrowth. Looser than a skim can actually reach, and
-    // deliberately so — the bound may **never** under-estimate, or it would reject a trip that would
+    // The **same** floor the take obeys (`fauna::hunt_policy_floor` — the one shared copy, never a
+    // second). Every hunt policy has one now, so the bound is the standing headroom above it plus the
+    // horizon's regrowth; by conservation that is everything the party could ever remove. `None` is
+    // not a hunt policy at all (a plant rung): it takes nothing, so the regrowth term alone bounds it
+    // — conservative, and the bound may **never** under-estimate or it would reject a trip that would
     // have filled.
-    let ecology_bound = match hunt_expedition_floor(policy, capacity, &ecology) {
+    let ecology_bound = match fauna::hunt_policy_floor(policy, capacity, &ecology) {
         Some(floor) => (herd.biomass - floor).max(0.0) as f64 + horizon * peak_regrowth,
-        None => herd.biomass.max(0.0) as f64 + horizon * peak_regrowth,
+        None => horizon * peak_regrowth,
     };
     let provisions = throughput.min(ecology_bound)
         * fauna.hunt.provisions_per_biomass.max(0.0) as f64
@@ -1049,7 +992,6 @@ fn simulate_hunt_trip(
             capacity,
             quarry.body_mass,
             &ecology,
-            fauna,
             ladder,
             carry_room_biomass,
         );
@@ -1226,7 +1168,6 @@ mod hunt_trip_bound_tests {
             500.0,
             1000.0,
             &ecology,
-            &fauna,
             &LadderConfig::builtin(),
         );
     }

@@ -18,6 +18,8 @@ use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng};
 use serde::Deserialize;
 use sim_runtime::TerrainType;
+
+use crate::fauna::MSY_BIOMASS_FRACTION;
 use thiserror::Error;
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
@@ -329,30 +331,19 @@ impl AbundanceConfig {
 /// Hunt tuning: how a take converts to resources, and the pursuit geometry (band closes to
 /// `pursuit_radius` tiles).
 ///
-/// **`take_fraction` / `min_take` size Eradicate** — "a fixed share of the standing stock, at least
-/// `min_take`". Slice 8 briefly retired them (Eradicate became escapement to a floor of `0`); that
-/// was reverted with the rest of ruling 4. **Only Sustain is escapement.** The four policies are
-/// four *doctrines*, not one rule with four floors — see [`crate::fauna::hunt_policy_ceiling`].
+/// **`take_fraction` / `min_take` are RETIRED**, with `take_from`. They sized Eradicate as "a fixed
+/// share of the standing stock, at least `min_take`" — but Eradicate is now **escapement to a floor of
+/// `0`**: the party takes every animal it can reach, which is what "eradicate" means and needs no dial.
+/// The whole hunt axis is one escapement rule at four ordered floors; see
+/// [`crate::fauna::hunt_policy_floor`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HuntConfig {
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
-    pub take_fraction: f32,
-    pub min_take: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
-}
-
-impl HuntConfig {
-    /// Biomass taken from a group of `biomass`, clamped to `[min_take, biomass]` — Eradicate's
-    /// one-shot maximum take. A **stock** rule (it reads `biomass`), which is what lets it quantise
-    /// to whole animals; see [`crate::fauna::hunt_policy_ceiling`].
-    pub fn take_from(&self, biomass: f32) -> f32 {
-        let fraction_take = (biomass * self.take_fraction).max(self.min_take);
-        fraction_take.min(biomass).max(0.0)
-    }
 }
 
 impl Default for HuntConfig {
@@ -360,8 +351,6 @@ impl Default for HuntConfig {
         Self {
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
-            take_fraction: 0.30,
-            min_take: 40.0,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
@@ -383,7 +372,27 @@ pub struct EcologyConfig {
     pub regrowth_rate: f32,
     /// Allee threshold as a fraction of carrying capacity. Below `collapse_fraction *
     /// cap` the group collapses instead of regrowing.
+    ///
+    /// **Doubles as MARKET's escapement floor** ([`crate::fauna::hunt_policy_floor`]) — *run it to the
+    /// brink*. One number, two jobs, deliberately: the commercial policy's whole character is that it
+    /// stops exactly where the ecology gives out.
     pub collapse_fraction: f32,
+    /// **SURPLUS's escapement floor**, as a fraction of carrying capacity: *take extra to sell — run
+    /// the herd down to a smaller, poorer one, but not to the brink.*
+    ///
+    /// Sits strictly between Market's `collapse_fraction` (0.15) and Sustain's MSY point (0.50), and
+    /// `validate()` enforces that ordering because **the ordering IS the mechanic** — see
+    /// [`crate::fauna::hunt_policy_floor`]. The four hunt policies are one escapement rule at four
+    /// **descending** floors, so their takes **ascend by construction**, at every biomass and for every
+    /// species.
+    ///
+    /// **This replaced a proportional skim, and the skim's failure is why the lever has this shape.**
+    /// Surplus was briefly `take_fraction × B` (0.10). A fixed % does not scale with `r`, so it cannot
+    /// be ordered against Sustain's escapement: measured in play on a Wild Fowl (`r` 0.35, B 72,
+    /// K 122) it paid **Surplus 0.15 vs Sustain 0.22** — *"take extra"* that took **less**, because
+    /// `0.10·B` is simply gentler than that herd's MSY. The inversion moves with both `B` and species,
+    /// so no value of `take_fraction` fixes it. Floors have no such freedom.
+    pub surplus_escapement_fraction: f32,
     /// Per-turn fractional decline of a collapsing (sub-threshold) group.
     pub collapse_rate: f32,
     /// Upper edge of the "stressed" (depleted-but-recovering) band, as a fraction of
@@ -399,6 +408,7 @@ impl Default for EcologyConfig {
         Self {
             regrowth_rate: 0.05,
             collapse_fraction: 0.15,
+            surplus_escapement_fraction: 0.30,
             collapse_rate: 0.20,
             stressed_fraction: 0.40,
             extinction_floor: 0.02,
@@ -434,8 +444,10 @@ impl Default for ImmigrationConfig {
 /// **never be Surplus-hunted, ever**. That is the same defect that made 7 of 9 species unhuntable
 /// under the old flow-based Sustain.
 ///
-/// Surplus is a **proportional stock skim** now — [`SurplusConfig::take_fraction`], the gentle twin of
-/// [`MarketConfig::take_fraction`]. See [`crate::fauna::hunt_policy_ceiling`].
+/// Surplus is **escapement to `ecology.surplus_escapement_fraction`** (0.30·K) now. The briefly-shipped
+/// replacement — a proportional `take_fraction × B` skim — is retired too, for a *different* reason: a
+/// fixed % does not scale with `r`, so it could not be **ordered** against Sustain and inverted in play.
+/// See [`crate::fauna::hunt_policy_floor`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FollowConfig {
@@ -651,63 +663,23 @@ const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 /// `trade_goods_multiplier`× the normal trade-goods rate. The heavy take drives the group past the
 /// Allee threshold into the depensation collapse (no separate depletion state — pure ecology reuse).
 ///
-/// Surplus tuning: the **gentle extraction** rung — *"take extra to sell; the herd slowly declines."*
+/// Market-hunting tuning: the commercial Follow policy sells its take at `trade_goods_multiplier`×
+/// the normal trade-goods rate.
 ///
-/// # It is a proportional STOCK skim, and it must never become a flow again
-///
-/// `take_fraction × biomass`, every turn — structurally identical to [`MarketConfig`], just gentler
-/// (0.10 vs 0.20). Two independent reasons it cannot be `multiplier × MSY`:
-///
-/// - **A flow cannot afford a whole animal.** A flow ceiling is a constant in `biomass`: it does not
-///   rise while the herd regrows, so it never accumulates. `floor(ceiling / body_mass) = 0` on turn 1
-///   is `0` forever — a mammoth (Surplus flow 664 vs `body_mass` **800**) would be permanently
-///   un-Surplus-huntable. A skim reads the standing stock, so it grows with the herd and quantises
-///   correctly. **This is the whole reason the dial changed shape** (see [`FollowConfig`]).
-/// - **A skim is what "slowly declines" means.** A 10% skim genuinely out-takes a slow breeder's
-///   regrowth turn over turn. (Escapement to a *lower floor* was the other candidate and is wrong for
-///   a different reason: escapement **converges** on its floor, so it strips the herd once and then
-///   holds it there forever — not a decline, and it made Surplus numerically identical to Market.)
-///
-/// The whole axis is stock-based now: **Sustain manages** (a stock *target*, `K/2`); **Surplus and
-/// Market extract** (a stock *fraction*, gentle vs commercial); **Eradicate** takes everything.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct SurplusConfig {
-    /// The share of standing biomass a Surplus hunt takes each turn. `0.10` — half Market's 0.20, so
-    /// the two read as gentle-vs-commercial extraction of the same shape. Validated `(0, 1)` strictly
-    /// and `< market.take_fraction` (Surplus that out-takes Market is not "surplus").
-    pub take_fraction: f32,
-}
-
-impl Default for SurplusConfig {
-    fn default() -> Self {
-        Self {
-            take_fraction: DEFAULT_SURPLUS_TAKE_FRACTION,
-        }
-    }
-}
-
-/// Surplus's per-turn share of standing stock — half Market's, the gentle end of the extraction pair.
-const DEFAULT_SURPLUS_TAKE_FRACTION: f32 = 0.10;
-
-/// **`take_fraction` is Market's whole mechanic** — a **proportional skim of the standing stock**,
-/// `take_fraction × biomass`, every turn. That is what makes it "crash slow breeders *fastest*"
-/// (the manual): a fast breeder refills a 20% skim and settles, a slow one cannot and spirals past
-/// the Allee threshold. Slice 8 retired it (Market became escapement to the collapse floor); that
-/// was reverted with the rest of ruling 4, because a floor Market never crosses **cannot drive
-/// extinction** — it pinned the herd at `0.15·K` forever and made Market ≡ Surplus.
-/// `trade_goods_multiplier` is what it does with the meat; `take_fraction` is how it hunts.
+/// **`take_fraction` is RETIRED.** Market is **escapement to the Allee threshold**
+/// (`ecology.collapse_fraction` — *run it to the brink*), not a share of stock; see
+/// [`crate::fauna::hunt_policy_floor`] for why the whole axis is floors and not skims. What
+/// distinguishes Market from Surplus is now **where it stops**; what distinguishes it from Eradicate is
+/// that it stops at all — and `trade_goods_multiplier`, which is what it does with the meat.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MarketConfig {
-    pub take_fraction: f32,
     pub trade_goods_multiplier: f32,
 }
 
 impl Default for MarketConfig {
     fn default() -> Self {
         Self {
-            take_fraction: 0.20,
             trade_goods_multiplier: 4.0,
         }
     }
@@ -814,9 +786,6 @@ pub struct FaunaConfig {
     pub follow: FollowConfig,
     pub immigration: ImmigrationConfig,
     pub husbandry: HusbandryConfig,
-    /// The gentle half of the extraction pair — see [`SurplusConfig`]. Beside `market` deliberately:
-    /// the two are the same rule at two intensities.
-    pub surplus: SurplusConfig,
     pub market: MarketConfig,
     /// The per-biome graze (pasture) layer — see [`GrazeConfig`].
     pub graze: GrazeConfig,
@@ -902,7 +871,6 @@ impl FaunaConfig {
             "hunt.provisions_per_biomass",
             self.hunt.provisions_per_biomass,
         )?;
-        require_positive_finite("hunt.take_fraction", self.hunt.take_fraction)?;
 
         // --- The three ecologies. `regrowth_rate` at `0` is a dead resource (no MSY, no regrowth);
         // the phase fractions must be ordered `extinction_floor < collapse < stressed < 1` or the
@@ -1027,18 +995,8 @@ impl FaunaConfig {
         // single statement, instead of each web restating its own copy.)
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
-        // The extraction pair. Both are shares of standing stock, so both are `(0, 1)` strictly
-        // (`1` = Eradicate, `0` = no hunt at all), and Market must out-take Surplus.
-        require_open_unit_fraction("surplus.take_fraction", self.surplus.take_fraction)?;
-        require_open_unit_fraction("market.take_fraction", self.market.take_fraction)?;
-        // Gentle < commercial, or "Surplus" is a lie: the two policies are the same proportional skim
-        // and the *only* thing separating their ecology is which share of the stock they remove.
-        require_greater_than(
-            "market.take_fraction",
-            self.market.take_fraction,
-            "surplus.take_fraction",
-            self.surplus.take_fraction,
-        )?;
+        // --- Market's trade rate (its take is an escapement floor now — see the ecology block).
+
         require_greater_than(
             "market.trade_goods_multiplier",
             self.market.trade_goods_multiplier,
@@ -1238,6 +1196,36 @@ fn validate_ecology(prefix: &'static str, ecology: &EcologyConfig) -> Result<(),
         field(prefix, "stressed_fraction"),
         ecology.stressed_fraction,
     )?;
+    // --- **THE HUNT AXIS'S ORDERING INVARIANT** (`crate::fauna::hunt_policy_floor`).
+    //
+    // The four policies are ONE escapement rule at four **descending** floors, so their takes ascend
+    // **by construction** — at every biomass, for every species. That ordering is not a tuning
+    // preference, it is the mechanic, and it is the thing a proportional skim could never give (it
+    // inverted against Sustain in play). So the floors are checked here, strictly:
+    //
+    //     0 = eradicate  <  collapse_fraction (market)  <  surplus_escapement_fraction  <  0.5 (sustain)
+    //
+    // Eradicate's `0` and Sustain's `MSY_BIOMASS_FRACTION` are *coded* constants, not dials, so only
+    // the two middle bounds can be broken by a config edit — and each has a rejection test.
+    require_in_unit_range(
+        field(prefix, "surplus_escapement_fraction"),
+        ecology.surplus_escapement_fraction,
+    )?;
+    require_greater_than(
+        field(prefix, "surplus_escapement_fraction"),
+        ecology.surplus_escapement_fraction,
+        field(
+            prefix,
+            "collapse_fraction (Market's floor — Surplus must stop ABOVE the brink)",
+        ),
+        ecology.collapse_fraction,
+    )?;
+    require_greater_than(
+        "sustain's MSY escapement point (0.5 — Surplus must take MORE than Sustain)",
+        MSY_BIOMASS_FRACTION,
+        field(prefix, "surplus_escapement_fraction"),
+        ecology.surplus_escapement_fraction,
+    )?;
     Ok(())
 }
 
@@ -1287,18 +1275,11 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
 // config's only caller of (slice 4). It lives on as `intensification::validate_knowledge`'s
 // `completion_threshold` check, which now states the bound once for both food webs.
 
-/// `(0, 1)` — a strict fraction: neither end is coherent (`0` = the lever does nothing, `1` = it does
-/// everything, and in both cases the mechanic it gates disappears).
-fn require_open_unit_fraction(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
-    if !value.is_finite() || value <= 0.0 || value >= MAX_FRACTION {
-        return Err(FaunaConfigError::Invalid {
-            field,
-            constraint: format!("be finite and in (0, {MAX_FRACTION})"),
-            value: value.to_string(),
-        });
-    }
-    Ok(())
-}
+// NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
+// dials (`surplus.take_fraction` / `market.take_fraction`) that were its only callers. The hunt axis
+// is four **ordered escapement floors** now, and an ordering is a stronger statement than a range:
+// `require_greater_than` chains them, so a floor cannot be individually "in range" yet out of order.
+// See `fauna::hunt_policy_floor`.
 
 /// A strict cross-field ordering (`value > other`) — the shape most of this config's real invariants
 /// take (the monotone ladder, the ordered phase bands, accrual out-running decay).
@@ -1582,19 +1563,72 @@ mod tests {
     }
 
     /// The levers `validate()` deliberately does NOT bound (they have coherent meanings at their
-    /// extremes) plus the `take_from` clamp — everything else moved into the validator, which every
-    /// load path now runs (`builtin()` would panic below if the shipped config broke one).
+    /// extremes) — everything else moved into the validator, which every load path now runs
+    /// (`builtin()` would panic below if the shipped config broke one).
+    ///
+    /// **The `take_from` clamp assertions are gone with the function**: Eradicate is escapement to a
+    /// floor of `0` now, so "a fixed share of the stock, at least `min_take`" has nothing left to
+    /// describe. See `fauna::hunt_policy_floor`.
     #[test]
     fn hunt_and_ecology_present() {
         let config = FaunaConfig::builtin();
         assert_eq!(config.hunt.pursuit_radius, 1);
         assert!(config.immigration.max_attempts >= 1);
         assert!(config.follow.reveal_radius >= 1);
-        // take clamps to [min_take, biomass].
-        assert_eq!(config.hunt.take_from(0.0), 0.0);
-        assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group
-        let big = config.hunt.take_from(10_000.0);
-        assert!(big >= config.hunt.min_take && big <= 10_000.0);
+    }
+
+    /// **THE HUNT AXIS'S ORDERING INVARIANT, on the shipped numbers** — the property the whole policy
+    /// spectrum rests on, and the one a proportional skim could not give (it inverted in play:
+    /// Sustain 0.22 / Surplus 0.15 on a Wild Fowl).
+    ///
+    /// Asserted as *floors*, which is where the guarantee actually lives: descending floors ⇒
+    /// ascending takes at every biomass, for every species, with no arithmetic in between.
+    #[test]
+    fn the_shipped_hunt_floors_are_strictly_ordered() {
+        use crate::components::FollowPolicy;
+        const CAP: f32 = 1000.0;
+        let config = FaunaConfig::builtin();
+        let floor = |policy| {
+            crate::fauna::hunt_policy_floor(policy, CAP, &config.ecology)
+                .expect("a hunt policy has a floor")
+        };
+        let (sustain, surplus, market, eradicate) = (
+            floor(FollowPolicy::Sustain),
+            floor(FollowPolicy::Surplus),
+            floor(FollowPolicy::Market),
+            floor(FollowPolicy::Eradicate),
+        );
+        assert!(
+            eradicate < market && market < surplus && surplus < sustain,
+            "hunt floors must descend Sustain > Surplus > Market > Eradicate (so takes ascend): \
+             {sustain} / {surplus} / {market} / {eradicate}"
+        );
+        assert!(
+            (0.0..=CAP).contains(&sustain),
+            "and stay inside the herd: {sustain}"
+        );
+    }
+
+    /// **Each ordering bound is REJECTED, not merely documented** — one rejection per bound, because
+    /// the ordering *is* the mechanic (`fauna::hunt_policy_floor`) and a config edit is the only way
+    /// to break it (Sustain's `0.5` and Eradicate's `0` are coded constants, not dials).
+    #[test]
+    fn validate_rejects_a_surplus_floor_at_or_below_markets_brink() {
+        // "Take extra to sell" would run the herd PAST the brink — Surplus below Market's floor.
+        let err = reject(|json| json["ecology"]["surplus_escapement_fraction"] = (0.10).into());
+        assert_rejects_field(err, "ecology.surplus_escapement_fraction");
+    }
+
+    #[test]
+    fn validate_rejects_a_surplus_floor_at_or_above_sustains_msy() {
+        // "Take extra" would take LESS than sustainable — the exact inversion that reached a live
+        // playtest under the retired proportional skim. The bound names Sustain's MSY point, so the
+        // rejected field is that comparison, not the surplus leaf.
+        let err = reject(|json| json["ecology"]["surplus_escapement_fraction"] = (0.60).into());
+        assert_rejects_field(
+            err,
+            "sustain's MSY escapement point (0.5 — Surplus must take MORE than Sustain)",
+        );
     }
 
     /// **Every species declares a positive body mass** — the quantum a hunt take is floored to

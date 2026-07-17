@@ -157,19 +157,20 @@
     "max_total_game": 120,
     "min_spacing": 2
   },
-  "_comment_hunt_take": "ERADICATE'S TAKE: take_fraction * biomass, floored at min_take, clamped to biomass — the one-shot maximum a party drives a group out with. RESTORED (ruling 4 reverted): slice 8 briefly made every policy escapement to a floor and Eradicate's floor 0, which retired these dials. Only SUSTAIN is escapement. The four policies are four HARVESTING DOCTRINES, not one rule with four floors: Sustain = escapement to K/2 (leave the most productive stock standing), Surplus = a steady overdraw of the regrowth FLOW (follow.surplus_multiplier), Market = a proportional SKIM of the standing stock (market.take_fraction), Eradicate = take everything. See fauna::hunt_policy_ceiling.",
   "hunt": {
     "provisions_per_biomass": 0.02,
     "trade_goods_per_biomass": 0.005,
-    "take_fraction": 0.30,
-    "min_take": 40.0,
     "pursuit_radius": 1,
     "pursuit_tiles_per_turn": 3,
     "max_pursuit_turns": 12
   },
+  "_comment_hunt_floors": "THE HUNT AXIS IS ONE ESCAPEMENT RULE AT FOUR ORDERED FLOORS: take = max(0, biomass - floor), quantised to whole animals. Sustain 0.50*K (the MSY point) > Surplus 0.30*K (surplus_escapement_fraction) > Market 0.15*K (collapse_fraction — run it to the brink) > Eradicate 0. THE FLOORS DESCEND, SO THE TAKES ASCEND BY CONSTRUCTION — at every biomass and for every species. That ordering is the mechanic, not a tuning preference, and validate() pins it. WHY NOT A PROPORTIONAL SKIM (take_fraction * B, briefly shipped and retired): a fixed % does not scale with r, so it cannot be ordered against an escapement rule. Measured in play on a Wild Fowl (r 0.35, B 72, K 122) it paid Sustain 0.22 / Surplus 0.15 / Market 0.29 — 'take extra to sell' took LESS than sustainable, because 0.10*B is gentler than that herd's MSY. The inversion moves with both B and species, so no take_fraction fixes it; the SHAPE was wrong, not the dial. WHAT ANY RULE HERE MUST SATISFY: the ceiling must GROW as the herd regrows, or it can never accumulate a whole animal. Escapement does (B - floor rises with B); the retired skims did too; a FLOW never does — multiplier*MSY is a constant in B, so floor(ceiling/body_mass) that is 0 on turn 1 is 0 on turn 500 and the animal is permanently unhuntable. That killed both flow rules this axis used to carry (Sustain's r*K/4: 7 of 9 species; Surplus's 1.6*MSY: mammoth ceiling 664 vs body 800). NEVER REINTRODUCE A FLOW. The herd's own biomass is the accumulator; there is no credit meter. RETIRED WITH THE SKIMS: follow.surplus_multiplier, surplus.take_fraction, market.take_fraction, hunt.take_fraction/min_take (Eradicate's floor is 0 — no dial needed).",
   "ecology": {
     "regrowth_rate": 0.05,
+    "_comment_collapse_fraction": "Doubles as MARKET's escapement floor (run it to the brink) — one number, two jobs: the commercial policy's character is that it stops exactly where the ecology gives out.",
     "collapse_fraction": 0.15,
+    "_comment_surplus_escapement_fraction": "SURPLUS's escapement floor: take extra to sell — run the herd down to a smaller, poorer one, but not to the brink. Strictly between Market's 0.15 and Sustain's 0.50; validate() enforces that ordering because the ordering IS the mechanic. PLAYTEST DIAL.",
+    "surplus_escapement_fraction": 0.30,
     "collapse_rate": 0.20,
     "stressed_fraction": 0.40,
     "extinction_floor": 0.02
@@ -206,13 +207,8 @@
     "_comment_corral_build": "The pen's BUILD dials (the old corralling_yield_fraction 0.50 and corral_build_progress_per_turn 0.04) live in intensification_ladder.json -> the animal:pen rung's `build` block: both food webs climb on the same numbers. What remains here is the animal web's own economy.",
     "_comment_knowledge": "The earned-knowledge dials (the old knowledge_progress_per_turn 0.05 / knowledge_completion_threshold 1.0) moved to intensification_ladder.json -> the ladder's `knowledge` block in slice 4, at the same values. They were duplicated VERBATIM in labor_config's forage.cultivation, back when each web had its own hard-coded earn site; the earn path is one rung-driven seam now (RungDef::knowledge_earned), so the pace of a lesson is the LADDER's number, not the animal web's."
   },
-  "_comment_surplus_take": "SURPLUS'S SKIM: take_fraction * biomass every turn — a PROPORTIONAL share of the standing stock, the gentle twin of market's (0.10 vs 0.20). 'Take extra to sell; the herd slowly declines.' EVERYTHING ON THIS AXIS IS STOCK-BASED, NOTHING IS A FLOW, AND THAT IS LOAD-BEARING: a flow ceiling (the retired follow.surplus_multiplier * MSY) is a CONSTANT in biomass — it does not rise while the herd regrows, so it can never accumulate, and once takes quantise to whole animals floor(ceiling/body_mass) that is 0 on turn 1 is 0 on turn 500. A Thunder Mammoth (Surplus flow 664 vs body_mass 800) could NEVER be Surplus-hunted. That is the same defect that made 7 of 9 species unhuntable under the old flow-based Sustain, and it is why the dial changed shape. A skim reads the standing stock, so it grows as the herd regrows and always eventually clears one body — DO NOT SIMPLIFY A SKIM BACK INTO A FLOW. Nor is Surplus escapement-to-a-lower-floor: escapement CONVERGES on its floor, so it would strip the herd once and hold it there forever, which is not 'slowly declines' — and giving Surplus and Market two floors made them numerically IDENTICAL, collapsing the 4-way axis to 3. THE AXIS: Sustain MANAGES (a stock target, K/2); Surplus + Market EXTRACT (a stock fraction, gentle vs commercial); Eradicate takes everything. Validated (0,1) strictly and < market.take_fraction. PLAYTEST DIAL.",
-  "surplus": {
-    "take_fraction": 0.10
-  },
-  "_comment_market_take": "MARKET'S SKIM: take_fraction * biomass every turn — a PROPORTIONAL share of the standing stock, which is Market's entire mechanic and the reason it 'crashes slow breeders fastest' (the manual). A fast breeder refills a 20% skim and settles at a lower stock; a slow one cannot keep up and spirals past the Allee threshold into the depensation collapse. The differential is emergent from r vs take_fraction — there is no separate depletion state. RESTORED (ruling 4 reverted): slice 8 briefly made Market escapement to the collapse floor, which pinned the herd AT 0.15*K forever and so could never drive extinction at all — and made it identical to Surplus. Market and surplus are now the SAME rule at two intensities (0.20 vs 0.10); see _comment_surplus_take for why both must stay stock-proportional and never become flows. trade_goods_multiplier is what Market does with the meat; take_fraction is how it hunts.",
+  "_comment_market": "MARKET keeps only its TRADE RATE. Its take is an escapement floor now (ecology.collapse_fraction — run the herd to the brink); take_fraction is retired. See _comment_hunt_floors.",
   "market": {
-    "take_fraction": 0.20,
     "trade_goods_multiplier": 4.0
   },
   "_comment_graze": "THE GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock (grass, browse, forbs), on ANY vegetated land tile. It is a DIFFERENT stock on a DIFFERENT distribution from the human-edible forage (labor_config.json `forage`, seeds/nuts/tubers, food-module tiles only): humans cannot digest cellulose, and that is the entire economic basis of herding. Phase 2a ships the layer INERT — it regrows, persists and exports, and NOTHING reads it for gameplay yet.",

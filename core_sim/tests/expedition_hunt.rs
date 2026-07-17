@@ -367,7 +367,7 @@ fn sustain_expedition_take_equals_the_shared_msy_ceiling() {
         FollowPolicy::Sustain,
         before,
         cap,
-        &fauna,
+        &fauna.ecology,
         &LadderConfig::builtin(),
     );
     assert!(
@@ -454,20 +454,22 @@ fn depleting_policies_are_unchanged() {
                 expedition_config(&app),
             )
         };
-        // **The party's ceiling is the BAND's ceiling now, for Surplus and Market** (slice 8): both
-        // are proportional stock skims, identical on either path, so the expedition-specific
-        // "strip the headroom down to the collapse floor" rule they used to carry is **gone** — and
-        // with it the long-standing resident/expedition disagreement. Only **Eradicate** keeps a
-        // party-specific floor of `0` (a resident takes `take_from(B)`; a party driving a herd out
-        // takes everything it can reach — a trip is not a tenancy).
+        // **The party's ceiling IS the band's ceiling, for all four policies now.** Every hunt policy
+        // is one escapement rule at an ordered floor (`hunt_policy_floor`), identical on either path —
+        // so the expedition-specific "strip the headroom to the collapse floor" rule the depleting
+        // policies used to carry, and Eradicate's `take_from`, are **both gone**, and with them the
+        // last of the resident/expedition disagreement.
         //
-        // Read off the shared seam rather than restating a formula: this test must track the
-        // doctrine, not duplicate it. Duplicating it is precisely how the preview once quoted ~34
-        // turns for a trip that filled in ~5.
-        let policy_ceiling = match policy {
-            FollowPolicy::Eradicate => before,
-            _ => hunt_policy_ceiling(policy, before, cap, &fauna, &LadderConfig::builtin()),
-        };
+        // Read off the shared seam rather than restating a formula: this test must track the doctrine,
+        // not duplicate it. Duplicating it is precisely how the preview once quoted ~34 turns for a
+        // trip that filled in ~5.
+        let policy_ceiling = hunt_policy_ceiling(
+            policy,
+            before,
+            cap,
+            &fauna.ecology,
+            &LadderConfig::builtin(),
+        );
         let worker_cap = PARTY_WORKERS as f32 * labor.hunt.per_worker_biomass_capacity;
         let carry_room = if matches!(policy, FollowPolicy::Eradicate) {
             f32::INFINITY
@@ -1313,7 +1315,7 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
                     policy,
                     depleted_biomass,
                     depleted_cap,
-                    &fauna,
+                    &fauna.ecology,
                     &LadderConfig::builtin(),
                 ) <= depleted_biomass,
                 "{policy:?}: a stock rule can never exceed the herd's own biomass, at any regrowth rate"

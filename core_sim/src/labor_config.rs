@@ -312,6 +312,13 @@ impl Default for ForageLaborConfig {
                 collapse_rate: DEFAULT_FORAGE_COLLAPSE_RATE,
                 stressed_fraction: DEFAULT_FORAGE_STRESSED_FRACTION,
                 extinction_floor: DEFAULT_FORAGE_EXTINCTION_FLOOR,
+                // **Animal-web only, and inert here.** `surplus_escapement_fraction` is Surplus's
+                // *floor* on the hunt axis (`fauna::hunt_policy_floor`), where escapement is forced:
+                // takes quantise to whole animals, and only a rule that grows with `B` can ever
+                // accumulate one. A patch is **continuous** — you can pick half a bush — so the plant
+                // web keeps sizing Surplus with its own `forage.surplus_multiplier` *flow*, which is
+                // legal precisely because nothing quantises. Nothing reads this field on this block.
+                surplus_escapement_fraction: EcologyConfig::default().surplus_escapement_fraction,
             },
             reseed_floor_fraction: DEFAULT_FORAGE_RESEED_FLOOR_FRACTION,
             surplus_multiplier: DEFAULT_FORAGE_SURPLUS_MULTIPLIER,
