@@ -214,6 +214,47 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
 - [x] Formalize the scripting manifest contract: publish JSON schema, add lint/validation tooling against `CapabilitySpec`, document host runtime checks, and sync manual/architecture references (Owner: TBD, Estimate: 2d; Deps: capability registry finalized). _Status_: Schema emitted to `docs/scripting_manifest.schema.json`, `cargo xtask validate-manifests` enforces shape + capability coverage, and docs/manual sections reference the contract + runtime checks.
 - [ ] Decide and document the distribution model for inspector scripts/mods (signed bundles vs Workshop-style feeds), outline load/unload flows, and sync the plan between `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §Next Steps (Frontend) and `docs/architecture.md` Shared Scripting Capability Model (Owner: TBD, Estimate: 2d; Deps: stakeholder interviews, packaging spike).
 
+### Roaming Bands — the missing half of settle/don't-settle (FUTURE ARC, design-doc first)
+
+**The gap, in one line: we have built the *rooted* column carefully and left the *roaming* column without a
+payoff.** Scarcity ([[scarcity-drives-the-real-decision]]), Fields on 46 river tiles, pens fixed at your
+fence, the sedentarization pull — everything pushes one way. Staying nomadic currently reads as *a phase
+you haven't grown out of*, not a strategy you chose. The design pillar says move/stay/fork must all be
+live options with real advantages; today only "stay" has any.
+
+**Four strategies, two of them under-built:**
+
+| | rooted | roaming |
+|---|---|---|
+| **plants** | **Field** — you cannot carry a farm | *(nothing — plants don't travel)* |
+| **animals** | **Pen** — fixed at your fence | **pastoral: your herd follows you** (`drift_to_owner`, 3b) · **big game: you follow the herd** |
+
+**The seed of the payoff — megafauna is food too big to carry.** A mammoth is ~2,000–2,500 kg of usable
+meat ≈ **60–100 person-loads**; nobody hauled one home, they *moved to the kill*, butchered, dried, cached,
+and moved on. So:
+- On an **expedition**, a big animal is mostly waste (a 3-hunter party keeps ~5% of a mammoth) — *"it may
+  just not be worth killing a mammoth on an expedition"*, which is the game telling the truth, not a bug.
+- **Move the band to it** and the carry cost vanishes — you're standing on the carcass. The whole beast is
+  yours.
+That is a food source that **rewards mobility and punishes rootedness** — the counterweight the rooted
+column has been missing, and historically exactly what happened.
+
+**Pieces that already exist** (this arc is mostly *connecting* them, not inventing): `drift_to_owner` (a
+tamed herd travels with the band — 3b); migratory herds + loiter ranges; Seasonal Camps + trail knowledge;
+the Nomadic Default start profile; `SedentarizationScore` (currently only models the pull *toward* rooting
+— it has no opposite).
+
+**Open questions for the design doc:** what does a roaming band *accumulate* if not buildings? (trail
+knowledge, herd relationships, cached stores?) How does storage/spoilage interact — a lump you can't
+preserve rots, so does drying/caching become the nomad's granary? Does `SedentarizationScore` need an
+opposing "mobility" reading rather than being a one-way meter? What does forking a band to seed a second
+group cost and gain? Does pastoral nomadism (herd follows you) and hunting nomadism (you follow the herd)
+want different support?
+
+**Depends on:** slice 8 (whole animals — megafauna only becomes a reason to move once a carcass is
+indivisible and huge); the local-hunt carry distinction below. **Manual-first** when opened.
+(Owner: TBD, Estimate: design-doc then phased; Deps: slice 8.)
+
 ## Core Simulation — Bugs
 
 - [ ] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** Strongly evidenced,
@@ -235,9 +276,21 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
   capture→restore→advance cycle**, since that's the only thing that would have caught this.
   (Owner: TBD, Estimate: 0.5d; Deps: none.)
 
-- [ ] **Hunting expeditions never say a hunter is idle — and party size means opposite things per
-  policy.** Playtest: 1 worker → 6 turns/4 food, 2 → 11/8, 3 → 16/12. Adding hunters didn't hunt faster,
-  it just made the trip longer. **Not a bug — the model is right and the UI is silent.**
+- [ ] **A local hunt should not pay the carry-home cost.** `hunt_take` applies the same
+  `per_worker_biomass_capacity` cap whether the band is **standing on the herd** (within its hunt reach)
+  or a detached party is hauling the kill back N tiles. Those are different acts: **hunt = reach + carry;
+  harvest-at-home = no haul, you're already there.** This is what makes megafauna coherent — a 3-hunter
+  expedition keeps ~5% of a mammoth (correct: don't hunt mammoths from a distance), but a band that
+  *moves to the carcass* should keep the beast. Without it, "go to the mammoth" is merely the absence of a
+  punishment rather than a reward, and the Roaming Bands arc above has nothing to stand on. Small change,
+  large consequence. Next slice after slice 8. (Owner: TBD, Estimate: 0.5d; Deps: slice 8.)
+- [ ] **~~Hunting expeditions never say a hunter is idle~~ — LARGELY SUPERSEDED by slice 8.** The ticket
+  below proposed *explaining the smooth model better*; the user's read was that **the smooth model was the
+  bug**, and slice 8 replaced it (whole animals + real escapement). Extra hunters now genuinely change the
+  take. **What remains is the UI half**: surfacing why a hunter is idle, and that Surplus is the answer to
+  "more food, faster — at the herd's expense". Original analysis kept for the seam map:
+  Playtest: 1 worker → 6 turns/4 food, 2 → 11/8, 3 → 16/12. Adding hunters didn't hunt faster,
+  it just made the trip longer. **Not a bug at the time — the model was self-consistent and the UI silent.**
   `expedition_take_biomass` (`expeditions.rs:650-666`) is `min(workers × per_worker_biomass_capacity,
   policy_ceiling)`, so throughput *does* scale with the party; it just wasn't binding:
   - **Sustain** → ceiling = the herd's MSY (`hunt_policy_ceiling`, a *herd* property). **This is close to
