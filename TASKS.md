@@ -595,23 +595,18 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no
   mutation); policy becomes a visible tradeoff. Lands alongside Phase 0/1.
-- [ ] **Market's DIFFERENTIAL crash — slow breeders go extinct, fast ones survive.** The manual's
-  "Market — commercial offtake … it crashes slow breeders **fastest**" is the depletion arc's central
-  overhunting mechanic, and it is **not currently modelled** (see slice 8's policy rework). Why it's
-  deferred, not just missing: the four hunt policies were unified into **ordered escapement targets**
-  (Sustain K/2 → Surplus 0.30K → Market 0.15K → Eradicate 0) so that each takes strictly more than the
-  last at every herd size — the property playtest demanded. But **escapement converges on its floor for
-  every `r`**, so it *cannot* differentiate slow from fast (proved in slice 8): under it Market strips any
-  herd to a collapsed remnant and *holds* it, rather than driving slow breeders extinct. The differential
-  crash is fundamentally a **proportional-skim** property (`net = B·[r(1−B/K) − f]`, sign flips at
-  `r ≈ f/0.85`), and a skim cannot be strictly ordered against escapement — so the two are mathematically
-  incompatible in one rule. **This arc is the right home:** model overhunting as an r-dependent pressure
-  on regrowth / a real Allee-depensation dynamic (not a skim coincidence), so a slow breeder under
-  commercial pressure declines into the collapse floor and dies while a fast one finds an equilibrium and
-  survives — *without* re-inverting the panel's take ordering. Eradicate is the only on-map extinction
-  verb until this lands. **Manual lines to revisit when it does:** the Market bullet (§2a, "crashes slow
-  breeders fastest") and the Surplus bullet ("herd slowly declines" → now "herd drops to a smaller stable
-  size" under escapement). (Owner: TBD, Estimate: 1–2d; Deps: none, but belongs with Phase 0 depletion.)
+- [ ] **Market's DIFFERENTIAL crash — slow breeders go extinct *fastest*, fast ones endure longest.**
+  **Plain extinction from Market is now SHIPPED** (slice 8b: hunt policies are ascending multiples of MSY
+  banked into a per-herd kill-credit — Sustain=MSY, Surplus=1.5×, Market=2.5×; a rate above MSY has no
+  equilibrium, so Market drives any herd to 0 on the map). What remains deferred is only the *differential*
+  the manual promises — that a slow breeder under commercial pressure dies **faster** than a fast one.
+  Today Market (2.5×MSY) extincts every species; the time-to-extinction does vary with `r` (a fast
+  breeder's MSY is larger, so 2.5×MSY strips more biomass/turn — but its regrowth is also larger), so the
+  differential is *muted*, not absent. **This arc sharpens it** into the depletion mechanic — e.g. an
+  Allee/depensation threshold a slow breeder can't climb back over once Market pushes it low, so it dies
+  while a fast breeder recovers if you ease off. Do it **without** re-inverting the panel's ascending take
+  ordering (the property playtest demanded and the multiplier model guarantees). (Owner: TBD, Estimate:
+  1–2d; Deps: none, but belongs with Phase 0 depletion.)
 - [ ] Deferred (documented): full improvement catalog (dwellings/storage/defense), larder spoilage +
   storage tiers, richer crop/livestock variety, settlement-cluster derivation — owned by
   `plan_settlement_population.md`; this arc delivers the food-tending seam that feeds them.
