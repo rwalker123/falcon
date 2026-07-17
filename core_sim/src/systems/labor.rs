@@ -64,11 +64,6 @@ pub fn advance_labor_allocation(
     let field_rung = ladder.rung(RungKey::PlantField);
     let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
     let pen_rung = ladder.rung(RungKey::AnimalPen);
-    // The `plant:field` dip, for the one case `forage_take` cannot express: sowing a patch that is
-    // **already managed** (a tended patch being upgraded to a Field) — its harvest is the rung's flat
-    // biomass rate, not an MSY ceiling, so the dip lands on that instead. Resolved through the same
-    // shared helper the forecast uses, so the two cannot quote different dips.
-    let field_dip = field_yield_fraction_while_building(&ladder);
     // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
     // labor at the same forgone-yield price, so it must never drift from the initial build.
     let pen_build_rate =
@@ -213,64 +208,61 @@ pub fn advance_labor_allocation(
                     {
                         discovery.add_progress(faction, knowledge, knowledge_delta);
                     }
-                    // A **managed** patch — a sown Field (rung 3) or a cultivated "tended" patch
-                    // (rung 2) — is worked, not wild-gathered: the band whose Forage assignment works
-                    // it (≥1 worker here → place-local by construction) is paid `biomass × the rung's
-                    // rate` — a **managed harvest** of the full standing crop, WITHOUT drawing biomass
-                    // down (it regrows freely, so biomass sits near cap and the yield out-runs the
-                    // same patch's wild MSY skim: the intensification incentive, and a Field's rate is
-                    // the higher of the two, which is the whole point of the rung). This is
-                    // maintenance labor: the amount is biomass-based (presence, not head-count, gates
-                    // it beyond the `workers == 0` check above). Marking the patch tended-this-turn
-                    // stops `advance_cultivation` taking it feral. Sustainable == actual (a managed
-                    // harvest never overdraws → no ⚠). Mirrors a penned herd's keeper income, but paid
-                    // place-local here.
+                    // **A FIELD (rung 3) is worked, not wild-gathered** — the plant web's one managed
+                    // rung, and the twin of a penned herd's keeper income (paid place-local here).
+                    // The band whose Forage assignment works it (≥1 worker here → place-local by
+                    // construction) takes `biomass × field_provisions_per_biomass` off the full
+                    // standing crop, WITHOUT drawing biomass down: the crop is yours, so there is no
+                    // wild stock to over-skim, the policy axis honestly collapses, and `sustainable ==
+                    // actual` (no ⚠). Marking the patch tended-this-turn stops `advance_cultivation`
+                    // taking it feral.
+                    //
+                    // **A TENDED patch (rung 2) is NOT here any more** (slice 7). It is still a *wild
+                    // stand* — better cared for, growing on the boosted `tended_regrowth_gain` curve —
+                    // so it falls through to the ordinary `forage_take` below: policy-live,
+                    // worker-capped, and drawn down, exactly as a *pastoral* herd is hunted on its
+                    // boosted `r`. The plant web used to collapse a rung earlier than the animal one;
+                    // that asymmetry was the bug.
+                    //
+                    // **Working a completed improvement IS tending it**, at either rung — so the flag
+                    // is set here, before the rungs part company, and `advance_cultivation` spares the
+                    // patch. Load-bearing for rung 2 now that it takes the wild path: the flag used to
+                    // ride the managed branch, so moving the tended patch out of it without this would
+                    // send every patch a band Sustain-gathers *feral* while they worked it.
                     if patch.is_managed() {
                         patch.tended_this_turn = true;
-                        // Shared with the pre-commit forecast (`forage::forage_forecast`) so the
-                        // client's "expected yield" for a managed patch is exactly what it is paid.
-                        let managed = if patch.is_field() {
-                            field_provisions(patch.biomass, &labor.forage, mult_f)
-                        } else {
-                            tended_provisions(patch.biomass, &labor.forage, mult_f)
-                        };
-                        // **Sowing a patch that is already tended still costs the rung's dip.** The
-                        // crew is upgrading rung 2 → rung 3, so — exactly like every other
-                        // rung-transition — the source pays only a fraction of what it would
-                        // otherwise hand them while the work goes on. (Once it *is* a Field there is
-                        // nothing left to build, so the dip stops and the full field yield lands.)
-                        let paid = if matches!(policy, FollowPolicy::Sow) && !patch.is_field() {
-                            managed * field_dip
-                        } else {
-                            managed
-                        };
-                        let provisions = scalar_from_f32(paid);
+                    }
+                    if patch.is_field() {
+                        // **Production**: what the Field offers this turn. Shared with the pre-commit
+                        // forecast (`forage::forage_forecast`), so the client's "expected yield" is
+                        // exactly what it is paid.
+                        let production = field_provisions(patch.biomass, &labor.forage, mult_f);
+                        // **Collection**: what the crew can carry home — the *same* per-worker
+                        // throughput a wild gather is capped by, at the seasonless managed weight (a
+                        // Field's crop stands where you planted it). Rung 3 collapses the policy axis;
+                        // it does NOT excuse you from the harvest. One worker used to collect the
+                        // whole Field however rich it was.
+                        let collection =
+                            workers as f32 * managed_per_worker_yield(&labor.forage, mult_f);
+                        let provisions = scalar_from_f32(production.min(collection));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
-                        // A managed patch is maintenance labor (biomass-based payout,
-                        // presence-gated), not scaling gather → a fixed one-worker "need" (never
-                        // overstaffed by count).
                         yields[idx] = SourceYield {
                             actual: paid,
+                            // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
-                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+                            // The crop the crew could not carry: it stood in the field and rotted.
+                            // The understaffing signal — "add hands here" — and the reason a rich
+                            // Field is a real labor sink rather than a free ration.
+                            wasted: (production - paid).max(0.0),
+                            workers_needed: workers_needed_for_take(
+                                paid,
+                                managed_per_worker_yield(&labor.forage, mult_f),
+                                workers,
+                            ),
                         };
-                        // The rung-3 build on a tended patch: same seam, same gate, same
-                        // accrue-after-the-take ordering as the wild-patch case below.
-                        if matches!(policy, FollowPolicy::Sow) {
-                            accrue_field(
-                                patch,
-                                field_rung,
-                                *policy,
-                                sow_permitted,
-                                faction,
-                                &mut event_log,
-                                tick.0,
-                                *tile,
-                            );
-                        }
                         continue;
                     }
                     let biomass_before = patch.biomass;
@@ -371,26 +363,45 @@ pub fn advance_labor_allocation(
                             inventory.add_stockpile(faction, "trade_goods", trade_goods);
                         }
                     }
-                    // Sustainable = one turn's net regrowth of the patch at its **pre-take** biomass,
-                    // in provisions (same conversion + output multiplier as the actual take). This
-                    // lights the over-forage ⚠ for free the moment `actual > sustainable`.
+                    // Sustainable = one turn's MSY of the patch at its **pre-take** biomass, in
+                    // provisions (same conversion + output multiplier as the actual take), against
+                    // the patch's **own** curve (`patch_ecology`) — a tended patch's sustainable line
+                    // sits on its boosted `r`, so Sustain-gathering it reads no ⚠ while
+                    // Surplus-gathering it does. This lights the over-forage ⚠ for free the moment
+                    // `actual > sustainable`, and since slice 7 that fires on a **tended** patch too:
+                    // rung 2 draws down, so it can be over-farmed. (It never could before — the old
+                    // managed branch recorded `sustainable == actual` by construction.)
                     let sustainable = sustainable_yield(
                         biomass_before,
                         patch.carrying_capacity,
-                        &labor.forage.ecology,
+                        &patch_ecology(patch, &labor.forage),
                     ) * labor.forage.provisions_per_biomass
                         * mult_f;
-                    // Overstaffing: invert the take by the **effective** per-worker throughput this
-                    // turn (`per_worker_biomass_capacity × seasonal`, matching `forage_take`'s worker
-                    // cap) so a labor-bound low-season patch isn't falsely flagged.
-                    let workers_needed = workers_needed_for_take(
-                        take,
-                        labor.forage.per_worker_biomass_capacity * seasonal,
-                        workers,
-                    );
+                    // The two staffing signals, from the same take. **Overstaffing**: invert the take
+                    // by the **effective** per-worker throughput this turn (`per_worker_biomass_capacity
+                    // × seasonal`, matching `forage_take`'s worker cap) so a labor-bound low-season
+                    // patch isn't falsely flagged. **Understaffing** (`wasted`): what the policy
+                    // ceiling offered beyond what the crew could gather — here it is not lost, it
+                    // simply stays in the stock and regrows, but it is the same "add hands" answer.
+                    let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal);
+                    let workers_needed = workers_needed_for_take(take, per_worker_biomass, workers);
+                    let production = forage_policy_ceiling(
+                        *policy,
+                        biomass_before,
+                        patch.carrying_capacity,
+                        &patch_ecology(patch, &labor.forage),
+                        &labor.forage,
+                        &ladder,
+                    )
+                    .clamp(0.0, biomass_before);
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        wasted: forage_provisions(
+                            (production - take).max(0.0),
+                            &labor.forage,
+                            mult_f,
+                        ),
                         workers_needed,
                     };
                 }
@@ -510,10 +521,22 @@ pub fn advance_labor_allocation(
                         // `yield_fraction_while_building` — the forgone yield IS the labor cost of the
                         // ring, and it is literally the same dip the corral *build* pays because both
                         // read the one rung (§4 "worked by the keeper band's labor, no materials").
-                        let mut take_biomass = fauna::pen_yield_biomass(herd, &fauna);
+                        let mut production = fauna::pen_yield_biomass(herd, &fauna);
                         if herd.pen_extending {
-                            take_biomass *= pen_build_dip;
+                            production *= pen_build_dip;
                         }
+                        // **Collection** (slice 7 — the Field's twin): the keeper still has to carry
+                        // the meat home, so the take is capped by the crew's own throughput — the
+                        // *same* `per_worker_biomass_capacity` a wild hunt is capped by. The pen
+                        // collapses the *policy* axis (the herd is yours), never the worker cap; one
+                        // keeper used to collect the whole pen however big it grew.
+                        //
+                        // What they cannot carry **stays on the hoof** — an uncollected pen harvest is
+                        // not slaughtered — so the herd simply sits above its `K/2` escapement point
+                        // and pays again next turn. Escapement is stable from above, so that is a
+                        // standing surplus, not a spiral.
+                        let collection = workers as f32 * labor.hunt.per_worker_biomass_capacity;
+                        let take_biomass = production.min(collection).max(0.0);
                         herd.biomass -= take_biomass;
                         let provisions =
                             scalar_from_f32(hunt_provisions(take_biomass, &fauna, mult_f));
@@ -542,14 +565,24 @@ pub fn advance_labor_allocation(
                                 )),
                             ));
                         }
-                        // A corralled herd is worker-tended maintenance (the animal mirror of the
-                        // tended patch): a fixed one-worker "need", not scaling with the take. And a
-                        // *managed* harvest never overdraws — it takes exactly the MSY — so
-                        // `sustainable == actual` (no overdraw ⚠).
+                        // A *managed* harvest never overdraws — it takes at most the escapement MSY —
+                        // so `sustainable == actual` (no overdraw ⚠). The two staffing signals are
+                        // derived like every other rung's: how many keepers the take really needed,
+                        // and how much of the pen's offered harvest went uncollected for want of
+                        // hands.
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
-                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+                            wasted: hunt_provisions(
+                                (production - take_biomass).max(0.0),
+                                &fauna,
+                                mult_f,
+                            ),
+                            workers_needed: workers_needed_for_take(
+                                take_biomass,
+                                labor.hunt.per_worker_biomass_capacity,
+                                workers,
+                            ),
                         };
                         continue;
                     }
@@ -692,16 +725,28 @@ pub fn advance_labor_allocation(
                         &herd_ecology(herd, &fauna),
                     ) * hunt.provisions_per_biomass
                         * mult_f;
-                    // Overstaffing: invert the biomass take by the per-hunter throughput (hunt has no
-                    // seasonal factor, unlike forage).
+                    // The two staffing signals, from the same take. **Overstaffing**: invert the
+                    // biomass take by the per-hunter throughput (hunt has no seasonal factor, unlike
+                    // forage). **Understaffing** (`wasted`): what the policy ceiling offered beyond
+                    // what these hunters could take — left standing on the range, not lost.
                     let workers_needed = workers_needed_for_take(
                         take,
                         labor.hunt.per_worker_biomass_capacity,
                         workers,
                     );
+                    let production = hunt_policy_ceiling(
+                        *policy,
+                        biomass_before,
+                        fauna::herd_capacity(herd, &fauna),
+                        &fauna::herd_ecology(herd, &fauna),
+                        &fauna,
+                        &ladder,
+                    )
+                    .clamp(0.0, biomass_before);
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        wasted: hunt_provisions((production - take).max(0.0), &fauna, mult_f),
                         workers_needed,
                     };
                 }
@@ -975,7 +1020,7 @@ mod labor_yield_tests {
     //! biomass K/2, so a resource at carrying capacity still reads a positive sustainable harvest;
     //! a Sustain gather skims exactly that, so `actual ≈ sustainable`); a hunt's `sustainable` uses
     //! the same formula; and an overdraw reads `actual > sustainable`.
-    use super::{advance_labor_allocation, TENDED_SOURCE_WORKERS_NEEDED};
+    use super::advance_labor_allocation;
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, Tile,
@@ -986,6 +1031,7 @@ mod labor_yield_tests {
     };
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
+    use crate::forage::patch_ecology;
     use crate::forage::{
         advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID,
         SEED_SELECTION_DISCOVERY_ID,
@@ -1282,24 +1328,57 @@ mod labor_yield_tests {
 
     /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
     fn cultivate_source_patch(world: &mut World, biomass: f32) {
-        let ecology = world.resource::<LaborConfigHandle>().get().forage.ecology;
+        let forage = world.resource::<LaborConfigHandle>().get().forage.clone();
         let mut registry = world.resource_mut::<ForageRegistry>();
         let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
         patch.cultivation_progress = 1.0;
         patch.owner = Some(FactionId(0));
         patch.biomass = biomass;
-        patch.refresh_ecology_phase(&ecology);
+        // The patch's OWN curve — a tended patch's phase bands ride `patch_ecology`, exactly as the
+        // live regrowth pass resolves them.
+        patch.refresh_ecology_phase(&patch_ecology(patch, &forage));
+    }
+
+    /// Switch a band's (single) Forage assignment to `policy` — what the client's picker does, and
+    /// what a player does the turn an improvement finishes and they want to start harvesting it.
+    fn set_forage_policy(world: &mut World, band: Entity, policy: FollowPolicy) {
+        let mut allocation = world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band forages");
+        let assignment = allocation
+            .assignments
+            .iter_mut()
+            .find(|assignment| matches!(assignment.target, LaborTarget::Forage { .. }))
+            .expect("a Forage assignment");
+        let LaborTarget::Forage {
+            policy: current, ..
+        } = &mut assignment.target
+        else {
+            unreachable!("filtered to Forage above");
+        };
+        *current = policy;
+    }
+
+    /// Stand the source patch up as a completed **Field** (rung 3) at `biomass` — the plant twin of
+    /// `Herd::corral_at`, for the tests that need a sown fixture without paying the 25-turn build.
+    fn sow_source_patch(world: &mut World, biomass: f32) {
+        cultivate_source_patch(world, biomass);
+        let forage = world.resource::<LaborConfigHandle>().get().forage.clone();
+        let mut registry = world.resource_mut::<ForageRegistry>();
+        let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
+        patch.field_progress = RUNG_COMPLETE;
+        patch.refresh_ecology_phase(&patch_ecology(patch, &forage));
     }
 
     /// Set the (wild, un-cultivated) source patch's biomass and refresh its ecology phase — for the
     /// `workers_needed` overstaffing tests, which need a full patch so the per-policy biomass-fraction
     /// ceiling binds rather than the seeded half-cap stock.
     fn set_wild_patch_biomass(world: &mut World, biomass: f32) {
-        let ecology = world.resource::<LaborConfigHandle>().get().forage.ecology;
+        let forage = world.resource::<LaborConfigHandle>().get().forage.clone();
         let mut registry = world.resource_mut::<ForageRegistry>();
         let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
         patch.biomass = biomass;
-        patch.refresh_ecology_phase(&ecology);
+        patch.refresh_ecology_phase(&patch_ecology(patch, &forage));
     }
 
     /// Run a single Forage assignment (given policy) with `WORKERS` on a full patch and return the
@@ -1676,18 +1755,28 @@ mod labor_yield_tests {
         );
     }
 
-    /// A **tended patch** / **corralled herd** forecasts its managed yield with ONE worker: every
-    /// policy ceiling is that yield, `per_worker_yield` equals it (→ `max_useful_workers == 1`), and
-    /// it is exactly what the sim pays the tending/keeping band.
+    /// **The rung-3 shape: the POLICY axis collapses, the WORKER cap does not** (slice 7). A **Field**
+    /// and a **pen** are yours — you control their reproduction, so no policy takes more or less than
+    /// the managed yield. But you still have to carry the harvest home, so `per_worker_yield` is the
+    /// crew's real throughput and `max_useful_workers` is the honest `ceil(production / per_worker)`.
+    ///
+    /// **Retargeted, not weakened.** This test used to be
+    /// `tended_patch_and_corral_forecast_full_yield_with_one_worker` and asserted
+    /// `max_useful_workers == 1` for every policy — pinning the two defects this slice fixes: the
+    /// forecast encoded "one worker collects everything the land offers", and it covered *tended*
+    /// patches, which are rung **2** and never belonged in the managed shape at all. Both claims are
+    /// now inverted deliberately: the worker count must exceed 1 on a source this rich, and the
+    /// fixture is a **Field**. The rung-2 half moved to
+    /// `a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed`.
     #[test]
-    fn tended_patch_and_corral_forecast_full_yield_with_one_worker() {
+    fn a_field_and_a_pen_collapse_the_policy_axis_but_still_need_carrying_home() {
         let (mut world, tile) = world_with_source(CAP);
         let patch_cap = world
             .resource::<LaborConfigHandle>()
             .get()
             .forage
             .capacity_for(SOURCE_BIOME);
-        cultivate_source_patch(&mut world, patch_cap);
+        sow_source_patch(&mut world, patch_cap);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             assert!(
@@ -1726,18 +1815,41 @@ mod labor_yield_tests {
         );
         drop(fauna);
 
-        // One worker suffices, and no policy changes the managed yield (including the investment
-        // rungs — the improvement is already built, so "preparing" reads as the managed yield too).
+        // **The policy axis is collapsed**: every policy — including the investment rungs, since the
+        // improvement is already built — quotes the one managed yield.
         for policy in FORAGE_POLICIES {
-            assert_eq!(max_useful_workers(&patch_forecast, policy), 1);
+            assert_eq!(
+                patch_forecast.ceiling_for(policy),
+                patch_forecast.managed_yield,
+                "a Field is yours — no policy takes more or less of it ({policy:?})"
+            );
         }
         for policy in HUNT_POLICIES {
-            assert_eq!(max_useful_workers(&herd_forecast, policy), 1);
+            assert_eq!(
+                herd_forecast.ceiling_for(policy),
+                herd_forecast.managed_yield,
+                "a pen is yours — no policy takes more or less of it ({policy:?})"
+            );
         }
 
-        // A single tending/keeping worker collects the whole forecast yield — and that IS what the
-        // sim pays (both bands staff one worker here).
-        let forager = spawn_band(
+        // **The worker cap is NOT collapsed.** `per_worker_yield` is the crew's real throughput, so
+        // this Field genuinely needs more than one pair of hands — the readout the old hardcoded `1`
+        // made permanently false.
+        let field_workers_needed = max_useful_workers(&patch_forecast, FollowPolicy::Sustain);
+        assert!(
+            field_workers_needed > 1,
+            "a Field at capacity offers more than one worker can carry: {field_workers_needed}"
+        );
+        for policy in FORAGE_POLICIES {
+            assert_eq!(
+                max_useful_workers(&patch_forecast, policy),
+                field_workers_needed
+            );
+        }
+
+        // Staffed to exactly that count, the crew collects the whole production — and that IS what
+        // the sim pays. Understaffed by one, it collects strictly less: the cap really binds.
+        let field_band = spawn_band(
             &mut world,
             tile,
             vec![LaborAssignment {
@@ -1745,10 +1857,10 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     policy: FollowPolicy::Sustain,
                 },
-                workers: TENDED_SOURCE_WORKERS_NEEDED,
+                workers: field_workers_needed,
             }],
         );
-        let keeper = spawn_band(
+        let short_handed = spawn_band(
             &mut world,
             tile,
             vec![LaborAssignment {
@@ -1756,47 +1868,67 @@ mod labor_yield_tests {
                     fauna_id: HERD_ID.to_string(),
                     policy: FollowPolicy::Sustain,
                 },
-                workers: TENDED_SOURCE_WORKERS_NEEDED,
+                workers: 1,
             }],
         );
         world.run_system_once(advance_labor_allocation);
 
-        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0].actual;
-        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].actual;
-        let tended_forecast = expected_yield(
-            &patch_forecast,
-            TENDED_SOURCE_WORKERS_NEEDED,
-            FollowPolicy::Sustain,
-        );
-        let corral_forecast = expected_yield(
-            &herd_forecast,
-            TENDED_SOURCE_WORKERS_NEEDED,
-            FollowPolicy::Sustain,
-        );
-        assert!(tended_forecast > 0.0 && corral_forecast > 0.0);
+        let field_row = world
+            .get::<LaborAllocation>(field_band)
+            .unwrap()
+            .last_yields[0];
+        let field_forecast =
+            expected_yield(&patch_forecast, field_workers_needed, FollowPolicy::Sustain);
+        assert!(field_forecast > 0.0);
         assert!(
-            (tended - tended_forecast).abs() < FORECAST_EPSILON,
-            "tended patch forecast must equal the actual payout: {tended_forecast} vs {tended}"
+            (field_row.actual - field_forecast).abs() < FORECAST_EPSILON,
+            "Field forecast must equal the actual payout: {field_forecast} vs {}",
+            field_row.actual
         );
         assert!(
-            (corral - corral_forecast).abs() < FORECAST_EPSILON,
-            "corral forecast must equal the actual payout: {corral_forecast} vs {corral}"
+            (field_row.actual - patch_forecast.managed_yield).abs() < FORECAST_EPSILON,
+            "a fully-staffed Field collects everything it produces"
+        );
+        assert!(
+            field_row.wasted < FORECAST_EPSILON,
+            "a fully-staffed Field wastes nothing: {}",
+            field_row.wasted
+        );
+
+        let pen_row = world
+            .get::<LaborAllocation>(short_handed)
+            .unwrap()
+            .last_yields[0];
+        let pen_forecast = expected_yield(&herd_forecast, 1, FollowPolicy::Sustain);
+        assert!(pen_forecast > 0.0);
+        assert!(
+            (pen_row.actual - pen_forecast).abs() < FORECAST_EPSILON,
+            "pen forecast must equal the actual payout: {pen_forecast} vs {}",
+            pen_row.actual
         );
     }
 
-    /// Rung 1a: a tended (cultivated) patch pays the band that tends it (a Forage assignment on the
-    /// tile) `biomass × tended_provisions_per_biomass` — higher than the same patch's wild MSY skim —
-    /// **without** drawing biomass down, and marks the patch tended-this-turn.
+    /// **Rung 2 is a WILD stand on a better curve** — the slice-7 correction, and the plant twin of a
+    /// *pastoral* herd. A tended patch is Sustain-gathered at its **boosted** MSY (`wild MSY ×
+    /// tended_regrowth_gain` — strictly more than the same patch wild: the intensification incentive),
+    /// it **draws down** like any wild stand, and it is marked tended-this-turn.
+    ///
+    /// **Retargeted, not weakened.** It used to be
+    /// `tended_patch_pays_tending_band_above_msy_no_drawdown` and asserted `paid == biomass ×
+    /// tended_provisions_per_biomass` with `biomass` **unchanged** — i.e. it pinned rung 2 as a
+    /// managed rung, which is the defect: a source that is never drawn down cannot be over-farmed, so
+    /// `actual == sustainable` was true by construction and the overdraw ⚠ could never fire. The
+    /// incentive claim it made (`tended > wild MSY`) survives intact — it is just carried by the curve
+    /// now instead of a flat rate.
     #[test]
-    fn tended_patch_pays_tending_band_above_msy_no_drawdown() {
+    fn a_tended_patch_out_yields_the_wild_stand_and_draws_down() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
-        let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
-        // A tended patch regrows freely toward the cap; harvest is on its full standing crop.
+        let forage = cfg.forage.clone();
+        let patch_cap = forage.capacity_for(SOURCE_BIOME);
         let biomass = patch_cap;
-        let tended_rate = cfg.forage.cultivation.tended_provisions_per_biomass;
-        let wild_msy = sustainable_yield(biomass, patch_cap, &cfg.forage.ecology)
-            * cfg.forage.provisions_per_biomass;
+        let wild_msy =
+            sustainable_yield(biomass, patch_cap, &forage.ecology) * forage.provisions_per_biomass;
         drop(cfg);
         cultivate_source_patch(&mut world, biomass);
 
@@ -1814,7 +1946,9 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let expected = biomass * tended_rate; // output multiplier 1.0 at morale 1.
+        // The rung's payoff, stated as the curve: the tended Sustain ceiling is the wild one × the
+        // gain. `WORKERS` is enough hands to reach it, so the ceiling — not the crew — binds.
+        let expected = wild_msy * forage.cultivation.tended_regrowth_gain;
         let paid = world
             .get::<PopulationCohort>(band)
             .unwrap()
@@ -1823,27 +1957,107 @@ mod labor_yield_tests {
             .to_f32();
         assert!(
             (paid - expected).abs() < 1e-3,
-            "tended band paid biomass × tended rate: {paid} vs {expected}"
+            "tended band gathers its boosted MSY: {paid} vs {expected}"
         );
         assert!(
             paid > wild_msy,
-            "tended yield out-yields the wild MSY skim: {paid} vs {wild_msy}"
+            "tending must still out-yield the same patch wild — the whole reason to cultivate: \
+             {paid} vs {wild_msy}"
         );
-        // No draw-down: a tended patch is a managed harvest, biomass unchanged.
+        // **It draws down** — the correction. A tended patch is a wild stand, so gathering it takes
+        // biomass out of it, which is what makes over-farming it possible at all.
         let patch = world
             .resource::<ForageRegistry>()
             .patch(UVec2::new(0, 0))
             .unwrap();
         assert!(
-            (patch.biomass - biomass).abs() < 1e-6,
-            "tended patch is not gather-drawn: {} vs {biomass}",
+            patch.biomass < biomass,
+            "a tended patch is still gathered from a real stock: {} vs {biomass}",
             patch.biomass
         );
         assert!(patch.tended_this_turn, "tending marks the patch worked");
-        // Telemetry: a managed harvest never overdraws → actual == sustainable (no ⚠).
+        // Telemetry: a Sustain take of the boosted curve is exactly sustainable → no ⚠, but
+        // `sustainable` is now a *measured* line rather than a copy of `actual`.
         let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
         assert!((row.actual - expected).abs() < 1e-3);
-        assert!((row.actual - row.sustainable).abs() < 1e-6);
+        assert!((row.actual - row.sustainable).abs() < 1e-3);
+    }
+
+    /// **The playtest bug, pinned: every policy on a completed Tended Patch forecast the identical
+    /// number.** Rung 2 reads the policy axis again — four policies, four different takes, ordered as
+    /// their design intends — and Surplus really does over-farm the patch, so the overdraw ⚠ can
+    /// finally fire on the plant web's rung 2. Before slice 7 the managed branch recorded
+    /// `sustainable == actual` by construction, so `actual > sustainable` was unreachable here.
+    #[test]
+    fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
+        let extractive = [
+            FollowPolicy::Sustain,
+            FollowPolicy::Surplus,
+            FollowPolicy::Market,
+            FollowPolicy::Eradicate,
+        ];
+        let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
+        for policy in extractive {
+            let (mut world, tile) = world_with_source(CAP);
+            let patch_cap = world
+                .resource::<LaborConfigHandle>()
+                .get()
+                .forage
+                .capacity_for(SOURCE_BIOME);
+            cultivate_source_patch(&mut world, patch_cap);
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: SOURCE,
+                        policy,
+                    },
+                    workers: WORKERS,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+            let patch = world.resource::<ForageRegistry>().patch(SOURCE).unwrap();
+            assert!(
+                patch.biomass < patch_cap,
+                "{policy:?} must draw the tended patch down"
+            );
+            if matches!(policy, FollowPolicy::Sustain) {
+                assert!(
+                    row.actual <= row.sustainable + 1e-3,
+                    "Sustain on the boosted curve is sustainable — no ⚠: {row:?}"
+                );
+            } else {
+                assert!(
+                    row.actual > row.sustainable,
+                    "{policy:?} over-farms a tended patch — the ⚠ that could never fire before: \
+                     {row:?}"
+                );
+            }
+            takes.push((policy, row.actual));
+        }
+        // Four policies, four DIFFERENT takes — the playtest's "+0.66 whatever I pick", inverted.
+        for (i, (policy, take)) in takes.iter().enumerate() {
+            for (other_policy, other) in takes.iter().skip(i + 1) {
+                assert!(
+                    (take - other).abs() > 1e-3,
+                    "the policy axis must be live on a tended patch: {policy:?} and \
+                     {other_policy:?} both pay {take}"
+                );
+            }
+        }
+        // ...and ordered as the axis means: restraint takes least, denial takes most.
+        let take_of = |wanted: FollowPolicy| {
+            takes
+                .iter()
+                .find(|(policy, _)| *policy == wanted)
+                .expect("every policy ran")
+                .1
+        };
+        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
+        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -2064,11 +2278,20 @@ mod labor_yield_tests {
                 .is_cultivated(),
             "sustained Cultivate work completes the patch"
         );
+        // **Harvest the finished patch to read the payoff.** `Cultivate` is the *build* verb, and its
+        // dip is "the crew is preparing ground, not gathering" — a fact that does not stop being true
+        // because the ground is now ready, so a completed patch left on `Cultivate` still pays the
+        // dip. (The animal side has always behaved this way: `Tame` on an already-tamed herd pays the
+        // pastoral dip too. Slice 7 made the plant side agree — the old managed branch ignored the
+        // policy and paid full, which is why this line used to pass without switching.) The player
+        // switches back to a harvest policy; so does the test.
+        set_forage_policy(&mut world, band, FollowPolicy::Sustain);
         world.run_system_once(advance_labor_allocation);
         let tended = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
             tended > sustain_yield,
-            "a tended patch out-pays the wild Sustain skim: {tended} vs {sustain_yield}"
+            "a tended patch out-pays the wild Sustain skim — the whole point of the 25 turns: \
+             {tended} vs {sustain_yield}"
         );
         assert!(
             tended > preparing,

@@ -27,7 +27,7 @@ use crate::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
         StartLocation, TileRegistry,
     },
-    systems::{workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
+    systems::workers_needed_for_take,
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -2320,23 +2320,33 @@ pub struct SourceYieldForecast {
 }
 
 impl SourceYieldForecast {
-    /// A **tended** improvement — a corralled herd or a cultivated (tended) patch. It is maintenance
-    /// labor, not scaling gather: a single worker (`TENDED_SOURCE_WORKERS_NEEDED`) collects the whole
-    /// managed yield and the policy is irrelevant. So every ceiling *is* that yield and
-    /// `per_worker_yield` equals it — the client's `max_useful_workers` then falls out as `1`.
-    pub(crate) fn tended(yield_per_turn: f32) -> Self {
+    /// A **rung-3 managed source** — a corralled herd (a Pen) or a sown Field. The source is *yours*:
+    /// you control its reproduction, so there is no wild stock left to over-skim and **the policy axis
+    /// honestly collapses** — every ceiling is the one managed yield `production` it hands over.
+    ///
+    /// **`per_worker_yield` is the crew's REAL throughput, not the yield** (slice 7). It used to be
+    /// `production` itself, which encoded "one worker collects everything the land offers": the
+    /// client's `max_useful_workers = ceil(ceiling / per_worker_yield)` then fell out as a hardcoded
+    /// `1` however rich the source, and `forecast_expected_take`'s `min` could never bind. Passing the
+    /// throughput restores the **collection** half of production-vs-collection at the top rung —
+    /// `min(workers × per_worker_yield, production)` — so a rich Field genuinely needs more hands and
+    /// says how many. **The policy axis collapses at rung 3; the worker cap never does — you always
+    /// have to carry the harvest home.**
+    pub(crate) fn managed(production: f32, per_worker_yield: f32) -> Self {
         Self {
-            per_worker_yield: yield_per_turn,
-            ceiling_sustain: yield_per_turn,
-            ceiling_surplus: yield_per_turn,
-            ceiling_market: yield_per_turn,
-            ceiling_eradicate: yield_per_turn,
+            per_worker_yield,
+            ceiling_sustain: production,
+            ceiling_surplus: production,
+            ceiling_market: production,
+            ceiling_eradicate: production,
             // The improvement is already built — "preparing" and "once complete" are both just the
-            // managed yield it pays now. (A source at this rung is past taming too.)
-            ceiling_prepare: yield_per_turn,
-            ceiling_tame: yield_per_turn,
-            ceiling_sow: yield_per_turn,
-            managed_yield: yield_per_turn,
+            // managed yield it pays now. (A source at this rung is past taming too.) Honest *here*,
+            // unlike on a rung-2 source, because there is genuinely nothing left to build: the plant
+            // web's rung-2 patch takes the policy-live path instead (`forage::forage_forecast`).
+            ceiling_prepare: production,
+            ceiling_tame: production,
+            ceiling_sow: production,
+            managed_yield: production,
         }
     }
 
@@ -2385,13 +2395,19 @@ pub fn forecast_expected_take(
 /// resolved yet. Mirrors the rows `advance_labor_allocation` writes:
 /// - `actual` = [`forecast_expected_take`],
 /// - `sustainable` = the caller's MSY-based sustainable rate (`sustainable_yield × provisions ×
-///   output_multiplier`, the same value the resolution path records) — except a **managed** source
-///   (tended patch / corralled herd), whose harvest never overdraws, so `sustainable == actual`
-///   (no ⚠), exactly as the tended/corral arms record it,
+///   output_multiplier`, the same value the resolution path records) — except a **`managed`** source
+///   (a rung-3 Field / Pen), whose harvest never draws the stock down, so `sustainable == actual`
+///   (no ⚠), exactly as the Field/corral arms record it,
+/// - `wasted` = the understaffing signal: the production the crew could not collect,
 /// - `workers_needed` = the overstaffing signal, inverted from the expected take by the per-worker
-///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result);
-///   a managed source is fixed at [`TENDED_SOURCE_WORKERS_NEEDED`] (maintenance labor, not scaling
-///   gather), again as the resolution path defines it.
+///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result).
+///
+/// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
+/// the rungs you own qualify. A *tended* patch is still a wild stand on a better curve — it draws
+/// down and can be over-farmed — so it takes the ordinary branch, ⚠ and all.
+///
+/// Both signals are computed for **every** rung, from the one expected take: the two rung-kinds differ
+/// in what their ceilings mean, never in whether the crew has to carry the food home.
 pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
@@ -2399,17 +2415,12 @@ pub(crate) fn forecast_source_yield(
     workers: u32,
     policy: FollowPolicy,
 ) -> SourceYield {
+    let production = forecast.ceiling_for(policy);
     let actual = forecast_expected_take(forecast, workers, policy);
-    if managed {
-        return SourceYield {
-            actual,
-            sustainable: actual,
-            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
-        };
-    }
     SourceYield {
         actual,
-        sustainable,
+        sustainable: if managed { actual } else { sustainable },
+        wasted: (production - actual).max(0.0),
         workers_needed: workers_needed_for_take(actual, forecast.per_worker_yield, workers),
     }
 }
@@ -2546,8 +2557,20 @@ pub(crate) fn hunt_forecast(
     output_multiplier: f32,
 ) -> SourceYieldForecast {
     // The pen's yield is **gross** — its feed is debited separately (wire: `penUpkeep`).
+    //
+    // A pen collapses the *policy* axis (the herd is yours) but **not** the worker cap: the keeper
+    // still has to carry the meat home, so `managed` gets the same real per-hunter throughput a wild
+    // hunt is capped by, and the pen's take is `min(pen MSY, hunters × throughput)` (slice 7 — the
+    // Field's twin, and the same fix: the old `::tended` claimed one keeper collected the whole pen).
     if herd.is_corralled() {
-        return SourceYieldForecast::tended(corral_provisions(herd, fauna, output_multiplier));
+        return SourceYieldForecast::managed(
+            corral_provisions(herd, fauna, output_multiplier),
+            hunt_provisions(
+                per_worker_biomass_capacity.max(0.0),
+                fauna,
+                output_multiplier,
+            ),
+        );
     }
     let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);

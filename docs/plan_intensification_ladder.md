@@ -374,6 +374,52 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     the "preparing X → then Y" pair its three sibling rungs do — the client shows the real dip and
     states the payoff in words rather than fabricating a number. A `pastoralYield` (or an honest
     per-worker before→after) would complete the symmetry.
+- [x] **7 — Production vs collection, and the plant rung-2 policy axis.** **Server landed.** Out of
+  playtest: on a completed Tended Patch *every* policy forecast the identical +0.66/turn. Two
+  pre-existing defects (`37e84d6`/`0df436a`, predating this arc), both now fixed:
+  - **The plant web collapsed a rung early.** Rung 2 paid a flat `tended_provisions_per_biomass ×
+    biomass`, policy-blind and never drawn down — a *managed* rate where the animal side's rung 2
+    (pastoral) has always been a **boosted curve** you still hunt under the full policy axis. **Fixed by
+    making tended the plant twin of pastoral**: the retired rate becomes **`tended_regrowth_gain`**
+    (1.5, `labor_config.json` — mirroring `husbandry.pastoral_gain`'s home *and* its value), folded in
+    by the new **`forage::patch_ecology`** (the plant twin of `fauna::herd_ecology`, and the one seam
+    every consumer resolves a patch's ecology through). Rung 2 now flows through the ordinary
+    `forage_take`: policy-live, worker-capped, drawn down — so **a tended patch can be over-farmed and
+    its overdraw ⚠ can finally fire** (`sustainable == actual` was previously true by construction).
+    *Chosen over "keep a managed rate as the Sustain ceiling and derive the other policies from it"*
+    because that keeps a second, parallel yield model on the plant web forever; a gain **deletes** the
+    special case — rungs 1 and 2 become the same code path with a different `r`.
+  - **The managed harvest ignored worker collection capacity.** The wild path already separated
+    **production** (what the source offers) from **collection** (`workers × per-worker throughput`) and
+    paid the `min`; the managed branch skipped it, so **one worker collected everything the land
+    offered**. Now applied at rung 3 too — on the **Field** *and* (confirmed: it had the same hole) the
+    **Pen**. `TENDED_SOURCE_WORKERS_NEEDED = 1` is **retired**; `workers_needed` is derived everywhere.
+    **Rung 3 collapses the POLICY axis, never the worker cap** — you always carry the harvest home.
+  - **`wastedYield`** (append-only on `LaborAssignment`) is the new **understaffing** signal, the exact
+    mirror of `workersNeeded`'s overstaffing one: `production − actual`. *Client renders it — slice 8.*
+  - **The forecast's "preparing → then" copy bug is fixed.** `SourceYieldForecast::tended` set *every*
+    ceiling to one number, so a completed rung-2 patch quoted "preparing 0.66 → then 0.66". It is now
+    `::managed`, used by **rung 3 only** (where "nothing left to build" is true), and a tended patch
+    forecasts policy-live. **Client keys off:** `ceilingCultivate → tendedYield` on a *wild* patch and
+    `ceilingSow → fieldYield` on a *tended* one — `tendedYield` now means **"the Sustain skim once
+    tended"** (rung 2's payoff on the boosted curve), not a managed rate.
+  - **MEASURED — the ladder stays monotone** (`AlluvialPlain`, K 195, production/turn): wild **0.61** →
+    tended **0.91** → Field **3.90**, needing **2 / 3 / 10** gatherers at 0.40 prov/worker.
+  - **MEASURED CAVEAT — the per-worker ladder is FLAT on plants and now CAPPED on animals. Reported,
+    not retuned.** §3's dial 1 ("intensifying raises yield per worker") does **not** hold at today's
+    numbers. On **plants** it never did: one gatherer carries 0.40/turn while even a *wild* patch's MSY
+    is 0.61, so the cap already bound at rung 1 — the plant payoff is **total production per tile**
+    (and so how many workers a tile can usefully employ: 2 → 3 → 10). On **animals** slice 7 makes the
+    cap bind where it did not: a hunter carries 0.80/turn, so a **Wild Boar** pen (production 1.57)
+    now needs **2** keepers and pays **0.79/worker — the same as pastoral**, collapsing 3b's 2×
+    per-worker step (wild 0.53 → pastoral 0.79 still holds at 1.5×); a **Red Deer** pen (2.03) needs 3.
+    Only small game keeps the full ladder (a **Rabbit** pen, 0.61, still fits one hunter). The pen
+    remains strictly better in **total** yield, and un-collected production is **not** slaughtered — it
+    stays on the hoof above the `K/2` escapement point, which is stable from above. **The lever is
+    `hunt.per_worker_biomass_capacity` (40) / `forage.per_worker_biomass_capacity` (8)** if the
+    per-worker thesis is to be restored.
+  - *Remaining:* the **client** (slice 8) — nothing renders `wastedYield`, and the tended patch's card
+    still needs to show four policy rows rather than one number.
 - [ ] **Rung 4 (future, own arc): Worked Land** (plants) — irrigation / clearing / terracing makes
   unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"
   actually lives. Its animal twin is **Selective Breeding**. Both should be config-shaped rungs on the

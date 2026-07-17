@@ -648,11 +648,13 @@ mod tests {
                 SourceYield {
                     actual: 2.5,
                     sustainable: 2.5,
+                    wasted: 0.0,
                     workers_needed: 1,
                 },
                 SourceYield {
                     actual: 0.5,
                     sustainable: 0.25,
+                    wasted: 0.0,
                     workers_needed: 5,
                 },
             ],
@@ -737,14 +739,7 @@ mod tests {
             policy: FollowPolicy::Market,
         };
         let assignment = LaborAssignment { target, workers: 6 };
-        let state = labor_assignment_to_state(
-            &assignment,
-            SourceYield {
-                actual: 0.0,
-                sustainable: 0.0,
-                workers_needed: 0,
-            },
-        );
+        let state = labor_assignment_to_state(&assignment, SourceYield::ZERO);
         assert_eq!(state.policy, "market", "policy serialized");
 
         let restored = labor_allocation_from_state(std::slice::from_ref(&state));

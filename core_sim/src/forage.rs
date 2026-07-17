@@ -116,6 +116,16 @@ pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
 /// yield seed and the snapshot forecast, so all three read the same "no season" answer.
 pub const NO_FORAGE_SEASON: f32 = 0.0;
 
+/// **The season a MANAGED harvest is worked at** — full weight, always. A Field's crop is not a wild
+/// stand whose bounty comes and goes with the year: it is standing where you planted it, and its
+/// harvest is biomass-based and seasonless (`field_provisions`). So the crew's collection cap on it
+/// reads the throughput at full season rather than the tile's `FoodModuleTag::seasonal_weight`.
+///
+/// **Load-bearing, not cosmetic:** `Sow` may place a Field on ground with **no food module at all**
+/// (slice 5), whose gather season is [`NO_FORAGE_SEASON`] — zero. Capping a Field's collection by that
+/// would let a crew carry home exactly nothing from the rung the whole arc climbs toward.
+const MANAGED_HARVEST_SEASON: f32 = 1.0;
+
 /// A live depletable forage patch on a `FoodModuleTag` tile. Mirrors the herd biomass model's
 /// ecology subset, including cultivation (`cultivation_progress`/`owner`) — the plant analog of a
 /// herd's domestication (Phase 1a).
@@ -491,7 +501,7 @@ pub fn advance_forage_regrowth(
     let labor = labor_config.get();
     let forage = &labor.forage;
     for patch in registry.patches.values_mut() {
-        regrow_patch(patch, &forage.ecology, forage.reseed_floor_fraction);
+        regrow_patch(patch, forage);
     }
 }
 
@@ -567,16 +577,22 @@ pub fn advance_cultivation(
 /// recovers from that floor via the normal logistic curve. The lift only touches patches below the
 /// floor — a healthy patch is untouched — and the floor is small (below `collapse_fraction`), so
 /// Eradicate still crashes a patch hard into the Collapsing band; it just can't hold it at `0`.
-fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_fraction: f32) {
+///
+/// **The patch's OWN ecology** ([`patch_ecology`]), never `forage.ecology` reached for directly: a
+/// tended patch regrows on the boosted `r` its rung bought, which is what makes its faster MSY a
+/// harvest the land can actually sustain rather than a promise the stock cannot keep. The animal
+/// mirror is `fauna::regrow_biomass`, which resolves `herd_ecology` for exactly this reason.
+fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
+    let ecology = patch_ecology(patch, forage);
     // The reseed lift + logistic step is the shared plant curve (`fauna::reseeding_logistic_regrowth`),
     // so the human-edible forage stock and the animal-edible graze stock can never drift apart.
     patch.biomass = reseeding_logistic_regrowth(
         patch.biomass,
         patch.carrying_capacity,
         ecology.regrowth_rate,
-        reseed_floor_fraction,
+        forage.reseed_floor_fraction,
     );
-    patch.refresh_ecology_phase(ecology);
+    patch.refresh_ecology_phase(&ecology);
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the per-policy ecology ceiling, cap it by
@@ -622,11 +638,16 @@ pub(crate) fn forage_take(
     seasonal: f32,
 ) -> Scalar {
     // Per-policy ecology ceiling + gather throughput, both from the shared helpers the pre-commit
-    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree.
+    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree. The ceiling
+    // rides the patch's **own** curve (`patch_ecology`), so a tended patch is gathered on its boosted
+    // MSY rather than the wild one — the whole of the rung-2 payoff, and the reason this one call
+    // serves rungs 1 and 2 alike.
+    let ecology = patch_ecology(patch, forage);
     let policy_ceiling = forage_policy_ceiling(
         policy,
         patch.biomass,
         patch.carrying_capacity,
+        &ecology,
         forage,
         ladder,
     );
@@ -649,14 +670,20 @@ pub(crate) fn forage_take(
 /// `yield_fraction_while_building ×` the *same* `sustainable_yield` MSY ceiling (the preparing dip —
 /// reusing the shared helper, never a second formula). Not yet clamped to biomass — callers do that
 /// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_ceiling`.
+///
+/// `ecology` is **the patch's own** — resolved by [`patch_ecology`], never by the caller reaching for
+/// `forage.ecology` directly. The tended rung is expressed *entirely* by handing this function a
+/// different ecology (wild `r` = 0.25 / tended = wild × `tended_regrowth_gain`), exactly as the
+/// husbandry ladder is expressed to `hunt_policy_ceiling`, so a call site that re-derives one silently
+/// gathers a tended patch on the wild curve.
 pub(crate) fn forage_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
+    ecology: &EcologyConfig,
     forage: &ForageLaborConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    let ecology = &forage.ecology;
     match policy {
         FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
         FollowPolicy::Surplus => {
@@ -709,16 +736,66 @@ pub(crate) fn forage_provisions(
     biomass_take * forage.provisions_per_biomass * output_multiplier
 }
 
-/// The place-local managed harvest a **tended** (cultivated) patch pays the band tending it each turn
-/// (`biomass × cultivation.tended_provisions_per_biomass`, no biomass drawn down). Shared by the
-/// Forage arm of `advance_labor_allocation` (the payout) and `forage_forecast` (the forecast). The
-/// plant mirror of `fauna::corral_provisions`.
+/// **What a patch would pay its gatherers as a TENDED patch**, in provisions — its Sustain (MSY)
+/// ceiling on the *tended* curve ([`tended_ecology`]), clamped to the standing crop.
+///
+/// This is the plant ladder's **rung-2 payoff quote**, and slice 7 retargeted what it means. It used
+/// to be `biomass × tended_provisions_per_biomass` — a *managed rate*, paid whatever the policy, never
+/// drawing the patch down. But rung 2 is **still a wild stand**: what tending buys is a faster curve,
+/// so the honest quote is "the best sustainable skim this patch will offer once tended", which is
+/// exactly the number the tended patch's own `ceiling_sustain` then reads. Its consumer is the
+/// forecast's `managed_yield` — the "then Y" of Cultivate's *"preparing X → then Y"* pair — and the
+/// wire's `ForagePatchState.tendedYield`.
+///
+/// The rung-3 twin, [`field_provisions`], **stays** a managed rate: a Field is yours.
 pub(crate) fn tended_provisions(
     biomass: f32,
+    carrying_capacity: f32,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
 ) -> f32 {
-    biomass * forage.cultivation.tended_provisions_per_biomass * output_multiplier
+    forage_provisions(
+        sustainable_yield(biomass, carrying_capacity, &tended_ecology(forage)).clamp(0.0, biomass),
+        forage,
+        output_multiplier,
+    )
+}
+
+/// **THE ecology a patch actually lives under** — the plant twin of `fauna::herd_ecology`, and the one
+/// place the plant ladder's rung → growth-rate mapping lives. Tending buys a *growth rate*, and
+/// nothing else:
+///
+/// - **wild** (`forage.ecology`, `r` = 0.25) — an untended stand;
+/// - **managed** (a tended patch or a Field) — [`tended_ecology`]: `r × cultivation.tended_regrowth_gain`.
+///
+/// Every consumer of a patch's ecology — regrowth, the MSY/policy ceilings, the phase classification,
+/// the forecast — resolves it *here*. **No call site may re-derive it**: a second copy of this mapping
+/// is exactly how a forecast starts promising a number the take won't pay (the lesson `herd_ecology`
+/// already paid for).
+///
+/// **Both managed rungs share one curve, deliberately.** A Field is never drawn down (its harvest is a
+/// managed rate on the standing crop), so its `r` moves nothing but how fast it recovers from a
+/// collapse — inventing a `field_regrowth_gain` nobody's yield reads would be a lever that lies about
+/// having an effect. Rung 3's payoff is `field_provisions`, not a curve.
+pub fn patch_ecology(patch: &ForagePatch, forage: &ForageLaborConfig) -> EcologyConfig {
+    if patch.is_managed() {
+        tended_ecology(forage)
+    } else {
+        forage.ecology
+    }
+}
+
+/// The **tended** curve: the wild forage ecology with only its `regrowth_rate` scaled by the rung's
+/// `cultivation.tended_regrowth_gain`, leaving the shared phase bands
+/// (`collapse_fraction`/`stressed_fraction`/`extinction_floor`) intact — the exact shape
+/// `fauna::pastoral_ecology_for` gives a tamed herd. Split out from [`patch_ecology`] because the
+/// forecast must also answer it for a patch that is **not tended yet** ("what will this pay once
+/// cultivated?").
+fn tended_ecology(forage: &ForageLaborConfig) -> EcologyConfig {
+    EcologyConfig {
+        regrowth_rate: forage.ecology.regrowth_rate * forage.cultivation.tended_regrowth_gain,
+        ..forage.ecology
+    }
 }
 
 /// The place-local managed harvest a sown **Field** (rung 3) pays the band working it each turn:
@@ -749,12 +826,22 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
 }
 
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
-/// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same per-policy ceilings, same
-/// seasonal-folded per-worker throughput, same biomass clamp, same biomass→provisions conversion — so
-/// the client's `min(workers × per_worker_yield, ceiling[policy])` IS the take the sim pays. A
-/// **managed** patch — a sown Field, else a cultivated (tended) patch — forecasts its managed yield
-/// with one worker (see `SourceYieldForecast::tended`), at the rung it actually stands on. The plant
-/// mirror of `fauna::hunt_forecast`.
+/// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same resolved ecology
+/// ([`patch_ecology`]), same per-policy ceilings, same seasonal-folded per-worker throughput, same
+/// biomass clamp, same biomass→provisions conversion — so the client's
+/// `min(workers × per_worker_yield, ceiling[policy])` IS the take the sim pays. The plant mirror of
+/// `fauna::hunt_forecast`.
+///
+/// **Two shapes, one per rung-kind** (slice 7 — this is where the plant ladder stopped collapsing a
+/// rung early):
+/// - A **Field** (rung 3) is *yours*: it pays a managed rate whatever the policy, so it forecasts
+///   through [`SourceYieldForecast::managed`] — every ceiling is that rate, and `per_worker_yield` is
+///   the crew's real throughput, so `max_useful_workers` falls out as the honest
+///   `ceil(production / per_worker)` rather than a hardcoded 1.
+/// - A **wild or tended** patch (rungs 1–2) is a wild stand either way, so it takes the full
+///   policy-live path below — the *same* code, differing only in the ecology `patch_ecology` hands
+///   it. That is the whole rung-2 fix: a tended patch's Sustain/Surplus/Market/Eradicate are four
+///   different numbers again, and it can be over-farmed.
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
@@ -762,32 +849,24 @@ pub(crate) fn forage_forecast(
     seasonal: f32,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
-    // Top rung first: a Field is *also* whatever it was underneath, and it must forecast the yield
-    // it will actually be paid.
+    // A Field's harvest is biomass-based and **seasonless** — the crop is standing in the field you
+    // built it to stand in — so its collection cap is too, and it must not read the gather season
+    // (which is `NO_FORAGE_SEASON` on module-less ground a crew sowed: a Field there would forecast,
+    // and be paid, exactly nothing).
     if patch.is_field() {
-        return SourceYieldForecast::tended(field_provisions(
-            patch.biomass,
-            forage,
-            output_multiplier,
-        ));
+        return SourceYieldForecast::managed(
+            field_provisions(patch.biomass, forage, output_multiplier),
+            managed_per_worker_yield(forage, output_multiplier),
+        );
     }
-    if patch.is_cultivated() {
-        let managed = tended_provisions(patch.biomass, forage, output_multiplier);
-        return SourceYieldForecast {
-            // The rung ABOVE this one is still unbuilt, so `Sow` still costs its investment dip —
-            // a fraction of what the patch would otherwise hand its tenders. (`tended()`'s blanket
-            // "every ceiling is the managed yield" is right for every *other* policy on a tended
-            // patch: they are all just the maintenance harvest.)
-            ceiling_sow: managed * field_yield_fraction_while_building(ladder),
-            ..SourceYieldForecast::tended(managed)
-        };
-    }
+    let ecology = patch_ecology(patch, forage);
     let ceiling = |policy| {
         forage_provisions(
             forage_policy_ceiling(
                 policy,
                 patch.biomass,
                 patch.carrying_capacity,
+                &ecology,
                 forage,
                 ladder,
             )
@@ -809,14 +888,49 @@ pub(crate) fn forage_forecast(
         // The investment rungs: what the patch pays *while preparing* (Cultivate at rung 2, Sow at
         // rung 3 — each its own field, since the two dips are independently tunable), and what it
         // will pay *once prepared* — so the client can show "preparing X → then Y" before committing.
+        //
+        // **Both stay honest on an ALREADY-TENDED patch**, which is the copy bug slice 7 fixed: this
+        // branch used to be `SourceYieldForecast::tended(managed)`, whose every ceiling — the
+        // "preparing" dip and the "then" payoff alike — was the one managed number, so a completed
+        // rung-2 patch quoted "preparing 0.66 → then 0.66". Now `ceiling_prepare` is Cultivate's dip
+        // on this patch's own (already boosted) curve, `ceiling_sow` is Sow's dip on it, and
+        // `managed_yield` below is the rung-2 payoff — each computed, none copied.
         ceiling_prepare: ceiling(FollowPolicy::Cultivate),
         ceiling_sow: ceiling(FollowPolicy::Sow),
         // `Tame` is animal-only — a patch has no taming rung, and `forage_policy_ceiling` yields `0`
         // for it. Resolved through the same `ceiling` closure rather than a literal, so the "not a
         // forage policy" rule stays stated in exactly one place.
         ceiling_tame: ceiling(FollowPolicy::Tame),
-        managed_yield: tended_provisions(patch.biomass, forage, output_multiplier),
+        // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
+        // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
+        // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
+        // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
+        // one field doing both jobs.)
+        managed_yield: tended_provisions(
+            patch.biomass,
+            patch.carrying_capacity,
+            forage,
+            output_multiplier,
+        ),
     }
+}
+
+/// **What one worker can carry home from a MANAGED plant source** (a Field), in provisions/turn — the
+/// gather throughput `forage_per_worker_biomass` gives, at the seasonless weight, through the gather
+/// conversion.
+///
+/// This is the **collection** half of production-vs-collection (slice 7): rung 3 collapses the *policy*
+/// axis (the crop is yours; there is no wild stock to over-skim) but **not** the worker cap — you
+/// still have to carry the harvest home, so a Field's actual take is
+/// `min(field_provisions, workers × this)` and the surplus it offered beyond that is wasted. Deliberately
+/// **not** a new lever: it is the same `per_worker_biomass_capacity` a wild gather is capped by, which
+/// is what keeps "a worker can carry X" one number for the whole plant web.
+pub(crate) fn managed_per_worker_yield(forage: &ForageLaborConfig, output_multiplier: f32) -> f32 {
+    forage_provisions(
+        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        forage,
+        output_multiplier,
+    )
 }
 
 /// The assign-time yield telemetry seed for a **Forage** source: what staffing `patch` with `workers`
@@ -834,12 +948,22 @@ pub fn forage_source_yield_preview(
     policy: FollowPolicy,
 ) -> SourceYield {
     let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
+    // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
+    // curve, so a Sustain gather of it reads no ⚠ while a Surplus gather of it does. Reading
+    // `forage.ecology` here would flag every tended Sustain as an overdraw.
     let sustainable = forage_provisions(
-        sustainable_yield(patch.biomass, patch.carrying_capacity, &forage.ecology),
+        sustainable_yield(
+            patch.biomass,
+            patch.carrying_capacity,
+            &patch_ecology(patch, forage),
+        ),
         forage,
         output_multiplier,
     );
-    forecast_source_yield(&forecast, sustainable, patch.is_managed(), workers, policy)
+    // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
+    // and since rung 2 went back to being a drawn-down wild stand, a *tended* patch can be over-farmed
+    // like any other, so it must keep its real sustainable line and its real ⚠.
+    forecast_source_yield(&forecast, sustainable, patch.is_field(), workers, policy)
 }
 
 #[cfg(test)]
@@ -977,7 +1101,7 @@ mod tests {
                 1.0,
             );
             last_take = before - patch.biomass;
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             if turn >= 190 {
                 assert!(
                     (patch.biomass - prev).abs() < 1.0,
@@ -1027,7 +1151,7 @@ mod tests {
                 1.0,
                 1.0,
             );
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             assert!(patch.biomass < last + 1e-3, "biomass must trend downward");
             last = patch.biomass;
             if patch.ecology_phase == EcologyPhase::Stressed {
@@ -1104,7 +1228,7 @@ mod tests {
 
         let mut prev = patch.biomass;
         for _ in 0..30 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             assert!(patch.biomass >= prev, "regrowth must be monotonic upward");
             prev = patch.biomass;
         }
@@ -1126,7 +1250,7 @@ mod tests {
         assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
 
         for _ in 0..80 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
@@ -1149,7 +1273,7 @@ mod tests {
         patch.refresh_ecology_phase(&forage.ecology);
 
         // One turn off dead-zero: reseeded to the floor and already regrowing above it (> 0).
-        regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+        regrow_patch(&mut patch, &forage);
         assert!(
             patch.biomass > 0.0,
             "a 0-biomass patch must escape 0 via the reseed floor: {}",
@@ -1160,7 +1284,7 @@ mod tests {
         // Over subsequent turns it recovers toward a healthy level (Thriving), just like a patch
         // seeded a hair above 0 — no permanent stall at 0.
         for _ in 0..80 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
@@ -1189,7 +1313,7 @@ mod tests {
                 1.0,
                 1.0,
             );
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             assert!(
                 patch.biomass > 0.0,
                 "Eradicate must not permanently zero a patch"
@@ -1205,7 +1329,7 @@ mod tests {
 
         // Stop hunting: from the crashed floor the patch recovers all the way back to Thriving.
         for _ in 0..120 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass >= floor);
@@ -1216,6 +1340,11 @@ mod tests {
         // A patch above the floor must regrow identically with or without the reseed lift (the floor
         // only reseeds depleted patches — a healthy patch is untouched).
         let forage = test_forage_config();
+        // The "no reseed" baseline — the shipped config with only the lift switched off.
+        let no_floor_forage = ForageLaborConfig {
+            reseed_floor_fraction: 0.0,
+            ..forage.clone()
+        };
         let cap = forage.capacity_for(TEST_BIOME);
         let start = 0.5 * cap; // comfortably above reseed_floor_fraction × cap.
 
@@ -1225,13 +1354,9 @@ mod tests {
         without_floor.biomass = start;
 
         for _ in 0..30 {
-            regrow_patch(
-                &mut with_floor,
-                &forage.ecology,
-                forage.reseed_floor_fraction,
-            );
+            regrow_patch(&mut with_floor, &forage);
             // A zero floor is the "no reseed" baseline.
-            regrow_patch(&mut without_floor, &forage.ecology, 0.0);
+            regrow_patch(&mut without_floor, &no_floor_forage);
         }
         assert!(
             (with_floor.biomass - without_floor.biomass).abs() < 1e-6,

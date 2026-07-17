@@ -26,7 +26,7 @@ use core_sim::{
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
     FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
     LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
     MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -419,43 +419,76 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     );
 }
 
-/// **Rung 3 must out-yield rung 2, or the rung is pointless.** Same tile, same biomass, same workers,
-/// same policy — the only difference is which rung the patch stands on. Runs the labor arm alone (no
-/// Logistics pass), so neither regrowth nor the feral decay can move one patch relative to the other.
+/// **THE LADDER MUST CLIMB: wild < tended < Field.** Same tile, same biomass, same workers, same
+/// policy — the only difference is which rung the patch stands on. Runs the labor arm alone (no
+/// Logistics pass), so neither regrowth nor the feral decay can move one rung relative to another.
+///
+/// **Retargeted, not weakened** (slice 7). This test used to assert `field / tended == 2.0` exactly.
+/// That ratio was never a design claim — it was an artifact of the two rungs sharing a *shape* (both
+/// paid `biomass × rate`, so the ratio was the ratio of two levers). Rung 2 is now a **wild stand on
+/// a boosted curve** and rung 3 a **managed rate**, so the ratio is a function of `B/K` rather than a
+/// config identity, and pinning it would pin the very conflation this slice removed. In its place each
+/// rung is pinned against **its own model** — strictly sharper than the ratio was — plus the
+/// monotonicity, which is the actual claim. The wild rung joins them: the ladder's bottom step was
+/// never covered here, and "tended beats wild" is exactly the incentive to cultivate at all.
 #[test]
-fn a_field_out_yields_a_tended_patch_on_the_same_tile() {
-    /// One turn's managed harvest from the same primed patch, standing on the given rung.
-    fn managed_yield(as_field: bool) -> f32 {
+fn the_plant_ladder_climbs_wild_then_tended_then_field() {
+    /// One turn's Sustain harvest from the same primed patch, standing on the given rung, plus the
+    /// `(biomass, capacity)` it was taken from.
+    fn rung_yield(rung: Option<bool>) -> (f32, f32, f32) {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
-        {
+        let (biomass, capacity) = {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            if as_field {
-                patch.field_progress = 1.0;
-            } else {
-                patch.cultivation_progress = 1.0;
+            match rung {
+                Some(true) => patch.field_progress = 1.0,
+                Some(false) => patch.cultivation_progress = 1.0,
+                None => {}
             }
-            patch.owner = Some(FactionId(0));
-        }
+            if rung.is_some() {
+                patch.owner = Some(FactionId(0));
+            }
+            (patch.biomass, patch.carrying_capacity)
+        };
         spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
         app.world.run_system_once(advance_labor_allocation);
-        provisions_f32(&mut app)
+        (provisions_f32(&mut app), biomass, capacity)
     }
 
-    let tended = managed_yield(false);
-    let field = managed_yield(true);
-    assert!(tended > 0.0, "baseline tended yield must be positive");
+    let (wild, biomass, capacity) = rung_yield(None);
+    let (tended, _, _) = rung_yield(Some(false));
+    let (field, _, _) = rung_yield(Some(true));
+
+    let forage = &LaborConfig::builtin().forage;
+    let gain = forage.cultivation.tended_regrowth_gain;
+    let _ = capacity;
+
+    // **Each rung against its own model — stated as what its config lever MEANS.**
+    //
+    // Rungs 1–2 are both *gathered*, off the same MSY curve at the same biomass, so the only thing
+    // between them is the tended curve's `r` multiplier: the rung-2 payoff **is** the gain, exactly and
+    // scale-freely. (Asserting the two absolute MSYs instead would need a second copy of the logistic
+    // curve out here — and pinning them against the forecast's own numbers would be two copies
+    // agreeing with each other while both disagree with the take, which this repo has paid for once.)
+    assert!(wild > 0.0, "baseline wild skim must be positive");
     assert!(
-        field > tended,
-        "a Field must out-yield the tended patch below it: {field} vs {tended}"
+        (tended - gain * wild).abs() < 1e-3,
+        "a tended patch skims exactly `tended_regrowth_gain ×` the same patch wild — the rung's whole \
+         payoff, and the intensification incentive: {tended} vs {} (gain {gain})",
+        gain * wild
     );
-    // The shipped dials put the Field at 2× tended (both are playtest dials; the *ratio* is the
-    // claim, and it is scale-free — both rungs pay `biomass × rate`).
-    let ratio = field / tended;
+    // Rung 3 is *managed*: a flat rate on the standing crop, drawn from no curve at all.
     assert!(
-        (ratio - 2.0).abs() < 1e-3,
-        "the shipped ladder pays a Field 2× the tended patch: {ratio}"
+        (field - biomass * forage.cultivation.field_provisions_per_biomass).abs() < 1e-3,
+        "a Field pays its managed rate on the standing crop: {field} vs {}",
+        biomass * forage.cultivation.field_provisions_per_biomass
+    );
+
+    // **And the ladder climbs.** This is the claim; the three pins above are how it is bought.
+    assert!(
+        wild < tended && tended < field,
+        "the plant ladder must be monotone: wild {wild} → tended {tended} → field {field}"
     );
 }
 

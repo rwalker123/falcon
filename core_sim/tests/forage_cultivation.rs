@@ -114,6 +114,27 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
+/// Switch a band's (single) Forage assignment to `policy` — what the client's picker does, and what a
+/// player does the turn an improvement finishes and they want to start harvesting it rather than
+/// building it.
+fn set_forage_policy(app: &mut App, band: bevy::prelude::Entity, policy: FollowPolicy) {
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band forages");
+    let assignment = allocation
+        .assignments
+        .first_mut()
+        .expect("a Forage assignment");
+    let LaborTarget::Forage {
+        policy: current, ..
+    } = &mut assignment.target
+    else {
+        panic!("the fixture band forages");
+    };
+    *current = policy;
+}
+
 fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
@@ -341,13 +362,20 @@ fn cultivate_completes_then_pays_the_tended_yield() {
         assert_eq!(registry.cultivated_count(FactionId(0)), 1);
     }
 
-    // The completed patch now pays the tended (managed) yield — the payoff on the investment.
+    // **Harvest it to read the payoff.** `Cultivate` is the *build* verb: its dip means "the crew is
+    // preparing ground, not gathering", which stays true once the ground is ready — so a completed
+    // patch left on `Cultivate` still pays the dip, exactly as `Tame` does on an already-tamed herd.
+    // (Slice 7: the retired managed branch ignored the policy and paid the flat rate, so this test
+    // used to read the payoff without ever switching off the build verb.) The player switches to a
+    // harvest policy; so does the test.
+    set_forage_policy(&mut app, band, FollowPolicy::Sustain);
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let tended_yield = provisions_f32(&mut app) - before;
     assert!(
         tended_yield > sustain_yield,
-        "a tended patch out-pays the wild Sustain skim: {tended_yield} vs {sustain_yield}"
+        "a tended patch out-pays the wild Sustain skim — the payoff the 25 turns bought: \
+         {tended_yield} vs {sustain_yield}"
     );
     assert_eq!(
         app.world
@@ -401,11 +429,16 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     );
 }
 
-/// Rung 1a: a **tended** (completed) patch pays the band that tends it — place-local, via the labor
-/// arm — WITHOUT drawing biomass down, and is not wild gather-drawn. `advance_cultivation` itself pays
-/// nothing (the retired even-split); it only decays *unworked* patches.
+/// Rung 2: a **tended** (completed) patch pays the band that tends it — **place-local, via the labor
+/// arm** — and, since slice 7, **draws down like the wild stand it still is**. `advance_cultivation`
+/// itself pays nothing (the retired even-split); it only decays *unworked* patches.
+///
+/// **Retargeted, not weakened** (slice 7): the no-drawdown assertion this test carried was the defect
+/// — it pinned rung 2 as a *managed* rung, one step earlier than the animal side's, which is what made
+/// a tended patch un-over-farmable and every policy pay the same number. The place-locality and
+/// "advance_cultivation pays nothing" claims are untouched.
 #[test]
-fn tended_patch_pays_tending_band_without_depletion() {
+fn tended_patch_pays_its_tending_band_place_local_and_draws_down() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
 
@@ -420,7 +453,9 @@ fn tended_patch_pays_tending_band_without_depletion() {
         patch.biomass
     };
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    // Sustain, not Cultivate: this test reads the finished rung's *harvest*, and the build verb pays
+    // its dip whether or not there is anything left to build.
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
     // The decay pass pays nothing and spares the worked patch.
@@ -437,21 +472,22 @@ fn tended_patch_pays_tending_band_without_depletion() {
         .unwrap()
         .is_cultivated());
 
-    // The tending band's labor resolves the tended yield place-local, without depleting biomass.
+    // The tending band's labor resolves the tended yield place-local — and gathers it out of a real
+    // stock, which is what makes rung 2 over-farmable at all.
     app.world.run_system_once(advance_labor_allocation);
     let paid = provisions_f32(&mut app);
     assert!(
         paid > 0.0,
         "the tending band is paid the tended yield via its Forage assignment: {paid}"
     );
-    assert_eq!(
+    assert!(
         app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .unwrap()
-            .biomass,
-        biomass_before,
-        "a tended patch is a managed harvest — biomass is not drawn down"
+            .biomass
+            < biomass_before,
+        "a tended patch is still a wild stand — gathering it draws it down"
     );
 }
 

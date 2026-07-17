@@ -759,15 +759,27 @@ pub struct LaborAssignment {
 /// overhunting signal — a *leading* flow indicator, distinct from the stock-based `ecology_phase`.
 ///
 /// `workers_needed` = the **minimum** assigned workers that would have produced the same take — the
-/// **overstaffing** signal. A source's take is `min(policy_ceiling, workers × per_worker_capacity,
-/// biomass, …)`; when the binding constraint is NOT labor, the extra workers were idle. It is
-/// `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken,
-/// else `0`; a *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is defined
-/// as `1`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
+/// **overstaffing** signal. A source's take is `min(production, workers × per_worker_capacity)`; when
+/// the binding constraint is NOT labor, the extra workers were idle. It is
+/// `ceil(actual / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else
+/// `0`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
+/// **Derived at every rung** since slice 7 — the hardcoded `1` a managed source used to report
+/// (`TENDED_SOURCE_WORKERS_NEEDED`) claimed one worker could carry home whatever the land offered, so
+/// "max N useful here" read `1` on a Field paying ten workers' worth.
+///
+/// `wasted` = **the understaffing signal, the exact mirror of `workers_needed`'s overstaffing one**:
+/// `production − actual`, the food this source offered that the crew could not collect (`0` when
+/// collection was not the binding constraint). *Production* is what the source hands over this turn —
+/// the policy ceiling at rungs 1–2, the managed rate at rung 3 — and *collection* is
+/// `workers × per_worker_capacity`, so the two signals answer the two halves of "is this source
+/// correctly staffed?": `workers_needed < workers` ⇒ drop some, `wasted > 0` ⇒ add some. Derived
+/// per-turn; on rung 3 (a Field / a pen) it is genuinely food left standing, on the drawn-down rungs
+/// it stays in the stock and regrows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
+    pub wasted: f32,
     pub workers_needed: u32,
 }
 
@@ -779,6 +791,7 @@ impl SourceYield {
     pub const ZERO: Self = Self {
         actual: 0.0,
         sustainable: 0.0,
+        wasted: 0.0,
         workers_needed: 0,
     };
 }

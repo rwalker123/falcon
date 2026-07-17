@@ -652,10 +652,20 @@ table LaborAssignment {
   sustainableYield:float = 0;
   // Minimum workers that would have produced this turn's take = the overstaffing signal. workers >
   // workersNeeded ⇒ the binding constraint was not labor, so the extra workers were idle (client
-  // flags the wasted labor). 0 when the source produced nothing; a tended patch / corralled herd
-  // (maintenance labor) reports 1. Derived per-turn at capture (0 on a rehydrated save before the
-  // next tick). Appended (append-only).
+  // flags the wasted labor). 0 when the source produced nothing. DERIVED AT EVERY RUNG since the
+  // intensification ladder's slice 7 — a tended patch / Field / corralled herd used to report a
+  // hardcoded 1, which claimed one worker could carry home whatever the land offered. Derived
+  // per-turn at capture (0 on a rehydrated save before the next tick). Appended (append-only).
   workersNeeded:uint = 0;
+  // Provisions this source OFFERED that the crew could not collect = the UNDERSTAFFING signal, and
+  // the exact mirror of workersNeeded's overstaffing one: production − actualYield, where production
+  // is what the source hands over this turn (the policy ceiling on a wild/tended source, the managed
+  // rate on a Field/pen) and collection is workers × per-worker throughput. So the pair answers both
+  // halves of "is this correctly staffed?": workers > workersNeeded ⇒ drop some, wastedYield > 0 ⇒
+  // add some. On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it
+  // stays in the stock and regrows. Derived per-turn at capture (0 on a rehydrated save before the
+  // next tick). Appended (append-only).
+  wastedYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

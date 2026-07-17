@@ -1532,10 +1532,22 @@ pub struct LaborAssignmentState {
     pub sustainable_yield: f32,
     /// Minimum workers that would have produced this turn's take — the **overstaffing** signal.
     /// `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
-    /// idle. `0` when the source produced nothing; a tended patch / corralled herd (maintenance
-    /// labor) reports `1`. Derived per-turn at capture. Appended (append-only).
+    /// idle. `0` when the source produced nothing. **Derived at every rung** since the intensification
+    /// ladder's slice 7 — a tended patch / Field / corralled herd used to report a hardcoded `1`,
+    /// which claimed one worker could carry home whatever the land offered. Derived per-turn at
+    /// capture. Appended (append-only).
     #[serde(default)]
     pub workers_needed: u32,
+    /// Provisions this source **offered that the crew could not collect** — the **understaffing**
+    /// signal, and the exact mirror of [`Self::workers_needed`]'s overstaffing one:
+    /// `production − actual_yield`, where *production* is what the source hands over this turn (the
+    /// policy ceiling on a wild/tended source, the managed rate on a Field/pen) and *collection* is
+    /// `workers × per-worker throughput`. Together the pair answers both halves of "is this source
+    /// correctly staffed?": `workers > workers_needed` ⇒ drop some, `wasted_yield > 0` ⇒ add some.
+    /// On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it stays in the
+    /// stock and regrows. Derived per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub wasted_yield: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -3912,6 +3924,7 @@ fn create_populations<'a>(
                                 actualYield: assignment.actual_yield,
                                 sustainableYield: assignment.sustainable_yield,
                                 workersNeeded: assignment.workers_needed,
+                                wastedYield: assignment.wasted_yield,
                             },
                         )
                     })

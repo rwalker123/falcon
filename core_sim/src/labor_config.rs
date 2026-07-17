@@ -67,39 +67,47 @@ const DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
 const DEFAULT_FORAGE_MARKET_TRADE_GOODS_PER_BIOMASS: f32 = 0.005;
 const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 
-/// Named-const defaults for **cultivation** (Intensification Phase 1a — the plant analog of fauna
-/// husbandry, `fauna_config::HusbandryConfig`). `progress_per_turn` must exceed `decay_per_turn` so
-/// a patch worked under the **Cultivate** policy nets forward against the feral decay; and
-/// `tended_provisions_per_biomass` is the **tended-harvest** rate — deliberately distinct from the
-/// gather `ForageLaborConfig::provisions_per_biomass` (a tended patch is harvested on its full
-/// standing biomass without being drawn down).
+/// **The tended rung's growth multiplier — the plant twin of `fauna_config`'s `pastoral_gain`**
+/// (intensification ladder slice 7). A tended patch is **still a wild stand, better cared for**: it
+/// grows `tended_regrowth_gain ×` as fast as the same patch would wild, and that faster curve is
+/// **the whole payoff** — exactly as a tamed herd's payoff is `wild_r × pastoral_gain`. Folded in by
+/// [`crate::forage::patch_ecology`], the plant mirror of `fauna::herd_ecology` and the one seam any
+/// consumer resolves a patch's ecology through.
 ///
-/// **Tuning — a tended patch out-yields the same patch's wild MSY (the intensification incentive).**
-/// A tended patch is never drawn down, so its biomass regrows toward its tile's cap `K` and the
-/// per-turn tended yield settles at `K × tended_provisions_per_biomass`. The best a *wild* patch can
-/// sustainably yield is MSY = regrowth at `K/2` = `regrowth_rate × K/4`, in provisions
-/// `regrowth_rate × K/4 × provisions_per_biomass` (the gather rate). **Both are linear in `K`, so the
-/// incentive is scale-free** — it holds on every biome in `capacity_by_biome`, which is why the
-/// per-biome table can be retuned without re-deriving it. Keep
-/// `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` so intensifying
-/// always pays. At the shipped rates (`regrowth_rate` 0.25, gather 0.05, tended 0.01) tended pays
-/// **3.2×** the wild sustainable skim on *any* tile — e.g. on an `AlluvialPlain` (`K` = 195): wild MSY
-/// `0.25 × 48.75 × 0.05` = **0.61 prov/turn** vs tended `195 × 0.01` = **1.95 prov/turn**. (The tended
-/// *per-biomass* rate is lower than the gather rate, but tended harvests the whole standing crop every
-/// turn, not just the regrowth skim.)
-const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
+/// **Why a gain and not a flat managed rate.** The retired `tended_provisions_per_biomass` (0.01) paid
+/// `biomass × rate` **without drawing the patch down** and **regardless of policy**, which made rung 2
+/// a *managed* rung a full step earlier than the animal side's — a tended patch could not be
+/// over-farmed, and Sustain/Surplus/Market/Eradicate all paid the identical number (the playtest's
+/// "every policy forecasts +0.66"). A gain restores the symmetry: rung 2 is policy-live, worker-capped
+/// and draws down on **both** webs; only rung 3 (Field / Pen) collapses the policy axis, because at
+/// rung 3 the source is yours.
+///
+/// **Tuning — a tended patch must out-yield the same patch's wild Sustain (the intensification
+/// incentive).** Both are MSY = `r × K/4 × provisions_per_biomass` against their own `r`, so the
+/// incentive is exactly this gain and is **scale-free**: it holds on every biome in
+/// `capacity_by_biome` at every biomass. Keep it `> 1.0`. Shipped at **1.5**, mirroring
+/// `husbandry.pastoral_gain` verbatim — and it lands almost exactly on the retired rate's measured
+/// operating point (on `K` = 130 at `B` = K/2 the old flat rung paid 0.65/turn; the boosted MSY pays
+/// `1.5 × 0.25 × 130/4 × 0.05` = **0.61**), so the ladder's *shape* survives the change while the
+/// policy axis comes back. A **playtest dial**.
+const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.5;
 
 /// The **Field**-harvest rate (the plant ladder's rung 3, slice 5): a sown Field pays its workers
-/// `biomass × this` provisions/turn on its full standing crop, without being drawn down — the tended
-/// patch's shape one rung up.
+/// `biomass × this` provisions/turn on its full standing crop, without being drawn down — **the one
+/// rung on the plant web that is a managed rate rather than a curve**, because at rung 3 the source
+/// is *yours*: you control its reproduction, so there is no wild stock left to over-skim and the
+/// policy axis honestly collapses (the animal mirror is the pen's `managed_yield_biomass`).
 ///
-/// **It must exceed [`DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS`], or rung 3 is pointless.**
-/// Both rungs pay `K × rate` at their settled biomass, so the ratio *is* the ratio of the two levers —
-/// scale-free across every biome, exactly like the tended-vs-wild incentive above. Shipped at **2× the
-/// tended rate**: on an `AlluvialPlain` (`K` = 195) a Field pays `195 × 0.02` = **3.9 prov/turn**
-/// against a tended patch's 1.95 and a wild Sustain skim's 0.61. Both plant rates are **playtest
-/// dials** — the ladder's shape (each rung roughly doubles the last) is the claim; the exact numbers
-/// are for measurement.
+/// **It must exceed what the same patch pays as a *tended* patch, or rung 3 is pointless.** A Field is
+/// never drawn down, so its biomass settles at `K` and it pays `K × this`; a tended patch pays its
+/// boosted MSY, `tended_regrowth_gain × regrowth_rate × K/4 × provisions_per_biomass`. Both are linear
+/// in `K`, so the comparison is **scale-free** across every biome — `validate()` states it once as a
+/// per-biomass inequality. Shipped at **0.02**: on an `AlluvialPlain` (`K` = 195) a Field *produces*
+/// `195 × 0.02` = **3.9 prov/turn** against a tended patch's 0.91 and a wild Sustain skim's 0.61.
+///
+/// **Production, not take** (slice 7): the crew still has to carry it home, so the Field's *actual*
+/// yield is `min(production, workers × per-worker throughput)` — a rich Field genuinely needs many
+/// hands, and understaffing it wastes the difference. A **playtest dial**.
 const DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS: f32 = 0.02;
 
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
@@ -110,16 +118,19 @@ const DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS: f32 = 0.02;
 /// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn` /
 /// `knowledge_completion_threshold` → the ladder's `knowledge` block): once the earn path became one
 /// rung-driven seam, a per-web copy of "20 turns to learn a rung" was pure duplication. What stays
-/// here is the plant web's own economy: the tended-harvest rate.
+/// here is the plant web's own economy: **the two rungs' payoffs** — rung 2's growth gain and rung 3's
+/// managed rate. They stay here for the same reason `pastoral_gain`/`pen_gain` stay in `fauna_config`:
+/// a rung's *payoff* is its web's economy, where its *build* is the ladder's grammar.
 ///
 /// A patch worked under the explicit **Cultivate** policy (`FollowPolicy::Cultivate`) — faction knows
 /// Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's `progress_per_turn` toward
 /// cultivation (`1.0` = cultivated) while yielding only that rung's `yield_fraction_while_building ×
 /// its Sustain (MSY) ceiling` (the investment cost). A cultivated patch that isn't tended any given
 /// turn goes **feral**, its progress decaying by the rung's `decay_per_turn` back below `1.0`
-/// (reverting to a wild gather patch). A tended patch pays the band that tends it `biomass ×
-/// tended_provisions_per_biomass` provisions each turn **without** drawing the patch down
-/// (place-local — see `advance_labor_allocation`). The plant mirror of fauna's `HusbandryConfig`.
+/// (reverting to a wild gather patch). A tended patch is **still a wild stand** — the tending buys it
+/// a faster curve (`tended_regrowth_gain`), and the band gathers it under the full policy axis,
+/// drawing it down, exactly as a *pastoral* herd is hunted on its boosted `r`. The plant mirror of
+/// fauna's `HusbandryConfig`.
 ///
 /// There is **no early claim**: a `claim_threshold` that snapped progress to `1.0` would let the
 /// player skip the investment, which is the whole decision. The `cultivate` command now *sets the
@@ -127,14 +138,15 @@ const DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS: f32 = 0.02;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CultivationConfig {
-    /// **Tended-harvest** rate: a tended patch pays the tending band `biomass × this` provisions/turn
-    /// on its full standing crop, without depleting biomass. Tuned so a tended patch out-yields the
-    /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
-    /// `provisions_per_biomass`.
-    pub tended_provisions_per_biomass: f32,
-    /// **Field-harvest** rate (rung 3): a sown Field pays its workers `biomass × this` provisions/turn
-    /// on its full standing crop, without depleting biomass — the tended rate's twin one rung up, and
-    /// deliberately **higher** than it (see
+    /// **The tended rung's growth multiplier** — a tended patch's stock regrows `this ×` as fast as
+    /// the same patch would wild, which *is* the rung's payoff (its MSY, and so every policy ceiling
+    /// on it, scales with it). The plant twin of `fauna_config`'s `husbandry.pastoral_gain`; folded
+    /// in by [`crate::forage::patch_ecology`]. Must be `> 1.0` or cultivating buys nothing — see
+    /// [`DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN`].
+    pub tended_regrowth_gain: f32,
+    /// **Field-harvest** rate (rung 3): a sown Field *produces* `biomass × this` provisions/turn on
+    /// its full standing crop, without depleting biomass — the one managed rate on the plant web,
+    /// because at rung 3 the source is yours. Must out-produce the tended rung's boosted MSY (see
     /// [`DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS`]), or climbing to rung 3 would buy nothing.
     pub field_provisions_per_biomass: f32,
 }
@@ -142,7 +154,7 @@ pub struct CultivationConfig {
 impl Default for CultivationConfig {
     fn default() -> Self {
         Self {
-            tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
+            tended_regrowth_gain: DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN,
             field_provisions_per_biomass: DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS,
         }
     }
@@ -399,7 +411,8 @@ impl LaborConfig {
     /// guards the *animal* food web's `graze.capacity_by_biome`) — the human food web's table gets
     /// the same discipline, because it fails the same way: silently, and invisibly.
     pub fn validate(&self) -> Result<(), LaborConfigError> {
-        validate_forage_capacity_table(&self.forage)
+        validate_forage_capacity_table(&self.forage)?;
+        validate_plant_ladder_payoffs(&self.forage)
     }
 
     /// Distance (inclusive) at which a Hunt assignment still yields before lapsing.
@@ -450,6 +463,78 @@ fn validate_forage_capacity_table(forage: &ForageLaborConfig) -> Result<(), Labo
         });
     }
     Ok(())
+}
+
+/// **The wild rung's growth multiplier** — a wild patch grows at exactly its ecology's `regrowth_rate`,
+/// so it is the identity, and it is the bar `cultivation.tended_regrowth_gain` must clear. Named
+/// rather than a bare `1.0` because it states *which* rung the comparison is against.
+const WILD_REGROWTH_GAIN: f32 = 1.0;
+
+/// **The plant ladder must be monotone, or climbing it buys nothing** — the payoff twin of
+/// `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1` check, and enforced on **every** load path
+/// (builtin, default file, `LABOR_CONFIG_PATH` override) for the reason that check is: a rung whose
+/// payoff sits at or below the rung beneath it is not a design choice, it is a config that has
+/// silently deleted a rung.
+///
+/// Two claims, both **scale-free** (every term is linear in the tile's `K`, so they hold on every biome
+/// in `capacity_by_biome` at once — which is exactly why the per-biome table can be retuned without
+/// re-deriving any of this):
+/// - **wild < tended** — both rungs are gathered under the same policy axis off the same MSY curve, so
+///   the whole comparison *is* `tended_regrowth_gain > 1`.
+/// - **tended < field** — a Field is never drawn down, so it settles at `K` and produces
+///   `K × field_provisions_per_biomass`; a tended patch pays its boosted MSY,
+///   `gain × (r·K/4) × provisions_per_biomass`. Divide both by `K`. The `r·K/4` factor comes from the
+///   **shared** [`peak_regrowth`] curve evaluated at unit capacity — never a second copy of the model.
+fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), LaborConfigError> {
+    let cultivation = &forage.cultivation;
+    if !cultivation.tended_regrowth_gain.is_finite()
+        || cultivation.tended_regrowth_gain <= WILD_REGROWTH_GAIN
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.tended_regrowth_gain",
+            constraint: format!(
+                "be finite and greater than {WILD_REGROWTH_GAIN} (the wild curve) — a tended patch \
+                 that grows no faster than the wild stand pays exactly what the wild stand pays, so \
+                 Cultivate would cost 25 turns for nothing"
+            ),
+            value: cultivation.tended_regrowth_gain.to_string(),
+        });
+    }
+    if !cultivation.field_provisions_per_biomass.is_finite()
+        || cultivation.field_provisions_per_biomass <= 0.0
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_provisions_per_biomass",
+            constraint: "be finite and positive — a Field that pays nothing is not a rung"
+                .to_string(),
+            value: cultivation.field_provisions_per_biomass.to_string(),
+        });
+    }
+    // The tended rung's MSY per unit of the tile's `K`, in provisions: the shared peak-regrowth curve
+    // at unit capacity (`r/4`), on the tended rung's boosted `r`, through the gather conversion.
+    let tended_rate = cultivation.tended_regrowth_gain
+        * peak_regrowth_per_capacity(&forage.ecology)
+        * forage.provisions_per_biomass;
+    if cultivation.field_provisions_per_biomass <= tended_rate {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_provisions_per_biomass",
+            constraint: format!(
+                "exceed what the same patch pays one rung down — the tended rung's boosted MSY of \
+                 {tended_rate} per unit of the tile's carrying capacity — or sowing a Field buys \
+                 nothing"
+            ),
+            value: cultivation.field_provisions_per_biomass.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// One turn's **peak (MSY) regrowth per unit of carrying capacity** — `r/4` — read off the *shared*
+/// logistic curve at unit capacity rather than re-spelled as a formula, so the plant ladder's tuning
+/// bounds and the yields they bound can never disagree about what MSY is.
+fn peak_regrowth_per_capacity(ecology: &EcologyConfig) -> f32 {
+    const UNIT_CAPACITY: f32 = 1.0;
+    crate::fauna::peak_regrowth(UNIT_CAPACITY, ecology)
 }
 
 #[derive(Debug, Error)]
@@ -595,22 +680,14 @@ mod tests {
         assert!(config.forage.market.trade_goods_per_biomass > 0.0);
         assert!(config.forage.eradicate.take_fraction > 0.0);
         assert!(config.forage.eradicate.take_fraction <= 1.0);
-        // Cultivation (Phase 1a): the steady tended-yield is positive. (The plant rung's *build*
-        // dials — progress vs decay, and the preparing dip — moved to the ladder, where
-        // `LadderConfig::validate` bounds them on every load path.)
-        assert!(config.forage.cultivation.tended_provisions_per_biomass > 0.0);
-        // A tended patch (harvested on its full standing biomass, ~cap) out-yields the same patch's
-        // wild MSY skim (regrowth at K/2 = regrowth_rate × K/4, × the gather provisions rate) — the
-        // intensification incentive. Compare per-biomass factors: tended pays on ~K, wild MSY on
-        // regrowth_rate·K/4, so tended wins iff tended_rate > regrowth_rate/4 × gather_rate.
-        let forage = &config.forage;
-        let wild_msy_rate = forage.ecology.regrowth_rate / 4.0 * forage.provisions_per_biomass;
-        assert!(
-            forage.cultivation.tended_provisions_per_biomass > wild_msy_rate,
-            "tended patch must out-yield its wild MSY: {} vs {}",
-            forage.cultivation.tended_provisions_per_biomass,
-            wild_msy_rate
-        );
+        // Cultivation (Phase 1a): the plant ladder's two payoffs are sane and monotone. (The plant
+        // rungs' *build* dials — progress vs decay, and the preparing dip — moved to the ladder,
+        // where `LadderConfig::validate` bounds them on every load path; the payoffs' own
+        // monotonicity now rides `LaborConfig::validate`, asserted directly below so the *builtin*
+        // is pinned to the shipped shape rather than merely to the bound.)
+        assert!(config.forage.cultivation.tended_regrowth_gain > 1.0);
+        assert!(config.forage.cultivation.field_provisions_per_biomass > 0.0);
+        assert!(config.validate().is_ok());
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
@@ -670,6 +747,65 @@ mod tests {
         let err =
             reject(|json| json["forage"]["capacity_by_biome"]["AlluvialPlain"] = (-1.0).into());
         assert_rejects_field(err, "forage.capacity_by_biome");
+    }
+
+    /// **A tended patch that grows no faster than the wild stand is not a rung.** Rung 2's entire
+    /// payoff is its curve (slice 7), so a gain at or below the wild `1.0` makes Cultivate a 25-turn
+    /// investment that buys literally nothing — while parsing perfectly. The plant twin of
+    /// `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1` ladder check, and enforced on every
+    /// load path for the same reason.
+    /// (Non-finite gains are guarded in code but not exercised here — JSON cannot express NaN or
+    /// infinity, so a config file can never carry one; `serde` rejects those spellings first.)
+    #[test]
+    fn validate_rejects_a_tended_gain_that_buys_nothing() {
+        for gain in [1.0, 0.5, -1.0] {
+            let err =
+                reject(|json| json["forage"]["cultivation"]["tended_regrowth_gain"] = gain.into());
+            assert_rejects_field(err, "forage.cultivation.tended_regrowth_gain");
+        }
+    }
+
+    /// **The plant ladder must be monotone.** A Field that out-produces nothing is a rung the player
+    /// pays Seed Selection + 25 turns to reach and is *worse off* for — the failure the tended-gain
+    /// check above guards one rung down.
+    #[test]
+    fn validate_rejects_a_field_that_does_not_beat_the_tended_patch_below_it() {
+        // The shipped tended rung's boosted MSY per unit K: 1.5 × 0.25/4 × 0.05 ≈ 0.0047 — so a Field
+        // rate at or under it pays no more than simply cultivating the same ground.
+        for rate in [0.004, 0.0, -0.02] {
+            let err = reject(|json| {
+                json["forage"]["cultivation"]["field_provisions_per_biomass"] = rate.into()
+            });
+            assert_rejects_field(err, "forage.cultivation.field_provisions_per_biomass");
+        }
+    }
+
+    /// **The plant ladder is scale-free — it reads the same on a delta and on a steppe.** Every rung's
+    /// payoff is linear in the tile's `K`, so the monotonicity `validate` enforces per-biomass must
+    /// hold at *every* capacity in the shipped table at once. That is what lets the per-biome table be
+    /// retuned without re-deriving the ladder.
+    #[test]
+    fn the_plant_ladder_is_monotone_on_every_biome() {
+        let forage = &LaborConfig::builtin().forage;
+        let cultivation = &forage.cultivation;
+        for terrain in TerrainType::VALUES {
+            let capacity = forage.capacity_for(terrain);
+            if capacity <= NO_FORAGE_CAPACITY {
+                continue;
+            }
+            // Wild and tended are both gathered off an MSY curve; the Field is a managed rate on the
+            // standing crop it settles at (`K`).
+            let wild_msy = peak_regrowth_per_capacity(&forage.ecology)
+                * capacity
+                * forage.provisions_per_biomass;
+            let tended_msy = cultivation.tended_regrowth_gain * wild_msy;
+            let field = capacity * cultivation.field_provisions_per_biomass;
+            assert!(
+                wild_msy < tended_msy && tended_msy < field,
+                "the ladder must climb on {terrain:?} (K = {capacity}): wild {wild_msy} → tended \
+                 {tended_msy} → field {field}"
+            );
+        }
     }
 
     /// **The two food webs must actually disagree.** This is the model claim the whole two-table

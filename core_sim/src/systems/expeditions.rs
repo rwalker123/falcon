@@ -533,10 +533,13 @@ pub fn advance_expeditions(
 /// `output_multiplier(cohort, ..)`). Named so the forecast and the take can't disagree.
 const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-/// A *tended* improvement (cultivated patch / corralled herd) is **maintenance labor**, not scaling
-/// gather: it needs a tending presence, not a headcount proportional to the take. Its
-/// `SourceYield.workers_needed` is defined as exactly this many workers.
-pub(crate) const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
+// **Retired in slice 7: `TENDED_SOURCE_WORKERS_NEEDED = 1`.** A managed source used to define its
+// `SourceYield.workers_needed` as a hardcoded one worker ("maintenance labor — a tending presence, not
+// a headcount"), which quietly asserted that **one worker could carry home whatever the land offered**.
+// It is the same claim `SourceYieldForecast::tended`'s `per_worker_yield = production` made, and it was
+// wrong at both ends: the payout was uncapped by labor, and the "max N useful here" readout said `1` on
+// a Field producing ten workers' worth. Every rung now derives it through `workers_needed_for_take`
+// against the crew's real throughput — a rich source genuinely needs more hands, and says so.
 
 /// `SourceYield.workers_needed` — the **minimum** assigned workers that would have produced `take`
 /// biomass this turn at `per_worker_capacity` biomass/worker (the overstaffing signal; see

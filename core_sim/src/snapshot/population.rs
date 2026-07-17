@@ -66,6 +66,7 @@ pub(crate) fn labor_assignment_to_state(
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
+        wasted_yield: yields.wasted,
         ..Default::default()
     };
     match &assignment.target {
@@ -168,11 +169,7 @@ pub(crate) fn population_state(
     let idle_workers = working_age.saturating_sub(assigned);
     // Zip each assignment with its retained per-source yield telemetry (same index order). A
     // rehydrated allocation has an empty `last_yields` until the next tick → default 0 yields.
-    const NO_YIELD: SourceYield = SourceYield {
-        actual: 0.0,
-        sustainable: 0.0,
-        workers_needed: 0,
-    };
+    const NO_YIELD: SourceYield = SourceYield::ZERO;
     let labor_assignments = allocation
         .map(|a| {
             a.assignments

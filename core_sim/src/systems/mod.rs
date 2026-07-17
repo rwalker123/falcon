@@ -35,9 +35,9 @@ use crate::{
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
-        field_provisions, field_yield_fraction_while_building, forage_take, patch_rung,
-        rung_site_refusal, tended_provisions, tile_forage_capacity, tile_is_fresh_watered,
-        ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
+        field_provisions, forage_per_worker_biomass, forage_policy_ceiling, forage_provisions,
+        forage_take, managed_per_worker_yield, patch_ecology, patch_rung, rung_site_refusal,
+        tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
