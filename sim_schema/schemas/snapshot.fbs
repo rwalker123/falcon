@@ -1046,11 +1046,19 @@ table HuntPolicyCeiling {
 table HuntTripEstimate {
   policy:string;           // sustain|surplus|market|eradicate (free-form, like `species`)
   partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
-  // Turns of hunting to fill the party's carry cap. 0 = DOES NOT FILL within
-  // expedition_config.hunt.forecast_horizon_turns → render "won't fill", not a number.
+  // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
+  // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
+  // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
+  // is a successful short trip. 0 = never completed within forecast_horizon_turns.
   turnsToFill:uint = 0;
   // false for eradicate (denial) — render "no food delivered", never an ETA.
   deliversFood:bool = false;
+  // Whole animals the raid delivers (append-only) — the payload the client headlines "≈N animals over
+  // M turns", combined with HerdTelemetryState.foodPerAnimal for the food total. Bounded by the
+  // standing surplus, so it plateaus with partyWorkers once the surplus (not the pack) binds — that
+  // plateau IS the max-useful party size (ceil(surplus_food / per_worker_carry)). 0 = herd at/below
+  // the policy's floor, no surplus to raid (the honest non-viable case).
+  animalsTaken:uint = 0;
 }
 
 table HerdTelemetryState {

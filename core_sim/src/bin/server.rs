@@ -2347,51 +2347,50 @@ fn handle_send_hunt_expedition(
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
-        registry.find(&fauna_id).map(|herd| {
-            hunt_trip_forecast(party_workers, herd, policy, &fauna, &ladder, &labor, &cfg)
-        })
+        registry
+            .find(&fauna_id)
+            .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
     };
+    // The raid always completes in bounded turns (grab the surplus, come home), so the only genuine
+    // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
+    // NO animals. Otherwise headline the payload the raid actually lands.
     let (viability_note, viability_detail) = match &forecast {
-        // A denial mission (Eradicate) brings nothing home, so a "turns to fill" number would be
-        // meaningless — say what it actually does instead of quoting a fillable-looking ETA.
+        // A denial mission (Eradicate) brings nothing home — say what it does, no ETA.
         Some(f) if !f.delivers_food => (
             " — denial mission: the party delivers NO food; it hunts the herd toward extinction"
                 .to_string(),
             " eta_turns=none viability=denial".to_string(),
         ),
-        Some(f) => match f.turns_to_fill {
-            Some(turns) if turns <= cfg.hunt.viability_warn_turns => (
-                format!(" — est. ~{} turns to fill", turns),
-                format!(" eta_turns={}", turns),
+        // The herd has no surplus above the policy's floor — the honest non-viable case.
+        Some(f) if f.animals_taken == 0 => (
+            format!(
+                " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
+                 return empty",
+                fauna_id,
+                policy.as_str()
             ),
-            Some(turns) => (
-                format!(
-                    " — est. ~{} turns to fill; NOT VIABLE at this herd's yield",
-                    turns
+            " eta_turns=none viability=no_surplus".to_string(),
+        ),
+        // A completed raid: "delivers ~N animals over ~M turns". `turns_to_fill == None` means it ran
+        // the whole horizon still delivering (a slow breeder a big party can neither fill nor exhaust).
+        Some(f) => {
+            let animals = f.animals_taken;
+            match f.turns_to_fill {
+                Some(turns) => (
+                    format!(" — est. ~{} animals over ~{} turns", animals, turns),
+                    format!(" eta_turns={} animals={}", turns, animals),
                 ),
-                format!(" eta_turns={} viability=marginal", turns),
-            ),
-            // The herd yields nothing at all under this policy (sub-Allee / collapsing).
-            None if f.first_turn_provisions <= 0.0 => (
-                " — this herd is below its collapse threshold and yields no sustainable take; the \
-                 party will return empty"
-                    .to_string(),
-                " eta_turns=none viability=impossible".to_string(),
-            ),
-            // It yields *something*, but not enough to fill a pack inside the forecast horizon —
-            // the exact turn count past there carries no information a player can act on.
-            None => (
-                format!(
-                    " — the party will NOT fill its pack within {} turns at this herd's yield; NOT \
-                     VIABLE",
-                    cfg.hunt.forecast_horizon_turns
+                None => (
+                    format!(
+                        " — a long raid: ~{} animals over {}+ turns",
+                        animals, cfg.hunt.forecast_horizon_turns
+                    ),
+                    format!(" eta_turns=none animals={}", animals),
                 ),
-                " eta_turns=none viability=marginal".to_string(),
-            ),
-        },
+            }
+        }
         None => (String::new(), String::new()),
     };
 

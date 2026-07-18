@@ -47,7 +47,7 @@ cargo run -p core_sim --bin server
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — the launch forecast flags a trip NOT VIABLE past this many estimated turns-to-fill; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the trip before reporting "won't fill"; past ~3× `viability_warn_turns` the exact number carries no actionable information, and the bound caps the per-snapshot cost of the exported `huntTripEstimates` table). The retired `sustain_floor_fraction` is **gone**: a Sustain expedition earns the shared `fauna::hunt_policy_rate` (Sustain = the sustainable yield) into the herd's kill-credit bank, same as a resident band. The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the policy's floor (Sustain `K/2`, Surplus `hunt.surplus_escapement_fraction·K`, Market `ecology.collapse_fraction·K`, Eradicate 0), *not* the resident band's throttled kill-credit rate. See "Scouting & Hunting Expeditions". The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -2420,93 +2420,79 @@ mission:
   hunt.per_worker_carry`). Deliver only with a worthwhile load: a full pack **or** `herd_near_band &&
   carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
-- **Per-policy behaviour**: **Sustain** — earns the **shared sustainable-yield rate** into the kill-credit bank
-  (`fauna::hunt_policy_ceiling(Sustain, …)`, the *same* take a resident band's Hunt arm makes from
-  the same herd state: "Sustain" has **one meaning** across the sim). It is **not** a stock target —
-  there is no sustain floor and no stock-line completion; the trip ends on a full pack, a near-band
-  delivery, a recall, or a lost herd, and the herd is held steady (skim = regrowth). **Surplus** —
-  one full-cap haul, capped by *stock* headroom down to the ecology collapse threshold
-  (`hunt_expedition_floor`) + **done**; **Market** — the same stock headroom, in repeated full-cap
-  trips via `Delivering`→deposit→**auto-relaunch** (the deposit fires once the party is back within
-  communication range of the home band — the shared `near_home` proximity — not necessarily on its
-  exact live tile), grinding the herd toward the collapse floor until it crashes or you recall;
-  **Eradicate** — no floor, **delivers no food** (denial): keeps taking each turn until the herd is
-  extinct, then folds back empty. A lost/extinct herd → shared `Returning`.
-- **Launch viability forecast — a bounded forward SIMULATION, not a division** (`hunt_trip_forecast`,
-  `systems.rs`). It runs the trip forward turn by turn — `fauna::regrow_biomass` (what `advance_herds`
-  does in Logistics) then `expedition_take_biomass` (what the `Hunting` arm does in Population), in
-  that order, accumulating the larder on the **fixed-point `Scalar` grid** exactly as the real one
-  does — until the pack is full or `hunt.forecast_horizon_turns` (**60**) is hit. There is no second
-  copy of the model to drift: each simulated turn is the same pair of calls the sim makes.
-  - *Why not a closed form?* **There is no single rate.** Dividing the carry cap by one per-policy
-    number is exact only when that number is a genuine per-turn **flow** (Sustain's MSY) or when the
-    party is throughput-bound for the whole trip (Surplus/Market on a *big* herd). Under
-    **Surplus/Market on a small herd it is a total *stock*** — the party strips the headroom down to
-    the collapse floor in a turn or two and then crawls at the herd's regrowth trickle. The division
-    read a full Rabbit Warren (K = 200, 4 hunters, Surplus) as a **~5-turn** trip; the simulation says
-    that party **never fills inside the 60-turn horizon** — only a *1-worker* party fills (in **23
-    turns**: a quarter the pack, so the regrowth trickle can still reach it). Simulating collapses
-    both regimes into one honest answer.
-  - The estimate is **turns spent hunting once you arrive** — **travel is not counted**, and the herd
-    is assumed stationary and in reach. **Eradicate** delivers no food (`delivers_food == false`) → no
-    ETA, ever.
-  - Past the horizon the answer is "**won't fill**", not a number: `viability_warn_turns` is 20, so a
-    60+-turn trip is emphatically not viable and the precise value carries no actionable information
-    — and the bound is what keeps the per-snapshot export cheap.
-  - **The "cannot fill" answer is O(1), not 60 simulated turns** (`hunt_trip_provisions_bound`). Most
-    of the exported estimate table is trips that never fill — small game under every policy, Sustain
-    on most herds — and simulating one to its horizon is spending the entire budget proving a "no" the
-    slowest possible way (measured: **85% of the table's cost**). So before simulating, the forecast
-    computes a **true upper bound** on the provisions the party could land over the whole horizon:
-    `min(horizon × party throughput, ecology)`, where *ecology* is `horizon × fauna::peak_regrowth`
-    for Sustain (a per-turn *flow* ceiling, capped by the logistic peak at K/2) and standing headroom
-    down to `hunt_expedition_floor` **plus** `horizon × peak_regrowth` for the depleting policies (a
-    *stock* draw-down — by conservation, everything the party can ever remove). Bound `< carry cap` →
-    "won't fill", returned after simulating only the **first** turn (the forecast still reports its
-    opening rate). Both terms over-estimate by construction, and the bound carries an explicit
-    rounding cushion (`CANNOT_FILL_BOUND_MARGIN` + the `Scalar` quantization slack — load-bearing:
-    the sim's `f32` conversion can land *exactly* on a cap an `f64` bound reads a hair below), so it
-    can never reject a trip that would have filled. Pinned by `systems::hunt_trip_bound_tests`, which
-    asserts the short-circuited forecast is **identical** to the unabridged simulation across every
-    policy × party size × herd state (wild + domesticated, sub-Allee → at-capacity), on the shipped
-    levers *and* off-nominal hot-reloadable ones. Exported table unchanged; measured **~2.3 ms →
-    ~0.8 ms per snapshot** at 122 herds (~19% → ~7% of a ~11.5 ms capture).
-    - *Not done, and why:* collapsing the 8 party sizes into one simulation where the trip is
-      throughput-bound (rate and cap both scale with workers → identical `turns_to_fill`) is
-      **measurably worthless on the shipped levers**: a hunter's 40 biomass/turn exceeds every game
-      herd's ceiling (Sustain's MSY is `0.0125 × K` — under 40 for any `K < 3200`, i.e. all non-
-      migratory herds), so the *herd* binds, not the party, and `turns_to_fill` genuinely varies with
-      party size. Only **4 of 488** (herd × policy) rows on a real map are constant across all 8
-      sizes — 0.005 ms of an 0.8 ms table. Revisit only if `hunt.per_worker_biomass_capacity` drops
-      far enough to make parties throughput-bound.
-  - Shipped-lever reality check (4 hunters, full herd): Red Deer ~5 turns under Surplus/Market and ~54
-    under Sustain; a full Rabbit Warren (K = 200) **never fills a 4-hunter pack inside the horizon**
-    under *any* policy (simulated past the horizon it would take ~320 turns under Sustain and ~495
-    under Surplus/Market — the forecast reports "won't fill" rather than those numbers). The *only*
-    small-game trip that fills at all is a **lone hunter** under Surplus/Market (**23 turns** — a
-    quarter the pack, so the herd's regrowth trickle can still reach it), and that is well past
-    `viability_warn_turns`. Small game simply cannot provision an expedition — the forecast now says
-    so.
-  - `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line — viable
-    (`≤ hunt.viability_warn_turns`) → "est. ~N turns to fill"; marginal (`>` it) → the same plus "NOT
-    VIABLE at this herd's yield"; **won't fill inside the horizon** → "the party will NOT fill its pack
-    within N turns; NOT VIABLE"; impossible (a sub-Allee herd — `first_turn_provisions == 0`) → "the
-    party will return empty"; **denial** (Eradicate) → "denial mission: the party delivers NO food".
-    It still launches — the player's call. `detail` carries `eta_turns=…`.
-  - Pinned end-to-end by `expedition_hunt.rs` (`party_fills_on_the_forecast_turn`), which launches a
-    **real party**, runs the sim forward, and asserts the larder first reaches the carry cap on exactly
-    the promised turn — across the throughput-bound, flow-bound and **stock-exhausted** regimes. The
-    forecast is pinned to the sim, never the reverse.
+> #### A hunting expedition is a GREEDY RAID, not a resident band's throttled skim (playtest fix)
+>
+> A resident band (`systems::hunt_take`) takes its policy's per-turn **rate** into the kill-credit
+> bank — worker-independent, so a second hunter only added pack to fill and made the *trip* longer
+> (the playtest bug). A detached party instead **grabs the herd's standing surplus above the policy's
+> floor in a burst and comes home**, so more hunters take more animals in **fewer-or-equal** turns.
+> This replaces the MSY-rate ceiling on the **expedition path only** (`expedition_take_biomass` /
+> `hunt_trip_forecast`); `hunt_take` and `hunt_policy_rate` are untouched.
+>
+> - **The floor is per-policy** (`hunt_expedition_floor`, `FaunaConfig::validate`-ordered
+>   `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`): Sustain `K/2` (0.50·K),
+>   Surplus `hunt.surplus_escapement_fraction·K` (0.30), Market `ecology.collapse_fraction·K` (0.15),
+>   Eradicate `0`. A deeper policy leaves a leaner herd — *"Surplus/Market raid deeper"*. (Expedition
+>   Market no longer drives extinction — it strips to 0.15·K and stops; extinction is the *resident*
+>   band's multiples-of-MSY axis, unchanged.)
+> - **The per-turn take** = `min(workers × per_worker_biomass_capacity, standing_surplus)` banked onto
+>   the herd's `hunt_credit` (so sub-body throughput accumulates to whole animals), quantised against
+>   the pack's carry room (`quantise_animal_take` — whole animals + `wasted`), capped at the surplus so
+>   the bank never funds biomass below the floor. One hunter per herd, so sharing `hunt_credit` with the
+>   band is safe.
+
+- **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
+  **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
+  surplus spent**, then fold home. **Market** — repeated FULL-cap trips (`Delivering`→deposit→
+  **auto-relaunch**) *while the herd still has surplus*; once stripped to `0.15·K` (surplus spent) it
+  comes home for good rather than trickle-churning at the floor. **Eradicate** — no floor, **delivers
+  no food** (denial): grinds the herd to extinction (→ lost-herd `Returning`).
+- **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
+  surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
+  raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**.
+- **Launch forecast — a bounded forward SIMULATION of the raid** (`hunt_trip_forecast`,
+  `systems::expeditions`). It runs the raid forward turn by turn — `fauna::regrow_biomass` (Logistics)
+  then `expedition_take_biomass` (Population), accumulating the larder on the **fixed-point `Scalar`
+  grid** — until the raid completes (fill OR surplus spent OR herd lost) or `hunt.forecast_horizon_turns`
+  (**60**). No second copy of the model, and the completion test mirrors the arm's `done`. It returns:
+  - **`turns_to_fill`** — turns until the raid **completes** (*"turns until the party comes home"*, NOT
+    *"turns until the pack is full"*: a big party on a full herd leaves a partial pack once it strips
+    the surplus, a successful short trip). `None` = never completed within the horizon.
+  - **`animals_taken`** — whole animals the raid delivers, the payload the client headlines. `0` = the
+    herd is at/below the policy's floor with **no surplus to raid** (the honest non-viable case).
+  - **Travel is not counted**; the herd is assumed stationary and in reach. **Eradicate** delivers no
+    food (`delivers_food == false`) → no ETA.
+  - *(The old O(1) "cannot fill" short-circuit + its `hunt_trip_bound_tests` sweep were **retired** with
+    the raid: their premise "won't fill the pack ⇒ doomed trip" is inverted by a raid, where "won't fill
+    the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
+    so simulating each to completion is already cheap. `surplus_escapement_fraction` replaced the retired
+    `hunt_expedition_ceiling`/kill-credit expedition ceiling and the bound's constants.)*
+- **Measured** (Wild Boar K = 1433, body 50, B = 1010, real pack 4 food/worker): 1 hunter **5 animals /
+  7 turns**, 2 hunters **8 / 8**, 3 hunters **8 / 4** — more hunters, more animals, no slower. With an
+  unbounded pack the raid runs to the floor and a *slower* party harvests more regrowth on the way down
+  (1 hunter 31 animals / 39 turns → 4 hunters 7 / 3), so the **turn count** is the load-bearing "more
+  hunters help" claim, not the animal count.
+- `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line: **denial**
+  (Eradicate) → "delivers NO food"; **no surplus** (`animals_taken == 0`) → "too lean to raid… no
+  surplus"; otherwise "est. ~N animals over ~M turns" (or "a long raid: ~N animals over 60+ turns" if it
+  runs the horizon still delivering). It still launches — the player's call. `detail` carries
+  `eta_turns=… animals=…`.
+- Pinned end-to-end by `expedition_hunt.rs` (`the_raid_forecast_matches_a_real_party_run`), which
+  launches a **real party**, runs the sim forward, and asserts the forecast completes on exactly the
+  turn the party leaves `Hunting` — across Sustain/Surplus/Market × full/depleted herds. The forecast
+  is pinned to the sim, never the reverse. The greedy-raid properties (more hunters → fewer turns,
+  Sustain leaves K/2, deeper policies raid deeper, surplus caps the take, no-surplus reads 0) are pinned
+  by the sibling tests in that file.
 - **Lives off its kills** — no launch provisions, no per-turn upkeep (upkeep is scout-only).
 - **The investment policies are NOT an expedition concept.** `Cultivate`/`Corral` are place-bound work
   a *resident* band does (prepare a patch, build a pen, then tend it) — a detached party cannot pen a
   herd and walk home. `handle_send_hunt_expedition` **rejects** them at launch (alongside an
   unparseable token), so the expedition's whole axis is `FollowPolicy::EXTRACTIVE` (the four extractive
-  rungs). `systems::hunt_expedition_ceiling`'s investment arm is therefore **unreachable**, and yields
-  **`0.0` + a `debug_assert!`** rather than quietly falling back to the Sustain flow: if that
-  validation ever regresses the party takes *nothing* and the hole is loud, instead of a
-  plausible-looking Sustain trip hiding it. (An unreachable arm must fail loudly, never quietly do
-  something plausible.) Guarded by
+  rungs). `systems::hunt_expedition_floor`'s investment arm is therefore **unreachable**, and yields
+  **`f32::INFINITY` (⇒ zero surplus ⇒ the party takes *nothing*) + a `debug_assert!`** rather than
+  quietly falling back to a real floor: if that validation ever regresses the party takes *nothing* and
+  the hole is loud, instead of a plausible-looking trip hiding it. (An unreachable arm must fail loudly,
+  never quietly do something plausible.) Guarded by
   `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
 - **Shared take helpers** (`fauna.rs`, slice 8b): **`hunt_policy_rate(policy, biomass_before_regrowth,
   cap, ecology, fauna, ladder)`** is THE per-turn take **rate** (Sustain `sustainable_yield`, Surplus/
@@ -2573,16 +2559,20 @@ a formula** (see the forecast above: a small-herd Surplus party exhausts *stock*
 describes the trip), so the sim exports the **answer** it simulated, and the client's job is a **table
 lookup**:
 - `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
-  turnsToFill:uint, deliversFood:bool }]` — per **huntable** herd, one entry per
+  turnsToFill:uint, deliversFood:bool, animalsTaken:uint }]` — per **huntable** herd, one entry per
   `FollowPolicy::EXTRACTIVE` × every legal party size (`1..=expedition_config.max_party_size`, so
   4 × 8 = 32 rows/herd; `policy` is a free-form string like `species`, so a new policy needs no schema
   change). **The four extractive rungs ONLY** — the investment policies are launch-rejected (above), so
-  a `Cultivate`/`Corral` row would be a number for a trip that cannot be launched, and would inflate a
-  table we just optimized (2.28 ms → 0.79 ms) for nothing. `turnsToFill` is the
-  simulated hunting-turn count; **`0` = does not fill** within `hunt.forecast_horizon_turns` → render
-  "won't fill", never a number. `deliversFood == false` (Eradicate) → render "no food delivered
-  (denial)", never an ETA. **Travel is excluded** — the number means "turns spent hunting once you
-  arrive".
+  a `Cultivate`/`Corral` row would be a number for a trip that cannot be launched. **`turnsToFill`** is
+  turns until the raid **completes** (comes home — pack full OR surplus spent), **`0` = never completed**
+  within `hunt.forecast_horizon_turns`. **`animalsTaken`** (append-only) is the whole animals the raid
+  delivers — the payload the client headlines *"≈N animals over M turns"* (combined with
+  `HerdTelemetryState.foodPerAnimal` for the food total); `0` = the herd is at/below the policy's floor
+  with no surplus to raid (the honest non-viable case). Because `animalsTaken` is bounded by the standing
+  surplus, it **plateaus** with `partyWorkers` once the surplus binds — that plateau is the max-useful
+  party size (`ceil(surplus_food / per_worker_carry)`), so the client caps its worker stepper there.
+  `deliversFood == false` (Eradicate) → "no food delivered (denial)", never an ETA. **Travel is
+  excluded** — the number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
   — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::HUNT_POLICIES`: the four
   extractive rungs **plus `Corral`** (a legitimate *band* Hunt policy — its deliberately dipped yield
@@ -2608,9 +2598,10 @@ lookup**:
   outfit UI lives on the resident-band panel).
 
 **The two hunt readouts, and what each reads:**
-- **Expedition (pre-launch trip)** — a lookup: `huntTripEstimates[(policy, partyWorkers)]` →
-  `turnsToFill` (`0` = won't fill), `deliversFood`. Viable iff `0 < turnsToFill ≤
-  expeditionViabilityWarnTurns`. No arithmetic, no ecology model, no rate.
+- **Expedition (pre-launch raid)** — a lookup: `huntTripEstimates[(policy, partyWorkers)]` →
+  `animalsTaken` (the payload; `0` = no surplus to raid), `turnsToFill` (comes home in ~N turns; `0` =
+  never completes in the horizon), `deliversFood`. Headline *"≈animalsTaken animals over turnsToFill
+  turns"*; the stepper caps where `animalsTaken` plateaus. No arithmetic, no ecology model, no rate.
 - **Resident band (local-hunt yield preview)** — pure arithmetic over the **band** ceiling, **× the
   cohort's already-exported `outputMultiplier`** (a band applies its morale/discontent productivity
   modifier at payout): `rate = min(workers × huntPerWorkerProvisions, bandCeiling_for(policy)) ×

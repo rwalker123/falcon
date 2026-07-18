@@ -163,6 +163,8 @@
     "trade_goods_per_biomass": 0.005,
     "surplus_multiplier": 1.5,
     "market_multiplier": 2.5,
+    "_comment_surplus_escapement_fraction": "EXPEDITION-ONLY (systems::expeditions). A greedy hunting RAID grabs the herd's standing surplus down to a per-policy floor and comes home: Sustain 0.50*K > Surplus surplus_escapement_fraction*K (0.30) > Market ecology.collapse_fraction*K (0.15) > Eradicate 0. So more hunters take more animals in fewer-or-equal turns, and a deeper policy leaves a leaner herd. This does NOT touch the RESIDENT band's kill-credit take (still surplus_multiplier*MSY). Validate pins collapse_fraction < surplus_escapement_fraction < 0.5 (MSY_BIOMASS_FRACTION). PLAYTEST DIAL.",
+    "surplus_escapement_fraction": 0.30,
     "pursuit_radius": 1,
     "pursuit_tiles_per_turn": 3,
     "max_pursuit_turns": 12

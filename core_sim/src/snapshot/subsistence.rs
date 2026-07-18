@@ -132,19 +132,18 @@ pub(crate) fn hunt_policy_ceiling_entries(
 /// The **pre-launch hunt-trip estimate table** for one herd: `hunt_trip_forecast` run for every
 /// policy × every legal party size (`1..=expedition.max_party_size`), so the client's outfit UI is a
 /// pure **table lookup** — zero arithmetic, zero ecology model. The forecast is a bounded forward
-/// simulation (stock exhaustion under Surplus/Market on a small herd is not a division), so there is
-/// no per-turn constant the client could divide by even if we wanted it to.
+/// simulation of the greedy raid (grab the standing surplus, come home), which has no single per-turn
+/// rate to divide by, and each row now carries both `turns_to_fill` (turns until the raid completes)
+/// and `animals_taken` (the payload the client headlines).
 ///
 /// Cost is bounded by construction: `policies × max_party_size × hunt.forecast_horizon_turns`
-/// turn-steps per herd, and only **huntable** herds are estimated. In practice it is far below that
-/// worst case — most of the table is trips that *cannot* fill (small game under every policy,
-/// Sustain on most herds), and `hunt_trip_forecast` rejects those in **O(1)** via an upper-bound
-/// short-circuit instead of burning the horizon proving it (measured: ~2.3 ms → ~0.8 ms per snapshot
-/// at 122 herds, the table's exported values unchanged).
+/// turn-steps per herd, and only **huntable** herds are estimated. In practice a raid is **short** —
+/// it grabs the surplus and terminates — so a snapshot's worth of raids simulates cheaply (the old
+/// O(1) "cannot fill" short-circuit was retired with the raid: its premise, "won't fill the pack ⇒
+/// doomed", is inverted by a raid, where "won't fill the pack" is the normal successful short trip).
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
-    ladder: &LadderConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> Vec<HuntTripEstimateState> {
@@ -155,21 +154,15 @@ pub(crate) fn hunt_trip_estimate_entries(
     // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
     for &policy in FollowPolicy::EXTRACTIVE.iter() {
         for party_workers in 1..=expedition.max_party_size {
-            let forecast = hunt_trip_forecast(
-                party_workers,
-                herd,
-                policy,
-                fauna,
-                ladder,
-                labor,
-                expedition,
-            );
+            let forecast =
+                hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
             entries.push(HuntTripEstimateState {
                 policy: policy.as_str().to_string(),
                 party_workers,
-                // `0` = the trip does not fill within `hunt.forecast_horizon_turns` ("won't fill").
+                // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
                 delivers_food: forecast.delivers_food,
+                animals_taken: forecast.animals_taken,
             });
         }
     }
@@ -257,7 +250,7 @@ pub(crate) fn herd_snapshot_entries(
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
-                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, ladder, labor, expedition))
+                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
                     .unwrap_or_default(),
                 // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
                 // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,

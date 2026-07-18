@@ -170,12 +170,20 @@ pub struct HuntTripEstimateState {
     pub policy: String,
     /// Party size, `1 ..= expedition_config.max_party_size`.
     pub party_workers: u32,
-    /// Turns of hunting to fill the party's carry cap. **`0` = it does not fill** within
-    /// `expedition_config.hunt.forecast_horizon_turns` — render "won't fill", not a number.
+    /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
+    /// standing surplus is spent (the herd is at the policy's floor) OR the herd is lost. **Not** "turns
+    /// to fill the pack": a big party on a full herd strips the surplus and leaves with a *partial*
+    /// pack, a successful short trip. **`0` = never completed** within `forecast_horizon_turns`.
     pub turns_to_fill: u32,
     /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
     /// delivered", never an ETA.
     pub delivers_food: bool,
+    /// **Whole animals the raid delivers** (append-only) — the payload the client headlines ("≈N
+    /// animals over M turns"), combined with `HerdTelemetryState::food_per_animal` for the food total.
+    /// Bounded by the standing surplus, so it plateaus with `party_workers` once the surplus (not the
+    /// pack) binds — and that plateau is the max-useful party size (`ceil(surplus_food /
+    /// per_worker_carry)`). `0` = the herd is at/below the policy's floor with no surplus to raid.
+    pub animals_taken: u32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -3511,6 +3519,7 @@ fn create_herds<'a>(
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
+                            animalsTaken: estimate.animals_taken,
                         },
                     )
                 })
