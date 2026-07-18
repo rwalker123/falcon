@@ -21,6 +21,11 @@ if [ ! -x "$APP" ]; then
   read -r -p "Press Return to close."
   exit 1
 fi
+if [ ! -x "./server" ]; then
+  echo "Could not find the 'server' program (or it isn't executable) — is the package unzipped fully?"
+  read -r -p "Press Return to close."
+  exit 1
+fi
 
 echo "Starting ShadowScale server..."
 ./server &

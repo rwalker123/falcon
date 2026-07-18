@@ -797,7 +797,15 @@ fn install_host_bindings<'js>(
                 .map(|value| js_to_json(&ctx, value))
                 .unwrap_or(JsonValue::Null);
             let mut session = set_state.session.lock().unwrap();
-            let map = session.as_object_mut().unwrap();
+            if !session.is_object() {
+                // A restored/rehydrated session may be null/array/scalar
+                // (restore_session/apply_state assign it wholesale). Coerce to
+                // an object before inserting so a script's sessionSet can't panic.
+                *session = JsonValue::Object(JsonMap::new());
+            }
+            let map = session
+                .as_object_mut()
+                .expect("session coerced to object above");
             map.insert(key_str, value_json);
             Ok(())
         },

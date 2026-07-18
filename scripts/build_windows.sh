@@ -16,7 +16,7 @@
 # (defaults line up — client STREAM=41002/COMMAND=41001/LOG=41003 vs the server's
 # default binds), so the package ships BOTH and run.bat starts them in order.
 #
-# Prerequisites (one-time, see docs/windows_build.md):
+# Prerequisites (one-time, see docs/desktop_builds.md):
 #   - rustup target add x86_64-pc-windows-msvc
 #   - cargo install cargo-xwin
 #   - brew install llvm            (provides lld — the MSVC-ABI linker)
@@ -66,6 +66,7 @@ cargo xwin --version >/dev/null 2>&1 || die "cargo-xwin not installed — run: c
 rustup target list --installed 2>/dev/null | grep -q "$TARGET" \
   || die "Rust target missing — run: rustup target add $TARGET"
 command -v "$GODOT_BIN" >/dev/null || die "Godot ('$GODOT_BIN') not on PATH — set GODOT_BIN=/path/to/godot"
+command -v zip >/dev/null         || die "zip not found (needed to package the build)"
 
 # --- 1. cross-compile the Rust artifacts (server + GDExtension) ---------------
 info "Cross-compiling server + GDExtension for $TARGET ..."
@@ -83,6 +84,8 @@ cp "$REL/$DLL_NAME" "$DLL_DEST/$DLL_NAME"
 info "Staged $DLL_NAME -> $GODOT_PROJECT/native/bin/windows/"
 
 # --- 3. export the Godot client .exe (headless) -------------------------------
+# Clear any prior package so a rerun can't ship stale artifacts (e.g. an old .pck).
+rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"
 info "Exporting Godot client ('$PRESET') ..."
 # --export-release fails hard if templates or the preset are missing; surface it.
