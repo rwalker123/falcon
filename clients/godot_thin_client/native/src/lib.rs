@@ -3197,9 +3197,10 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // horizon, and under Sustain no party size fills at any size). The sim therefore
         // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
         // table lookup keyed
-        // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}`:
-        //   turns_to_fill == 0  → does not fill within the forecast horizon ("won't fill", not an ETA)
+        // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken}`:
+        //   turns_to_fill == 0  → the raid ran the whole horizon still delivering (a long raid)
         //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
+        //   animals_taken == 0  → herd at/below the policy floor, no surplus to raid (too lean)
         // Empty for a non-huntable herd (the HUD then shows no forecast).
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
@@ -3208,6 +3209,10 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
                     let mut entry = VarDictionary::new();
                     let _ = entry.insert("turns_to_fill", i64::from(estimate.turnsToFill()));
                     let _ = entry.insert("delivers_food", estimate.deliversFood());
+                    // The whole animals the raid delivers — the payload the client headlines
+                    // ("delivers ≈N animals over M turns") and the plateau it caps the party stepper
+                    // at. Dropped from this dict on four prior appended fields; this is the newest.
+                    let _ = entry.insert("animals_taken", i64::from(estimate.animalsTaken()));
                     let key = format!("{}:{}", policy, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }

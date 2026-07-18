@@ -654,6 +654,11 @@ const HERD_CREW_LABEL := "Herders"
 # One policy button's per-turn take on the hunt picker, so the four extractive rungs read as ASCENDING
 # (Sustain < Surplus < Market < Eradicate). A compact second line under the policy name.
 const POLICY_TAKE_FORMAT := "%s/turn"
+# The EXPEDITION picker's per-policy button metric — the whole animals a raid at this policy delivers at
+# the composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves
+# K/2, Surplus/Market raid deeper, Eradicate takes all). The raid analog of POLICY_TAKE_FORMAT's rate,
+# so all three pickers wear a per-policy metric on a second line under the policy name.
+const EXPEDITION_TAKE_FORMAT := "≈%d taken"
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
 # forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
@@ -902,24 +907,29 @@ const HUNT_ESTIMATE_KEY_SEPARATOR := ":"
 # IS legitimate arithmetic — `min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier`
 # over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
 # pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
-const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
-# The HAUL a filled pack delivers, appended to the turns line so the party-size tradeoff reads BOTH
-# ways: a bigger party climbs the turns AND the food it brings home. The haul = party_workers ×
-# expedition_per_worker_carry (blessed party×lever arithmetic, NOT the ecology lookup turns comes
-# from). Shown ONLY when the pack fills (viable OR too-slow); a won't-fill / denial trip never reaches
-# the cap, so quoting a haul there would be a lie. Absent/0 per-worker-carry → no suffix (live guard).
-const HUNT_FORECAST_HAUL_FORMAT := " · ~%d food"
-# Above the config's viability threshold the trip still launches (this is information, not a block) —
-# but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
-const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
-# The sim's forward simulation never filled this party's packs within its `forecast_horizon_turns`
-# (`turns_to_fill == 0`) — a "won't fill" verdict, NOT "the herd is dead". A perfectly HEALTHY herd
-# lands here whenever its yield is simply too slow for the packs this party carries: a thriving Rabbit
-# Warren under Sustain fills NO party size at all. The party would still be out there at the horizon.
-const HUNT_FORECAST_NEVER_FILLS_FORMAT := "%s can't fill a party this size — the packs would never fill"
-# An Eradicate expedition is a DENIAL mission, not a failed hunt: it delivers no food BY DESIGN. Kept
-# distinct from the won't-fill line above (red = the packs don't fill within the sim's horizon; amber =
-# you are choosing to bring nothing home).
+# A hunting expedition is a GREEDY RAID: it grabs the herd's standing surplus above the policy's floor
+# in a burst and comes home. So the headline is the PAYLOAD — the whole animals the raid delivers over
+# the turns it takes: "delivers ≈5 Wild Boar over ≈7 turns". `animals` is `HuntTripEstimate.animalsTaken`
+# (the sim's forward-simulated answer), `turns` is `turnsToFill` — now "turns until the raid comes home",
+# NOT "turns to fill the pack" (a big party leaves a partial pack once it strips the surplus).
+const HUNT_FORECAST_DELIVERS_FORMAT := "delivers ≈%d %s over ≈%d turns"
+# `turnsToFill == 0` no longer means "won't fill" — under the raid model it means the raid ran the whole
+# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The
+# client has no horizon lever, so it words this "over many turns" rather than a bare number.
+const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
+# The FOOD the delivered animals are worth (`animals × HerdTelemetryState.foodPerAnimal`), appended so
+# the party-size tradeoff reads BOTH ways: a bigger party takes more animals AND more food. Omitted when
+# the herd carries no `food_per_animal` (older snapshot) — a live guard, no fake zero.
+const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
+# A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
+# real tradeoff (told, then trusted), so the line stays WARN-amber and the button stays enabled.
+const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
+# The ONE non-viable case under the raid model: `animalsTaken == 0` — the herd is at/below the policy's
+# floor, so there is no standing surplus to raid and the party would return empty. NOT a "won't fill"
+# verdict (the raid always completes); the herd simply has nothing to give this policy right now.
+const HUNT_FORECAST_NO_SURPLUS_FORMAT := "%s is too lean to raid — its surplus is spent"
+# An Eradicate expedition is a DENIAL mission, not a failed raid: it delivers no food BY DESIGN (the sim
+# says so via `delivers_food`, the client never infers it from the policy string).
 const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, delivers no food"
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
@@ -933,31 +943,15 @@ const HUNT_RATE_UNAVAILABLE := -1.0
 # When the trip is a trap, the button itself names the cost (amber "armed"); it is NEVER disabled and
 # never gated behind a confirm — the player can always send. This is information, not a gate.
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
-# A trip that CANNOT FILL is the one case that is blocked rather than warned. The distinction is the
-# whole point: a SLOW trip (finite ETA past the warn threshold) is a real tradeoff and the player is
-# told and then TRUSTED — `Send Anyway (≈54 turns)` stays enabled. A trip that cannot succeed has no
-# upside at all, so offering the button would be offering a mistake. The button states the reason, and
-# the reason SCANS THE SIM'S TABLE rather than dispensing generic advice (see `_hunt_impossible_reason`).
-const SEND_HUNT_IMPOSSIBLE_BUTTON := "Can't fill this party's packs"
-# BLOCKED, but the policy's row of the estimate table holds a party size that fills AND is VIABLE: name it
-# (the LARGEST such — the most food per trip among the trips this UI considers worth making) and its ETA.
-# Generic "send a smaller party" advice was often a lie: on Red Deer + Surplus, 1–5 workers fill in 5 turns
-# while 8 never fills, so "smaller" and "bigger" are both wrong answers in general and only the row knows.
-const SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON := "%s can't fill packs for a party of %d. A party of %d fills in %d turns."
-# BLOCKED, and NOTHING on the row is viable — some size fills, but only past `viability_warn_turns` (Rabbit
-# Warren + Surplus: a lone hunter, 23 turns). Name the best there is (the FASTEST — with no viable option
-# left, time dominates haul), but word it as the marginal trip it is: recommending it in the same breath as
-# a real fix would have the UI cheerfully suggesting a trip it flags "too slow to be worth sending".
-const SEND_HUNT_IMPOSSIBLE_SLOW_REASON := "%s can't fill packs for a party of %d. A party of %d fills, but takes %d turns."
-# BLOCKED with the WHOLE ROW zeroed — NO party size fills this herd under this policy (a Rabbit Warren on
-# Sustain: its sustainable trickle never fills anyone's packs). Telling the player to try another size here
-# would send them fruitlessly up and down the stepper, so say so plainly and point them somewhere real.
-const SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON := "%s can't fill packs at any party size — hunt it locally instead."
-# The party stepper is a REAL decision, not "more is better": a bigger party carries bigger packs, so
-# stepping UP can turn a working trip impossible (Red Deer + Surplus fills at 5, never at 8). Surfaced as
-# the stepper row's tooltip when the very next size up is impossible — zero added clutter on a panel that
-# is otherwise fine, and it lands exactly where the trap is.
-const SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP := "A party of %d could not fill its packs on %s — bigger parties carry bigger packs than this herd can fill."
+# A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
+# but the button names it a long haul rather than quoting a turn count the client can't bound.
+const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
+# The ONE blocked case: `animalsTaken == 0`, the herd has no surplus above the policy's floor. A raid
+# that returns empty is a mistake with no upside (unlike a slow-but-delivering one), so the button is
+# DISABLED and says why + the way out. Party size can't fix it — surplus is a property of the HERD, not
+# the party — so the reason names no alternative size (the old row-scan is meaningless under the raid).
+const SEND_HUNT_NO_SURPLUS_BUTTON := "Herd too lean to raid"
+const SEND_HUNT_NO_SURPLUS_REASON := "%s has no surplus above this policy's floor — the raid would return empty. Wait for the herd to rebuild, ease the policy, or hunt it locally."
 # Eradicate's button states the deal rather than implying failure — the mission IS the point.
 const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
 # Live per-turn yield preview for the LOCAL hunt branch. A resident hunt has no carry cap, so
@@ -1354,39 +1348,45 @@ func _hunt_forecast_bbcode() -> String:
 func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
     if not bool(forecast.get("available", false)):
         return ""
-    # Two different "no food comes home" stories, and they must not be confused: an Eradicate party
-    # brings nothing home BY DESIGN (denial, amber), while any other policy the sim says won't fill
-    # within its `forecast_horizon_turns` means the packs stay empty for the whole trip (red). The red
-    # case is a "can't fill" verdict, NOT a collapsed herd — a thriving herd whose yield is simply too
-    # slow for this party's packs (a full Rabbit Warren on Sustain) lands here too.
+    # A denial mission (Eradicate) brings nothing home BY DESIGN — say what it does, amber, no payload.
     if bool(forecast.get("denial", false)):
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
         ]
-    if not bool(forecast.get("fills", false)):
+    # No surplus above the policy's floor → the raid returns empty. The ONE non-viable case (red).
+    if bool(forecast.get("empty", false)):
         return "[color=#%s]%s%s[/color]" % [
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
-            HUNT_FORECAST_NEVER_FILLS_FORMAT % herd_name,
+            HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
+        ]
+    # A real raid: headline the PAYLOAD (whole animals over turns), + the food it's worth. `food` is set
+    # only when the herd carried `food_per_animal`, so a missing lever renders animals+turns alone.
+    var animals := int(forecast.get("animals", 0))
+    var food: String = HUNT_FORECAST_FOOD_FORMAT % int(forecast["food"]) if forecast.has("food") else ""
+    if bool(forecast.get("long_raid", false)):
+        # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
+        return "[color=#%s]%s%s%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name], food,
+            HUNT_FORECAST_SLOW_SUFFIX,
         ]
     var turns := int(forecast.get("turns", 0))
-    var text: String = HUNT_FORECAST_TURNS_FORMAT % [herd_name, turns]
-    # The pack fills here (viable OR too-slow), so the haul is a real delivery, not a lie — append it.
-    # No `haul` key = the snapshot didn't carry the per-worker-carry lever → render turns only.
-    var haul: String = HUNT_FORECAST_HAUL_FORMAT % int(forecast["haul"]) if forecast.has("haul") else ""
-    if bool(forecast.get("viable", true)):
-        return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, haul]
-    return "[color=#%s]%s%s%s%s[/color]" % [
-        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, haul, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
-    ]
+    var text: String = HUNT_FORECAST_DELIVERS_FORMAT % [animals, herd_name, turns]
+    # Slow raid (past the band's warn threshold) — still a real delivery, just a long one: amber, told
+    # then trusted. A brisk raid reads income-cyan.
+    if bool(forecast.get("slow", false)):
+        return "[color=#%s]%s%s%s%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, food, HUNT_FORECAST_SLOW_SUFFIX,
+        ]
+    return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, food]
 
-## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. A PURE TABLE
-## LOOKUP into the sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO
-## arithmetic, and NEVER a `carryCap / rate` division: the sim moves the herd's state under the party
-## and bounds the trip by its `forecast_horizon_turns`, so only the sim's own number is honest (pinned
-## by core_sim/tests/expedition_hunt.rs). The ecology/MSY model is never reproduced here. (The LOCAL
-## band hunt preview DOES compute — see `_hunt_take_rate` over the band ceiling `hunt_policy_ceilings`.)
-## Returns {available, fills, turns, viable, denial}: `available` false when the snapshot carries no
-## estimate for this (policy, party size) — older server → the caller shows no forecast at all.
+## The raid `workers` from `band` deliver hunting `herd` under `policy`. A PURE TABLE LOOKUP into the
+## sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO arithmetic: the sim
+## grabs the herd's standing surplus above the policy floor in a burst and reports the whole animals it
+## lands (`animals_taken`) and the turns until the party comes home (`turns_to_fill`, NOT "turns to fill
+## the pack"). The ecology/MSY model is never reproduced here. (The LOCAL band hunt preview DOES compute
+## — see `_hunt_take_rate` over the band ceiling `hunt_policy_ceilings`.) Returns {available, denial,
+## empty, animals, turns, food, long_raid, slow}: `available` false = the snapshot carries no estimate
+## for this (policy, party size) (older server → the caller shows no forecast at all).
 func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if workers <= 0 or not (estimates_variant is Dictionary):
@@ -1396,31 +1396,32 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     if not estimates.has(key):
         return {"available": false}
     var estimate: Dictionary = estimates[key]
-    # A denial mission (eradicate) delivers no food BY DESIGN — never an ETA, never a failure, and NOT
-    # "impossible": it does exactly what it says. This carve-out MUST come first, or gating on
-    # "doesn't fill" would ban Eradicate outright (it never fills, by definition).
+    # A denial mission (eradicate) delivers no food BY DESIGN — never a payload, never a failure. This
+    # carve-out MUST come first: it takes animals (down to the 0 floor) but banks none as food.
     if not bool(estimate.get("delivers_food", false)):
-        return {"available": true, "fills": false, "denial": true, "impossible": false}
-    # 0 turns = the sim's forward simulation never fills the party within its forecast horizon. A trip
-    # that CANNOT SUCCEED is not a tradeoff, it's a mistake with no upside — so unlike a merely SLOW
-    # trip (finite ETA past the warn threshold, which the player is told about and then trusted with),
-    # this one is BLOCKED. Keyed off the sim's per-(policy, party-size) verdict, never off a species /
-    # size_class / biomass proxy: a 1-worker pack may well fill off a herd that can't fill a 4-worker
-    # pack, and an overhunted big-game herd near its collapse floor can't fill either.
+        return {"available": true, "denial": true, "empty": false}
+    # animals_taken == 0 = the herd is at/below the policy's floor: no standing surplus to raid, the
+    # party returns empty. The ONE non-viable case (the raid always completes; the herd has nothing).
+    # Keyed off the sim's per-(policy, party-size) verdict, never a species/biomass proxy.
+    var animals := int(estimate.get("animals_taken", 0))
+    if animals <= 0:
+        return {"available": true, "denial": false, "empty": true}
+    # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
+    # threshold of 0 means the server sent none — report the raid, judge nothing.
     var turns := int(estimate.get("turns_to_fill", 0))
-    if turns <= 0:
-        return {"available": true, "fills": false, "denial": false, "impossible": true}
-    # A warn threshold of 0 means the server sent none — report the turns, judge nothing.
+    var long_raid: bool = turns <= 0
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
-    var viable: bool = warn_turns <= 0 or turns <= warn_turns
-    var result := {"available": true, "fills": true, "turns": turns, "viable": viable}
-    # The haul a filled pack delivers: party_workers × the per-worker carry lever — blessed party×lever
-    # arithmetic (the same kind as the band ceiling), NOT the ecology/turns-to-fill lookup. Only set
-    # when the lever is present (> 0), so the renderer can guard on the key's absence rather than a fake
-    # zero. Withheld from the denial / won't-fill branches above: those packs never reach the cap.
-    var per_worker_carry := float(band.get("expedition_per_worker_carry", 0.0))
-    if per_worker_carry > 0.0:
-        result["haul"] = int(round(float(workers) * per_worker_carry))
+    var slow: bool = not long_raid and warn_turns > 0 and turns > warn_turns
+    var result := {
+        "available": true, "denial": false, "empty": false,
+        "animals": animals, "turns": turns, "long_raid": long_raid, "slow": slow,
+    }
+    # The food those animals are worth: animals × food_per_animal — a lookup product of two exported
+    # numbers, NOT the ecology model. Only when the herd carried the lever (> 0), so the renderer guards
+    # on the key rather than a fake zero.
+    var food_per_animal := float(herd.get("food_per_animal", 0.0))
+    if food_per_animal > 0.0:
+        result["food"] = int(round(float(animals) * food_per_animal))
     return result
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
@@ -3208,14 +3209,14 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # "Expected yield" sitting directly above a WARN-amber "⚠ overdraws the herd" for the same number.
     var forecast_active := not is_expedition and bool(forecast["known"]) \
         and bool(forecast["investment"])
-    var capped := {"cap": assignable, "note": ""} if is_expedition \
+    # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
+    # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
+    # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
+    # hunter gap this pass closes). The local branch caps at the source's max-useful ceiling.
+    var capped := _expedition_useful_cap(band, herd, _hunt_assign_policy, assignable) if is_expedition \
         else _forecast_worker_cap(forecast, assignable)
     var cap := int(capped["cap"])
     _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
-    # On an expedition the party stepper is a real decision (a bigger party carries bigger packs, so
-    # stepping UP can turn a working trip impossible) — warn on the row itself when the next size up is.
-    var stepper_tooltip := _hunt_step_up_tooltip(band, herd, _hunt_assign_policy, _hunt_assign_count) \
-        if is_expedition else ""
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
     var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
@@ -3224,15 +3225,15 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         "Party" if is_expedition else crew_label, _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
-            _build_herd_assign_controls(herd),
-        false, false, stepper_tooltip))
+            _build_herd_assign_controls(herd)))
     var cap_note := String(capped["note"])
     if cap_note != "":
         herd_assign_controls.add_child(_alloc_hint_label(cap_note))
-    # Ascending per-turn takes under the LOCAL hunt picker (Sustain < Surplus < Market < Eradicate),
-    # off the herd's sim-exported ceilings. An expedition's take is a carry-cap trip, not a per-turn
-    # rate, so it gets no take line.
-    var policy_takes := {} if is_expedition else _hunt_policy_takes(herd)
+    # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
+    # the same button metric: the local hunt shows each policy's per-turn ceiling (Sustain < Surplus <
+    # Market < Eradicate), the expedition shows each policy's raid haul in animals at the composed party.
+    var policy_takes := _expedition_policy_takes(herd, _hunt_assign_count) if is_expedition \
+        else _hunt_policy_takes(herd)
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
         _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
@@ -3260,15 +3261,13 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
             herd_assign_controls.add_child(_forecast_label(forecast_line))
-        # The row-scanned refusal — computed ONCE and used for both the button tooltip and the reason
+        # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
-        var impossible := _hunt_trip_impossible(trip)
-        var reason := _hunt_impossible_reason(
-            band, herd, _hunt_assign_policy, _hunt_assign_count) if impossible else ""
+        var no_surplus := _hunt_trip_no_surplus(trip)
+        var reason := _hunt_no_surplus_reason(herd) if no_surplus else ""
         _style_send_hunt_button(assign_btn, trip, reason)
-        # The reason is spelled out beside the button too — a disabled control's tooltip is easy to
-        # miss, and the named alternative (a party size that DOES fill) is the actionable half.
-        if impossible:
+        # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
+        if no_surplus:
             herd_assign_controls.add_child(_alloc_hint_label(reason))
     else:
         # What this policy DOES for a resident band (the forecast line below carries the number; this
@@ -3306,11 +3305,11 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
-        # `_style_send_hunt_button` already disabled it when the trip is impossible; a positive party
-        # is the other precondition. (`or` — never clear a disable the style step set.)
+        # `_style_send_hunt_button` already disabled it when the raid returns empty (no surplus); a
+        # positive party is the other precondition. (`or` — never clear a disable the style step set.)
         assign_btn.disabled = assign_btn.disabled or _hunt_assign_count <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _hunt_assign_count <= 0 or _hunt_trip_impossible(
+            if _hunt_assign_count <= 0 or _hunt_trip_no_surplus(
                     _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)):
                 return
             emit_signal("send_hunt_expedition_requested", {
@@ -3329,129 +3328,119 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
 
 ## Style the hunt-expedition send button from the live forecast. Two treatments, and the line between
 ## them is the point:
-##   SLOW (finite ETA past the warn threshold) — a real tradeoff. "armed" amber + a label that NAMES
-##     the cost (`Send Anyway (≈54 turns)`), but ENABLED: the player is told, then trusted. Likewise
-##     a denial mission (`Send (delivers no food)`) — it does exactly what it says.
-##   IMPOSSIBLE (cannot fill within the horizon) — not a tradeoff, a mistake with no upside. DISABLED,
-##     with the reason and the way out. Offering this button would be offering the player a mistake.
+##   DELIVERING (viable / slow / long / denial) — the raid lands something (animals, or the denial it
+##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
+##     turns)` / `Send Anyway (long raid)`) or a denial (`Send (delivers no food)`) — ENABLED either
+##     way: the player is told, then trusted.
+##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
+##     with the reason and the way out (party size can't fix it, so the reason names no alternative).
 ## No confirm dialogs either way.
 func _style_send_hunt_button(button: Button, forecast: Dictionary, reason: String) -> void:
-    var fills := bool(forecast.get("fills", false))
-    # IMPOSSIBLE — the one blocked case. Disabled, and it says WHY plus what to do instead (the button
-    # is the last thing the player looks at before clicking, so the reason belongs on it). The reason is
-    # the caller's row-scanned sentence, so button tooltip and panel line are the SAME words.
-    if _hunt_trip_impossible(forecast):
-        button.text = SEND_HUNT_IMPOSSIBLE_BUTTON
+    # NO SURPLUS — the one blocked case. Disabled, and it says WHY plus what to do instead (the button is
+    # the last thing the player looks at before clicking, so the reason belongs on it). Same words as the
+    # panel line and the targeting refusal, from the one helper.
+    if _hunt_trip_no_surplus(forecast):
+        button.text = SEND_HUNT_NO_SURPLUS_BUTTON
         button.disabled = true
         button.tooltip_text = reason
         HudStyle.apply_button(button, "ghost")
         return
-    var warned := bool(forecast.get("available", false)) \
-        and (not fills or not bool(forecast.get("viable", true)))
-    if not warned:
-        button.text = SEND_HUNTING_EXPEDITION_BUTTON
-        HudStyle.apply_button(button, "primary")
-        return
     if bool(forecast.get("denial", false)):
         # Eradicate: no food comes home, but that IS the mission — state the deal, don't cry failure.
-        # Explicitly NOT blocked: it never fills by design, and blocking it would ban denial outright.
         button.text = SEND_HUNT_DENIAL_BUTTON
-    else:
-        # The only warned non-denial case left is a trip that fills, just slowly. A warned trip
-        # that does NOT fill is the impossible case, and that already returned disabled above.
+        HudStyle.apply_button(button, "armed")
+        return
+    if bool(forecast.get("long_raid", false)):
+        button.text = SEND_HUNT_LONG_RAID_BUTTON
+        HudStyle.apply_button(button, "armed")
+        return
+    if bool(forecast.get("slow", false)):
         button.text = SEND_HUNT_ANYWAY_TURNS_FORMAT % int(forecast.get("turns", 0))
-    HudStyle.apply_button(button, "armed")
+        HudStyle.apply_button(button, "armed")
+        return
+    # A brisk, delivering raid (or no forecast at all — older server): the plain primary send.
+    button.text = SEND_HUNTING_EXPEDITION_BUTTON
+    HudStyle.apply_button(button, "primary")
 
-## The trip provably cannot fill the party's packs: the sim's estimate for THIS (policy, party size)
-## says it delivers food but never fills within the forecast horizon. The single definition of the
-## blocked case — both entry points (panel button + targeting click) gate on it.
-func _hunt_trip_impossible(forecast: Dictionary) -> bool:
-    return bool(forecast.get("available", false)) and bool(forecast.get("impossible", false))
+## The raid returns empty: the sim's estimate for THIS (policy, party size) says the herd has no surplus
+## above the policy's floor (`animals_taken == 0`). The single definition of the blocked case — both
+## entry points (panel button + targeting click) gate on it.
+func _hunt_trip_no_surplus(forecast: Dictionary) -> bool:
+    return bool(forecast.get("available", false)) and bool(forecast.get("empty", false))
 
 ## The `hunt_trip_estimates` key the sim exports a (policy, party size) estimate under. One definition —
-## the lookup and the row scan must agree on the key format or the scan silently finds nothing.
+## the lookup and the plateau scan must agree on the key format or the scan silently finds nothing.
 func _hunt_estimate_key(policy: String, workers: int) -> String:
     return "%s%s%d" % [policy, HUNT_ESTIMATE_KEY_SEPARATOR, workers]
 
-## Scan the CURRENT policy's ROW of the sim's per-(policy, party-size) estimate table and pick the party
-## size to RECOMMEND when the dialed-in one can't fill. Returns `{workers, turns, viable}` — or `{}` when
-## the whole row is zeros (NO size fills at all). A table SCAN, not arithmetic: the client's zero-math
-## property for expeditions is preserved exactly (see `_hunt_trip_forecast`).
-##
-## The objective is the LARGEST party that fills AND IS VIABLE (`turns <= expedition_viability_warn_turns`,
-## the band's own exported lever). Largest-that-*fills* alone is WRONG — on Red Deer + Surplus it names 7
-## (49 turns), a trip this very UI flags "too slow to be worth sending" the moment you dial it: we'd be
-## recommending an option we elsewhere warn against. The party of 5 fills the same packs in 5 turns. Among
-## trips the UI considers worth making, the biggest party hauls the most food — that is the only coherent
-## recommendation. It is NOT "one smaller" either: the row is not monotonic (Surplus fills at 1–5 in 5
-## turns, 6 in 23, 7 in 49, never at 8), so only the row itself knows the answer.
-##
-## Fallback when NOTHING on the row is viable (Rabbit + Surplus: only a lone hunter fills, in 23 turns):
-## still name the best available, but pick the FASTEST-filling size, not the largest — with no viable
-## option left, time dominates haul — and the caller words it as the marginal trip it is (`viable: false`).
-##
-## Capped at what this band could actually field (`_expedition_party_cap`): naming a party of 7 to a band
-## with 4 idle workers would be advice it cannot take.
-## Denial rows (`delivers_food == false` — Eradicate) never "fill" BY DESIGN and are skipped: an Eradicate
-## trip is not impossible, so this scan must never speak for it.
-func _recommended_party(band: Dictionary, herd: Dictionary, policy: String) -> Dictionary:
+## The ONE sentence spoken about a no-surplus raid — shared verbatim by the herd panel (reason line +
+## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
+## never disagree. Under the raid model party size cannot fix it (surplus is a property of the HERD, not
+## the party), so — unlike the retired row scan — there is no alternative size to name.
+func _hunt_no_surplus_reason(herd: Dictionary) -> String:
+    return SEND_HUNT_NO_SURPLUS_REASON % _herd_display_name(herd)
+
+## The max-useful party for a raid: `animals_taken` PLATEAUS with party size once the standing surplus
+## (not the pack) binds, so beyond the plateau extra hunters raise the haul by nothing. Scan the current
+## policy's row for the smallest size at which animals stops rising and cap there — the raid twin of
+## `_forecast_worker_cap`, and it mirrors its `{cap, note}` shape + "max N useful" note so the expedition
+## and local pickers explain a dead `+` the same way. A table SCAN, zero client arithmetic. Returns the
+## full `assignable` (no note) when the row carries no data or never plateaus within the band's reach.
+func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, assignable: int) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if not (estimates_variant is Dictionary):
-        return {}
-    var cap := _expedition_party_cap(band)
-    # A warn threshold of 0 means the server sent none — judge nothing, so every filling size counts as
-    # viable (mirrors `_hunt_trip_forecast`, which reports the turns and withholds the verdict).
-    var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
-    var best_viable := {}
-    var fastest := {}
-    for workers in range(1, cap + 1):
-        var entry_variant: Variant = (estimates_variant as Dictionary).get(
-            _hunt_estimate_key(policy, workers), null)
-        if not (entry_variant is Dictionary):
+        return {"cap": assignable, "note": ""}
+    var estimates := estimates_variant as Dictionary
+    var scan_cap := _expedition_party_cap(band)
+    var prev_animals := -1
+    var plateau := 0
+    for workers in range(1, scan_cap + 1):
+        var cell_variant: Variant = estimates.get(_hunt_estimate_key(policy, workers), null)
+        if not (cell_variant is Dictionary):
             continue
-        var entry := entry_variant as Dictionary
-        if not bool(entry.get("delivers_food", false)):
-            continue
-        var turns := int(entry.get("turns_to_fill", 0))
-        if turns <= 0:
-            continue
-        if warn_turns <= 0 or turns <= warn_turns:
-            # Keep scanning: we want the LARGEST viable size, so the last one that qualifies wins.
-            best_viable = {"workers": workers, "turns": turns, "viable": true}
-        # Strictly faster only, so a tie keeps the SMALLEST fast size... but a tie on turns means the
-        # bigger party hauls more in the same time, so prefer the larger: `<=`.
-        if fastest.is_empty() or turns <= int(fastest.get("turns", 0)):
-            fastest = {"workers": workers, "turns": turns, "viable": false}
-    return best_viable if not best_viable.is_empty() else fastest
+        var animals := int((cell_variant as Dictionary).get("animals_taken", 0))
+        if animals > prev_animals:
+            prev_animals = animals
+            plateau = workers   # the haul is still rising — this size is useful
+        else:
+            break               # the haul stopped rising — the previous size is the plateau
+    if plateau <= 0:
+        return {"cap": assignable, "note": ""}
+    var useful: int = mini(plateau, assignable)
+    if useful >= assignable:
+        return {"cap": assignable, "note": ""}
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## The ONE sentence spoken about a blocked trip — shared verbatim by the herd panel (reason line +
-## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
-## never disagree. Says something TRUE and SPECIFIC by scanning the policy's row (above) instead of
-## dispensing generic "try a smaller party" advice, which is wrong whenever the row is all zeros.
-func _hunt_impossible_reason(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    var herd_name := _herd_display_name(herd)
-    var alternative := _recommended_party(band, herd, policy)
-    if alternative.is_empty():
-        return SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON % herd_name
-    var alt_workers := int(alternative.get("workers", 0))
-    var alt_turns := int(alternative.get("turns", 0))
-    # Nothing on the row is viable: name the best there is, but don't dress a trip the UI would flag
-    # "too slow to be worth sending" up as a fix.
-    if not bool(alternative.get("viable", false)):
-        return SEND_HUNT_IMPOSSIBLE_SLOW_REASON % [herd_name, workers, alt_workers, alt_turns]
-    return SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON % [herd_name, workers, alt_workers, alt_turns]
+## Each extractive policy's raid haul at `party` — `animals_taken` from the sim's estimate table, keyed
+## policy → display string, for the EXPEDITION picker's ascending per-policy readout (Sustain < Surplus <
+## Market < Eradicate raid deeper). The raid twin of `_hunt_policy_takes`. Empty when the herd carries no
+## estimates (older snapshot / non-huntable); a policy with no cell for this party size is skipped.
+func _expedition_policy_takes(herd: Dictionary, party: int) -> Dictionary:
+    var takes := {}
+    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
+    if party <= 0 or not (estimates_variant is Dictionary):
+        return takes
+    var estimates := estimates_variant as Dictionary
+    for policy in LABOR_HUNT_POLICIES:
+        var cell_variant: Variant = estimates.get(_hunt_estimate_key(String(policy), party), null)
+        if not (cell_variant is Dictionary):
+            continue
+        takes[String(policy)] = EXPEDITION_TAKE_FORMAT % int((cell_variant as Dictionary).get("animals_taken", 0))
+    return takes
 
-## Tooltip for the hunt-expedition PARTY stepper when the very next size up is impossible — the stepper is
-## a real decision (a bigger party can break a working trip), and this is where that bites. "" when
-## stepping up is fine (or impossible to do), so the tooltip only exists when it has something to say.
-func _hunt_step_up_tooltip(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    var next_workers := workers + WORKER_STEP
-    if workers <= 0 or next_workers > _expedition_party_cap(band):
-        return ""
-    var next_forecast := _hunt_trip_forecast(band, herd, policy, next_workers)
-    if not _hunt_trip_impossible(next_forecast):
-        return ""
-    return SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP % [next_workers, _herd_display_name(herd)]
+## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared
+## `_forecast_inputs` (food/turn at output 1.0, like the hunt band ceiling), for the FORAGE picker's
+## ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three pickers wear the
+## same "+X /turn" button metric. Empty entries (dead-season patch / older snapshot) are skipped.
+func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
+    var takes := {}
+    for policy in LABOR_HUNT_POLICIES:
+        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
+        if not bool(forecast["known"]):
+            continue
+        takes[String(policy)] = POLICY_TAKE_FORMAT % _format_signed(float(forecast["ceiling"]))
+    return takes
 
 ## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
 ## Sized like the hint lines it sits among, but BBCode-capable so the forecast keeps its state colors.
@@ -3713,9 +3702,13 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
             or not _gate_reasons(forage_gates, _forage_assign_policy).is_empty():
         _forage_assign_policy = DEFAULT_HUNT_POLICY
+    # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
+    # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
+    # like Corral — their dip→payoff is stated by the forecast row below).
+    var forage_takes := _forage_policy_takes(tile_info)
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
-        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates))
+        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
@@ -3855,14 +3848,12 @@ func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
     var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
     var workers := int(_pending_send_hunt_expedition.get("party_workers", 0))
     var policy := String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY))
-    # The SAME block as the panel button, at the other entry point: a trip that provably can't fill is
-    # not dispatchable here either. Stay in targeting and SAY WHY (never swallow the click silently),
-    # exactly like the "no huntable herd here" nudge above — the player can pick another herd or cancel.
-    # The refusal is the SAME row-scanned sentence the panel shows, from the one helper — the two entry
-    # points cannot drift into contradicting each other about which party sizes work.
-    if _hunt_trip_impossible(_hunt_trip_forecast(band, herd, policy, workers)):
-        _note_command_feed("Hunt expedition",
-            _hunt_impossible_reason(band, herd, policy, workers))
+    # The SAME block as the panel button, at the other entry point: a raid that would return empty (no
+    # surplus above the policy's floor) is not dispatchable here either. Stay in targeting and SAY WHY
+    # (never swallow the click silently), exactly like the "no huntable herd here" nudge above — the
+    # player can pick another herd or cancel. Same sentence the panel shows, from the one helper.
+    if _hunt_trip_no_surplus(_hunt_trip_forecast(band, herd, policy, workers)):
+        _note_command_feed("Hunt expedition", _hunt_no_surplus_reason(herd))
         return
     emit_signal("send_hunt_expedition_requested", {
         "faction": int(band.get("faction", PLAYER_FACTION_ID)),

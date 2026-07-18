@@ -39,25 +39,22 @@ const MAMMOTH_SUSTAIN_TRIP_TURNS := 6
 const DEER_SUSTAIN_TRIP_TURNS := 54
 const DEER_SURPLUS_TRIP_TURNS := 6
 const MAMMOTH_SURPLUS_TRIP_TURNS := 3
-# 0 = the forward simulation never fills the party within the forecast horizon ("won't fill").
+# The whole animals the 4-worker RAID delivers (HuntTripEstimate.animalsTaken) — the payload the readout
+# headlines. A viable/slow raid lands a positive count; a herd at/below its policy floor lands 0 (the
+# no-surplus state). Surplus/Market raid deeper than Sustain, so a deeper policy lands MORE animals.
+const MAMMOTH_SUSTAIN_ANIMALS := 8
+const DEER_SUSTAIN_ANIMALS := 6
+const DEER_SURPLUS_ANIMALS := 12
+const NO_SURPLUS_ANIMALS := 0
+# The server's measured Wild Boar raid (K=1433, body 50, B=1010, 4 food/hunter): 1 hunter → 5 animals /
+# 7 turns, 2 → 8 / 8, 3 → 8 / 4. animalsTaken PLATEAUS at 8 (party 2), so max-useful = 2 hunters — the
+# frame the "delivers ≈5 boar over ≈7 turns" readout and the stepper-cap-at-plateau are judged on.
+const BOAR_RAID_ANIMALS := [5, 8, 8, 8, 8, 8, 8, 8]
+const BOAR_RAID_TURNS := [7, 8, 4, 3, 3, 3, 3, 3]
+const BOAR_FOOD_PER_ANIMAL := 4.0
+# 0 = the raid ran the whole forecast horizon still delivering (a long raid), used by the no-surplus /
+# collapsed fixtures where the raid also lands 0 animals.
 const NEVER_FILLS_TRIP_TURNS := 0
-# The SAME herd that can't fill a 4-worker party fills a 1-worker party's (4× smaller) pack in 9 turns.
-const SMALL_PARTY_TRIP_TURNS := 9
-const IMPOSSIBLE_SMALL_PARTY := 1
-# The REAL per-(policy, party-size) estimate ROWS the sim exports at the shipped levers, for a herd
-# sitting at carrying capacity — transcribed from a live snapshot, party sizes 1..8 left-to-right.
-# `0` = does not fill within the sim's forecast horizon. These are what the impossible-trip row scan
-# must reason over, and they are why generic "send a smaller party" advice was WRONG:
-#   Rabbit + Sustain — the whole row is zeros: NO party size ever fills. Stepping is pointless.
-#   Red Deer + Surplus — 1–5 workers fill in 5 turns, 6 in 23, 7 in 49, and 8 NEVER: cranking the party
-#     UP to "get more food" is what makes the trip impossible. The row is not monotonic, so only the row
-#     itself knows which size to recommend.
-const RABBIT_SUSTAIN_ROW := [0, 0, 0, 0, 0, 0, 0, 0]
-const RABBIT_SURPLUS_ROW := [23, 0, 0, 0, 0, 0, 0, 0]
-const DEER_SUSTAIN_ROW := [14, 27, 40, 54, 0, 0, 0, 0]
-const DEER_SURPLUS_ROW := [5, 5, 5, 5, 5, 23, 49, 0]
-# The party that trips the Red Deer + Surplus trap (impossible), and the largest one that still fills.
-const DEER_SURPLUS_TRAP_PARTY := 8
 # The pen-keeping band's entity id — its own, so the force-expanded Food breakdown override
 # (`_breakdown_expanded` is keyed `food:<entity>`) doesn't collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
@@ -915,79 +912,51 @@ func _ready() -> void:
 		await _settle()
 		await _save(String(state["name"]))
 
-	# States 3p–3r — the IMPOSSIBLE trip: the one case that is BLOCKED rather than warned. A slow trip
-	# (3l's 54 turns) is a real tradeoff — told, then trusted, button enabled. A trip that provably
-	# CANNOT fill has no upside at all, so offering the button would be offering a mistake.
-	#   3p impossible    — Rabbit Warren, 4-worker party: the sim says turns_to_fill = 0 → the button is
-	#                      DISABLED and says why + the way out.
-	#   3q smaller party — the SAME herd, party stepped down to 1: a 1-worker pack is 4× smaller and the
-	#                      warren CAN fill it (9 turns) → the button comes back to life. This is the
-	#                      payoff for gating on the sim's per-(policy, party-size) verdict instead of a
-	#                      species/size_class/biomass proxy, which would have banned the herd outright.
-	#   3r eradicate     — the SAME herd on Eradicate: it never "fills" BY DESIGN (delivers_food = false),
-	#                      so it must stay ENABLED. Blocking on "won't fill" alone would ban denial.
-	var impossible_herd := _impossible_herd()
+	# States 3p–3s — the RAID readout in ANIMALS + the party stepper capped at max-useful. A hunting
+	# expedition is a greedy raid: it grabs the herd's standing surplus in a burst and comes home, so the
+	# headline is the PAYLOAD, and `animalsTaken` PLATEAUS with party size once the surplus (not the
+	# pack) binds — that plateau IS max-useful. The Wild Boar carries the server's measured raid.
+	#   3p boar raid   — a 1-hunter raid: "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", cyan +
+	#                    primary "Send Hunting Expedition".
+	#   3q max useful  — 2 hunters: "delivers ≈8 Wild Boar over ≈8 turns · ~32 food"; a 3rd raids NO more
+	#                    animals (the surplus binds), so the stepper caps at 2 and the `+` note reads
+	#                    "max 2 workers useful here — more would be idle". The silent-idle-hunter gap, closed.
+	#   3r no surplus  — a herd stripped to its floor: animalsTaken = 0 at EVERY size → the raid returns
+	#                    empty → red "too lean to raid" + the DISABLED "Herd too lean to raid" button (party
+	#                    size can't fix it — surplus is a property of the herd, not the party).
+	#   3s eradicate   — the boar on Eradicate: delivers no food BY DESIGN → amber "Send (delivers no
+	#                    food)", ENABLED (blocking a denial mission would ban it outright).
+	var boar := _raid_boar_herd()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
-	_hud.show_herd_selection(impossible_herd)
-	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
-	_hud._build_herd_assign_controls(impossible_herd)
+	_hud.show_herd_selection(boar)
+	_hud._build_herd_assign_controls(boar)   # source_changed seeds party = 1
 	await _settle()
-	await _save("herd_hunt_impossible")
+	await _save("herd_hunt_boar_raid")
 
-	_hud._hunt_assign_count = IMPOSSIBLE_SMALL_PARTY
-	_hud._build_herd_assign_controls(impossible_herd)
+	_hud._hunt_assign_count = 2               # key unchanged → no re-seed; caps at the plateau (2)
+	_hud._build_herd_assign_controls(boar)
 	await _settle()
-	await _save("herd_hunt_impossible_smaller_party")
+	await _save("herd_hunt_max_useful")
 
+	var lean := _no_surplus_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(lean)
 	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
+	_hud._build_herd_assign_controls(lean)
+	await _settle()
+	await _save("herd_hunt_no_surplus")
+
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(boar)
+	_hud._hunt_assign_count = 2
+	_hud._build_herd_assign_controls(boar)   # seeds sustain; key now = boar id
 	_hud._hunt_assign_policy = "eradicate"
-	_hud._build_herd_assign_controls(impossible_herd)
+	_hud._build_herd_assign_controls(boar)   # key unchanged → the eradicate policy sticks
 	await _settle()
-	await _save("herd_hunt_impossible_eradicate")
-	_hud._hunt_assign_policy = "sustain"
-
-	# States 3s–3t — the ROW SCAN. When a trip is impossible the client scans the CURRENT policy's row of
-	# the sim's estimate table and says something TRUE and SPECIFIC, instead of the old generic "send a
-	# smaller party" — which was a flat lie on a herd whose whole row is zeros, and points the WRONG WAY
-	# on Red Deer + Surplus. Both fixtures carry the REAL exported rows (see the *_ROW consts).
-	#   3s no size fills — Rabbit Warren + Sustain, party 4: EVERY size is 0, so the panel says "can't
-	#                      fill packs at any party size — hunt it locally instead" and offers no stepper
-	#                      advice at all (sending the player up and down the stepper is the failure mode).
-	#   3t slow only     — the SAME Rabbit on Surplus, party 4: a lone hunter DOES fill — in 23 turns, past
-	#                      the 20-turn warn line, so nothing on the row is viable. Name the best there is
-	#                      (the fastest), but word it "fills, but takes 23 turns": recommending it as a fix
-	#                      would have the UI cheerfully suggesting a trip it elsewhere calls too slow.
-	#   3u bigger trap   — Red Deer + Surplus, party 8: impossible — and the row's largest FILLING size is
-	#                      7 (49 turns), which this same UI would flag NOT VIABLE. So the recommendation is
-	#                      the largest VIABLE size: 5, in 5 turns (~7× the food per turn of the 7-party).
-	#                      Cranking the party UP is what broke the trip. Needs a band that can field 8.
-	var no_size_herd := _msy_rabbit_herd()
-	_hud._hunt_assign_key = ""
-	_hud._hunt_assign_band = -1
-	_hud.show_herd_selection(no_size_herd)
-	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
-	_hud._build_herd_assign_controls(no_size_herd)
-	await _settle()
-	await _save("herd_hunt_impossible_no_size")
-
-	_hud._hunt_assign_policy = "surplus"
-	_hud._build_herd_assign_controls(no_size_herd)
-	await _settle()
-	await _save("herd_hunt_impossible_slow_only")
-	_hud._hunt_assign_policy = "sustain"
-
-	var trap_herd := _msy_deer_herd()
-	_hud._player_bands = [_hunt_preview_full_party_band()]
-	_hud._player_band = _hud._player_bands[0]
-	_hud._hunt_assign_key = ""
-	_hud._hunt_assign_band = -1
-	_hud.show_herd_selection(trap_herd)
-	_hud._hunt_assign_count = DEER_SURPLUS_TRAP_PARTY
-	_hud._hunt_assign_policy = "surplus"
-	_hud._build_herd_assign_controls(trap_herd)
-	await _settle()
-	await _save("herd_hunt_impossible_bigger_party")
+	await _save("herd_hunt_eradicate")
 	_hud._hunt_assign_policy = "sustain"
 
 	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). A local hunt has NO carry
@@ -1674,72 +1643,57 @@ func _hunt_distance_herd() -> Dictionary:
 	herd["tile_info"] = _plain_herd_tile_info()
 	return herd
 
-## A herd that CANNOT fill a full party's packs but CAN fill a small one's — the case the block exists
-## for, and why it keys off the sim's per-(policy, party-size) verdict rather than a species/biomass
-## proxy. A rabbit warren: 4 hunters carry 4×4 = 16 provisions of packs and the warren's trickle never
-## fills them within the horizon (`turns_to_fill = 0`), but 1 hunter's 4-provision pack fills in 9
-## turns. So stepping the party DOWN re-enables the button — the payoff for gating on the real answer.
-## Eradicate stays `delivers_food = false` at every size: a denial mission never "fills", by design, and
-## must stay enabled (blocking on "won't fill" alone would ban it outright).
-func _impossible_herd() -> Dictionary:
-	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05,
-		NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS)
-	herd["size_class"] = "small"
-	herd["hunt_trip_estimates"] = {
-		"sustain:1": {"turns_to_fill": SMALL_PARTY_TRIP_TURNS, "delivers_food": true},
-		"sustain:2": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
-		"sustain:3": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
-		"sustain:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
-		"surplus:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
-		"market:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
-		"eradicate:1": {"turns_to_fill": 0, "delivers_food": false},
-		"eradicate:4": {"turns_to_fill": 0, "delivers_food": false},
-	}
+## A Wild Boar carrying the server's MEASURED raid (K=1433, body 50, B=1010, 4 food/hunter): 1 hunter →
+## 5 animals / 7 turns, 2 → 8 / 8, 3 → 8 / 4. `animalsTaken` plateaus at 8 (party 2), so max-useful = 2.
+## The frame the "delivers ≈5 Wild Boar over ≈7 turns" readout and the stepper-cap-at-plateau are judged
+## on. `food_per_animal` = 4 so the readout appends the food total (~20 at 5 animals, ~32 at 8).
+func _raid_boar_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_boar_04", "Wild Boar", "thriving", 0.30, 0, 0)
+	herd["food_per_animal"] = BOAR_FOOD_PER_ANIMAL
+	herd["hunt_trip_estimates"] = _raid_estimate_table(BOAR_RAID_TURNS, BOAR_RAID_ANIMALS)
 	return herd
 
-## The full estimate TABLE the sim exports on a herd, built from its two real policy rows (index i = a
-## party of i+1). Market mirrors Surplus (both strip stock headroom), and Eradicate is a DENIAL row at
-## every size — `delivers_food = false`, never an ETA — so the impossible-trip row scan must skip it
-## entirely rather than reporting "no party size fills" for a mission that is not supposed to fill.
-func _msy_estimate_table(sustain_row: Array, surplus_row: Array) -> Dictionary:
+## A raid estimate TABLE from a per-party Sustain (turns, animals) pair (index i = a party of i+1). The
+## deeper policies raid to a lower floor, so they take MORE animals (Surplus < Market < Eradicate) — the
+## per-policy ASCENDING the picker buttons read. Eradicate takes the most but delivers NO food (denial —
+## `delivers_food = false`). The per-policy bumps are illustrative fixture data; the live sim exports the
+## real per-floor counts.
+func _raid_estimate_table(turns_row: Array, animals_row: Array) -> Dictionary:
 	var table := {}
-	for i in sustain_row.size():
+	for i in animals_row.size():
+		var turns := int(turns_row[i])
+		var base := int(animals_row[i])
 		table["sustain:%d" % (i + 1)] = {
-			"turns_to_fill": int(sustain_row[i]), "delivers_food": true,
+			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base,
 		}
-	for i in surplus_row.size():
-		var turns := int(surplus_row[i])
-		table["surplus:%d" % (i + 1)] = {"turns_to_fill": turns, "delivers_food": true}
-		table["market:%d" % (i + 1)] = {"turns_to_fill": turns, "delivers_food": true}
-		table["eradicate:%d" % (i + 1)] = {"turns_to_fill": 0, "delivers_food": false}
+		table["surplus:%d" % (i + 1)] = {
+			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base + 2,
+		}
+		table["market:%d" % (i + 1)] = {
+			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base + 3,
+		}
+		table["eradicate:%d" % (i + 1)] = {
+			"turns_to_fill": turns, "delivers_food": false, "animals_taken": base + 5,
+		}
 	return table
 
-## A Rabbit Warren carrying its REAL exported table: on Sustain NO party size fills (the whole row is
-## zeros), so the panel must say exactly that and point the player at a local hunt — never at the
-## stepper. On Surplus a lone hunter fills in 23 turns, so the same herd's OTHER row does name a party.
-func _msy_rabbit_herd() -> Dictionary:
-	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05,
-		NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS)
+## A herd stripped to its policy floor: EVERY (policy, party) cell delivers 0 animals, so the raid comes
+## home empty at any size — the one non-viable case (surplus is a property of the HERD, not the party, so
+## no party size fixes it). The button must be DISABLED with the "too lean to raid" reason.
+func _no_surplus_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05, 0, 0)
 	herd["size_class"] = "small"
-	herd["hunt_trip_estimates"] = _msy_estimate_table(RABBIT_SUSTAIN_ROW, RABBIT_SURPLUS_ROW)
+	var table := {}
+	for w in range(1, 9):
+		for policy in ["sustain", "surplus", "market"]:
+			table["%s:%d" % [policy, w]] = {
+				"turns_to_fill": 0, "delivers_food": true, "animals_taken": 0,
+			}
+		table["eradicate:%d" % w] = {
+			"turns_to_fill": 0, "delivers_food": false, "animals_taken": 0,
+		}
+	herd["hunt_trip_estimates"] = table
 	return herd
-
-## A Red Deer carrying its REAL exported table — the "bigger party breaks the trip" trap: a party of 8
-## on Surplus never fills, while 7 fills in 49 turns (and 5 in 5). The row scan must name 7, which no
-## "send a smaller party" heuristic and no one-step-down rule would ever land on.
-func _msy_deer_herd() -> Dictionary:
-	var herd := _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
-		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
-	herd["hunt_trip_estimates"] = _msy_estimate_table(DEER_SUSTAIN_ROW, DEER_SURPLUS_ROW)
-	return herd
-
-## The far band with enough idle workers to actually field the 8-strong party the Red Deer trap needs
-## (the row scan is capped at what the band could field, so a 6-idle band could never be told "7").
-func _hunt_preview_full_party_band() -> Dictionary:
-	var band := _hunt_preview_far_band()
-	band["working_age"] = 14
-	band["idle_workers"] = 12
-	return band
 
 ## A hex in a given SIGHT state, deliberately carrying a herd in ALL THREE — including the unseen
 ## ones, where MapView would never have put one (it fog-gates `_herds_on_tile` at source). Feeding the
@@ -1796,49 +1750,59 @@ func _plain_herd_tile_info() -> Dictionary:
 func _hunt_assign_forecast_states() -> Array:
 	return [
 		{
+			# A brisk raid: Sustain on a Thunder Mammoth delivers ≈8 animals in 6 turns → cyan line,
+			# primary "Send Hunting Expedition".
 			"name": "herd_hunt_forecast_viable",
 			"policy": "sustain",
 			"herd": _assign_preview_herd("game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
-				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS),
+				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
+				MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS),
 		},
 		{
-			"name": "herd_hunt_forecast_not_viable",
+			# A SLOW raid: Sustain on a Red Deer still delivers ≈6 animals, but over 54 turns — past the
+			# band's warn threshold (20) → amber "⚠ … — a slow raid" + "Send Anyway (≈54 turns)".
+			"name": "herd_hunt_forecast_slow",
 			"policy": "sustain",
 			"herd": _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
-				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS),
+				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
 		{
-			# THE FIX, on the same Red Deer that reads 54 turns on Sustain: a Surplus party strips the
-			# herd's stock headroom instead of living off its renewable flow, so the sim's simulated
-			# row says ~6 turns — VIABLE. Re-deriving the trip from the band's flow ceiling is what
-			# used to scare the player off it.
+			# The SAME Red Deer on Surplus: a Surplus raid strips deeper (≈12 animals) and comes home in
+			# ~6 turns — a brisk, richer raid. Reading the sim's row, never re-deriving it.
 			"name": "herd_hunt_forecast_surplus",
 			"policy": "surplus",
 			"herd": _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
-				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS),
+				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
 		{
-			"name": "herd_hunt_forecast_never_fills",
+			# No surplus: a collapsing Wild Fowl flock is at/below its floor → animalsTaken = 0, the raid
+			# returns empty → red "too lean to raid" + the DISABLED "Herd too lean to raid" button.
+			"name": "herd_hunt_forecast_no_surplus",
 			"policy": "sustain",
 			"herd": _assign_preview_herd("game_fowl_03", "Wild Fowl", "collapsing", 0.0,
-				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS),
+				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS,
+				NO_SURPLUS_ANIMALS, NO_SURPLUS_ANIMALS),
 		},
 		{
 			# Eradicate: the sim marks the row `delivers_food = false` — a DENIAL mission delivers no
-			# food BY DESIGN (the client never infers that from the policy string). Must NOT read like
-			# the collapsed herd above (which is the herd having nothing left to give).
+			# food BY DESIGN (the client never infers that from the policy string). Stays ENABLED.
 			"name": "herd_hunt_forecast_eradicate",
 			"policy": "eradicate",
 			"herd": _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
-				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS),
+				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
 	]
 
 ## A forecast herd (carrying BOTH sim-exported per-policy ceiling tables) as a SELECTED herd — i.e. on
 ## a plain tile, the way `show_herd_selection` receives it — rather than as a hovered hex.
 func _assign_preview_herd(id: String, species: String, phase: String, sustain_ceiling: float,
-		trip_turns: int, surplus_trip_turns: int) -> Dictionary:
-	var herd := _forecast_herd(id, species, phase, sustain_ceiling, trip_turns, surplus_trip_turns)
+		trip_turns: int, surplus_trip_turns: int,
+		sustain_animals: int = 0, surplus_animals: int = 0) -> Dictionary:
+	var herd := _forecast_herd(id, species, phase, sustain_ceiling, trip_turns, surplus_trip_turns,
+		sustain_animals, surplus_animals)
 	herd["huntable"] = true
 	herd["tile_info"] = _plain_herd_tile_info()
 	return herd
@@ -1978,26 +1942,31 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 func _hunt_forecast_states() -> Array:
 	return [
 		{
+			# A brisk raid: ≈8 animals over ≈6 turns.
 			"name": "hunt_forecast_viable",
 			"tile": _herd_hover_tile(_forecast_herd(
 				"game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
-				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS
+				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
+				MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS
 			)),
 		},
 		{
-			"name": "hunt_forecast_not_viable",
+			# A slow raid: ≈6 animals, but over 54 turns (past the warn line) → amber "a slow raid".
+			"name": "hunt_forecast_slow",
 			"tile": _herd_hover_tile(_forecast_herd(
 				"game_deer_07", "Red Deer", "thriving", 0.30,
-				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS
+				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS
 			)),
 		},
 		{
-			"name": "hunt_forecast_never_fills",
-			# A collapsing (sub-Allee) flock: Sustain yields NOTHING, so the ceiling is 0 and the
-			# party would follow it forever and come home empty.
+			"name": "hunt_forecast_no_surplus",
+			# A collapsing (sub-Allee) flock at/below its floor: animalsTaken = 0, so the raid would
+			# come home empty → red "too lean to raid".
 			"tile": _herd_hover_tile(_forecast_herd(
 				"game_fowl_03", "Wild Fowl", "collapsing", 0.0,
-				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS
+				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS,
+				NO_SURPLUS_ANIMALS, NO_SURPLUS_ANIMALS
 			)),
 		},
 	]
@@ -2012,7 +1981,8 @@ func _hunt_forecast_states() -> Array:
 ##       `turns_to_fill == 0` → won't fill within the horizon; `delivers_food == false` → denial.
 ## `trip_turns` is the simulated turns-to-fill for the 4-worker party these states dial in.
 func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling: float,
-		trip_turns: int = 0, surplus_trip_turns: int = 0) -> Dictionary:
+		trip_turns: int = 0, surplus_trip_turns: int = 0,
+		sustain_animals: int = 0, surplus_animals: int = 0) -> Dictionary:
 	return {
 		"id": id,
 		"label": "%s (%s)" % [species, id],
@@ -2047,16 +2017,19 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"hunt_trip_estimates": {
 			"sustain:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": trip_turns, "delivers_food": true,
+				"animals_taken": sustain_animals,
 			},
 			"surplus:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
+				"animals_taken": surplus_animals,
 			},
 			"market:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
+				"animals_taken": surplus_animals,
 			},
 			# Denial: the sim says so via `delivers_food`, the client never infers it from the policy.
 			"eradicate:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": 0, "delivers_food": false,
+				"turns_to_fill": 0, "delivers_food": false, "animals_taken": surplus_animals,
 			},
 		},
 	}
