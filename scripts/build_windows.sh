@@ -70,8 +70,8 @@ command -v zip >/dev/null         || die "zip not found (needed to package the b
 
 # --- 1. cross-compile the Rust artifacts (server + GDExtension) ---------------
 info "Cross-compiling server + GDExtension for $TARGET ..."
-cargo xwin build --release --target "$TARGET" -p core_sim --bin server
-cargo xwin build --release --target "$TARGET" -p shadow_scale_godot
+cargo xwin build --release --locked --target "$TARGET" -p core_sim --bin server
+cargo xwin build --release --locked --target "$TARGET" -p shadow_scale_godot
 
 REL="$ROOT_DIR/target/$TARGET/release"
 [ -f "$REL/$SERVER_NAME" ] || die "server build produced no $SERVER_NAME"
@@ -99,8 +99,9 @@ fi
 # --- 4. assemble the package --------------------------------------------------
 cp "$REL/$SERVER_NAME" "$PKG_DIR/$SERVER_NAME"
 # Godot copies the GDExtension DLL next to the exe on export; copy defensively in
-# case the export embed setting changes.
-cp "$REL/$DLL_NAME" "$PKG_DIR/$DLL_NAME" 2>/dev/null || true
+# case the export embed setting changes. Not silenced — the source is verified to
+# exist above, so a failure here is a real problem worth surfacing.
+cp "$REL/$DLL_NAME" "$PKG_DIR/$DLL_NAME"
 cp "$SCRIPT_DIR/windows_dist/run.bat"    "$PKG_DIR/run.bat"
 cp "$SCRIPT_DIR/windows_dist/README.txt" "$PKG_DIR/README.txt"
 
