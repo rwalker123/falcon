@@ -1616,10 +1616,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     different numbers) and gives the **button itself** the verdict (`_style_send_hunt_button`).
     **A hunting expedition is a GREEDY RAID** (server `5a130e0`): it grabs the herd's standing surplus
     above the policy floor in a burst and comes home, so the headline is the **PAYLOAD** — the whole
-    animals delivered over the turns it takes: **`delivers ≈5 Wild Boar over ≈7 turns · ~20 food`**
-    (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_FOOD_FORMAT`; `animals` =
-    `HuntTripEstimate.animalsTaken`, `turns` = `turnsToFill` now meaning **"turns until the raid comes
-    home"** (fill OR surplus-spent), food = `animals × HerdTelemetryState.foodPerAnimal`).
+    animals delivered over the turns it takes: **`delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8
+    travel) · ~32 food`** (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_TRAVEL_BREAKDOWN` +
+    `HUNT_FORECAST_FOOD_FORMAT`; `animals` = `HuntTripEstimate.animalsTaken`, food = `animals ×
+    HerdTelemetryState.foodPerAnimal`). **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel
+    is NOT in it; the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL**
+    itself (`_round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
+    hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total**, spelling the split
+    out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. **SERVER-SIDE WORK REMAINS:**
+    `band_move_tiles_per_turn` is a LaborConfig scalar NOT yet echoed onto `PopulationCohortState` nor
+    decoded onto the band marker, so travel reads 0 on the live wire today (the readout degrades to the
+    hunting turns, never a fabricated travel) — the arithmetic lights up the moment the field ships.
     **WARNED vs BLOCKED — the line that matters:** a **slow** raid (finite `turnsToFill` past
     `viability_warn_turns`) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
@@ -1668,6 +1675,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy "≈N taken" picker
     buttons) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
     the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
+    `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
+    round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
     `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
     lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → denial, still enabled), and
     `herd_hunt_local_sustain` /
@@ -1736,10 +1745,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `This herd is 40% tamed — ◎ Tame it to finish`.
       **THE GATE RESHUFFLE (§4.3) — one knowledge per transition, and the client encodes it in
       `_hunt_policy_gates` / `_forage_policy_gates`** (mirroring the sim's `assign_labor` validation):
-      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch.
-      * `Sow` ← `seed_selection >= 1` **and** the ground will take seed (see the Sow site gate below).
-        Deliberately **no** Thriving gate: sown ground starts at the reseed floor (i.e. Collapsing),
-        so a health gate would forbid the very case the rung exists for.
+      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch **and NOT already `is_cultivated`** —
+        a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
+        Tended Patch — ♻ Sustain-forage it to harvest"), because re-running the verb only pays the low
+        prep dip forever. The completed reason SUPERSEDES the prep prerequisites (a done patch's
+        Thriving/knowledge gates are moot). Since a gated rung can never be the composed policy, this is
+        also what STOPS the panel lying on a done patch: a standing Cultivate falls back to Sustain, so
+        the "Preparing → then" prep line disappears and the forecast reads the Sustain harvest.
+      * `Sow` ← `seed_selection >= 1` **and** the ground will take seed (see the Sow site gate below)
+        **and NOT already `patch_is_field`** — a finished Field retires Sow the same way
+        (`GATE_REASON_ALREADY_FIELD_FORMAT`). Deliberately **no** Thriving gate: sown ground starts at
+        the reseed floor (i.e. Collapsing), so a health gate would forbid the very case the rung exists for.
       * `Tame` ← `herding >= 1`. **Herding gates Tame ALONE now** — it no longer gates Corral.
       * `Corral` ← **`penning >= 1`** (the new rung-3 knowledge) **and** `domestication >= 1`.
       Two more remedies are the *opposite* of "work harder", because their conditions are stocks, not
@@ -1874,7 +1890,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       near-zero dip, 2× tended payoff) / `forage_sow_locked` (2 reasons, one fixed by practice and one
       only by moving) / `forage_sow_too_dry` / `forage_sow_too_poor` (the two refusals must read
       differently) / `forage_field_building` (`Sowing 45%` beside `🌾 Tended Patch`) / `forage_field`
-      (`▦ Field`).
+      (`▦ Field`) / `forage_cultivate_done` (a COMPLETED Tended Patch with a standing Cultivate: 🌱
+      Cultivate greys "Already a Tended Patch — ♻ Sustain-forage it to harvest", the "Preparing → then"
+      line is GONE, and the policy falls back to Sustain's `Expected yield: +0.32 /turn`) /
+      `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
     were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
@@ -2177,7 +2196,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **5-cell** bar + the live percent. **The narrow bar + the bare ✔ are not cosmetic**: at the
     shared 10-cell `_meter_bar` width plus the word "learning", four tracks overflowed the top bar
     and clipped the last one off-screen (caught in `two_meter_split.png`). `_meter_bar(score, cells)`
-    takes the width as a defaulted param, so Sedentarization is untouched.
+    takes the width as a defaulted param, so Sedentarization is untouched. **AND the strip WRAPS** —
+    even narrowed, four tracks on one line ran off the right edge (the "Penning clipped" playtest
+    report), so `update_intensification` groups the tracks into rows of `KNOWLEDGE_STRIP_TRACKS_PER_LINE`
+    (2) joined by explicit `\n` (the prefix rides the first row). The label lives in the content-sized
+    right-docked `TurnBlock`, so Godot autowrap can't engage without a bounded width — the explicit rows
+    are what guarantee no track is ever lost off the edge, at any window width or ladder length.
   - **PER-SOURCE PROGRESS — the source's own drawer row, never the strip.** A herd's `Husbandry`
     (`domestication`) + `Corral` (`corral_progress`); a patch's `Cultivation` (`cultivation_progress`)
     + `Field` (`patch_field_progress`). Local to ONE source, decays if abandoned.

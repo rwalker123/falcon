@@ -174,6 +174,11 @@ const KNOWLEDGE_STRIP_PREFIX := "⚒ Your people know:  "
 # overflowed and clipped its last track off-screen (caught in the preview, not in review).
 const METER_BAR_CELLS := 10
 const KNOWLEDGE_METER_CELLS := 5
+# Tracks per row in the "⚒ Your people know" strip. Four tracks on ONE line overflowed the top bar and
+# clipped the last one off-screen (the Penning playtest report); grouping into rows of two keeps every
+# line short enough to fit common window widths — a top-bar strip is fine on two rows, and no track is
+# ever lost off the edge, regardless of how many rungs the ladder grows.
+const KNOWLEDGE_STRIP_TRACKS_PER_LINE := 2
 # A fully-learned track. Bare, because `KNOWLEDGE_STRIP_PREFIX` already supplies the verb.
 const KNOWLEDGE_KNOWN_BADGE := "✔"
 const FOOD_MODULE_LABELS := {
@@ -389,6 +394,12 @@ const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Ta
 # patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# A COMPLETED investment rung is a dead-end no-op — the build is DONE, so re-running the verb only pays
+# the low prep dip forever. The rung is greyed (like Sow is greyed when gated) and the reason points the
+# player at the ♻ Sustain that now HARVESTS the finished ground, where the real payoff lives. Mirrors the
+# SOURCE-reason voice ("This herd is 40% tamed — ◎ Tame it to finish") for a state that is already there.
+const GATE_REASON_ALREADY_TENDED_FORMAT := "Already a Tended Patch — %s Sustain-forage it to harvest"
+const GATE_REASON_ALREADY_FIELD_FORMAT := "Already a Field — %s Sustain-forage it to harvest"
 # THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
 # the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
 # client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so
@@ -924,6 +935,15 @@ const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
 # A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
 # real tradeoff (told, then trusted), so the line stays WARN-amber and the button stays enabled.
 const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
+# Travel is NOT in `turnsToFill` — that now counts HUNTING turns only (once the party is in reach). The
+# round trip out to the herd and back is band-relative (the per-herd estimate table is band-agnostic, so
+# it cannot carry it), so the client adds it: ceil(2 × wrap-aware hex_distance(band, herd) /
+# band_move_tiles_per_turn), the SAME formula the server's launch feed uses. When travel > 0 the headline
+# turns is the TOTAL and this breakdown spells the split out; when 0 the headline is just the hunting turns.
+const HUNT_FORECAST_TRAVEL_BREAKDOWN := " (%d hunting + %d travel)"
+# The long-raid line has no bounded hunting-turn count ("over many turns"), so travel rides as a trailing
+# "(+T travel)" rather than a two-part split.
+const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
 # The ONE non-viable case under the raid model: `animalsTaken == 0` — the herd is at/below the policy's
 # floor, so there is no standing surplus to raid and the party would return empty. NOT a "won't fill"
 # verdict (the raid always completes); the herd simply has nothing to give this policy right now.
@@ -1365,12 +1385,20 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
     var food: String = HUNT_FORECAST_FOOD_FORMAT % int(forecast["food"]) if forecast.has("food") else ""
     if bool(forecast.get("long_raid", false)):
         # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
+        var long_text: String = HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name]
+        var long_travel := int(forecast.get("travel", 0))
+        if long_travel > 0:
+            long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
         return "[color=#%s]%s%s%s[/color]" % [
-            HudStyle.WARN_HEX, HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name], food,
-            HUNT_FORECAST_SLOW_SUFFIX,
+            HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX,
         ]
+    # `turns` is the TOTAL (hunting + round-trip travel); the breakdown spells the split out when there's
+    # travel to show — a band-relative addition the band-agnostic estimate table can't carry.
     var turns := int(forecast.get("turns", 0))
     var text: String = HUNT_FORECAST_DELIVERS_FORMAT % [animals, herd_name, turns]
+    var travel := int(forecast.get("travel", 0))
+    if travel > 0:
+        text += HUNT_FORECAST_TRAVEL_BREAKDOWN % [int(forecast.get("hunt_turns", 0)), travel]
     # Slow raid (past the band's warn threshold) — still a real delivery, just a long one: amber, told
     # then trusted. A brisk raid reads income-cyan.
     if bool(forecast.get("slow", false)):
@@ -1407,14 +1435,18 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     if animals <= 0:
         return {"available": true, "denial": false, "empty": true}
     # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
-    # threshold of 0 means the server sent none — report the raid, judge nothing.
-    var turns := int(estimate.get("turns_to_fill", 0))
-    var long_raid: bool = turns <= 0
+    # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
+    # counts HUNTING turns only; the band-relative round trip is added on top so the headline is honest.
+    var hunt_turns := int(estimate.get("turns_to_fill", 0))
+    var long_raid: bool = hunt_turns <= 0
+    var travel := _round_trip_travel_turns(band, herd)
+    var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
-    var slow: bool = not long_raid and warn_turns > 0 and turns > warn_turns
+    var slow: bool = not long_raid and warn_turns > 0 and total > warn_turns
     var result := {
         "available": true, "denial": false, "empty": false,
-        "animals": animals, "turns": turns, "long_raid": long_raid, "slow": slow,
+        "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
+        "long_raid": long_raid, "slow": slow,
     }
     # The food those animals are worth: animals × food_per_animal — a lookup product of two exported
     # numbers, NOT the ecology model. Only when the herd carried the lever (> 0), so the renderer guards
@@ -1423,6 +1455,27 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     if food_per_animal > 0.0:
         result["food"] = int(round(float(animals) * food_per_animal))
     return result
+
+## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
+## remainder of the trip length the band-agnostic `hunt_trip_estimates` table cannot carry (one row
+## serves every band). Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
+## / band_move_tiles_per_turn), from the SELECTED band's tile + the exported move rate.
+## Returns 0 — so the forecast degrades to hunting turns only, never a fabricated travel — when the move
+## rate isn't on the band dict or a position is unknown.
+## SERVER-SIDE WORK REMAINS: `band_move_tiles_per_turn` is a LaborConfig scalar that is NOT yet echoed
+## onto `PopulationCohortState` nor decoded onto the band marker, so `band.band_move_tiles_per_turn` is
+## absent on the live wire today and travel reads 0. The arithmetic here is ready to light up the moment
+## the field ships (schema + population snapshot + native decode). See the report.
+func _round_trip_travel_turns(band: Dictionary, herd: Dictionary) -> int:
+    var move_rate := int(band.get("band_move_tiles_per_turn", 0))
+    if move_rate <= 0:
+        return 0
+    var band_tile := _band_tile(band)
+    var one_way := _hex_distance_wrapped(
+        band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
+    if one_way < 0:
+        return 0
+    return int(ceil(float(2 * one_way) / float(move_rate)))
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
 ## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
@@ -1693,8 +1746,21 @@ func update_intensification(intensification_variant: Variant) -> void:
     intensification_label.visible = true
     # The prefix is what makes this strip read as YOUR PEOPLE'S SKILL rather than as a stat of
     # whatever is currently selected — the one line of copy carrying the §4.1 distinction in the HUD.
-    intensification_label.text = "%s%s" % [
-        KNOWLEDGE_STRIP_PREFIX, INTENSIFICATION_SEGMENT_SEP.join(segments)]
+    # Break the tracks into rows of KNOWLEDGE_STRIP_TRACKS_PER_LINE so a fourth (or future fifth) track
+    # can NEVER run off the right edge: the strip lives in a content-sized top-bar block, so a single
+    # long line just widens the block until it clips (the Penning playtest report) — autowrap can't
+    # engage without a bounded width. Explicit rows bound each line regardless of window width. The
+    # prefix rides the first row.
+    var rows: Array[String] = []
+    var line_segs: Array[String] = []
+    for seg in segments:
+        line_segs.append(seg)
+        if line_segs.size() >= KNOWLEDGE_STRIP_TRACKS_PER_LINE:
+            rows.append(INTENSIFICATION_SEGMENT_SEP.join(line_segs))
+            line_segs = []
+    if not line_segs.is_empty():
+        rows.append(INTENSIFICATION_SEGMENT_SEP.join(line_segs))
+    intensification_label.text = "%s%s" % [KNOWLEDGE_STRIP_PREFIX, "\n".join(rows)]
     # Cyan once every learned track is fully known; neutral while any is still in progress.
     intensification_label.add_theme_color_override(
         "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
@@ -3484,6 +3550,12 @@ func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     if phase != ECOLOGY_PHASE_THRIVING:
         var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
         cultivate_reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
+    # A finished patch retires Cultivate outright: the build is DONE (Sustain harvests it, and Sow is the
+    # next rung if unlocked). This SUPERSEDES the prep prerequisites — a tended patch's Thriving/knowledge
+    # gates are moot — so it replaces the reason list rather than piling on.
+    if bool(tile_info.get("is_cultivated", false)):
+        cultivate_reasons.clear()
+        cultivate_reasons.append(GATE_REASON_ALREADY_TENDED_FORMAT % sustain_icon)
     if not cultivate_reasons.is_empty():
         gates[LABOR_POLICY_CULTIVATE] = cultivate_reasons
     var sow_reasons: Array[String] = []
@@ -3494,6 +3566,10 @@ func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     var refusal := _sow_site_refusal_reason(tile_info)
     if refusal != "":
         sow_reasons.append(refusal)
+    # A finished Field retires Sow, same as a finished patch retires Cultivate.
+    if bool(tile_info.get("patch_is_field", false)):
+        sow_reasons.clear()
+        sow_reasons.append(GATE_REASON_ALREADY_FIELD_FORMAT % sustain_icon)
     if not sow_reasons.is_empty():
         gates[LABOR_POLICY_SOW] = sow_reasons
     return gates

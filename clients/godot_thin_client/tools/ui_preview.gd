@@ -529,6 +529,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_field")
 
+	# State 6b-cultivate-done — a COMPLETED Tended Patch with a standing Cultivate selection: the build is
+	# DONE, so Cultivate is a dead-end no-op. 🌱 Cultivate greys with "Already a Tended Patch — ♻
+	# Sustain-forage it to harvest", the composed policy falls back to Sustain, and the "Preparing → then"
+	# prep line is GONE (the forecast now reads the Sustain harvest, +/turn). This is the fix for the panel
+	# lying: Cultivate used to stay enabled and keep paying the low prep dip on a finished patch.
+	_hud.show_tile_selection(_tended_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._build_forage_assign_controls(_tended_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_done")
+
+	# State 6b-sow-done — a COMPLETED Field with a standing Sow selection: ▦ Sow greys with "Already a
+	# Field — ♻ Sustain-forage it to harvest", mirroring the finished-patch case one rung up (Cultivate is
+	# greyed here too — the ground is both tended AND a Field).
+	_hud.show_tile_selection(_field_tile_fixture())
+	_hud._forage_assign_policy = "sow"
+	_hud._build_forage_assign_controls(_field_tile_fixture())
+	await _settle()
+	await _save("forage_sow_done")
+
 	# Back to a plain Sustain compose for the range states below.
 	_hud._forage_assign_policy = "sustain"
 
@@ -938,6 +958,25 @@ func _ready() -> void:
 	_hud._build_herd_assign_controls(boar)
 	await _settle()
 	await _save("herd_hunt_max_useful")
+
+	# State 3q-travel — the SAME boar raid, staffed by a band the herd is 8 tiles away from (beyond
+	# hunt_reach 7 → expedition) and carrying a move rate. `turnsToFill` is HUNTING turns only, so the
+	# client adds the round-trip TRAVEL the band-agnostic estimate table can't (ceil(2 × 8 / 2) = 8): at
+	# party 2 the readout reads "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food",
+	# and the stepper still caps at the animalsTaken plateau (2). NOTE: `band_move_tiles_per_turn` is not
+	# yet on the live wire (server-side follow-up); this fixture carries it as the decoder WOULD once it ships.
+	_hud._player_bands = [_raid_travel_band()]
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(boar)
+	_hud._hunt_assign_count = 2
+	_hud._build_herd_assign_controls(boar)
+	await _settle()
+	await _save("herd_hunt_raid_travel")
+	# Restore the far band (no move rate) for the remaining raid states.
+	_hud._player_bands = [_hunt_preview_far_band()]
+	_hud._player_band = _hud._player_bands[0]
 
 	var lean := _no_surplus_herd()
 	_hud._hunt_assign_key = ""
@@ -1820,6 +1859,23 @@ func _hunt_preview_far_band() -> Dictionary:
 		"expedition_viability_warn_turns": 20,
 		# Per-worker carry (shipped 4.0) → the forecast's HAUL = party × this.
 		"expedition_per_worker_carry": 4.0,
+		"activity": "forage", "labor_assignments": [],
+	}
+
+## A band 8 tiles from the (66,10) herd (beyond hunt_reach 7 → expedition) carrying a MOVE RATE, so the
+## raid forecast's round-trip travel is exercised: ceil(2 × 8 / 2) = 8 travel turns added to the hunting
+## turns. `band_move_tiles_per_turn` is not on the live wire yet (server-side follow-up); this stands in
+## for what the decoder will surface on the band once it ships.
+func _raid_travel_band() -> Dictionary:
+	return {
+		"id": "Band 1", "entity": 833, "faction": 0, "size": 80,
+		"current_x": 66, "current_y": 18, "pos": [66, 18],
+		"working_age": 10, "idle_workers": 6,
+		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
+		"hunt_per_worker_provisions": 0.8,
+		"expedition_viability_warn_turns": 20,
+		"expedition_per_worker_carry": 4.0,
+		"band_move_tiles_per_turn": 2,
 		"activity": "forage", "labor_assignments": [],
 	}
 
