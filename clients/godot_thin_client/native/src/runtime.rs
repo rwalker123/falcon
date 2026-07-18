@@ -1,7 +1,8 @@
 use anyhow::Result;
-use quick_js::{Arguments, Context, JsValue};
+use rquickjs::function::Rest;
+use rquickjs::{Context, Ctx, Exception, Function, Runtime, Value};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::TcpStream;
@@ -525,12 +526,15 @@ fn run_script_worker(
     shared: Arc<ScriptSharedState>,
     command_rx: Receiver<ScriptCommand>,
 ) -> Result<(), ScriptError> {
-    let ctx = Context::new()
+    let runtime = Runtime::new()
+        .map_err(|err| ScriptError::Runtime(format!("failed to create JS runtime: {err}")))?;
+    let context = Context::full(&runtime)
         .map_err(|err| ScriptError::Runtime(format!("failed to create JS context: {err}")))?;
 
-    install_host(&ctx, Arc::clone(&shared))
+    install_host(&context, Arc::clone(&shared))
         .map_err(|err| ScriptError::Runtime(format!("failed to install host bindings: {err}")))?;
-    ctx.eval(source.as_str())
+    context
+        .with(|ctx| ctx.eval::<Value, _>(source).map(|_| ()))
         .map_err(|err| ScriptError::Runtime(format!("script execution error: {err}")))?;
 
     wait_for_registration(&shared);
@@ -548,7 +552,7 @@ fn run_script_worker(
         match command_rx.recv() {
             Ok(ScriptCommand::Dispatch { event, payload }) => {
                 if let Err(err) =
-                    invoke_callback(&ctx, &shared, CallbackKind::Event(event), payload)
+                    invoke_callback(&context, &shared, CallbackKind::Event(event), payload)
                 {
                     let _ = shared
                         .responses_tx
@@ -557,9 +561,12 @@ fn run_script_worker(
             }
             Ok(ScriptCommand::Tick { delta, budget_ms }) => {
                 let start = std::time::Instant::now();
-                if let Err(err) =
-                    invoke_callback(&ctx, &shared, CallbackKind::Tick(delta), JsonValue::Null)
-                {
+                if let Err(err) = invoke_callback(
+                    &context,
+                    &shared,
+                    CallbackKind::Tick(delta),
+                    JsonValue::Null,
+                ) {
                     let _ = shared
                         .responses_tx
                         .send(ScriptResponse::Error { message: err });
@@ -596,16 +603,34 @@ fn wait_for_registration(shared: &ScriptSharedState) {
         .wait_timeout(guard, Duration::from_secs(1));
 }
 
-fn install_host(ctx: &Context, shared: Arc<ScriptSharedState>) -> Result<(), String> {
+fn install_host(context: &Context, shared: Arc<ScriptSharedState>) -> Result<(), String> {
+    // `install_host_bindings` names the `'js` lifetime explicitly so the host
+    // callbacks can share it between their `Ctx<'js>` and `Value<'js>` params
+    // (rquickjs `Value` is invariant, so the two must be the same lifetime).
+    context.with(|ctx| install_host_bindings(&ctx, shared))
+}
+
+fn install_host_bindings<'js>(
+    ctx: &Ctx<'js>,
+    shared: Arc<ScriptSharedState>,
+) -> Result<(), String> {
+    let globals = ctx.globals();
+
     let log_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_log",
-        move |args: Arguments| -> Result<JsValue, String> {
-            let mut values = args.into_vec().into_iter();
-            let level = values.next().unwrap_or(JsValue::Null);
-            let message = values.next().unwrap_or(JsValue::Null);
-            let level_str = js_value_to_string(level).unwrap_or_else(|| "info".to_string());
-            let message_str = js_value_to_string(message).unwrap_or_default();
+    let host_log = Function::new(
+        ctx.clone(),
+        move |args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+            let mut values = args.0.into_iter();
+            let level_str = values
+                .next()
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_else(|| "info".to_string());
+            let message_str = values
+                .next()
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_default();
             let lvl = match level_str.to_lowercase().as_str() {
                 "trace" => LogLevel::Trace,
                 "debug" => LogLevel::Debug,
@@ -617,138 +642,197 @@ fn install_host(ctx: &Context, shared: Arc<ScriptSharedState>) -> Result<(), Str
                 level: lvl,
                 message: message_str,
             });
-            Ok(JsValue::Null)
+            Ok(())
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_log", host_log)
+        .map_err(|err| err.to_string())?;
 
     let cap_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_capabilities",
-        move |_: Arguments| -> Result<JsValue, String> {
-            let list: Vec<JsValue> = cap_state
+    let host_capabilities = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>| -> rquickjs::Result<Value<'js>> {
+            let list: Vec<JsonValue> = cap_state
                 .capabilities
                 .iter()
                 .cloned()
-                .map(JsValue::from)
+                .map(JsonValue::String)
                 .collect();
-            Ok(JsValue::Array(list))
+            json_to_js(&ctx, &JsonValue::Array(list))
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_capabilities", host_capabilities)
+        .map_err(|err| err.to_string())?;
 
     let req_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_request",
-        move |args: Arguments| -> Result<JsValue, String> {
-            let mut values = args.into_vec().into_iter();
-            let op = values.next().unwrap_or(JsValue::Null);
-            let payload = values.next().unwrap_or(JsValue::Null);
-            let op_str = js_value_to_string(op).unwrap_or_default();
-            let payload_json = js_value_to_json(payload);
+    let host_request = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+            let mut values = args.0.into_iter();
+            let op_str = values
+                .next()
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_default();
+            let payload_json = values
+                .next()
+                .map(|value| js_to_json(&ctx, value))
+                .unwrap_or(JsonValue::Null);
             if let Err(err) = handle_host_request(&req_state, &op_str, &payload_json) {
                 let _ = req_state.responses_tx.send(ScriptResponse::Error {
                     message: err.to_string(),
                 });
             }
-            Ok(JsValue::Null)
+            Ok(())
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_request", host_request)
+        .map_err(|err| err.to_string())?;
 
     let emit_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_emit",
-        move |args: Arguments| -> Result<JsValue, String> {
-            let mut values = args.into_vec().into_iter();
-            let event = values.next().unwrap_or(JsValue::Null);
-            let payload = values.next().unwrap_or(JsValue::Null);
-            let event_name = js_value_to_string(event).unwrap_or_default();
-            let payload_json = js_value_to_json(payload);
+    let host_emit = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+            let mut values = args.0.into_iter();
+            let event_name = values
+                .next()
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_default();
+            let payload_json = values
+                .next()
+                .map(|value| js_to_json(&ctx, value))
+                .unwrap_or(JsonValue::Null);
             // Emitting alerts requires the alerts capability; other custom events are allowed.
             if event_name.starts_with("alerts") {
                 emit_state
                     .ensure_capability("alerts.emit")
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
             }
             let _ = emit_state.responses_tx.send(ScriptResponse::Event {
                 event: event_name,
                 payload: payload_json,
             });
-            Ok(JsValue::Null)
+            Ok(())
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_emit", host_emit)
+        .map_err(|err| err.to_string())?;
 
     let register_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_register",
-        move |args: Arguments| -> Result<JsValue, String> {
-            let descriptor = args.into_vec().into_iter().next().unwrap_or(JsValue::Null);
-            register_descriptor(&register_state, descriptor)?;
+    let host_register = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+            let descriptor_json = args
+                .0
+                .into_iter()
+                .next()
+                .map(|value| js_to_json(&ctx, value))
+                .unwrap_or(JsonValue::Null);
+            register_descriptor(&register_state, &descriptor_json)
+                .map_err(|err| Exception::throw_message(&ctx, &err))?;
             register_state.registered.store(true, Ordering::SeqCst);
             register_state.registration_cv.notify_all();
-            Ok(JsValue::Null)
+            Ok(())
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_register", host_register)
+        .map_err(|err| err.to_string())?;
 
     let get_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_session_get",
-        move |args: Arguments| -> Result<JsValue, String> {
+    let host_session_get = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<Value<'js>> {
             get_state
                 .ensure_capability("storage.session")
-                .map_err(|err| err.to_string())?;
-            let key = args.into_vec().into_iter().next().unwrap_or(JsValue::Null);
-            let key_str = js_value_to_string(key).unwrap_or_default();
-            let session = get_state.session.lock().unwrap();
-            let value = session
-                .as_object()
-                .and_then(|map| map.get(&key_str))
-                .cloned()
-                .unwrap_or(JsonValue::Null);
-            Ok(json_to_js_value(&value))
+                .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+            let key_str = args
+                .0
+                .into_iter()
+                .next()
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_default();
+            let value = {
+                let session = get_state.session.lock().unwrap();
+                session
+                    .as_object()
+                    .and_then(|map| map.get(&key_str))
+                    .cloned()
+                    .unwrap_or(JsonValue::Null)
+            };
+            json_to_js(&ctx, &value)
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_session_get", host_session_get)
+        .map_err(|err| err.to_string())?;
 
     let set_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_session_set",
-        move |args: Arguments| -> Result<JsValue, String> {
-            let mut values = args.into_vec().into_iter();
-            let key = values.next().unwrap_or(JsValue::Null);
-            let value = values.next().unwrap_or(JsValue::Null);
+    let host_session_set = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+            let mut values = args.0.into_iter();
+            let key = values.next();
+            let value = values.next();
             set_state
                 .ensure_capability("storage.session")
-                .map_err(|err| err.to_string())?;
-            let key_str = js_value_to_string(key).unwrap_or_default();
+                .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+            let key_str = key
+                .as_ref()
+                .and_then(js_value_to_string)
+                .unwrap_or_default();
+            let value_json = value
+                .map(|value| js_to_json(&ctx, value))
+                .unwrap_or(JsonValue::Null);
             let mut session = set_state.session.lock().unwrap();
-            let map = session.as_object_mut().unwrap();
-            map.insert(key_str, js_value_to_json(value));
-            Ok(JsValue::Null)
+            if !session.is_object() {
+                // A restored/rehydrated session may be null/array/scalar
+                // (restore_session/apply_state assign it wholesale). Coerce to
+                // an object before inserting so a script's sessionSet can't panic.
+                *session = JsonValue::Object(JsonMap::new());
+            }
+            let map = session
+                .as_object_mut()
+                .expect("session coerced to object above");
+            map.insert(key_str, value_json);
+            Ok(())
         },
     )
     .map_err(|err| err.to_string())?;
+    globals
+        .set("host_session_set", host_session_set)
+        .map_err(|err| err.to_string())?;
 
     let clear_state = Arc::clone(&shared);
-    ctx.add_callback(
-        "host_session_clear",
-        move |_: Arguments| -> Result<JsValue, String> {
+    let host_session_clear =
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<()> {
             clear_state
                 .ensure_capability("storage.session")
-                .map_err(|err| err.to_string())?;
+                .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
             let mut session = clear_state.session.lock().unwrap();
             if let Some(map) = session.as_object_mut() {
                 map.clear();
             }
-            Ok(JsValue::Null)
-        },
-    )
-    .map_err(|err| err.to_string())?;
+            Ok(())
+        })
+        .map_err(|err| err.to_string())?;
+    globals
+        .set("host_session_clear", host_session_clear)
+        .map_err(|err| err.to_string())?;
 
-    ctx.eval(
+    ctx.eval::<Value, _>(
         r#"
         globalThis.host = {
             register: host_register,
@@ -760,7 +844,8 @@ fn install_host(ctx: &Context, shared: Arc<ScriptSharedState>) -> Result<(), Str
             sessionClear: host_session_clear,
             emit: host_emit
         };
-    "#,
+    "#
+        .as_bytes(),
     )
     .map_err(|err| err.to_string())?;
 
@@ -773,7 +858,7 @@ enum CallbackKind {
 }
 
 fn invoke_callback(
-    ctx: &Context,
+    context: &Context,
     shared: &ScriptSharedState,
     kind: CallbackKind,
     payload: JsonValue,
@@ -784,28 +869,37 @@ fn invoke_callback(
                 let guard = shared.on_event.lock().unwrap();
                 guard.clone()
             };
-            if let Some(func) = name {
-                let args = vec![JsValue::from(event), json_to_js_value(&payload)];
-                ctx.call_function(func.as_str(), args)
+            let Some(func_name) = name else {
+                return Ok(());
+            };
+            context.with(|ctx| -> Result<(), String> {
+                let func: Function = ctx
+                    .globals()
+                    .get(func_name.as_str())
+                    .map_err(|err| err.to_string())?;
+                let payload_js = json_to_js(&ctx, &payload).map_err(|err| err.to_string())?;
+                func.call::<_, Value>((event, payload_js))
                     .map(|_| ())
                     .map_err(|err| err.to_string())
-            } else {
-                Ok(())
-            }
+            })
         }
         CallbackKind::Tick(delta) => {
             let name = {
                 let guard = shared.on_tick.lock().unwrap();
                 guard.clone()
             };
-            if let Some(func) = name {
-                let args = vec![JsValue::from(delta)];
-                ctx.call_function(func.as_str(), args)
+            let Some(func_name) = name else {
+                return Ok(());
+            };
+            context.with(|ctx| -> Result<(), String> {
+                let func: Function = ctx
+                    .globals()
+                    .get(func_name.as_str())
+                    .map_err(|err| err.to_string())?;
+                func.call::<_, Value>((delta,))
                     .map(|_| ())
                     .map_err(|err| err.to_string())
-            } else {
-                Ok(())
-            }
+            })
         }
     }
 }
@@ -1002,10 +1096,10 @@ pub(crate) fn transmit_proto_command(
     Ok(())
 }
 
-fn register_descriptor(shared: &ScriptSharedState, descriptor: JsValue) -> Result<(), String> {
-    let object = match descriptor {
-        JsValue::Object(map) => map,
-        _ => return Err("host.register expects an object".into()),
+fn register_descriptor(shared: &ScriptSharedState, descriptor: &JsonValue) -> Result<(), String> {
+    let object = match descriptor.as_object() {
+        Some(map) => map,
+        None => return Err("host.register expects an object".into()),
     };
     if let Some(on_event) = object.get("onEvent").and_then(|v| v.as_str()) {
         let mut guard = shared.on_event.lock().unwrap();
@@ -1015,7 +1109,7 @@ fn register_descriptor(shared: &ScriptSharedState, descriptor: JsValue) -> Resul
         let mut guard = shared.on_tick.lock().unwrap();
         *guard = Some(on_tick.to_string());
     }
-    if let Some(JsValue::Array(items)) = object.get("subscriptions") {
+    if let Some(JsonValue::Array(items)) = object.get("subscriptions") {
         shared
             .ensure_capability("telemetry.subscribe")
             .map_err(|err| err.to_string())?;
@@ -1030,60 +1124,42 @@ fn register_descriptor(shared: &ScriptSharedState, descriptor: JsValue) -> Resul
     Ok(())
 }
 
-fn js_value_to_string(value: JsValue) -> Option<String> {
-    match value {
-        JsValue::String(s) => Some(s),
-        JsValue::Int(i) => Some(i.to_string()),
-        JsValue::Float(f) => Some(f.to_string()),
-        JsValue::Bool(b) => Some(b.to_string()),
-        _ => None,
+/// Coerce a JS value to its string form (string/number/bool → text;
+/// null/undefined/object/array → None), matching the previous engine's behaviour.
+fn js_value_to_string(value: &Value<'_>) -> Option<String> {
+    if let Some(s) = value.as_string() {
+        return s.to_string().ok();
     }
+    if let Some(i) = value.as_int() {
+        return Some(i.to_string());
+    }
+    if let Some(f) = value.as_float() {
+        return Some(f.to_string());
+    }
+    if let Some(b) = value.as_bool() {
+        return Some(b.to_string());
+    }
+    None
 }
 
-fn js_value_to_json(value: JsValue) -> JsonValue {
-    match value {
-        JsValue::Undefined | JsValue::Null => JsonValue::Null,
-        JsValue::Bool(b) => JsonValue::Bool(b),
-        JsValue::Int(i) => JsonValue::Number(JsonNumber::from(i)),
-        JsValue::Float(f) => JsonNumber::from_f64(f)
-            .map(JsonValue::Number)
+/// Read a JS value out into `serde_json` via quickjs's own JSON serializer.
+/// Undefined (JSON.stringify → None) maps to `Null`, as it did before.
+fn js_to_json<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> JsonValue {
+    match ctx.json_stringify(value) {
+        Ok(Some(text)) => text
+            .to_string()
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(JsonValue::Null),
-        JsValue::String(s) => JsonValue::String(s),
-        JsValue::Array(arr) => JsonValue::Array(arr.into_iter().map(js_value_to_json).collect()),
-        JsValue::Object(map) => {
-            let mut json_map = JsonMap::new();
-            for (k, v) in map {
-                json_map.insert(k, js_value_to_json(v));
-            }
-            JsonValue::Object(json_map)
-        }
         _ => JsonValue::Null,
     }
 }
 
-fn json_to_js_value(value: &JsonValue) -> JsValue {
-    match value {
-        JsonValue::Null => JsValue::Null,
-        JsonValue::Bool(b) => JsValue::Bool(*b),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                JsValue::Int(i as i32)
-            } else if let Some(f) = n.as_f64() {
-                JsValue::Float(f)
-            } else {
-                JsValue::Null
-            }
-        }
-        JsonValue::String(s) => JsValue::String(s.clone()),
-        JsonValue::Array(arr) => JsValue::Array(arr.iter().map(json_to_js_value).collect()),
-        JsonValue::Object(map) => {
-            let mut obj = HashMap::new();
-            for (k, v) in map {
-                obj.insert(k.clone(), json_to_js_value(v));
-            }
-            JsValue::Object(obj)
-        }
-    }
+/// Pass a `serde_json` value into JS via quickjs's own JSON parser.
+fn json_to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<Value<'js>> {
+    let text = serde_json::to_string(value)
+        .map_err(|err| Exception::throw_internal(ctx, &err.to_string()))?;
+    ctx.json_parse(text)
 }
 
 pub fn responses_to_json(responses: Vec<ScriptResponse>) -> JsonValue {
