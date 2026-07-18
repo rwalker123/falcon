@@ -634,6 +634,11 @@ table PopulationCohortState {
   // auto-Delivering; the launched-party echo is `expeditionCarryCap`). Appended last (append-only
   // schema discipline).
   expeditionPerWorkerCarry:float = 0;
+  // A band's move speed = labor_config.band_move_tiles_per_turn. Global config echoed per-cohort (same
+  // idiom as the levers above). The client adds a raid's round-trip travel to the band-agnostic
+  // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
+  // Appended last (append-only schema discipline).
+  bandMoveTilesPerTurn:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

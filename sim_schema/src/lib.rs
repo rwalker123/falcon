@@ -1822,6 +1822,12 @@ pub struct PopulationCohortState {
     /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
     #[serde(default)]
     pub expedition_per_worker_carry: f32,
+    /// A band's move speed (`labor_config.band_move_tiles_per_turn`). Global config echoed per-cohort
+    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the
+    /// band-agnostic pre-launch `hunt_trip_estimates` as
+    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
+    #[serde(default)]
+    pub band_move_tiles_per_turn: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -4084,6 +4090,7 @@ fn create_populations<'a>(
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
+                    bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
                 },
             )
         })

@@ -126,6 +126,10 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
+    /// `labor_config.band_move_tiles_per_turn` — a band's move speed, echoed per-cohort so the client
+    /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
+    /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
+    pub(crate) band_move_tiles_per_turn: u32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -340,6 +344,7 @@ pub(crate) fn population_state(
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
+        band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
     }
 }
 

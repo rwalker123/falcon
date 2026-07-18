@@ -4167,6 +4167,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_per_worker_carry",
         f64::from(cohort.expeditionPerWorkerCarry()),
     );
+    // Band move speed (tiles/turn, LaborConfig scalar echoed per-cohort). The hunt-expedition
+    // forecast's round-trip TRAVEL turns are `ceil(2 × hex_distance(band, herd) / this)` — without
+    // it the travel breakdown reads 0 and degrades to hunting-turns-only. 0/absent = no travel line.
+    let _ = dict.insert(
+        "band_move_tiles_per_turn",
+        f64::from(cohort.bandMoveTilesPerTurn()),
+    );
 
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();

@@ -1376,6 +1376,7 @@ pub fn capture_snapshot(
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
+        band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
     };
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()

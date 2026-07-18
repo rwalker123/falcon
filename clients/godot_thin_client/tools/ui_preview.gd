@@ -963,8 +963,8 @@ func _ready() -> void:
 	# hunt_reach 7 → expedition) and carrying a move rate. `turnsToFill` is HUNTING turns only, so the
 	# client adds the round-trip TRAVEL the band-agnostic estimate table can't (ceil(2 × 8 / 2) = 8): at
 	# party 2 the readout reads "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food",
-	# and the stepper still caps at the animalsTaken plateau (2). NOTE: `band_move_tiles_per_turn` is not
-	# yet on the live wire (server-side follow-up); this fixture carries it as the decoder WOULD once it ships.
+	# and the stepper still caps at the animalsTaken plateau (2). `band_move_tiles_per_turn` now ships on the
+	# wire (schema slot 124) and is decoded onto the band; this fixture carries it exactly as the decoder does.
 	_hud._player_bands = [_raid_travel_band()]
 	_hud._player_band = _hud._player_bands[0]
 	_hud._hunt_assign_key = ""
@@ -1864,8 +1864,8 @@ func _hunt_preview_far_band() -> Dictionary:
 
 ## A band 8 tiles from the (66,10) herd (beyond hunt_reach 7 → expedition) carrying a MOVE RATE, so the
 ## raid forecast's round-trip travel is exercised: ceil(2 × 8 / 2) = 8 travel turns added to the hunting
-## turns. `band_move_tiles_per_turn` is not on the live wire yet (server-side follow-up); this stands in
-## for what the decoder will surface on the band once it ships.
+## turns. `band_move_tiles_per_turn` now ships on the wire (schema slot 124) and is decoded onto the band;
+## this carries the same value the decoder surfaces.
 func _raid_travel_band() -> Dictionary:
 	return {
 		"id": "Band 1", "entity": 833, "faction": 0, "size": 80,
