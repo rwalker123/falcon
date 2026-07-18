@@ -798,6 +798,13 @@ const FORECAST_LABEL_FORMAT := "Expected yield: %s"
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
 const MAX_USEFUL_NOUN_ONE := "worker"
 const MAX_USEFUL_NOUN_MANY := "workers"
+# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
+# not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
+# so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
+const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
+# The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
+# (idle >= max party), so the advice is wrong — say we're at the party limit instead.
+const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
 # Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -2751,7 +2758,13 @@ func _expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> fl
 func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     var useful := _max_useful_workers(forecast)
     if useful == MAX_USEFUL_UNBOUNDED or useful >= assignable:
-        return {"cap": assignable, "note": ""}
+        # Labor-bound below the usefulness ceiling: the `+` capped at idle workers, not at
+        # usefulness — name the reason so the cap doesn't read as a silent bug. Exactly staffed
+        # (useful == assignable) and no-forecast (UNBOUNDED) stay noteless.
+        var labor_note := ""
+        if useful != MAX_USEFUL_UNBOUNDED and useful > assignable:
+            labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
+        return {"cap": assignable, "note": labor_note}
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
@@ -3502,7 +3515,16 @@ func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, 
     if not (estimates_variant is Dictionary):
         return {"cap": assignable, "note": ""}
     var estimates := estimates_variant as Dictionary
-    var scan_cap := _expedition_party_cap(band)
+    # Scan the herd's FULL exported absorption range — every party size the estimate table carries for
+    # this policy, NOT the idle/party-limited cap — so `plateau` is the herd's true max-useful party
+    # even when it exceeds what we can field right now. The returned cap still clamps to `assignable`
+    # below, so this widens ONLY the explanatory note (it lets a labor-bound stepper name the ceiling
+    # it's working toward, "N of M useful"), never the cap: within reach the loop breaks exactly as before.
+    var scan_cap := 1
+    for key in estimates:
+        var parts := String(key).split(":")
+        if parts.size() == 2 and String(parts[0]) == policy:
+            scan_cap = maxi(scan_cap, int(parts[1]))
     var prev_animals := -1
     var plateau := 0
     for workers in range(1, scan_cap + 1):
@@ -3519,7 +3541,18 @@ func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, 
         return {"cap": assignable, "note": ""}
     var useful: int = mini(plateau, assignable)
     if useful >= assignable:
-        return {"cap": assignable, "note": ""}
+        # Labor-bound below the plateau: the party capped at what you can field, not at usefulness.
+        # `assignable = min(idle, max_party_size)`, so distinguish which constraint binds — freeing
+        # idle workers only helps when idle is the binder; if the party-size cap binds, say so.
+        var labor_note := ""
+        if plateau > assignable:
+            var idle := int(band.get("idle_workers", 0))
+            var max_party := int(band.get("max_expedition_party_size", 0))
+            if max_party > 0 and idle >= max_party:
+                labor_note = PARTY_SIZE_BOUND_NOTE_FORMAT % [assignable, plateau]
+            else:
+                labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
+        return {"cap": assignable, "note": labor_note}
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 

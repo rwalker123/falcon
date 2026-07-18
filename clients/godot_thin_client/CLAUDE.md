@@ -1916,6 +1916,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
     max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
+    **When the *labor* cap binds instead** (idle workers run out *below* the usefulness ceiling), the
+    silent-disable case is filled by a companion note — `LABOR_BOUND_NOTE_FORMAT` = `"N of M useful —
+    free up idle workers to send more"` (M = the usefulness ceiling, so it tracks the selected policy;
+    the expedition's party-size sub-case, `idle >= max_party_size`, reads `PARTY_SIZE_BOUND_NOTE_FORMAT`
+    = "N of M useful — at the max party size"). The cap value is unchanged (still `min(labor,
+    usefulness)`); only the note now names *which* ceiling bound and the M you're working toward, so a
+    disabled `+` is never mute. (`_expedition_useful_cap` scans the full estimate table for M even past
+    the fieldable party, so "of M" can exceed the party you can currently staff.)
     Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
     `per_worker_yield == 0` (a dead-season tile) → no row,

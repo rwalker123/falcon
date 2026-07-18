@@ -368,6 +368,24 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_forecast_cap")
 
+	# State 2-labor — the SAME food tile, but the actor band has only 2 idle workers, BELOW Sustain's
+	# max-useful of 3: the Foragers stepper caps at 2 (LABOR, not usefulness) and the note names the
+	# reason — "2 of 3 useful — free up idle workers to send more" — so a `+` gone dead at idle reads as
+	# fixable by reassigning labor, not as a silent bug. The usefulness ceiling (3) is unchanged; only
+	# the note differs from the usefulness-bound `forage_forecast_cap` above.
+	var forage_labor_band: Dictionary = _forage_range_bands()[0].duplicate(true)
+	forage_labor_band["idle_workers"] = 2
+	_hud._player_band = forage_labor_band
+	_hud._forage_assign_band = -1
+	_hud._forage_assign_count = 2
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("forage_labor_bound")
+	# Restore the 10-idle range band + count for the states that follow.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._forage_assign_band = -1
+	_hud._forage_assign_count = 3
+
 	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
 	# "🌾 Tended Patch" (SIGNAL tint) with an "Ecology: Thriving" row above it. A tended
 	# patch's ceilings all equal its per-worker yield, so the forecast caps the stepper at 1 worker.
@@ -1012,6 +1030,51 @@ func _ready() -> void:
 	_hud._build_herd_assign_controls(boar)   # key unchanged → the eradicate policy sticks
 	await _settle()
 	await _save("herd_hunt_eradicate")
+	_hud._hunt_assign_policy = "sustain"
+
+	# States 3t–3v — the LABOR-BOUND note. When the herd's max-useful party exceeds the hunters you can
+	# field, the `+` caps at LABOR (not usefulness), and the note names the reason AND the ceiling you're
+	# working toward — "N of M useful — free up idle workers to send more". The Steppe Bison's plateau
+	# DIFFERS BY POLICY (Sustain 4, Market 7), which is how the "of M" is shown to track the policy.
+	var bison := _labor_bound_raid_herd()
+	var bound_band: Dictionary = _hunt_preview_far_band().duplicate(true)
+	bound_band["idle_workers"] = 3           # below Sustain's plateau of 4 AND Market's of 7 → labor-bound
+	_hud._player_bands = [bound_band]
+	_hud._player_band = bound_band
+	#   3t Sustain — idle 3 < plateau 4 → "3 of 4 useful — free up idle workers to send more", + dead at 3.
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(bison)
+	_hud._hunt_assign_count = 3
+	_hud._hunt_assign_policy = "sustain"
+	_hud._build_herd_assign_controls(bison)
+	await _settle()
+	await _save("herd_hunt_labor_bound")
+	#   3u Market — SAME herd + band, policy flipped: the plateau rises to 7 → "3 of 7 useful", proving the
+	#              ceiling tracks the selected policy. Key unchanged so the policy override sticks.
+	_hud._hunt_assign_policy = "market"
+	_hud._build_herd_assign_controls(bison)
+	await _settle()
+	await _save("herd_hunt_labor_bound_market")
+	#   3v Party-size-bound — the SUB-CASE where freeing idle workers would NOT help: idle 6 >= max party 2,
+	#              so the party-SIZE cap binds, not idle. The note reads "2 of 4 useful — at the max party
+	#              size" instead of the free-up-workers advice.
+	var party_capped: Dictionary = _hunt_preview_far_band().duplicate(true)
+	party_capped["idle_workers"] = 6
+	party_capped["max_expedition_party_size"] = 2
+	_hud._player_bands = [party_capped]
+	_hud._player_band = party_capped
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(bison)
+	_hud._hunt_assign_count = 2
+	_hud._hunt_assign_policy = "sustain"
+	_hud._build_herd_assign_controls(bison)
+	await _settle()
+	await _save("herd_hunt_party_size_bound")
+	# Restore the far band + sustain for the states that follow.
+	_hud._player_bands = [_hunt_preview_far_band()]
+	_hud._player_band = _hud._player_bands[0]
 	_hud._hunt_assign_policy = "sustain"
 
 	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). A local hunt has NO carry
@@ -1754,6 +1817,26 @@ func _raid_estimate_table(turns_row: Array, animals_row: Array) -> Dictionary:
 			"turns_to_fill": turns, "delivers_food": false, "animals_taken": base + 5,
 		}
 	return table
+
+## A raid herd whose max-useful party DIFFERS BY POLICY, to prove the labor-bound note's "of M" tracks
+## the selected policy: Sustain's animalsTaken keeps rising through a party of 4 (then plateaus), Market's
+## through a party of 7. A band that can field only 3 hunters is labor-bound under BOTH — so the note reads
+## "3 of 4 useful" on Sustain and "3 of 7 useful" on Market, the same herd, only the policy changed.
+func _labor_bound_raid_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_bison_09", "Steppe Bison", "thriving", 0.30, 0, 0)
+	herd["food_per_animal"] = 4.0
+	var sustain_animals := [3, 5, 7, 9, 9, 9, 9, 9]     # plateau at party 4
+	var surplus_animals := [4, 6, 8, 10, 12, 12, 12, 12] # plateau at party 5
+	var market_animals := [5, 7, 9, 11, 13, 15, 17, 17]  # plateau at party 7
+	var table := {}
+	for i in sustain_animals.size():
+		var w := i + 1
+		table["sustain:%d" % w] = {"turns_to_fill": 8, "delivers_food": true, "animals_taken": int(sustain_animals[i])}
+		table["surplus:%d" % w] = {"turns_to_fill": 6, "delivers_food": true, "animals_taken": int(surplus_animals[i])}
+		table["market:%d" % w] = {"turns_to_fill": 5, "delivers_food": true, "animals_taken": int(market_animals[i])}
+		table["eradicate:%d" % w] = {"turns_to_fill": 4, "delivers_food": false, "animals_taken": int(market_animals[i]) + 2}
+	herd["hunt_trip_estimates"] = table
+	return herd
 
 ## A herd stripped to its policy floor: EVERY (policy, party) cell delivers 0 animals, so the raid comes
 ## home empty at any size — the one non-viable case (surplus is a property of the HERD, not the party, so
