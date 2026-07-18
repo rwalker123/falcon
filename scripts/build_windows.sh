@@ -53,6 +53,8 @@ elif [ -d /usr/local/opt/llvm/bin ]; then
 fi
 
 GODOT_BIN="${GODOT_BIN:-godot}"
+# When set (CI passes the run number), the zip is named ShadowScale-windows-b<N>.zip.
+BUILD_NUMBER="${BUILD_NUMBER:-}"
 
 info()  { printf '\033[1;36m[win-build]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[win-build]\033[0m %s\n' "$*" >&2; }
@@ -100,10 +102,12 @@ cp "$SCRIPT_DIR/windows_dist/run.bat"    "$PKG_DIR/run.bat"
 cp "$SCRIPT_DIR/windows_dist/README.txt" "$PKG_DIR/README.txt"
 
 # --- 5. zip it ----------------------------------------------------------------
+ZIP_NAME="$PKG_NAME"
+[ -n "$BUILD_NUMBER" ] && ZIP_NAME="${PKG_NAME}-b${BUILD_NUMBER}"
 info "Zipping package ..."
-( cd "$DIST_ROOT" && rm -f "$PKG_NAME.zip" && zip -r -q "$PKG_NAME.zip" "$PKG_NAME" )
+( cd "$DIST_ROOT" && rm -f "$ZIP_NAME.zip" && zip -r -q "$ZIP_NAME.zip" "$PKG_NAME" )
 
 info "Done."
 info "Package : $PKG_DIR"
-info "Zip     : $DIST_ROOT/$PKG_NAME.zip"
+info "Zip     : $DIST_ROOT/$ZIP_NAME.zip"
 info "Hand the ZIP to a Windows playtester — they unzip and double-click run.bat."
