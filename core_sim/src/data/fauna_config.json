@@ -4,6 +4,7 @@
   "_comment_taming_rate": "PER-SPECIES TAMING TIMESCALE (intensification ladder slice 3c, docs/plan_intensification_ladder.md) — a multiplier on the animal:pastoral rung's BUILD, so the rung owns the mechanic and the species scales it (exactly how husbandry r works: rung pastoral_gain x species wild r). Without it the rung's single progress_per_turn (0.04) tames EVERY species in the same 25 turns — a rabbit costs what a Steppe Runner costs. Taming a small, quick, forgiving animal should be fast; binding a large migratory herd should be generational. IT SCALES THE WHOLE TIMESCALE: RungDef::build_accrual AND build_decay both take it, so the rung's 4:1 build:decay ratio is invariant — slow to tame, SLOW TO FORGET (a beast that takes a lifetime to gentle does not go feral in a season). Scaling progress alone would put a Steppe Runner at 0.04*0.2 = 0.008/turn, BELOW the 0.01/turn decay: literally untameable, and a violation of the ladder's taming-must-outrun-its-decay bound. Roster: rabbit/fowl/crag_goat 1.0 (25 turns), boar 0.8 (~31), aurochs 0.5 (50), steppe_runner/marsh_grazer 0.2 (125); deer/mammoth omit it — a wild husbandry_ceiling never tames at all. Defaults to 1.0 (the rung's own pace) when omitted. PLAYTEST DIALS — possibly slow, deliberately tunable.",
   "_comment_body_mass": "BIOMASS OF ONE ANIMAL (intensification ladder slice 8, docs/plan_intensification_ladder.md) — the quantum every hunt take is floored to. A herd's animal count is biomass/body_mass, DERIVED, never stored. This is what makes a herd a herd and not a fluid: you kill WHOLE animals, and a big animal is a lot of food at once. Read each row against its MSY (r*K/4) — the ratio IS the gameplay. (1) RHYTHM = body_mass/MSY turns per animal at the operating point: fowl/rabbit ~every turn (a trickle), boar/deer ~2, steppe_runner ~3, MAMMOTH ~7 — then you eat for a week. When the herd cannot yet spare a whole animal the hunt PAUSES and the herd regrows; that wait is constant escapement, discretised, and the herd's own biomass is the accumulator (there is no credit meter). (2) PARTY SIZE = HOW MUCH OF THE KILL YOU KEEP, against labor_config's hunt.per_worker_biomass_capacity (40): one hunter keeps 80% of a boar, 33% of a steppe runner, 5% of a mammoth; ~20 hunters bring a whole mammoth home. A party that cannot carry a whole animal may still take one and WASTE most of it — you cannot half-kill a mammoth, and that waste is the player's call, shown on the income breakdown. NOTE THE ASYMMETRY WITH PLANTS, IT IS DELIBERATE: forage never quantises, because you harvest grain by the handful. The PEN never quantises either (fauna::managed_yield_biomass) — converting a lumpy wild resource into a steady supply is WHY humans penned animals. PLAYTEST DIALS.",
   "_comment_animals_per_herder": "STANDING HERDER LABOR, PER SPECIES (intensification ladder slice 8): how many ANIMALS one herder can mind. herders_needed = ceil((biomass / body_mass) / animals_per_herder), owed EVERY TURN by a pastoral or penned herd — including wait turns when the herd cannot spare an animal. Just because you aren't killing an animal doesn't mean you aren't tending them, keeping them from running off, repairing fences. Before this a pen of 2 and a pen of 200 needed the same single keeper and only the FEED scaled. HERDING IS HEADS, NOT TONNES — the denominator is the whole design: a shepherd minds ~300 sheep, a cowherd ~80 cattle; you watch INDIVIDUALS (chase strays, check each animal) and a heavier beast is not proportionally more work. An earlier cut used a single global biomass_per_herder, which says 'one herder per 100 fowl but one herder per 2 boar' and invented a 45-herder steppe megaherd that was a pure artifact of the unit (4,560 biomass of Steppe Runner is only 38 ANIMALS = ~3 herders). Per-species for the same reason body_mass / taming_rate / husbandry_ceiling are. ONE NEED, NOT TWO: the same herders mind the herd AND slaughter it, so a managed rung has no separate harvest-side worker need. A WILD hunt is the opposite model and must stay apart — no maintenance (the herd isn't yours) but it keeps its carry cap: hunt = reach + carry, harvest = maintain + take. UNDERSTAFFING IS PROPORTIONAL, NEVER BINARY: herded_fraction = min(1, assigned/needed) scales growth and decays the rung's meter, floored and recoverable (the pen_fed_fraction -> starve_shrink_rate pattern). Binary escape survives ONLY for total abandonment (zero herders) — a threshold that destroys a 25-turn investment on rounding, as biomass breathes across it, is not a decision but an accident. Roster: fowl/rabbit 200 (birds and hutches — tiny, docile, one keeper minds a whole flock), crag_goat 80 (small hardy stock, herded in big flocks), boar 15, steppe_runner/marsh_grazer 15 (bison / wild-horse scale, herded not fenced), aurochs 12 (cattle — big, ornery, few per herder). deer/mammoth omit it: a wild husbandry_ceiling is never herded. Defaults to 25 when omitted. Resolved LIVE by display name (FaunaConfig::animals_per_herder_for), not cached on the Herd, so a retune reaches herds already on the map. PLAYTEST DIALS — ship these, measure, then tune.",
+  "_comment_husbandry_density": "PER-SPECIES HUSBANDRY DENSITY (K) MULTIPLIER, PER RUNG — domestication makes the LAND hold more animals, and by how much is species-specific and NON-LINEAR up the ladder (wild x1, pastoral modest, pen big). pastoral_density scales a mobile-tamed herd's carrying capacity, pen_density a penned herd's; both default to 1.0 (neutral — a wild/untagged species is unchanged and byte-identical). This is DISTINCT from the global r-gains (husbandry.pastoral_gain 1.5 / pen_gain 3.0): those scale a herd's breeding RATE, this scales its CEILING. Without it a species on marginal range (a goat penned at K≈24) stays tiny even penned, and a fast wild breeder (rabbit) out-yields the prime domesticates (goat/aurochs) at every rung — because taming touched only r. Applied at the ONE K seam (fauna::ecological_carrying_capacity, via herd_density_gain) to the final range/footprint-derived K, resolved LIVE by display name so a retune reaches herds already on the map. Roster: crag_goat/aurochs 2.0/5.0 (the prime grazer domesticates — a fenced pasture packs far more of them), boar 1.5/4.0 (a tier-1 domesticate — a dense sty, just under the grazers since pigs lean harder on larder feed than rangeland stock), rabbit/fowl 1.1/1.5 (already dense as wild small game — little headroom), steppe_runner/marsh_grazer 1.5/1.0 (nomadic pastoral only — never penned, so pen_density is inert). deer/mammoth omit both (wild ceiling — never domesticated, always x1). PLAYTEST DIALS. Validated finite & >= 1.0 (a gain below 1 would make domestication REDUCE capacity).",
   "species": {
     "mammoth": {
       "display_name": "Thunder Mammoths",
@@ -35,7 +36,9 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.04,
       "taming_rate": 0.2,
-      "husbandry_ceiling": "pastoral"
+      "husbandry_ceiling": "pastoral",
+      "pastoral_density": 1.5,
+      "pen_density": 1.0
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
@@ -52,7 +55,9 @@
       "fodder_per_biomass": 0.03,
       "regrowth_rate": 0.04,
       "taming_rate": 0.2,
-      "husbandry_ceiling": "pastoral"
+      "husbandry_ceiling": "pastoral",
+      "pastoral_density": 1.5,
+      "pen_density": 1.0
     },
     "deer": {
       "display_name": "Red Deer",
@@ -80,7 +85,9 @@
       "fodder_per_biomass": 0.06,
       "regrowth_rate": 0.10,
       "taming_rate": 0.8,
-      "husbandry_ceiling": "pen"
+      "husbandry_ceiling": "pen",
+      "pastoral_density": 1.5,
+      "pen_density": 4.0
     },
     "rabbit": {
       "display_name": "Rabbit Warren",
@@ -95,7 +102,9 @@
       "fodder_per_biomass": 0.10,
       "regrowth_rate": 0.35,
       "taming_rate": 1.0,
-      "husbandry_ceiling": "pen"
+      "husbandry_ceiling": "pen",
+      "pastoral_density": 1.1,
+      "pen_density": 1.5
     },
     "fowl": {
       "display_name": "Wild Fowl",
@@ -110,7 +119,9 @@
       "fodder_per_biomass": 0.09,
       "regrowth_rate": 0.35,
       "taming_rate": 1.0,
-      "husbandry_ceiling": "pen"
+      "husbandry_ceiling": "pen",
+      "pastoral_density": 1.1,
+      "pen_density": 1.5
     },
     "aurochs": {
       "display_name": "Wild Aurochs",
@@ -125,7 +136,9 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.09,
       "taming_rate": 0.5,
-      "husbandry_ceiling": "pen"
+      "husbandry_ceiling": "pen",
+      "pastoral_density": 2.0,
+      "pen_density": 5.0
     },
     "crag_goat": {
       "display_name": "Crag Goats",
@@ -140,7 +153,9 @@
       "fodder_per_biomass": 0.05,
       "regrowth_rate": 0.22,
       "taming_rate": 1.0,
-      "husbandry_ceiling": "pen"
+      "husbandry_ceiling": "pen",
+      "pastoral_density": 2.0,
+      "pen_density": 5.0
     }
   },
   "abundance": {

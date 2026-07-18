@@ -226,6 +226,25 @@ pub struct SpeciesDef {
     /// (the full ladder) when omitted. See [`HusbandryCeiling`].
     #[serde(default)]
     pub husbandry_ceiling: HusbandryCeiling,
+    /// **The K (carrying-capacity) multiplier at the mobile-tamed (pastoral) rung** — domestication
+    /// makes the *land* hold more animals, non-linearly by species. Distinct from the global r-gains
+    /// (`husbandry.pastoral_gain` / `pen_gain`), which scale a herd's *breeding rate*: this scales its
+    /// *ceiling*. Without it a species on marginal range (a goat at `K≈24`) stays tiny even tamed while
+    /// a fast wild breeder out-yields it, because taming touched only `r`. Folded into the herd's `K` at
+    /// the one seam that writes it (`fauna::ecological_carrying_capacity`, via [`fauna::herd_density_gain`]),
+    /// so a wild herd's `×1.0` leaves its `K` byte-identical. Resolved **live** by display name
+    /// ([`FaunaConfig::pastoral_density_for`]), never cached on the `Herd` — the `taming_rate` path, so a
+    /// retune reaches herds already on the map. Defaults to [`DEFAULT_HUSBANDRY_DENSITY`] (1.0, neutral).
+    /// **Playtest dial.** Validated finite & `>= 1.0` (a gain below 1 would make domestication *reduce*
+    /// capacity).
+    #[serde(default = "default_husbandry_density")]
+    pub pastoral_density: f32,
+    /// **The K (carrying-capacity) multiplier at the penned rung** — the top of the density ladder, big
+    /// for the prime domesticates (goat/aurochs `5.0`). The pen twin of [`SpeciesDef::pastoral_density`];
+    /// see it for the full rationale. Resolved live ([`FaunaConfig::pen_density_for`]), defaults to
+    /// [`DEFAULT_HUSBANDRY_DENSITY`], validated finite & `>= 1.0`.
+    #[serde(default = "default_husbandry_density")]
+    pub pen_density: f32,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -255,6 +274,16 @@ pub const DEFAULT_ANIMALS_PER_HERDER: f32 = 25.0;
 
 fn default_animals_per_herder() -> f32 {
     DEFAULT_ANIMALS_PER_HERDER
+}
+
+/// **A species whose husbandry does not raise its carrying capacity** — the neutral density gain
+/// ([`SpeciesDef::pastoral_density`] / [`SpeciesDef::pen_density`]), so an untagged (or wild) species'
+/// `K` is unchanged (`×1.0`). Also what an unresolvable species name reads as
+/// ([`FaunaConfig::pastoral_density_for`] / [`FaunaConfig::pen_density_for`]).
+pub const DEFAULT_HUSBANDRY_DENSITY: f32 = 1.0;
+
+fn default_husbandry_density() -> f32 {
+    DEFAULT_HUSBANDRY_DENSITY
 }
 
 /// Default migratory loiter wander radius (hexes) around an anchor. Also the fallback grazing-range
@@ -972,6 +1001,12 @@ impl FaunaConfig {
             // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
             // turn; negative would invert the floor and hand back a negative kill count.
             require_positive_finite(species_field("body_mass"), def.body_mass)?;
+            // **The husbandry density gains** — the per-rung K multiplier (`>= 1.0`). A gain **below 1**
+            // would mean domestication *reduces* the land's carrying capacity, inverting the whole point
+            // of the dial; `1.0` is neutral (a wild/untagged species). Both `#[serde(default)]` to 1.0,
+            // so an older config that omits them stays valid.
+            require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
+            require_at_least_one(species_field("pen_density"), def.pen_density)?;
         }
 
         // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the
@@ -1117,6 +1152,23 @@ impl FaunaConfig {
     pub fn animals_per_herder_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
+    }
+
+    /// **The species' pastoral density gain** ([`SpeciesDef::pastoral_density`]), resolved by the
+    /// display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning the dial
+    /// reaches herds already on the map instead of freezing at spawn. A species the table cannot resolve
+    /// (an isolated test fixture) reads [`DEFAULT_HUSBANDRY_DENSITY`] (neutral, `×1.0`).
+    pub fn pastoral_density_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_HUSBANDRY_DENSITY, |def| def.pastoral_density)
+    }
+
+    /// **The species' pen density gain** ([`SpeciesDef::pen_density`]), resolved by display name — the
+    /// [`FaunaConfig::pastoral_density_for`] path. An unresolvable species reads
+    /// [`DEFAULT_HUSBANDRY_DENSITY`].
+    pub fn pen_density_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_HUSBANDRY_DENSITY, |def| def.pen_density)
     }
 
     /// `(key, def)` pairs for every non-migratory (short-range) game species that
@@ -1303,6 +1355,23 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
 // (`hunt.surplus_multiplier` / `market_multiplier`, both `> 1`, so *out* of the unit range), and an
 // ordering is a stronger statement than a range: `require_greater_than` chains them so a multiplier
 // cannot be individually "in range" yet out of order. See `fauna::hunt_policy_ceiling`.
+
+/// A **gain that must not shrink** the quantity it scales: finite and `>= 1.0`. A husbandry density
+/// below 1 would make domestication *reduce* a herd's carrying capacity — the exact inversion the dial
+/// exists to prevent (see [`SpeciesDef::pastoral_density`]). `1.0` is the neutral (wild) value.
+fn require_at_least_one(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
+    if !value.is_finite() || value < MAX_FRACTION {
+        return Err(FaunaConfigError::Invalid {
+            field,
+            constraint: format!(
+                "be finite and at least {MAX_FRACTION} (a density gain below 1 would make \
+                 domestication reduce carrying capacity)"
+            ),
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
 
 /// A strict cross-field ordering (`value > other`) — the shape most of this config's real invariants
 /// take (the monotone ladder, the ordered phase bands, accrual out-running decay).
@@ -1551,6 +1620,48 @@ mod tests {
             let err = reject(|json| json["species"]["rabbit"]["taming_rate"] = (bad).into());
             assert_rejects_field(err, "species.rabbit.taming_rate");
         }
+    }
+
+    /// **A husbandry density below 1 makes domestication REDUCE the land's carrying capacity** — the
+    /// exact inversion the dial exists to prevent (a tamed goat's range would hold *fewer* goats than a
+    /// wild one). One rejection per bound; the neutral `1.0` and the shipped gains stay valid.
+    #[test]
+    fn validate_rejects_a_pastoral_density_below_one() {
+        for bad in [0.99, 0.0, -1.0] {
+            let err =
+                reject(|json| json["species"]["crag_goat"]["pastoral_density"] = (bad).into());
+            assert_rejects_field(err, "species.crag_goat.pastoral_density");
+        }
+        assert!(FaunaConfig::builtin().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_pen_density_below_one() {
+        for bad in [0.99, 0.0, -1.0] {
+            let err = reject(|json| json["species"]["crag_goat"]["pen_density"] = (bad).into());
+            assert_rejects_field(err, "species.crag_goat.pen_density");
+        }
+    }
+
+    /// The density gains default to the neutral `1.0` (a wild/untagged species is unchanged) and
+    /// resolve live by display name — the `taming_rate_for` path, so a retune reaches herds on the map.
+    #[test]
+    fn husbandry_density_defaults_to_neutral_and_resolves_live() {
+        let config = FaunaConfig::builtin();
+        // A row that omits both dials reads the neutral gain.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
+        assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);
+        assert_eq!(def.pen_density, DEFAULT_HUSBANDRY_DENSITY);
+        // The prime grazer domesticate carries the big pen bump; an unresolvable species is neutral.
+        assert_eq!(config.pastoral_density_for("Crag Goats"), 2.0);
+        assert_eq!(config.pen_density_for("Crag Goats"), 5.0);
+        assert_eq!(
+            config.pen_density_for("No Such Beast"),
+            DEFAULT_HUSBANDRY_DENSITY
+        );
     }
 
     /// **A `body_mass` of `0` is a herd of infinitely many animals** — `floor(escapement / 0)` is

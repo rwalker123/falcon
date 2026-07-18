@@ -14,7 +14,7 @@ use crate::{
     components::{FollowPolicy, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
-        HusbandryCeiling, SizeClass, SpeciesDef, NO_GRAZE_CAPACITY,
+        HusbandryCeiling, SizeClass, SpeciesDef, DEFAULT_HUSBANDRY_DENSITY, NO_GRAZE_CAPACITY,
     },
     food::{classify_food_module, FoodModule},
     graze::GrazeRegistry,
@@ -740,6 +740,27 @@ fn managed_regrowth_rate(wild_r: f32, gain: f32, fauna: &FaunaConfig) -> f32 {
 /// the range). The twin of [`herd_ecology`] — same rule: no call site re-derives it.
 pub fn herd_capacity(herd: &Herd, _fauna: &FaunaConfig) -> f32 {
     herd.carrying_capacity
+}
+
+/// **The per-species density (K) multiplier for a herd's CURRENT husbandry rung** — domestication makes
+/// the land hold *more* animals, non-linearly by species (the density ladder, orthogonal to the r-gains
+/// `herd_ecology` folds in). A **corralled** herd multiplies its footprint `K` by the species'
+/// [`SpeciesDef::pen_density`], a **mobile-tamed** herd by its [`SpeciesDef::pastoral_density`], and a
+/// **wild** herd by [`DEFAULT_HUSBANDRY_DENSITY`] (`1.0`, so its `K` is byte-identical). Mirrors
+/// `herd_ecology`'s rung dispatch exactly.
+///
+/// Resolved **live** by display name (`pen_density_for` / `pastoral_density_for`, the `taming_rate_for`
+/// path), never cached on the `Herd`, so a config retune reaches herds already on the map. Applied at
+/// the single K seam [`ecological_carrying_capacity`] (the one place `herd.carrying_capacity` is
+/// written), covering both the graze-derived and the fallback constant K.
+pub fn herd_density_gain(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    if herd.is_corralled() {
+        fauna.pen_density_for(&herd.species)
+    } else if herd.is_domesticated() {
+        fauna.pastoral_density_for(&herd.species)
+    } else {
+        DEFAULT_HUSBANDRY_DENSITY
+    }
 }
 
 /// **The feed a pen demands — or WOULD demand once built** — at the herd's current biomass:
@@ -1644,7 +1665,13 @@ fn ecological_carrying_capacity(
             );
         }
     }
-    Some(flow / herd.fodder_per_biomass)
+    // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the land
+    // hold *more* animals, non-linearly by species — a corralled goat's fenced pasture supports
+    // `pen_density ×` the animals a wild goat's would. Orthogonal to the r-gains `herd_ecology` folds
+    // in (which scale the *rate*, not the *ceiling*). Applied to the FINAL range-derived K, so a wild
+    // herd's `×1.0` leaves this byte-identical; recomputed fresh each turn from `flow`, so it is
+    // idempotent (never a compounding read of the already-scaled field).
+    Some(flow / herd.fodder_per_biomass * herd_density_gain(herd, fauna))
 }
 
 /// **The graze draw-down** (Grazing Phase 2b-i, `docs/plan_grazing_2b.md` §3). Each **mobile,
