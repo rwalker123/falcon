@@ -3294,6 +3294,14 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
         // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
         let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
+        // Staffing of a MANAGED herd (intensification ladder). A domesticated herd needs
+        // `herders_needed` herders every turn to HOLD its tameness; `herded_fraction` = min(1,
+        // assigned / needed) is how well that demand is met. Understaffed (< 1) means the herd's
+        // domestication is DECAYING — it slips back to wild and stops earning Penning — so the herd
+        // drawer surfaces the deficit. `herders_needed` is 0 for a wild/unmanaged herd (never show a
+        // herder readout then); `herded_fraction` defaults to 1.0 for any unmanaged/vanished herd.
+        let _ = dict.insert("herders_needed", i64::from(herd.herdersNeeded()));
+        let _ = dict.insert("herded_fraction", herd.herdedFraction());
         array.push(&dict.to_variant());
     }
     array

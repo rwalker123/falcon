@@ -689,6 +689,22 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral_starving")
 
+	# Staffing readout — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
+	# FULLY STAFFED: a near-tamed herd with every needed herder present (`herded_fraction` 1.0) reads a
+	# calm "Herders: 4 / 4" (neutral ink) and no consequence line — it holds its tameness and earns
+	# Penning normally.
+	_hud.show_herd_selection(_fully_herded_herd_fixture())
+	await _settle()
+	await _save("herd_fully_herded")
+
+	# UNDER-HERDED: the SAME herd with only half the needed herders (`herded_fraction` 0.5). Its
+	# tameness is slipping, so the drawer says so loudly even though domestication 0.98 rounds to
+	# "Domesticating 100%": an amber "Herders: 2 / 4 — under-herded" row plus the muted "Tameness
+	# slipping — teaching Herding, not Penning. Staff all 4 herders to hold it." consequence line.
+	_hud.show_herd_selection(_under_herded_herd_fixture())
+	await _settle()
+	await _save("herd_under_herded")
+
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
 	# amber Pen-feed debit row is gone. With no ring in flight, `_build_herd_assign_controls` shows the
@@ -1028,6 +1044,29 @@ func _ready() -> void:
 	_hud._build_herd_assign_controls(local_herd)
 	await _settle()
 	await _save("herd_hunt_local_overdraw")
+
+	# States 3p–3q — the WHOLE-ANIMAL carry cap. A big-game aurochs drops as one 80-biomass body via the
+	# kill-credit bank; food_per_animal 1.6 outweighs one hunter's carry (per_worker 0.80), so the cap is
+	# the CARRIERS needed to haul the peak-turn drop, not ceil(smoothed-rate / per_worker). Sustain
+	# (ceiling 0.74) used to read "max 1 useful" (the bug: ceil(0.74/0.80)=1) — it must now read "max 2".
+	_hud._player_bands = [_hunt_preview_local_band()]
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	var aurochs := _aurochs_big_game_fixture()
+	_hud.show_herd_selection(aurochs)
+	_hud._hunt_assign_count = 1
+	_hud._build_herd_assign_controls(aurochs)
+	await _settle()
+	await _save("herd_hunt_whole_animal_cap")
+
+	# Flip to Market — two bodies drop on the peak turn, so the cap climbs to 4: it tracks the selected
+	# policy's ceiling, exactly as the smoothed-rate cap did.
+	_hud._hunt_assign_policy = "market"
+	_hud._build_herd_assign_controls(aurochs)
+	await _settle()
+	await _save("herd_hunt_whole_animal_cap_market")
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	_hud._player_bands = []
@@ -2209,6 +2248,27 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 	fixture["ecology_phase"] = "stressed"
 	return fixture
 
+## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout. Domestication is
+## near-complete and `herded_fraction` is 1.0 (every needed herder present), so the herd holds its
+## tameness and earns Penning normally: the drawer shows a neutral "Herders: 4 / 4" with NO warning.
+func _fully_herded_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["domestication"] = 0.9
+	fixture["herders_needed"] = 4
+	fixture["herded_fraction"] = 1.0
+	return fixture
+
+## The SAME herd, UNDER-HERDED — the playtest bug made visible. Only half the needed herders are on it
+## (`herded_fraction` 0.5), so its tameness is slipping: domestication decays, the herd will drop back
+## to WILD and stop earning Penning. `domestication` sits at 0.98 (rounds to "Domesticating 100%", the
+## exact reading that used to look fine), so the drawer must NOT read as OK — the amber "Herders: 2 / 4
+## — under-herded" row and the muted "Tameness slipping — teaching Herding, not Penning…" line carry it.
+func _under_herded_herd_fixture() -> Dictionary:
+	var fixture := _fully_herded_herd_fixture()
+	fixture["domestication"] = 0.98
+	fixture["herded_fraction"] = 0.5
+	return fixture
+
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.
 func _world_herds_fixture() -> Array:
@@ -2305,6 +2365,32 @@ func _herd_fixture() -> Dictionary:
 func _wild_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["husbandry_ceiling"] = "wild"
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## A BIG-GAME wild herd whose WHOLE-ANIMAL body outweighs one hunter's carry — the frame the peak-turn
+## carry cap is judged on. An aurochs is one 80-biomass body dropped whole by the kill-credit bank;
+## `food_per_animal` 1.6 is that body in food, and one hunter carries only `per_worker_yield` 0.80. So a
+## lone hunter carrying an aurochs WASTES half — the panel must say TWO hunters are useful, not one.
+##   Sustain ceiling 0.74: old cap = ceil(0.74 / 0.80) = 1 (the bug); new cap =
+##     ceil((floor(0.74 / 1.6) + 1) × 1.6 / 0.80) = ceil(1.6 / 0.80) = 2 → "max 2 workers useful".
+##   Market ceiling 1.86: two bodies drop on the peak turn → ceil((floor(1.86/1.6)+1) × 1.6 / 0.80) =
+##     ceil(3.2 / 0.80) = 4 → the cap tracks the selected policy's ceiling upward.
+func _aurochs_big_game_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["id"] = "game_aurochs_04"
+	fixture["label"] = "Wild Aurochs (game_aurochs_04)"
+	fixture["species"] = "Wild Aurochs"
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["food_per_animal"] = 1.6
+	fixture["per_worker_yield"] = 0.80
+	fixture["ceiling_sustain"] = 0.74
+	fixture["ceiling_surplus"] = 1.20
+	fixture["ceiling_market"] = 1.86
+	fixture["ceiling_eradicate"] = 2.60
+	fixture["hunt_policy_ceilings"] = {
+		"sustain": 0.74, "surplus": 1.20, "market": 1.86, "eradicate": 2.60,
+	}
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
 

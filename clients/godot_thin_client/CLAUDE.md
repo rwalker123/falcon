@@ -2045,6 +2045,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   §4.1) — taming as a hidden Sustain side effect, with a visible-but-disabled `Corral` beside it, is
   the exact UX problem that arc exists to fix. See `core_sim` Fauna & Wild Game — Domestication /
   husbandry.
+- **Herd staffing / "Herders" row — the under-herded deficit made VISIBLE** (`Hud.gd`
+  `_herd_summary_lines`; snapshot `HerdTelemetryState.herdersNeeded` / `herdedFraction` → decoded in
+  `native/src/lib.rs herds_to_array` as `herders_needed` (int) / `herded_fraction` (float)). A managed
+  herd needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction <
+  1`) its domestication decays, it slips back to WILD, and stops earning Penning — the silent stall a
+  playtest hit ("🐄 Domesticated" with no signal Penning had stopped). Immediately after the Husbandry
+  row, ONLY when `herders_needed > 0` (0 = wild/unmanaged, `herded_fraction` defaults to `FULLY_HERDED`
+  = 1.0 = "no problem"), a **Herders** row shows a calm `N / N` when fully staffed (neutral ink) or an
+  amber `A / N — under-herded` (`assigned = round(herded_fraction · needed)`) when slipping, tinted via
+  `_herders_value_hex` (WARN, the shared overgrazing/pen-debit path). When under-herded AND
+  `domestication > 0`, a muted consequence line — `Tameness slipping — teaching Herding, not Penning.
+  Staff all N herders to hold it.` — states WHY Penning stalled and the one lever that fixes it. The
+  honest-label choice: the Husbandry label is LEFT as-is (0.98 still reads "Domesticating 100%") — the
+  new Herders + consequence lines carry the warning. ui_preview `herd_fully_herded` (calm `4 / 4`) /
+  `herd_under_herded` (amber `2 / 4 — under-herded` + the slipping line, Husbandry 98%). **Server half
+  (`herdersNeeded`/`herdedFraction` on `HerdTelemetryState`) already landed** — this is the client
+  consumer.
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
   `docs/plan_grazing_2d.md` §4a; snapshot `HerdTelemetryState.husbandryCeiling` → `husbandry_ceiling`,
   decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the

@@ -500,6 +500,20 @@ const HUSBANDRY_CEILING_PEN := "pen"
 # `_format_detail_bbcode` renders them as dim informational sentences (the `kv.is_empty()` path).
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
+# Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
+# needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction < 1`)
+# it DECAYS out of the pastoral rung, slips back to wild, and stops earning Penning — the silent stall
+# a playtest hit ("🐄 Domesticated" with no signal that Penning had stopped). The row makes the deficit
+# visible; the under-herded value is WARN-tinted via `_herders_value_hex`, and the slipping consequence
+# is spelled out below it so the player knows WHY Penning stalled and how to fix it.
+# `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also unmanaged/vanished
+# herds) — treated as "no problem". The staffed label reads "N / N" (calm); under-herded "A / N —
+# under-herded" (amber).
+const FULLY_HERDED := 1.0
+const HERDERS_ROW := "Herders"
+const HERDERS_STAFFED_FORMAT := "%d / %d"
+const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
+const HERDERS_SLIPPING_FORMAT := "Tameness slipping — teaching Herding, not Penning. Staff all %d herders to hold it."
 # Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
 # range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
@@ -769,6 +783,10 @@ const FORAGE_FORECAST_PREFIX := "patch_"
 const FORECAST_MIN_PER_WORKER := 0.0001
 # Sentinel for "no forecast data" → the stepper is not forecast-capped.
 const MAX_USEFUL_UNBOUNDED := -1
+# A whole-animal hunt's kill-credit bank accumulates the smoothed take, then discharges a WHOLE animal
+# when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
+# so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
+const HUNT_PEAK_DROP_BANK_BONUS := 1
 const FORECAST_LABEL_FORMAT := "Expected yield: %s"
 # A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
 # "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
@@ -2675,6 +2693,14 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
     var feed := 0.0
     if feed_rung:
         feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy_key]), 0.0))
+    # WHOLE-ANIMAL HUNT: a take of whole animals via a kill-credit bank (`food_per_animal` = one animal's
+    # yield in food; 0/absent for a forage patch). The peak-turn carry need is quantized to whole bodies
+    # (see `_max_useful_workers`), so it must fire ONLY for an extractive hunt of a live herd — never a
+    # forage patch (no food_per_animal), an investment rung (Tame/Corral collapse to 1), or a corralled
+    # herd (managed `worker_tend` harvest, whose forecast already collapses every ceiling to per_worker).
+    var food_per_animal := float(src.get(prefix + "food_per_animal", 0.0))
+    var whole_animal: bool = food_per_animal > 0.0 and not investment \
+        and not bool(src.get("corralled", false))
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
@@ -2682,6 +2708,8 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
         "investment": investment,
         "feed_rung": feed_rung,
         "feed": feed,
+        "food_per_animal": food_per_animal,
+        "whole_animal": whole_animal,
         "known": per_worker >= FORECAST_MIN_PER_WORKER,
     }
 
@@ -2691,7 +2719,19 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
 func _max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
-    return int(ceilf(float(forecast["ceiling"]) / float(forecast["per_worker"])))
+    var per_worker := float(forecast["per_worker"])
+    var ceiling := float(forecast["ceiling"])
+    # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
+    # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
+    # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
+    # bank holds just under one body when the turn's rate lands, so floor(ceiling / food_per_animal) + 1
+    # whole animals drop, each worth food_per_animal — carry that peak, not the average flow.
+    var food_per_animal := float(forecast.get("food_per_animal", 0.0))
+    if bool(forecast.get("whole_animal", false)) and food_per_animal > 0.0:
+        var animals := floori(ceiling / food_per_animal) + HUNT_PEAK_DROP_BANK_BONUS
+        var peak_drop_food := float(animals) * food_per_animal
+        return ceili(peak_drop_food / per_worker)
+    return int(ceilf(ceiling / per_worker))
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
 ## acting band's output multiplier (the sim exports the forecast at 1.0).
@@ -5438,6 +5478,21 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:
             lines.append("Husbandry: %s" % _husbandry_label(domestication))
+        # Staffing deficit — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
+        # A managed herd needs `herders_needed` herders every turn to hold its tameness; understaffed,
+        # its domestication decays, the herd slips back to WILD and stops earning Penning. Surface it
+        # so the player has a signal to staff more herders. Shown only for a managed herd
+        # (`herders_needed > 0`); `herded_fraction` defaults to FULLY_HERDED, so an unmanaged herd never
+        # trips it. Fully staffed reads a calm "N / N"; under-herded an amber "A / N — under-herded".
+        var herders_needed := int(herd_data.get("herders_needed", 0))
+        if herders_needed > 0:
+            var herded_fraction := float(herd_data.get("herded_fraction", FULLY_HERDED))
+            var herders_assigned := int(round(herded_fraction * herders_needed))
+            lines.append("%s: %s" % [HERDERS_ROW, _herders_label(herders_assigned, herders_needed, herded_fraction)])
+            # Make the CONSEQUENCE explicit when the herd is slipping AND has real tameness to lose:
+            # a muted one-liner naming why Penning has stalled and the single lever that fixes it.
+            if herded_fraction < FULLY_HERDED and domestication > 0.0:
+                lines.append(HERDERS_SLIPPING_FORMAT % herders_needed)
         # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
         # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
         # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
@@ -5534,6 +5589,22 @@ func _husbandry_label(progress: float) -> String:
 func _husbandry_value_hex(value: String) -> String:
     if value.to_lower().contains("domesticated"):
         return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## The "Herders" row value: a calm "N / N" when fully staffed, an amber "A / N — under-herded" when
+## the herd is decaying for lack of herders. Fully staffed uses [needed, needed] (assigned == needed
+## at frac 1.0); under-herded uses the rounded assigned count. Tinted via `_herders_value_hex`.
+func _herders_label(assigned: int, needed: int, herded_fraction: float) -> String:
+    if herded_fraction >= FULLY_HERDED:
+        return HERDERS_STAFFED_FORMAT % [needed, needed]
+    return HERDERS_UNDER_FORMAT % [assigned, needed]
+
+## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded and its tameness is
+## slipping, normal ink when fully staffed. Matched on the label from `_herders_label`, mirroring
+## `_corral_value_hex` / the overgrazing warning's shared WARN tint.
+func _herders_value_hex(value: String) -> String:
+    if value.to_lower().contains("under-herded"):
+        return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
 ## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop
@@ -5691,6 +5762,9 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
+            elif String(kv[0]) == HERDERS_ROW:
+                # A managed herd's staffing: amber when under-herded (tameness slipping), ink when full.
+                value_hex = _herders_value_hex(String(kv[1]))
             elif String(kv[0]) == "Cultivation":
                 value_hex = _cultivation_value_hex(String(kv[1]))
             elif String(kv[0]) == FIELD_ROW:
