@@ -294,6 +294,17 @@ pub(crate) fn herd_snapshot_entries(
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield,
+                // Herd staffing — the herders a MANAGED herd owes this turn to hold its tameness (0 for
+                // a wild/unmanaged herd, per `herd_herders_needed`), and how well it is staffed
+                // (`Herd::herded_fraction`, the labor system's per-turn write; `FULLY_HERDED` for a herd
+                // that needs nobody or a vanished one). Split out so the client can distinguish an
+                // under-HERDING shortfall from the assignment's blended `workers_needed`.
+                herders_needed: herd
+                    .map(|herd| herd_herders_needed(herd, fauna))
+                    .unwrap_or(0),
+                herded_fraction: herd
+                    .map(|herd| herd.herded_fraction)
+                    .unwrap_or(FULLY_HERDED),
             }
         })
         .collect()

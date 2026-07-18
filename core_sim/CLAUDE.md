@@ -803,7 +803,7 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 > feed scaled.
 >
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
->   per-species: fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
+>   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
 >   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —
 >   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a

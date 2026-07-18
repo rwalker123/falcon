@@ -192,6 +192,12 @@ fn pen_fully_fed() -> f32 {
     1.0
 }
 
+/// A fully-staffed herd — the neutral value of [`HerdTelemetryState::herded_fraction`], so an
+/// unmanaged (or older-snapshot) herd never reads as under-herded.
+fn fully_herded() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -327,6 +333,19 @@ pub struct HerdTelemetryState {
     /// unknown.
     #[serde(default)]
     pub food_per_animal: f32,
+    /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
+    /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
+    /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
+    /// honest "herders 1 / 6" readout the labor assignment's blended `workers_needed`
+    /// (`max(herders_needed, haulers)`) cannot give. Appended last (append-only). `0` if unknown.
+    #[serde(default)]
+    pub herders_needed: u32,
+    /// **How well the herd is staffed** — `min(1, assigned / herders_needed)` (`Herd::herded_fraction`).
+    /// `1.0` = fully staffed (and the value for a herd that needs nobody); `< 1` = under-herded, so
+    /// `domestication` bleeds proportionally and the herd risks reclassifying as wild. Appended last
+    /// (append-only).
+    #[serde(default = "fully_herded")]
+    pub herded_fraction: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -367,6 +386,8 @@ impl Default for HerdTelemetryState {
             husbandry_ceiling: String::new(),
             body_mass: 0.0,
             food_per_animal: 0.0,
+            herders_needed: 0,
+            herded_fraction: fully_herded(),
         }
     }
 }
@@ -3576,6 +3597,9 @@ fn create_herds<'a>(
                 bodyMass: herd.body_mass,
                 // Food per animal (slice 8b) — appended last (append-only wire).
                 foodPerAnimal: herd.food_per_animal,
+                // Herd staffing — appended last (append-only wire).
+                herdersNeeded: herd.herders_needed,
+                herdedFraction: herd.herded_fraction,
             },
         );
         entries.push(entry);

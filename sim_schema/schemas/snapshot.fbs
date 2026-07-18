@@ -1191,6 +1191,17 @@ table HerdTelemetryState {
   // sustainableYield` — both in provisions, so dimensionally clean — and it doubles as a "a mammoth is
   // ~16 food" display. 0 if unknown.
   foodPerAnimal:float = 0;
+  // --- Herd staffing (appended last) --- how many herders a MANAGED herd owes this turn to hold its
+  // tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) / animals_per_herder)), and how
+  // well it is currently staffed. Together they let the client show an honest "herders 1 / 6": the
+  // labor assignment's `workersNeeded` blends this with the take crew (`max(herdersNeeded, haulers)`),
+  // so it cannot distinguish an under-HERDING shortfall (tameness bleeds, the herd goes feral) from an
+  // under-CARRYING one (wasted food). `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
+  herdersNeeded:uint = 0;
+  // `herdedFraction` = `min(1, assigned / herdersNeeded)` — the share of the needed herders present.
+  // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
+  // `domestication` bleeds proportionally and the herd risks reclassifying as wild. Render a warning.
+  herdedFraction:float = 1;
 }
 
 table CommandEventState {

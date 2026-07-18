@@ -51,8 +51,9 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-        SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        herd_herders_needed, hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap,
+        HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
