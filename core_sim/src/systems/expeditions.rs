@@ -391,9 +391,14 @@ pub fn advance_expeditions(
                             }
                         }
 
-                        // Trip-completion + early-delivery decision (arrived parties only).
+                        // Trip-completion + early-delivery decision (arrived parties only). The pack is
+                        // "full" once it is filled OR cannot seat another whole animal (its remaining
+                        // room is under one animal's food) — the raid never over-kills to top it off, so
+                        // without this a partial-pack raid would hang killing 0 every turn.
                         let carried = cohort.stores.get(FOOD);
-                        let full = carried >= cap;
+                        let food_per_animal =
+                            fauna::hunt_provisions(body_mass, &fauna, EXPEDITION_OUTPUT_MULTIPLIER);
+                        let full = carried >= cap || (cap - carried).to_f32() < food_per_animal;
                         let min_deliver = scalar_from_f32(
                             workers as f32
                                 * cfg.hunt.per_worker_carry
@@ -646,14 +651,15 @@ fn hunt_expedition_floor(
 /// herd sits at the floor and the raid comes home (the `hunt_trip_forecast` / `Hunting`-arm completion
 /// checks own that); Sustain leaves `K/2`, Surplus `0.30·K`, Market `0.15·K`.
 ///
-/// **The accumulator is what turns sub-body throughput into whole animals + waste.** For a body
-/// heavier than one turn's throughput (a boar at 50 vs one hunter's 40) `floor(throughput / body) = 0`
-/// would take *nothing forever*; banking the throughput onto the herd's `credit` until it clears a body
-/// (the `Herd::hunt_credit` field the resident band also uses — one hunter per herd, so they never
-/// collide) makes the party kill one every `body / throughput` turns. It is capped at the standing
-/// surplus so the bank never funds biomass below the floor. **It is a whole-animal take**
-/// ([`fauna::quantise_animal_take`], slice 8): `carry_room_biomass` bounds the party's collection, so a
-/// heavy kill it cannot fully haul is `wasted`, not left standing.
+/// **A raid brings home only what it can carry — it does NOT over-kill.** The `credit` accumulator
+/// meters *when* the next whole animal is **ready** (a body heavier than one turn's processing
+/// `throughput` takes `body / throughput` turns — the boar at 50 vs one hunter's 40), but a readied
+/// animal is killed **and carried whole** into the pack: `killed == carried`, and there is **no
+/// over-kill waste**. This is the fix for the bug where the party killed at its throughput rate and
+/// could carry only one turn's throughput of each kill (a 1-hunter Marsh Grazer wasted 60 of a
+/// 100-body animal). The resident band's `max(1)` "take one you cannot haul and waste it"
+/// ([`fauna::quantise_animal_take`]) is a *band* rule — a raid hauls its kills home over the trip, so
+/// it kills only what the pack can seat whole.
 #[allow(clippy::too_many_arguments)] // the ecology, the floor levers and the party's caps are all levers
 fn expedition_take_biomass(
     workers: u32,
@@ -667,28 +673,36 @@ fn expedition_take_biomass(
     carry_room_biomass: f32,
     credit: &mut f32,
 ) -> AnimalTake {
-    // The standing surplus above the policy's floor — everything the raid may take this turn.
+    if !body_mass.is_finite() || body_mass <= 0.0 {
+        debug_assert!(
+            false,
+            "body_mass must be finite and positive; got {body_mass}"
+        );
+        return AnimalTake::default();
+    }
+    // The standing surplus above the policy's floor — everything the raid may take.
     let floor = hunt_expedition_floor(policy, carrying_capacity, ecology, fauna);
     let standing_surplus = (biomass - floor).max(0.0);
-    // The party's per-turn grab: its whole throughput, never more than the surplus still standing.
+    // Bank the party's processing throughput; the bank meters WHEN the next whole animal is ready,
+    // never how much of it is carried. Capped at the surplus so it never funds a kill below the floor.
     let throughput = (workers as f32 * per_worker_biomass_capacity).max(0.0);
     let rate = throughput.min(standing_surplus);
-    // Bank the throughput; this turn's affordable biomass is `credit + rate`, capped at the surplus (so
-    // the bank never funds animals below the floor). A body heavier than `rate` accumulates until
-    // affordable; a light-bodied herd clears several bodies at once.
     let ceiling = (*credit + rate).clamp(0.0, standing_surplus);
-    // What the party can actually take home this turn: its throughput, bounded by the room left in the
-    // pack. Folding the carry room in HERE (not clamping afterwards) is what stops a nearly-full pack
-    // killing a whole animal it has no room for.
-    let collection = throughput.min(carry_room_biomass.max(0.0));
-    let take = fauna::quantise_animal_take(ceiling, collection, body_mass);
-    // Drain the bank by what was killed, and cap it at the (pre-kill) surplus so it can never grow
-    // unbounded while the herd sits at its floor (surplus < body ⇒ no kill ⇒ credit would otherwise
-    // climb every turn). `0 ≤ credit ≤ standing_surplus ≤ biomass` holds by construction.
-    *credit = (*credit + rate - take.killed_biomass())
-        .max(0.0)
-        .min(standing_surplus);
-    take
+    // Whole animals: as many as the bank has readied (`affordable`), but NEVER more than the pack can
+    // seat whole (`seatable`) — so a kill is always carried home in full, no over-kill, no waste.
+    let room = carry_room_biomass.max(0.0);
+    let affordable = (ceiling / body_mass).floor().max(0.0);
+    let seatable = (room / body_mass).floor().max(0.0);
+    let killed = affordable.min(seatable);
+    let carried = killed * body_mass; // fully carried — killed == carried
+                                      // Drain the bank by what was killed; cap at the surplus so it can't grow unbounded at the floor
+                                      // (surplus < body ⇒ no kill ⇒ the bank would otherwise climb every turn). `0 ≤ credit ≤ surplus`.
+    *credit = (*credit + rate - carried).max(0.0).min(standing_surplus);
+    AnimalTake {
+        killed: killed as u32,
+        carried,
+        wasted: 0.0,
+    }
 }
 
 /// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
@@ -954,6 +968,8 @@ pub fn hunt_trip_forecast(
             &mut quarry.hunt_credit,
         );
         quarry.biomass -= take.killed_biomass();
+        // `killed == carried` (a raid never over-kills), so this is the DELIVERED whole-animal count —
+        // the payload the client multiplies by `foodPerAnimal`, not a kill count inflated by waste.
         animals_taken += take.killed;
 
         let provisions = scalar_from_f32(fauna::hunt_provisions(
@@ -967,12 +983,17 @@ pub fn hunt_trip_forecast(
             first_turn_provisions = provisions.to_f32();
         }
 
-        // The raid completes when the pack fills OR the standing surplus is spent — the herd is within
-        // one body of its floor, so no whole animal is left to raid from *standing stock* (only the
-        // regrowth trickle, which the raid deliberately stops at). Whichever fires, the party comes
-        // home; this is the forecast twin of the `ExpeditionPhase::Hunting` arm's `done`.
+        // The raid completes when the pack is full — or **cannot seat another whole animal** (its
+        // remaining room is less than one animal's food, so the party never over-kills to top it off) —
+        // OR the standing surplus is spent (the herd is within one body of its floor, only the regrowth
+        // trickle left, which the raid deliberately stops at). Whichever fires, the party comes home;
+        // this mirrors the `ExpeditionPhase::Hunting` arm's `done`. The pack-can't-seat check is what
+        // stops a partial-pack raid hanging (killing 0 every turn) once the pack is a fraction short.
+        let food_per_animal =
+            fauna::hunt_provisions(quarry.body_mass, fauna, EXPEDITION_OUTPUT_MULTIPLIER);
+        let pack_cannot_seat_another = (cap - larder).to_f32() < food_per_animal;
         let surplus_spent = (quarry.biomass - floor) < quarry.body_mass;
-        if larder >= cap || surplus_spent {
+        if larder >= cap || pack_cannot_seat_another || surplus_spent {
             return HuntTripForecast {
                 turns_to_fill: Some(turn),
                 delivers_food,

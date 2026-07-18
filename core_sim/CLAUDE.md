@@ -2435,11 +2435,16 @@ mission:
 >   Eradicate `0`. A deeper policy leaves a leaner herd — *"Surplus/Market raid deeper"*. (Expedition
 >   Market no longer drives extinction — it strips to 0.15·K and stops; extinction is the *resident*
 >   band's multiples-of-MSY axis, unchanged.)
-> - **The per-turn take** = `min(workers × per_worker_biomass_capacity, standing_surplus)` banked onto
->   the herd's `hunt_credit` (so sub-body throughput accumulates to whole animals), quantised against
->   the pack's carry room (`quantise_animal_take` — whole animals + `wasted`), capped at the surplus so
->   the bank never funds biomass below the floor. One hunter per herd, so sharing `hunt_credit` with the
->   band is safe.
+> - **The take brings home only what it can carry — it does NOT over-kill.** The party's processing
+>   throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's `hunt_credit`, and the
+>   bank meters *when* the next whole animal is **ready** (a body heavier than one turn's work takes
+>   `body / throughput` turns) — but a readied animal is **killed and carried whole** into the pack,
+>   bounded only by the room the pack can seat whole. So `killed == carried`, **`wasted` is 0**, and
+>   `animals_taken` is the **delivered/carried** count (the client multiplies it by `foodPerAnimal`) —
+>   NOT a kill count inflated by carcass the party had to leave. This is the fix for the over-kill bug
+>   (the old model killed at the throughput rate and could carry only one turn's throughput of each,
+>   wasting the rest — a 1-hunter Marsh Grazer killed a 100-body animal and wasted 60). One hunter per
+>   herd, so sharing `hunt_credit` with the band is safe.
 
 - **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
   **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
@@ -2467,16 +2472,24 @@ mission:
     the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
     so simulating each to completion is already cheap. `surplus_escapement_fraction` replaced the retired
     `hunt_expedition_ceiling`/kill-credit expedition ceiling and the bound's constants.)*
-- **Measured** (Wild Boar K = 1433, body 50, B = 1010, real pack 4 food/worker): 1 hunter **5 animals /
-  7 turns**, 2 hunters **8 / 8**, 3 hunters **8 / 4** — more hunters, more animals, no slower. With an
-  unbounded pack the raid runs to the floor and a *slower* party harvests more regrowth on the way down
-  (1 hunter 31 animals / 39 turns → 4 hunters 7 / 3), so the **turn count** is the load-bearing "more
-  hunters help" claim, not the animal count.
+- **Animals delivered SCALE WITH THE PACK** (`2 × workers` on a heavy-bodied herd with ample surplus,
+  since the pack seats `pack ÷ food-per-animal` whole animals) until the surplus caps them — the
+  plateau **is** the max-useful party size (`ceil(surplus_food / per_worker_carry)`), which the client
+  reads straight off `animalsTaken`. **Measured** (real pack 4 food/worker): a **Marsh Grazer** (body
+  100, food/animal 2, big surplus) delivers **2 / 4 / 6 / 8** animals for 1/2/3/4 hunters, ~5 hunting
+  turns each, **0 wasted**; a **Wild Boar** (K 1433, B 1010) delivers **4 / 8 / 7** for 1/2/3 hunters
+  (5 / 5 / 3 turns) — it goes surplus-bound sooner (only ~5–8 boar of surplus), and a *faster* big party
+  harvests slightly less regrowth on the way down.
+- **Travel is counted at launch, band-relative.** `hunt_trip_forecast` returns only the HUNTING turns
+  (once in reach); `handle_send_hunt_expedition` adds the **round-trip walk** (`ceil(2 ×
+  hex_distance(band, herd) / band_move_tiles_per_turn)`) to the feed line, where the launching band's
+  tile is known. The per-herd `huntTripEstimates` table is **band-agnostic** (one row per herd serves
+  every band), so its `turnsToFill` is the hunting turns and the **client** adds the same travel to the
+  pre-launch readout from the selected band's tile + `bandMoveTilesPerTurn`.
 - `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line: **denial**
   (Eradicate) → "delivers NO food"; **no surplus** (`animals_taken == 0`) → "too lean to raid… no
-  surplus"; otherwise "est. ~N animals over ~M turns" (or "a long raid: ~N animals over 60+ turns" if it
-  runs the horizon still delivering). It still launches — the player's call. `detail` carries
-  `eta_turns=… animals=…`.
+  surplus"; otherwise "est. ~N animals over ~M turns (H hunting + T travel)". It still launches — the
+  player's call. `detail` carries `eta_turns=… hunt_turns=… travel_turns=… animals=…`.
 - Pinned end-to-end by `expedition_hunt.rs` (`the_raid_forecast_matches_a_real_party_run`), which
   launches a **real party**, runs the sim forward, and asserts the forecast completes on exactly the
   turn the party leaves `Hunting` — across Sustain/Surplus/Market × full/depleted herds. The forecast

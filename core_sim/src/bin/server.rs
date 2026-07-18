@@ -2353,9 +2353,38 @@ fn handle_send_hunt_expedition(
             .find(&fauna_id)
             .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
     };
+    // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
+    // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
+    // the launching band's tile is known. (The per-herd `huntTripEstimates` snapshot table is
+    // band-agnostic — one row serves every band — so the CLIENT adds this same travel to the pre-launch
+    // readout from the SELECTED band's tile + the exported `bandMoveTilesPerTurn`.)
+    let travel_turns: u32 = {
+        let grid_width = app.world.resource::<TileRegistry>().width;
+        let wrap_horizontal = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let move_rate = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .band_move_tiles_per_turn
+            .max(1);
+        app.world
+            .get::<PopulationCohort>(band.entity)
+            .map(|c| c.current_tile)
+            .and_then(|t| app.world.get::<Tile>(t))
+            .map(|tile| {
+                let one_way =
+                    hex_distance_wrapped(tile.position, herd_pos, grid_width, wrap_horizontal);
+                (2 * one_way).div_ceil(move_rate)
+            })
+            .unwrap_or(0)
+    };
     // The raid always completes in bounded turns (grab the surplus, come home), so the only genuine
     // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
-    // NO animals. Otherwise headline the payload the raid actually lands.
+    // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
     let (viability_note, viability_detail) = match &forecast {
         // A denial mission (Eradicate) brings nothing home — say what it does, no ETA.
         Some(f) if !f.delivers_food => (
@@ -2378,16 +2407,28 @@ fn handle_send_hunt_expedition(
         Some(f) => {
             let animals = f.animals_taken;
             match f.turns_to_fill {
-                Some(turns) => (
-                    format!(" — est. ~{} animals over ~{} turns", animals, turns),
-                    format!(" eta_turns={} animals={}", turns, animals),
-                ),
+                Some(hunt_turns) => {
+                    let total = hunt_turns + travel_turns;
+                    (
+                        format!(
+                            " — est. ~{} animals over ~{} turns ({} hunting + {} travel)",
+                            animals, total, hunt_turns, travel_turns
+                        ),
+                        format!(
+                            " eta_turns={} hunt_turns={} travel_turns={} animals={}",
+                            total, hunt_turns, travel_turns, animals
+                        ),
+                    )
+                }
                 None => (
                     format!(
-                        " — a long raid: ~{} animals over {}+ turns",
-                        animals, cfg.hunt.forecast_horizon_turns
+                        " — a long raid: ~{} animals over {}+ hunting turns (+{} travel)",
+                        animals, cfg.hunt.forecast_horizon_turns, travel_turns
                     ),
-                    format!(" eta_turns=none animals={}", animals),
+                    format!(
+                        " eta_turns=none travel_turns={} animals={}",
+                        travel_turns, animals
+                    ),
                 ),
             }
         }
