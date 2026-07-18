@@ -1686,9 +1686,13 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
     per-policy **`+X /turn`** button metric the local-hunt picker does (`_forage_policy_takes`, each
-    policy's ceiling from `_forecast_inputs`; the investment rungs Cultivate/Sow carry none, like Corral;
-    the three pickers — forage / local hunt / expedition — now wear an identical button format, only the
-    metric differs: `+X /turn` for forage & local hunt, `≈N taken` for the expedition raid) — with a
+    extractive policy's ceiling from `_forecast_inputs`; the forage INVESTMENT rungs Cultivate/Sow instead
+    wear a **`→ +X /turn` PAYOFF** metric — `POLICY_PAYOFF_FORMAT`, the `tended_yield`/`field_yield` they
+    build toward, NOT the prep dip, which is lower than Sustain — while Corral still carries none; a locked
+    Sow may still show its payoff, the gate-reason line explains the lock, and a 0/absent payoff leaves the
+    button bare. The three pickers — forage / local hunt / expedition — wear an identical button format,
+    only the metric differs: `+X /turn` for the extractive rungs, `→ +X /turn` for the forage investment
+    rungs, `≈N taken` for the expedition raid) — with a
     **forage-appropriate**
     behaviour hint (`FORAGE_POLICY_HINTS` — "gather at the patch's regrowth" etc., NOT the herd-cull
     hints), an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`), and a

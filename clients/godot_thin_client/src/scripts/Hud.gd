@@ -679,6 +679,11 @@ const HERD_CREW_LABEL := "Herders"
 # One policy button's per-turn take on the hunt picker, so the four extractive rungs read as ASCENDING
 # (Sustain < Surplus < Market < Eradicate). A compact second line under the policy name.
 const POLICY_TAKE_FORMAT := "%s/turn"
+# The FORAGE INVESTMENT rungs (Cultivate/Sow) wear a metric on their button face too, but it is not an
+# immediate take like the extractive `+X/turn` — it is the PAYOFF the preparation builds TOWARD (the
+# tended/field yield). A leading arrow marks it as "builds toward", so it reads distinct from an
+# extractive rate and never as a rung you'd out-earn today.
+const POLICY_PAYOFF_FORMAT := "→ %s/turn"
 # The EXPEDITION picker's per-policy button metric — the whole animals a raid at this policy delivers at
 # the composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves
 # K/2, Surplus/Market raid deeper, Eradicate takes all). The raid analog of POLICY_TAKE_FORMAT's rate,
@@ -3546,6 +3551,17 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
         if not bool(forecast["known"]):
             continue
         takes[String(policy)] = POLICY_TAKE_FORMAT % _format_signed(float(forecast["ceiling"]))
+    # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
+    # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
+    # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
+    # the picker already explains the lock. Absent/zero payoff → no entry, so the button stays bare.
+    for policy in [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]:
+        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+        if not bool(forecast["known"]) or not bool(forecast["investment"]):
+            continue
+        var payoff := float(forecast["payoff"])
+        if payoff > 0.0:
+            takes[policy] = POLICY_PAYOFF_FORMAT % _format_signed(payoff)
     return takes
 
 ## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
