@@ -1707,8 +1707,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
     to raid" + disabled button) / `herd_hunt_forecast_eradicate` (denial → amber "Send (delivers no
     food)", enabled), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
-    1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy "≈N taken" picker
-    buttons) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
+    1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
+    buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
     the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
     `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
     round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
@@ -1722,17 +1722,28 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
-    per-policy **`up to +X /turn`** CAP button metric the local-hunt picker does (the shared
-    `POLICY_CAP_FORMAT`, fed by `_forage_policy_takes`, each extractive policy's ceiling from
-    `_forecast_inputs`; the INVESTMENT rungs on BOTH pickers instead
-    wear a **`→ +X /turn` PAYOFF** metric — `POLICY_PAYOFF_FORMAT`, the `tended_yield`/`field_yield`
-    (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT the prep dip, which reads
-    below Sustain and was identical for both hunt rungs (quoting it made taming/penning look worse than
-    hunting); a locked rung may still show its payoff, the gate-reason line explains the lock, and a
-    0/absent payoff leaves the button bare. The three pickers — forage / local hunt / expedition — wear an
-    identical button format, only the metric differs: `up to +X /turn` (`POLICY_CAP_FORMAT`) for the
-    extractive rungs, `→ +X /turn` for the investment rungs (Cultivate/Sow AND Tame/Corral), `≈N taken`
-    for the expedition raid). **Picking a policy AUTO-FILLS the
+    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is ONE line:
+    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇄ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`)
+    — so all six rungs fit one docked row; the six wide two-line `♻ Sustain / up to +0.90/turn` buttons
+    used to overflow. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
+    compact `+0.96` (just `_format_signed(ceiling)`, fed by `_forage_policy_takes` off `_forecast_inputs`),
+    full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`
+    (`POLICY_PAYOFF_COMPACT`), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
+    `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
+    the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
+    taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
+    (under the picker) explains the lock. **The name lives ONLY in the tooltip now** — every button's
+    `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g. `Sustain — up
+    to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate reasons below
+    that (so a hover names the rung AND explains any lock; enabled buttons carry the name+metric tooltip
+    too). A rung with **no** metric (older snapshot / metric-less gated rung, or the send-expedition launch
+    picker that passes no `takes`) falls back to the **name** on the face, so a button is never a lone
+    glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
+    locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
+    forage / local hunt / expedition — wear an identical face format, only the compact metric differs:
+    `+X` (extractive), `→+X` (investment, Cultivate/Sow AND Tame/Corral), `≈N` (expedition raid,
+    `EXPEDITION_TAKE_COMPACT`). **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a
@@ -1918,11 +1929,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       divide by `body_mass` (BIOMASS): with `provisions_per_biomass 0.02` that reads ~50× too long. A herd
       whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
       picker** (`_build_policy_picker(…, takes)`, fed
-      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** framed **`up to X/turn`**
-      (`POLICY_CAP_FORMAT`, the shared const also used by the forage picker — the source's
-      worker-independent ceiling, FOOD units, distinct from the crew's
-      carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate reads
-      as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
+      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the bare compact `+X` on
+      the button face (full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
+      used by the forage picker — the source's worker-independent ceiling, FOOD units, distinct from the
+      crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate
+      reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
       (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
       (`_is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is

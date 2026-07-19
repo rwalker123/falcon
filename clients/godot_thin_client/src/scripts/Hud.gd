@@ -436,6 +436,10 @@ const GATE_REASON_HEADER_FORMAT := "%s needs:"
 const GATE_REASON_BULLET_FORMAT := "   · %s"
 # The disabled button's tooltip carries every reason, one per line.
 const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
+# Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
+# +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its
+# gate reasons below (one per line), so a hover names the rung AND explains any lock.
+const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # 0..1 progress tracks (knowledge, domestication) render as whole percents.
 const PROGRESS_PERCENT_SCALE := 100.0
 # A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
@@ -672,22 +676,29 @@ const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party could
 # as a hunt-party bug. See `_is_managed_hunt_source`.
 const HUNT_CREW_LABEL := "Hunters"
 const HERD_CREW_LABEL := "Herders"
-# An EXTRACTIVE policy button's per-turn metric on the LOCAL-hunt AND forage pickers: the source's CAP
+# A policy button carries its per-policy metric TWICE: a bare COMPACT string on the one-line button face
+# (glyph + metric, no name — so all six rungs fit one docked row) and the VERBOSE full string in the
+# tooltip (led by the policy name). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
+#
+# EXTRACTIVE (Sustain/Surplus/Market/Eradicate) on the LOCAL-hunt AND forage pickers: the source's CAP
 # for that policy (worker-independent), NOT the crew's carry-aware delivered take (that's the preview
-# line). Framed as "up to X/turn" so the button reads as the ceiling it is, distinct from the honest
-# per-crew line below, and so the four extractive rungs read as ASCENDING (Sustain < Surplus < Market <
-# Eradicate). FOOD units (the cross-source comparison axis), so it keeps `_format_signed`, exactly as the
-# expedition button metric does. Shared by `_hunt_policy_takes` and `_forage_policy_takes`.
+# line). The compact face is the bare signed rate (`+0.90`); the full tooltip frames it as "up to X/turn"
+# so it reads as the ceiling it is, distinct from the honest per-crew line below, and so the four
+# extractive rungs read as ASCENDING (Sustain < Surplus < Market < Eradicate). FOOD units (the
+# cross-source comparison axis), so it keeps `_format_signed`, exactly as the expedition metric does.
+# The compact form is just `_format_signed(rate)`; only the verbose tooltip form needs a format string.
 const POLICY_CAP_FORMAT := "up to %s/turn"
-# The FORAGE INVESTMENT rungs (Cultivate/Sow) wear a metric on their button face too, but it is not an
-# immediate take like the extractive `+X/turn` — it is the PAYOFF the preparation builds TOWARD (the
-# tended/field yield). A leading arrow marks it as "builds toward", so it reads distinct from an
-# extractive rate and never as a rung you'd out-earn today.
-const POLICY_PAYOFF_FORMAT := "→ %s/turn"
-# The EXPEDITION picker's per-policy button metric — the whole animals a raid at this policy delivers at
-# the composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves
-# K/2, Surplus/Market raid deeper, Eradicate takes all). The raid analog of POLICY_CAP_FORMAT's rate,
-# so all three pickers wear a per-policy metric on a second line under the policy name.
+# The INVESTMENT rungs (Cultivate/Sow, Tame/Corral) wear a metric too, but it is not an immediate take
+# like the extractive rate — it is the PAYOFF the preparation builds TOWARD (the tended/field/pastoral/
+# corral yield). A leading arrow marks it on the compact face (`→+1.20`, distinct from an extractive
+# rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward X/turn".
+const POLICY_PAYOFF_COMPACT := "→%s"
+const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
+# The EXPEDITION picker's per-policy metric — the whole animals a raid at this policy delivers at the
+# composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves K/2,
+# Surplus/Market raid deeper, Eradicate takes all). The raid analog of the cap rate: `≈8` on the compact
+# face, `≈8 taken` in the tooltip.
+const EXPEDITION_TAKE_COMPACT := "≈%d"
 const EXPEDITION_TAKE_FORMAT := "≈%d taken"
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
@@ -1625,14 +1636,16 @@ func _is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
         or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
         or policy == LABOR_POLICY_CORRAL
 
-## Each hunt policy's button metric, keyed policy → display string, for the picker's ascending readout.
-## The plant twin of this is `_forage_policy_takes`; both wear the same button format, only the metric
-## differs:
+## Each hunt policy's button metric, keyed policy → a `{compact, full}` pair (compact for the one-line
+## button face, full for the tooltip). The plant twin of this is `_forage_policy_takes`; both wear the
+## same shape, only the metric differs:
 ##   EXTRACTIVE (Sustain/Surplus/Market/Eradicate) → the herd's worker-independent CAP for the policy
-##       (`hunt_policy_ceilings`), framed "up to X/turn" — the ceiling it is, distinct from the crew's
-##       carry-aware delivered line below the picker. Read straight off the sim; never re-derived.
+##       (`hunt_policy_ceilings`): a bare signed rate on the face, framed "up to X/turn" in the tooltip
+##       — the ceiling it is, distinct from the crew's carry-aware delivered line below the picker. Read
+##       straight off the sim; never re-derived.
 ##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward (`pastoral_yield` / `corral_yield`),
-##       framed "→ +Y/turn". NOT the during-building dip: that dip reads BELOW Sustain and is identical
+##       `→+Y` on the face / "builds toward Y/turn" in the tooltip. NOT the during-building dip: that dip
+##       reads BELOW Sustain and is identical
 ##       for both rungs, so quoting it made taming/penning look strictly worse than hunting. Shown even
 ##       when the rung is gated/greyed — informative — with the gate-reason line explaining the lock; a
 ##       0/absent payoff leaves the button bare.
@@ -1650,15 +1663,27 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
-        takes[String(policy)] = POLICY_CAP_FORMAT % _format_signed(rate)
+        takes[String(policy)] = _extractive_take(rate)
     for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
         var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
         if payoff > 0.0:
-            takes[policy] = POLICY_PAYOFF_FORMAT % _format_signed(payoff)
+            takes[policy] = _payoff_take(payoff)
     return takes
+
+## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the bare signed rate on the
+## button face, the "up to X/turn" wording in the tooltip. Shared by the hunt + forage takes helpers.
+func _extractive_take(rate: float) -> Dictionary:
+    var signed := _format_signed(rate)
+    return {"compact": signed, "full": POLICY_CAP_FORMAT % signed}
+
+## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led rate on the button
+## face (`→+1.20`), the "builds toward X/turn" wording in the tooltip. Shared by hunt + forage.
+func _payoff_take(payoff: float) -> Dictionary:
+    var signed := _format_signed(payoff)
+    return {"compact": POLICY_PAYOFF_COMPACT % signed, "full": POLICY_PAYOFF_FULL_FORMAT % signed}
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
 ## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its
@@ -3796,7 +3821,11 @@ func _expedition_policy_takes(herd: Dictionary, party: int) -> Dictionary:
         var cell_variant: Variant = estimates.get(_hunt_estimate_key(String(policy), party), null)
         if not (cell_variant is Dictionary):
             continue
-        takes[String(policy)] = EXPEDITION_TAKE_FORMAT % int((cell_variant as Dictionary).get("animals_taken", 0))
+        var animals := int((cell_variant as Dictionary).get("animals_taken", 0))
+        takes[String(policy)] = {
+            "compact": EXPEDITION_TAKE_COMPACT % animals,
+            "full": EXPEDITION_TAKE_FORMAT % animals,
+        }
     return takes
 
 ## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared
@@ -3809,7 +3838,7 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
         var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
         if not bool(forecast["known"]):
             continue
-        takes[String(policy)] = POLICY_CAP_FORMAT % _format_signed(float(forecast["ceiling"]))
+        takes[String(policy)] = _extractive_take(float(forecast["ceiling"]))
     # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
     # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
     # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
@@ -3820,7 +3849,7 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
             continue
         var payoff := float(forecast["payoff"])
         if payoff > 0.0:
-            takes[policy] = POLICY_PAYOFF_FORMAT % _format_signed(payoff)
+            takes[policy] = _payoff_take(payoff)
     return takes
 
 ## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
@@ -3982,18 +4011,30 @@ func _build_policy_picker(
         var icon := FoodIcons.for_policy(policy_key)
         var reasons := _gate_reasons(gates, policy_key)
         var btn := Button.new()
-        # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
-        # append, so a policy reads identically on the picker and on the worked tile/herd. When the
-        # caller supplies per-policy takes (the hunt picker), a compact per-turn number rides a second
-        # line so the four extractive rungs read as ASCENDING (Sustain < Surplus < Market < Eradicate).
-        var take_line := "\n%s" % String(takes[policy_key]) if takes.has(policy_key) else ""
-        btn.text = "%s%s%s" % [_source_icon_prefix(icon), policy_key.capitalize(), take_line]
+        # ONE-LINE FACE: the FoodIcons policy glyph (the same icon the map's yield labels append, so a
+        # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
+        # metric, NO name — so all six rungs fit one docked row. The name + full metric live in the
+        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Market < Eradicate). A rung
+        # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
+        # is never a lone glyph.
+        var take: Variant = takes.get(policy_key, null)
+        var compact := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
+        var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
+        var face := compact if compact != "" else policy_key.capitalize()
+        btn.text = "%s%s" % [_source_icon_prefix(icon), face]
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
+        # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
+        # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
+        # it is locked.
+        var name_line := POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
+            if full != "" else policy_key.capitalize()
+        var tooltip_lines: Array[String] = [name_line]
         btn.disabled = not reasons.is_empty()
         if btn.disabled:
-            btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(reasons)
+            tooltip_lines.append_array(reasons)
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
+        btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
         row.add_child(btn)
     block.add_child(row)
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
