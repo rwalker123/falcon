@@ -4,6 +4,7 @@ const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
 const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
+const ServerPortsFile = preload("res://src/scripts/ServerPortsFile.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
@@ -31,7 +32,13 @@ var _reservations: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
-const STREAM_DEFAULT_ENABLED = false
+# Stream from the live server by DEFAULT. This used to be false, which meant any launch that
+# did not explicitly set STREAM_ENABLED=true rendered `mock_snapshots.json` instead of the
+# simulation — scripts/run_stack.sh sets it, so dev never noticed, but the packaged playtest
+# build does not, so every package shipped in demo mode. Falling back to mock data is still the
+# behaviour when the connection FAILS (see _ready), so a client launched with no server running
+# degrades exactly as before; it just no longer ignores a server that IS there.
+const STREAM_DEFAULT_ENABLED = true
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
 const STREAM_CONNECTION_TIMEOUT = 5.0
@@ -69,6 +76,7 @@ func _ready() -> void:
     var stream_enabled: bool = _determine_stream_enabled()
     var stream_host: String = _determine_stream_host()
     var stream_port: int = _determine_stream_port()
+    print("[Endpoints] stream=%s:%d (enabled=%s)" % [stream_host, stream_port, stream_enabled])
     if stream_enabled:
         var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
         if err == OK:
@@ -82,6 +90,7 @@ func _ready() -> void:
     var command_host: String = _determine_command_host()
     var command_port: int = _determine_command_port()
     var command_proto_port: int = _determine_command_proto_port()
+    print("[Endpoints] command=%s:%d (proto=%d)" % [command_host, command_port, command_proto_port])
     command_client = CommandClient.new()
     command_client.set_proto_port(command_proto_port)
     var command_err: Error = command_client.connect_to_host(command_host, command_port)
@@ -684,10 +693,18 @@ func _determine_stream_enabled() -> bool:
         return env_flag.to_lower() == "true"
     return STREAM_DEFAULT_ENABLED
 
+# Endpoint resolution order is uniform across stream/command/log:
+#   explicit env var -> ports file published by the server -> hardcoded default.
+# The env var wins so run_stack.sh (which exports explicit hosts/ports) is
+# unaffected; the ports file only covers the packaged build, where the server may
+# have had to bind a non-default block because the defaults were busy.
 func _determine_stream_host() -> String:
     var env_host: String = OS.get_environment("STREAM_HOST")
     if env_host != "":
         return env_host
+    var discovered_host: String = ServerPortsFile.get_host()
+    if discovered_host != "":
+        return discovered_host
     return STREAM_HOST
 
 func _determine_stream_port() -> int:
@@ -696,12 +713,20 @@ func _determine_stream_port() -> int:
         var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
+    # The stream is the FlatBuffers snapshot socket ("snapshot_flat"), not the
+    # legacy JSON "snapshot" socket.
+    var discovered_port: int = ServerPortsFile.get_port(ServerPortsFile.KEY_SNAPSHOT_FLAT)
+    if discovered_port > 0:
+        return discovered_port
     return STREAM_PORT
 
 func _determine_command_host() -> String:
     var env_host: String = OS.get_environment("COMMAND_HOST")
     if env_host != "":
         return env_host
+    var discovered_host: String = ServerPortsFile.get_host()
+    if discovered_host != "":
+        return discovered_host
     return COMMAND_HOST
 
 func _determine_command_port() -> int:
@@ -710,6 +735,9 @@ func _determine_command_port() -> int:
         var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
+    var discovered_port: int = ServerPortsFile.get_port(ServerPortsFile.KEY_COMMAND)
+    if discovered_port > 0:
+        return discovered_port
     return COMMAND_PORT
 
 func _determine_command_proto_port() -> int:
