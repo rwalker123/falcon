@@ -15,9 +15,14 @@ cd "$(dirname "$0")"
 # Best-effort: clear the download quarantine on this package so the app opens.
 xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-APP="ShadowScaleClient.app/Contents/MacOS/ShadowScaleClient"
-if [ ! -x "$APP" ]; then
-  echo "Could not find $APP — is the package unzipped fully?"
+APP_BUNDLE="ShadowScaleClient.app"
+# Godot names the bundle's inner binary after the *project* name, not the export
+# filename, so read the authoritative name out of the bundle instead of guessing.
+APP_EXEC="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+  "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true)"
+APP="$APP_BUNDLE/Contents/MacOS/$APP_EXEC"
+if [ -z "$APP_EXEC" ] || [ ! -x "$APP" ]; then
+  echo "Could not find the client program inside $APP_BUNDLE — is the package unzipped fully?"
   read -r -p "Press Return to close."
   exit 1
 fi

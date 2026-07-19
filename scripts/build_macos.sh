@@ -61,12 +61,24 @@ SERVER_SRC="$ROOT_DIR/target/release/$SERVER_NAME"
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"
 info "Exporting Godot client ('$PRESET') ..."
-if ! "$GODOT_BIN" --headless --path "$GODOT_PROJECT" \
-      --export-release "$PRESET" "$PKG_DIR/$APP_NAME" 2>&1 | tee /tmp/ss_godot_export_macos.log
-then
-  die "Godot export failed — see /tmp/ss_godot_export_macos.log (macOS templates installed? preset '$PRESET' present?)"
+# Godot can crash on SHUTDOWN after writing a perfectly good bundle, so the exit code alone
+# is not a trustworthy verdict — gate on the artifact and treat a late failure as a warning.
+set +e
+"$GODOT_BIN" --headless --path "$GODOT_PROJECT" \
+  --export-release "$PRESET" "$PKG_DIR/$APP_NAME" 2>&1 | tee /tmp/ss_godot_export_macos.log
+godot_status=${PIPESTATUS[0]}
+set -e
+
+# The bundle is only usable if Godot actually wrote its executable, so check that — not just
+# the directory, which it creates before it can fail.
+APP_EXEC="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+  "$PKG_DIR/$APP_NAME/Contents/Info.plist" 2>/dev/null || true)"
+if [ -z "$APP_EXEC" ] || [ ! -x "$PKG_DIR/$APP_NAME/Contents/MacOS/$APP_EXEC" ]; then
+  die "Godot export produced no usable $APP_NAME (exit $godot_status) — see /tmp/ss_godot_export_macos.log (macOS templates installed? preset '$PRESET' present?)"
 fi
-[ -d "$PKG_DIR/$APP_NAME" ] || die "export produced no $APP_NAME (check $GODOT_PROJECT/export_presets.cfg)"
+if [ "$godot_status" -ne 0 ]; then
+  info "WARNING: Godot exited $godot_status but the export is complete — continuing."
+fi
 
 # --- 3. assemble the package ---------------------------------------------------
 cp "$SERVER_SRC" "$PKG_DIR/$SERVER_NAME"
