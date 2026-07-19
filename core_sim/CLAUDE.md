@@ -2248,6 +2248,23 @@ while the player is composing an assignment**.
 `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
 `perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
 (all `float`, **food/turn**, at the source's CURRENT biomass), **plus the investment rung**:
+
+> **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
+> TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
+> `hunt_credit_ceiling`, so each extractive/investment ceiling is `min(hunt_policy_rate, biomass)` —
+> the sustainable rate the confirmed-allocation row already headlines (`sustainable_yield`) — **not**
+> the credit-inclusive `min(credit + rate, biomass)` this-turn burst the take path cashes. For a slow
+> breeder whose MSY < `body_mass` (e.g. Wild Aurochs, `r ≈ 0.09`) the bank accumulates ~a whole animal,
+> and quoting `credit + rate` inflated every extractive ceiling by that banked amount — reading the Tame
+> dip *above* its own payoff and Sustain *above* Tame, inverting the ladder. Steady, the compose
+> forecast agrees with the resolved headline (no jump between them) and the aurochs ladder reads in
+> order: `Sustain 0.72 < Surplus 1.08 < Market 1.80`, Tame dip `+0.36 → payoff +1.44`, Corral payoff
+> `2.88`. **Eradicate is unchanged** (its rate is the whole stock `B`; it bypasses the bank). The take
+> path (`hunt_take` / `hunt_credit_ceiling`) keeps the bank untouched — only the readout is steady.
+> Pinned by `fauna::tests::the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst` (a full-bank
+> herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
+> continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
+
 `ForagePatchState.ceilingCultivate` + `tendedYield` and `HerdTelemetryState.ceilingCorral` +
 `corralYield`. The investment policy's `ceiling*` is the **preparing** yield
 (`fraction × ceilingSustain` — the dip); `tendedYield`/`corralYield` is what the source will pay

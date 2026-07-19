@@ -1905,9 +1905,17 @@ mod labor_yield_tests {
         );
     }
 
-    /// **Hunt forecast == actual.** The fauna twin of the forage test. The herd is re-seated at a
-    /// large capacity so the Eradicate ceiling exceeds a single hunter's throughput (a labor-bound
-    /// case); 20 hunters overstaff every policy (the ceiling binds).
+    /// **Hunt forecast == actual, on a fresh (empty-bank) herd.** The fauna twin of the forage test.
+    /// The herd is re-seated at a large capacity so the Eradicate ceiling exceeds a single hunter's
+    /// throughput (a labor-bound case); 20 hunters overstaff every policy (the ceiling binds).
+    ///
+    /// **The forecast is now the STEADY sustainable rate, not the credit-inclusive burst** — it drops
+    /// the transient `hunt_credit` term (see `hunt_forecast`). So forecast == actual holds exactly when
+    /// **`hunt_credit == 0`**: with an empty bank the take path's `min(0 + rate, biomass)` IS the steady
+    /// rate, so the first turn's take equals the displayed ceiling. A herd carrying banked credit would
+    /// legitimately take *more* this turn (it cashes the bank) than the steady readout advertises — that
+    /// lumpiness is the take's, not the forecast's — so the invariant is asserted on a fresh herd, and
+    /// the `hunt_credit == 0` precondition below is load-bearing, not incidental.
     #[test]
     fn hunt_forecast_equals_actual_take_for_every_policy_and_staffing() {
         const BIG_HERD_CAP: f32 = 1_000.0;
@@ -1922,6 +1930,11 @@ mod labor_yield_tests {
                     .find(HERD_ID)
                     .cloned()
                     .expect("seeded herd");
+                assert_eq!(
+                    herd.hunt_credit, 0.0,
+                    "forecast == actual is the empty-bank invariant: the steady readout matches the \
+                     take only when no banked credit is waiting to be cashed"
+                );
                 let fauna = world.resource::<FaunaConfigHandle>().get();
                 let per_worker = world
                     .resource::<LaborConfigHandle>()

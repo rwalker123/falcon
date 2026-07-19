@@ -6718,7 +6718,10 @@ mod tests {
         );
     }
 
-    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side.
+    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side. The seed is the herd's
+    /// **steady** sustainable rate (`hunt_forecast` drops the transient `hunt_credit` term), so it is
+    /// exactly `hunt_source_yield_preview` — the two are the same forecast object, and this pins that
+    /// the command-path seed matches it.
     #[test]
     fn assigning_hunt_workers_seeds_the_expected_yield_before_the_turn() {
         let mut app = build_headless_app();
@@ -6755,7 +6758,15 @@ mod tests {
         );
     }
 
-    /// **Hunt, no jump.** The resolved take equals the seed.
+    /// **Hunt, no jump — on a fresh (empty-bank) herd.** The resolved take equals the seed.
+    ///
+    /// The seed is now the herd's **steady** sustainable rate (`hunt_forecast` no longer folds in the
+    /// banked `hunt_credit`). On a **fresh** herd (`hunt_credit == 0`) the take path's
+    /// `min(0 + rate, biomass)` IS that steady rate, so the first resolved turn pays exactly the seed —
+    /// no jump. A herd already carrying banked credit would cash it and take *more* this one turn than
+    /// the steady display promised; that is the lumpy TAKE, not a forecast error, so this no-jump
+    /// invariant is asserted on the empty-bank herd `seed_herd` produces (the precondition below is
+    /// load-bearing).
     #[test]
     fn resolved_hunt_yield_equals_the_seeded_yield() {
         let mut app = build_headless_app();
@@ -6764,6 +6775,12 @@ mod tests {
         let tile = seed_tile_grid(&mut app, coord);
         let id = seed_herd(&mut app, coord, None);
         let band = spawn_idle_band(&mut app, faction, tile);
+        assert_eq!(
+            app.world.resource::<HerdRegistry>().find(&id).unwrap().hunt_credit,
+            0.0,
+            "no-jump is the empty-bank invariant: the steady seed equals the take only when no banked \
+             credit is waiting to be cashed"
+        );
 
         assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
         let seeded = source_actual(&app, band);

@@ -3146,10 +3146,18 @@ pub(crate) fn hunt_forecast(
     }
     let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
-    // **The credit-based ceiling** (slice 8b): each policy earns its `hunt_policy_rate` into the herd's
-    // banked `hunt_credit`, and this turn's affordable take is `min(credit + rate, biomass)` (Eradicate
-    // bypasses the bank). Reading the *live* `herd.hunt_credit` here is what makes forecast == actual —
-    // `hunt_take` advances and drains the same credit from the same starting value.
+    // **The displayed ceiling is the STEADY per-turn rate, NOT the credit-inclusive burst** (the
+    // intensification-ladder readout fix). Each policy earns its `hunt_policy_rate` into the herd's
+    // banked `hunt_credit`, and the *take* path cashes `min(credit + rate, biomass)` — a lumpy,
+    // this-turn amount that, for a slow breeder whose MSY < `body_mass`, is inflated by ~a whole banked
+    // animal. Quoting that in the compose forecast made the ladder read nonsense (the Tame dip
+    // out-reading its own payoff; Sustain out-reading Tame). So the forecast drops the transient
+    // `hunt_credit` term and shows the **sustainable** rate — the number the confirmed-allocation row
+    // already headlines (`sustainable_yield`), so compose and resolved now agree. The bank still drives
+    // the lumpy TAKE (`hunt_take` / `hunt_credit_ceiling` are untouched); only the readout is steady.
+    // Passing `credit = 0.0` reuses `hunt_credit_ceiling` so **Eradicate stays the whole stock `B`**
+    // (it bypasses the bank) exactly as the take path reads it — the one policy whose ceiling is
+    // unchanged.
     let ceiling = |policy| {
         // Sustain's rate is sized against the **pre-regrowth** biomass (slice 8b), so a below-K/2
         // herd holds rather than leaking; the ceiling then clamps to the current stock.
@@ -3162,7 +3170,7 @@ pub(crate) fn hunt_forecast(
             ladder,
         );
         hunt_provisions(
-            hunt_credit_ceiling(policy, herd.biomass, herd.hunt_credit, rate),
+            hunt_credit_ceiling(policy, herd.biomass, 0.0, rate),
             fauna,
             output_multiplier,
         )
@@ -3647,6 +3655,71 @@ mod tests {
         assert!(
             forecast.pastoral_yield < forecast.managed_yield,
             "the pen's payoff out-yields taming's (Sustain < Tame < Corral): tame {} vs corral {}",
+            forecast.pastoral_yield,
+            forecast.managed_yield,
+        );
+    }
+
+    /// **The forecast ceilings are the STEADY sustainable rate, NOT the credit-inclusive burst** — the
+    /// intensification-ladder readout fix, pinned on a slow-breeder herd whose bank is FULL (the case
+    /// that exposed the bug). A Wild-Aurochs-shaped herd (`r ≈ 0.09`, MSY < `body_mass`) banks ~a whole
+    /// animal of `hunt_credit`; the take path cashes it, so the credit-inclusive ceiling used to inflate
+    /// every extractive readout by that banked amount — pushing Sustain **above** the Tame payoff and
+    /// inverting the ladder (`Sustain 2.24 > Tame 1.44`). Dropping the `hunt_credit` term restores the
+    /// steady rate, so the displayed ladder is ordered whatever the bank holds:
+    ///
+    /// `Sustain < Surplus < Market` (extractive, steady multiples of MSY), the Tame/Corral **dips**
+    /// below their **payoffs** (`ceiling_tame < pastoral_yield`, `ceiling_prepare < managed_yield` — the
+    /// "Preparing +X → then +Y" the client renders, dip now under payoff), and the whole intensification
+    /// ladder `Sustain < pastoral_yield < managed_yield`. Asserting this **with a full bank** is the
+    /// regression: the old credit-inclusive ceiling failed every one of these.
+    #[test]
+    fn the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        // A healthy slow breeder at capacity (Wild-Aurochs-shaped): MSY < body_mass, so it banks credit.
+        let mut herd = herd_of_size(SizeClass::Big, 1000.0, 1000.0, 0.06);
+        herd.species = "Wild Aurochs".to_string();
+        herd.regrowth_rate = 0.09;
+        herd.husbandry_ceiling = HusbandryCeiling::Pen;
+        herd.body_mass = 50.0;
+        herd.biomass_before_regrowth = herd.biomass;
+        // Fill the kill-credit bank to a whole animal — the state that inflated the OLD ceiling. The
+        // steady forecast must ignore it.
+        herd.hunt_credit = herd.body_mass;
+
+        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+
+        // Extractive ladder — steady multiples of MSY, unperturbed by the banked animal.
+        assert!(
+            forecast.ceiling_sustain < forecast.ceiling_surplus
+                && forecast.ceiling_surplus < forecast.ceiling_market,
+            "extractive ceilings must be the steady MSY multiples in order, not the banked burst: \
+             sustain {} surplus {} market {}",
+            forecast.ceiling_sustain,
+            forecast.ceiling_surplus,
+            forecast.ceiling_market,
+        );
+        // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff".
+        assert!(
+            forecast.ceiling_tame < forecast.pastoral_yield,
+            "the Tame dip must read below its payoff (Preparing < then): dip {} payoff {}",
+            forecast.ceiling_tame,
+            forecast.pastoral_yield,
+        );
+        assert!(
+            forecast.ceiling_prepare < forecast.managed_yield,
+            "the Corral dip must read below its payoff: dip {} payoff {}",
+            forecast.ceiling_prepare,
+            forecast.managed_yield,
+        );
+        // The intensification ladder, visible at a single turn despite the full bank.
+        assert!(
+            forecast.ceiling_sustain < forecast.pastoral_yield
+                && forecast.pastoral_yield < forecast.managed_yield,
+            "the ladder must climb Sustain < Tame payoff < Corral payoff even with a full bank: \
+             sustain {} tame {} corral {}",
+            forecast.ceiling_sustain,
             forecast.pastoral_yield,
             forecast.managed_yield,
         );
