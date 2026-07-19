@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::Serialize;
 use std::io::{self, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,18 +28,11 @@ pub struct LogStreamHandle {
     sender: Sender<LogEnvelope>,
 }
 
-pub fn start_log_stream_server(bind_addr: SocketAddr) -> Option<LogStreamHandle> {
-    let listener = match TcpListener::bind(bind_addr) {
-        Ok(listener) => listener,
-        Err(err) => {
-            eprintln!(
-                "Log stream server bind failed at {}: {}. Log streaming disabled.",
-                bind_addr, err
-            );
-            return None;
-        }
-    };
-
+/// Starts the log stream server on an already-bound listener.
+///
+/// Binding happens up front in `port_alloc::allocate`, so the only remaining
+/// failure mode is `set_nonblocking` — hence the `Option` return stays.
+pub fn start_log_stream_server(listener: TcpListener) -> Option<LogStreamHandle> {
     if let Err(err) = listener.set_nonblocking(true) {
         eprintln!("set_nonblocking failed for log stream listener: {}", err);
         return None;
