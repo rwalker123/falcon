@@ -672,14 +672,13 @@ const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party could
 # as a hunt-party bug. See `_is_managed_hunt_source`.
 const HUNT_CREW_LABEL := "Hunters"
 const HERD_CREW_LABEL := "Herders"
-# One policy button's per-turn take on the hunt picker, so the four extractive rungs read as ASCENDING
-# (Sustain < Surplus < Market < Eradicate). A compact second line under the policy name.
-const POLICY_TAKE_FORMAT := "%s/turn"
-# The LOCAL-hunt picker's button metric is the herd's CAP for that policy (worker-independent), NOT the
-# crew's carry-aware delivered take (that's the preview line). Framed as "up to X/turn" so the button
-# reads as the ceiling it is, distinct from the honest per-crew line below. FOOD units (the cross-source
-# comparison axis), so it keeps `_format_signed`, exactly as the forage/expedition button metrics do.
-const HUNT_CAP_FORMAT := "up to %s/turn"
+# An EXTRACTIVE policy button's per-turn metric on the LOCAL-hunt AND forage pickers: the source's CAP
+# for that policy (worker-independent), NOT the crew's carry-aware delivered take (that's the preview
+# line). Framed as "up to X/turn" so the button reads as the ceiling it is, distinct from the honest
+# per-crew line below, and so the four extractive rungs read as ASCENDING (Sustain < Surplus < Market <
+# Eradicate). FOOD units (the cross-source comparison axis), so it keeps `_format_signed`, exactly as the
+# expedition button metric does. Shared by `_hunt_policy_takes` and `_forage_policy_takes`.
+const POLICY_CAP_FORMAT := "up to %s/turn"
 # The FORAGE INVESTMENT rungs (Cultivate/Sow) wear a metric on their button face too, but it is not an
 # immediate take like the extractive `+X/turn` — it is the PAYOFF the preparation builds TOWARD (the
 # tended/field yield). A leading arrow marks it as "builds toward", so it reads distinct from an
@@ -687,7 +686,7 @@ const HUNT_CAP_FORMAT := "up to %s/turn"
 const POLICY_PAYOFF_FORMAT := "→ %s/turn"
 # The EXPEDITION picker's per-policy button metric — the whole animals a raid at this policy delivers at
 # the composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves
-# K/2, Surplus/Market raid deeper, Eradicate takes all). The raid analog of POLICY_TAKE_FORMAT's rate,
+# K/2, Surplus/Market raid deeper, Eradicate takes all). The raid analog of POLICY_CAP_FORMAT's rate,
 # so all three pickers wear a per-policy metric on a second line under the policy name.
 const EXPEDITION_TAKE_FORMAT := "≈%d taken"
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
@@ -793,7 +792,6 @@ const MAX_USEFUL_UNBOUNDED := -1
 # when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
 # so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
 const HUNT_PEAK_DROP_BANK_BONUS := 1
-const FORECAST_LABEL_FORMAT := "Expected yield: %s"
 # A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
 # "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
@@ -1016,6 +1014,9 @@ const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
 # with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+# The FORAGE twin of the hunt overdraw suffix: a take above the patch's Sustain ceiling draws its
+# biomass down. Forage is smooth food (no whole-animal rhythm), so the preview shows a bare rate + this.
+const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
 # unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
 # itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
@@ -1170,6 +1171,10 @@ var _send_hunt_policy: String = DEFAULT_HUNT_POLICY
 # the selected source changes.
 var _forage_assign_key: String = ""
 var _forage_assign_count: int = 0
+# One-shot: set when the player CLICKS a forage policy so the next rebuild auto-fills the worker count
+# to the policy's max-useful cap ("give me everything this patch sustains"). The forage twin of
+# `_hunt_assign_autofill` — cleared as soon as consumed, never set by a −/+ tick.
+var _forage_assign_autofill := false
 var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
@@ -1640,7 +1645,7 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
-        takes[String(policy)] = HUNT_CAP_FORMAT % _format_signed(rate)
+        takes[String(policy)] = POLICY_CAP_FORMAT % _format_signed(rate)
     return takes
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
@@ -1689,6 +1694,30 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
         body += "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
     return body
+
+## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
+## Forage is SMOOTH food (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
+## per-turn take + a sustainability verdict: income-green `+2.74 /turn · renewable` when the take is
+## within the patch's Sustain ceiling, WARN-amber `⚠ … — overdraws the patch` when a Surplus/Market/
+## Eradicate policy draws it down. Both scaled by the acting band's output multiplier, like the hunt
+## line. "" (no line) when the forecast levers are unknown, so the panel degrades gracefully.
+func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
+    # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
+    # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
+    var sustain := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
+    if not bool(sustain["known"]):
+        return ""
+    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+    if not bool(forecast["known"]):
+        return ""
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var sustainable := float(sustain["ceiling"]) * output
+    var actual := _expected_yield(forecast, workers, band)
+    var text := _format_yield(actual)
+    if _is_overdraw(actual, sustainable):
+        return "[color=#%s]%s %s%s[/color]" % [
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_FORAGE_OVERDRAW_SUFFIX]
+    return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
@@ -2932,11 +2961,12 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## The live "Expected yield: +0.48 /turn" row on the assign controls. Food income → HEALTHY green,
-## matching the map's per-source yield annotations and the Food line's income tint. Under an
-## INVESTMENT policy (Cultivate/Corral) it states the deal instead — "Preparing: +0.09 /turn → then
-## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
-## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
+## The live INVESTMENT-rung forecast row on the assign controls — it states the DEAL: "Preparing:
+## +0.09 /turn → then +1.20 /turn", so the up-front dip AND the payoff are visible BEFORE the player
+## commits. Both halves scaled by the acting band's output multiplier. This row is INVESTMENT-only now:
+## every extractive rung (hunt AND forage) renders its own bare-rate + verdict preview
+## (`_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode`) instead, so the old non-investment
+## "Expected yield:" branch was unreachable and was removed. Callers gate on the investment rung.
 ##
 ## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its row
 ## never shows the payoff bare — it subtracts the herd's own exported `pen_upkeep` (which the sim now
@@ -2947,23 +2977,20 @@ func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
     var hex := HudStyle.HEALTHY
-    if bool(forecast.get("investment", false)):
-        var output := float(band.get("output_multiplier", OUTPUT_FULL))
-        var payoff := float(forecast.get("payoff", 0.0)) * output
-        var feed := float(forecast.get("feed", 0.0)) * output
-        var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
-        if has_feed:
-            row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
-                expected, _format_yield(payoff), _format_magnitude(feed)]
-        else:
-            row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
-        # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
-        # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
-        if has_feed and payoff < FOOD_FLOW_MIN:
-            row.text += "\n%s" % INVESTMENT_FORECAST_DEPLETED_NOTE
-            hex = HudStyle.WARN
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var payoff := float(forecast.get("payoff", 0.0)) * output
+    var feed := float(forecast.get("feed", 0.0)) * output
+    var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
+    if has_feed:
+        row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
+            expected, _format_yield(payoff), _format_magnitude(feed)]
     else:
-        row.text = FORECAST_LABEL_FORMAT % expected
+        row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
+    # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
+    # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
+    if has_feed and payoff < FOOD_FLOW_MIN:
+        row.text += "\n%s" % INVESTMENT_FORECAST_DEPLETED_NOTE
+        hex = HudStyle.WARN
     row.add_theme_color_override("font_color", hex)
     return row
 
@@ -3767,7 +3794,7 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
         var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
         if not bool(forecast["known"]):
             continue
-        takes[String(policy)] = POLICY_TAKE_FORMAT % _format_signed(float(forecast["ceiling"]))
+        takes[String(policy)] = POLICY_CAP_FORMAT % _format_signed(float(forecast["ceiling"]))
     # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
     # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
     # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
@@ -4057,6 +4084,8 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var forage_takes := _forage_policy_takes(tile_info)
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
+        # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
+        _forage_assign_autofill = true
         _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
@@ -4067,6 +4096,11 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
+    # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
+    # the policy (clamped to available below). Only ever set by a policy click, never by a −/+ tick.
+    if _forage_assign_autofill:
+        _forage_assign_count = cap
+        _forage_assign_autofill = false
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
         "Foragers", _forage_assign_count, _forage_assign_count < cap,
@@ -4076,9 +4110,20 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var cap_note := String(capped["note"])
     if cap_note != "":
         forage_assign_controls.add_child(_alloc_hint_label(cap_note))
-    if bool(forecast["known"]):
-        forage_assign_controls.add_child(
-            _forecast_yield_row(forecast, _forage_assign_count, band))
+    # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
+    # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
+    # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
+    # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
+    # warning an Eradicate/Market forage used to render silently.
+    if _forage_assign_policy in INVESTMENT_POLICIES:
+        if bool(forecast["known"]):
+            forage_assign_controls.add_child(
+                _forecast_yield_row(forecast, _forage_assign_count, band))
+    else:
+        var yield_line := _local_forage_preview_bbcode(
+            band, tile_info, _forage_assign_policy, _forage_assign_count)
+        if yield_line != "":
+            forage_assign_controls.add_child(_forecast_label(yield_line))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,

@@ -1467,7 +1467,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     animals-first preview note below) and the INVESTMENT rung (Corral)
     renders `_forecast_yield_row` (`Preparing: +0.23 → then +1.05` — the dip→payoff deal, which a single
     rate structurally cannot express; Corral draws sustainably, so no overdraw verdict is lost).
-    **Forage** has no local-preview twin, so it keeps `_forecast_yield_row` for all five rungs. Rendering
+    **Forage now mirrors the hunt split** — its EXTRACTIVE rungs render `_local_forage_preview_bbcode`
+    (the plant twin, a bare rate + `· renewable` / `⚠ … — overdraws the patch`; no animal rhythm, so no
+    waste suffix) and only its INVESTMENT rungs (Cultivate/Sow) keep `_forecast_yield_row`. Rendering
     both on a hunt was a merge artifact: the flat `per_worker_yield`/`ceiling_*` scalars and the
     `hunt_policy_ceilings` list are **two views of ONE sim hunt model** and agree numerically (verified:
     both give +0.54 on a Market take — the redundancy was measured before it was removed, not assumed), so
@@ -1720,14 +1722,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
-    per-policy **`+X /turn`** button metric the local-hunt picker does (`_forage_policy_takes`, each
-    extractive policy's ceiling from `_forecast_inputs`; the forage INVESTMENT rungs Cultivate/Sow instead
+    per-policy **`up to +X /turn`** CAP button metric the local-hunt picker does (the shared
+    `POLICY_CAP_FORMAT`, fed by `_forage_policy_takes`, each extractive policy's ceiling from
+    `_forecast_inputs`; the forage INVESTMENT rungs Cultivate/Sow instead
     wear a **`→ +X /turn` PAYOFF** metric — `POLICY_PAYOFF_FORMAT`, the `tended_yield`/`field_yield` they
     build toward, NOT the prep dip, which is lower than Sustain — while Corral still carries none; a locked
     Sow may still show its payoff, the gate-reason line explains the lock, and a 0/absent payoff leaves the
     button bare. The three pickers — forage / local hunt / expedition — wear an identical button format,
-    only the metric differs: `+X /turn` for the extractive rungs, `→ +X /turn` for the forage investment
-    rungs, `≈N taken` for the expedition raid) — with a
+    only the metric differs: `up to +X /turn` (`POLICY_CAP_FORMAT`) for the extractive rungs, `→ +X /turn`
+    for the forage investment rungs, `≈N taken` for the expedition raid). **Picking a policy AUTO-FILLS the
+    foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
+    `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
+    clamp; the manual `−/+` stepper never sets it). It carries a
     **forage-appropriate**
     behaviour hint (`FORAGE_POLICY_HINTS` — "gather at the patch's regrowth" etc., NOT the herd-cull
     hints), an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`), and a
@@ -1824,8 +1830,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       answers by **moving** rather than by working. ui_preview `forage_sow_too_dry` /
       `forage_sow_too_poor`.
     - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
-      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` then reads
-      **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
+      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` (now INVESTMENT-only) then
+      reads **`Preparing: +0.24 /turn → then +1.20 /turn`** — the deal, not a single rate — both halves
       scaled by the band's `output_multiplier` like every other forecast. The managed source reports
       per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
       **Corral's payoff is GROSS** (`corralYield` does NOT deduct the pen's feed), so its row never
@@ -1910,7 +1916,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
       picker** (`_build_policy_picker(…, takes)`, fed
       `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** framed **`up to X/turn`**
-      (`HUNT_CAP_FORMAT` — the herd's worker-independent ceiling, FOOD units, distinct from the crew's
+      (`POLICY_CAP_FORMAT`, the shared const also used by the forage picker — the source's
+      worker-independent ceiling, FOOD units, distinct from the crew's
       carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate reads
       as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
@@ -1948,7 +1955,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       differently) / `forage_field_building` (`Sowing 45%` beside `🌾 Tended Patch`) / `forage_field`
       (`▦ Field`) / `forage_cultivate_done` (a COMPLETED Tended Patch with a standing Cultivate: 🌱
       Cultivate greys "Already a Tended Patch — ♻ Sustain-forage it to harvest", the "Preparing → then"
-      line is GONE, and the policy falls back to Sustain's `Expected yield: +0.32 /turn`) /
+      line is GONE, and the policy falls back to Sustain's extractive preview `+0.32 /turn · renewable`) /
       `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
@@ -1963,8 +1970,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the controls via the herd dict and — for the patch — via `forage_patch_lookup` → `_tile_info_at`
     as `patch_`-prefixed keys (in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile redacts them).
     Two affordances, both recomputed on **every** stepper *and* policy change (both already re-render
-    the controls): a live HEALTHY-green **"Expected yield: +X.XX /turn"** row (scaled by the
-    **selected band's `output_multiplier`** — the sim exports at 1.0), and a **worker-stepper cap** of
+    the controls): a live forecast line (scaled by the **selected band's `output_multiplier`** — the sim
+    exports at 1.0), and a **worker-stepper cap** of
     `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
     max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
@@ -1976,8 +1983,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     usefulness)`); only the note now names *which* ceiling bound and the M you're working toward, so a
     disabled `+` is never mute. (`_expedition_useful_cap` scans the full estimate table for M even past
     the fieldable party, so "of M" can exceed the party you can currently staff.)
-    Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
-    `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
+    **ONE forecast row per rung, and forage now mirrors the local hunt exactly** (`Hud.gd`): an
+    **INVESTMENT** rung (Cultivate/Sow — the `_forage_assign_policy in INVESTMENT_POLICIES` branch)
+    keeps `_forecast_yield_row`'s dip→payoff deal (`Preparing: +X /turn → then +Y /turn`); an
+    **EXTRACTIVE** rung renders `_local_forage_preview_bbcode` — the plant twin of
+    `_local_hunt_preview_bbcode` — a bare rate + verdict (`+2.74 /turn · renewable`, or WARN-amber
+    `⚠ … — overdraws the patch` on Market/Eradicate via `_is_overdraw` against the Sustain-ceiling
+    yield), through the SAME `_forecast_label` RichTextLabel at `ALLOC_SECTION_FONT_SIZE` the hunt line
+    uses. This retires the old `"Expected yield:"` prefix for extractive forage (`FORECAST_LABEL_FORMAT`
+    is gone and `_forecast_yield_row`'s non-investment `else` branch was unreachable and removed — its
+    only two callers, hunt via `forecast_active` and forage via the `INVESTMENT_POLICIES` guard, both
+    gate on an investment rung) and fixes the gap where an Eradicate/Market forage rendered no overdraw
+    warning. Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
+    `_forecast_worker_cap` / `_forecast_yield_row` (investment-only now) serve both controls. **Guards:**
     `per_worker_yield == 0` (a dead-season tile) → no row,
     no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
     `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
