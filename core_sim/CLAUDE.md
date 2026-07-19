@@ -2250,7 +2250,23 @@ while the player is composing an assignment**.
 **once the improvement completes**, so the client can show **"preparing X → then Y"** *before* the
 player commits to the cost. (Sim-side both live on the shared `SourceYieldForecast` as
 `ceiling_prepare` / `managed_yield` — the two investment policies are kind-exclusive, so one field
-serves both.)
+serves both.) **The `Tame` rung has its own payoff twin: `HerdTelemetryState.pastoralYield`** (sim
+`SourceYieldForecast::pastoral_yield`) — what a Sustain hunt pays **once the herd is tamed**, so the
+client can render Tame's `→ +Y` instead of quoting only its during-building dip (`ceiling_tame`, which
+reads *below* wild Sustain and hides that taming out-yields wild hunting). `0` on a source that never
+offers Tame (a forage patch, or a herd already penned/forage-tended). **Both `pastoralYield` and the
+un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
+`hunt_provisions(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
+the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
+escapement (`max(0, B − K/2)`) is `r`-independent, the sustained form is what makes the ladder visible
+at a single turn: **`ceiling_sustain < pastoral_yield < managed_yield`** (wild `r·K/4` < pastoral
+`r×1.5` < pen `r×3`, MSY-capped; measured ≈ 0.5 < 0.75 < 1.5 on a full Wild Boar). The old escapement
+projection read `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field
+exists for. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
+`hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
+constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
+projection* is the sustained MSY. Pinned by
+`fauna::tests::the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain`.
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).

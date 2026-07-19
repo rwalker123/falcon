@@ -3302,6 +3302,12 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // herder readout then); `herded_fraction` defaults to 1.0 for any unmanaged/vanished herd.
         let _ = dict.insert("herders_needed", i64::from(herd.herdersNeeded()));
         let _ = dict.insert("herded_fraction", herd.herdedFraction());
+        // The Tame rung's PAYOFF — the pastoral twin of `corral_yield`: food/turn a Sustain hunt pays
+        // ONCE this herd is tamed (the pastoral MSY). While Tame's DURING-BUILDING dip rides the
+        // `hunt_policy_ceilings` list, this is the "then +Y" the client shows so Tame reads as
+        // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
+        // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
+        let _ = dict.insert("pastoral_yield", herd.pastoralYield());
         array.push(&dict.to_variant());
     }
     array

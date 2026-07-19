@@ -1724,13 +1724,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
     per-policy **`up to +X /turn`** CAP button metric the local-hunt picker does (the shared
     `POLICY_CAP_FORMAT`, fed by `_forage_policy_takes`, each extractive policy's ceiling from
-    `_forecast_inputs`; the forage INVESTMENT rungs Cultivate/Sow instead
-    wear a **`→ +X /turn` PAYOFF** metric — `POLICY_PAYOFF_FORMAT`, the `tended_yield`/`field_yield` they
-    build toward, NOT the prep dip, which is lower than Sustain — while Corral still carries none; a locked
-    Sow may still show its payoff, the gate-reason line explains the lock, and a 0/absent payoff leaves the
-    button bare. The three pickers — forage / local hunt / expedition — wear an identical button format,
-    only the metric differs: `up to +X /turn` (`POLICY_CAP_FORMAT`) for the extractive rungs, `→ +X /turn`
-    for the forage investment rungs, `≈N taken` for the expedition raid). **Picking a policy AUTO-FILLS the
+    `_forecast_inputs`; the INVESTMENT rungs on BOTH pickers instead
+    wear a **`→ +X /turn` PAYOFF** metric — `POLICY_PAYOFF_FORMAT`, the `tended_yield`/`field_yield`
+    (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT the prep dip, which reads
+    below Sustain and was identical for both hunt rungs (quoting it made taming/penning look worse than
+    hunting); a locked rung may still show its payoff, the gate-reason line explains the lock, and a
+    0/absent payoff leaves the button bare. The three pickers — forage / local hunt / expedition — wear an
+    identical button format, only the metric differs: `up to +X /turn` (`POLICY_CAP_FORMAT`) for the
+    extractive rungs, `→ +X /turn` for the investment rungs (Cultivate/Sow AND Tame/Corral), `≈N taken`
+    for the expedition raid). **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a
@@ -1849,22 +1851,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
       misled. ui_preview `herd_corral_depleted`.
-    - **TAME IS THE ONE INVESTMENT RUNG WITH NO QUOTABLE PAYOFF — do not invent one.** There is no
-      flat `ceilingTame` scalar on the wire (its dip rides the `huntPolicyCeilings` LIST, read via
-      `_hunt_policy_ceiling`, so it has **no** `FORECAST_CEILING_KEYS` entry — adding one would
-      silently fall back to Sustain's ceiling and quote the wrong number), and **no `pastoralYield`
-      field exists at all**. That is structural, not a decode gap: since slice 3b retired passive-free
-      pastoral, taming's payoff is a faster regrowth (`r` × `pastoral_gain`) that a worker must still
-      harvest — the tamed herd keeps paying through the ordinary Sustain/Surplus ceilings, which RISE
-      as it rebuilds. There is no instantaneous "then +Y". So `_tame_forecast_bbcode` renders the real
-      exported dip and states the payoff **in words** (`TAME_FORECAST_FORMAT`). Quoting `+0.00` (a
-      missing field's default) would be a lie; deriving 1.5× client-side would be the client
-      re-deriving the ecology model. **This is why `INVESTMENT_POLICIES` exists** and why the
-      "which yield row?" test is NOT `forecast["investment"]` (really "has a payoff key", which misses
-      Tame): an investment rung must never fall through to the extractive `renewable / ⚠ overdraws`
-      preview, which is meaningless for a rung drawn sustainably by construction.
-      *Server-side follow-up:* a `pastoralYield` (or an honest "yield per worker, before → after")
-      would let Tame render the same dip→payoff pair as its three siblings.
+    - **TAME's dip has no scalar ceiling field — its DIP rides the list, its PAYOFF is a scalar.** There
+      is no flat `ceilingTame` on the wire (the Tame dip rides the `huntPolicyCeilings` LIST, so `tame`
+      has **no** `FORECAST_CEILING_KEYS` entry — adding one would silently fall back to Sustain's ceiling
+      and quote the wrong dip); `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
+      instead. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+      pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
+      `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
+      renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
+      (no feed term — Tame has no running cost). `INVESTMENT_POLICIES` still names the set (an investment
+      rung must never fall through to the extractive `renewable / ⚠ overdraws` preview), and both hunt
+      investment rungs' picker buttons wear the `→ +Y/turn` PAYOFF (Tame `→ pastoralYield`, Corral
+      `→ corralYield`) via `_hunt_policy_takes` — NOT the during-building dip, which reads below Sustain
+      and was identical for both, making taming/penning look worse than hunting. The payoff shows even on
+      a gated/greyed rung (the gate-reason line explains the lock). ui_preview `herd_tame` /
+      `two_meter_split` (gated Corral still quotes its payoff).
     - **Progress meters — one row per rung, never merged.** Tile card: `Cultivation N%` → `🌾 Tended
       Patch`, joined by its own **`Field`** row — `Sowing N%` → the SIGNAL-tinted **`▦ Field`**
       (`patch_field_progress` / `patch_is_field`, `_field_label` / `_field_value_hex`). Herd drawer:
@@ -1892,7 +1893,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
-      `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) → bare keys
+      `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
+      **`pastoralYield` → `pastoral_yield`** (the newest slot — Tame's payoff, the pastoral twin of
+      `corralYield`, which lets Tame render `→ +Y`; verified present on the herd dict) → bare keys
       on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
       **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) → per-assignment keys
       inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +

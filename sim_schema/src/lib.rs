@@ -346,6 +346,14 @@ pub struct HerdTelemetryState {
     /// (append-only).
     #[serde(default = "fully_herded")]
     pub herded_fraction: f32,
+    /// **The Tame rung's payoff** — food/turn a Sustain hunt pays once this herd is tamed (the
+    /// pastoral MSY at the herd's current biomass), the pastoral twin of [`Self::corral_yield`]. Its
+    /// `ceilingTame` sibling (in [`Self::hunt_policy_ceilings`]) is Tame's *during-building* dip; this
+    /// is what the herd pays *after* taming, so the client renders Tame as `→ +Y` (like
+    /// Cultivate/Sow/Corral) instead of only the dip. `0` on a herd that never offers Tame (already
+    /// penned, or a `wild`-ceiling species). Appended last (append-only).
+    #[serde(default)]
+    pub pastoral_yield: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -388,6 +396,7 @@ impl Default for HerdTelemetryState {
             food_per_animal: 0.0,
             herders_needed: 0,
             herded_fraction: fully_herded(),
+            pastoral_yield: 0.0,
         }
     }
 }
@@ -3600,6 +3609,8 @@ fn create_herds<'a>(
                 // Herd staffing — appended last (append-only wire).
                 herdersNeeded: herd.herders_needed,
                 herdedFraction: herd.herded_fraction,
+                // The Tame rung's payoff — appended last (append-only wire).
+                pastoralYield: herd.pastoral_yield,
             },
         );
         entries.push(entry);

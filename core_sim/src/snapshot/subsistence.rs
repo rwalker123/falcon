@@ -305,6 +305,12 @@ pub(crate) fn herd_snapshot_entries(
                 herded_fraction: herd
                     .map(|herd| herd.herded_fraction)
                     .unwrap_or(FULLY_HERDED),
+                // The Tame rung's payoff — the pastoral twin of `corral_yield`: what a Sustain hunt
+                // pays once this herd is tamed (the pastoral MSY), so the client can quote Tame's
+                // `→ +Y` beside its during-building dip. Sourced from the same `hunt_forecast` object
+                // every ceiling above reads, so it cannot drift; `0` for a source that never offers
+                // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
+                pastoral_yield: forecast.pastoral_yield,
             }
         })
         .collect()

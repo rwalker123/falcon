@@ -65,7 +65,7 @@ use crate::{
     components::{FollowPolicy, SourceYield, Tile},
     fauna::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
-        sustainable_yield, EcologyPhase, SourceYieldForecast,
+        sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
@@ -925,6 +925,9 @@ pub(crate) fn forage_forecast(
             forage,
             output_multiplier,
         ),
+        // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
+        // plant twin of `ceiling_tame: 0`).
+        pastoral_yield: NO_PASTORAL_YIELD,
     }
 }
 

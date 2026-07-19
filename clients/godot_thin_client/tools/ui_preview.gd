@@ -797,16 +797,15 @@ func _ready() -> void:
 	await _save("herd_corral_locked")
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
-	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.05 /turn
-	# before feed", ceiling_corral → corral_yield, stepper capped at the 1 keeper a managed source
-	# needs), and the drawer carries the "Corral: Building 40%" row — the herd twin of the tile's
-	# "Cultivation N%".
+	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
+	# − 0.34 feed", ceiling_corral → corral_yield minus the projected pen_upkeep, stepper capped at the
+	# 1 keeper a managed source needs), and the drawer carries the "Corral: Building 40%" row — the
+	# herd twin of the tile's "Cultivation N%". The picker's 🐄 Corral button wears the `→ +1.50/turn`
+	# PAYOFF (corral_yield), above ◎ Tame's `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
 	#
-	# "before feed", not a number: `corral_yield` is the GROSS take, and the pen's feed is a separate
-	# debit — but the sim exports `pen_upkeep` as 0 for a herd that is not penned YET (there is no pen
-	# to feed), so the pre-build feed figure is NOT on the wire. Rather than fake a projection the row
-	# says the payoff is gross, and the picker's Corral hint below it spells out that the animals eat
-	# from the larder every turn. (A penned herd's row DOES subtract its real exported upkeep.)
+	# `pen_upkeep` is the feed this pen WOULD demand once built — the sim projects it at the herd's
+	# current biomass (on the same basis as `corral_yield`), so the pre-commit row subtracts the real
+	# running cost rather than saying "before feed".
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_ready_herd_fixture())
 	_hud._hunt_assign_policy = "corral"
@@ -846,13 +845,12 @@ func _ready() -> void:
 	await _settle()
 	await _save("two_meter_split")
 
-	# State 6b-tame — the 🐾 Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
+	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Market/Eradicate/Corral, ENABLED (Herding is known) and selected on a
-	# pen-ceiling herd that is only 40% tamed. Its forecast row is deliberately NOT the dip→payoff
-	# pair the other investment rungs render: there is no `pastoralYield` on the wire and nothing to
-	# quote (taming's payoff is a faster regrowth a worker must still harvest, not a managed rate), so
-	# the row shows the REAL exported dip and states the payoff in words. Fabricating a "then +Y" — or
-	# deriving 1.5× client-side — would be the client re-deriving the ecology model.
+	# pen-ceiling herd that is only 40% tamed. Now that the sim exports `pastoralYield`, Tame renders
+	# the SAME dip→payoff pair as its three siblings: "Preparing: +<dip> → then +1.20 /turn" (dip from
+	# `hunt_policy_ceilings["tame"]`, payoff = pastoral_yield, no feed term — Tame has no running cost).
+	# Its picker button wears the `→ +1.20/turn` payoff, above Sustain's `up to +0.90/turn`.
 	await _save("herd_tame")
 
 	# State 6b-tame-stalled — the "why isn't my Tame progressing?" hint. Taming accrues ONLY while the
@@ -2538,16 +2536,19 @@ func _herd_fixture() -> Dictionary:
 		"ceiling_surplus": 1.80,
 		"ceiling_market": 2.70,
 		"ceiling_eradicate": 4.50,
-		# The Corral INVESTMENT rung (the herd twin of the patch's Cultivate pair): the dip yield paid
-		# while the pen is being built, then the yield the penned herd pays.
+		# The two INVESTMENT rungs' PAYOFFS — the food/turn each rung pays ONCE prepared (the pastoral
+		# MSY after taming, the pen's sustained rate once built), NOT the during-build dip. Ordered
+		# Sustain (0.90) < Tame (1.20) < Corral (1.50) so the picker's `→ +Y/turn` payoff buttons read
+		# as an ascending ladder, both clearly above Sustain's `up to +0.90/turn` cap.
 		"ceiling_corral": 0.23,
-		"corral_yield": 1.05,
+		"corral_yield": 1.50,
+		"pastoral_yield": 1.20,
 		"corral_progress": 0.0,
-		# The TAME rung's dip. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
+		# The TAME/Corral DIPS. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
 		# rides the `hunt_policy_ceilings` LIST (the sim exports a row for every one of the six
-		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder actually produces and the
-		# only place `_tame_forecast_bbcode` can read the number from. The extractive rows match the
-		# flat ceilings above, because the sim exports ONE hunt model and the two views must agree.
+		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder produces and where
+		# `_forecast_inputs` reads Tame's dip. The extractive rows match the flat ceilings above,
+		# because the sim exports ONE hunt model and the two views must agree.
 		"hunt_policy_ceilings": {
 			"sustain": 0.90,
 			"surplus": 1.80,

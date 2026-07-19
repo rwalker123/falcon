@@ -1202,6 +1202,13 @@ table HerdTelemetryState {
   // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
   // `domestication` bleeds proportionally and the herd risks reclassifying as wild. Render a warning.
   herdedFraction:float = 1;
+  // --- The Tame rung's payoff (appended last) --- the pastoral twin of `corralYield`: food/turn a
+  // Sustain hunt pays ONCE this herd is tamed (the pastoral MSY at the herd's CURRENT biomass). While
+  // `ceilingTame` in `huntPolicyCeilings` is Tame's DURING-BUILDING dip, this is what the herd pays
+  // after taming completes — so the client can render Tame as "→ +Y" (like Cultivate/Sow/Corral)
+  // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
+  // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
+  pastoralYield:float = 0;
 }
 
 table CommandEventState {

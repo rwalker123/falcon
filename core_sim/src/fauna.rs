@@ -981,9 +981,12 @@ pub const NOT_HERDED: f32 = 0.0;
 /// The **gross managed harvest a PEN yields**, in biomass: [`managed_yield_biomass`] against the herd's
 /// per-species pen ecology ([`pen_ecology_for`]) and the pen's capacity (the herd's
 /// `carrying_capacity`, which for a penned herd is its fenced footprint's `K` — Grazing 2d). Takes the
-/// `&Herd` (not raw scalars) because the per-species pen `r` needs the herd's own wild rate; the
-/// forecast still calls it for a herd that is **not penned yet** to project "what would this pay once
-/// penned?".
+/// `&Herd` (not raw scalars) because the per-species pen `r` needs the herd's own wild rate. This is
+/// the pen's **actual** constant-escapement take, so it drives the corral-tend payout
+/// (`systems::labor`) and the penned-herd early-return of [`hunt_forecast`] (forecast == actual). The
+/// forecast's *un-penned* "what would this pay once penned?" projection is instead the pen's sustained
+/// MSY (`sustainable_yield` at the pen `r`) — the long-run rate that shows the ladder, not this
+/// one-turn escapement.
 pub(crate) fn pen_yield_biomass(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     managed_yield_biomass(
         herd.biomass,
@@ -2648,10 +2651,21 @@ pub struct SourceYieldForecast {
     /// a `fieldYield`) beside today's `ceilingCultivate`/`tendedYield`.
     pub ceiling_sow: f32,
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
-    /// (`tended_provisions`) / the corral harvest (`corral_provisions`) at its current biomass. Lets
+    /// (`tended_provisions`), or, for an **un-penned** herd, the pen's **sustained MSY** projected on
+    /// the pen ecology (`sustainable_yield` at the pen `r`, the long-run rate that shows the ladder).
+    /// A **penned** herd instead reads its actual constant-escapement corral take (`corral_provisions`,
+    /// via the `is_corralled()` early-return in `hunt_forecast`), so forecast == actual there. Lets
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
     /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
     pub managed_yield: f32,
+    /// Food/turn a herd pays **once tamed** — the **Tame rung's payoff**: the pastoral **sustained
+    /// MSY** at the herd's current biomass (`sustainable_yield` at the pastoral `r`). The pastoral
+    /// analog of [`SourceYieldForecast::managed_yield`]/`corralYield`: `ceiling_tame` is Tame's
+    /// *during-building dip*, this is what a Sustain hunt pays *after* the herd is tamed — so the
+    /// client can render Tame as `→ +Y` (like Cultivate/Sow/Corral) instead of quoting only the dip.
+    /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
+    /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
+    pub pastoral_yield: f32,
     /// **One animal's worth of yield** — `body_mass` through the same biomass→provisions conversion
     /// every other field here uses — or **`0.0` for a source that does not quantise**
     /// (intensification ladder slice 8).
@@ -2667,6 +2681,11 @@ pub struct SourceYieldForecast {
     /// — the same reason seed travels and a herd doesn't. Do not "fix" this into a plant body mass.
     pub body_mass_yield: f32,
 }
+
+/// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
+/// patch, or a herd already penned/forage-tended. `0` = *no Tame payoff to advertise*, the pastoral
+/// twin of `PLANTS_DO_NOT_QUANTISE`.
+pub(crate) const NO_PASTORAL_YIELD: f32 = 0.0;
 
 impl SourceYieldForecast {
     /// A **rung-3 managed source** — a corralled herd (a Pen) or a sown Field. The source is *yours*:
@@ -2697,6 +2716,9 @@ impl SourceYieldForecast {
             ceiling_tame: production,
             ceiling_sow: production,
             managed_yield: production,
+            // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
+            // the Tame verb — so it advertises no pastoral payoff.
+            pastoral_yield: NO_PASTORAL_YIELD,
         }
     }
 
@@ -3158,9 +3180,7 @@ pub(crate) fn hunt_forecast(
         ceiling_market: ceiling(FollowPolicy::Market),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
         // The investment rung: what the herd pays *while the pen is built* (Corral — the dip, on the
-        // herd's CURRENT ecology), and what it will pay *once penned* (the pen's MSY, which is why
-        // `corral_provisions` takes the raw capacity rather than a penned herd) — so the client can
-        // show "preparing X → then Y" before the player commits to the 25-turn cost.
+        // herd's CURRENT ecology), and what it will pay *once penned*.
         ceiling_prepare: ceiling(FollowPolicy::Corral),
         // The rung below: what the herd pays *while it is being tamed* (the `animal:pastoral` dip).
         ceiling_tame: ceiling(FollowPolicy::Tame),
@@ -3169,7 +3189,36 @@ pub(crate) fn hunt_forecast(
         // policy" rule stays stated in exactly one place (the mirror of `forage_forecast`'s
         // `ceiling_tame`).
         ceiling_sow: ceiling(FollowPolicy::Sow),
-        managed_yield: corral_provisions(herd, fauna, output_multiplier),
+        // The Corral rung's PAYOFF (`corralYield`) projected for a still-un-penned herd: the pen's
+        // **sustained MSY** on the improved (pen) ecology — the long-run rate that shows the
+        // Sustain < Tame < Corral ladder, NOT the one-turn constant-escapement take. Same
+        // `biomass_before_regrowth` basis and `carrying_capacity` the wild `ceiling` closure uses, so
+        // the ONLY difference from Sustain is the pen ecology's boosted `r`. The **actual** pen take
+        // stays constant-escapement (`corral_provisions`) — see the `is_corralled()` early-return.
+        managed_yield: hunt_provisions(
+            sustainable_yield(
+                herd.biomass_before_regrowth,
+                herd.carrying_capacity,
+                &pen_ecology_for(herd, fauna),
+            ),
+            fauna,
+            output_multiplier,
+        ),
+        // The Tame rung's PAYOFF (the pastoral analog of `managed_yield` above): the pastoral
+        // **sustained MSY** — what a Sustain hunt pays once this herd is tamed — projected for a
+        // still-wild herd on the same basis as Sustain, so the only difference is the pastoral `r`.
+        // `ceiling_tame` is the during-building dip; this is the `→ +Y` the client renders. A wild
+        // herd whose species never tames (`wild` ceiling) reads its wild MSY here, which is fine — the
+        // client only surfaces it on the Tame affordance, hidden on a non-tameable herd.
+        pastoral_yield: hunt_provisions(
+            sustainable_yield(
+                herd.biomass_before_regrowth,
+                herd.carrying_capacity,
+                &pastoral_ecology_for(herd, fauna),
+            ),
+            fauna,
+            output_multiplier,
+        ),
     }
 }
 
@@ -3553,6 +3602,72 @@ mod tests {
             WILD_TEST_REGROWTH_RATE,
             TEST_BODY_MASS,
         )
+    }
+
+    /// The **Tame rung's payoff** (`pastoral_yield`) is what a Sustain hunt pays *once the herd is
+    /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can quote
+    /// Tame's `→ +Y` instead of only its during-building dip (`ceiling_tame`), which reads *below* wild
+    /// Sustain and hides that taming out-yields wild hunting.
+    ///
+    /// **Both projections are the SUSTAINED MSY on each rung's own ecology** — the long-run rate, which
+    /// is `r`-dependent and so orders the ladder strictly. For a healthy pennable herd at capacity
+    /// (`B = K`, `hunt_credit = 0`): `ceiling_sustain` **<** `pastoral_yield` **<** `managed_yield`,
+    /// each a strict step because only the ecology's `r` differs (wild `r·K/4` < pastoral `r×1.5` < pen
+    /// `r×3`, MSY-capped). The old escapement projection (`max(0, B − K/2)`, ecology-independent) tied
+    /// Tame and Corral at a single turn; sustained MSY is what lets the field show the ladder it exists
+    /// to show. (The pen's **actual** take stays constant-escapement — this is a forecast/display
+    /// number only.)
+    #[test]
+    fn the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        // A healthy Wild Boar herd at capacity — a pennable species (`husbandry_ceiling == pen`).
+        let mut herd = herd_of_size(SizeClass::Big, 1000.0, 1000.0, 0.06);
+        herd.species = "Wild Boar".to_string();
+        herd.regrowth_rate = 0.10;
+        herd.husbandry_ceiling = HusbandryCeiling::Pen;
+        herd.body_mass = 50.0;
+        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+
+        assert!(
+            forecast.ceiling_tame < forecast.ceiling_sustain,
+            "the during-building dip reads below wild Sustain — the defect pastoral_yield fixes: \
+             dip {} vs sustain {}",
+            forecast.ceiling_tame,
+            forecast.ceiling_sustain,
+        );
+        // The ladder, now a strict three-step ordering on the sustained MSY of each rung's ecology
+        // (r-dependent), where escapement used to tie the top two. Measured ≈ 0.5 < 0.75 < 1.5.
+        assert!(
+            forecast.ceiling_sustain < forecast.pastoral_yield,
+            "taming's payoff out-yields wild Sustain: sustain {} vs tame payoff {}",
+            forecast.ceiling_sustain,
+            forecast.pastoral_yield,
+        );
+        assert!(
+            forecast.pastoral_yield < forecast.managed_yield,
+            "the pen's payoff out-yields taming's (Sustain < Tame < Corral): tame {} vs corral {}",
+            forecast.pastoral_yield,
+            forecast.managed_yield,
+        );
+    }
+
+    /// A **forage patch** and a **penned herd** never offer the `Tame` verb, so their forecast
+    /// advertises no pastoral payoff (`pastoral_yield == 0`) — the mirror of `ceiling_tame == 0` on the
+    /// plant side and of `managed()` collapsing the axis on a rung-3 source.
+    #[test]
+    fn a_penned_herd_advertises_no_tame_payoff() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let mut herd = herd_of_size(SizeClass::Big, 1000.0, 1000.0, 0.06);
+        herd.species = "Wild Boar".to_string();
+        herd.husbandry_ceiling = HusbandryCeiling::Pen;
+        herd.corralled_at = Some(UVec2::new(1, 1));
+        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+        assert_eq!(
+            forecast.pastoral_yield, NO_PASTORAL_YIELD,
+            "a penned herd is past taming — no Tame payoff to advertise",
+        );
     }
 
     /// Grazing 2d-δ: a `Wild`-ceiling herd never accrues domestication (and never picks up an owner),

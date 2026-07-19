@@ -715,24 +715,23 @@ const FORECAST_CEILING_KEYS := {
     # test by coincidence and lie the moment either rung is retuned.
     "sow": "ceiling_sow",
     # NOTE — `tame` is deliberately ABSENT. There is no flat `ceilingTame` scalar on the wire; the
-    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so it is read via `_hunt_policy_ceiling`
-    # and rendered by `_tame_forecast_bbcode`. Adding a key here would silently fall back to Sustain's
-    # ceiling and quote the wrong number.
+    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so `_forecast_inputs` reads it via
+    # `_hunt_policy_ceiling` (its payoff, `pastoral_yield`, is a real scalar in FORECAST_PAYOFF_KEYS).
+    # Adding a key here would silently fall back to Sustain's ceiling and quote the wrong dip.
 }
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
 #
-# `tame` has NO entry, and that is a real modelling fact rather than a gap in the decode: since slice
-# 3b retired passive-free pastoral, taming's payoff is **not a managed harvest rate** like
-# `tended_yield`/`corral_yield`/`field_yield`. It is a faster regrowth (`r` × pastoral_gain) that a
-# worker still has to harvest — so the tamed herd keeps paying through the ordinary Sustain/Surplus
-# ceilings, which RISE as the herd rebuilds. There is no instantaneous "then +Y" the sim could quote,
-# so the client does not invent one; `_tame_forecast_bbcode` shows the real dip and states the payoff
-# qualitatively. See the client CLAUDE.md note on the missing `pastoralYield`.
+# `tame` → `pastoral_yield`: the sim now exports the Tame rung's payoff (the pastoral MSY once the herd
+# is tamed), the pastoral twin of `corral_yield`, so Tame renders the same dip→payoff pair as its three
+# siblings. Tame's DURING-BUILDING dip has no scalar ceiling field (there is no `ceilingTame`); it rides
+# the `hunt_policy_ceilings` LIST, so `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
+# rather than a `FORECAST_CEILING_KEYS` scalar (adding a key there would silently quote Sustain's ceiling).
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
     "sow": "field_yield",
+    "tame": "pastoral_yield",
 }
 # The INVESTMENT rungs by name — "does this rung trade a dip now for a better source later?". This is
 # the test for *which yield row a rung gets*, and it is deliberately NOT `policy in
@@ -749,14 +748,9 @@ const FORECAST_FEED_KEYS := {
     "corral": "pen_upkeep",
 }
 # The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
+# Tame renders through it too (dip from `hunt_policy_ceilings["tame"]`, payoff = `pastoral_yield`), with
+# no feed term (Tame has no running cost).
 const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
-# TAME's forecast — the one investment rung whose payoff is not a number the sim can quote (see
-# FORECAST_PAYOFF_KEYS). The dip is REAL and exported (`hunt_policy_ceilings["tame"]`), so it is shown
-# as a number; the payoff is stated in words rather than fabricated. Saying "→ then +0.00 /turn" (the
-# default of a field that does not exist) would be a lie, and inventing 1.5× client-side would be the
-# client re-deriving the ecology model — the one thing it must never do.
-# NOTE: no "/turn" in this format string — `_format_yield` already appends YIELD_PER_TURN_SUFFIX.
-const TAME_FORECAST_FORMAT := "Gentling: %s — then the same hunters take more from a herd that stays near"
 # The same deal for a rung that also carries a running feed cost:
 #   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
 # `pen_upkeep` answers "what would this pen cost?" for an UNPENNED herd too (a projection at the
@@ -1631,21 +1625,39 @@ func _is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
         or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
         or policy == LABOR_POLICY_CORRAL
 
-## Each hunt policy's per-turn BAND take CEILING (provisions/turn), keyed policy → display string, for the
-## picker's ascending readout. This is the herd's worker-independent CAP for the policy — framed "up to
-## X/turn" to read as the ceiling it is, distinct from the crew's carry-aware delivered line below the
-## picker. Read straight off the herd's sim-exported `hunt_policy_ceilings` — never re-derived. Empty when
-## the herd carries no ceilings (older snapshot / non-huntable).
+## Each hunt policy's button metric, keyed policy → display string, for the picker's ascending readout.
+## The plant twin of this is `_forage_policy_takes`; both wear the same button format, only the metric
+## differs:
+##   EXTRACTIVE (Sustain/Surplus/Market/Eradicate) → the herd's worker-independent CAP for the policy
+##       (`hunt_policy_ceilings`), framed "up to X/turn" — the ceiling it is, distinct from the crew's
+##       carry-aware delivered line below the picker. Read straight off the sim; never re-derived.
+##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward (`pastoral_yield` / `corral_yield`),
+##       framed "→ +Y/turn". NOT the during-building dip: that dip reads BELOW Sustain and is identical
+##       for both rungs, so quoting it made taming/penning look strictly worse than hunting. Shown even
+##       when the rung is gated/greyed — informative — with the gate-reason line explaining the lock; a
+##       0/absent payoff leaves the button bare.
+## Empty when the herd carries no ceilings (older snapshot / non-huntable).
 func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
     var takes := {}
     var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
     if not (ceilings_variant is Dictionary):
         return takes
     for policy in (ceilings_variant as Dictionary):
+        # The INVESTMENT rungs are skipped here — their during-build dip rides this list too, but they
+        # wear the PAYOFF (the second loop), not the dip. Mirrors `_forage_policy_takes`.
+        if String(policy) in INVESTMENT_POLICIES:
+            continue
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
         takes[String(policy)] = POLICY_CAP_FORMAT % _format_signed(rate)
+    for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
+        var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, policy)
+        if not bool(forecast["known"]) or not bool(forecast["investment"]):
+            continue
+        var payoff := float(forecast["payoff"])
+        if payoff > 0.0:
+            takes[policy] = POLICY_PAYOFF_FORMAT % _format_signed(payoff)
     return takes
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
@@ -2885,19 +2897,30 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
 func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
-    var policy_key: String = policy if policy in FORECAST_CEILING_KEYS else DEFAULT_HUNT_POLICY
-    var ceiling := float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy_key]), 0.0))
-    var investment: bool = policy_key in FORECAST_PAYOFF_KEYS
+    # The DIP ceiling paid while the source is prepared. Every rung reads a scalar ceiling field EXCEPT
+    # `tame`, whose dip has no scalar on the wire (there is no `ceilingTame`) — it rides the
+    # `hunt_policy_ceilings` LIST, so resolve it through `_hunt_policy_ceiling` (< 0 unavailable → 0).
+    var ceiling := 0.0
+    if policy in FORECAST_CEILING_KEYS:
+        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy]), 0.0))
+    elif policy == LABOR_POLICY_TAME:
+        ceiling = maxf(_hunt_policy_ceiling(src, LABOR_POLICY_TAME), 0.0)
+    else:
+        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[DEFAULT_HUNT_POLICY]), 0.0))
+    # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —
+    # is still recognized as the investment rung it is. For every other rung `policy` IS its ceiling key,
+    # so this is identical to the old `policy_key in …` test.
+    var investment: bool = policy in FORECAST_PAYOFF_KEYS
     var payoff := 0.0
     if investment:
-        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy_key]), 0.0))
+        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy]), 0.0))
     # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
     # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
     # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
-    var feed_rung: bool = policy_key in FORECAST_FEED_KEYS
+    var feed_rung: bool = policy in FORECAST_FEED_KEYS
     var feed := 0.0
     if feed_rung:
-        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy_key]), 0.0))
+        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy]), 0.0))
     # WHOLE-ANIMAL HUNT: a take of whole animals via a kill-credit bank (`food_per_animal` = one animal's
     # yield in food; 0/absent for a forage patch). The peak-turn carry need is quantized to whole bodies
     # (see `_max_useful_workers`), so it must fire ONLY for an extractive hunt of a live herd — never a
@@ -3617,14 +3640,6 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             var stalled_label := _alloc_hint_label(stalled)
             stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
             herd_assign_controls.add_child(stalled_label)
-        # TAME's own row — the investment rung with no quotable payoff, so it gets neither the
-        # dip→payoff row above (no `then +Y` exists) nor the extractive preview below (its
-        # "renewable / ⚠ overdraws" verdict is meaningless for a rung drawn sustainably by
-        # construction). See `_tame_forecast_bbcode`.
-        if _hunt_assign_policy == LABOR_POLICY_TAME:
-            var tame_line := _tame_forecast_bbcode(band, herd, _hunt_assign_count)
-            if tame_line != "":
-                herd_assign_controls.add_child(_forecast_label(tame_line))
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
         # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
         # EXTRACTIVE rungs ONLY — an INVESTMENT rung is answered by the dip→payoff row above
@@ -3919,23 +3934,6 @@ func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
     if not corral_reasons.is_empty():
         gates[LABOR_POLICY_CORRAL] = corral_reasons
     return gates
-
-## TAME's pre-commit row: the real exported dip, and the payoff in words. "" when the snapshot lacks
-## the levers/ceilings (graceful degrade — no line, panel otherwise unchanged), matching
-## `_local_hunt_preview_bbcode`.
-##
-## The dip comes from `hunt_policy_ceilings["tame"]` via the SAME `_hunt_take_rate` arithmetic the
-## local hunt preview uses (`min(workers × per_worker, ceiling) × output_multiplier`) — blessed
-## band-flow arithmetic over a sim-exported ceiling, never a re-derivation of the ecology. The payoff
-## is NOT quoted: no `pastoralYield` exists on the wire, and there is nothing to quote (see
-## FORECAST_PAYOFF_KEYS). Rendered in the neutral investment-forecast tint, not income-green: while
-## gentling, this number is a COST the player is accepting, not income to celebrate.
-func _tame_forecast_bbcode(band: Dictionary, herd: Dictionary, workers: int) -> String:
-    var rate := _hunt_take_rate(band, herd, LABOR_POLICY_TAME, workers)
-    if rate < 0.0:
-        return ""
-    var actual := rate * float(band.get("output_multiplier", OUTPUT_FULL))
-    return TAME_FORECAST_FORMAT % _format_yield(actual)
 
 ## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
 ## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`_hunt_policy_gates`): a
