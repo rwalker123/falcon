@@ -183,9 +183,40 @@ impl PortsFileGuard {
     }
 }
 
+/// JSON key holding the writing process's pid. Contract with the Godot client's
+/// discovery reader and with [`PortsFile`] — do not rename.
+const PORTS_FILE_PID_KEY: &str = "pid";
+
+/// Whether the file at `path` still records `pid` as its owner.
+///
+/// Best-effort and deliberately biased toward `false`: a missing, unreadable or
+/// malformed file is *not* ours to delete. Wrongly removing a live server's
+/// discovery record breaks its clients, whereas leaving a stale file behind is
+/// the already-accepted crash/SIGINT behaviour.
+fn ports_file_is_owned_by(path: &std::path::Path, pid: u32) -> bool {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    parsed
+        .get(PORTS_FILE_PID_KEY)
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|recorded| recorded == u64::from(pid))
+}
+
 impl Drop for PortsFileGuard {
+    /// Removes the handshake file only while this process still owns it.
+    ///
+    /// A later server that found the block busy and bumped will have
+    /// *overwritten* the file with its own ports and pid; deleting it then would
+    /// strand that live server's clients on the hardcoded default block. Never
+    /// panics and never fails the process.
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        if ports_file_is_owned_by(&self.path, std::process::id()) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -342,5 +373,87 @@ mod tests {
         drop(guard);
         assert!(!path.exists(), "guard removes the file on drop");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Offset applied to this process's pid to fabricate a pid that is not ours,
+    /// standing in for a second server that bumped its block and took ownership
+    /// of the handshake file.
+    const FOREIGN_PID_OFFSET: u32 = 1;
+
+    /// A unique scratch dir per ownership test, so the filesystem-only tests
+    /// never collide with each other or with the socket-binding tests.
+    fn scratch_path(tag: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!(
+                "shadow_scale_ports_owner_{}_{tag}",
+                std::process::id()
+            ))
+            .join(PORTS_FILE_NAME)
+    }
+
+    /// Writes a handshake file recording `pid`, creating parent dirs as needed.
+    fn write_ports_file_with_pid(path: &PathBuf, pid: u32) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create scratch dir");
+        }
+        fs::write(path, format!("{{\"{PORTS_FILE_PID_KEY}\":{pid}}}")).expect("write ports file");
+    }
+
+    #[test]
+    fn guard_removes_the_file_it_still_owns() {
+        let path = scratch_path("owned");
+        write_ports_file_with_pid(&path, std::process::id());
+        drop(PortsFileGuard { path: path.clone() });
+        assert!(!path.exists(), "our own file should be removed on drop");
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn guard_leaves_a_file_another_process_took_ownership_of() {
+        // Regression: an older server exiting must not delete the handshake file
+        // a newer, still-running server overwrote with its own ports and pid.
+        let path = scratch_path("foreign");
+        let foreign_pid = std::process::id() + FOREIGN_PID_OFFSET;
+        write_ports_file_with_pid(&path, foreign_pid);
+        drop(PortsFileGuard { path: path.clone() });
+        assert!(path.exists(), "another process's file must be left alone");
+        let raw = fs::read_to_string(&path).expect("read ports file");
+        assert!(
+            raw.contains(&foreign_pid.to_string()),
+            "the file's contents must be untouched"
+        );
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn guard_tolerates_a_missing_or_malformed_file() {
+        let missing = scratch_path("missing");
+        // No file written at all: dropping must not panic.
+        drop(PortsFileGuard {
+            path: missing.clone(),
+        });
+        assert!(!missing.exists());
+
+        let malformed = scratch_path("malformed");
+        if let Some(parent) = malformed.parent() {
+            fs::create_dir_all(parent).expect("create scratch dir");
+        }
+        fs::write(&malformed, "{not json").expect("write malformed ports file");
+        drop(PortsFileGuard {
+            path: malformed.clone(),
+        });
+        assert!(
+            malformed.exists(),
+            "an unparseable file is not provably ours, so it stays"
+        );
+        for path in [&missing, &malformed] {
+            if let Some(parent) = path.parent() {
+                let _ = fs::remove_dir_all(parent);
+            }
+        }
     }
 }
