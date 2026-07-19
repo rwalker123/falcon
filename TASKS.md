@@ -785,3 +785,113 @@ retires the static `game_trail` food-site (which never survives food-site curati
 
 ### Market hunting ✅
 - [x] Commercial-hunt Follow policy. `FollowPolicy::Market` (Sustain | Surplus | **Market** | Eradicate) takes `market.take_fraction * biomass` each turn — a large commercial share that declines the herd fast into the Phase D depensation collapse — and sells it at `market.trade_goods_multiplier`× the normal trade-goods rate (`advance_fauna_pursuits`). New `market` config block; the policy is a free string parsed via `FollowPolicy::from_str`, so no proto/schema change — only the `FromStr`/`as_str`/resolve arms + the client policy picker (`FollowMarketButton`, `FOLLOW_POLICIES`). Completes the overlay's depletion-vs-domestication design. Deferred: the pastoral→corral→settlement chain (`Camp`, `SedentarizationScore`).
+
+---
+
+## Script Sandbox Hardening
+
+Found during the code scan for the emergent-narrative arc (`docs/plan_the_telling.md`
+§1a), which evaluated the QuickJS sandbox as a possible host for the beat engine and
+rejected it. None of these block that arc — the engine lives in `core_sim` — but they
+are real gaps between `clients/godot_thin_client/CLAUDE.md` § Scripting Capability
+Model (now corrected to mark them) and the implementation in
+`clients/godot_thin_client/native/src/runtime.rs`.
+
+- [ ] **`ensure_capability` uses a prefix match, not equality.** `runtime.rs:214` checks
+      `cap.starts_with(required)`, so a declared capability is treated as a *prefix
+      source*: a manifest declaring a capability whose name begins with the required
+      string satisfies the check. This is looser than it reads and than the capability
+      registry implies. Decide whether prefix semantics are intended (namespaced
+      capabilities like `telemetry.subscribe.overlays` would justify it) — if so,
+      document and match on a dot boundary; if not, use equality. Add tests for the
+      chosen semantics. (Owner: TBD, Estimate: 0.5d; Deps: none.)
+- [ ] **`commands.issue` has no allowlist or throttle.** A script declaring the
+      capability may submit free-form command lines (`payload.line`) at player
+      privilege, either through GDScript (`ScriptHostManager._handle_command_issue`) or
+      — when a command endpoint is configured — over a raw `TcpStream` from the script
+      thread (`transmit_proto_command`, `runtime.rs:1076`), bypassing Godot entirely.
+      CLAUDE.md promised "vetted command endpoints with throttle windows"; neither
+      exists. Add a per-script command allowlist declared in the manifest plus a rate
+      limit, and decide whether the direct-TCP path should exist at all given it evades
+      any client-side gate. (Owner: TBD, Estimate: 1.5d; Deps: capability-check
+      semantics above.)
+- [ ] **The tick budget cannot stop a runaway script.** `SCRIPT_TICK_BUDGET_MS` (8 ms,
+      `ScriptHostManager.gd:13`) is measured *after* `onTick` returns and only logs an
+      `OverBudget` warning, and there is no memory limit, stack limit, interrupt
+      handler, or preemption. An infinite loop in `onTick` hangs that script's thread
+      permanently with no recovery path. Wire `rquickjs`'s interrupt handler to abort a
+      script exceeding the budget, add `set_memory_limit` / `set_max_stack_size`, and
+      implement the "suspension on sandbox violations" lifecycle step CLAUDE.md already
+      documents. (Owner: TBD, Estimate: 2d; Deps: none.)
+- [ ] **`ui.compose` is declared but unimplemented.** It exists in `CAPABILITY_SPECS`
+      (`sim_runtime/src/scripting.rs`) and in the docs, but `handle_host_request` has no
+      arm for it, so a call logs "Unhandled host request". Either implement the
+      declarative widget graph or drop the capability from the registry so manifests
+      cannot declare something inert. Note this is also the prerequisite for hosting
+      Telling presentation/Voice packs script-side (`docs/plan_the_telling.md` §1b).
+      (Owner: TBD, Estimate: 3d+ if implemented; Deps: none.)
+- [ ] **Subscription wildcards do not match at dispatch.** The capability registry
+      advertises wildcard topics (`overlays.*`, `alerts.*`), but `broadcast_topic`
+      (`ScriptHostManager.gd:114-126`) dispatches on exact string equality, so a script
+      subscribing to a wildcard receives nothing. Either implement prefix/glob matching
+      at dispatch or replace the wildcards with concrete topic names. (Owner: TBD,
+      Estimate: 0.5d; Deps: none.)
+
+---
+
+## The Telling — Emergent Narrative Layer
+
+Concept: `docs/Emergent Narrative.md`. Engineering plan, schema, and PR slicing:
+`docs/plan_the_telling.md`. Turns sim events into a continuous voiced story and lets
+the player author a disposition that colors and steers which beats surface. Sliced so
+each PR is independently playtestable.
+
+### PR-A — beat engine + ambient tier (no new client code)
+- [ ] `core_sim/src/telling/` module + `BeatLedger` resource (fired-set, edge state,
+      wardrobe usage/novelty memory, stance vector, consequence flags, pending forks),
+      saved and restored with the sim.
+- [ ] Signal registry — named accessors over sim state, the engine/content boundary.
+      Content composes signals; it cannot invent them. Seed with the signals the
+      opening arc needs (`sedentarization.score`, `turn.index`, `culture.axis.*`).
+- [ ] Predicate grammar (`all`/`any`/`not`, scalar comparisons, `crosses`
+      rising/falling edges, `trend`, `flag`, `fired within`). `crosses` generalizes the
+      `sedentarization_tick` rising-edge pattern; edge state in the ledger so a beat
+      fires once per crossing, not every tick the condition holds.
+- [ ] Noun-slot resolver registry (`fauna.most_hunted`, `fauna.dominant_local`,
+      `site.last_discovered`, `biome.current_dominant`, …) returning
+      `{ name, plural, adjective }`, with fallback chains. A wardrobe entry whose
+      required slot fails to resolve is excluded from selection so no line renders
+      with a hole in it.
+- [ ] Beat catalog loader — `core_sim/src/data/beat_definitions.json`, mirroring
+      `great_discovery_definitions.json`'s shape and load path, with a `validate()`
+      following the `FaunaConfig`/`ExpeditionConfig` convention (error-level log +
+      builtin fallback on a broken invariant).
+- [ ] Weighted wardrobe selection (`fit × novelty × stance_affinity`), seeded per
+      decision from `hash(world_seed, turn_index, beat_id)` — never a rolling global
+      stream — so selection is reproducible and independent of beat evaluation order.
+      All weights and the novelty window in `beat_config.json`.
+- [ ] `telling_tick` turn-pipeline stage, placed after the systems whose state it
+      reads; ambient/beat tiers emit through the existing `CommandEventLog` (renders
+      today, no client change). Per-tier per-turn budget + cooldowns in config.
+- [ ] Opening-arc ambient content: enough wardrobe depth to judge whether emergent
+      noun dressing produces copy worth reading. Both voice registers (`mythic`,
+      `warm`) per entry.
+
+### PR-B — the fork tier
+- [ ] Snapshot field carrying pending forks + the choice-submission command path.
+- [ ] The one genuinely new client component: an interrupt decision surface
+      (no modal/choice UI exists today; nearest patterns are the TurnOrb attention
+      popover and the top-center targeting banner).
+- [ ] Stance write-back and the stance vector's backing-signal map
+      (`roam_settle` → `SedentarizationScore`, `appetite_restraint` →
+      `culture.axis.ascetic_indulgent`, …; axis list is config, not code).
+- [ ] Stance re-coloring of *shared* events, not just unlocking stance-specific beats
+      — the concept's §6 "key nuance" and the cheapest characterful win in the design.
+- [ ] Player-facing voice-register toggle (both registers already carried as data).
+
+### PR-C — voice evolution + callbacks
+- [ ] Voice medium progression (oral saga → painted chronicle → written record →
+      institutional archive) tied to `CapabilityFlags` milestone crossings.
+- [ ] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
+      callback beats that reference them — what makes a 200-turn emergent game feel
+      authored.
