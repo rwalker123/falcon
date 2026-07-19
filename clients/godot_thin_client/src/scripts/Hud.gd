@@ -608,6 +608,15 @@ const BAND_PICKER_LABEL := "Band:"
 const WORKER_STEPPER_BUTTON_WIDTH := 28.0
 const WORKER_STEPPER_VALUE_WIDTH := 32.0
 const WORKER_STEPPER_SEPARATION := 6
+# Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
+# rows): the title + stepper ride line 1, the yield/policy/status/notes drop to an indented, smaller
+# secondary line 2 so the row reads narrow. `STATUS_LINE_INDENT` ≈ the leading resource-icon width, so
+# line 2 sits under the title TEXT rather than under the icon; the flow separation is the gap between
+# the status parts (which wrap to the next line rather than widening the panel); the two-line gap is
+# the vertical space between line 1 and line 2.
+const STATUS_LINE_INDENT := 18.0
+const STATUS_LINE_SEPARATION := 6
+const TWO_LINE_STEPPER_SEPARATION := 2
 # Allocation-panel section headers + role hints (make the panel read as a "current actions"
 # report and make the standing Scout/Warrior roles discoverable — the −/+ steppers ARE how
 # you staff a scout mission now; there is no targeted map action).
@@ -652,12 +661,6 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
-# Cadence separator (" · ") joining a Current-actions Hunt row's food rate to its animals-first cadence
-# suffix (`_hunt_row_animal_rate`). A hunt takes WHOLE animals, so the row pairs the honest food rate
-# (`sustainable_yield`, NOT the quantized kill PULSE) with the animals/turn form `≈X animal/turn`
-# (`rate ÷ food_per_animal`, both PROVISIONS — dividing by `bodyMass` would be a ~50× unit error). This
-# is the SINGLE non-flipping format; the old fast/slow rhythm flip was retired.
-const HUNT_RHYTHM_SEPARATOR := " · "
 # UNDERSTAFFING (`LaborAssignment.wastedYield`): provisions the source OFFERED that the crew could not
 # collect — the party is under-crewed for the kill (an animal too big to fully carry, or an
 # over-abundant pulse) and food is left standing. Muted (INK_FAINT), the low-key mirror of the
@@ -1614,15 +1617,6 @@ func _format_animal_rate(value: float) -> String:
         if text.ends_with("."):
             text = text.rstrip(".")
     return text
-
-## The animals-first, NON-FLIPPING cadence for a confirmed Current-actions Hunt row: the honest food rate
-## (`sustainable_yield`) as animals/turn against one animal's worth of food, in the same `≈X animal/turn`
-## form the compose preview uses (retiring the old fast/slow flip). No worker-compose context here, so no
-## carry/waste model — just a consistent unit. "" when a term is unknown (0), so the row degrades bare.
-func _hunt_row_animal_rate(rate: float, food_per_animal: float, animal: String) -> String:
-    if food_per_animal <= 0.0 or rate <= 0.0:
-        return ""
-    return HUNT_DELIVERED_FORMAT % [_format_animal_rate(rate / food_per_animal), animal]
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
 ## fully tamed (pastoral), or being penned under the composed Corral policy. `workersNeeded` on such a
@@ -2601,69 +2595,139 @@ func _policy_hint(kind: String, policy: String) -> String:
 ## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
 ## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
 ## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "") -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+## `status_line` (default "") is the OPT-IN to the two-line form used ONLY by the Forage/Hunt
+## Current-actions rows: when non-empty the title (icon + action + location) + the −/+ stepper ride
+## line 1, and the yield/policy text (`status_line`) + the status glyph + the ⚠/overstaff/wasted notes
+## drop to an indented, smaller secondary line 2 that WRAPS rather than widening the panel. When "",
+## every existing caller (Scout/Warrior, the compose steppers) renders the unchanged single-line HBox.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "") -> Control:
     # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
     var status_key := FoodIcons.STATUS_PENDING if pending else status
     var row_tooltip := _append_status_tooltip(tooltip, status_key)
+    # Pending tints the row's IDENTITY amber (the title — it ties to the amber pending hex on the map);
+    # a settled row reads plain INK.
+    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
+    if status_line != "":
+        return _build_two_line_stepper(
+            label_text, count, plus_enabled, on_change, warn, row_tooltip, note,
+            on_focus_source, status_key, muted_note, status_line, row_ink)
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     if row_tooltip != "":
         row.tooltip_text = row_tooltip
     var row_text := label_text + _row_glyph_suffix(FoodIcons.for_status(status_key))
-    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
-    var name_label: Control
-    if on_focus_source.is_valid():
-        var link := Button.new()
-        link.text = row_text
-        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
-        HudStyle.apply_link_button(link, row_ink)
-        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
-        link.pressed.connect(func() -> void: on_focus_source.call())
-        name_label = link
-    else:
-        var plain := Label.new()
-        plain.text = row_text
-        plain.add_theme_color_override("font_color", row_ink)
-        if row_tooltip != "":
-            plain.tooltip_text = row_tooltip
-        name_label = plain
-    row.add_child(name_label)
+    row.add_child(_build_row_name_label(row_text, row_ink, row_tooltip, on_focus_source))
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
     # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
     if warn:
-        var warn_label := Label.new()
-        warn_label.text = OVERHUNT_FLAG
-        warn_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if row_tooltip != "":
-            warn_label.tooltip_text = row_tooltip
-        row.add_child(warn_label)
+        row.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, row_tooltip))
     # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
     # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
     # means "overdrawing" (ecological); this means "extra workers idle here" (see
     # `_source_yield_readout`). The tooltip carries the full explanation.
     if note != "":
-        var note_label := Label.new()
-        note_label.text = note
-        note_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if row_tooltip != "":
-            note_label.tooltip_text = row_tooltip
-        row.add_child(note_label)
+        row.add_child(_build_row_note_label(note, HudStyle.WARN, row_tooltip))
     # Understaffing note ("· 1.7 wasted"): MUTED (INK_FAINT), the low-key mirror of the WARN overstaff
     # note — it says "the source offered more than the crew carried home" (add workers), a softer nudge
     # than the ecological ⚠. Fed by `wasted_yield`; tooltip carries the full explanation.
     if muted_note != "":
-        var muted_label := Label.new()
-        muted_label.text = muted_note
-        muted_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-        if row_tooltip != "":
-            muted_label.tooltip_text = row_tooltip
-        row.add_child(muted_label)
+        row.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, row_tooltip))
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(spacer)
+    _add_stepper_controls(row, count, plus_enabled, on_change)
+    return row
+
+## The two-line form of a worker-stepper row (see `_build_worker_stepper`'s `status_line`): line 1 =
+## the clickable title + spacer + −/+ stepper; line 2 = an indented, smaller secondary status carrying
+## the yield/policy text, the status glyph, then the ⚠/overstaff/wasted notes — the SAME per-part
+## colors the single-line path uses, just relocated below. Pending tints the TITLE amber (row 1's
+## identity) and shows the ◌ glyph on row 2.
+func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color) -> VBoxContainer:
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", TWO_LINE_STEPPER_SEPARATION)
+    # Line 1: title + spacer + stepper. The status glyph is NOT appended to the title here (it lives on
+    # line 2); the title keeps its click-to-jump link (or a plain Label for band-wide roles).
+    var title_row := HBoxContainer.new()
+    title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title_row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    title_row.add_child(_build_row_name_label(label_text, row_ink, row_tooltip, on_focus_source))
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title_row.add_child(spacer)
+    _add_stepper_controls(title_row, count, plus_enabled, on_change)
+    col.add_child(title_row)
+    # Line 2: indented, smaller, wrapping status. A MarginContainer insets it past the icon; an
+    # HFlowContainer wraps the parts to the next line rather than widening the panel (its min width is
+    # the widest single part, small by construction).
+    var status_margin := MarginContainer.new()
+    status_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    status_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
+    var status_flow := HFlowContainer.new()
+    status_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    status_flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
+    if row_tooltip != "":
+        status_flow.tooltip_text = row_tooltip
+    # The yield + policy glyph the caller composed (INK), then the status glyph (row_ink — WARN with the
+    # ◌ when pending, tying it to the amber title), then ⚠ (WARN), the overstaff note (WARN), and the
+    # wasted note (INK_FAINT).
+    status_flow.add_child(_build_status_part(status_line, HudStyle.INK))
+    var status_glyph := FoodIcons.for_status(status_key)
+    if status_glyph != "":
+        status_flow.add_child(_build_status_part(status_glyph, row_ink))
+    if warn:
+        status_flow.add_child(_build_status_part(OVERHUNT_FLAG, HudStyle.WARN))
+    if note != "":
+        status_flow.add_child(_build_status_part(note, HudStyle.WARN))
+    if muted_note != "":
+        status_flow.add_child(_build_status_part(muted_note, HudStyle.INK_FAINT))
+    status_margin.add_child(status_flow)
+    col.add_child(status_margin)
+    return col
+
+## The clickable title (or plain Label) shared by both stepper forms. `on_focus_source` (when valid)
+## makes it an inline link that jumps the map to the source; a band-wide role passes nothing.
+func _build_row_name_label(text: String, ink: Color, row_tooltip: String, on_focus_source: Callable) -> Control:
+    if on_focus_source.is_valid():
+        var link := Button.new()
+        link.text = text
+        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
+        HudStyle.apply_link_button(link, ink)
+        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
+        link.pressed.connect(func() -> void: on_focus_source.call())
+        return link
+    var plain := Label.new()
+    plain.text = text
+    plain.add_theme_color_override("font_color", ink)
+    if row_tooltip != "":
+        plain.tooltip_text = row_tooltip
+    return plain
+
+## A single-line note Label (⚠ / overstaff / wasted) for the one-line stepper form.
+func _build_row_note_label(text: String, color: Color, row_tooltip: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", color)
+    if row_tooltip != "":
+        label.tooltip_text = row_tooltip
+    return label
+
+## A secondary status part (line 2 of the two-line form): rendered a touch smaller
+## (`ALLOC_SECTION_FONT_SIZE`) than the title.
+func _build_status_part(text: String, color: Color) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", color)
+    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
+    return label
+
+## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
+## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
+func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable) -> void:
     var minus := Button.new()
     minus.text = "−"
     minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
@@ -2684,7 +2748,6 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
     plus.disabled = not plus_enabled
     plus.pressed.connect(func() -> void: on_change.call(count + WORKER_STEP))
     row.add_child(plus)
-    return row
 
 ## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
 ## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
@@ -3108,8 +3171,12 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
             # truth), so a source reads identically in the panel and on the map. Unknown module → "".
             var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
+            # Two-line row: the title (icon + Forage + tile) stays on the stepper line; the yield + the
+            # policy glyph drop to the indented secondary line 2 (leading separator stripped so it reads
+            # "+0.61 /turn  ♻").
+            var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
             actions_block.add_child(_build_worker_stepper(
-                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, yld.label_suffix, forage_policy_glyph],
+                "%sForage (%d, %d)" % [forage_icon, fx, fy],
                 workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
                 pending, yld.warn,
@@ -3117,7 +3184,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note))
+                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -3130,16 +3197,13 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # label/species) — the panel row and the map marker read as the same animal.
             var herd_label := _herd_label_for_id(herd_id)
             var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
-            # Pair the honest per-turn rate (yld.rate = sustainable, not the pulse) with the animals-first,
-            # NON-FLIPPING cadence (`≈X animal/turn`, the same form the compose preview uses), from the
-            # herd's `food_per_animal` (provisions — same unit as the rate). Unknown herd → no suffix.
-            var hunt_rhythm := _hunt_row_animal_rate(
-                float(yld.rate), float(_find_world_herd(herd_id).get("food_per_animal", 0.0)), herd_label)
-            var hunt_rhythm_suffix := HUNT_RHYTHM_SEPARATOR + hunt_rhythm if hunt_rhythm != "" else ""
+            # A summary row headlines the honest per-turn FOOD rate (yld.rate = sustainable, not the pulse);
+            # the animals-per-turn cadence lives on the compose-preview line, not here. Two-line row: the
+            # title (icon + Hunt + species) stays on the stepper line; the yield + policy glyph drop to
+            # the indented secondary line 2 (leading separator stripped so it reads "+1.19 /turn  ♻").
+            var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
             actions_block.add_child(_build_worker_stepper(
-                "%sHunt %s%s%s%s" % [
-                    hunt_icon, herd_label, yld.label_suffix, hunt_rhythm_suffix,
-                    _row_glyph_suffix(FoodIcons.for_policy(policy))],
+                "%sHunt %s" % [hunt_icon, herd_label],
                 workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
                 pending, yld.warn,
@@ -3148,7 +3212,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),
                 # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note))
+                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)

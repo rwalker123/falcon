@@ -1428,9 +1428,10 @@ func _ready() -> void:
 	await _save("terrain_legend_persist")
 
 	# ---- Hunt/husbandry render-honesty pass (intensification ladder client UX) ----------------------
-	# Fix #1 + #5 — CURRENT ACTIONS rows: the honest per-turn RATE (sustainable, not the 0.00 pulse)
-	# paired with the kill-RHYTHM from body_mass (a fast animal "≈1.3 Marsh Fowl/turn"; a big one "≈1
-	# Woolly Mammoth / 7 turns"), and the muted "· 1.9 wasted" under-crewed note on the big-game row.
+	# Fix #1 + #5 — CURRENT ACTIONS rows: a summary row headlines the honest per-turn FOOD rate
+	# (sustainable, not the 0.00 pulse) + the policy/status glyphs, with NO `≈… /turn` animals-per-turn
+	# cadence (that lives on the compose-preview line). Both rows must read `Hunt <species> +X /turn ♻ ●`;
+	# the big-game (under-crewed) row also keeps its muted "· 1.9 wasted" note (yld.muted_note, not cadence).
 	_hud.update_herds(_hunt_rhythm_herds_fixture())
 	_hud.show_unit_selection(_hunt_actions_band_fixture())
 	await _settle()
@@ -2486,21 +2487,20 @@ func _hunt_rhythm_herds_fixture() -> Array:
 		{"id": "game_mammoth_01", "species": "Woolly Mammoth", "x": 70, "y": 17, "food_per_animal": 16.0},
 	]
 
-## A band worked on TWO hunt sources — the render-honesty frame for the kill-RHYTHM (fix #1) and the
-## under-crewed `wastedYield` note (fix #5). Row 1 is a FAST animal (its honest per-turn rate reads as
-## several a turn); row 2 a BIG animal whose `actualYield` is 0.00 THIS turn — the "+0.00 /turn" lie
-## the row used to headline — and which is under-crewed, so the muted "· N wasted" note shows.
+## A band worked on TWO hunt sources — the render-honesty frame for the summary row's honest per-turn
+## FOOD rate (fix #1) and the under-crewed `wastedYield` note (fix #5). Row 1 is a FAST animal; row 2 a
+## BIG animal whose `actualYield` is 0.00 THIS turn — the "+0.00 /turn" lie the row used to headline —
+## and which is under-crewed, so the muted "· N wasted" note shows. Neither row shows a `≈… /turn`
+## animals-per-turn cadence: on a summary row the sustainable food rate is enough.
 func _hunt_actions_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["labor_assignments"] = [
-		# Fast: honest rate 2.60/turn, body 2.0 → 1.3 animals/turn → "≈1.3 Marsh Fowl/turn". A fast
-		# Sustain animal takes several a turn, so actual ≈ sustainable (no overdraw ⚠).
+		# Fast: honest rate 2.60/turn. A fast Sustain animal, so actual ≈ sustainable (no overdraw ⚠).
 		{"kind": "hunt", "workers": 3, "fauna_id": "game_fowl_01", "policy": "sustain",
 			"target_x": 71, "target_y": 18, "actual_yield": 2.60, "sustainable_yield": 2.60,
 			"workers_needed": 3},
-		# Big: honest rate 2.40/turn (the sim's measured Mammoth Sustain), 16 food/animal → ceil(16/2.4)
-		# = 7 → "≈1 Woolly Mammoth / 7 turns". actual_yield 0.00 = a wait turn of the kill pulse (the old
-		# lie the row used to headline). Under-crewed → the muted "· 1.9 wasted".
+		# Big: honest rate 2.40/turn (the sim's measured Mammoth Sustain). actual_yield 0.00 = a wait turn
+		# of the kill pulse (the old lie the row used to headline). Under-crewed → the muted "· 1.9 wasted".
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_mammoth_01", "policy": "sustain",
 			"target_x": 70, "target_y": 17, "actual_yield": 0.00, "sustainable_yield": 2.40,
 			"workers_needed": 5, "wasted_yield": 1.9},

@@ -1423,8 +1423,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;
     `WORKERS_HEADER_FORMAT`, idle from `_effective_idle` so it counts optimistically), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
-    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A row states its
-    policy and its status as GLYPHS, not words** (`🌰 Forage (27, 26) +0.48 /turn  ♻  ●`) — the old
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A Forage/Hunt row is
+    TWO lines** (the `status_line` opt-in on `_build_worker_stepper` → a `VBoxContainer`; the
+    Scout/Warrior role rows and the compose steppers stay the single-line `HBoxContainer`): **line 1** is
+    the resource-glyph title + tile/species (`🌰 Forage (27, 26)`) beside the `−/+` stepper, keeping its
+    click-to-jump link; **line 2** is an INDENTED, smaller (`ALLOC_SECTION_FONT_SIZE`), `HFlowContainer`
+    that WRAPS carrying the yield + policy glyph + status glyph + any ⚠/overstaff/wasted notes
+    (`+0.48 /turn  ♻  ●  · only 2 of 5 working`), so the row reads narrow and never forces the panel
+    wider. `_build_two_line_stepper` / `_build_row_name_label` / `_build_status_part` /
+    `_add_stepper_controls` factor the title/stepper/status parts so both forms share them. **A row
+    states its policy and its status as GLYPHS, not words** — the old
     `[sustain]` / `· pending` word-tags were long and, for pending, redundant with the amber tint.
     Both come from the one glyph registry, `FoodIcons` (`for_policy` / `for_status`; see the
     **action-status vocabulary** header block in `Hud.gd`), and the WORDS move into the row tooltip
@@ -1884,21 +1892,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
       slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
       playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
-    - **The hunt row headlines the honest RATE, never the kill-credit PULSE, and pairs it with an
-      ANIMALS-first, NON-FLIPPING cadence** (`Hud._source_yield_readout` / `_hunt_row_animal_rate`, slice
-      8b UX + the local-hunt UX cleanup): a Hunt allocation row + the local-hunt preview show
-      `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on a
-      kill turn — the "+0.00 /turn" lie), and append the cadence as `≈<rate> <animal>/turn`
-      (`_hunt_row_animal_rate` = `sustainable_yield ÷ food_per_animal`, up to 2 dp, trailing zeros
-      stripped by `_format_animal_rate`) — **one consistent format at every scale**: fast game reads
-      `≈1.3 Marsh Fowl/turn`, big game `≈0.15 Woolly Mammoth/turn`. The **old fast/slow flip**
-      (`_hunt_kill_rhythm`'s `≈1 Mammoth / N turns` slow form) was **retired** — its jarring format switch
-      confused the reading. **The cadence divides FOOD by FOOD** — the rate (`sustainable_yield`,
-      provisions) by **`food_per_animal`** (`HerdTelemetryState.foodPerAnimal`, slot 72 = `body_mass ×
-      provisions_per_biomass` = the sim's `SourceYieldForecast::body_mass_yield`, one animal's worth of
-      yield in provisions). It must **NOT** divide by `body_mass` (BIOMASS): with `provisions_per_biomass
-      0.02` that reads ~50× too long. A herd whose `foodPerAnimal` is 0/unknown → no cadence drawn (the
-      honest rate still shows). The **hunt policy picker** (`_build_policy_picker(…, takes)`, fed
+    - **The hunt row headlines the honest RATE, never the kill-credit PULSE** (`Hud._source_yield_readout`,
+      slice 8b UX + the local-hunt UX cleanup): a Current-actions Hunt SUMMARY row + the local-hunt preview
+      show `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on
+      a kill turn — the "+0.00 /turn" lie). **The summary row is now JUST the food rate + glyphs** — it reads
+      `Hunt <species> +X /turn ♻ ●` (food rate, policy glyph, status glyph). The **animals-per-turn cadence
+      (`≈<rate> <animal>/turn`) belongs to the COMPOSE-PREVIEW line only** (`_local_hunt_preview_bbcode` /
+      `_format_animal_rate` — `sustainable_yield ÷ food_per_animal`, up to 2 dp, trailing zeros stripped;
+      fast game `≈1.3 Marsh Fowl/turn`, big game `≈0.15 Woolly Mammoth/turn`): on a summary row the food rate
+      is enough, so the cadence suffix was dropped there (the old `_hunt_row_animal_rate` / `HUNT_RHYTHM_SEPARATOR`
+      helpers are gone). The **old fast/slow flip** (`_hunt_kill_rhythm`'s `≈1 Mammoth / N turns` slow form)
+      had already been retired — its jarring format switch confused the reading. **The preview cadence divides
+      FOOD by FOOD** — the rate (`sustainable_yield`, provisions) by **`food_per_animal`**
+      (`HerdTelemetryState.foodPerAnimal`, slot 72 = `body_mass × provisions_per_biomass` = the sim's
+      `SourceYieldForecast::body_mass_yield`, one animal's worth of yield in provisions). It must **NOT**
+      divide by `body_mass` (BIOMASS): with `provisions_per_biomass 0.02` that reads ~50× too long. A herd
+      whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
+      picker** (`_build_policy_picker(…, takes)`, fed
       `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** framed **`up to X/turn`**
       (`HUNT_CAP_FORMAT` — the herd's worker-independent ceiling, FOOD units, distinct from the crew's
       carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate reads
@@ -1909,8 +1919,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
       row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
     - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt
-      rows — fast `≈1.3 Marsh Fowl/turn`, big-game **`≈0.15 Woolly Mammoth/turn`** (non-flipping) + the
-      muted `· 1.90 wasted`) / `hunt_picker_ascending` (the local picker + the preview's per-crew line,
+      SUMMARY rows — each `Hunt <species> +X /turn ♻ ●` with NO `≈… /turn` animals-per-turn cadence; the
+      big-game row also keeps the muted `· 1.90 wasted` under-crewed note) / `hunt_picker_ascending` (the local picker + the preview's per-crew line,
       "Hunters" stepper on a wild herd) / **`herd_hunt_delivered_clean`** (2 hunters → `≈1 Red Deer/turn ·
       renewable` + the four ascending `up to +2.33/+3.50/+5.00/+7.00 /turn` cap buttons) /
       **`herd_hunt_delivered_waste`** (1 hunter can't carry one whole deer → green `≈0.65 Red Deer/turn ·
