@@ -1723,9 +1723,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
     per-policy **COMPACT** button metric the local-hunt picker does. **Each button is ONE line:
-    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇄ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`)
-    — so all six rungs fit one docked row; the six wide two-line `♻ Sustain / up to +0.90/turn` buttons
-    used to overflow. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇄ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`).
+    **The picker is a `GridContainer` `POLICY_PICKER_COLUMNS` (3) wide, each button `SIZE_EXPAND_FILL`**, so
+    the six-rung forage/local-hunt pickers wrap to **two rows of three** (equal-width, filling the panel
+    content width) instead of one over-wide row; the six wide two-line `♻ Sustain / up to +0.90/turn`
+    buttons used to overflow, and even the compacted six-in-a-row read too wide docked. A picker with
+    `≤ POLICY_PICKER_MAX_SINGLE_ROW` (4) rungs — the 4-rung expedition launch/compose picker — stays a
+    **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
+    on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
     bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
     compact `+0.96` (just `_format_signed(ceiling)`, fed by `_forage_policy_takes` off `_forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`

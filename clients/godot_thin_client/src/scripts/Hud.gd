@@ -612,6 +612,12 @@ const BAND_PICKER_LABEL := "Band:"
 const WORKER_STEPPER_BUTTON_WIDTH := 28.0
 const WORKER_STEPPER_VALUE_WIDTH := 32.0
 const WORKER_STEPPER_SEPARATION := 6
+# Policy-picker layout: the compacted glyph+metric buttons wrap 3 per row so the six-rung
+# forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A picker
+# with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker) stays
+# a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
+const POLICY_PICKER_COLUMNS := 3
+const POLICY_PICKER_MAX_SINGLE_ROW := 4
 # Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
 # rows): the title + stepper ride line 1, the yield/policy/status/notes drop to an indented, smaller
 # secondary line 2 so the row reads narrow. `STATUS_LINE_INDENT` ≈ the leading resource-icon width, so
@@ -4004,8 +4010,13 @@ func _build_policy_picker(
     var current := selected if selected != "" else _hunt_assign_policy
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
+    # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
+    # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
+    var grid := GridContainer.new()
+    grid.columns = maxi(1, options.size()) if options.size() <= POLICY_PICKER_MAX_SINGLE_ROW else POLICY_PICKER_COLUMNS
+    grid.add_theme_constant_override("h_separation", WORKER_STEPPER_SEPARATION)
+    grid.add_theme_constant_override("v_separation", WORKER_STEPPER_SEPARATION)
     for policy in options:
         var policy_key := String(policy)
         var icon := FoodIcons.for_policy(policy_key)
@@ -4013,7 +4024,8 @@ func _build_policy_picker(
         var btn := Button.new()
         # ONE-LINE FACE: the FoodIcons policy glyph (the same icon the map's yield labels append, so a
         # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
-        # metric, NO name — so all six rungs fit one docked row. The name + full metric live in the
+        # metric, NO name — so the rungs stay compact enough to wrap 3-per-row (see the grid above)
+        # without overflow. The name + full metric live in the
         # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Market < Eradicate). A rung
         # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
         # is never a lone glyph.
@@ -4022,6 +4034,8 @@ func _build_policy_picker(
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
         var face := compact if compact != "" else policy_key.capitalize()
         btn.text = "%s%s" % [_source_icon_prefix(icon), face]
+        # EXPAND_FILL so the buttons sharing a grid row are equal width and fill the panel content width.
+        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
         # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
         # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
@@ -4035,8 +4049,8 @@ func _build_policy_picker(
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
         btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
-        row.add_child(btn)
-    block.add_child(row)
+        grid.add_child(btn)
+    block.add_child(grid)
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
     for policy in options:
         var policy_key := String(policy)
