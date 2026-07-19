@@ -32,7 +32,13 @@ var _reservations: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
-const STREAM_DEFAULT_ENABLED = false
+# Stream from the live server by DEFAULT. This used to be false, which meant any launch that
+# did not explicitly set STREAM_ENABLED=true rendered `mock_snapshots.json` instead of the
+# simulation — scripts/run_stack.sh sets it, so dev never noticed, but the packaged playtest
+# build does not, so every package shipped in demo mode. Falling back to mock data is still the
+# behaviour when the connection FAILS (see _ready), so a client launched with no server running
+# degrades exactly as before; it just no longer ignores a server that IS there.
+const STREAM_DEFAULT_ENABLED = true
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
 const STREAM_CONNECTION_TIMEOUT = 5.0
