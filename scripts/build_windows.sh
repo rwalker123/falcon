@@ -88,13 +88,19 @@ info "Staged $DLL_NAME -> $GODOT_PROJECT/native/bin/windows/"
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"
 info "Exporting Godot client ('$PRESET') ..."
-# --export-release fails hard if templates or the preset are missing; surface it.
-if ! "$GODOT_BIN" --headless --path "$GODOT_PROJECT" \
-      --export-release "$PRESET" "$PKG_DIR/$CLIENT_EXE" 2>&1 | tee /tmp/ss_godot_export.log
-then
-  die "Godot export failed — see /tmp/ss_godot_export.log (templates installed? preset '$PRESET' present?)"
+# --export-release fails hard if templates or the preset are missing, but Godot can also crash
+# on SHUTDOWN after writing a good .exe — so the exit code alone is not a trustworthy verdict.
+# Gate on the artifact and treat a late failure as a warning (mirrors build_macos.sh).
+set +e
+"$GODOT_BIN" --headless --path "$GODOT_PROJECT" \
+  --export-release "$PRESET" "$PKG_DIR/$CLIENT_EXE" 2>&1 | tee /tmp/ss_godot_export.log
+godot_status=${PIPESTATUS[0]}
+set -e
+
+[ -s "$PKG_DIR/$CLIENT_EXE" ] || die "Godot export produced no usable $CLIENT_EXE (exit $godot_status) — see /tmp/ss_godot_export.log (templates installed? preset '$PRESET' present?)"
+if [ "$godot_status" -ne 0 ]; then
+  info "WARNING: Godot exited $godot_status but the export is complete — continuing."
 fi
-[ -f "$PKG_DIR/$CLIENT_EXE" ] || die "export produced no $CLIENT_EXE (check $GODOT_PROJECT/export_presets.cfg)"
 
 # --- 4. assemble the package --------------------------------------------------
 cp "$REL/$SERVER_NAME" "$PKG_DIR/$SERVER_NAME"

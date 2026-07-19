@@ -179,6 +179,31 @@ func _load_textures() -> void:
 		river_textures = _build_river_texture_array()
 
 
+func _load_asset_image(res_path: String) -> Image:
+	## Load a texture asset as an Image in BOTH the editor and an exported build.
+	## Exports convert PNGs to `.ctex` inside the `.pck`, where `Image.load_from_file`
+	## (OS-filesystem only) cannot reach them — so the imported resource is the primary
+	## path and a loose-file read is only the fallback for un-imported assets.
+	## The `exists` probe is NOT redundant: the canopy/peak builders ask for a path per biome and treat
+	## an absent asset as "this biome has no overlay", and a bare `load()` on a missing path PUSHES AN
+	## ERROR — which turned that ordinary negative answer into ~70 error lines per launch.
+	var tex: Texture2D = null
+	if ResourceLoader.exists(res_path):
+		tex = ResourceLoader.load(res_path) as Texture2D
+	if tex != null:
+		var img := tex.get_image()
+		if img != null:
+			# Never mutate the cached resource's own Image — callers resize/convert/mipmap it.
+			img = img.duplicate() as Image
+			if img.is_compressed():
+				img.decompress()
+			return img
+	var abs_path := ProjectSettings.globalize_path(res_path)
+	if FileAccess.file_exists(abs_path):
+		return Image.load_from_file(abs_path)
+	return null
+
+
 func _build_terrain_texture_array() -> Texture2DArray:
 	const BASE_PATH := "res://assets/terrain/textures/base/"
 	var terrain_count: int = TerrainDefinitions.get_terrain_count()
@@ -197,11 +222,7 @@ func _build_terrain_texture_array() -> Texture2DArray:
 		var filename := "%02d_%s.png" % [terrain_id, tname]
 		var filepath := BASE_PATH + filename
 
-		var img: Image = null
-		# Load directly from file (more reliable than ResourceLoader which requires import cache)
-		var abs_path := ProjectSettings.globalize_path(filepath)
-		if FileAccess.file_exists(abs_path):
-			img = Image.load_from_file(abs_path)
+		var img: Image = _load_asset_image(filepath)
 
 		if img == null:
 			missing_textures.append(filename)
@@ -369,6 +390,7 @@ func get_layer_mean_luma() -> PackedFloat32Array:
 
 func _build_canopy_texture_array() -> Texture2DArray:
 	## Build the canopy Texture2DArray from `textures/canopy/NN_name.png` (RGBA crowns on transparency).
+	## Loaded via _load_asset_image so exported builds (where the PNG is a `.ctex` in the `.pck`) work too.
 	## Skips biomes with no canopy file, recording `canopy_layer_by_id[terrain_id] = array layer` for the
 	## ones present. Returns null when no canopy asset exists (shader then runs canopy-disabled).
 	const CANOPY_PATH := "res://assets/terrain/textures/canopy/"
@@ -381,10 +403,8 @@ func _build_canopy_texture_array() -> Texture2DArray:
 	for terrain_id: int in range(terrain_count):
 		var tname: String = terrain_names.get(terrain_id, "unknown")
 		var filename := "%02d_%s.png" % [terrain_id, tname]
-		var abs_path := ProjectSettings.globalize_path(CANOPY_PATH + filename)
-		if not FileAccess.file_exists(abs_path):
-			continue
-		var img: Image = Image.load_from_file(abs_path)
+		# A missing canopy asset means "this biome has no overlay" — skip it.
+		var img: Image = _load_asset_image(CANOPY_PATH + filename)
 		if img == null:
 			continue
 		if first_size == Vector2i.ZERO:
@@ -422,7 +442,7 @@ func canopy_layer_for(terrain_id: int) -> int:
 
 func _build_peak_texture_array() -> Texture2DArray:
 	## Build the peak Texture2DArray from `textures/peaks/NN_name.png` (RGBA faceted mountain relief on
-	## transparency). Mirrors the canopy build exactly (once-only Image.load_from_file, mipmaps + trilinear
+	## transparency). Mirrors the canopy build exactly (once-only _load_asset_image, mipmaps + trilinear
 	## for far-zoom stability). Skips biomes with no peak file, recording `peak_layer_by_id[terrain_id] =
 	## array layer` for the ones present. Returns null when no peak asset exists (shader runs peak-disabled).
 	const PEAK_PATH := "res://assets/terrain/textures/peaks/"
@@ -435,10 +455,8 @@ func _build_peak_texture_array() -> Texture2DArray:
 	for terrain_id: int in range(terrain_count):
 		var tname: String = terrain_names.get(terrain_id, "unknown")
 		var filename := "%02d_%s.png" % [terrain_id, tname]
-		var abs_path := ProjectSettings.globalize_path(PEAK_PATH + filename)
-		if not FileAccess.file_exists(abs_path):
-			continue
-		var img: Image = Image.load_from_file(abs_path)
+		# A missing peak asset means "this biome has no overlay" — skip it.
+		var img: Image = _load_asset_image(PEAK_PATH + filename)
 		if img == null:
 			continue
 		if first_size == Vector2i.ZERO:
@@ -475,7 +493,7 @@ func peak_layer_for(terrain_id: int) -> int:
 
 func _build_river_texture_array() -> Texture2DArray:
 	## Build the river Texture2DArray from `textures/rivers/NN_class.png` (flowing water, RGBA/opaque) for
-	## the blend shader's river passes. Mirrors the canopy/peak builds (once-only Image.load_from_file +
+	## the blend shader's river passes. Mirrors the canopy/peak builds (once-only _load_asset_image +
 	## mipmaps, so the trilinear river sampler averages a thin band into a stable line at far zoom instead
 	## of shimmering) with ONE difference: a river is not a biome, so the layer is keyed by the file's
 	## numeric prefix, not by terrain id — 0 = Minor / 1 = Major (the hex-EDGE classes, layer = class - 1)
@@ -487,15 +505,30 @@ func _build_river_texture_array() -> Texture2DArray:
 	# Layers 0/1 are the 2-bit edge mask's Minor/Major (class 3 is reserved and never drawn); layer 2 is the
 	# navigable channel. A river file's prefix must land in [0, RIVER_MAX_LAYERS).
 	const RIVER_MAX_LAYERS := 3
+	# A directory listing does NOT report the authored `NN_class.png` verbatim: in an EXPORTED build an
+	# imported resource is listed with a trailing `.remap`, and in the editor the `.import` sidecar shows up
+	# beside the source. Both are stripped before the `.png` test (and the results de-duplicated), so the
+	# directory-driven layer contract holds in both environments without a hardcoded filename roster.
+	const RESOURCE_REMAP_SUFFIX := ".remap"
+	const RESOURCE_IMPORT_SUFFIX := ".import"
 	var by_layer: Dictionary = {}   # layer index (class - 1) -> Image
 	var dir := DirAccess.open(RIVER_PATH)
 	if dir == null:
 		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
 		return null
 	var first_size: Vector2i = Vector2i.ZERO
-	for filename: String in dir.get_files():
+	var seen_files: Dictionary = {}
+	for entry: String in dir.get_files():
+		var filename: String = entry
+		if filename.ends_with(RESOURCE_REMAP_SUFFIX):
+			filename = filename.trim_suffix(RESOURCE_REMAP_SUFFIX)
+		elif filename.ends_with(RESOURCE_IMPORT_SUFFIX):
+			filename = filename.trim_suffix(RESOURCE_IMPORT_SUFFIX)
 		if not filename.ends_with(".png"):
 			continue
+		if seen_files.has(filename):
+			continue
+		seen_files[filename] = true
 		var prefix: String = filename.split("_")[0]
 		if not prefix.is_valid_int():
 			push_warning("[TerrainTextureManager] River texture '%s' has no NN_ layer prefix — skipped" % filename)
@@ -504,7 +537,7 @@ func _build_river_texture_array() -> Texture2DArray:
 		if layer < 0 or layer >= RIVER_MAX_LAYERS:
 			push_warning("[TerrainTextureManager] River texture '%s' layer %d out of range — skipped" % [filename, layer])
 			continue
-		var img: Image = Image.load_from_file(ProjectSettings.globalize_path(RIVER_PATH + filename))
+		var img: Image = _load_asset_image(RIVER_PATH + filename)
 		if img == null:
 			continue
 		if first_size == Vector2i.ZERO:
