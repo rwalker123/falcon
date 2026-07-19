@@ -793,6 +793,11 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
+# The RAW wire forage-patch dict (as decoded in native `forage_patches_to_array` and stored in
+# `_forage_patch_lookup`) carries the forecast fields BARE — the `patch_` prefix above is only the
+# cross-ref MapView stamps onto `tile_info`. The Current-actions Forage row reads the raw dict, so it
+# forecasts with the bare prefix.
+const WIRE_FORAGE_PATCH_PREFIX := ""
 # Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
 # Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
@@ -808,6 +813,9 @@ const HUNT_PEAK_DROP_BANK_BONUS := 1
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
 const MAX_USEFUL_NOUN_ONE := "worker"
 const MAX_USEFUL_NOUN_MANY := "workers"
+# A Current-actions row's `+` disabled because the SOURCE is fully staffed (not because idle ran out):
+# spelled out in the row tooltip rather than as a visible note, to keep the compact row uncluttered.
+const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
 # The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
@@ -2272,6 +2280,28 @@ func update_food_modules(modules_variant: Variant) -> void:
         if sx >= 0 and sy >= 0:
             _food_module_by_tile[Vector2i(sx, sy)] = site
 
+## The world's forage patches captured each snapshot (Main forwards the snapshot `forage_patches`
+## array — the same dicts in `MapView.forage_patch_lookup`), keyed by tile. A Current-actions Forage
+## row reads the patch here to forecast its max-useful worker cap (the compose control gets the same
+## forecast off `tile_info`'s `patch_`-prefixed cross-ref; the RAW wire dict here carries the fields
+## BARE — see `WIRE_FORAGE_PATCH_PREFIX`).
+var _forage_patch_lookup: Dictionary = {}
+
+## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
+## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest.
+func update_forage_patches(patches_variant: Variant) -> void:
+    if not (patches_variant is Array):
+        return
+    _forage_patch_lookup.clear()
+    for entry in patches_variant:
+        if not (entry is Dictionary):
+            continue
+        var patch: Dictionary = entry
+        var px := int(patch.get("x", -1))
+        var py := int(patch.get("y", -1))
+        if px >= 0 and py >= 0:
+            _forage_patch_lookup[Vector2i(px, py)] = patch
+
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.
 func _source_icon_prefix(icon: String) -> String:
@@ -3190,6 +3220,26 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     for block in _build_allocation_sections(band, rebuild):
         container.add_child(block)
 
+## Per-SOURCE `+`-gate for a Current-actions Forage/Hunt row: the compose controls cap the stepper at
+## max-useful (`_forecast_worker_cap`), and a confirmed row must cap the same way — a source's `+` may
+## add a worker only while the band has an idle worker AND this source is below its own max-useful
+## ceiling, so a single source can't absorb workers past the point they help. An unknown forecast
+## (MAX_USEFUL_UNBOUNDED — no wire data) falls back to the plain `idle > 0` gate. Returns
+## `{can_add, note}`; `note` is set ONLY when max-useful (not idle) is what stopped the `+`, so the
+## row tooltip explains a dead button rather than leaving it mysterious (the idle-exhausted gate
+## explains itself). Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate.
+func _source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
+    var useful := _max_useful_workers(forecast)
+    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
+        return {"can_add": idle > 0, "note": ""}
+    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
+    # when idle workers remain (else the idle-exhausted gate already reads for itself).
+    var note := ""
+    if idle > 0:
+        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
+    return {"can_add": false, "note": note}
+
 ## Build the band's labor allocation as an ordered list of discrete **section blocks** (Workers /
 ## Current actions / Band roles / Orders / Send expedition), returned for the caller to host — the
 ## Band/City panel arranges them into a tall stack or a wide column-flow; the legacy flat host just
@@ -3258,12 +3308,19 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # policy glyph drop to the indented secondary line 2 (leading separator stripped so it reads
             # "+0.61 /turn  ♻").
             var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
+            # Cap the `+` at this patch's max-useful (the compose control's cap, applied to the confirmed
+            # row) so a single source can't absorb workers past the point they help. The raw wire patch
+            # dict carries the forecast fields BARE (WIRE_FORAGE_PATCH_PREFIX), unlike the `patch_`-prefixed
+            # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
+            var forage_forecast := _forecast_inputs(
+                _forage_patch_lookup.get(Vector2i(fx, fy), {}), WIRE_FORAGE_PATCH_PREFIX, forage_emit_policy)
+            var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sForage (%d, %d)" % [forage_icon, fx, fy],
-                workers, can_add,
+                workers, bool(forage_cap["can_add"]),
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
                 pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy)]), yld.note,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy), String(forage_cap["note"])]), yld.note,
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
@@ -3285,12 +3342,18 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # title (icon + Hunt + species) stays on the stepper line; the yield + policy glyph drop to
             # the indented secondary line 2 (leading separator stripped so it reads "+1.19 /turn  ♻").
             var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
+            # Cap the `+` at this herd's max-useful (the compose control's cap, applied to the confirmed
+            # row) so a single source can't absorb workers past the point they help. Herds carry the
+            # forecast fields BARE (HERD_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
+            # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
+            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), HERD_FORECAST_PREFIX, policy)
+            var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sHunt %s" % [hunt_icon, herd_label],
-                workers, can_add,
+                workers, bool(hunt_cap["can_add"]),
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
                 pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy)]), yld.note,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy), String(hunt_cap["note"])]), yld.note,
                 # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),

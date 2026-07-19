@@ -1514,7 +1514,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the band's sight — more scouts see further"; more staffed scouts extend the band's actual sight
     range, so the effect shows directly in the fog, not as a map-action or a reveal disc). Then
     **Move** / **Clear all**.
-    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on idle.
+    Each stepper re-sends `assign_labor_requested` with the new count (0 removes). **The Forage/Hunt
+    Current-actions rows are PER-SOURCE max-useful capped** (mirroring the compose controls' cap): each
+    row's `+` is gated on `idle > 0 AND workers < max_useful` via `_source_worker_cap_state` +
+    `_max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
+    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `HERD_FORECAST_PREFIX`); the
+    Forage row reads its patch from the new `_forage_patch_lookup` (Main pushes the snapshot
+    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the bare
+    `WIRE_FORAGE_PATCH_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
+    the `patch_`-prefixed tile_info cross-ref the compose control reads). An unknown forecast
+    (`MAX_USEFUL_UNBOUNDED`) falls back to the plain `idle > 0` gate; a source capped at max-useful with
+    idle still available spells the reason in the row tooltip (`MAX_USEFUL_CAPPED_TOOLTIP`). **Scout /
+    Warrior are band-wide roles with no ceiling — they keep the plain `idle > 0` gate.** Verified by
+    `band_panel_preview` state `band_panel_source_cap`.
   - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
     immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
     record a HUD-local **pending** entry per band entity (`_pending_labor[entity] = {turn, assign:{key→…},

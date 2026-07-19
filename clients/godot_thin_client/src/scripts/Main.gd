@@ -245,6 +245,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
+    if snapshot.has("forage_patches"):
+        # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
+        # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
+        # array MapView ingests into `forage_patch_lookup`.
+        _hud_invoke("update_forage_patches", [snapshot["forage_patches"]])
     if snapshot.has("populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:
