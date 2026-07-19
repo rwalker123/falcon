@@ -1220,7 +1220,16 @@ func _snapshot_pens() -> Dictionary:
 		"x": 10, "y": 7, "biomass": 310.0, "huntable": true,
 		"corralled": true, "pen_fed_fraction": 0.4,
 	}
-	return _base_snapshot(_band([], 2, 2), [fed, starving])
+	# A THIRD pen, starving, whose species has BUNDLED SPRITE ART (boar) — the aurochs above is an
+	# emoji species, so without this the frame never proves the distress ring/badge still reads over a
+	# sprite marker (the sprite is drawn untinted, exactly like the emoji, so the geometry is the whole
+	# distress signal on both paths).
+	var starving_sprite := {
+		"id": "game_boar_05", "label": "Wild Boar (game_boar_05)",
+		"x": 7, "y": 7, "biomass": 260.0, "huntable": true,
+		"corralled": true, "pen_fed_fraction": 0.3,
+	}
+	return _base_snapshot(_band([], 2, 2), [fed, starving, starving_sprite])
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==

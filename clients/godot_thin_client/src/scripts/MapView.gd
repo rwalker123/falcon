@@ -2323,6 +2323,18 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	var baseline := Vector2(center.x - text_size.x * 0.5, center.y + size * 0.34)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+## Sprite sibling of `_draw_marker_glyph`: a bundled marker texture in a `size`×`size` box centered
+## on `center`, wearing the SAME drop-shadow treatment (once offset in near-black, then again on
+## top) so a sprite marker and an emoji marker sit on the map identically.
+## The sprite is deliberately drawn UNTINTED — see the herd-marker comment in
+## `SecondaryMarkerRenderer.draw_herd`: distress reads as ring + badge geometry, never as a modulate.
+func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int) -> void:
+	if tex == null or size <= 0:
+		return
+	var box := Rect2(center - Vector2(size, size) * 0.5, Vector2(size, size))
+	draw_texture_rect(tex, Rect2(box.position + MARKER_GLYPH_SHADOW_OFFSET, box.size), false, MARKER_GLYPH_SHADOW_COLOR)
+	draw_texture_rect(tex, box, false)
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —

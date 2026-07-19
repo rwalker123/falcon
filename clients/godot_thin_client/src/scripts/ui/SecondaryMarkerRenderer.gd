@@ -128,7 +128,11 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
+	var herd_label := String(herd.get("label", herd.get("id", "Herd")))
+	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that
+	# don't have art yet — FaunaSprites returns null for those and we fall through unchanged.
+	var herd_sprite := FaunaSprites.for_herd(herd_label)
+	var herd_icon := FoodIcons.for_herd(herd_label)
 	var icon_size := _secondary_icon_size(radius)
 	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
 	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
@@ -138,7 +142,10 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	if starving:
 		_view.draw_arc(icon_center, radius * _view.HERD_DISTRESS_RING_FACTOR, 0, TAU, _view.HERD_DISTRESS_RING_SEGMENTS,
 			_view.HERD_DISTRESS_COLOR, _view.HERD_DISTRESS_RING_WIDTH)
-	_view._draw_marker_glyph(icon_center, herd_icon, icon_size, _view.SECONDARY_ICON_COLOR)
+	if herd_sprite != null:
+		_view._draw_marker_sprite(icon_center, herd_sprite, icon_size)
+	else:
+		_view._draw_marker_glyph(icon_center, herd_icon, icon_size, _view.SECONDARY_ICON_COLOR)
 	if starving:
 		_draw_distress_badge(icon_center, icon_size)
 

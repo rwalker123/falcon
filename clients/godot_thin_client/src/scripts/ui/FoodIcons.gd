@@ -163,16 +163,28 @@ static func _terrain_name(terrain_id: int) -> String:
 # runs per herd from the map draw loop, so this avoids re-sorting every frame.
 static var _herd_keywords_by_length: Array = []
 
-## Icon for a migratory herd, inferred from a species keyword in its label
-## (falls back to a generic grazer). Matches the longest keyword first so a
-## specific species wins over a shorter substring (e.g. "reindeer" is not
-## mistaken for "deer") regardless of HERD_SPECIES declaration order.
-static func for_herd(label: String) -> String:
+## The HERD_SPECIES key matched by a species keyword in a herd label, or "" when the label
+## names no species we know. Matches the longest keyword first so a specific species wins
+## over a shorter substring (e.g. "reindeer" is not mistaken for "deer") regardless of
+## HERD_SPECIES declaration order.
+##
+## This is the ONE species-matching implementation: `for_herd` maps the key to an emoji, and
+## `FaunaSprites.for_herd` maps the same key to a bundled PNG. Adding a species keyword here
+## therefore serves both renderers.
+static func species_key_for(label: String) -> String:
 	if _herd_keywords_by_length.is_empty():
 		_herd_keywords_by_length = HERD_SPECIES.keys()
 		_herd_keywords_by_length.sort_custom(func(a, b): return String(a).length() > String(b).length())
 	var lower := label.to_lower()
 	for keyword in _herd_keywords_by_length:
 		if lower.find(keyword) != -1:
-			return String(HERD_SPECIES[keyword])
-	return HERD_DEFAULT
+			return String(keyword)
+	return ""
+
+## Icon for a migratory herd, inferred from a species keyword in its label
+## (falls back to a generic grazer).
+static func for_herd(label: String) -> String:
+	var key := species_key_for(label)
+	if key == "":
+		return HERD_DEFAULT
+	return String(HERD_SPECIES[key])
