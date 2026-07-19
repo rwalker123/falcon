@@ -1835,9 +1835,9 @@ mod tests {
     /// player pays a 25-turn build + a permanent keeper to make their food situation strictly worse.
     #[test]
     fn validate_rejects_a_pen_that_eats_more_than_it_yields() {
-        // Best-case floor (Grazing 2d §2.4): r_pen(fastest) = min(0.75, 0.35 × 3.0) = 0.75, so the
-        // bound is 0.75 × 0.02 / 2.75 ≈ 0.0055; at or above it EVEN THE BEST pen is a net loss.
-        let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.0065).into());
+        // Best-case floor (Grazing 2d §2.4): r_pen(fastest) = min(1.0, 0.35 × 4.0) = 1.0, so the
+        // bound is 1.0 × 0.02 / 3.0 ≈ 0.0067; at or above it EVEN THE BEST pen is a net loss.
+        let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.007).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");
         let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.008).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");

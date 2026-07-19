@@ -1733,9 +1733,23 @@ mod labor_yield_tests {
             tended.actual > 0.0 && corral.actual > 0.0,
             "both tended sources pay out: tended={tended:?} corral={corral:?}"
         );
+        // A tended patch's staffing need is **derived** like every other rung's (slice 7): the
+        // boosted curve (`tended_regrowth_gain`) can now pay out more biomass than a single forager
+        // carries, so the honest count is `ceil(take / per-worker throughput)`, not a fixed `1`.
+        // Asserted against the shared helper rather than a magic number, so it tracks a gain retune.
+        let expected_foragers = {
+            let world_labor = world.resource::<LaborConfigHandle>().get();
+            let take_biomass = tended.actual / world_labor.forage.provisions_per_biomass;
+            let per_worker = crate::forage::forage_per_worker_biomass(&world_labor.forage, 1.0);
+            (take_biomass / per_worker).ceil() as u32
+        };
+        assert!(
+            expected_foragers >= 1,
+            "the tended patch must pay out, or this asserts nothing"
+        );
         assert_eq!(
-            tended.workers_needed, 1,
-            "a tended patch needs one tending presence: {tended:?}"
+            tended.workers_needed, expected_foragers,
+            "a tended patch reports the crew its boosted take needs: {tended:?}"
         );
         // **The pen's staffing need is its whole CREW** (slice 8): `max(herders, haulers)`. Asserted
         // against the shared helpers rather than magic numbers, so it tracks a roster retune.
@@ -2191,6 +2205,13 @@ mod labor_yield_tests {
     /// their design intends — and Surplus really does over-farm the patch, so the overdraw ⚠ can
     /// finally fire on the plant web's rung 2. Before slice 7 the managed branch recorded
     /// `sustainable == actual` by construction, so `actual > sustainable` was unreachable here.
+    ///
+    /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately: at
+    /// `tended_regrowth_gain` 2.0 the boosted MSY is high enough that Surplus (`1.6 × MSY`, riding the
+    /// *whole* K) equals a 20% Market skim at the exact biomass `B = K` (`1.6 × r_tended/4 = 0.20 =
+    /// market.take_fraction`) — a knife-edge tie at full patch only. Below capacity the two separate
+    /// cleanly, and the boosted sustainable Surplus **overtakes** the flat Market skim: the middle two
+    /// swap versus the pre-retune ladder, which is the true gain-2.0 behaviour.
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
         let extractive = [
@@ -2199,6 +2220,9 @@ mod labor_yield_tests {
             FollowPolicy::Market,
             FollowPolicy::Eradicate,
         ];
+        // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
+        // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Market (see docstring).
+        const OPERATING_FRACTION: f32 = 0.8;
         let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
         for policy in extractive {
             let (mut world, tile) = world_with_source(CAP);
@@ -2207,7 +2231,7 @@ mod labor_yield_tests {
                 .get()
                 .forage
                 .capacity_for(SOURCE_BIOME);
-            cultivate_source_patch(&mut world, patch_cap);
+            cultivate_source_patch(&mut world, patch_cap * OPERATING_FRACTION);
             let band = spawn_band(
                 &mut world,
                 tile,
@@ -2250,7 +2274,10 @@ mod labor_yield_tests {
                 );
             }
         }
-        // ...and ordered as the axis means: restraint takes least, denial takes most.
+        // ...and ordered as the axis means: restraint takes least, denial takes most. On the boosted
+        // tended curve the sustainable Surplus (1.6 × MSY) now out-takes the flat 20% Market skim
+        // below capacity — the middle two swap versus a wild patch, the true gain-2.0 behaviour — but
+        // the endpoints hold: Sustain the leanest, Eradicate the deepest.
         let take_of = |wanted: FollowPolicy| {
             takes
                 .iter()
@@ -2258,9 +2285,9 @@ mod labor_yield_tests {
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
-        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Market));
+        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Surplus));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
