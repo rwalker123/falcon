@@ -67,6 +67,7 @@ pub(crate) fn labor_assignment_to_state(
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
         wasted_yield: yields.wasted,
+        overdraws: yields.overdraws,
         ..Default::default()
     };
     match &assignment.target {

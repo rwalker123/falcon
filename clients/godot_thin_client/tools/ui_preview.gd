@@ -155,12 +155,12 @@ func _ready() -> void:
 	await _save("band_foreign")
 
 	# State 1-forage-policy — the forage allocation row carries a policy tag like Hunt does. This band
-	# forages on Market policy, which the sim gathers past the patch's regrowth, so actual_yield (0.62)
-	# exceeds sustainable_yield (0.40): the row reads `Forage (71, 18) [market] +0.62 /turn ⚠` (amber
-	# over-forage flag). The default `band` state above shows the [sustain] tag with no warning.
+	# forages on Market policy, which the sim gathers past the patch's regrowth: the sim-answered
+	# `overdraws` flag is true, so the row reads `Forage (71, 18) [market] +0.62 /turn ⚠` (amber
+	# over-forage flag). The default `band` state above shows the [sustain] tag with overdraws=false.
 	var forage_policy_band := _band_fixture()
 	forage_policy_band["labor_assignments"] = [
-		{"kind": "forage", "workers": 6, "target_x": 71, "target_y": 18, "policy": "market", "actual_yield": 0.62, "sustainable_yield": 0.40},
+		{"kind": "forage", "workers": 6, "target_x": 71, "target_y": 18, "policy": "market", "actual_yield": 0.62, "sustainable_yield": 0.40, "overdraws": true},
 		{"kind": "scout", "workers": 2},
 	]
 	_hud.show_unit_selection(forage_policy_band)
@@ -1598,19 +1598,21 @@ func _band_fixture() -> Dictionary:
 		"activity": "forage",
 		# Band food flow (Food summary line): total income across the worked sources vs the cohort's
 		# consumption. Net = 0.94 − 0.68 = +0.26 (positive → larder growing), shown green on the Food
-		# line. Per-source actual/sustainable yields live on the assignments below; the hunt overdraws
-		# (0.46 > 0.20) so its allocation row shows the ⚠ flag; forage (actual == sustainable) never does.
+		# line. Per-source actual/sustainable yields live on the assignments below.
 		# The Gathered/Hunted breakdown sums the assignment actual_yields (0.48 / 0.46) by kind.
 		"food_income": 0.94,
 		"food_consumption": 0.68,
 		# `workers_needed` is the overstaffing axis, INDEPENDENT of the overdraw (⚠) axis — the two
-		# rows below deliberately cross them so one frame proves both:
+		# rows below deliberately cross them so one frame proves both, AND proves the ⚠ now keys off the
+		# sim-answered `overdraws` bool, not the client-derived `actual > sustainable`:
 		#   • forage: 5 assigned but only 1 needed (the patch's ceiling caps the take) → the amber
-		#     "· only 1 of 5 working" note, and NO ⚠ (actual == sustainable, perfectly renewable).
-		#   • hunt: 4 assigned, 4 needed → no note, but it DOES overdraw (0.46 > 0.20) → the ⚠.
+		#     "· only 1 of 5 working" note, and NO ⚠ (Sustain patch, overdraws=false).
+		#   • hunt: 4 assigned, 4 needed → no overstaff note. `actual_yield 0.46 > sustainable_yield 0.20`
+		#     (a banked whole animal cashed on this KILL turn), yet `overdraws=false` under Sustain → the
+		#     row reads CLEAN, NO ⚠. Under the old client test this row false-tripped the flag — the fix.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1, "overdraws": false},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4, "overdraws": false},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -1639,8 +1641,9 @@ func _pen_keeper_band_fixture() -> Dictionary:
 	band["pen_feed_upkeep"] = 1.74      # the ANIMALS' feed — a debit in neither row above
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
-		# A managed source: one keeper, take == sustainable (escapement), so no ⚠ and no overstaff note.
-		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 5.40, "sustainable_yield": 5.40, "workers_needed": 1},
+		# A managed source: one keeper, take == sustainable (escapement); Corral is managed, so the
+		# sim-answered `overdraws` is false → no ⚠ and no overstaff note.
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 5.40, "sustainable_yield": 5.40, "workers_needed": 1, "overdraws": false},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -1657,8 +1660,8 @@ func _starving_pen_band_fixture() -> Dictionary:
 	band["food_income"] = 1.32          # forage 0.48 + the shrunken pen's 0.84
 	band["pen_feed_upkeep"] = 0.70      # PAID, not demanded — the herd starves for the difference
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
-		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1},
+		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1, "overdraws": false},
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1, "overdraws": false},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -1674,8 +1677,8 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
+		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15, "overdraws": false},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20, "overdraws": false},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -2493,15 +2496,16 @@ func _hunt_rhythm_herds_fixture() -> Array:
 func _hunt_actions_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["labor_assignments"] = [
-		# Fast: honest rate 2.60/turn. A fast Sustain animal, so actual ≈ sustainable (no overdraw ⚠).
+		# Fast: honest rate 2.60/turn. A Sustain animal → the sim-answered `overdraws` is false (no ⚠).
 		{"kind": "hunt", "workers": 3, "fauna_id": "game_fowl_01", "policy": "sustain",
 			"target_x": 71, "target_y": 18, "actual_yield": 2.60, "sustainable_yield": 2.60,
-			"workers_needed": 3},
+			"workers_needed": 3, "overdraws": false},
 		# Big: honest rate 2.40/turn (the sim's measured Mammoth Sustain). actual_yield 0.00 = a wait turn
 		# of the kill pulse (the old lie the row used to headline). Under-crewed → the muted "· 1.9 wasted".
+		# Sustain → overdraws false, so no ⚠.
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_mammoth_01", "policy": "sustain",
 			"target_x": 70, "target_y": 17, "actual_yield": 0.00, "sustainable_yield": 2.40,
-			"workers_needed": 5, "wasted_yield": 1.9},
+			"workers_needed": 5, "wasted_yield": 1.9, "overdraws": false},
 	]
 	return band
 

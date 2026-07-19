@@ -580,7 +580,6 @@ const YIELD_LABEL_MIN_FONT := 11
 const YIELD_LABEL_MAX_FONT := 24
 const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction of the hex radius
 const YIELD_LABEL_DECIMALS := 2
-const YIELD_OVERHUNT_EPSILON := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
 # Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
 # label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
@@ -2041,12 +2040,13 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			_fill_hex(tcol, trow, radius, origin, FORAGE_WORKED_FILL)
 			_outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
-			# Forage patch: label the take. Sustain gathers at regrowth (actual == sustainable → plain
-			# green), but a Surplus/Market/Eradicate policy overdraws (actual > sustainable + ε) → ⚠.
+			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
+			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
+			# `Hud._source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
+			# trips ⚠.
 			if show_yields and entry.has("actual_yield"):
 				var fcenter := _hex_center(tcol, trow, radius, origin)
-				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
-					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
+				var forage_overdraw := bool(entry.get("overdraws", false))
 				_queue_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
 					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
@@ -2063,11 +2063,15 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
 				draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
 			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
-			# Depletable herd: label the take, flagging overhunting when actual > sustainable + ε.
-			if show_yields and entry.has("actual_yield"):
-				var overhunt := float(entry.get("actual_yield", 0.0)) \
-					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_queue_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
+			# Depletable herd: HEADLINE the steady per-turn rate (`sustainable_yield`), NOT the
+			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
+			# the Band panel's hunt-headline rule in `Hud._source_yield_readout` (rate = sustainable for
+			# HUNT), so the map label and the Band panel can never disagree. The overhunt ⚠ flag is the
+			# sim-answered `overdraws` bool (policy-driven, false for Sustain) — NOT `actual > sustainable`,
+			# which false-positives on a kill turn when a banked animal spikes `actual`.
+			if show_yields and entry.has("sustainable_yield"):
+				var overhunt := bool(entry.get("overdraws", false))
+				_queue_yield_label(hc, float(entry.get("sustainable_yield", 0.0)), overhunt, radius,
 					String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that

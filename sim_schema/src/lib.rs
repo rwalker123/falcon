@@ -1615,6 +1615,16 @@ pub struct LaborAssignmentState {
     /// stock and regrows. Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub wasted_yield: f32,
+    /// **THE overhunting ⚠, answered by the sim** — `SourceYield::overdraws` (`!managed &&
+    /// policy.overdraws()`): does this take draw the stock below what it sustains? It replaces the
+    /// client-derived `actual_yield > sustainable_yield` test, which mis-fires on a hunt's lumpy
+    /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
+    /// sustainable rate even under Sustain). False for Sustain and the investment rungs
+    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/Eradicate.
+    /// A row with no yield (Scout/Warrior, or a rehydrated [`SourceYield::ZERO`]) is `false`. Derived
+    /// per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub overdraws: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -4008,6 +4018,7 @@ fn create_populations<'a>(
                                 sustainableYield: assignment.sustainable_yield,
                                 workersNeeded: assignment.workers_needed,
                                 wastedYield: assignment.wasted_yield,
+                                overdraws: assignment.overdraws,
                             },
                         )
                     })

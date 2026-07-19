@@ -1023,7 +1023,9 @@ const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
 # exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
 const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
-# with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
+# with the same ⚠ / WARN amber. This is the COMPOSE preview, which derives the flag from the steady
+# forecast via `_is_overdraw` (there is no assignment yet, so no wire `overdraws` field); the CONFIRMED
+# allocation rows instead read the sim-answered `overdraws` bool off the assignment.
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
 # The FORAGE twin of the hunt overdraw suffix: a take above the patch's Sustain ceiling draws its
 # biomass down. Forage is smooth food (no whole-animal rhythm), so the preview shows a bare rate + this.
@@ -2875,12 +2877,12 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
-        # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
-        # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
-        # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
-        # above sustainable → the ⚠ flag. ONE definition of the test (`_is_overdraw`), shared with the
-        # local-hunt yield preview so the row and the preview can never disagree.
-        warn = _is_overdraw(actual, sustainable)
+        # A source overdraws when its take draws the stock below what it sustains. This is the
+        # sim-answered `overdraws` flag (policy-driven: `!managed && policy.overdraws()`), NOT the
+        # client-derived `actual > sustainable` — which false-positives on a hunt's kill turn (cashing a
+        # banked whole animal spikes `actual` above the steady `sustainable` even under Sustain). Forage
+        # on Sustain reads clean; a Surplus/Market/Eradicate patch or an over-hunted herd trips ⚠.
+        warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % _format_yield(actual)
         if renewable:

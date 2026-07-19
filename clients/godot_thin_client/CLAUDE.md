@@ -1446,12 +1446,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     is a modifier rather than a phase member, wins the glyph slot with `○`, and keeps the amber label
     tint). The policy glyph is read off the assignment's `policy` field (populated for forage too); an
     an assignment whose policy is unset falls back to no glyph. **Each source row headlines its per-turn food yield**
-    (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
-    `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
-    (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
-    patch** or an over-hunted herd pushes `actual` above `sustainable` → the flag trips (forage is no
-    longer hardcoded renewable now that the policy axis can decline a patch). A
-    `tooltip_text` spells out actual-vs-sustainable. **Each source row also flags overstaffing** — a
+    (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** driven by
+    the **sim-answered `overdraws` bool** on the assignment (`LaborAssignment.overdraws`, policy-driven:
+    `!managed && policy.overdraws()`, false for Sustain and managed/investment sources; decoded in
+    `native/src/lib.rs` beside `wasted_yield`). This **replaced** the old client-derived `actual >
+    sustainable + ε` test on the confirmed rows, which **false-positived on a hunt's kill turn** — cashing a
+    banked whole animal spikes `actual` above the steady `sustainable` even under Sustain, so the row wrongly
+    flashed ⚠. A Sustain source reads `… · renewable` (no flag); a Surplus/Market/Eradicate forage patch or
+    an over-hunted herd trips the flag. A `tooltip_text` spells out actual-vs-sustainable. (The **compose
+    previews** still derive it from the steady forecast via `_is_overdraw` — there is no assignment, hence no
+    `overdraws` field, at compose time, and the forecast is not a lumpy `actual`.) **Each source row also flags overstaffing** — a
     WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
     (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
     idled HERE and should be reassigned; the `tooltip_text` (`OVERSTAFF_TOOLTIP`) explains it. This is
@@ -1532,12 +1536,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     hex-steps away), and the **hunted
     herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
     = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
-    tile / hunted herd is labeled with its `actual_yield` (food/turn, from the assignment inside
+    tile / hunted herd is labeled with its per-turn rate (food/turn, from the assignment inside
     `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
-    food-income **green**; a source that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
-    panel's overdraw test) reads **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage
-    patch now that the forage policy axis can decline one (a Sustain forage gathers at regrowth, so it
-    stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
+    food-income **green**. **A HUNT label headlines `sustainable_yield`** (the steady per-turn rate),
+    **a FORAGE label `actual_yield`** — the exact split `Hud._source_yield_readout` uses for the Band
+    panel (a hunt's `actual_yield` is the kill-credit PULSE — 0 on a wait turn, a spike on a kill turn —
+    so its honest rate is `sustainable_yield`; forage has no pulse, `actual == sustainable`), so the map
+    label and the Band panel's hunt headline can never disagree. A source that overdraws (the
+    **sim-answered `overdraws` bool** on the assignment — the SAME wire flag the Band panel's
+    `_source_yield_readout` reads, NOT the client-derived `actual > sustainable`, which false-positives on a
+    hunt's kill turn) reads
+    **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage patch now that the forage
+    policy axis can decline one (a Sustain forage gathers at regrowth, so it stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
     pill chrome extracted out of `_draw_count_pill` — the `×N`/`+N` badges draw the same primitive):
     bare drop-shadowed text washed out on the light tan biomes (prairie/desert), so the plate is sized to
     the MEASURED text+glyph run plus symmetric padding (`YIELD_LABEL_PLATE_PAD_FACTOR`, a fraction of the
@@ -1913,7 +1923,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       **`pastoralYield` → `pastoral_yield`** (the newest slot — Tame's payoff, the pastoral twin of
       `corralYield`, which lets Tame render `→ +Y`; verified present on the herd dict) → bare keys
       on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
-      **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) → per-assignment keys
+      **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) +
+      **`overdraws` → `overdraws`** (the sim-answered overhunting ⚠ for the confirmed rows/map labels,
+      policy-driven `!managed && policy.overdraws()`) → per-assignment keys
       inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
       slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
       playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).

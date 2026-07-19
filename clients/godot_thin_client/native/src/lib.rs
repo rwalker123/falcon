@@ -4085,6 +4085,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // and food is being left standing — the allocation row surfaces it as a muted "· N.N
             // wasted". 0 on a rehydrated save ⇒ hidden, never wrong.
             let _ = entry.insert("wasted_yield", assignment.wastedYield() as f64);
+            // THE overhunting ⚠, answered by the sim (`!managed && policy.overdraws()`): does this
+            // take draw the stock below what it sustains? False for Sustain (and investment/managed
+            // sources). Confirmed rows/map labels flag on this wire bool rather than the client-derived
+            // `actual > sustainable`, which false-positives on a hunt's kill turn (banked animal spikes
+            // actual above the steady sustainable even under Sustain).
+            let _ = entry.insert("overdraws", assignment.overdraws());
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }
