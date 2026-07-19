@@ -1077,17 +1077,15 @@ func _ready() -> void:
 	_hud._player_band = _hud._player_bands[0]
 	_hud._hunt_assign_policy = "sustain"
 
-	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). A local hunt has NO carry
-	# cap, so turns-to-fill is meaningless; the live number that decides a standing assignment is its
-	# per-turn food yield:  min(workers × 0.8, ceiling(policy)) × output_multiplier (0.9 here — a
-	# resident band applies its morale/discontent productivity modifier at payout, an expedition does
-	# not). Red Deer: Sustain ceiling 0.30, Market ceiling 0.60.
-	#   3n Sustain, 6 hunters — min(4.8, 0.30) × 0.9 = +0.27 /turn, == the sustainable yield → income-
-	#                           green "· renewable", no flag.
-	#   3o Market,  6 hunters — min(4.8, 0.60) × 0.9 = +0.54 /turn > sustainable 0.27 → WARN-amber with
-	#                           the same ⚠ the allocation rows use: "overdraws the herd".
+	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). The preview line reads the
+	# crew's HONEST carry-aware delivered take in ANIMALS (delivered ÷ food_per_animal), not the
+	# unquantized food rate. Red Deer fpa 2.0, band per-worker 0.8, output 0.9; Sustain ceiling 0.30,
+	# Market 0.60. At 6 hunters the crew carries 2 whole deer/turn, so the flow ceiling binds:
+	#   3n Sustain — delivered = min(0.30×0.9, …) = 0.27 → ≈0.14 Red Deer/turn · renewable (green).
+	#   3o Market  — delivered 0.54 > Sustain 0.27 → WARN-amber "⚠ ≈0.27 Red Deer/turn — overdraws the
+	#                herd" (the same ⚠ the allocation rows use). No waste (a whole deer is carryable).
 	# (The herd's `hunt_trip_estimates` ride along but are IGNORED here — a trip table answers an
-	# EXPEDITION's question; a local hunt is arithmetic over the band's flow ceilings. Band = flow
+	# EXPEDITION's question; a local hunt is carry arithmetic over the band's flow ceilings. Band = flow
 	# arithmetic; expedition = lookup.)
 	var local_herd := _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
 		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
@@ -1130,6 +1128,67 @@ func _ready() -> void:
 	_hud._build_herd_assign_controls(aurochs)
 	await _settle()
 	await _save("herd_hunt_whole_animal_cap_market")
+
+	# States 3s–3v — the CARRY-AWARE ANIMALS-FIRST local-hunt preview (spec oracle: deer fpa 1.23, band
+	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST
+	# delivered take in animals, not the unquantized food rate the crew could never carry; the policy
+	# buttons read "up to X/turn" (the herd's cap, worker-independent).
+	_hud._player_bands = [_delivered_oracle_band()]
+	_hud._player_band = _hud._player_bands[0]
+
+	# 3s — 2 hunters land exactly one whole 1.23 deer/turn, no waste → "≈1 Red Deer/turn · renewable",
+	# and the four ascending "up to +2.33 / +3.50 / +5.00 / +7.00 /turn" cap buttons.
+	var oracle_clean := _delivered_oracle_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud.show_herd_selection(oracle_clean)
+	_hud._hunt_assign_count = 2
+	_hud._build_herd_assign_controls(oracle_clean)
+	await _settle()
+	await _save("herd_hunt_delivered_clean")
+
+	# 3t — 1 hunter can't carry even one whole deer (0.80 < 1.23), so 35% of the kill rots →
+	# "≈0.65 Red Deer/turn · ⚠ 35% wasted" (green line, amber waste suffix).
+	var oracle_waste := _delivered_oracle_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud.show_herd_selection(oracle_waste)
+	_hud._hunt_assign_count = 1
+	_hud._build_herd_assign_controls(oracle_waste)
+	await _settle()
+	await _save("herd_hunt_delivered_waste")
+
+	# 3u — AUTO-MAX on policy select: simulate the picker click path (autofill flag + policy set) starting
+	# from a count of 1; the rebuild fills the crew to the Sustain max-useful cap (4 carriers), so the
+	# stepper sits at 4 and the line reads the full ≈1.89 deer/turn with zero waste.
+	var oracle_automax := _delivered_oracle_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud.show_herd_selection(oracle_automax)
+	_hud._hunt_assign_count = 1
+	_hud._build_herd_assign_controls(oracle_automax)
+	_hud._hunt_assign_autofill = true
+	_hud._build_herd_assign_controls(oracle_automax)
+	await _settle()
+	await _save("herd_hunt_automax")
+
+	# 3v — big game (mammoth fpa 16, Sustain ceiling 2.4): auto-max staffs the 20 carriers, delivered
+	# 2.4 → ≈0.15 mammoth/turn, and the averaging-WINDOW hint appears: "≈1 Woolly Mammoth every ~7
+	# turns — the rate above is averaged over that span."
+	var window_herd := _big_game_window_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud.show_herd_selection(window_herd)
+	_hud._hunt_assign_count = 1
+	_hud._build_herd_assign_controls(window_herd)
+	_hud._hunt_assign_autofill = true
+	_hud._build_herd_assign_controls(window_herd)
+	await _settle()
+	await _save("herd_hunt_big_game_window")
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	_hud._player_bands = []
@@ -2014,6 +2073,64 @@ func _hunt_preview_local_band() -> Dictionary:
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 0.9,
 		"activity": "hunt", "labor_assignments": [],
+	}
+
+## The oracle band for the carry-aware delivered/waste preview: per-worker 0.8, output 1.0 (so the
+## rendered numbers match the spec oracle EXACTLY — no morale modifier muddying them), sitting ON the
+## herd (local branch), with plenty of idle workers so the big-game auto-max (20 carriers) isn't
+## labor-bound.
+func _delivered_oracle_band() -> Dictionary:
+	return {
+		"id": "Band 1", "entity": 840, "faction": 0, "size": 120,
+		"current_x": 66, "current_y": 10, "pos": [66, 10],
+		"working_age": 30, "idle_workers": 26,
+		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
+		"hunt_per_worker_provisions": 0.8,
+		"output_multiplier": 1.0,
+		"activity": "hunt", "labor_assignments": [],
+	}
+
+## The spec oracle deer: food_per_animal 1.23, Sustain flow ceiling 2.33, per-worker 0.8, output 1.0.
+##   1 worker  → can't carry one whole 1.23 deer → delivered 0.80, ≈0.65 deer/turn · ⚠ 35% wasted
+##   2 workers → lands exactly one whole deer/turn, no waste → ≈1 deer/turn · renewable
+##   4 workers → the Sustain-max cap, delivered 2.33 → ≈1.89 deer/turn, no waste
+## Ascending `hunt_policy_ceilings` so the "up to X/turn" cap buttons read Sustain < Surplus < Market <
+## Eradicate; husbandry ceiling "wild" keeps the picker to the four extractive rungs.
+func _delivered_oracle_herd() -> Dictionary:
+	return {
+		"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "species": "Red Deer",
+		"size_class": "big", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10, "biomass": 820.0,
+		"husbandry_ceiling": "wild",
+		"food_per_animal": 1.23,
+		"per_worker_yield": 0.8,
+		"ceiling_sustain": 2.33, "ceiling_surplus": 3.5,
+		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
+		"hunt_policy_ceilings": {
+			"sustain": 2.33, "surplus": 3.5, "market": 5.0, "eradicate": 7.0,
+		},
+		"tile_info": _plain_herd_tile_info(),
+	}
+
+## A big-game herd for the averaging-WINDOW hint: food_per_animal 16, Sustain flow ceiling 2.4 → one whole
+## mammoth lands only every ceil(16/2.4)=7 turns, so the delivered ≈0.15/turn rate carries the "≈1 … every
+## ~7 turns" span line. The whole-animal cap needs 20 carriers to haul one 16-food body, and auto-max
+## staffs them (band idle 26).
+func _big_game_window_herd() -> Dictionary:
+	return {
+		"id": "game_mammoth_01", "label": "Woolly Mammoth (game_mammoth_01)",
+		"species": "Woolly Mammoth",
+		"size_class": "big", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10, "biomass": 3200.0,
+		"husbandry_ceiling": "wild",
+		"food_per_animal": 16.0,
+		"per_worker_yield": 0.8,
+		"ceiling_sustain": 2.4, "ceiling_surplus": 3.6,
+		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
+		"hunt_policy_ceilings": {
+			"sustain": 2.4, "surplus": 3.6, "market": 5.0, "eradicate": 7.0,
+		},
+		"tile_info": _plain_herd_tile_info(),
 	}
 
 func _food_tile_fixture() -> Dictionary:

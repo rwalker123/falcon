@@ -652,19 +652,12 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
-# Kill-RHYTHM: a hunt takes WHOLE animals, so a per-turn RATE reads as a rhythm, not a smooth flow.
-# animals/turn = rate ÷ food_per_animal, and BOTH terms must be PROVISIONS: the honest rate is the
-# assignment's `sustainable_yield` (a hunt row's `actual_yield` is the quantized PULSE — 0 on wait
-# turns, a spike on kill turns — and must NEVER headline the row); `food_per_animal` is the wire's
-# `HerdTelemetryState.foodPerAnimal` (= body_mass × provisions_per_biomass, the sim's
-# `SourceYieldForecast::body_mass_yield`). Dividing the food rate by `bodyMass` (BIOMASS) would be a
-# UNIT ERROR — ~50× too long at provisions_per_biomass 0.02 — so we divide food by food instead.
-#   ≥ 1 → a fast animal, several a turn → "≈1.3 Fowl/turn" (the multiple)
-#   < 1 → a big animal, one every few turns → "≈1 Mammoth / 7 turns" (ceil(food_per_animal ÷ rate))
-const HUNT_RHYTHM_FAST_FORMAT := "≈%s %s/turn"
-const HUNT_RHYTHM_SLOW_FORMAT := "≈1 %s / %d turns"
+# Cadence separator (" · ") joining a Current-actions Hunt row's food rate to its animals-first cadence
+# suffix (`_hunt_row_animal_rate`). A hunt takes WHOLE animals, so the row pairs the honest food rate
+# (`sustainable_yield`, NOT the quantized kill PULSE) with the animals/turn form `≈X animal/turn`
+# (`rate ÷ food_per_animal`, both PROVISIONS — dividing by `bodyMass` would be a ~50× unit error). This
+# is the SINGLE non-flipping format; the old fast/slow rhythm flip was retired.
 const HUNT_RHYTHM_SEPARATOR := " · "
-const HUNT_RHYTHM_DECIMALS := 1
 # UNDERSTAFFING (`LaborAssignment.wastedYield`): provisions the source OFFERED that the crew could not
 # collect — the party is under-crewed for the kill (an animal too big to fully carry, or an
 # over-abundant pulse) and food is left standing. Muted (INK_FAINT), the low-key mirror of the
@@ -679,6 +672,11 @@ const HERD_CREW_LABEL := "Herders"
 # One policy button's per-turn take on the hunt picker, so the four extractive rungs read as ASCENDING
 # (Sustain < Surplus < Market < Eradicate). A compact second line under the policy name.
 const POLICY_TAKE_FORMAT := "%s/turn"
+# The LOCAL-hunt picker's button metric is the herd's CAP for that policy (worker-independent), NOT the
+# crew's carry-aware delivered take (that's the preview line). Framed as "up to X/turn" so the button
+# reads as the ceiling it is, distinct from the honest per-crew line below. FOOD units (the cross-source
+# comparison axis), so it keeps `_format_signed`, exactly as the forage/expedition button metrics do.
+const HUNT_CAP_FORMAT := "up to %s/turn"
 # The FORAGE INVESTMENT rungs (Cultivate/Sow) wear a metric on their button face too, but it is not an
 # immediate take like the extractive `+X/turn` — it is the PAYOFF the preparation builds TOWARD (the
 # tended/field yield). A leading arrow marks it as "builds toward", so it reads distinct from an
@@ -1015,6 +1013,26 @@ const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
 # with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+# CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
+# unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
+# itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
+# ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered_and_waste`).
+const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
+# When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
+# A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
+const HUNT_WASTE_SUFFIX_FORMAT := " · ⚠ %d%% wasted"
+# The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
+# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer (always shown on an
+# extractive hunt rung) naming the averaging span, computed from the SELECTED policy's ceiling by
+# `_hunt_avg_window_turns` so it never blinks out as workers change (a faster policy averages over a
+# different span, so the line reflects the composed action, not a Sustain-wide claim).
+const HUNT_AVG_WINDOW_FORMAT := "This estimate is a long-run average over ~%d turns — you take whole animals, so per-turn delivery varies."
+# The averaging window's upper clamp: near-integer animals/turn rates make the "extra animal" cycle span
+# read absurdly long, so cap it at a plausible span.
+const HUNT_WINDOW_MAX_TURNS := 12
+# Animals-per-turn rate formatting: up to 2 decimals, trailing zeros/dot stripped (1.90→"1.9", 1.00→"1",
+# 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
+const HUNT_ANIMAL_RATE_DECIMALS := 2
 # Tile-card PASTURE rows (the graze layer). The twin of `Forage biomass`, and the pair is the point:
 # forage is what HUMANS can eat here (seeds, nuts, tubers — food-module tiles only), pasture is what
 # ANIMALS can eat here (grass and browse — cellulose humans cannot digest, on nearly every land tile).
@@ -1153,6 +1171,10 @@ var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
+# One-shot: set when the player CLICKS a policy so the next rebuild auto-fills the worker count to the
+# policy's max-useful cap ("give me everything this herd sustains" — zero waste + full rate). Cleared as
+# soon as it's consumed; never set by a −/+ stepper tick, so manual counts are preserved.
+var _hunt_assign_autofill := false
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding},
 # each 0..1. Gates the Cultivate/Corral picker options (a rung needs its track fully learned) and
 # backs the top-bar meters; the previous value is what makes the one-shot unlock nudge possible.
@@ -1527,21 +1549,80 @@ func _hunt_policy_ceiling(herd: Dictionary, policy: String) -> float:
         return HUNT_RATE_UNAVAILABLE
     return float((ceilings_variant as Dictionary)[policy])
 
-## Turn a per-turn take RATE into the honest kill-RHYTHM against one animal's worth of FOOD. BOTH
-## inputs must be in the SAME unit — PROVISIONS: `rate` is `sustainable_yield` / a `hunt_policy_ceilings`
-## row (food/turn), and `food_per_animal` is the sim's `SourceYieldForecast::body_mass_yield`
-## (= body_mass × provisions_per_biomass, food per animal). Dividing food by food is dimensionless
-## (animals/turn); dividing the food rate by `body_mass` (BIOMASS) is NOT — with provisions_per_biomass
-## 0.02 it reads ~50× too long, so we never do it. "" when either input is unknown (0), so the caller
-## shows the bare rate with no rhythm (a herd whose `foodPerAnimal` the wire couldn't resolve).
-func _hunt_kill_rhythm(rate: float, food_per_animal: float, animal: String) -> String:
+## The averaging WINDOW (turns) for the whole-animal disclaimer — a STABLE, worker-independent property
+## derived from the SELECTED policy's raw flow ceiling (NOT the crew's current delivered rate, which
+## moves as workers change and made the old line blink out). Keyed on `policy` because a faster policy
+## (Surplus/Market) delivers lumpy whole animals over a different span. `g` = animals/turn the policy's
+## flow buys: slow/big game (`g < 1`) lands one animal every ~`1/g` turns; fast game (`g >= 1`) delivers
+## the "extra" fractional animal every ~`1/frac` turns. Returns 0 when `food_per_animal` / the ceiling is
+## unknown (caller then skips the line). NEVER scaled by `output_multiplier` — it's a pure herd property.
+func _hunt_avg_window_turns(herd: Dictionary, policy: String) -> int:
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var ceiling := _hunt_policy_ceiling(herd, policy)
+    if fpa <= 0.0 or ceiling <= 0.0:
+        return 0
+    var g: float = ceiling / fpa
+    var x: int
+    if g < 1.0:
+        x = int(ceil(1.0 / g))
+    else:
+        var frac: float = g - floor(g)
+        x = 1 if frac < 0.01 else int(ceil(1.0 / frac))
+    return clampi(x, 1, HUNT_WINDOW_MAX_TURNS)
+
+## The HONEST carry-aware delivery model for a local hunt: what a crew of `workers` from `band` actually
+## lands off `herd` under `policy` per turn, and how much of the kill they can't carry (which rots). A
+## hunt takes WHOLE animals via a kill-credit bank, so the crew's raw food throughput is quantized to the
+## whole bodies it can haul — fractional carry capacity is idle (NOT waste), but a crew too small to carry
+## even one whole animal loses the surplus meat. Returns `{available, delivered, waste, waste_pct}` (all
+## food/turn; `waste_pct` 0..1) or `{available=false}` when a lever/ceiling is absent (caller degrades to
+## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
+## are sim exports.
+func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var per_worker := float(band.get("hunt_per_worker_provisions", 0.0))
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var ceiling := _hunt_policy_ceiling(herd, policy)
+    if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
+        return {"available": false}
+    ceiling *= output
+    var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
+    var carryable := floorf(collection / fpa)                # whole animals /turn the crew can carry
+    var delivered := 0.0
+    var waste := 0.0
+    if carryable >= 1.0:
+        # Carry quantized to whole bodies; the flow ceiling still caps it. Leftover carry capacity is
+        # idle, NOT waste (no animal was killed and dropped).
+        delivered = minf(ceiling, carryable * fpa)
+        waste = 0.0
+    else:
+        # Can't carry even one whole animal → the meat that can't be hauled rots.
+        var kills_per_turn := minf(1.0, ceiling / fpa)
+        delivered = collection * kills_per_turn
+        waste = (fpa - collection) * kills_per_turn
+    var killed_food := delivered + waste
+    var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
+    return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct}
+
+## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
+## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
+## strip the tail ourselves (rstrip stops at the first non-matching char, so integer zeros survive).
+func _format_animal_rate(value: float) -> String:
+    var text := ("%." + str(HUNT_ANIMAL_RATE_DECIMALS) + "f") % value
+    if "." in text:
+        text = text.rstrip("0")
+        if text.ends_with("."):
+            text = text.rstrip(".")
+    return text
+
+## The animals-first, NON-FLIPPING cadence for a confirmed Current-actions Hunt row: the honest food rate
+## (`sustainable_yield`) as animals/turn against one animal's worth of food, in the same `≈X animal/turn`
+## form the compose preview uses (retiring the old fast/slow flip). No worker-compose context here, so no
+## carry/waste model — just a consistent unit. "" when a term is unknown (0), so the row degrades bare.
+func _hunt_row_animal_rate(rate: float, food_per_animal: float, animal: String) -> String:
     if food_per_animal <= 0.0 or rate <= 0.0:
         return ""
-    var per_turn := rate / food_per_animal
-    if per_turn >= 1.0:
-        return HUNT_RHYTHM_FAST_FORMAT % [
-            String.num(per_turn, HUNT_RHYTHM_DECIMALS).pad_decimals(HUNT_RHYTHM_DECIMALS), animal]
-    return HUNT_RHYTHM_SLOW_FORMAT % [animal, int(ceil(food_per_animal / rate))]
+    return HUNT_DELIVERED_FORMAT % [_format_animal_rate(rate / food_per_animal), animal]
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
 ## fully tamed (pastoral), or being penned under the composed Corral policy. `workersNeeded` on such a
@@ -1551,9 +1632,11 @@ func _is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
         or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
         or policy == LABOR_POLICY_CORRAL
 
-## Each hunt policy's per-turn BAND take (provisions/turn), keyed policy → display string, for the
-## picker's ascending readout. Read straight off the herd's sim-exported `hunt_policy_ceilings` — never
-## re-derived. Empty when the herd carries no ceilings (older snapshot / non-huntable).
+## Each hunt policy's per-turn BAND take CEILING (provisions/turn), keyed policy → display string, for the
+## picker's ascending readout. This is the herd's worker-independent CAP for the policy — framed "up to
+## X/turn" to read as the ceiling it is, distinct from the crew's carry-aware delivered line below the
+## picker. Read straight off the herd's sim-exported `hunt_policy_ceilings` — never re-derived. Empty when
+## the herd carries no ceilings (older snapshot / non-huntable).
 func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
     var takes := {}
     var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
@@ -1563,7 +1646,7 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
-        takes[String(policy)] = POLICY_TAKE_FORMAT % _format_signed(rate)
+        takes[String(policy)] = HUNT_CAP_FORMAT % _format_signed(rate)
     return takes
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
@@ -1572,28 +1655,46 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
 func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    # The BAND ceiling (the herd's flow) — a resident hunt is capped by it, and the Sustain entry IS
-    # the herd's sustainable yield. The expedition's stock-headroom ceilings never enter here.
-    var rate := _hunt_take_rate(band, herd, policy, workers)
     var sustain_ceiling := _hunt_policy_ceiling(herd, DEFAULT_HUNT_POLICY)
-    if rate < 0.0 or sustain_ceiling < 0.0:
+    if sustain_ceiling < 0.0:
         return ""
     var output := float(band.get("output_multiplier", OUTPUT_FULL))
-    var actual := rate * output
     var sustainable := sustain_ceiling * output
-    var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
-    # Pair the per-turn rate with the honest kill-RHYTHM so a big animal reads "one every N turns"
-    # rather than a smooth flow that never quite arrives. `food_per_animal` (provisions) keeps the
-    # division dimensionless; 0/unknown → no suffix.
-    var rhythm := _hunt_kill_rhythm(
-        actual, float(herd.get("food_per_animal", 0.0)), _herd_display_name(herd))
-    var rhythm_suffix := HUNT_RHYTHM_SEPARATOR + rhythm if rhythm != "" else ""
-    if _is_overdraw(actual, sustainable):
-        return "[color=#%s]%s %s%s%s[/color]" % [
-            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, rhythm_suffix, LOCAL_HUNT_OVERDRAW_SUFFIX,
-        ]
-    return "[color=#%s]%s%s%s[/color]" % [
-        HudStyle.HEALTHY_HEX, text, rhythm_suffix, YIELD_TOOLTIP_RENEWABLE]
+    var dw := _hunt_delivered_and_waste(band, herd, policy, workers)
+    if not bool(dw.get("available", false)):
+        # Graceful degrade — `food_per_animal` (or a lever) is unknown, so fall back to the old smoothed
+        # food/turn line unchanged rather than regress the readout.
+        var rate := _hunt_take_rate(band, herd, policy, workers)
+        if rate < 0.0:
+            return ""
+        var actual := rate * output
+        var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
+        if _is_overdraw(actual, sustainable):
+            return "[color=#%s]%s %s%s[/color]" % [
+                HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_HUNT_OVERDRAW_SUFFIX]
+        return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
+    # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
+    # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
+    # throughput the crew can't haul home.
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var delivered := float(dw["delivered"])
+    var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
+    var primary := HUNT_DELIVERED_FORMAT % [_format_animal_rate(animal_rate), _herd_display_name(herd)]
+    # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
+    # exceeds the herd's Sustain ceiling (Surplus/Market draw it down); waste = a kill the crew couldn't
+    # carry. The Sustain reading stays green + "· renewable".
+    var body := ""
+    if _is_overdraw(delivered, sustainable):
+        body = "[color=#%s]%s %s%s[/color]" % [
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, primary, LOCAL_HUNT_OVERDRAW_SUFFIX]
+    else:
+        body = "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, primary, YIELD_TOOLTIP_RENEWABLE]
+    var waste_pct := float(dw["waste_pct"])
+    if waste_pct > 0.0:
+        # Waste is its OWN concern — always WARN-tinted, even when the main line is green.
+        body += "[color=#%s]%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
+    return body
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
@@ -3029,10 +3130,10 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # label/species) — the panel row and the map marker read as the same animal.
             var herd_label := _herd_label_for_id(herd_id)
             var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
-            # Pair the honest per-turn rate (yld.rate = sustainable, not the pulse) with the kill-rhythm
-            # from the herd's `food_per_animal` (provisions — same unit as the rate, never the
-            # dimensionally-wrong food÷biomass division). Unknown herd → no suffix (graceful degrade).
-            var hunt_rhythm := _hunt_kill_rhythm(
+            # Pair the honest per-turn rate (yld.rate = sustainable, not the pulse) with the animals-first,
+            # NON-FLIPPING cadence (`≈X animal/turn`, the same form the compose preview uses), from the
+            # herd's `food_per_animal` (provisions — same unit as the rate). Unknown herd → no suffix.
+            var hunt_rhythm := _hunt_row_animal_rate(
                 float(yld.rate), float(_find_world_herd(herd_id).get("food_per_animal", 0.0)), herd_label)
             var hunt_rhythm_suffix := HUNT_RHYTHM_SEPARATOR + hunt_rhythm if hunt_rhythm != "" else ""
             actions_block.add_child(_build_worker_stepper(
@@ -3340,6 +3441,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     var capped := _expedition_useful_cap(band, herd, _hunt_assign_policy, assignable) if is_expedition \
         else _forecast_worker_cap(forecast, assignable)
     var cap := int(capped["cap"])
+    # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
+    # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy
+    # click (both branches), never by a −/+ tick, so manual counts survive the rebuild.
+    if _hunt_assign_autofill:
+        _hunt_assign_count = cap
+        _hunt_assign_autofill = false
     _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
@@ -3360,6 +3467,8 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         else _hunt_policy_takes(herd)
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
+        # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
+        _hunt_assign_autofill = true
         _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
@@ -3399,6 +3508,17 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         # invisible). Deliberately NOT the expedition hints: a party earns neither.
         herd_assign_controls.add_child(_alloc_hint_label(
             String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
+        # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
+        # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
+        # an extractive rung (an investment rung shows a dip→payoff, not an animal cadence, so it's
+        # skipped), as a STABLE herd-level statement: the span is keyed off the selected policy's flow
+        # ceiling (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never
+        # blinks out. Skipped only when the window is unknown (missing food_per_animal / ceiling).
+        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
+            var window_turns := _hunt_avg_window_turns(herd, _hunt_assign_policy)
+            if window_turns > 0:
+                herd_assign_controls.add_child(_alloc_hint_label(
+                    HUNT_AVG_WINDOW_FORMAT % window_turns))
         # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
         # than left to be guessed. See `_tame_stalled_hint`.
         var stalled := _tame_stalled_hint(herd)

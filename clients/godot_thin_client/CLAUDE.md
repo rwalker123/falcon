@@ -1453,8 +1453,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     == 0` (rehydrated, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one.
     **ONE yield row per rung — each rung gets the row that informs ITS decision, never both.** On the
-    **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the same per-turn number PLUS
-    the sustainability verdict `· renewable` / `⚠ overdraws the herd`) and the INVESTMENT rung (Corral)
+    **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the crew's honest carry-aware
+    delivered take, ANIMALS-first — `≈1 Red Deer/turn` — PLUS the sustainability verdict `· renewable` /
+    `⚠ overdraws the herd`, and a WARN `· ⚠ N% wasted` suffix when a kill can't be carried; see the
+    animals-first preview note below) and the INVESTMENT rung (Corral)
     renders `_forecast_yield_row` (`Preparing: +0.23 → then +1.05` — the dip→payoff deal, which a single
     rate structurally cannot express; Corral draws sustainably, so no overdraw verdict is lost).
     **Forage** has no local-preview twin, so it keeps `_forecast_yield_row` for all five rungs. Rendering
@@ -1645,21 +1647,44 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     plateau raid no more animals — a table SCAN for the smallest size at which animals stops rising, capped
     there with the SAME "max N useful here — more would be idle" note the local hunt uses
     (`MAX_USEFUL_NOTE_FORMAT`). That closes the silent-idle-hunter gap the whole pass exists for.
+    **Picking a policy AUTO-FILLS the crew/party to that policy's max-useful cap** (`_hunt_assign_autofill`,
+    a one-shot set only by a policy CLICK, consumed on the next rebuild before the clamp — the "give me
+    everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
+    the manual `−/+` stepper is untouched (it never sets the flag).
     The **band-first targeting flow gates identically**: `_try_dispatch_pending_send_hunt_expedition`
     refuses to emit on a no-surplus herd and posts the SAME `_hunt_no_surplus_reason` sentence to the
     command feed, staying in targeting — the click is never silently swallowed
     (mirrors the existing "no huntable herd there" nudge). The **local** branch has no carry cap, so a raid readout is meaningless and
-    it instead previews the **per-turn food yield** of the standing assignment
-    (`_local_hunt_preview_bbcode`: `min(workers × hunt_per_worker_provisions, band_ceiling(policy)) ×
-    output_multiplier` — the resident band applies its morale/discontent productivity modifier at
-    payout, an expedition does not), income-green `≈ +0.27 /turn · renewable`, or WARN-amber
-    `⚠ … — overdraws the herd` when the take exceeds the herd's Sustain ceiling (the shared
-    `_is_overdraw` test the allocation rows use). **The two branches read DIFFERENT herd fields**
+    it instead previews the crew's honest **carry-aware delivered take, ANIMALS-first**
+    (`_local_hunt_preview_bbcode` / `_hunt_delivered_and_waste`). A hunt takes WHOLE animals via a
+    kill-credit bank, so the crew's raw food throughput
+    (`workers × hunt_per_worker_provisions × output_multiplier`, capped by the band's flow ceiling)
+    is quantized to the whole bodies it can HAUL: `delivered = min(ceiling, floor(collection ÷
+    food_per_animal) × food_per_animal)`. The line reads `≈<delivered ÷ food_per_animal> <animal>/turn`
+    (e.g. `≈1 Red Deer/turn`, 2-dp trailing-zero-stripped via `_format_animal_rate`), income-green
+    `· renewable` or WARN-amber `⚠ … — overdraws the herd` when the delivered take exceeds the herd's
+    Sustain ceiling (the shared `_is_overdraw` test). When the crew can't carry even one whole animal the
+    surplus meat rots → a **separate** WARN-amber `· ⚠ N% wasted` suffix (`waste_pct`, its own flag,
+    rendered amber even on a green line; overdraw + waste can co-occur). Because the animal rate is a
+    long-run average of lumpy whole-animal delivery, EVERY extractive rung shows a **STABLE, always-on
+    averaging-WINDOW disclaimer** under the policy picker — `HUNT_AVG_WINDOW_FORMAT`: `This estimate is a
+    long-run average over ~<X> turns — you take whole animals, so per-turn delivery varies.` X =
+    `_hunt_avg_window_turns(herd, policy)`, derived from the SELECTED policy's raw flow ceiling (NOT the
+    crew's current delivered rate), so it is **worker-independent and never blinks out** as the Hunters
+    count steps up: `g = ceiling ÷ food_per_animal`; slow/big game (`g < 1`) → `ceil(1/g)` (deer Sustain →
+    ~2, mammoth Sustain → ~7), fast game → `ceil(1/frac)`, clamped to `HUNT_WINDOW_MAX_TURNS` (12). Keyed on
+    the composed policy (a faster policy averages over a different span), extractive rungs only (an
+    investment rung shows a dip→payoff, not a cadence), skipped when the window is unknown (missing
+    food_per_animal / ceiling → returns 0). The resident band applies its
+    morale/discontent productivity modifier at payout, an expedition does not; when `food_per_animal` is
+    unknown the line degrades to the old smoothed `≈ +X /turn · renewable` food line (unchanged). **The
+    two branches read DIFFERENT herd fields**
     (see "Hunting expedition" below): the expedition line is a pure LOOKUP into the sim's
     forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
-    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is arithmetic over
-    the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_take_rate` /
-    `_hunt_policy_ceiling`). The ecology/MSY model is NEVER re-derived client-side.
+    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is carry arithmetic over
+    the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_delivered_and_waste`
+    / `_hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
+    is NEVER re-derived client-side.
     Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
     `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
     snapshot `grid` key). Compose state re-seeds from current staffing when the selected herd changes.
@@ -1680,8 +1705,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
     lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → denial, still enabled), and
     `herd_hunt_local_sustain` /
-    `herd_hunt_local_overdraw` (local branch: green `≈ +0.27 /turn · renewable` vs amber `⚠ ≈ +0.54
-    /turn — overdraws the herd`).
+    `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
+    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`), and the carry-aware set
+    `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
+    `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
@@ -1857,28 +1884,43 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
       slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
       playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
-    - **The hunt row headlines the honest RATE, never the kill-credit PULSE, and pairs it with the
-      kill-RHYTHM** (`Hud._source_yield_readout` / `_hunt_kill_rhythm`, slice 8b UX): a Hunt
-      allocation row + the local-hunt preview show `sustainable_yield` (the smoothed per-turn take), not
-      `actual_yield` (0 on a wait turn, a spike on a kill turn — the "+0.00 /turn" lie), and append the
-      rhythm as `≈N.N Fowl/turn` (fast, rate ≥ 1 animal/turn) or `≈1 Mammoth / N turns`
-      (big, `ceil(food_per_animal ÷ rate)`). **The rhythm divides FOOD by FOOD** — the rate
-      (`sustainable_yield`, provisions) by **`food_per_animal`** (`HerdTelemetryState.foodPerAnimal`,
-      slot 72 = `body_mass × provisions_per_biomass` = the sim's `SourceYieldForecast::body_mass_yield`,
-      one animal's worth of yield in provisions). It must **NOT** divide by `body_mass` (BIOMASS): with
-      `provisions_per_biomass 0.02` that reads ~50× too long. A herd whose `foodPerAnimal` is 0/unknown
-      → no rhythm drawn (the honest rate still shows). The **hunt policy picker** (`_build_policy_picker(…, takes)`,
-      fed `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's per-turn take so
-      Sustain < Surplus < Market < Eradicate reads as ASCENDING. `wasted_yield > 0` renders a muted
-      "· N.N wasted" understaffing note (the low-key mirror of the WARN overstaff note). A MANAGED
+    - **The hunt row headlines the honest RATE, never the kill-credit PULSE, and pairs it with an
+      ANIMALS-first, NON-FLIPPING cadence** (`Hud._source_yield_readout` / `_hunt_row_animal_rate`, slice
+      8b UX + the local-hunt UX cleanup): a Hunt allocation row + the local-hunt preview show
+      `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on a
+      kill turn — the "+0.00 /turn" lie), and append the cadence as `≈<rate> <animal>/turn`
+      (`_hunt_row_animal_rate` = `sustainable_yield ÷ food_per_animal`, up to 2 dp, trailing zeros
+      stripped by `_format_animal_rate`) — **one consistent format at every scale**: fast game reads
+      `≈1.3 Marsh Fowl/turn`, big game `≈0.15 Woolly Mammoth/turn`. The **old fast/slow flip**
+      (`_hunt_kill_rhythm`'s `≈1 Mammoth / N turns` slow form) was **retired** — its jarring format switch
+      confused the reading. **The cadence divides FOOD by FOOD** — the rate (`sustainable_yield`,
+      provisions) by **`food_per_animal`** (`HerdTelemetryState.foodPerAnimal`, slot 72 = `body_mass ×
+      provisions_per_biomass` = the sim's `SourceYieldForecast::body_mass_yield`, one animal's worth of
+      yield in provisions). It must **NOT** divide by `body_mass` (BIOMASS): with `provisions_per_biomass
+      0.02` that reads ~50× too long. A herd whose `foodPerAnimal` is 0/unknown → no cadence drawn (the
+      honest rate still shows). The **hunt policy picker** (`_build_policy_picker(…, takes)`, fed
+      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** framed **`up to X/turn`**
+      (`HUNT_CAP_FORMAT` — the herd's worker-independent ceiling, FOOD units, distinct from the crew's
+      carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate reads
+      as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
+      mirror of the WARN overstaff note). A MANAGED
       (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
       (`_is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
       the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
       row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
-    - ui_preview (slice-8b UX): `hunt_actions_rhythm` (two Current-actions Hunt rows — fast
-      `≈1.3 Marsh Fowl/turn`, big-game `≈1 Woolly Mammoth / 7 turns` + the muted `· 1.90 wasted`) /
-      `hunt_picker_ascending` (the local picker's ascending per-turn takes + the preview's
-      `+0.90 /turn · ≈1 Red Deer / 5 turns`, "Hunters" stepper on a wild herd) / `hunt_crew_herders`
+    - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt
+      rows — fast `≈1.3 Marsh Fowl/turn`, big-game **`≈0.15 Woolly Mammoth/turn`** (non-flipping) + the
+      muted `· 1.90 wasted`) / `hunt_picker_ascending` (the local picker + the preview's per-crew line,
+      "Hunters" stepper on a wild herd) / **`herd_hunt_delivered_clean`** (2 hunters → `≈1 Red Deer/turn ·
+      renewable` + the four ascending `up to +2.33/+3.50/+5.00/+7.00 /turn` cap buttons) /
+      **`herd_hunt_delivered_waste`** (1 hunter can't carry one whole deer → green `≈0.65 Red Deer/turn ·
+      renewable` + amber `· ⚠ 35% wasted`) / **`herd_hunt_automax`** (a policy click auto-fills the crew to
+      the max-useful cap — count sits at 4) / **`herd_hunt_big_game_window`** (mammoth: auto-max staffs the
+      20 carriers, `≈0.15 Woolly Mammoth/turn` + the averaging-window disclaimer `This estimate is a
+      long-run average over ~7 turns — you take whole animals, so per-turn delivery varies.`; the deer
+      `delivered_*` states carry the same disclaimer reading ~2 turns at every worker count) /
+      `herd_hunt_local_sustain` +
+      `herd_hunt_local_overdraw` (green vs amber `⚠ … — overdraws the herd`) / `hunt_crew_herders`
       (a corralled herd → "Herders" stepper + "Assign herders") / `knowledge_penning_climbing`
       (Penning 34% climbing in the top strip) / `food_tile` (the "Cultivation Preparing 60%" row).
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
