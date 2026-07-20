@@ -84,6 +84,20 @@ pub(crate) fn snapshot_stance_axes(ledger: &BeatLedger) -> Vec<StanceState> {
         .collect()
 }
 
+/// Every faction's attained narrator **medium**, so the client can present the telling as an oral
+/// saga / painted chronicle / written record. Presentational only — the medium never selects
+/// different copy (see `core_sim/src/telling/medium.rs`).
+pub(crate) fn snapshot_voice_medium(ledger: &BeatLedger) -> Vec<VoiceMediumState> {
+    ledger
+        .mediums_by_faction()
+        .map(|(faction, medium)| VoiceMediumState {
+            faction: faction.0,
+            medium_id: medium.id.clone(),
+            medium_index: medium.index,
+        })
+        .collect()
+}
+
 fn voice_lines(lines: &BTreeMap<String, String>) -> Vec<VoiceLineState> {
     lines
         .iter()

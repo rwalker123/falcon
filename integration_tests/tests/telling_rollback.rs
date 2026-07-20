@@ -196,3 +196,74 @@ fn answering_a_fork_after_the_rollback_point_is_rewound_by_the_rollback() {
     );
     assert_eq!(*restored, captured, "the whole fork tier must rewind");
 }
+
+/// PR-C: the **memory threads** and the **attained voice medium** rewind with everything else.
+///
+/// Both are durable narrative memory, so a rollback that left them behind would carry a callback
+/// (or a narrator that had learned to write) into a timeline where it never happened — the same
+/// class of bug as a beat stuck marked-fired.
+#[test]
+fn threads_and_the_attained_medium_rewind_with_the_ledger() {
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+    app.update();
+
+    let snapshot = {
+        let history = app.world.resource::<SnapshotHistory>();
+        history
+            .latest_entry()
+            .expect("snapshot captured")
+            .snapshot
+            .clone()
+    };
+    let captured = app.world.resource::<BeatLedger>().clone();
+
+    // Write a thread and advance the medium *after* the rollback point.
+    {
+        let mut ledger = app.world.resource_mut::<BeatLedger>();
+        let mut state = ledger.to_state();
+        state.threads.push(sim_schema::BeatThreadState {
+            kind: "place".to_string(),
+            key: "Phantom Vale".to_string(),
+            name: "Phantom Vale".to_string(),
+            plural: "vales".to_string(),
+            adjective: "vale".to_string(),
+            first_seen_tick: 1,
+            last_referenced_tick: 1,
+        });
+        state.mediums.push(sim_schema::BeatVoiceMediumState {
+            faction: 0,
+            medium_id: "written".to_string(),
+            medium_index: 2,
+        });
+        *ledger = BeatLedger::from_state(&state);
+    }
+    {
+        let live = app.world.resource::<BeatLedger>();
+        assert!(live
+            .threads_of("place")
+            .iter()
+            .any(|thread| thread.key == "Phantom Vale"));
+        assert_eq!(live.medium_for(FactionId(0)).map(|m| m.index), Some(2));
+    }
+
+    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+
+    let restored = app.world.resource::<BeatLedger>();
+    assert!(
+        !restored
+            .threads_of("place")
+            .iter()
+            .any(|thread| thread.key == "Phantom Vale"),
+        "a thread written after the rollback point must be un-remembered"
+    );
+    assert_ne!(
+        restored.medium_for(FactionId(0)).map(|m| m.index),
+        Some(2),
+        "the narrator must not carry a medium it never attained in this timeline"
+    );
+    assert_eq!(
+        *restored, captured,
+        "threads and medium rewind as one ledger"
+    );
+}

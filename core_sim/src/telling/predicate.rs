@@ -11,7 +11,9 @@ use serde::{de, Deserialize, Deserializer};
 
 use super::{
     config::TrendConfig,
+    memory::{self, Thread},
     signals::{SignalId, SignalSample},
+    Answer,
 };
 use crate::scalar::Scalar;
 
@@ -116,6 +118,28 @@ pub enum Predicate {
         beat: String,
         within_turns: u32,
     },
+    /// **The memory-thread gate**: at least `min_count` threads of `kind` exist that were first
+    /// seen at least `older_than_turns` turns ago.
+    Thread {
+        kind: String,
+        min_count: u32,
+        older_than_turns: u32,
+    },
+    /// **The consequence gate**: the player answered fork `beat` with `choice`, at least
+    /// `min_turns_since` turns ago. This is what makes a fork's promise — *"the stories that will
+    /// find you now"* — literally true: a player who answered one way gets a beat the other player
+    /// never sees.
+    ///
+    /// `min_turns_since` is the **elapsed-time** half, and it is usually load-bearing: a callback
+    /// almost always means "some time after you said that". `identity.trail_endures` says *"we have
+    /// kept our word to it"*, which is absurd the turn after the word is given. Do **not** reach for
+    /// a `turn.index` trend to express this — `turn.index` rises unconditionally, so such a clause
+    /// only ever means "we are past turn n", not "n turns since the answer".
+    Answered {
+        beat: String,
+        choice: String,
+        min_turns_since: u32,
+    },
 }
 
 /// Everything a predicate reads. Assembled once per turn so evaluation is a pure function of a
@@ -130,6 +154,10 @@ pub struct EvalContext<'a> {
     pub history: &'a BTreeMap<String, VecDeque<Scalar>>,
     pub fired: &'a BTreeMap<String, Vec<u64>>,
     pub flags: &'a BTreeSet<String>,
+    /// Beat id → the choice the player took, backing [`Predicate::Answered`].
+    pub answers: &'a BTreeMap<String, Answer>,
+    /// The memory threads, by kind, backing [`Predicate::Thread`].
+    pub threads: &'a BTreeMap<String, Vec<Thread>>,
     pub tick: u64,
     pub trend: &'a TrendConfig,
 }
@@ -190,6 +218,22 @@ impl Predicate {
                         .any(|t| ctx.tick.saturating_sub(*t) <= *within_turns as u64)
                 })
                 .unwrap_or(false),
+            Predicate::Thread {
+                kind,
+                min_count,
+                older_than_turns,
+            } => {
+                memory::count_matching(ctx.threads, kind, *older_than_turns, ctx.tick)
+                    >= *min_count as usize
+            }
+            Predicate::Answered {
+                beat,
+                choice,
+                min_turns_since,
+            } => ctx.answers.get(beat).is_some_and(|answer| {
+                answer.choice == *choice
+                    && ctx.tick.saturating_sub(answer.tick) >= *min_turns_since as u64
+            }),
         }
     }
 
@@ -205,7 +249,60 @@ impl Predicate {
             Predicate::Compare { signal, .. }
             | Predicate::Crosses { signal, .. }
             | Predicate::Trend { signal, .. } => out.push(signal.clone()),
-            Predicate::Flag(_) | Predicate::Fired { .. } => {}
+            Predicate::Flag(_)
+            | Predicate::Fired { .. }
+            | Predicate::Thread { .. }
+            | Predicate::Answered { .. } => {}
+        }
+    }
+
+    /// Every `{ "answered": B, "choice": C, "min_turns_since": n }` gate, as `(B, C, n)` — the
+    /// load-time validation hook. A typo in `B`/`C` silently produces a beat that can never fire,
+    /// which is the worst failure mode a content system has, so the catalog checks each target hard.
+    pub fn collect_answered_gates(&self, out: &mut Vec<(String, String, u32)>) {
+        self.walk(&mut |predicate| {
+            if let Predicate::Answered {
+                beat,
+                choice,
+                min_turns_since,
+            } = predicate
+            {
+                out.push((beat.clone(), choice.clone(), *min_turns_since));
+            }
+        });
+    }
+
+    /// Every `trend` window this predicate opens — the load-time hook that catches a window wider
+    /// than the ledger's retained history, which `evaluate` can only ever read as `false`.
+    pub fn collect_trend_windows(&self, out: &mut Vec<u32>) {
+        self.walk(&mut |predicate| {
+            if let Predicate::Trend { over_turns, .. } = predicate {
+                out.push(*over_turns);
+            }
+        });
+    }
+
+    /// Every thread `kind` this predicate gates on — the load-time hook that catches a kind no
+    /// `remembers` entry ever writes (and which could therefore never be satisfied).
+    pub fn collect_thread_kinds(&self, out: &mut Vec<String>) {
+        self.walk(&mut |predicate| {
+            if let Predicate::Thread { kind, .. } = predicate {
+                out.push(kind.clone());
+            }
+        });
+    }
+
+    /// Visit every node of the tree, so the collectors above share one traversal.
+    fn walk(&self, visit: &mut impl FnMut(&Predicate)) {
+        visit(self);
+        match self {
+            Predicate::All(children) | Predicate::Any(children) => {
+                for child in children {
+                    child.walk(visit);
+                }
+            }
+            Predicate::Not(child) => child.walk(visit),
+            _ => {}
         }
     }
 }
@@ -256,6 +353,44 @@ fn parse_predicate(value: &serde_json::Value) -> Result<Predicate, String> {
         });
     }
 
+    if let Some(kind) = object.get("thread") {
+        let kind = kind
+            .as_str()
+            .ok_or_else(|| format!("`thread` must be a kind string, got {kind}"))?;
+        // Both bounds default: `{ "thread": K }` reads as "we remember at least one, of any age".
+        let min_count = parse_optional_u32(object.get("min_count"), "min_count", value)?
+            .unwrap_or(DEFAULT_THREAD_MIN_COUNT);
+        let older_than_turns =
+            parse_optional_u32(object.get("older_than_turns"), "older_than_turns", value)?
+                .unwrap_or(0);
+        return Ok(Predicate::Thread {
+            kind: kind.to_string(),
+            min_count,
+            older_than_turns,
+        });
+    }
+    if let Some(beat) = object.get("answered") {
+        let beat = beat
+            .as_str()
+            .ok_or_else(|| format!("`answered` must be a beat id string, got {beat}"))?;
+        let choice = object
+            .get("choice")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!("predicate {value} requires a `choice` naming the answer it gates on")
+            })?;
+        // Defaults to 0 — "the moment you answered" — so a gate that genuinely wants no delay
+        // says nothing, and one that wants elapsed time says so explicitly.
+        let min_turns_since =
+            parse_optional_u32(object.get("min_turns_since"), "min_turns_since", value)?
+                .unwrap_or(0);
+        return Ok(Predicate::Answered {
+            beat: beat.to_string(),
+            choice: choice.to_string(),
+            min_turns_since,
+        });
+    }
+
     let signal = object
         .get("signal")
         .and_then(serde_json::Value::as_str)
@@ -301,6 +436,9 @@ fn parse_predicate(value: &serde_json::Value) -> Result<Predicate, String> {
     ))
 }
 
+/// "We remember at least one" — the reading a bare `{ "thread": K }` should have.
+const DEFAULT_THREAD_MIN_COUNT: u32 = 1;
+
 fn parse_children(value: &serde_json::Value, key: &str) -> Result<Vec<Predicate>, String> {
     let array = value
         .as_array()
@@ -336,9 +474,23 @@ fn parse_u32(
         .ok_or_else(|| format!("predicate {parent} requires a non-negative integer `{key}`"))
 }
 
+/// Like [`parse_u32`], but absent is `Ok(None)` rather than an error. A *present but malformed*
+/// key still fails — a typo'd bound must never silently read as its default.
+fn parse_optional_u32(
+    value: Option<&serde_json::Value>,
+    key: &str,
+    parent: &serde_json::Value,
+) -> Result<Option<u32>, String> {
+    match value {
+        None => Ok(None),
+        Some(_) => parse_u32(value, key, parent).map(Some),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telling::nouns::Noun;
 
     fn parse(json: &str) -> Predicate {
         serde_json::from_str(json).expect("predicate parses")
@@ -351,6 +503,8 @@ mod tests {
         history: BTreeMap<String, VecDeque<Scalar>>,
         fired: BTreeMap<String, Vec<u64>>,
         flags: BTreeSet<String>,
+        answers: BTreeMap<String, Answer>,
+        threads: BTreeMap<String, Vec<Thread>>,
         trend: TrendConfig,
         tick: u64,
     }
@@ -362,6 +516,8 @@ mod tests {
                 history: BTreeMap::new(),
                 fired: BTreeMap::new(),
                 flags: BTreeSet::new(),
+                answers: BTreeMap::new(),
+                threads: BTreeMap::new(),
                 trend: TrendConfig::default(),
                 tick: 0,
             }
@@ -379,6 +535,8 @@ mod tests {
                 history: &self.history,
                 fired: &self.fired,
                 flags: &self.flags,
+                answers: &self.answers,
+                threads: &self.threads,
                 tick: self.tick,
                 trend: &self.trend,
             });
@@ -520,6 +678,137 @@ mod tests {
         // Outside the window it no longer matches.
         w.tick += 50;
         assert!(!w.step(&fired, "band.count", 0.0));
+    }
+
+    #[test]
+    fn thread_reads_the_memory_ledger_with_a_count_and_an_age_gate() {
+        let predicate = parse(r#"{ "thread": "place", "min_count": 2, "older_than_turns": 25 }"#);
+        let mut w = Walker::new();
+        assert!(!w.step(&predicate, "band.count", 0.0), "no threads yet");
+
+        memory::remember(
+            &mut w.threads,
+            "place",
+            &Noun::named("Great Peak", "peaks", "peak"),
+            0,
+            8,
+        );
+        memory::remember(
+            &mut w.threads,
+            "place",
+            &Noun::named("Verdant Basin", "basins", "basin"),
+            0,
+            8,
+        );
+        // Both exist but neither is old enough yet.
+        w.tick = 10;
+        assert!(!w.step(&predicate, "band.count", 0.0));
+        w.tick = 40;
+        assert!(w.step(&predicate, "band.count", 0.0));
+
+        // The bounds default: a bare `{ "thread": K }` is "at least one, of any age".
+        let bare = parse(r#"{ "thread": "place" }"#);
+        assert!(matches!(
+            bare,
+            Predicate::Thread {
+                min_count: 1,
+                older_than_turns: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn answered_reads_the_recorded_choice() {
+        let predicate =
+            parse(r#"{ "answered": "sedentarization.soft_drift", "choice": "yes_trail" }"#);
+        let mirror = parse(r#"{ "answered": "sedentarization.soft_drift", "choice": "no_root" }"#);
+        let mut w = Walker::new();
+        assert!(!w.step(&predicate, "band.count", 0.0), "unanswered");
+
+        w.answers.insert(
+            "sedentarization.soft_drift".to_string(),
+            Answer {
+                choice: "yes_trail".to_string(),
+                tick: 0,
+            },
+        );
+        assert!(w.step(&predicate, "band.count", 0.0));
+        assert!(
+            !w.step(&mirror, "band.count", 0.0),
+            "one answer must not satisfy the other branch"
+        );
+    }
+
+    /// **`min_turns_since` is the honest expression of "some time after you said that."** The
+    /// tempting alternative — a `turn.index` trend — rises unconditionally, so it only ever means
+    /// "we are past turn n"; combined with an `answered` gate it fires the turn *after* the answer.
+    #[test]
+    fn answered_gates_on_elapsed_time_since_the_answer_not_since_turn_zero() {
+        let predicate = parse(
+            r#"{ "answered": "sedentarization.soft_drift", "choice": "yes_trail",
+                 "min_turns_since": 20 }"#,
+        );
+        let mut w = Walker::new();
+        // Answered late in the campaign: what matters is the gap, not the absolute turn.
+        const ANSWERED_AT: u64 = 100;
+        w.answers.insert(
+            "sedentarization.soft_drift".to_string(),
+            Answer {
+                choice: "yes_trail".to_string(),
+                tick: ANSWERED_AT,
+            },
+        );
+
+        for elapsed in [0, 1, 19] {
+            w.tick = ANSWERED_AT + elapsed;
+            assert!(
+                !w.step(&predicate, "band.count", 0.0),
+                "{elapsed} turns after the answer is too soon — the copy says \
+                 \"we have kept our word\""
+            );
+        }
+        w.tick = ANSWERED_AT + 20;
+        assert!(
+            w.step(&predicate, "band.count", 0.0),
+            "the gate opens at 20"
+        );
+        w.tick = ANSWERED_AT + 500;
+        assert!(w.step(&predicate, "band.count", 0.0), "and stays open");
+
+        // Absent, it defaults to 0 — "the moment you answered".
+        let immediate =
+            parse(r#"{ "answered": "sedentarization.soft_drift", "choice": "yes_trail" }"#);
+        assert!(matches!(
+            immediate,
+            Predicate::Answered {
+                min_turns_since: 0,
+                ..
+            }
+        ));
+        w.tick = ANSWERED_AT;
+        assert!(w.step(&immediate, "band.count", 0.0));
+    }
+
+    #[test]
+    fn collectors_walk_the_whole_tree() {
+        let predicate = parse(
+            r#"{ "all": [ { "answered": "a.fork", "choice": "yes" },
+                          { "not": { "thread": "place", "min_count": 1 } },
+                          { "any": [ { "answered": "b.fork", "choice": "no" } ] } ] }"#,
+        );
+        let mut answered = Vec::new();
+        predicate.collect_answered_gates(&mut answered);
+        assert_eq!(
+            answered,
+            vec![
+                ("a.fork".to_string(), "yes".to_string(), 0),
+                ("b.fork".to_string(), "no".to_string(), 0)
+            ]
+        );
+        let mut kinds = Vec::new();
+        predicate.collect_thread_kinds(&mut kinds);
+        assert_eq!(kinds, vec!["place".to_string()]);
     }
 
     #[test]

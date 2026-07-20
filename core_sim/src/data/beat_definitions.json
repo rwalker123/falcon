@@ -5,10 +5,21 @@
     "soul": {
       "question": "The old ground is behind us and everything ahead is unnamed. Naming it is your work."
     },
-    "when": { "all": [{ "signal": "turn.index", "eq": 0 }] },
+    "when": {
+      "all": [
+        {
+          "signal": "turn.index",
+          "eq": 0
+        }
+      ]
+    },
     "nouns": {
-      "ground": { "from": "biome.current_dominant" },
-      "count": { "from": "band.count" }
+      "ground": {
+        "from": "biome.current_dominant"
+      },
+      "count": {
+        "from": "band.count"
+      }
     },
     "wardrobe": [
       {
@@ -28,24 +39,39 @@
         }
       }
     ],
-    "gloss": ["turn.index", "band.count"],
+    "gloss": [
+      "turn.index",
+      "band.count"
+    ],
     "once": true
   },
-
   {
     "id": "discovery.site_found",
     "tier": "ambient",
     "soul": {
       "question": "The land gives up one of its secrets, and it is ours before we know its worth."
     },
-    "when": { "all": [{ "signal": "sites.discovered_this_turn", "gte": 1 }] },
+    "when": {
+      "all": [
+        {
+          "signal": "sites.discovered_this_turn",
+          "gte": 1
+        }
+      ]
+    },
     "nouns": {
-      "place": { "from": "site.last_discovered" }
+      "place": {
+        "from": "site.last_discovered"
+      }
     },
     "wardrobe": [
       {
         "id": "site_found.beyond_ridge",
-        "fit": { "requires_noun": ["place"] },
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
         "voice": {
           "mythic": "Past the ridge, {place.name}. It has our name on it now — though not yet its worth.",
           "warm": "There's {place.name} past the ridge. Ours now, for whatever that turns out to be worth."
@@ -53,7 +79,11 @@
       },
       {
         "id": "site_found.scouts_returned",
-        "fit": { "requires_noun": ["place"] },
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
         "voice": {
           "mythic": "The scouts came back thinner and louder than they left. {place.name}, they said, over and over, until we all knew the word.",
           "warm": "Scouts came back hungry and wouldn't shut up — {place.name}, {place.name}, until the rest of us had the word too."
@@ -61,17 +91,28 @@
       },
       {
         "id": "site_found.quiet",
-        "fit": { "requires_noun": ["place"] },
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
         "voice": {
           "mythic": "{place.name}. We have added it to what we know. The knowing is small yet.",
           "warm": "{place.name} — one more thing we know about this country. Not much yet, but it's more than yesterday."
         }
       }
     ],
-    "gloss": ["sites.discovered_this_turn"],
-    "cooldown_turns": 3
+    "gloss": [
+      "sites.discovered_this_turn"
+    ],
+    "cooldown_turns": 3,
+    "remembers": [
+      {
+        "slot": "place",
+        "kind": "place"
+      }
+    ]
   },
-
   {
     "id": "knowledge.cultivation_learned",
     "tier": "beat",
@@ -88,7 +129,9 @@
       ]
     },
     "nouns": {
-      "ground": { "from": "biome.current_dominant" }
+      "ground": {
+        "from": "biome.current_dominant"
+      }
     },
     "wardrobe": [
       {
@@ -109,17 +152,24 @@
       },
       {
         "id": "cultivation.on_purpose",
-        "fit": { "biome": ["alluvial", "grassland", "savanna"] },
+        "fit": {
+          "biome": [
+            "alluvial",
+            "grassland",
+            "savanna"
+          ]
+        },
         "voice": {
           "mythic": "The {ground.adjective} ground has always fed us by accident. This season we made it do so on purpose.",
           "warm": "The {ground.adjective} ground's always fed us by luck. This year we made it do it on purpose."
         }
       }
     ],
-    "gloss": ["discovery.progress.cultivation"],
+    "gloss": [
+      "discovery.progress.cultivation"
+    ],
     "once": true
   },
-
   {
     "id": "knowledge.herding_learned",
     "tier": "beat",
@@ -136,12 +186,19 @@
       ]
     },
     "nouns": {
-      "beast": { "from": "fauna.most_domesticated", "fallback": "fauna.most_hunted" }
+      "beast": {
+        "from": "fauna.most_domesticated",
+        "fallback": "fauna.most_hunted"
+      }
     },
     "wardrobe": [
       {
         "id": "herding.did_not_run",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "The {beast.plural} did not run this time. They watched us, and stayed, and we understood that something had changed in them — or in us.",
           "warm": "The {beast.plural} didn't run this time. They just watched us and stayed put. Something's changed in them. Or in us."
@@ -149,17 +206,22 @@
       },
       {
         "id": "herding.kept_not_caught",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "We have stopped catching {beast.plural} and started keeping them. It is a smaller feast and a longer one.",
           "warm": "We've stopped catching {beast.plural} and started keeping them instead. Less meat today. More of it for longer."
         }
       }
     ],
-    "gloss": ["discovery.progress.herding"],
+    "gloss": [
+      "discovery.progress.herding"
+    ],
     "once": true
   },
-
   {
     "id": "ecology.herd_collapsing",
     "tier": "beat",
@@ -168,16 +230,26 @@
     },
     "when": {
       "all": [
-        { "signal": "fauna.collapsing_group_count", "crosses": "rising", "threshold": 1 }
+        {
+          "signal": "fauna.collapsing_group_count",
+          "crosses": "rising",
+          "threshold": 1
+        }
       ]
     },
     "nouns": {
-      "beast": { "from": "fauna.most_collapsed" }
+      "beast": {
+        "from": "fauna.most_collapsed"
+      }
     },
     "wardrobe": [
       {
         "id": "collapse.thin_season",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "The {beast.plural} are thin on the ground this season, and thinner where we hunted hardest. The old ones have started counting aloud.",
           "warm": "There aren't many {beast.plural} left out there, and fewest where we hunted hardest. The old ones have started counting them out loud, which is never a good sign."
@@ -185,7 +257,11 @@
       },
       {
         "id": "collapse.no_young",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "We found no young {beast.plural} at all this year. Only the old, and not many of those.",
           "warm": "Didn't see a single young {beast.name} this year. Just old ones, and not many of them either."
@@ -193,7 +269,11 @@
       },
       {
         "id": "collapse.quiet_where_loud",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "Where the {beast.plural} were loud enough to wake us, it is quiet now. We did that. We are not saying it aloud.",
           "warm": "The {beast.plural} used to wake us up out there. It's quiet now. That was us, and nobody's saying so."
@@ -201,8 +281,14 @@
       },
       {
         "id": "collapse.the_chase_thins",
-        "fit": { "requires_noun": ["beast"] },
-        "stance_affinity": { "roam_settle": -1.0 },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
+        "stance_affinity": {
+          "roam_settle": -1.0
+        },
         "voice": {
           "mythic": "The chase is longer every season and ends in less. The {beast.plural} were the road we walked; the road is going quiet under us.",
           "warm": "Every season the chase runs longer and comes back with less. The {beast.plural} were how we got anywhere. That road's going quiet."
@@ -210,18 +296,31 @@
       },
       {
         "id": "collapse.less_reason_to_follow",
-        "fit": { "requires_noun": ["beast"] },
-        "stance_affinity": { "roam_settle": 1.0 },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
+        "stance_affinity": {
+          "roam_settle": 1.0
+        },
         "voice": {
           "mythic": "The {beast.plural} thin out past the fields, and fewer of us look up when they pass. There is less reason to follow anything now.",
           "warm": "The {beast.plural} are thinning out past the fields, and fewer of us bother watching them go. Less reason to follow anything these days."
         }
       }
     ],
-    "gloss": ["fauna.collapsing_group_count"],
-    "cooldown_turns": 8
+    "gloss": [
+      "fauna.collapsing_group_count"
+    ],
+    "cooldown_turns": 8,
+    "remembers": [
+      {
+        "slot": "beast",
+        "kind": "beast"
+      }
+    ]
   },
-
   {
     "id": "sedentarization.soft_drift",
     "tier": "fork",
@@ -231,12 +330,20 @@
     },
     "when": {
       "all": [
-        { "signal": "sedentarization.score", "crosses": "rising", "threshold": 40 }
+        {
+          "signal": "sedentarization.score",
+          "crosses": "rising",
+          "threshold": 40
+        }
       ]
     },
     "nouns": {
-      "ground": { "from": "biome.current_dominant" },
-      "beast": { "from": "fauna.most_hunted" }
+      "ground": {
+        "from": "biome.current_dominant"
+      },
+      "beast": {
+        "from": "fauna.most_hunted"
+      }
     },
     "wardrobe": [
       {
@@ -265,7 +372,11 @@
       },
       {
         "id": "soft_drift.long_chase",
-        "fit": { "requires_noun": ["beast"] },
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
         "voice": {
           "mythic": "Three seasons, and each one we chased the {beast.plural} and left the seed-ground unturned. The children do not remember a walled night. At the fires, they have begun to call us the People of the Long Chase. Is that who we are?",
           "warm": "Three seasons now, all of them spent following the {beast.plural}, and nobody's turned the seed-ground once. The children have never slept behind a wall. People have started calling us the People of the Long Chase. Is that us?"
@@ -279,7 +390,11 @@
           "mythic": "We are the trail",
           "warm": "Yes — we're trail people"
         },
-        "writes": { "stance": { "roam_settle": -0.4 } },
+        "writes": {
+          "stance": {
+            "roam_settle": -0.4
+          }
+        },
         "echo": {
           "mythic": "So it is said, and so we are: the People of the Long Chase.",
           "warm": "So that's us, then. People of the Long Chase."
@@ -291,7 +406,11 @@
           "mythic": "We were meant to root",
           "warm": "No — we were meant to settle"
         },
-        "writes": { "stance": { "roam_settle": 0.4 } },
+        "writes": {
+          "stance": {
+            "roam_settle": 0.4
+          }
+        },
         "echo": {
           "mythic": "Let them call us what they like. We were meant to root, and here is the ground.",
           "warm": "Let them call us whatever. We were meant to settle, and this is the ground for it."
@@ -311,10 +430,12 @@
         }
       }
     ],
-    "gloss": ["sedentarization.score", "stance.roam_settle"],
+    "gloss": [
+      "sedentarization.score",
+      "stance.roam_settle"
+    ],
     "once": true
   },
-
   {
     "id": "hunger.provisions_falling",
     "tier": "ambient",
@@ -323,7 +444,11 @@
     },
     "when": {
       "all": [
-        { "signal": "provisions.total", "trend": "falling", "over_turns": 3 }
+        {
+          "signal": "provisions.total",
+          "trend": "falling",
+          "over_turns": 3
+        }
       ]
     },
     "nouns": {},
@@ -345,10 +470,11 @@
         }
       }
     ],
-    "gloss": ["provisions.total"],
+    "gloss": [
+      "provisions.total"
+    ],
     "cooldown_turns": 10
   },
-
   {
     "id": "growth.band_swelling",
     "tier": "ambient",
@@ -357,7 +483,11 @@
     },
     "when": {
       "all": [
-        { "signal": "band.count", "trend": "rising", "over_turns": 5 }
+        {
+          "signal": "band.count",
+          "trend": "rising",
+          "over_turns": 5
+        }
       ]
     },
     "nouns": {},
@@ -379,7 +509,341 @@
         }
       }
     ],
-    "gloss": ["band.count"],
+    "gloss": [
+      "band.count"
+    ],
     "cooldown_turns": 12
+  },
+  {
+    "id": "voice.medium_painted",
+    "tier": "beat",
+    "soul": {
+      "question": "What the mouth forgets, the wall can keep."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "voice.medium_index",
+          "crosses": "rising",
+          "threshold": 1
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "medium_painted.ochre",
+        "fit": {},
+        "voice": {
+          "mythic": "Someone ground ochre and put the hunt on a wall, and it stayed there after the telling stopped. We have found a way to remember that does not need us awake.",
+          "warm": "Someone ground up ochre and painted the hunt on a wall, and it was still there after everyone stopped talking. We've found a way to remember that doesn't need us awake for it."
+        }
+      },
+      {
+        "id": "medium_painted.outlast",
+        "fit": {},
+        "voice": {
+          "mythic": "The marks on the rock do not tire, do not misremember, and do not die. They will outlast the ones who made them. We are not sure yet whether that is a comfort.",
+          "warm": "Marks on rock don't get tired, don't misremember, don't die. They'll outlast whoever made them. Nobody's decided yet if that's comforting."
+        }
+      }
+    ],
+    "gloss": [
+      "voice.medium_index",
+      "sedentarization.score"
+    ],
+    "once": true
+  },
+  {
+    "id": "voice.medium_written",
+    "tier": "beat",
+    "soul": {
+      "question": "A record outlives the rememberer, and answers to no one."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "voice.medium_index",
+          "crosses": "rising",
+          "threshold": 2
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "medium_written.no_longer_ours",
+        "fit": {},
+        "voice": {
+          "mythic": "The count of the grain is written now, and the writing does not care who reads it. Our memory has stopped being ours alone. It has become a thing that can be consulted, and argued with, and used against us.",
+          "warm": "The grain count gets written down now, and the writing doesn't care who's reading. Our memory isn't just ours any more — it's a thing you can look up, argue with, and use against us."
+        }
+      }
+    ],
+    "gloss": [
+      "voice.medium_index"
+    ],
+    "once": true
+  },
+  {
+    "id": "memory.return_to_place",
+    "tier": "beat",
+    "soul": {
+      "question": "We have been here before, and we were different then."
+    },
+    "when": {
+      "all": [
+        {
+          "thread": "place",
+          "min_count": 1,
+          "older_than_turns": 25
+        },
+        {
+          "signal": "turn.index",
+          "gte": 30
+        }
+      ]
+    },
+    "nouns": {
+      "place": {
+        "from": "thread.place.oldest"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "return.older_than_us",
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
+        "voice": {
+          "mythic": "{place.name} again. The ones who named it are mostly gone, and the ones who say the name now have never wondered what it means.",
+          "warm": "{place.name} again. Most of the people who named it are gone, and the ones saying it now have never once wondered what it means."
+        }
+      },
+      {
+        "id": "return.same_ground",
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
+        "voice": {
+          "mythic": "We passed {place.name} and no one remarked on it. That is how you know a country has become a home: its landmarks stop being news.",
+          "warm": "We went past {place.name} and nobody said anything about it. That's how you know somewhere's become home — the landmarks stop being worth mentioning."
+        }
+      }
+    ],
+    "gloss": [
+      "turn.index"
+    ],
+    "cooldown_turns": 30
+  },
+  {
+    "id": "identity.trail_endures",
+    "tier": "beat",
+    "soul": {
+      "question": "We said we were the trail. The trail has been long."
+    },
+    "when": {
+      "all": [
+        {
+          "answered": "sedentarization.soft_drift",
+          "choice": "yes_trail",
+          "min_turns_since": 20
+        },
+        {
+          "signal": "stance.roam_settle",
+          "lt": 0.0
+        }
+      ]
+    },
+    "nouns": {
+      "beast": {
+        "from": "fauna.most_hunted",
+        "fallback": "thread.beast.oldest"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "trail_endures.kept_word",
+        "fit": {},
+        "voice": {
+          "mythic": "We said we were the trail, and we have kept our word to it. There are children among us now who have never slept twice in the same place and do not think it strange.",
+          "warm": "We said we were trail people and we've stuck to it. There are kids with us now who've never slept in the same place twice and don't think that's odd at all."
+        }
+      },
+      {
+        "id": "trail_endures.cost",
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
+        "voice": {
+          "mythic": "The {beast.plural} still lead and we still follow. Some seasons that feels like freedom and some seasons it feels like being owned. We have not settled which, and we said we would not settle anything.",
+          "warm": "The {beast.plural} lead, we follow. Some seasons that feels like freedom, some seasons it feels like being owned. We never worked out which, and we did say we wouldn't settle anything."
+        }
+      }
+    ],
+    "gloss": [
+      "stance.roam_settle",
+      "sedentarization.score"
+    ],
+    "once": true
+  },
+  {
+    "id": "identity.walls_promised",
+    "tier": "beat",
+    "soul": {
+      "question": "We said we were meant to root. Rooting turned out to be work."
+    },
+    "when": {
+      "all": [
+        {
+          "answered": "sedentarization.soft_drift",
+          "choice": "no_root",
+          "min_turns_since": 20
+        },
+        {
+          "signal": "stance.roam_settle",
+          "gt": 0.0
+        }
+      ]
+    },
+    "nouns": {
+      "ground": {
+        "from": "biome.current_dominant"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "walls_promised.slower",
+        "fit": {},
+        "voice": {
+          "mythic": "We said we were meant to root, and we have been rooting ever since — slower than we promised, and harder. No one has said aloud that the walls we spoke of are not built.",
+          "warm": "We said we were meant to settle, and we've been at it ever since — slower than we promised and harder than we thought. Nobody's said out loud that those walls we talked about still aren't up."
+        }
+      },
+      {
+        "id": "walls_promised.worth_it",
+        "fit": {},
+        "voice": {
+          "mythic": "The {ground.adjective} ground has begun to answer to us rather than the other way round. It took longer than a life to start. It will take longer than ours to finish.",
+          "warm": "The {ground.adjective} ground's started answering to us instead of the other way round. Took more than one lifetime just to start it. It'll take more than ours to finish."
+        }
+      }
+    ],
+    "gloss": [
+      "stance.roam_settle",
+      "sedentarization.score"
+    ],
+    "once": true
+  },
+  {
+    "id": "identity.trail_forsaken",
+    "tier": "beat",
+    "soul": {
+      "question": "We said we were the trail. We are not, and no one will say when that changed."
+    },
+    "when": {
+      "all": [
+        {
+          "answered": "sedentarization.soft_drift",
+          "choice": "yes_trail",
+          "min_turns_since": 20
+        },
+        {
+          "signal": "stance.roam_settle",
+          "gte": 0.0
+        }
+      ]
+    },
+    "nouns": {
+      "beast": {
+        "from": "fauna.most_hunted",
+        "fallback": "thread.beast.oldest"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "trail_forsaken.no_one_said",
+        "fit": {},
+        "voice": {
+          "mythic": "We said we were the People of the Long Chase. We have not chased anything in a long while. No one lied and no one decided — we simply stopped, one season at a time, and kept the name.",
+          "warm": "We said we were the People of the Long Chase. Nobody's chased anything in a long time. No one lied about it and no one decided it — we just stopped, one season at a time, and kept the name anyway."
+        }
+      },
+      {
+        "id": "trail_forsaken.name_outlived",
+        "fit": {
+          "requires_noun": [
+            "beast"
+          ]
+        },
+        "voice": {
+          "mythic": "The young ask what the Long Chase was, and the answer takes longer every year. The {beast.plural} still pass. We watch them from the same place we watched them from last season.",
+          "warm": "The young ones ask what the Long Chase was, and it takes longer to explain every year. The {beast.plural} still come past. We watch them from the same spot we watched them from last season."
+        }
+      }
+    ],
+    "gloss": [
+      "stance.roam_settle",
+      "sedentarization.score"
+    ],
+    "once": true
+  },
+  {
+    "id": "identity.walls_forsaken",
+    "tier": "beat",
+    "soul": {
+      "question": "We said we were meant to root. The ground did not hold us."
+    },
+    "when": {
+      "all": [
+        {
+          "answered": "sedentarization.soft_drift",
+          "choice": "no_root",
+          "min_turns_since": 20
+        },
+        {
+          "signal": "stance.roam_settle",
+          "lte": 0.0
+        }
+      ]
+    },
+    "nouns": {
+      "place": {
+        "from": "thread.place.oldest"
+      }
+    },
+    "wardrobe": [
+      {
+        "id": "walls_forsaken.ground_let_go",
+        "fit": {},
+        "voice": {
+          "mythic": "We said we were meant to root, and then the ground would not have us — or we would not have it. We are walking again. No one calls it a failure out loud, and no one calls it anything else either.",
+          "warm": "We said we were meant to settle, and then the ground wouldn't have us — or we wouldn't have it. We're walking again. Nobody calls that a failure out loud, and nobody calls it anything else either."
+        }
+      },
+      {
+        "id": "walls_forsaken.left_behind",
+        "fit": {
+          "requires_noun": [
+            "place"
+          ]
+        },
+        "voice": {
+          "mythic": "{place.name} is behind us, and the seed-ground we turned there belongs to whatever grows back. We meant to stay. Meaning to was not enough.",
+          "warm": "{place.name} is behind us now, and the seed-ground we turned there belongs to whatever grows back over it. We meant to stay. Turns out meaning to wasn't enough."
+        }
+      }
+    ],
+    "gloss": [
+      "stance.roam_settle",
+      "sedentarization.score"
+    ],
+    "once": true
   }
 ]

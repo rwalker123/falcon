@@ -32,9 +32,9 @@ use sim_runtime::{
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
     TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
-    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState, WorldDelta,
-    WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED,
-    GRAZE_PHASE_THRIVING,
+    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState,
+    VoiceMediumState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
+    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
@@ -398,6 +398,7 @@ mod tests {
             command_events: Vec::new(),
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
+            voice_medium: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
@@ -463,6 +464,7 @@ mod tests {
             command_events: Vec::new(),
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
+            voice_medium: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
@@ -523,6 +525,7 @@ mod tests {
             command_events: Vec::new(),
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
+            voice_medium: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),

@@ -199,3 +199,38 @@ pub fn drive_sedentarization_past_the_soft_threshold(app: &mut App, faction: Fac
         "the score should have crossed 40, got {score}"
     );
 }
+
+/// **Stop driving settlement.** The larders are not replenished, so the sedentarization score falls
+/// back off the peak `drive_sedentarization_past_the_soft_threshold` leaves it at (~80 → ~50 within
+/// a handful of turns, then stable). The herds stay tamed — this is a people that stopped *pushing*
+/// deeper into settlement, not one that renounced it.
+///
+/// The counterpart the identity beats need: `stance.roam_settle` is
+/// `score/50 - 1 + declared_offset`, so a people that declared the trail (offset −0.4) only *reads*
+/// as still walking it while the score is under 70. Without this, every post-fork scenario is a
+/// settling one and `identity.trail_endures` can never honestly fire.
+pub fn let_settlement_lapse(app: &mut App, faction: FactionId, turns: u32) {
+    for _ in 0..turns {
+        set_surplus(app, faction, 0);
+        run_turn(app);
+    }
+}
+
+/// **Keep driving settlement**, at the same intensity that carried the score across the threshold —
+/// a people that said one thing and went on doing another.
+pub fn keep_driving_settlement(app: &mut App, faction: FactionId, turns: u32) {
+    for _ in 0..turns {
+        set_surplus(app, faction, 300);
+        run_turn(app);
+    }
+}
+
+/// The faction's **effective** `roam_settle` stance, as the last `telling_tick` computed it —
+/// accreted drift plus whatever the player declared at the fork.
+pub fn roam_settle_stance(app: &App, faction: FactionId) -> f32 {
+    app.world
+        .resource::<core_sim::BeatLedger>()
+        .effective_stance_for(faction)
+        .and_then(|axes| axes.get("roam_settle").copied())
+        .expect("a turn has run, so the stance is computed")
+}

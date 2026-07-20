@@ -1357,12 +1357,23 @@ table StanceState {
   axes:[StanceAxisState];
 }
 
+// A faction's narrator MEDIUM (The Telling, concept §7): oral saga -> painted chronicle ->
+// written record. Presentational only: it changes how the telling is *presented*, and never
+// selects different copy. `mediumId` is a string (the species/policy/register convention) so
+// adding a medium needs no schema change; `mediumIndex` is its 0-based rung.
+table VoiceMediumState {
+  faction:uint;
+  mediumId:string;
+  mediumIndex:uint = 0;
+}
+
 table CampaignSection {
   campaignProfiles:[CampaignProfile]; // snapshot-only
   commandEvents:[CommandEventState];
   victory:VictoryState;
   pendingForks:[PendingForksState];
   stanceAxes:[StanceState];
+  voiceMedium:[VoiceMediumState];
 }
 
 table WorldSnapshot {

@@ -41,8 +41,8 @@ cargo run -p core_sim --bin server
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 1.5 / `pen_gain` 3.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 0.75, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
-| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
-| `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns`, `min_delta`), `voice` (`default_register`, `registers`), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
+| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, **`remembers`** (slot → memory-thread kind — see "Memory threads"), `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
+| `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns` **16** — must exceed every authored `trend` window, validated at catalog load, `min_delta`), `voice` (`default_register`, `registers`, **`mediums`** — the ordered oral→painted→written ladder, see "The maturing voice"), **`memory.max_threads_per_kind`** (8), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -1817,8 +1817,9 @@ world, and pushes them through the existing `CommandEventLog`. The feed stops sa
 "Sedentarization available" and starts saying *"The river-bend remembers us now."* Authoritative
 design: `docs/plan_the_telling.md` (§2 schema, §3 runtime); concept `docs/Emergent Narrative.md`.
 
-**Shipped: PR-A (the ambient/beat tiers) + PR-B (the fork tier, stance, and re-colouring).** All
-three tiers are live; see "The fork tier" and "Stance" below.
+**Shipped: PR-A (the ambient/beat tiers) + PR-B (the fork tier, stance, and re-colouring) + PR-C
+(memory threads, callback predicates, and the maturing voice).** All three tiers are live; see "The
+fork tier", "Stance", "Memory threads", "The `answered` gate" and "The maturing voice" below.
 
 ### Three layers, and the mod surface is content
 
@@ -1840,6 +1841,8 @@ three tiers are live; see "The fork tier" and "Stance" below.
 | `nouns.rs` | **the noun resolver registry** + template rendering — extension point |
 | `select.rs` | weighted wardrobe selection + the determinism recipe |
 | `stance.rs` | **stance** — signal normalization, declared offsets, the effective value, the re-colouring term |
+| `memory.rs` | **memory threads** — the durable nouns callbacks are made of, their selectors, and eviction |
+| `medium.rs` | **the maturing voice** — the medium ladder and its never-regress rule |
 
 ### Turn-pipeline placement
 
@@ -1869,6 +1872,7 @@ once. Sampled for the **player faction** = `FactionRegistry`'s first entry in `F
 | `discovery.progress.cultivation` / `.herding` | `DiscoveryProgressLedger::get_progress` on `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004), 0..1 |
 | `fauna.collapsing_group_count` | `HerdRegistry::entries()` in `EcologyPhase::Collapsing` |
 | `culture.axis.<snake_axis>` | one per `CultureTraitAxis`, off the **faction culture rollup** — `CultureManager::faction_trait_average`, a **population-weighted average of the faction's resident bands' local layers** (`CultureOwner::from_entity`, weighted by `PopulationCohort.size` over `With<ResidentBand>`; expeditions are detached and don't vote), falling back to the global layer when a faction has no local layers. PR-A read the global layer directly because no rollup existed |
+| `voice.medium_index` | the narrator's **attained** medium as a 0-based index into `voice.mediums`. Injected by `telling_tick` (not `sample_signals`) right after the stance axes, so it is in the sample before anything evaluates — the `voice.medium_*` beats gate on it with `crosses` |
 | `stance.<axis>` | one per configured `stance.axes[]` — the axis's **effective** value, `clamp(normalize(signal) + declared_offset, -1, 1)`. **Config-driven, so it resolves through `BeatConfig`, not the static registry** (`stance::is_stance_signal`); a stance axis may *not* be backed by a `stance.*` signal, which would define its accreted value in terms of itself |
 
 **Noun resolvers** (`nouns.rs`) — each returns `Option<Noun>` (`Named { name, plural, adjective }`
@@ -1883,6 +1887,7 @@ so the result is order-independent.
 | `fauna.most_hunted` | species with the most workers assigned as a `LaborTarget::Hunt` target |
 | `fauna.most_domesticated` | highest `domestication_progress` among herds the faction owns |
 | `fauna.most_collapsed` | species of the largest `Collapsing` herd |
+| `thread.<kind>.oldest` / `.recent` | the remembered noun with the earliest / latest `first_seen_tick` of that thread kind, ties by `key` ascending. **Registered generically over the kinds the catalog's `remembers` entries declare** — a modder adding a kind needs no engine change. Using one refreshes that thread's eviction clock. See "Memory threads" |
 
 **Fauna word forms are data, not a heuristic.** `SpeciesDef.plural` / `.adjective`
 (`fauna_config.json`, both `Option`, defaulting to `display_name`) supply the forms copy needs.
@@ -1902,6 +1907,8 @@ an unrecognised shape (content authors will hit this).
 | `{ "signal": S, "trend": "rising"\|"falling", "over_turns": n }` | the sample `n` turns ago vs now, beyond `trend.min_delta` |
 | `{ "flag": F }` | a consequence flag (nothing writes one in PR-A) |
 | `{ "fired": B, "within_turns": n }` | callback to a prior beat |
+| `{ "thread": K, "min_count": n, "older_than_turns": t }` | at least `n` memory threads of kind `K`, each first seen ≥ `t` turns ago. Both bounds default (`1` / `0`), but a *present but malformed* bound still fails at load |
+| `{ "answered": B, "choice": C, "min_turns_since": n }` | the player answered fork `B` with choice `C`, at least `n` turns ago (`n` defaults to 0). **The elapsed-time half is usually load-bearing** — see "The `answered` gate" |
 
 > **`Crosses` is the correctness heart of the engine.** It is true **only on the turn the value
 > crosses**, computed from the previous turn's stored sample (rising = `prev < threshold <= now`),
@@ -2032,9 +2039,10 @@ plumbing; `AnswerForkCommand` proto field **40**; `handle_answer_fork`). On a va
 (`BeatLedger::answer_fork`, the single path both the command and the expiry valve take):
 1. apply `writes.stance` into the ledger's declared offsets (clamped to `[-1, 1]`);
 2. apply `writes.flags` into `BeatLedger.flags` (the `{ "flag": F }` predicate's first real writer);
-3. **mark the beat fired at the current tick** and record the choice in `BeatLedger.answers`
-   (beat id → choice id) — the concept's memory ledger in its smallest useful form, so later beats
-   can call back to what was decided;
+3. **mark the beat fired at the current tick** and record the answer in `BeatLedger.answers`
+   (beat id → `Answer { choice, tick }`) — the concept's memory ledger in its smallest useful form,
+   so later beats can call back to what was decided **and how long ago**. The expiry valve's
+   auto-defer resolves through this same path, so it records a tick too;
 4. if the choice carries `rearm_after_turns`, record a re-arm tick that lifts the `once` guard after
    that many turns — the defer branch's "it returns, sharper";
 5. drop the fork from `pending`;
@@ -2085,13 +2093,129 @@ choice a defer, and its turn gate depends on the answer. `stanceAxes` carries th
 value, so the client shows what the player's identity currently reads as, drift and declaration
 together.
 
+### Memory threads — what the story remembers
+
+The concept's memory ledger: *a small set of durable threads (a rival tribe, a sacred mountain, a
+valley you refused) so later beats can call back. **Callbacks are what make a 200-turn emergent game
+feel authored.*** Lives in `telling/memory.rs`; held on `BeatLedger.threads` as
+`BTreeMap<kind, Vec<Thread>>`.
+
+A `Thread` is `{ kind, key, name, plural, adjective, first_seen_tick, last_referenced_tick }`. The
+`kind` is **free-form and content-defined** — the engine has no thread enum.
+
+> **A thread snapshots its noun at first sight and is NEVER re-resolved.** The whole point is that
+> the story remembers a thing that may no longer exist — the herd went extinct, the site is four
+> hundred turns behind you. Re-resolving would make a callback silently vanish exactly when it would
+> land hardest. Pinned by
+> `memory::tests::a_threads_noun_is_snapshotted_at_first_sight_and_never_re_resolved` and
+> `telling_memory::a_thread_survives_its_source_disappearing`.
+
+- **Writing** — a beat's `remembers: [{ "slot": S, "kind": K }]` promotes slot `S`'s resolved noun
+  into a thread of kind `K` when the beat **lands**. "Lands" means *emits*, or — for a fork —
+  *posts*: a fork's nouns are pinned at post time for exactly the same reason a thread's are, so the
+  two agree by construction. It is an **upsert keyed by the noun's `name`**, never a push:
+  rediscovering the same site updates `last_referenced_tick` and leaves the snapshot and
+  `first_seen_tick` alone. A `Scalar` noun has no identity to remember and is silently not a thread.
+- **Reading** — the `thread.<kind>.<selector>` noun resolvers (`oldest` / `recent`, ties by `key`
+  ascending). An empty kind resolves to `None`, which the existing machinery already handles: a
+  wardrobe entry requiring the slot is excluded, and a `fallback` chain moves on (the shipped
+  `identity.trail_endures` uses a thread as a *fallback* behind `fauna.most_hunted`). Registration is
+  **generic over the kinds the catalog declares**, not a hardcoded list.
+- **Eviction is by least recently REFERENCED, not oldest first-seen.** A thread the story keeps
+  returning to is the one worth keeping; the one nothing has called back to in two hundred turns is
+  the one to drop. `last_referenced_tick` is refreshed when a resolver *wins a slot* on a beat that
+  lands — a thread merely sitting in a fallback chain that the primary resolver beat does not count.
+  Ties by `key` ascending, for determinism. Cap: `memory.max_threads_per_kind` (**8**).
+- **Validated at load** — `remembers.slot` must be a declared noun slot and its `kind` non-empty; a
+  `thread.*` resolver and a `{ "thread": K }` gate must both name a kind some beat's `remembers`
+  actually declares (otherwise they could never resolve or be satisfied).
+
+### The `answered` gate — one sim, two stories
+
+`{ "answered": B, "choice": C, "min_turns_since": n }` is true when the player answered fork `B` with
+choice `C` at least `n` turns ago. PR-B stored `answers` and nothing read it; this is what makes it
+load-bearing. The fork promised *"the stories that will find you now"*, and `identity.trail_endures` /
+`identity.walls_promised` are that promise being kept: **a player who answered `yes_trail` gets a beat
+20 turns later that the `no_root` player never sees, out of the same simulation.** Pinned by
+`telling_memory::one_sim_two_stories_the_answer_decides_which_beat_finds_you`.
+
+> **`min_turns_since` is the elapsed-time half, and it is not decoration.** A callback almost always
+> means *"some time after you said that"* — `identity.trail_endures` says *"we have kept our word to
+> it"*, which is absurd the turn after the word is given. **Do NOT reach for a `turn.index` trend to
+> express this.** `turn.index` rises unconditionally, so `{"signal":"turn.index","trend":"rising",
+> "over_turns":20}` does not mean "20 turns after the answer" — it only ever means "we are past turn
+> ~20", and combined with an `answered` gate the beat fires the turn *after* the player answers. Both
+> identity beats were authored that way and are now `min_turns_since: 20` with the trend clause gone.
+> This is why `BeatLedger.answers` stores an [`Answer { choice, tick }`](#ledger--rollback) rather
+> than a bare choice id.
+
+> **A gate on the answer is not enough — the voice must not claim what the sim contradicts.** The
+> identity beats gate on the **declared stance still holding**, not merely on the answer:
+> `trail_endures` needs `stance.roam_settle < 0`, `walls_promised` needs `> 0`, and
+> **`identity.trail_forsaken`** (`>= 0`) is the honest beat for a player who declared the trail and
+> then settled anyway — *"No one lied and no one decided — we simply stopped, one season at a time,
+> and kept the name."* Without it, elapsed time alone would have the narrator tell a settled people
+> *"we have kept our word to it"* — **concept pillar 2, the one thing this layer must never do.**
+> `trail_endures` (`< 0`) and `trail_forsaken` (`>= 0`) are exactly complementary, so a player who
+> declared the trail always gets **precisely one** of them. Pinned by
+> `telling_memory::{keeping,breaking}_the_word_brings_*`, which drive the two regimes explicitly
+> (stop driving settlement → `roam_settle` ≈ −0.40; keep driving → ≈ +0.20).
+
+> **The target is validated hard**: the referenced beat must exist, be `fork` tier, and declare that
+> choice id. A typo there silently produces a beat that can *never fire* — nothing errors, nothing
+> logs, the beat is simply never seen — which is the worst failure mode a content system has. The
+> same reasoning added a **`trend` window check**: a `trend` predicate whose `over_turns` is `>=`
+> `trend.max_history_turns` can only ever read false, so it is now a load failure too. (It first fired
+> on the mis-authored identity beats above; with those fixed the widest authored window is 5, so
+> `trend.max_history_turns` stays at its original **16**.)
+
+### The maturing voice — medium
+
+Concept §7: the voice changes **medium** as the civilization crosses milestones — oral saga → painted
+chronicle → written record — and *"the narrator maturing is itself a narrative arc that makes
+progression felt."* Lives in `telling/medium.rs`.
+
+> **Medium is PRESENTATIONAL and does NOT multiply wardrobe copy.** It changes how the telling
+> *looks* to the client and fires a beat when it advances; that is the whole of it. It deliberately
+> does **not** select different copy — 4 mediums × 2 registers per wardrobe entry is an **8×**
+> authoring cost for the layer's thinnest payoff, and the concept doc names authoring cost as a real
+> risk. **Do not "complete" this later by authoring per-medium strings.**
+
+- **Config-driven, reusing the predicate evaluator.** `voice.mediums` is an ordered
+  least→most-advanced list of `{ id, when }`; the first entry is the default and needs no `when`,
+  and the **highest satisfied** rung wins. Evaluated once per turn in `telling_tick`, right after
+  the stance axes and *before* any beat evaluates.
+- **Shipped ladder** (`beat_config.json`): `oral` (default) → `painted`
+  (`sedentarization.score >= 40` — the soft-drift moment, when a people has been in one place long
+  enough to have walls to paint) → `written` (`sedentarization.score >= 70` **and**
+  `discovery.progress.cultivation >= 1.0` — a settled people that has learned to farm is the one that
+  needs to count a harvest). **The concept's fourth rung, `archive`, is deliberately NOT shipped**:
+  the only plausible source for an institutional-archive gate is the `CapabilityFlags` bits, which
+  are not registered signals, and adding a signal whose sole purpose is to make a medium reachable
+  would be inventing state to satisfy content. Three reachable mediums beat four with a dead rung.
+- **It never regresses.** If a signal falls back below its threshold the medium does **not** step
+  down — a people that learned to write does not forget — so the attained rung is persisted per
+  faction on the ledger and each turn's evaluation takes the max.
+- **Readable as `voice.medium_index`**, which is how the authored `voice.medium_painted` /
+  `voice.medium_written` beats gate themselves with `crosses`.
+- **On the wire** (append-only, `CampaignSection`, both `WorldSnapshot` and `WorldDelta`):
+  `voiceMedium:[VoiceMediumState{ faction:uint, mediumId:string, mediumIndex:uint }]`. `mediumId` is
+  a **string** (the `species` / `policy` / `register` convention) so adding a rung needs no schema
+  change. Threads are deliberately **not** on the client stream — nothing renders them; they stay in
+  the ledger's sim-side serde state.
+- **Validated at load**: at least one medium, no `when` on the default rung, unique ids, every gate
+  on a registered signal; and `memory.max_threads_per_kind > 0` (a zero cap would silently discard
+  every thread, making every `thread` gate and `thread.*` resolver permanently unsatisfiable).
+
 ### Ledger + rollback
 
 `BeatLedger` (resource) holds `fired` (beat → ticks), `edge_state` (signal → last turn's sample),
 `history` (signal → rolling, capped at `trend.max_history_turns`), `wardrobe_usage` (novelty),
 `flags`, `stance` (the **declared offsets only**), `pending` (posted, unanswered forks — every
-register already rendered), `answers` (beat → chosen choice) and `rearm_at` (beat → the tick its
-`once` guard lifts). `BTreeMap`/`BTreeSet` throughout for deterministic iteration
+register already rendered), `answers` (beat → **`Answer { choice, tick }`** — the choice *and the
+turn it was made on*, which is what `answered`'s `min_turns_since` reads), `rearm_at` (beat → the tick
+its `once` guard lifts), `threads` (kind → the durable memory threads) and `mediums` (faction → the
+attained voice medium — persisted because it is monotone). `BTreeMap`/`BTreeSet` throughout for deterministic iteration
 and stable snapshot ordering, and **`Scalar`, not `f32`**, for everything persisted — sampled as
 `f64`, stored fixed-point, the same rollback-bit-exactness argument the rest of the codebase makes.
 
@@ -2107,10 +2231,17 @@ FlatBuffers client stream (beats reach the client as `CommandEvent`s).
 > rides the same round-trip: a fork **answered after the rollback point is un-answered by the
 > rollback** — the declared stance offset, the fired mark, the recorded answer and the pending list
 > all rewind together, so a player never carries a stance they did not declare in the timeline they
-> rolled back into. Guarded by `integration_tests/tests/telling_rollback.rs` (both halves).
+> rolled back into. **PR-C rides it too**: a thread written after the rollback point is
+> un-remembered, and a narrator that advanced its medium after the rollback point does not carry that
+> medium into a timeline where it never learned it. Guarded by
+> `integration_tests/tests/telling_rollback.rs` (all three halves).
 
 See Also: `docs/plan_the_telling.md` (design + PR slicing), `docs/Emergent Narrative.md` (concept),
 "Sedentarization" (the rising-edge pattern `crosses` generalises).
+
+Test suites: `core_sim/tests/telling.rs` (ambient/beat), `telling_fork.rs` (the fork tier),
+**`telling_memory.rs`** (threads, callbacks, the `answered` payoff, and the medium),
+`integration_tests/tests/telling_rollback.rs` (the round-trip).
 
 ---
 

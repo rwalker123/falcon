@@ -403,6 +403,7 @@ pub mod knowledge {
                 command_events: Vec::new(),
                 pending_forks: Vec::new(),
                 stance_axes: Vec::new(),
+                voice_medium: Vec::new(),
                 herds: Vec::new(),
                 herd_registry: Vec::new(),
                 forage_registry: Vec::new(),

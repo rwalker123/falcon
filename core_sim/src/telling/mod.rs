@@ -25,6 +25,8 @@
 
 pub mod catalog;
 pub mod config;
+pub mod medium;
+pub mod memory;
 pub mod nouns;
 pub mod predicate;
 pub mod select;
@@ -55,12 +57,14 @@ use crate::{
 
 pub use catalog::{
     load_beat_catalog_from_env, BeatCatalog, BeatCatalogHandle, BeatCatalogMetadata, BeatChoice,
-    BeatDefinition, BeatTier, ChoiceWrites, Fit, NounBinding, Soul, WardrobeEntry,
+    BeatDefinition, BeatTier, ChoiceWrites, Fit, NounBinding, Remembers, Soul, WardrobeEntry,
 };
 pub use config::{
     load_beat_config_from_env, BeatConfig, BeatConfigHandle, BeatConfigMetadata, BudgetConfig,
-    SelectionConfig, StanceAxis, StanceConfig, TrendConfig, VoiceConfig,
+    MemoryConfig, SelectionConfig, StanceAxis, StanceConfig, TrendConfig, VoiceConfig, VoiceMedium,
 };
+pub use medium::AttainedMedium;
+pub use memory::{Thread, ThreadSelector};
 pub use nouns::{Noun, NounField};
 pub use predicate::{CompareOp, EdgeDir, Predicate};
 pub use select::TELLING_SEED_SALT;
@@ -100,11 +104,21 @@ pub struct BeatLedger {
     /// Forks posted and not yet answered. **The server never blocks a turn on one** — the turn
     /// gate is client-side, and `budget.fork_expire_turns` is what keeps this list bounded.
     pending: Vec<PendingFork>,
-    /// Beat id → the choice the player took. The concept's memory ledger in its smallest useful
-    /// form: later beats can call back to what was decided.
-    answers: BTreeMap<String, String>,
+    /// Beat id → the choice the player took **and when**. The concept's memory ledger in its
+    /// smallest useful form: later beats can call back to what was decided, and — because the tick
+    /// rides along — to *how long ago*. See [`Answer`].
+    answers: BTreeMap<String, Answer>,
     /// Beat id → the tick its `once` guard lifts, from a choice's `rearm_after_turns`.
     rearm_at: BTreeMap<String, u64>,
+    /// **The memory ledger proper**: kind → durable threads, each snapshotting its noun at first
+    /// sight and *never* re-resolved (`telling::memory`). Bounded per kind by
+    /// `memory.max_threads_per_kind`, evicting the least recently referenced.
+    threads: BTreeMap<String, Vec<Thread>>,
+    /// Faction → the narrator's attained medium (`telling::medium`). **Persisted and monotone** —
+    /// a people that learned to write does not forget, so a falling signal never steps it down.
+    /// Keyed by faction (unlike the rest of the ledger) because the medium is a property of a
+    /// civilization and is exported per faction.
+    mediums: BTreeMap<u32, AttainedMedium>,
     /// Faction → axis → **effective** stance, recomputed every turn from the signals plus the
     /// declared offsets. **Derived scratch**: not persisted (it is a pure function of state that
     /// *is*) and excluded from equality, the `LaborAllocation::last_yields` convention. Exists so
@@ -125,10 +139,27 @@ impl PartialEq for BeatLedger {
             && self.pending == other.pending
             && self.answers == other.answers
             && self.rearm_at == other.rearm_at
+            && self.threads == other.threads
+            && self.mediums == other.mediums
     }
 }
 
 impl Eq for BeatLedger {}
+
+/// A decision the player made, and the turn they made it on.
+///
+/// **The tick is load-bearing, not bookkeeping.** A beat that calls back to an answer almost always
+/// means "some time after you said that" — `identity.trail_endures` says *"we have kept our word to
+/// it"*, which is absurd the turn after the word was given. Without the tick, the only way to
+/// express elapsed time was a `turn.index` trend, which rises unconditionally and therefore means
+/// nothing more than "we are past turn 20". `answered`'s `min_turns_since` is the honest version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub choice: String,
+    /// The tick the fork was answered on — including an expiry auto-defer, which resolves through
+    /// the same path and is deliberately indistinguishable afterwards.
+    pub tick: u64,
+}
 
 /// One register's rendering of a player-visible string.
 pub type VoiceLines = BTreeMap<String, String>;
@@ -283,7 +314,52 @@ impl BeatLedger {
 
     /// The choice a beat was answered with, if it has been.
     pub fn answer(&self, beat: &str) -> Option<&str> {
-        self.answers.get(beat).map(String::as_str)
+        self.answers.get(beat).map(|answer| answer.choice.as_str())
+    }
+
+    /// The tick a beat was answered on, if it has been — the elapsed-time half of a callback.
+    pub fn answered_at(&self, beat: &str) -> Option<u64> {
+        self.answers.get(beat).map(|answer| answer.tick)
+    }
+
+    /// The memory threads, by kind.
+    pub fn threads(&self) -> &BTreeMap<String, Vec<Thread>> {
+        &self.threads
+    }
+
+    /// The threads of one kind, in insertion order.
+    pub fn threads_of(&self, kind: &str) -> &[Thread] {
+        self.threads.get(kind).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// The medium a faction's narrator has attained. Absent before its first `telling_tick`.
+    pub fn medium_for(&self, faction: FactionId) -> Option<&AttainedMedium> {
+        self.mediums.get(&faction.0)
+    }
+
+    /// Every faction's attained medium, in faction order.
+    pub fn mediums_by_faction(&self) -> impl Iterator<Item = (FactionId, &AttainedMedium)> {
+        self.mediums
+            .iter()
+            .map(|(faction, medium)| (FactionId(*faction), medium))
+    }
+
+    /// Promote a resolved noun into a durable thread. Upsert by key, bounded per kind.
+    fn remember_thread(&mut self, kind: &str, noun: &Noun, tick: u64, max_per_kind: u32) {
+        memory::remember(&mut self.threads, kind, noun, tick, max_per_kind as usize);
+    }
+
+    /// Mark a thread referenced this turn — the eviction clock (least recently *referenced* wins).
+    fn touch_thread(&mut self, resolver: &str, tick: u64) {
+        let Some((kind, selector)) = memory::parse_thread_resolver(resolver) else {
+            return;
+        };
+        let Some(key) =
+            memory::select_thread(&self.threads, kind, selector).map(|thread| thread.key.clone())
+        else {
+            return;
+        };
+        memory::touch(&mut self.threads, kind, &key, tick);
     }
 
     /// Is `beat`'s `once` guard currently down? A `once` fork that was deferred re-arms after the
@@ -352,8 +428,13 @@ impl BeatLedger {
         }
         // 3/4. Fired now, remembered, and re-armed if the choice asks for it.
         self.mark_fired(beat_id, tick);
-        self.answers
-            .insert(beat_id.to_string(), choice_id.to_string());
+        self.answers.insert(
+            beat_id.to_string(),
+            Answer {
+                choice: choice_id.to_string(),
+                tick,
+            },
+        );
         self.rearm_at.remove(beat_id);
         let rearmed_at_tick = choice.rearm_after_turns.map(|turns| {
             let at = tick.saturating_add(turns as u64);
@@ -490,9 +571,10 @@ impl BeatLedger {
             answers: self
                 .answers
                 .iter()
-                .map(|(beat, choice)| sim_schema::BeatAnswerState {
+                .map(|(beat, answer)| sim_schema::BeatAnswerState {
                     beat: beat.clone(),
-                    choice: choice.clone(),
+                    choice: answer.choice.clone(),
+                    tick: answer.tick,
                 })
                 .collect(),
             rearm: self
@@ -501,6 +583,29 @@ impl BeatLedger {
                 .map(|(beat, tick)| sim_schema::BeatRearmState {
                     beat: beat.clone(),
                     tick: *tick,
+                })
+                .collect(),
+            threads: self
+                .threads
+                .values()
+                .flatten()
+                .map(|thread| sim_schema::BeatThreadState {
+                    kind: thread.kind.clone(),
+                    key: thread.key.clone(),
+                    name: thread.name.clone(),
+                    plural: thread.plural.clone(),
+                    adjective: thread.adjective.clone(),
+                    first_seen_tick: thread.first_seen_tick,
+                    last_referenced_tick: thread.last_referenced_tick,
+                })
+                .collect(),
+            mediums: self
+                .mediums
+                .iter()
+                .map(|(faction, medium)| sim_schema::BeatVoiceMediumState {
+                    faction: *faction,
+                    medium_id: medium.id.clone(),
+                    medium_index: medium.index,
                 })
                 .collect(),
         }
@@ -555,12 +660,48 @@ impl BeatLedger {
             answers: state
                 .answers
                 .iter()
-                .map(|entry| (entry.beat.clone(), entry.choice.clone()))
+                .map(|entry| {
+                    (
+                        entry.beat.clone(),
+                        Answer {
+                            choice: entry.choice.clone(),
+                            tick: entry.tick,
+                        },
+                    )
+                })
                 .collect(),
             rearm_at: state
                 .rearm
                 .iter()
                 .map(|entry| (entry.beat.clone(), entry.tick))
+                .collect(),
+            threads: state.threads.iter().fold(
+                BTreeMap::<String, Vec<Thread>>::new(),
+                |mut acc, entry| {
+                    acc.entry(entry.kind.clone()).or_default().push(Thread {
+                        kind: entry.kind.clone(),
+                        key: entry.key.clone(),
+                        name: entry.name.clone(),
+                        plural: entry.plural.clone(),
+                        adjective: entry.adjective.clone(),
+                        first_seen_tick: entry.first_seen_tick,
+                        last_referenced_tick: entry.last_referenced_tick,
+                    });
+                    acc
+                },
+            ),
+            mediums: state
+                .mediums
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.faction,
+                        AttainedMedium {
+                            index: entry.medium_index,
+                            id: entry.medium_id.clone(),
+                        },
+                    )
+                })
                 .collect(),
             // Derived, not persisted: recomputed by the next `telling_tick`.
             last_effective_stance: BTreeMap::new(),
@@ -768,6 +909,33 @@ pub fn telling_tick(
     ledger
         .last_effective_stance
         .insert(faction.0, effective_stance.clone());
+
+    // The **medium** ladder, evaluated once per turn through the same predicate evaluator the beat
+    // triggers use, and injected as `voice.medium_index` *before* anything evaluates — the authored
+    // `voice.medium_*` beats gate on it with `crosses`, so it must be in the sample by now. It is
+    // taken as a max against what was already attained: a people that learned to write does not
+    // forget.
+    let attained = ledger.mediums.get(&faction.0).cloned().unwrap_or_default();
+    let medium = medium::advance(
+        &cfg,
+        &EvalContext {
+            sample: &sample,
+            previous: &ledger.edge_state,
+            history: &ledger.history,
+            fired: &ledger.fired,
+            flags: &ledger.flags,
+            answers: &ledger.answers,
+            threads: &ledger.threads,
+            tick,
+            trend: &cfg.trend,
+        },
+        &attained,
+    );
+    let mut sample = sample;
+    sample.set(signals::VOICE_MEDIUM_INDEX, medium.index as f64);
+    let sample = sample;
+    ledger.mediums.insert(faction.0, medium);
+
     ledger.push_history(&sample, cfg.trend.max_history_turns);
 
     // **The safety valve, before anything else this turn.** A fork nobody answered auto-resolves
@@ -800,6 +968,10 @@ pub fn telling_tick(
 
     let fauna = sources.fauna_config.get();
     let sites = sources.sites_config.get();
+    // The threads the resolvers read. Cloned out of the ledger so the resolution loop can borrow
+    // it immutably while the ledger is being written; threads are few and small by construction
+    // (`memory.max_threads_per_kind`).
+    let threads = ledger.threads.clone();
     let noun_ctx = NounContext {
         faction,
         band_people: sample.get("band.count"),
@@ -809,6 +981,7 @@ pub fn telling_tick(
         bands: &bands,
         herds: &sources.herds,
         fauna: &fauna,
+        threads: &threads,
     };
 
     let world_seed = sources
@@ -821,6 +994,13 @@ pub fn telling_tick(
     // Emissions and fork posts are staged so the ledger stays immutably borrowed during evaluation.
     let mut emissions: Vec<(String, String, BeatTier, String, String)> = Vec::new();
     let mut posts: Vec<PendingFork> = Vec::new();
+    /// What a beat that **landed** owes the memory ledger: the threads to write, and the threads a
+    /// resolver drew on (so the eviction clock counts callbacks, not sightings).
+    struct MemoryWrites {
+        remembers: Vec<(String, Noun)>,
+        touched: Vec<String>,
+    }
+    let mut memory_writes: Vec<MemoryWrites> = Vec::new();
 
     // 2/3/4/5. Candidate filter → noun resolution → weighing → seeded selection, in catalog
     // (authored) order so evaluation is stable.
@@ -861,6 +1041,8 @@ pub fn telling_tick(
             history: &ledger.history,
             fired: &ledger.fired,
             flags: &ledger.flags,
+            answers: &ledger.answers,
+            threads: &ledger.threads,
             tick,
             trend: &cfg.trend,
         });
@@ -868,17 +1050,19 @@ pub fn telling_tick(
             continue;
         }
 
-        // Resolve nouns (with `fallback` chains) for this beat's declared slots.
+        // Resolve nouns (with `fallback` chains) for this beat's declared slots, keeping the
+        // resolver that actually *won* each slot — a thread resolver only counts as a callback if
+        // it is the one that filled the slot, not merely because it sat in a fallback chain.
         let mut resolved: BTreeMap<String, Noun> = BTreeMap::new();
+        let mut winning_resolvers: BTreeMap<String, String> = BTreeMap::new();
         for (slot, binding) in &beat.nouns {
-            let noun = nouns::resolve(&binding.from, &noun_ctx).or_else(|| {
-                binding
-                    .fallback
-                    .as_deref()
-                    .and_then(|fallback| nouns::resolve(fallback, &noun_ctx))
-            });
-            if let Some(noun) = noun {
-                resolved.insert(slot.clone(), noun);
+            let candidates = [Some(binding.from.as_str()), binding.fallback.as_deref()];
+            for resolver in candidates.into_iter().flatten() {
+                if let Some(noun) = nouns::resolve(resolver, &noun_ctx) {
+                    resolved.insert(slot.clone(), noun);
+                    winning_resolvers.insert(slot.clone(), resolver.to_string());
+                    break;
+                }
             }
         }
 
@@ -896,6 +1080,22 @@ pub fn telling_tick(
         let Some(entry) = select::select_wardrobe(&candidates, world_seed, tick, &beat.id) else {
             continue;
         };
+
+        // The beat has **landed** (it emits below, or posts as a fork — a fork's nouns are pinned
+        // at post time exactly as a thread's are), so it owes the memory ledger: promote whatever
+        // `remembers` names, and mark every thread a resolver actually drew on.
+        memory_writes.push(MemoryWrites {
+            remembers: beat
+                .remembers
+                .iter()
+                .filter_map(|remembers| {
+                    resolved
+                        .get(&remembers.slot)
+                        .map(|noun| (remembers.kind.clone(), noun.clone()))
+                })
+                .collect(),
+            touched: winning_resolvers.into_values().collect(),
+        });
 
         // A **fork** does not push a line to the feed: it posts a decision the player answers.
         // It is deliberately **not** marked fired here — a fork is fired when *answered*, so one
@@ -990,6 +1190,18 @@ pub fn telling_tick(
         ledger.push_pending_fork(fork);
     }
 
+    // The memory ledger's writes, after everything that read it. A landed beat's `remembers` slots
+    // become threads (upsert by key — rediscovering the same site is one thread, not two), and the
+    // threads its resolvers drew on have their eviction clock refreshed.
+    for writes in memory_writes {
+        for resolver in writes.touched {
+            ledger.touch_thread(&resolver, tick);
+        }
+        for (kind, noun) in writes.remembers {
+            ledger.remember_thread(&kind, &noun, tick, cfg.memory.max_threads_per_kind);
+        }
+    }
+
     // Store this turn's samples as next turn's `prev` — **after** evaluation, so `crosses`
     // always compares against the previous turn.
     ledger.commit_edge_state(&sample, discovered_total);
@@ -1041,10 +1253,36 @@ mod tests {
             }],
             gloss: vec![("sedentarization.score".to_string(), Scalar::from_f32(41.5))],
         });
-        ledger
-            .answers
-            .insert("some.prior_fork".to_string(), "yes_trail".to_string());
+        ledger.answers.insert(
+            "some.prior_fork".to_string(),
+            Answer {
+                choice: "yes_trail".to_string(),
+                tick: 12,
+            },
+        );
         ledger.rearm_at.insert("some.prior_fork".to_string(), 27);
+
+        // PR-C: the memory threads and the attained medium ride the same round-trip.
+        ledger.remember_thread(
+            "place",
+            &Noun::named("Great Peak", "peaks", "peak"),
+            4,
+            DEFAULT_TEST_THREAD_CAP,
+        );
+        ledger.remember_thread(
+            "beast",
+            &Noun::named("Ash Elk", "ash elk", "elk"),
+            9,
+            DEFAULT_TEST_THREAD_CAP,
+        );
+        ledger.touch_thread("thread.place.oldest", 31);
+        ledger.mediums.insert(
+            0,
+            AttainedMedium {
+                index: 1,
+                id: "painted".to_string(),
+            },
+        );
 
         let restored = BeatLedger::from_state(&ledger.to_state());
         assert_eq!(
@@ -1058,6 +1296,36 @@ mod tests {
         );
         assert_eq!(restored.pending_forks().len(), 1);
         assert_eq!(restored.answer("some.prior_fork"), Some("yes_trail"));
+        assert_eq!(
+            restored.answered_at("some.prior_fork"),
+            Some(12),
+            "the answering tick must survive the round-trip — `min_turns_since` reads it"
+        );
+        // The threads survive with their snapshotted word forms *and* their eviction clock.
+        let place = &restored.threads_of("place")[0];
+        assert_eq!(place.name, "Great Peak");
+        assert_eq!(place.plural, "peaks");
+        assert_eq!(place.first_seen_tick, 4);
+        assert_eq!(place.last_referenced_tick, 31);
+        assert_eq!(restored.threads_of("beast").len(), 1);
+        assert_eq!(
+            restored.medium_for(FactionId(0)).map(|m| m.index),
+            Some(1),
+            "the attained medium must rewind with the ledger, not reset to oral"
+        );
+    }
+
+    /// A cap large enough that the round-trip fixture never trips eviction.
+    const DEFAULT_TEST_THREAD_CAP: u32 = 8;
+
+    #[test]
+    fn threads_are_bounded_per_kind_by_the_configured_cap() {
+        const CAP: u32 = 2;
+        let mut ledger = BeatLedger::default();
+        for (turn, name) in ["Alpha", "Bravo", "Charlie"].into_iter().enumerate() {
+            ledger.remember_thread("place", &Noun::named(name, name, name), turn as u64, CAP);
+        }
+        assert_eq!(ledger.threads_of("place").len(), CAP as usize);
     }
 
     #[test]

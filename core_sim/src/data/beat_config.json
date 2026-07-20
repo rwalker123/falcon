@@ -18,7 +18,26 @@
   },
   "voice": {
     "default_register": "mythic",
-    "registers": ["mythic", "warm"]
+    "registers": ["mythic", "warm"],
+    "mediums": [
+      { "id": "oral" },
+      {
+        "id": "painted",
+        "when": { "signal": "sedentarization.score", "gte": 40 }
+      },
+      {
+        "id": "written",
+        "when": {
+          "all": [
+            { "signal": "sedentarization.score", "gte": 70 },
+            { "signal": "discovery.progress.cultivation", "gte": 1.0 }
+          ]
+        }
+      }
+    ]
+  },
+  "memory": {
+    "max_threads_per_kind": 8
   },
   "stance": {
     "axes": [

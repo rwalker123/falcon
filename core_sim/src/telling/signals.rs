@@ -36,8 +36,15 @@ const CULTURE_AXIS_PREFIX: &str = "culture.axis.";
 /// through the rollback snapshot for free and a rollback cannot invent a phantom discovery.
 pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 
+/// The narrator's attained medium, as a 0-based index into `voice.mediums`. **Set by
+/// `telling_tick`, not by [`sample_signals`]** — it is derived from the ledger's attained rung plus
+/// this turn's sample, so it is injected after the base sample exists (the `stance.*` idiom). It is
+/// a registered signal so the authored `voice.medium_*` beats can gate on it with `crosses`.
+pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
+
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 8] = [
+const BASE_SIGNALS: [&str; 9] = [
+    VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
     "provisions.total",

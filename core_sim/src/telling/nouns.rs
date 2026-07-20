@@ -8,7 +8,7 @@
 //! naming an unregistered resolver fails at **load**, not at render. Rendering itself is
 //! infallible — every placeholder and field is validated when the catalog loads.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sim_schema::TerrainType;
 
@@ -21,7 +21,10 @@ use crate::{
     sites_config::SitesConfig,
 };
 
-use super::signals::BandView;
+use super::{
+    memory::{self, Thread},
+    signals::BandView,
+};
 
 /// A resolved noun slot. `Named` carries the three forms copy needs so lines read naturally;
 /// `Scalar` is a bare number the template renders as a rounded integer.
@@ -111,9 +114,24 @@ const NOUN_RESOLVERS: [&str; 6] = [
     "fauna.most_collapsed",
 ];
 
-/// Is `resolver` a registered noun resolver? The load-time validation hook for `from`/`fallback`.
+/// Is `resolver` one of the **static** noun resolvers? The `thread.*` family is
+/// content-declared, so it is checked separately — see [`is_registered_resolver_for`].
 pub fn is_registered_resolver(resolver: &str) -> bool {
     NOUN_RESOLVERS.contains(&resolver)
+}
+
+/// Is `resolver` bindable, given the thread kinds the catalog's `remembers` entries declare?
+///
+/// The thread family is registered **generically over kind** rather than from a hardcoded
+/// `place`/`beast` list: a modder who adds a `remembers` kind gets `thread.<kind>.oldest` /
+/// `.recent` for free, which is exactly the engine/content boundary `docs/plan_the_telling.md` §1b
+/// draws. A `thread.*` resolver naming a kind nothing ever *writes* is still a load-time failure —
+/// it could only ever resolve to nothing.
+pub fn is_registered_resolver_for(resolver: &str, thread_kinds: &BTreeSet<String>) -> bool {
+    if is_registered_resolver(resolver) {
+        return true;
+    }
+    memory::parse_thread_resolver(resolver).is_some_and(|(kind, _)| thread_kinds.contains(kind))
 }
 
 pub fn registered_resolvers() -> &'static [&'static str] {
@@ -198,6 +216,9 @@ pub struct NounContext<'a> {
     pub bands: &'a [BandView<'a>],
     pub herds: &'a HerdRegistry,
     pub fauna: &'a FaunaConfig,
+    /// The memory threads, by kind. **Read straight out of the ledger and never re-resolved
+    /// against the live world** — that is the whole point of a thread (see `telling::memory`).
+    pub threads: &'a BTreeMap<String, Vec<Thread>>,
 }
 
 /// Resolve one noun slot. `None` is normal early-game (nothing hunted yet, no site found); a
@@ -224,8 +245,11 @@ pub fn resolve(resolver: &str, ctx: &NounContext<'_>) -> Option<Noun> {
         "fauna.most_collapsed" => {
             most_collapsed_species(ctx).map(|species| species_noun(&species, ctx))
         }
-        // Unreachable through validated content; an unknown resolver simply resolves to nothing.
-        _ => None,
+        // `thread.<kind>.<selector>` — the callback family. An empty kind resolves to `None`,
+        // which the existing machinery already handles (a wardrobe entry requiring the slot is
+        // excluded, and a `fallback` chain moves on). Otherwise: an unknown resolver simply
+        // resolves to nothing, unreachable through validated content.
+        _ => memory::resolve_thread_noun(ctx.threads, resolver),
     }
 }
 

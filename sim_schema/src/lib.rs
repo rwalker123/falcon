@@ -619,6 +619,56 @@ pub struct BeatLedgerState {
     /// Beat id → the tick a `once` beat's guard lifts (the defer branch's `rearm_after_turns`).
     #[serde(default)]
     pub rearm: Vec<BeatRearmState>,
+    /// The memory threads — durable nouns later beats can call back to. Flat and kind-grouped by
+    /// construction (the ledger iterates a `BTreeMap<kind, Vec<Thread>>`), so the record is stable.
+    #[serde(default)]
+    pub threads: Vec<BeatThreadState>,
+    /// Faction → the narrator's **attained** medium. Persisted because it is monotone: a people
+    /// that learned to write does not forget, so the live evaluation takes the max against this.
+    #[serde(default)]
+    pub mediums: Vec<BeatVoiceMediumState>,
+}
+
+/// One memory thread: a noun **snapshotted at first sight and never re-resolved**, so a callback
+/// still lands after the herd went extinct or the site fell four hundred turns behind.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatThreadState {
+    pub kind: String,
+    /// Dedupe identity — the resolved noun's `name`.
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub plural: String,
+    #[serde(default)]
+    pub adjective: String,
+    #[serde(default)]
+    pub first_seen_tick: u64,
+    /// The eviction clock: least recently *referenced* is what gets dropped, not oldest first-seen.
+    #[serde(default)]
+    pub last_referenced_tick: u64,
+}
+
+/// A faction's attained narrator medium, sim-side (the client-facing twin is [`VoiceMediumState`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatVoiceMediumState {
+    pub faction: u32,
+    pub medium_id: String,
+    #[serde(default)]
+    pub medium_index: u32,
+}
+
+/// A faction's narrator **medium** on the client stream: oral saga → painted chronicle → written
+/// record. Presentational — it changes how the telling *looks*; it does **not** select different
+/// copy (see `core_sim/src/telling/medium.rs`).
+///
+/// `mediumId` is a string (the `species` / `policy` / `register` convention) so adding a medium
+/// needs no schema change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct VoiceMediumState {
+    pub faction: u32,
+    pub medium_id: String,
+    #[serde(default)]
+    pub medium_index: u32,
 }
 
 /// One register's rendering of a player-visible narrative string.
@@ -735,6 +785,10 @@ pub struct StanceAxisState {
 pub struct BeatAnswerState {
     pub beat: String,
     pub choice: String,
+    /// The tick the fork was answered on. Load-bearing: the `answered` predicate's
+    /// `min_turns_since` reads it, so a callback can mean "some time after you said that".
+    #[serde(default)]
+    pub tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -2451,6 +2505,9 @@ pub struct WorldSnapshot {
     /// The Telling's effective stance per faction and axis.
     #[serde(default)]
     pub stance_axes: Vec<StanceState>,
+    /// The Telling's narrator medium per faction (presentational — see `VoiceMediumState`).
+    #[serde(default)]
+    pub voice_medium: Vec<VoiceMediumState>,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
     /// Authoritative herd sim state (`HerdRegistry`), round-tripped for rollback correctness —
@@ -2538,6 +2595,7 @@ pub struct WorldDelta {
     pub command_events: Option<Vec<CommandEventState>>,
     pub pending_forks: Option<Vec<PendingForksState>>,
     pub stance_axes: Option<Vec<StanceState>>,
+    pub voice_medium: Option<Vec<VoiceMediumState>>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
@@ -3044,6 +3102,7 @@ fn serialize_campaign_section<'a>(
     let command_events = create_command_events(builder, &snapshot.command_events);
     let pending_forks = create_pending_forks(builder, &snapshot.pending_forks);
     let stance_axes = create_stance_axes(builder, &snapshot.stance_axes);
+    let voice_medium = create_voice_medium(builder, &snapshot.voice_medium);
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -3052,6 +3111,7 @@ fn serialize_campaign_section<'a>(
             victory: Some(victory_state),
             pendingForks: Some(pending_forks),
             stanceAxes: Some(stance_axes),
+            voiceMedium: Some(voice_medium),
         },
     )
 }
@@ -3350,6 +3410,10 @@ fn serialize_campaign_section_delta<'a>(
         .stance_axes
         .as_ref()
         .map(|entries| create_stance_axes(builder, entries));
+    let voice_medium = delta
+        .voice_medium
+        .as_ref()
+        .map(|entries| create_voice_medium(builder, entries));
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -3358,6 +3422,7 @@ fn serialize_campaign_section_delta<'a>(
             victory: victory_state,
             pendingForks: pending_forks,
             stanceAxes: stance_axes,
+            voiceMedium: voice_medium,
         },
     )
 }
@@ -3680,6 +3745,27 @@ fn create_stance_axes<'a>(
         ));
     }
     builder.create_vector(&faction_entries)
+}
+
+/// The narrator's medium, per faction. `mediumId` rides as a string so a new rung on the ladder
+/// needs no schema change.
+fn create_voice_medium<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[VoiceMediumState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::VoiceMediumState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let medium_id = builder.create_string(state.medium_id.as_str());
+        entries.push(fb::VoiceMediumState::create(
+            builder,
+            &fb::VoiceMediumStateArgs {
+                faction: state.faction,
+                mediumId: Some(medium_id),
+                mediumIndex: state.medium_index,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
 }
 
 fn create_sedentarization<'a>(

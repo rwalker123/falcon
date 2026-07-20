@@ -17,7 +17,7 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
-use super::catalog::BeatTier;
+use super::{catalog::BeatTier, predicate::Predicate};
 
 pub const BUILTIN_BEAT_CONFIG: &str = include_str!("../data/beat_config.json");
 
@@ -134,6 +134,21 @@ impl Default for TrendConfig {
     }
 }
 
+/// One rung of the narrator's **medium** ladder (concept §7: oral saga → painted chronicle →
+/// written record). A medium is just a named threshold over signals, so it reuses the predicate
+/// evaluator rather than inventing a second condition language.
+///
+/// **Medium is presentational.** It does *not* select different wardrobe copy — see the note on
+/// [`VoiceConfig::mediums`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct VoiceMedium {
+    pub id: String,
+    /// The condition that unlocks this medium. Absent on the first (default) entry, which is
+    /// always satisfied.
+    #[serde(default)]
+    pub when: Option<Predicate>,
+}
+
 /// Voice registers. Every player-visible string is keyed by register (`docs/plan_the_telling.md`
 /// §2d) so the choice stays a data-level toggle rather than a design commitment.
 #[derive(Debug, Clone, Deserialize)]
@@ -141,16 +156,56 @@ impl Default for TrendConfig {
 pub struct VoiceConfig {
     pub default_register: String,
     pub registers: Vec<String>,
+    /// The medium ladder, ordered **least → most advanced**. The first entry is the default and
+    /// needs no `when`; the **highest satisfied** entry wins, and the attained rung never regresses
+    /// (a people that learned to write does not forget).
+    ///
+    /// **Do NOT author per-medium wardrobe strings.** Medium is presentational: it changes how the
+    /// telling *looks* to the client and fires a beat when it advances, and that is the whole of
+    /// it. Four mediums × two registers per wardrobe entry would be an 8× authoring cost for the
+    /// layer's thinnest payoff, and `docs/Emergent Narrative.md` §13 names authoring cost as a real
+    /// risk. The index is readable as the `voice.medium_index` signal, which is how the
+    /// medium-advance beats gate themselves.
+    pub mediums: Vec<VoiceMedium>,
 }
+
+/// The rung every telling starts on: a story told aloud, by people, from memory.
+pub const DEFAULT_VOICE_MEDIUM: &str = "oral";
 
 impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
             default_register: "mythic".to_string(),
             registers: vec!["mythic".to_string(), "warm".to_string()],
+            mediums: vec![VoiceMedium {
+                id: DEFAULT_VOICE_MEDIUM.to_string(),
+                when: None,
+            }],
         }
     }
 }
+
+/// How much the layer remembers (`telling::memory`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Threads retained per kind. When full, the **least recently referenced** thread is evicted —
+    /// a thread the story keeps returning to is the one worth keeping.
+    pub max_threads_per_kind: u32,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            max_threads_per_kind: DEFAULT_MAX_THREADS_PER_KIND,
+        }
+    }
+}
+
+/// Enough that a long campaign's landmarks and finished herds are all still callable, small enough
+/// that the ledger stays a *memory* rather than a log — a kind with more than this many live
+/// threads has stopped being a set of things the story can meaningfully return to.
+const DEFAULT_MAX_THREADS_PER_KIND: u32 = 8;
 
 /// One narrative stance axis and the sim signal backing it (`docs/plan_the_telling.md` §1c).
 /// Parsed and validated in PR-A; the vector itself is not populated until PR-B.
@@ -179,6 +234,7 @@ pub struct BeatConfig {
     pub trend: TrendConfig,
     pub voice: VoiceConfig,
     pub stance: StanceConfig,
+    pub memory: MemoryConfig,
 }
 
 impl BeatConfig {
@@ -270,6 +326,14 @@ impl BeatConfig {
                 self.voice.default_register
             )));
         }
+        self.validate_mediums()?;
+        if self.memory.max_threads_per_kind == 0 {
+            return Err(BeatConfigError::invalid(
+                "memory.max_threads_per_kind must be > 0 — a zero cap silently discards every \
+                 thread, so every `thread` predicate and `thread.*` resolver in the catalog would \
+                 be permanently unsatisfiable",
+            ));
+        }
         let mut seen_axes: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         for axis in &self.stance.axes {
             if !seen_axes.insert(axis.id.as_str()) {
@@ -293,6 +357,48 @@ impl BeatConfig {
                     "stance axis {:?} range must be finite with range[0] < range[1]",
                     axis.id
                 )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The medium ladder must be a genuine ladder: at least one rung, a `when`-free default first,
+    /// unique ids, and every later rung gated on registered signals.
+    fn validate_mediums(&self) -> Result<(), BeatConfigError> {
+        let mediums = &self.voice.mediums;
+        let Some(first) = mediums.first() else {
+            return Err(BeatConfigError::invalid(
+                "voice.mediums must list at least one medium (the default the telling starts on)",
+            ));
+        };
+        if first.when.is_some() {
+            return Err(BeatConfigError::invalid(format!(
+                "voice.mediums[0] {:?} declares a `when` — the first entry is the default rung and \
+                 is always satisfied, so a condition on it could only ever be misleading",
+                first.id
+            )));
+        }
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for medium in mediums {
+            if !seen.insert(medium.id.as_str()) {
+                return Err(BeatConfigError::invalid(format!(
+                    "duplicate voice medium id {:?}",
+                    medium.id
+                )));
+            }
+            let Some(when) = &medium.when else { continue };
+            let mut signals = Vec::new();
+            when.collect_signals(&mut signals);
+            for signal in signals {
+                // The stance family is config-driven, so it resolves through this same config.
+                if !super::signals::is_registered_signal(&signal)
+                    && !super::stance::is_stance_signal(&signal, self)
+                {
+                    return Err(BeatConfigError::invalid(format!(
+                        "voice medium {:?} references unknown signal {signal:?}",
+                        medium.id
+                    )));
+                }
             }
         }
         Ok(())
@@ -455,6 +561,53 @@ mod tests {
     #[test]
     fn validate_rejects_stance_axis_with_unknown_signal() {
         assert!(mutate(|j| j["stance"]["axes"][0]["signal"] = "vibes.total".into()).is_err());
+    }
+
+    /// The shipped medium ladder is ordered, `when`-free at the bottom, and every rung's condition
+    /// reads signals that actually exist.
+    #[test]
+    fn the_shipped_medium_ladder_is_a_ladder() {
+        let config = BeatConfig::builtin();
+        let ids: Vec<&str> = config
+            .voice
+            .mediums
+            .iter()
+            .map(|medium| medium.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["oral", "painted", "written"]);
+        assert!(config.voice.mediums[0].when.is_none());
+        for medium in &config.voice.mediums[1..] {
+            assert!(medium.when.is_some(), "{} needs a gate", medium.id);
+        }
+        assert!(config.memory.max_threads_per_kind > 0);
+    }
+
+    #[test]
+    fn validate_rejects_an_empty_medium_ladder() {
+        assert!(mutate(|j| j["voice"]["mediums"] = serde_json::json!([])).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_a_condition_on_the_default_medium() {
+        assert!(mutate(|j| {
+            j["voice"]["mediums"][0]["when"] =
+                serde_json::json!({ "signal": "band.count", "gte": 1 });
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn validate_rejects_a_medium_gated_on_an_unknown_signal() {
+        assert!(mutate(|j| {
+            j["voice"]["mediums"][1]["when"] =
+                serde_json::json!({ "signal": "vibes.total", "gte": 1 });
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn validate_rejects_a_zero_thread_cap() {
+        assert!(mutate(|j| j["memory"]["max_threads_per_kind"] = 0.into()).is_err());
     }
 
     #[test]

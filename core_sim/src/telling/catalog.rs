@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use super::{
     config::BeatConfig,
-    nouns::{is_known_biome_tag, is_registered_resolver, template_placeholders},
+    nouns::{is_known_biome_tag, is_registered_resolver_for, template_placeholders},
     predicate::Predicate,
     signals::is_registered_signal,
     stance,
@@ -160,6 +160,17 @@ pub struct WardrobeEntry {
     pub stance_affinity: Option<BTreeMap<String, f32>>,
 }
 
+/// Promote a resolved noun into a durable **memory thread** when the beat lands.
+///
+/// `kind` is free-form and content-defined; declaring it here is what registers the
+/// `thread.<kind>.oldest` / `.recent` noun resolvers and makes `{ "thread": kind, … }` gateable.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Remembers {
+    /// A noun slot this beat declares. Its resolved value is snapshotted into the thread.
+    pub slot: String,
+    pub kind: String,
+}
+
 /// One beat: a soul, a trigger, its nouns, and the wardrobe it can be dressed in.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BeatDefinition {
@@ -176,6 +187,10 @@ pub struct BeatDefinition {
     /// none, is an authoring error, not a silent no-op.
     #[serde(default)]
     pub choices: Vec<BeatChoice>,
+    /// Nouns this beat promotes into durable memory threads when it lands (emits, or — for a fork
+    /// — posts, since a fork's nouns are pinned at post time exactly as a thread's are).
+    #[serde(default)]
+    pub remembers: Vec<Remembers>,
     /// Signal ids sampled into the detail line ("the voice never lies").
     #[serde(default)]
     pub gloss: Vec<String>,
@@ -237,9 +252,20 @@ impl BeatCatalog {
         self.beats.iter().find(|beat| beat.id == id)
     }
 
+    /// Every thread kind the catalog's `remembers` entries declare. This — not a hardcoded list —
+    /// is what registers the `thread.*` noun resolvers and the `thread` predicate's vocabulary.
+    pub fn thread_kinds(&self) -> BTreeSet<String> {
+        self.beats
+            .iter()
+            .flat_map(|beat| beat.remembers.iter())
+            .map(|remembers| remembers.kind.clone())
+            .collect()
+    }
+
     fn validate(&self, config: &BeatConfig) -> Result<(), BeatCatalogError> {
         let register = &config.voice.default_register;
         let mut seen_ids: BTreeSet<&str> = BTreeSet::new();
+        let thread_kinds = self.thread_kinds();
 
         for beat in &self.beats {
             if !seen_ids.insert(beat.id.as_str()) {
@@ -261,12 +287,60 @@ impl BeatCatalog {
                     .into_iter()
                     .flatten()
                 {
-                    if !is_registered_resolver(resolver) {
+                    if !is_registered_resolver_for(resolver, &thread_kinds) {
                         return Err(BeatCatalogError::invalid(format!(
-                            "beat {:?} noun slot {slot:?} names unknown resolver {resolver:?}",
+                            "beat {:?} noun slot {slot:?} names unknown resolver {resolver:?} \
+                             (a `thread.<kind>.oldest`/`.recent` resolver needs some beat to \
+                             declare that kind in `remembers`, or it could never resolve)",
                             beat.id
                         )));
                     }
+                }
+            }
+
+            // `remembers` promotes a *declared* slot into a thread; a typo would silently remember
+            // nothing forever.
+            for remembers in &beat.remembers {
+                if !beat.nouns.contains_key(&remembers.slot) {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} remembers undeclared noun slot {:?}",
+                        beat.id, remembers.slot
+                    )));
+                }
+                if remembers.kind.trim().is_empty() {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} remembers slot {:?} with an empty kind",
+                        beat.id, remembers.slot
+                    )));
+                }
+            }
+
+            // A `trend` window wider than the retained history is unevaluable: `evaluate` needs
+            // `over_turns` samples *plus* this turn's, so it can only ever read false. Silent, and
+            // exactly the class of bug the `answered` check exists for.
+            let mut windows = Vec::new();
+            beat.when.collect_trend_windows(&mut windows);
+            for over_turns in windows {
+                if over_turns >= config.trend.max_history_turns {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} trends over {over_turns} turns, but the ledger retains only \
+                         trend.max_history_turns = {} samples — the window could never be filled, \
+                         so the beat could never fire",
+                        beat.id, config.trend.max_history_turns
+                    )));
+                }
+            }
+
+            // A `thread` predicate on a kind nothing writes can never be satisfied.
+            let mut gated_kinds = Vec::new();
+            beat.when.collect_thread_kinds(&mut gated_kinds);
+            for kind in gated_kinds {
+                if !thread_kinds.contains(&kind) {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} gates on thread kind {kind:?}, which no beat's `remembers` \
+                         declares — it could never be satisfied",
+                        beat.id
+                    )));
                 }
             }
 
@@ -345,6 +419,45 @@ impl BeatCatalog {
                             )));
                         }
                     }
+                }
+            }
+        }
+
+        // Cross-beat pass: an `answered` target must be resolvable *and* answerable.
+        self.validate_answered_targets()?;
+        Ok(())
+    }
+
+    /// **Validate every `{ "answered": B, "choice": C }` hard.** A typo here silently produces a
+    /// beat that can never fire, which is the worst failure mode a content system has: nothing
+    /// errors, nothing logs, the beat is simply never seen. So the target must exist, be a `fork`
+    /// (only a fork records an answer), and declare that choice.
+    fn validate_answered_targets(&self) -> Result<(), BeatCatalogError> {
+        for beat in &self.beats {
+            let mut answered = Vec::new();
+            beat.when.collect_answered_gates(&mut answered);
+            for (target_id, choice_id, _) in answered {
+                let Some(target) = self.find(&target_id) else {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} gates on `answered` beat {target_id:?}, which is not in the \
+                         catalog — the gate could never be satisfied",
+                        beat.id
+                    )));
+                };
+                if target.tier != BeatTier::Fork {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} gates on `answered` beat {target_id:?}, which is tier {:?} — \
+                         only a fork is ever answered, so the gate could never be satisfied",
+                        beat.id,
+                        target.tier.as_str()
+                    )));
+                }
+                if target.choice(&choice_id).is_none() {
+                    return Err(BeatCatalogError::invalid(format!(
+                        "beat {:?} gates on `answered` beat {target_id:?} choice {choice_id:?}, \
+                         which that fork does not declare — the gate could never be satisfied",
+                        beat.id
+                    )));
                 }
             }
         }
@@ -801,6 +914,117 @@ mod tests {
         let err =
             mutate(|j| j[fork]["gloss"] = serde_json::json!(["stance.roam_setle"])).unwrap_err();
         assert!(err.to_string().contains("unknown signal"), "{err}");
+    }
+
+    // --- memory threads + the `answered` gate ---------------------------------------------
+
+    /// The shipped catalog declares the two thread kinds its resolvers and gates depend on.
+    #[test]
+    fn the_shipped_catalog_declares_the_thread_kinds_it_calls_back_to() {
+        let catalog = BeatCatalog::builtin();
+        let kinds = catalog.thread_kinds();
+        assert!(kinds.contains("place"), "{kinds:?}");
+        assert!(kinds.contains("beast"), "{kinds:?}");
+        let site = catalog.find("discovery.site_found").expect("the site beat");
+        assert_eq!(site.remembers.len(), 1);
+        assert_eq!(site.remembers[0].slot, "place");
+    }
+
+    /// Registration is **generic over kind**: a brand-new kind declared by content registers its
+    /// resolvers with no engine change.
+    #[test]
+    fn a_new_thread_kind_registers_its_resolvers_without_an_engine_change() {
+        let catalog = mutate(|j| {
+            j[1]["remembers"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({ "slot": "place", "kind": "hearth" }));
+            j[1]["nouns"]["place"]["fallback"] = "thread.hearth.recent".into();
+        })
+        .expect("a content-defined kind is enough to register thread.hearth.*");
+        assert!(catalog.thread_kinds().contains("hearth"));
+    }
+
+    #[test]
+    fn validate_rejects_a_thread_resolver_for_a_kind_nothing_remembers() {
+        let err = mutate(|j| j[1]["nouns"]["place"]["fallback"] = "thread.ghost.oldest".into())
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown resolver"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_an_unknown_thread_selector() {
+        let err = mutate(|j| j[1]["nouns"]["place"]["fallback"] = "thread.place.middling".into())
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown resolver"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_remembering_an_undeclared_slot() {
+        let err = mutate(|j| {
+            j[1]["remembers"] = serde_json::json!([{ "slot": "ghost", "kind": "place" }]);
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("undeclared noun slot"), "{err}");
+    }
+
+    /// A `trend` window wider than the retained history can only ever read false — silent, like a
+    /// typo'd `answered` target, so it fails at load instead.
+    #[test]
+    fn validate_rejects_a_trend_window_wider_than_the_retained_history() {
+        let window = config().trend.max_history_turns;
+        let err = mutate(|j| {
+            j[0]["when"] = serde_json::json!({
+                "signal": "turn.index",
+                "trend": "rising",
+                "over_turns": window
+            });
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("max_history_turns"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_a_thread_gate_on_a_kind_nothing_remembers() {
+        let err = mutate(|j| {
+            j[0]["when"] = serde_json::json!({ "thread": "ghost", "min_count": 1 });
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("thread kind"), "{err}");
+    }
+
+    /// **The `answered` gate is validated hard.** A typo'd target silently produces a beat that can
+    /// never fire — nothing errors, nothing logs, the beat is simply never seen — which is the
+    /// worst failure mode a content system has.
+    #[test]
+    fn validate_rejects_an_answered_gate_on_a_beat_that_does_not_exist() {
+        let err = mutate(|j| {
+            j[0]["when"] = serde_json::json!({ "answered": "no.such_fork", "choice": "yes" });
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("not in the catalog"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_an_answered_gate_on_a_non_fork_beat() {
+        let err = mutate(|j| {
+            j[0]["when"] =
+                serde_json::json!({ "answered": "discovery.site_found", "choice": "yes" });
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("only a fork"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_an_answered_gate_on_a_choice_the_fork_does_not_declare() {
+        let err = mutate(|j| {
+            j[0]["when"] = serde_json::json!({
+                "answered": "sedentarization.soft_drift",
+                "choice": "yes_trale"
+            });
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("does not declare"), "{err}");
     }
 
     #[test]
