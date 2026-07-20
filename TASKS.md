@@ -889,10 +889,10 @@ each PR is independently playtestable.
       — the concept's §6 "key nuance" and the cheapest characterful win in the design.
 - [x] Player-facing voice-register toggle (both registers already carried as data).
 
-### PR-C — voice evolution + callbacks
-- [ ] Voice medium progression (oral saga → painted chronicle → written record →
+### PR-C — voice evolution + callbacks ✅
+- [x] Voice medium progression (oral saga → painted chronicle → written record →
       institutional archive) tied to `CapabilityFlags` milestone crossings.
-- [ ] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
+- [x] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
       callback beats that reference them — what makes a 200-turn emergent game feel
       authored.
 
@@ -931,3 +931,34 @@ each PR is independently playtestable.
   re-adds it, briefly lifting the gate. Self-correcting within a turn; flagged rather
   than given a rollback path.
 - `PendingForkState.wardrobeId`/`postedTick` are currently unused by the client.
+
+**PR-C landed** (server `91ec7c6`, client `9333b20`) — arc complete. Carried forward:
+
+- **The voice never lies, enforced structurally.** Each fork declaration has a *kept*
+  and a *broken* beat, exactly complementary on the stance sign, so a player always
+  gets the one that is true of them. Any future beat asserting something about the
+  player's history must gate the same way — elapsed time alone is not evidence the
+  claim still holds.
+- **Medium is presentational and must stay that way.** Three rungs ship
+  (oral/painted/written); `archive` was left out because its only plausible source
+  (`CapabilityFlags`) is not a registered signal, and an unattainable rung is worse
+  than an absent one. Do not "complete" the feature by authoring per-medium copy —
+  that is a 4x8 authoring cost for the thinnest payoff in the layer.
+- **The ui_preview harness renders at whatever size the display allows.** The same
+  states captured 3456x2168 on one run and 5120x1410 on another; `--resolution` does
+  not override it, and the letterboxed frames make dock panels look far more cramped
+  than they are in a normal window. Frames are therefore not comparable across runs
+  or machines. Worth rendering to a fixed-size SubViewport instead of grabbing the
+  window texture — this degrades every visual verification, not just this arc's.
+
+### The Telling — remaining / possible next
+- [ ] Ambient beat volume tuning once the Telling panel has been played with — the
+      per-tier budgets and cooldowns were set before there was a surface that could
+      hold the output.
+- [ ] `expiresTick` on `PendingForkState` so the fork panel can say how long the
+      question keeps before it auto-defers (see the PR-B notes).
+- [ ] Tent-pole tier (concept §5) — the authored spine moments. Deliberately not
+      built: the catalog format should be proven in play before committing writing
+      effort at volume.
+- [ ] A faction-level culture rollup consumer beyond the stance signals, if stance
+      axes beyond `roam_settle` ever get forks of their own.
