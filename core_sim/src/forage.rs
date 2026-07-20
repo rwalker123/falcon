@@ -373,8 +373,14 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
         cultivation_progress: state.ecology.progress,
         field_progress: state.field_progress,
         owner: state.ecology.owner.map(FactionId),
-        // Transient (not persisted) — a rehydrated patch is "untended" until worked again.
-        tended_this_turn: false,
+        // Transient (not persisted) — seeded `true` for a **one-turn grace**, the deliberate
+        // precedent `ForagePatch::sow`/the Cultivate arm already set on a freshly-worked patch. The
+        // rollback-restore path runs the Logistics decay pass (`advance_cultivation`) *before* the
+        // Population labor arm can re-mark a patch a band is working, so seeding this `false` would
+        // decay a tended patch / Field one tick on the very first post-restore turn — flipping
+        // `is_managed()` false and destroying the improvement even while a band tends it every turn.
+        // The grace spares exactly that turn; a genuinely abandoned patch still goes feral next turn.
+        tended_this_turn: true,
     }
 }
 
