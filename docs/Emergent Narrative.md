@@ -1,6 +1,14 @@
 # The Telling — Emergent Narrative & Disposition Layer
 ### Design Concept v0.1 · Trail Sovereigns / Shadow-Scale
-Status: **concept, pre-implementation.** Captured from a brainstorm. Nothing here is built; one visual prototype exists (see §15). Copy is placeholder throughout.
+Status: **largely implemented.** Captured from a brainstorm; the ambient, fork, and memory/voice tiers have since shipped — engine in `core_sim/src/telling/`, client surfaces in `clients/godot_thin_client/src/scripts/ui/{TellingPanel,NarrativeForkPanel}.gd`. Engineering detail lives in `docs/plan_the_telling.md`; this document remains the **design intent**, and where the two disagree the plan describes what was actually built.
+
+Built: §4's data model (soul / wardrobe / beat / stance / memory ledger), §5's ambient + beat + fork tiers, §6's disposition loop, §7's evolving medium, §9's cross-system triggers, §11's freshness model, §14's beat registry.
+
+**Not built, deliberately:** the **tent-pole tier** (§5) — the catalog format should earn its keep in play before committing writing effort at volume (§13's authoring-cost risk). The `archive` voice medium (§7) also ships absent: no reachable signal backs it, and an unattainable rung is worse than one that does not exist.
+
+Two decisions in here were overtaken by implementation: the QuickJS sandbox floated in §14 was **ruled out** as a host (it cannot satisfy §13's determinism requirement — see `docs/plan_the_telling.md` §1a), and §4's claim that stance rides on the culture trait stack is **not how it works** — there is no roam↔settle culture axis, so stance became its own vector (plan §1c).
+
+Copy in the worked examples is illustrative; the shipped catalog is `core_sim/src/data/beat_definitions.json`.
 
 ---
 

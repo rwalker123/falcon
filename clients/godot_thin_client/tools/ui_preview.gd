@@ -1594,6 +1594,12 @@ func _ready() -> void:
 	_hud.update_victory_state(_victory_state_fixture())
 	await _settle()
 	await _save("dock_default_layout")
+	# The Telling panel is registered with `right_dock.add(..., 10)`, and `PanelDock._reorder`
+	# reparents. Screenshotting the dock only shows it LOOKS right; assert WHERE it lives, so a
+	# dropped/reordered registration (or a scene edit that re-authors it under the left dock)
+	# fails here instead of silently reverting the narrative surface to the left column.
+	_assert_hud("default layout: Telling panel lives in the right dock stack",
+		_hud.telling_panel.get_parent() == _hud.right_stack)
 
 	# G5 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
 	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the

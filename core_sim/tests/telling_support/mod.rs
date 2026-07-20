@@ -3,6 +3,12 @@
 //! One real earthlike world on a pinned seed, driven a turn at a time through the same systems the
 //! turn pipeline runs, so both suites exercise the engine rather than a mock.
 
+// Justified per `.github/copilot-instructions.md`: this module is compiled WHOLE into each of the
+// three Telling test binaries (`telling.rs`, `telling_fork.rs`, `telling_memory.rs`), and each uses
+// only the subset of helpers its suite needs — so "dead" here is structural, not an unused-code
+// defect. Splitting the harness to satisfy the lint would fragment one deliberately shared world
+// fixture into three drifting ones. Same idiom and rationale as
+// `integration_tests/tests/biome_speckle.rs`.
 #![allow(dead_code)]
 
 use bevy::app::App;

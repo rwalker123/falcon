@@ -4,8 +4,19 @@ Companion to `docs/Emergent Narrative.md` (the concept doc). That document owns
 the *why* and the authorial voice; this one owns the *how* — data model, module
 boundaries, and the PR slicing.
 
-Status: **design, pre-implementation.** Schema below is the first concrete
-engineering artifact called for in concept §15.3.
+Status: **implemented.** All three slices in §4 have shipped — PR-A (engine +
+ambient tier), PR-B (fork tier + stance + re-colouring), PR-C (memory threads,
+the `answered` gate, the maturing voice). The authoritative reference for the
+built system is `core_sim/CLAUDE.md` § "The Telling"; this document records the
+*decisions* and why they were made, which the code cannot.
+
+Two things below were revised during implementation and are marked in place:
+`answered` gained a `min_turns_since` (elapsed time is not derivable from
+`turn.index`, which rises unconditionally), and the identity beats gained a
+stance gate — without it the voice would tell a player who declared "we are the
+trail" and then settled that they had kept their word, which violates concept
+pillar 2. Still unbuilt by choice: the tent-pole tier, and a scripting escape
+hatch for trigger conditions (see §1b).
 
 ---
 
