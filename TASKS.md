@@ -846,34 +846,34 @@ Concept: `docs/Emergent Narrative.md`. Engineering plan, schema, and PR slicing:
 the player author a disposition that colors and steers which beats surface. Sliced so
 each PR is independently playtestable.
 
-### PR-A — beat engine + ambient tier (no new client code)
-- [ ] `core_sim/src/telling/` module + `BeatLedger` resource (fired-set, edge state,
+### PR-A — beat engine + ambient tier (no new client code) ✅
+- [x] `core_sim/src/telling/` module + `BeatLedger` resource (fired-set, edge state,
       wardrobe usage/novelty memory, stance vector, consequence flags, pending forks),
       saved and restored with the sim.
-- [ ] Signal registry — named accessors over sim state, the engine/content boundary.
+- [x] Signal registry — named accessors over sim state, the engine/content boundary.
       Content composes signals; it cannot invent them. Seed with the signals the
       opening arc needs (`sedentarization.score`, `turn.index`, `culture.axis.*`).
-- [ ] Predicate grammar (`all`/`any`/`not`, scalar comparisons, `crosses`
+- [x] Predicate grammar (`all`/`any`/`not`, scalar comparisons, `crosses`
       rising/falling edges, `trend`, `flag`, `fired within`). `crosses` generalizes the
       `sedentarization_tick` rising-edge pattern; edge state in the ledger so a beat
       fires once per crossing, not every tick the condition holds.
-- [ ] Noun-slot resolver registry (`fauna.most_hunted`, `fauna.dominant_local`,
+- [x] Noun-slot resolver registry (`fauna.most_hunted`, `fauna.dominant_local`,
       `site.last_discovered`, `biome.current_dominant`, …) returning
       `{ name, plural, adjective }`, with fallback chains. A wardrobe entry whose
       required slot fails to resolve is excluded from selection so no line renders
       with a hole in it.
-- [ ] Beat catalog loader — `core_sim/src/data/beat_definitions.json`, mirroring
+- [x] Beat catalog loader — `core_sim/src/data/beat_definitions.json`, mirroring
       `great_discovery_definitions.json`'s shape and load path, with a `validate()`
       following the `FaunaConfig`/`ExpeditionConfig` convention (error-level log +
       builtin fallback on a broken invariant).
-- [ ] Weighted wardrobe selection (`fit × novelty × stance_affinity`), seeded per
+- [x] Weighted wardrobe selection (`fit × novelty × stance_affinity`), seeded per
       decision from `hash(world_seed, turn_index, beat_id)` — never a rolling global
       stream — so selection is reproducible and independent of beat evaluation order.
       All weights and the novelty window in `beat_config.json`.
-- [ ] `telling_tick` turn-pipeline stage, placed after the systems whose state it
+- [x] `telling_tick` turn-pipeline stage, placed after the systems whose state it
       reads; ambient/beat tiers emit through the existing `CommandEventLog` (renders
       today, no client change). Per-tier per-turn budget + cooldowns in config.
-- [ ] Opening-arc ambient content: enough wardrobe depth to judge whether emergent
+- [x] Opening-arc ambient content: enough wardrobe depth to judge whether emergent
       noun dressing produces copy worth reading. Both voice registers (`mythic`,
       `warm`) per entry.
 
@@ -895,3 +895,21 @@ each PR is independently playtestable.
 - [ ] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
       callback beats that reference them — what makes a 200-turn emergent game feel
       authored.
+
+**PR-A landed** (`23f55bc`). Deviations and notes carried forward:
+- `band.count` sums people, not bands — the authored copy needs "There are {count} of us".
+- `sites.discovered_this_turn` keeps its cumulative count under a reserved ledger key
+  (`internal.sites.discovered_total`) that the signal registry rejects, so it persists
+  through rollback for free and content cannot reference it.
+- `culture.axis.*` reads the **global** culture layer. There is no faction-level culture
+  rollup and PR-B needs a decision on whether to build one.
+- A `fit.biome` narrative tag vocabulary (`nouns.rs`) was added beyond spec — an
+  exhaustive `TerrainType` match, load-time validated, so a new terrain forces a
+  narrative decision instead of silently failing to match.
+- **Known behaviour:** a beat whose signal is already above its threshold the first turn
+  it is sampled never fires — there is no `prev` to cross from, and it never falls back
+  to re-arm. Correct for the current content (scores start at 0) but a trap for any
+  future beat gated on a signal that starts high.
+- `core_sim/tests/grazing_2d_pen::extend_pen_...` failed once during a combined-package
+  run and passed on every rerun. Unrelated to this arc; possible flake, worth a second
+  look if it recurs.
