@@ -1,8 +1,8 @@
 # Climate Authority — temperature decides the biome, not latitude
 
-**Status:** implemented (sim + schema). Client half outstanding — see §8.3. Authoritative
-implementation notes live in `core_sim/CLAUDE.md` → "Temperature is the climate authority".
-**Branch:** `worktree-polar-boundary`.
+**Status:** implemented (sim + schema + client). Authoritative implementation notes live in
+`core_sim/CLAUDE.md` → "Temperature is the climate authority" and
+`clients/godot_thin_client/CLAUDE.md` → Tile-card Climate.
 **Sibling arc:** `docs/plan_elevation_authority.md` — this is the same shape of fix one layer up.
 Elevation authority made the *land mask* a derived function of the heightfield; this makes the
 *biome* a derived function of the climate.
