@@ -951,6 +951,17 @@ fn pick(noise: u32, options: &[TerrainType]) -> TerrainType {
 mod tests {
     use super::*;
 
+    /// The relief a **fold-belt core** actually reaches: `apply_belt_relief` floors a belt tile at
+    /// `1 + relief_belt_gain * strength / (belt_width + 1)`, which peaks at `1 + relief_belt_gain`
+    /// — 2.2 on earthlike's `relief_belt_gain = 1.2`. Fixtures that mean "a towering mountain"
+    /// use this rather than a bare literal, so raising `alpine_relief_threshold` (the range-WIDTH
+    /// lever) cannot silently turn "the tallest tile the sim can produce" into a sub-alpine one.
+    const BELT_CORE_RELIEF: f32 = 2.2;
+
+    /// A belt *edge*: the outermost belt ring, well below the alpine cut-off at any shipped
+    /// threshold, so these fixtures mean "mountain mask, but not a peak".
+    const BELT_EDGE_RELIEF: f32 = 1.4;
+
     #[test]
     fn fold_mountains_become_alpine_highland() {
         let position = UVec2::new(8, 8);
@@ -960,7 +971,7 @@ mod tests {
             grid,
             Some(0.55),
             Some(0.9),
-            Some((MountainType::Fold, 1.6)),
+            Some((MountainType::Fold, BELT_CORE_RELIEF)),
         );
         assert_eq!(terrain, TerrainType::AlpineMountain);
         assert!(tags.contains(TerrainTags::HIGHLAND));
@@ -1138,7 +1149,7 @@ mod tests {
             grid,
             Some(0.15),
             Some(0.95),
-            Some((MountainType::Fold, 1.6)), // relief clears alpine_relief_threshold (1.45)
+            Some((MountainType::Fold, BELT_CORE_RELIEF)), // clears alpine_relief_threshold
         );
         assert_eq!(terrain, TerrainType::Glacier);
         assert!(tags.contains(TerrainTags::POLAR));
@@ -1154,7 +1165,7 @@ mod tests {
             grid,
             Some(0.18),
             Some(0.88),
-            Some((MountainType::Fold, 1.4)),
+            Some((MountainType::Fold, BELT_EDGE_RELIEF)),
         );
         assert_eq!(terrain, TerrainType::SeasonalSnowfield);
         assert!(tags.contains(TerrainTags::POLAR));
@@ -1178,7 +1189,7 @@ mod tests {
             grid,
             Some(0.55),
             Some(0.9),
-            Some((MountainType::Fold, 1.6)),
+            Some((MountainType::Fold, BELT_CORE_RELIEF)),
         );
         assert_eq!(terrain, TerrainType::AlpineMountain);
         assert!(tags.contains(TerrainTags::HIGHLAND));

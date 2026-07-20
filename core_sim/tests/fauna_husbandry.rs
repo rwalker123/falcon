@@ -70,18 +70,41 @@ fn spawn_world() -> App {
     app
 }
 
-/// A stationary game herd (route length 1) primed to half its cap → Thriving and a clean
-/// domestication candidate. Returns its id.
+/// The species every husbandry-ladder fixture in this file runs on, **pinned by name on purpose**.
+///
+/// These tests measure *rates* — the Tame dip, the pen's MSY harvest, its upkeep debit — and a take
+/// is quantized to **whole animals**. So the fixture needs a species whose one-turn MSY comfortably
+/// exceeds one `body_mass`; on a heavy-bodied or slow-breeding one the same correct code takes `0`
+/// this turn and banks kill-credit instead, and the assertions read a rate of zero. The Rabbit
+/// Warren (`r` 0.35, the lightest body on the roster, `pen` husbandry ceiling) is the species that
+/// makes every rung's rate visible in a single turn.
+///
+/// **It used to be whichever short-range herd worldgen happened to place first**, which is an
+/// incidental dependency on map generation, not a property of the mechanic under test: a
+/// `macro_land` retune that moved one herd swapped the fixture to Crag Goats and failed four tests
+/// with "expected ~0.2, got 0" — a fixture artifact wearing the costume of a husbandry regression.
+const FIXTURE_SPECIES: &str = "Rabbit Warren";
+
+/// A stationary [`FIXTURE_SPECIES`] herd (route length 1) primed to half its cap → Thriving and a
+/// clean domestication candidate. Returns its id.
 fn prime_thriving_herd(app: &mut App) -> String {
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
         registry
             .herds
             .iter()
-            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
-            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .find(|h| {
+                h.id.starts_with("game_") && h.route_length() == 1 && h.species == FIXTURE_SPECIES
+            })
             .map(|h| h.id.clone())
-            .expect("expected short-range game to spawn")
+            .unwrap_or_else(|| {
+                panic!(
+                    "husbandry fixtures need a stationary {FIXTURE_SPECIES} on the generated map \
+                     and worldgen placed none — see FIXTURE_SPECIES for why the species is pinned. \
+                     Re-point the constant at another light-bodied, fast-breeding `pen`-ceiling \
+                     species rather than falling back to an arbitrary herd."
+                )
+            })
     };
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();

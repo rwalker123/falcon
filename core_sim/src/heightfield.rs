@@ -198,6 +198,43 @@ const CONTINENT_CENTER_MAX_ATTEMPTS: u32 = 64;
 /// (`mapgen::generate_land_mask`), expressed in continuous coordinates. Below 1.0 so a crowded map
 /// can still seat every centre without exhausting the attempt budget.
 const CONTINENT_MIN_SEPARATION_FRACTION: f32 = 0.75;
+/// Hash salt for the **domain-warp** noise field — the low-frequency displacement applied to the
+/// sample coordinates before the continental envelope is evaluated. Disjoint from every other stream.
+const CONTINENT_WARP_SEED_SALT: u32 = 0x7A1D_0FE5;
+/// Hash salt for the **ridged-spine** noise field, likewise disjoint.
+const CONTINENT_SPINE_SEED_SALT: u32 = 0x5B1D_9E77;
+/// Hash salt for the per-centre **tilt direction**. Each centre draws one angle from this stream, so
+/// the tilt is a pure function of `(world_seed, centre_index)` — no RNG, no iteration order.
+const CONTINENT_TILT_SEED_SALT: u32 = 0x71B7_0A21;
+/// Octaves / lacunarity / gain of the domain-warp fbm. A short stack: the warp exists to make a
+/// continent *lobed*, which is large-scale shape, not texture — high octaves would fray the coastline
+/// (that is [`apply_coastline_roughness`]'s job) instead of moving the landmass.
+const CONTINENT_WARP_OCTAVES: u32 = 3;
+const CONTINENT_WARP_LACUNARITY: f32 = 2.0;
+const CONTINENT_WARP_GAIN: f32 = 0.5;
+/// Shape of the window `1 - t^exponent` that confines the per-continent tilt to that continent's own
+/// footprint. **Deliberately high**: the window must be near-flat across the interior — where the
+/// drainage direction is decided — and collapse only at the rim. A gentle window (exponent 1) merely
+/// shifts the dome's summit a little off-centre and the drainage stays radial (measured: navigable
+/// rivers fell back to 0–1 per map), while *no* window lets the tilt plane climb without bound past
+/// the radius and ramp every continent into one landmass (measured: landmasses ≥ `min_area` collapsed
+/// to 1).
+const CONTINENT_TILT_WINDOW_EXPONENT: f32 = 4.0;
+/// How hard the tilt term lifts the ground **away from** a continent's drainage axis, as a fraction
+/// of `continental_tilt_strength`. This is what turns a tilted plane (parallel flow, forty short
+/// rivers) into a tilted trough (convergent flow, one trunk). Tied to the tilt lever rather than
+/// broken out on its own, because a trough with no down-axis gradient has nowhere to drain **to** and
+/// a gradient with no trough never gathers — they are two halves of one structure, not two dials.
+const CONTINENT_TROUGH_GAIN: f32 = 0.5;
+/// Octaves / lacunarity / gain of the ridged-spine fbm. One octave more than the warp, because a
+/// divide reads as a *range* — a trunk ridge with subsidiary spurs — rather than a single smooth arch.
+const CONTINENT_SPINE_OCTAVES: u32 = 4;
+const CONTINENT_SPINE_LACUNARITY: f32 = 2.0;
+const CONTINENT_SPINE_GAIN: f32 = 0.5;
+/// Sharpness of the ridged transform `(1 - |2n - 1|)^exponent`. Above 1 the ridge crest narrows and
+/// its flanks fall away faster, which is what makes it read as a **divide** (two drainage sides) and
+/// not as a broad dome with a bump on it.
+const CONTINENT_SPINE_RIDGE_EXPONENT: f32 = 2.0;
 /// Cycles of coastline-roughness noise across the map's smaller dimension. High enough that it
 /// perturbs the coastline tile-to-tile rather than moving whole landmasses (that is
 /// [`apply_continental_bias`]'s job), low enough that the fbm's octaves stay above the raster's
@@ -210,14 +247,37 @@ const COASTLINE_ROUGHNESS_LACUNARITY: f32 = 2.0;
 const COASTLINE_ROUGHNESS_GAIN: f32 = 0.5;
 
 /// The low-frequency **continental bias**: `elevation += continental_weight * bias(x, y)`, where
-/// `bias = max_i(falloff(dist_i / radius))` over `macro_land.continents` seed-derived centres.
+/// `bias = max_i(envelope_i + tilt_i)` over `macro_land.continents` seed-derived centres, plus a
+/// ridged **spine** gated to the continent interiors.
 ///
-/// Two properties are load-bearing:
+/// Properties that are load-bearing:
 /// - **`max`, not sum.** Summing lets two nearby centres add into a land bridge, fusing exactly the
 ///   continents the lever exists to separate; the maximum keeps each continent's profile its own.
-/// - **The falloff spans `[-1, 1]`, not `[0, 1]`.** A bias that only ever *adds* height leaves the
+/// - **The envelope spans `[-1, 1]`, not `[0, 1]`.** A bias that only ever *adds* height leaves the
 ///   inter-continental gaps merely lower than the continents, which after renormalisation and the
 ///   contour anchor can still land above sea level. Reaching `-1` actively sinks them.
+/// - **The envelope alone is a DOME, and a dome sheds water radially.** Every direction off a radial
+///   falloff is downhill, so a continent decomposes into many short independent basins instead of a
+///   few long trunk drainages — measured: the largest basin was ~5% of its landmass and max drainage
+///   accumulation topped out at 10–20 against a navigable threshold of 25, so 80×52 maps grew **no
+///   rivers at all**, and with no rivers there were no `RiverDelta`/`Floodplain` tiles and therefore
+///   **zero** ground the `plant:field` rung could take seed on. The three terms below exist to give a
+///   continent **internal divides and directional drainage**, which the dome cannot have:
+///   1. **Domain warp** — the sample coordinates are displaced by low-frequency noise *before* the
+///      envelope is evaluated, so continents are irregular and lobed rather than circular.
+///   2. **Per-continent tilt** — a directional gradient across each centre, its direction drawn
+///      deterministically from the world seed. **A tilted surface drains ONE way**, which is what
+///      turns radial spokes into a long trunk basin. **Both shipped presets set
+///      `continental_tilt_strength` to `0.0`, so this term is inert on the maps a player gets**: it
+///      buys drainage but bridges continents into a supercontinent, which starves the fold-belt
+///      plate network (see [`MacroLandConfig::continental_tilt_strength`]). The code stays because
+///      the lever stays live — nothing below is conditional on it being zero.
+///   3. **Ridged spine** — a ridged-noise term gated to the continent interior, so a continent
+///      carries an internal divide (two drainage sides) rather than a single summit. With the tilt
+///      off, this and the warp are what shape divides on the shipped maps.
+///
+/// Everything here is pure arithmetic over seed-derived hashes — no RNG, no map iteration — as
+/// `integration_tests::determinism` requires.
 fn apply_continental_bias(
     values: &mut [f32],
     width: usize,
@@ -231,19 +291,121 @@ fn apply_continental_bias(
     if weight <= 0.0 || width == 0 || height == 0 {
         return;
     }
-    let radius = cfg.continental_radius.max(f32::EPSILON) * width.min(height) as f32;
+    let min_dim = width.min(height) as f32;
+    let radius = cfg.continental_radius.max(f32::EPSILON) * min_dim;
     let exponent = cfg.continental_falloff_exponent.max(f32::EPSILON);
     let centers = continent_centers(width, height, continents, seed, wrap_horizontal);
+    // One unit tilt direction per centre, hashed from `(world_seed, index)` — so which way a
+    // continent drains is a property of the map, reproducibly, and two centres never share a heading
+    // by accident of iteration order.
+    let tilt_dirs: Vec<(f32, f32)> = (0..centers.len())
+        .map(|index| {
+            let hash_seed = mix_seed(CONTINENT_TILT_SEED_SALT, seed, index as u32);
+            let angle = hash2(index as i32, index as i32, hash_seed) * std::f32::consts::TAU;
+            (angle.cos(), angle.sin())
+        })
+        .collect();
+
+    let warp_amplitude = cfg.continental_warp_amplitude.max(0.0) * min_dim;
+    let warp_frequency = cfg.continental_warp_frequency.max(0.0);
+    let warp_seed_x = mix_seed(CONTINENT_WARP_SEED_SALT, seed, 0);
+    let warp_seed_y = mix_seed(CONTINENT_WARP_SEED_SALT, seed, 1);
+    let spine_amplitude = cfg.continental_spine_amplitude.max(0.0);
+    let spine_frequency = cfg.continental_spine_frequency.max(0.0);
+    let spine_seed = mix_seed(CONTINENT_SPINE_SEED_SALT, seed, 0);
+    let aspect = width as f32 / height.max(1) as f32;
 
     for y in 0..height {
         for x in 0..width {
+            // (1) Domain warp. `fbm_noise` is 0..1, so centring it makes the displacement symmetric —
+            // the warp reshapes a continent without translating the whole field.
+            let nx = x as f32 / width as f32;
+            let ny = y as f32 / height as f32;
+            let (warp_x, warp_y) = if warp_amplitude > 0.0 && warp_frequency > 0.0 {
+                let sx = nx * warp_frequency * aspect;
+                let sy = ny * warp_frequency;
+                let dx = fbm_noise(
+                    sx,
+                    sy,
+                    CONTINENT_WARP_OCTAVES,
+                    CONTINENT_WARP_LACUNARITY,
+                    CONTINENT_WARP_GAIN,
+                    warp_seed_x,
+                ) - 0.5;
+                let dy = fbm_noise(
+                    sx,
+                    sy,
+                    CONTINENT_WARP_OCTAVES,
+                    CONTINENT_WARP_LACUNARITY,
+                    CONTINENT_WARP_GAIN,
+                    warp_seed_y,
+                ) - 0.5;
+                (2.0 * warp_amplitude * dx, 2.0 * warp_amplitude * dy)
+            } else {
+                (0.0, 0.0)
+            };
+            let sample_x = x as f32 + warp_x;
+            let sample_y = y as f32 + warp_y;
+
             let mut bias = -1.0f32;
-            for &(cx, cy) in &centers {
-                let dx = torus_delta(x as f32, cx, width as f32, wrap_horizontal);
-                let dy = y as f32 - cy;
+            for (center, &(ux, uy)) in centers.iter().zip(tilt_dirs.iter()) {
+                let &(cx, cy) = center;
+                // The signed offset is what the tilt needs; `torus_delta` yields only a magnitude, so
+                // the sign is recovered from the unwrapped delta and re-applied.
+                let raw_dx = sample_x - cx;
+                let dx = torus_delta(sample_x, cx, width as f32, wrap_horizontal)
+                    * if raw_dx < 0.0 { -1.0 } else { 1.0 };
+                let dy = sample_y - cy;
                 let t = ((dx * dx + dy * dy).sqrt() / radius).clamp(0.0, 1.0);
-                bias = bias.max(1.0 - 2.0 * t.powf(exponent));
+                // (2) Per-continent tilt: a plane through the centre, normalised by the radius so the
+                // strength lever is in the same units as the envelope's own `[-1, 1]` span — and
+                // **windowed by `(1 - t)` so it vanishes at the continent's rim**.
+                //
+                // The window is not cosmetic. `t` saturates at 1 beyond the radius but a raw plane does
+                // not: an unwindowed tilt keeps climbing with distance, so it lifts the far field into
+                // a ramp that bridges every centre. Measured, that collapsed landmasses ≥ `min_area`
+                // from 3–5 to **1** on every seed while the tilt was strong enough to make rivers. The
+                // window keeps the tilt where drainage is decided — the interior — and leaves the
+                // coastline the envelope's business.
+                let along = ((dx * ux + dy * uy) / radius).clamp(-1.0, 1.0);
+                // The cross-axis coordinate: `u` rotated a quarter turn.
+                let across = ((dx * -uy + dy * ux) / radius).clamp(-1.0, 1.0);
+                let window = 1.0 - t.powf(CONTINENT_TILT_WINDOW_EXPONENT);
+                // A bare tilt is not enough, and this is the correction the measurements forced.
+                // A tilted *plane* drains one way but drains it in **parallel**: every column runs
+                // straight down its own strip to the coast, so a 40-tile continent yields forty
+                // 20-long rivers rather than one trunk. Convergence needs the cross-section to be
+                // **concave** — high flanks, low axis — which is what real trunk basins sit in
+                // (Mississippi, Amazon, Congo all occupy a structural low between highland rims).
+                //
+                // So the term is a *tilted trough*, not a tilted plane: `tilt_strength` sets the
+                // down-axis gradient that decides which way it drains, and `trough_gain` (a fraction
+                // of it, so one lever still governs the whole structure) raises the ground away from
+                // the axis so flow gathers onto it before running down.
+                let tilt = cfg.continental_tilt_strength
+                    * (along + CONTINENT_TROUGH_GAIN * across.abs())
+                    * window;
+                bias = bias.max(1.0 - 2.0 * t.powf(exponent) + tilt);
             }
+
+            // (3) Ridged spine, gated by the continent envelope so it raises divides *inside* a
+            // landmass instead of scattering seamounts across the ocean. `clamp(bias, 0, 1)` is that
+            // gate: it is 0 everywhere the bias is already sinking the gaps.
+            if spine_amplitude > 0.0 && spine_frequency > 0.0 {
+                let raw = fbm_noise(
+                    nx * spine_frequency * aspect,
+                    ny * spine_frequency,
+                    CONTINENT_SPINE_OCTAVES,
+                    CONTINENT_SPINE_LACUNARITY,
+                    CONTINENT_SPINE_GAIN,
+                    spine_seed,
+                );
+                let ridged = (1.0 - (raw - 0.5).abs() * 2.0)
+                    .clamp(0.0, 1.0)
+                    .powf(CONTINENT_SPINE_RIDGE_EXPONENT);
+                bias += spine_amplitude * ridged * bias.clamp(0.0, 1.0);
+            }
+
             values[y * width + x] += weight * bias;
         }
     }

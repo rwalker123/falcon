@@ -3376,101 +3376,287 @@ mod tests {
         assert!(volcanic > 0, "expected volcanic terrain");
     }
 
+    /// Prints every regression metric for both shipped presets, so a deliberate re-pin can read all
+    /// the new centres at once. The `*_regression_metrics_stable` assertions stop at the **first**
+    /// drift, which otherwise turns a re-pin into a one-metric-per-run loop.
+    #[test]
+    #[ignore]
+    fn print_regression_metrics() {
+        println!(
+            "earthlike: {:?}",
+            regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64))
+        );
+        println!(
+            "polar_contrast: {:?}",
+            regression_metrics_for_preset("polar_contrast", None)
+        );
+    }
+
     #[test]
     fn earthlike_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64));
         assert!(
-            (metrics.land_ratio - 0.402).abs() <= 0.01,
+            (metrics.land_ratio - 0.403).abs() <= 0.01,
             "earthlike land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 3105).abs() <= 32,
+            (metrics.fold as isize - 2326).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 346).abs() <= 16,
+            (metrics.fault as isize - 254).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 11).abs() <= 6,
+            (metrics.volcanic as isize - 24).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 661).abs() <= 32,
+            (metrics.dome as isize - 707).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 1369).abs() <= 32,
+            (metrics.polar_fold as isize - 613).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 69).abs() <= 16,
+            (metrics.polar_fault as isize - 157).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 144).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 136).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 117).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 12).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
+    }
+
+    /// **Why a relief term can collapse a preset's fold belts** — the measurement that explained
+    /// `polar_contrast`'s fold count falling 3556 -> 544 under the tilt (run with
+    /// `-- --ignored --nocapture`).
+    ///
+    /// Fold belts form only at boundaries **between plates inside one land component**, and
+    /// [`derive_mountain_mask`] buckets plate count by component area with a **cap of 4**. So the
+    /// fold count tracks *how many multi-plate landmasses there are*, not how much land there is:
+    /// five separate 1.5k-9k-tile bodies carry ~14 plates and a long boundary network, while one
+    /// fused 18k-tile supercontinent carries **4 plates** and almost none.
+    ///
+    /// Measured, that is exactly what happened: the tilt fused `polar_contrast`'s five multi-plate
+    /// components into **two** (largest 9053 -> 18313 tiles, i.e. 85% of all land in one body) and
+    /// the folds went with them. It is the same land-bridging failure the tilt window was added to
+    /// prevent, surviving the window on this preset.
+    ///
+    /// It also **refutes the obvious suspect**: `polar_contrast`'s much stricter
+    /// `belt_convergence` (-0.1 vs earthlike's 0.25) is *not* the sensitivity. Under the dome the
+    /// two gates give 3556 vs 3782 — 6% apart. The gate was never the mechanism; landmass fusion
+    /// was.
+    #[test]
+    #[ignore]
+    fn polar_contrast_fold_investigation() {
+        /// (label, warp, tilt, spine)
+        const RELIEFS: [(&str, f64, f64, f64); 5] = [
+            ("dome", 0.0, 0.0, 0.0),
+            ("warp-only", 0.18, 0.0, 0.0),
+            ("spine-only", 0.0, 0.0, 0.35),
+            ("tilt-on", 0.18, 2.0, 0.35),
+            ("tilt-off (SHIPPED)", 0.18, 0.0, 0.35),
+        ];
+
+        fn plate_structure(
+            land: &[bool],
+            w: usize,
+            h: usize,
+            cfg: &crate::map_preset::MountainsConfig,
+        ) -> String {
+            let total = w * h;
+            let mut comp = vec![usize::MAX; total];
+            let mut sizes: Vec<usize> = Vec::new();
+            for start in 0..total {
+                if !land[start] || comp[start] != usize::MAX {
+                    continue;
+                }
+                let id = sizes.len();
+                let mut size = 0usize;
+                let mut stack = vec![start];
+                comp[start] = id;
+                while let Some(idx) = stack.pop() {
+                    size += 1;
+                    let (x, y) = (idx % w, idx / w);
+                    for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                        let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                        if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                            continue;
+                        }
+                        let n = ny as usize * w + nx as usize;
+                        if land[n] && comp[n] == usize::MAX {
+                            comp[n] = id;
+                            stack.push(n);
+                        }
+                    }
+                }
+                sizes.push(size);
+            }
+            let plates_for = |area: usize| -> usize {
+                let mut n = if area < cfg.plate_area_bucket_2 as usize {
+                    1
+                } else if area < cfg.plate_area_bucket_3 as usize {
+                    2
+                } else if area < cfg.plate_area_bucket_4 as usize {
+                    3
+                } else {
+                    4
+                };
+                if n <= 1 && area >= cfg.plate_area_bump as usize {
+                    n = 2;
+                }
+                n.min(area.max(1))
+            };
+            let plates: usize = sizes.iter().map(|&a| plates_for(a)).sum();
+            let multi: usize = sizes.iter().filter(|&&a| plates_for(a) > 1).count();
+            let in_multi: usize = sizes.iter().filter(|&&a| plates_for(a) > 1).sum();
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            format!(
+                "comps {:>4} | plates {:>4} | multi-plate comps {:>3} (land in them {:>6}) | largest {:?}",
+                sizes.len(),
+                plates,
+                multi,
+                in_multi,
+                &sizes[..sizes.len().min(6)]
+            )
+        }
+
+        fn report(id: &str, relief: (&str, f64, f64, f64), convergence: Option<f64>) {
+            let mut file: serde_json::Value =
+                serde_json::from_str(crate::map_preset::BUILTIN_MAP_PRESETS).expect("presets");
+            for preset in file["presets"].as_array_mut().expect("presets").iter_mut() {
+                let macro_land = preset["macro_land"].as_object_mut().expect("macro_land");
+                macro_land.insert("continental_warp_amplitude".into(), relief.1.into());
+                macro_land.insert("continental_tilt_strength".into(), relief.2.into());
+                macro_land.insert("continental_spine_amplitude".into(), relief.3.into());
+                if let Some(c) = convergence {
+                    preset["mountains"]
+                        .as_object_mut()
+                        .expect("mountains")
+                        .insert("belt_convergence".into(), c.into());
+                }
+            }
+            let presets = MapPresets::from_json_str(&file.to_string()).expect("patched presets");
+            let preset = presets.get(id).expect("preset");
+            let seed = preset_seed(preset, None);
+
+            let mut config = SimulationConfig::builtin();
+            config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+            config.map_seed = seed;
+            config.map_preset_id = preset.id.clone();
+
+            let elevation = build_elevation_field(&config, Some(preset), seed);
+            let bands = build_bands(
+                &elevation,
+                preset.sea_level,
+                &preset.macro_land,
+                &preset.shelf,
+                &preset.islands,
+                &preset.inland_sea,
+                &preset.ocean,
+                preset.moisture_scale,
+                &preset.biomes,
+                seed,
+                preset.mountain_scale,
+                &preset.mountains,
+                false,
+            );
+            let (fold, fault, volcanic, dome) = bands.mountains.iter_counts();
+            let land = bands.land_mask.iter().copied().filter(|&v| v).count();
+            let (w, h) = (
+                preset.dimensions.width as usize,
+                preset.dimensions.height as usize,
+            );
+            println!(
+                "  {:<20} gate {:>5} | fold {:>5} fault {:>4} volc {:>3} dome {:>5} | land {:.3}",
+                relief.0,
+                preset.mountains.belt_convergence,
+                fold,
+                fault,
+                volcanic,
+                dome,
+                land as f64 / (w * h) as f64
+            );
+            println!(
+                "      {}",
+                plate_structure(&bands.land_mask, w, h, &preset.mountains)
+            );
+        }
+
+        println!("=== polar_contrast @ shipped gate (belt_convergence -0.1) ===");
+        for relief in RELIEFS {
+            report("polar_contrast", relief, None);
+        }
+        println!("=== polar_contrast @ earthlike's gate (belt_convergence 0.25) ===");
+        for relief in [RELIEFS[0], RELIEFS[4]] {
+            report("polar_contrast", relief, Some(0.25));
+        }
+        println!("=== earthlike @ its own gate (0.25), for reference ===");
+        for relief in [RELIEFS[0], RELIEFS[4]] {
+            report("earthlike", relief, None);
+        }
     }
 
     #[test]
     fn polar_contrast_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("polar_contrast", None);
         assert!(
-            (metrics.land_ratio - 0.438).abs() <= 0.01,
+            (metrics.land_ratio - 0.440).abs() <= 0.01,
             "polar_contrast land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 3556).abs() <= 40,
+            (metrics.fold as isize - 3004).abs() <= 40,
             "polar_contrast fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 690).abs() <= 24,
+            (metrics.fault as isize - 702).abs() <= 24,
             "polar_contrast fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 51).abs() <= 10,
+            (metrics.volcanic as isize - 52).abs() <= 10,
             "polar_contrast volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 925).abs() <= 40,
+            (metrics.dome as isize - 981).abs() <= 40,
             "polar_contrast dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 2328).abs() <= 36,
+            (metrics.polar_fold as isize - 1471).abs() <= 36,
             "polar_contrast polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 261).abs() <= 18,
+            (metrics.polar_fault as isize - 244).abs() <= 18,
             "polar_contrast polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 177).abs() <= 14,
+            (metrics.polar_uplift_cells as isize - 233).abs() <= 14,
             "polar_contrast polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 564).abs() <= 18,
+            (metrics.polar_relief_cells as isize - 368).abs() <= 18,
             "polar_contrast polar relief cap drift: {}",
             metrics.polar_relief_cells
         );

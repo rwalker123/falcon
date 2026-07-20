@@ -19,16 +19,17 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
+use core_sim::grid_utils::hex_range_tiles;
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    ForageRegistry, GenerationId, GenerationRegistry, GrazePatch, GrazeRegistry, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_COMPLETE,
 };
@@ -149,6 +150,45 @@ fn seat_pen(
     "pen_0".to_string()
 }
 
+/// Capacity every tile of a levelled pen footprint carries. Any positive value works — the tests read
+/// the **ratio** between a 1-tile and a 7-tile fence, never an absolute — so this is a fixture
+/// constant, not a tuning lever.
+const LEVELLED_PASTURE_CAPACITY: f32 = 200.0;
+
+/// The widest fence any test in this file seats. The footprint is levelled out to this radius, so
+/// every radius in a sweep reads the same per-tile pasture and the comparison between them is a pure
+/// tile-count comparison.
+const MAX_SWEPT_PEN_RADIUS: u32 = 2;
+
+/// **Level the pen's footprint to a uniform pasture**, so a fence's K is a function of how many tiles
+/// it encloses and nothing else.
+///
+/// The fixture anchors on `richest_patch()`, which is by construction the map's single best tile — its
+/// six neighbours are necessarily no richer, and *how much* poorer they are is whatever worldgen
+/// happened to put there. So "a 7-tile fence holds ≥1.5× a 1-tile fence" was being decided by the
+/// biomes around one generated tile rather than by the pen economy: a worldgen retune moved the
+/// neighbourhood and the ratio fell to 1.42× while the mechanic under test was completely unchanged.
+/// Levelling makes the enclosed pasture exactly `tiles × LEVELLED_PASTURE_CAPACITY`, so radius 1 is a
+/// true 7× of radius 0 and the assertion is earned by the footprint rule instead of by the map.
+fn level_footprint_pasture(app: &mut App, center: UVec2, radius: u32) {
+    let (width, height, wrap) = {
+        let registry = app.world.resource::<TileRegistry>();
+        let wrap = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        (registry.width, registry.height, wrap)
+    };
+    let footprint = hex_range_tiles(center, radius, width, height, wrap);
+    let mut graze = app.world.resource_mut::<GrazeRegistry>();
+    for tile in footprint {
+        graze
+            .patches
+            .insert(tile, GrazePatch::new(tile, LEVELLED_PASTURE_CAPACITY));
+    }
+}
+
 /// A keeper band standing on the pen tile with a single Hunt assignment (= tending the pen). It pays
 /// the feed and harvests the pen each turn. Returns its entity.
 fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
@@ -253,6 +293,10 @@ const PEN_BODY_MASS: f32 = 2.0;
 fn run_pen_to_settle(radius: u32, start: f32, cap: f32, fodder: f32, wild_r: f32) -> f32 {
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
+    // The fence's K must depend on how many tiles it encloses, not on the biomes worldgen happened to
+    // put around the anchor — see `level_footprint_pasture`. Levelled at the widest radius the sweep
+    // uses, so every radius reads the same per-tile pasture.
+    level_footprint_pasture(&mut app, tile, MAX_SWEPT_PEN_RADIUS);
     let id = seat_pen(
         &mut app,
         tile,
@@ -465,6 +509,9 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
 
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
+    // Same reason as the convergence sweep: the ring must raise K because it encloses more tiles, not
+    // because worldgen put good ground next door. See `level_footprint_pasture`.
+    level_footprint_pasture(&mut app, tile, MAX_SWEPT_PEN_RADIUS);
     // Seat a radius-0 pen at equilibrium-ish so K is stable before the extension.
     let id = seat_pen(
         &mut app,

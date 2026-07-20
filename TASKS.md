@@ -75,7 +75,8 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       monotonically re-anchored (`anchor_contour_to_sea_level`) or the carved valleys never reach
       hydrology.
 
-- [ ] **Capture: the divides, not the valleys.** *(Next worldgen arc — start after PR #133 merges.)*
+- [~] **Capture: the divides, not the valleys.** *(Attempted — partially delivered; see the outcome
+      note at the end of this item before picking it back up.)*
       Incision deepens the valleys a continent already has; it does not move its **divides**, which come
       from the continent-scale fbm in `build_elevation_field`. A noise-dome continent (seeds 1/3) sheds
       radially no matter how deep the valleys get. The next lever is therefore the **noise itself** — a
@@ -106,6 +107,45 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       **not** "fix" this by lowering `river_class_navigable_min_discharge` or by making navigability a
       percentile of the accumulation distribution — that is a quota applied to the output, which is the
       pattern the elevation-authority arc exists to delete. Rivers must emerge from the field.
+
+      **OUTCOME of the first attempt (the three-term continental relief).** `apply_continental_bias`
+      now applies **domain warp + per-continent tilt (as a tilted *trough*) + ridged spine** on top of
+      the radial envelope, each a `macro_land` lever (see `core_sim/CLAUDE.md` → Map Presets).
+      Measured over 6 seeds at 80×52 (`core_sim/tests/relief_sweep.rs`), dome → **the shipped
+      warp+spine** (the tilt ships at `0.0`, see finding 2): **sowable ground 35 → 49**, navigable
+      rivers on **1/6 → 2/6 seeds**, max accumulation mean **25.4 → 28.4**, land fraction unchanged.
+
+      **What is still open, with the root cause now measured rather than inferred:**
+      1. **Basin coherence did not move** (~0.02–0.08, as before). It is bounded by *sink density*, not
+         by relief: a corner is a sink iff any of its 3 hexes is ocean, and the largest landmass at
+         80×52 has a **mean depth-to-coast of ~2.9 tiles** — roughly one sink corner per two interior
+         corners. Ruled out by direct measurement: `river_flat_jitter` (5e-4 → 1e-6 changes nothing)
+         and `continental_weight` (0.5 → 2.0 improves compactness but *lowers* max accumulation). The
+         remaining levers are therefore **landmass compactness** (raise mean depth-to-coast) or
+         **fewer, larger continents** — not more relief terms.
+      2. **The tilt is now OFF (`continental_tilt_strength: 0.0` on both presets), and range width is
+         still unsolved — they are two separate findings.**
+         - The earlier claim that *"the tilt widens ranges 55.2 → ~102"* was a **metric error**: it
+           read mean alpine connected-component **area** as a width. Area does not measure width, and
+           that statistic swings up to **27× between seeds** on a single configuration. Measuring
+           thickness directly (`relief_sweep::alpine_thickness` — every alpine tile's hex distance to
+           the nearest non-alpine tile, 6 seeds at 384×288) shows it is **flat at ~2.2–2.4 across the
+           bare dome and every combination of warp/tilt/spine**. **No continental-envelope lever moves
+           range width.** The open work is downstream in the mountain mask —
+           `derive_mountain_mask`'s `belt_width_tiles` dilation, `apply_belt_relief`, and
+           `terrain_classifier.alpine_relief_threshold`.
+         - The tilt was switched off for a **different, measured reason**: it **fuses continents**.
+           On `polar_contrast` it merged five multi-plate landmasses into two (largest 9,053 →
+           **18,313** tiles, 85% of all land), starving the plate-boundary network fold belts form on
+           and cutting that preset's fold count **3556 → 544 (−85%)**; with the tilt off it recovers
+           to **3004**. The cost of switching it off is one seed in six that no longer grows a
+           navigable river (3/6 → 2/6); the sowable gate is unaffected (**49** tiles).
+      3. **A defect this arc found and fixed, unrelated to worldgen:** the reported "sowable 46 → 0"
+         was a **test-harness bug**, not a regression. `core_sim/tests/forage_field.rs` never ran
+         `generate_hydrology`, so its map had no rivers, no deltas and no `river_edges`, and
+         `plant:field`'s fresh-water rule could not be satisfied by any tile at any grid size. The
+         harness now runs the real pipeline and pins its own grid, and the shipped-map playability
+         check is a separate, deliberately config-reading test.
 
 - [ ] **Fold-mountain counts are knife-edge sensitive to plate-drift RNG.** *(Surfaced by PR #133
       review; test-level symptom fixed there, root cause untouched.)* `derive_mountain_mask` splits each

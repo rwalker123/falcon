@@ -21,17 +21,18 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, rung_site_refusal,
-    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
-    tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
-    RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, generate_hydrology,
+    rung_site_refusal, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_world, tile_forage_capacity, tile_is_fresh_watered, CommandEventLog,
+    CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory,
+    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig,
+    SimulationTick, SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
+    TileRegistry, WellbeingConfigHandle, FOOD, RUNG_TIMESCALE_UNSCALED,
+    SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -60,15 +61,35 @@ const NEAR_ZERO_PROVISIONS: f32 = 1e-3;
 /// asserting the *shape* (sowing bare ground is an investment, not a slow harvest), not a number.
 const BUILD_TRICKLE_FRACTION: f32 = 0.1;
 
+/// The **mechanic fixture's** grid — pinned *here*, deliberately not read from
+/// `simulation_config.json`.
+///
+/// Every test below except the playability one asks a question about the *mechanic* ("does sowing
+/// build a Field, does an abandoned Field go feral"), which has nothing to do with how big the
+/// shipped map is. The fixture used to take its grid from the shipped config while pinning only the
+/// seed, so **editing a gameplay lever silently changed what these tests measured** — and when
+/// worldgen stopped putting sowable ground on the shipped map, all six mechanic tests failed for a
+/// reason none of them was about. Pinning both halves makes the fixture immune to config edits; the
+/// shipped map's playability is asserted separately, and *loudly*, by
+/// [`the_shipped_map_carries_sowable_ground`].
+const MECHANIC_GRID: UVec2 = UVec2::new(96, 64);
+
+/// The seed both fixtures pin. The shipped `map_seed` is `0` = "roll from entropy", so a test that
+/// did not pin one would ask a different question every run.
+const PINNED_SEED: u64 = 119_304_647;
+
 fn spawn_world() -> App {
+    spawn_world_on(MECHANIC_GRID, PINNED_SEED)
+}
+
+fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    // The shipped `map_seed` is 0 = entropy; pin one so "where is the hospitable ground?" is the same
-    // question every run.
-    config.map_seed = 119304647;
+    config.map_seed = seed;
+    config.grid_size = grid_size;
     app.world.insert_resource(config);
 
     app.world
@@ -91,6 +112,14 @@ fn spawn_world() -> App {
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
+    // **Hydrology is not optional here, and leaving it out is what broke this file.**
+    // `spawn_initial_world` builds terrain; `generate_hydrology` is a separate Startup system, and it
+    // is the *only* stage that stamps `RiverDelta`/`Floodplain` and sets the `river_edges` bits.
+    // `plant:field`'s site rule wants rich ground **and fresh water**, and `tile_is_fresh_watered`
+    // reads exactly those river edges — so a fixture that skipped hydrology was asking whether a map
+    // *with no rivers on it* had riverbank farmland. It does not, and cannot, at any grid size or any
+    // seed. Run the pipeline the game runs.
+    generate_hydrology(&mut app.world);
 
     app.world.insert_resource(HerdRegistry::default());
     app.world.insert_resource(ForageRegistry::default());
@@ -310,6 +339,48 @@ fn field_build(app: &App) -> (f32, f32) {
         field.build_accrual(FollowPolicy::Sow, true, RUNG_TIMESCALE_UNSCALED),
         field.build_decay(RUNG_TIMESCALE_UNSCALED),
     )
+}
+
+/// **PLAYABILITY, not mechanic — this is the check that caught worldgen dropping the Field rung.**
+///
+/// Every other test in this file runs on [`MECHANIC_GRID`], pinned so a config edit cannot move what
+/// it measures. This one does the opposite **on purpose**: it reads the **shipped** `grid_size` out
+/// of `simulation_config.json` and asks whether the map a player actually gets carries ground that
+/// rung 3 can take seed on. If it does not, `plant:field` is unreachable in the real game — the
+/// ladder's top plant rung is decoration — and no mechanic test would ever say so.
+///
+/// It asserts the *existence* of sowable ground, not a count: the count is an emergent property of
+/// the heightfield and legitimately moves with worldgen tuning. Zero is the only unplayable answer.
+#[test]
+fn the_shipped_map_carries_sowable_ground() {
+    let shipped_grid = SimulationConfig::builtin().grid_size;
+    let app = spawn_world_on(shipped_grid, PINNED_SEED);
+
+    let sowable = (0..shipped_grid.y)
+        .flat_map(|y| (0..shipped_grid.x).map(move |x| UVec2::new(x, y)))
+        .filter(|coord| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .is_some()
+                && site_verdict(&app, *coord).is_none()
+        })
+        .count();
+
+    assert!(
+        sowable > 0,
+        "INTENSIFICATION RUNG 3 IS UNREACHABLE ON THE SHIPPED MAP.\n\
+         The shipped grid ({}x{}, seed {PINNED_SEED}) carries 0 tiles that satisfy the \
+         `plant:field` rung's site requirement (rich enough ground, on fresh water), so no band can \
+         ever sow a Field and the plant ladder dead-ends at rung 2.\n\
+         This is a WORLDGEN result, not a test-fixture problem: the rule is emergent from the \
+         heightfield. Do NOT fix it by lowering `min_forage_capacity`, relaxing the fresh-water \
+         rule, or stamping deltas anywhere but real river mouths — shape the generated field \
+         instead (`heightfield::apply_continental_bias`).",
+        shipped_grid.x,
+        shipped_grid.y,
+    );
 }
 
 /// **The point of the slice: `Sow` PLACES a source.** Hospitable ground carrying no forage site at
