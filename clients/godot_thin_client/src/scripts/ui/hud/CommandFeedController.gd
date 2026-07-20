@@ -6,9 +6,15 @@ extends RefCounted
 ## HudLayer (composition — Hud holds one of these and delegates). Behaviour is
 ## unchanged; only the ownership moved.
 
+const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
+const DockScrollFit := preload("res://src/scripts/ui/hud/DockScrollFit.gd")
+const TellingPanelScript := preload("res://src/scripts/ui/TellingPanel.gd")
+
 const COMMAND_FEED_LIMIT := 6
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
+
+const COMMAND_TURN_COLOR_HEX := "8fd4ff"
 
 var _panel: PanelCard = null
 var _scroll: ScrollContainer = null
@@ -26,6 +32,11 @@ func _init(panel: PanelCard, scroll: ScrollContainer, label: RichTextLabel, dock
 
 ## Merge a batch of server command-event dicts (`{tick, kind, label, detail}`),
 ## de-duplicated by their signature, then re-render.
+##
+## NARRATIVE KINDS ARE SKIPPED — they belong to `TellingPanel` (see its header for why: a receipt
+## and a telling want opposite retention and density, and two beats used to fill this whole card
+## and push the receipts off). The test lives THERE, not here, so a kind can never be claimed by
+## both surfaces or dropped by both.
 func ingest_events(events_variant: Variant) -> void:
 	if _label == null or not (events_variant is Array):
 		return
@@ -34,8 +45,10 @@ func ingest_events(events_variant: Variant) -> void:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		var tick: int = int(entry.get("tick", -1))
 		var kind: String = String(entry.get("kind", "")).strip_edges()
+		if TellingPanelScript.handles_kind(kind):
+			continue
+		var tick: int = int(entry.get("tick", -1))
 		var label: String = String(entry.get("label", "")).strip_edges()
 		var detail: String = String(entry.get("detail", "")).strip_edges()
 		var signature := "%d|%s|%s|%s" % [tick, kind, label, detail]
@@ -60,13 +73,16 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 	var summary := label if label != "" else prefix
 	var turn_fragment := ""
 	if tick >= 0:
-		turn_fragment = "[color=#8fd4ff]Turn %d[/color]  " % tick
+		turn_fragment = "[color=#%s]Turn %d[/color]  " % [COMMAND_TURN_COLOR_HEX, tick]
 	var message := "%s[b]%s[/b]" % [turn_fragment, prefix]
 	if summary != "" and summary != prefix:
 		message += " — %s" % summary
 	if detail != "":
 		message += "\n[i]%s[/i]" % detail
 	_entries.append(message)
+	_trim()
+
+func _trim() -> void:
 	while _entries.size() > COMMAND_FEED_LIMIT:
 		_entries.pop_front()
 
@@ -90,10 +106,7 @@ func render() -> void:
 func _resize() -> void:
 	if _scroll == null or _label == null:
 		return
-	var cap: float = _label.get_content_height()
-	if _dock_scroll != null and _dock_scroll.size.y > 0.0:
-		var top_in_dock: float = _scroll.global_position.y - _dock_scroll.global_position.y
-		var available: float = _dock_scroll.size.y - top_in_dock - COMMAND_FEED_BOTTOM_MARGIN
-		cap = min(cap, max(available, COMMAND_FEED_MIN_HEIGHT))
-	_scroll.custom_minimum_size.y = max(cap, 0.0)
-	_scroll.set_deferred("scroll_vertical", 1000000)
+	DockScrollFit.fit(_scroll, _label, _dock_scroll, COMMAND_FEED_MIN_HEIGHT, COMMAND_FEED_BOTTOM_MARGIN)
+	# A receipt is worthless once read, so the feed ALWAYS snaps to newest — no read-position
+	# preservation here (that is the Telling panel's concern, where scrolling back is the point).
+	_scroll.set_deferred("scroll_vertical", int(_label.get_content_height()))

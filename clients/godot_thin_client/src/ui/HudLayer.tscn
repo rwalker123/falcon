@@ -189,6 +189,29 @@ text = "Trail Sovereigns"
 theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
 text = "Nomadic strategy saga"
 
+[node name="TellingPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
+script = ExtResource("4")
+card_title = "AT THE FIRE"
+custom_minimum_size = Vector2(320, 0)
+
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel"]
+size_flags_horizontal = 3
+
+[node name="TellingScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="TellingLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel/CardContent/TellingScroll"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+bbcode_enabled = true
+scroll_active = false
+fit_content = true
+autowrap_mode = 2
+text = "[i]Nothing has been told yet.[/i]"
+
 [node name="VictoryPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
 custom_minimum_size = Vector2(0, 140)
 

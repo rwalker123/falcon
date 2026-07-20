@@ -1118,6 +1118,13 @@ pub enum CommandEventKind {
     ExpeditionArrived,
     ExpeditionRecalled,
     ExpeditionReturned,
+    /// A narrative beat from The Telling (`core_sim::telling`). The wire field is already a
+    /// string, so the feed renders new kinds generically — no schema or client change.
+    NarrativeBeat,
+    /// A **fork** from The Telling was answered (by the player, or by the expiry valve resolving
+    /// it to its defer choice). The chosen line joins the story record rather than the decision
+    /// being a silent state change.
+    NarrativeFork,
 }
 
 impl CommandEventKind {
@@ -1142,6 +1149,8 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionArrived => "expedition_arrived",
             CommandEventKind::ExpeditionRecalled => "expedition_recalled",
             CommandEventKind::ExpeditionReturned => "expedition_returned",
+            CommandEventKind::NarrativeBeat => "narrative_beat",
+            CommandEventKind::NarrativeFork => "narrative_fork",
         }
     }
 }

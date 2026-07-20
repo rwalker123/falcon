@@ -32,6 +32,9 @@ pub struct SnapshotContext<'w> {
     /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
     /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
     pub graze_registry: Res<'w, GrazeRegistry>,
+    /// The Telling's narrative memory, captured into the rollback snapshot (`beat_ledger`) so a
+    /// rollback past a beat lets that beat fire again — see `core_sim/src/telling/mod.rs`.
+    pub beat_ledger: Res<'w, BeatLedger>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
@@ -156,6 +159,9 @@ pub struct SnapshotHistory {
     forage_patches: Vec<ForagePatchState>,
     intensification_knowledge: Vec<IntensificationKnowledgeState>,
     command_events: Vec<CommandEventState>,
+    pending_forks: Vec<PendingForksState>,
+    stance_axes: Vec<StanceState>,
+    voice_medium: Vec<VoiceMediumState>,
     herds: Vec<HerdTelemetryState>,
     food_modules: Vec<FoodModuleState>,
     history: VecDeque<StoredSnapshot>,
@@ -220,6 +226,9 @@ impl SnapshotHistory {
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
             command_events: Vec::new(),
+            pending_forks: Vec::new(),
+            stance_axes: Vec::new(),
+            voice_medium: Vec::new(),
             herds: Vec::new(),
             food_modules: Vec::new(),
             history: VecDeque::new(),
@@ -527,6 +536,24 @@ impl SnapshotHistory {
         } else {
             Some(command_events_state.clone())
         };
+        let pending_forks_state = snapshot.pending_forks.clone();
+        let pending_forks_delta = if self.pending_forks == pending_forks_state {
+            None
+        } else {
+            Some(pending_forks_state.clone())
+        };
+        let stance_axes_state = snapshot.stance_axes.clone();
+        let stance_axes_delta = if self.stance_axes == stance_axes_state {
+            None
+        } else {
+            Some(stance_axes_state.clone())
+        };
+        let voice_medium_state = snapshot.voice_medium.clone();
+        let voice_medium_delta = if self.voice_medium == voice_medium_state {
+            None
+        } else {
+            Some(voice_medium_state.clone())
+        };
         let capability_flags_state = snapshot.capability_flags;
         let capability_flags_delta = if self.capability_flags == capability_flags_state {
             None
@@ -572,6 +599,9 @@ impl SnapshotHistory {
             victory: victory_delta.clone(),
             capability_flags: capability_flags_delta,
             command_events: command_events_delta.clone(),
+            pending_forks: pending_forks_delta.clone(),
+            stance_axes: stance_axes_delta.clone(),
+            voice_medium: voice_medium_delta.clone(),
             faction_inventory: faction_inventory_delta.clone(),
             sedentarization: sedentarization_delta.clone(),
             discovered_sites: discovered_sites_delta.clone(),
@@ -654,6 +684,9 @@ impl SnapshotHistory {
         self.forage_patches = forage_patches_state;
         self.intensification_knowledge = intensification_knowledge_state;
         self.command_events = command_events_state;
+        self.pending_forks = pending_forks_state;
+        self.stance_axes = stance_axes_state;
+        self.voice_medium = voice_medium_state;
         self.herds = herd_state;
         self.food_modules = food_modules_state;
         self.last_snapshot = Some(snapshot_arc);
@@ -736,6 +769,9 @@ impl SnapshotHistory {
         self.forage_patches = entry.snapshot.forage_patches.clone();
         self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
         self.command_events = entry.snapshot.command_events.clone();
+        self.pending_forks = entry.snapshot.pending_forks.clone();
+        self.stance_axes = entry.snapshot.stance_axes.clone();
+        self.voice_medium = entry.snapshot.voice_medium.clone();
         self.herds = entry.snapshot.herds.clone();
         self.food_modules = entry.snapshot.food_modules.clone();
         self.great_discoveries = entry
@@ -822,6 +858,9 @@ impl SnapshotHistory {
             victory: None,
             capability_flags: None,
             command_events: None,
+            pending_forks: None,
+            stance_axes: None,
+            voice_medium: None,
             herds: None,
             food_modules: None,
             faction_inventory: None,
@@ -1001,6 +1040,9 @@ impl SnapshotHistory {
             victory: None,
             capability_flags: None,
             command_events: None,
+            pending_forks: None,
+            stance_axes: None,
+            voice_medium: None,
             herds: None,
             food_modules: None,
             faction_inventory: None,
@@ -1110,6 +1152,9 @@ impl SnapshotHistory {
             victory: None,
             capability_flags: None,
             command_events: None,
+            pending_forks: None,
+            stance_axes: None,
+            voice_medium: None,
             herds: None,
             food_modules: None,
             faction_inventory: None,
@@ -1229,6 +1274,7 @@ pub fn capture_snapshot(
         herd_registry,
         forage_registry,
         graze_registry,
+        beat_ledger,
         fog_reveals,
         elevation,
         moisture,
@@ -1689,6 +1735,9 @@ pub fn capture_snapshot(
     let mut graze_registry_states: Vec<GrazeState> =
         graze_registry.patches.values().map(graze_state).collect();
     graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
+    // The Telling's narrative memory. Already deterministically ordered (BTree-backed), so it
+    // needs no sort of its own.
+    let beat_ledger_state = beat_ledger.to_state();
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1702,6 +1751,10 @@ pub fn capture_snapshot(
     );
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
+    // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
+    let pending_forks_state = snapshot_pending_forks(&beat_ledger);
+    let stance_axes_state = snapshot_stance_axes(&beat_ledger);
+    let voice_medium_state = snapshot_voice_medium(&beat_ledger);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
 
@@ -1729,6 +1782,7 @@ pub fn capture_snapshot(
         herd_registry: herd_registry_states,
         forage_registry: forage_registry_states,
         graze_registry: graze_registry_states,
+        beat_ledger: beat_ledger_state,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -1738,6 +1792,9 @@ pub fn capture_snapshot(
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
         command_events: command_events_state.clone(),
+        pending_forks: pending_forks_state.clone(),
+        stance_axes: stance_axes_state.clone(),
+        voice_medium: voice_medium_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
@@ -2155,6 +2212,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     } else {
         world.insert_resource(GrazeRegistry::from_states(&snapshot.graze_registry));
     }
+
+    // Rebuild The Telling's narrative memory. **Restore, not just capture**: without this a
+    // rollback past a beat leaves it marked fired and it could never fire again.
+    world.insert_resource(BeatLedger::from_state(&snapshot.beat_ledger));
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
         handle.get()

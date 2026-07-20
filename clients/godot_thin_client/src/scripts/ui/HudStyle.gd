@@ -26,6 +26,18 @@ const WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ET
 const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
 const HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
 
+# ---- The Telling: voice-medium accents -------------------------------------
+# The narrator's voice AGES as the civilization crosses medium thresholds (oral -> painted ->
+# written), and the accent is how that reads. RESTRAINT IS THE REQUIREMENT: the HUD is dark and
+# STAYS dark — a light "parchment" panel would read as a rendering bug, not a chronicle — so the
+# maturation is carried by the accent, the title and a hairline rule, nothing more. The ladder runs
+# from firelight warmth toward cool ink; `oral` reuses WARN (it IS the ember tone) rather than
+# adding a fourth near-identical amber, so only the two genuinely-new tones are named here.
+const VOICE_PIGMENT := Color(0.784, 0.612, 0.400, 1.0)   # #c89c66  earth pigment on a cave wall
+# Deliberately DESATURATED: the cool end of the ladder must read as a considered accent, never as
+# the SIGNAL cyan (which means "targeting" everywhere else) nor as a greyed-out/disabled control.
+const VOICE_INK     := Color(0.510, 0.635, 0.706, 1.0)   # #82a2b4  cool ink, a written record
+
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed).
 const SIGNAL_HEX := "4fe0cf"
 const WARN_HEX := "f2b13f"

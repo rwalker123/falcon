@@ -1239,6 +1239,18 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         let _ = dict.insert("command_events", &command_events_to_array(events));
     }
 
+    if let Some(pending_forks) = delta.campaign().and_then(|s| s.pendingForks()) {
+        let _ = dict.insert("pending_forks", &pending_forks_to_array(pending_forks));
+    }
+
+    if let Some(stance_axes) = delta.campaign().and_then(|s| s.stanceAxes()) {
+        let _ = dict.insert("stance_axes", &stance_axes_to_array(stance_axes));
+    }
+
+    if let Some(voice_medium) = delta.campaign().and_then(|s| s.voiceMedium()) {
+        let _ = dict.insert("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
     if let Some(herds) = delta.subsistence().and_then(|s| s.herds()) {
         let _ = dict.insert("herds", &herds_to_array(herds));
     }
@@ -2794,6 +2806,18 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             .map(food_modules_to_array),
     );
 
+    if let Some(pending_forks) = snapshot.campaign().and_then(|s| s.pendingForks()) {
+        let _ = dict.insert("pending_forks", &pending_forks_to_array(pending_forks));
+    }
+
+    if let Some(stance_axes) = snapshot.campaign().and_then(|s| s.stanceAxes()) {
+        let _ = dict.insert("stance_axes", &stance_axes_to_array(stance_axes));
+    }
+
+    if let Some(voice_medium) = snapshot.campaign().and_then(|s| s.voiceMedium()) {
+        let _ = dict.insert("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
     if let Some(server_build) = header.serverBuild() {
         let _ = dict.insert("server_build", server_build);
     }
@@ -3092,6 +3116,27 @@ fn sedentarization_to_array(
     array
 }
 
+/// The Telling (docs/plan_the_telling.md): each faction's narrator MEDIUM — oral saga ->
+/// painted chronicle -> written record. PRESENTATIONAL only; it never selects different copy.
+/// `medium_id` stays a free-form string (the species/policy/register convention), so a new
+/// medium needs no schema change and the client must key its styling off a table with a
+/// fallback rather than a match assuming the shipped three are exhaustive.
+fn voice_medium_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::VoiceMediumState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        if let Some(medium_id) = state.mediumId() {
+            let _ = dict.insert("medium_id", medium_id);
+        }
+        let _ = dict.insert("medium_index", state.mediumIndex() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 fn discovered_sites_to_array(
     states: Vector<'_, ForwardsUOffset<fb::DiscoveredSitesState<'_>>>,
 ) -> VarArray {
@@ -3121,6 +3166,110 @@ fn discovered_sites_to_array(
             }
         }
         let _ = dict.insert("sites", &sites);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The Telling (docs/plan_the_telling.md): one register's rendering of a player-visible line.
+/// `register` is a FREE-FORM string by design — a new voice register needs no schema change — so
+/// the decoder never enumerates them and the client builds its toggle from what is present.
+fn voice_lines_to_array(lines: Vector<'_, ForwardsUOffset<fb::VoiceLine<'_>>>) -> VarArray {
+    let mut array = VarArray::new();
+    for line in lines {
+        let mut dict = VarDictionary::new();
+        if let Some(register) = line.register() {
+            let _ = dict.insert("register", register);
+        }
+        if let Some(text) = line.text() {
+            let _ = dict.insert("text", text);
+        }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// Pending narrative forks, per faction — the same per-faction-with-nested-children shape as
+/// `discovered_sites_to_array`, one level deeper (each fork nests narration / choices / gloss).
+///
+/// `is_defer` is computed SERVER-side and exactly one choice per fork carries it; it is copied
+/// through verbatim so the client never has to re-derive which choice writes nothing.
+fn pending_forks_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::PendingForksState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let mut forks = VarArray::new();
+        if let Some(entries) = state.forks() {
+            for fork in entries {
+                let mut fork_dict = VarDictionary::new();
+                if let Some(beat_id) = fork.beatId() {
+                    let _ = fork_dict.insert("beat_id", beat_id);
+                }
+                if let Some(wardrobe_id) = fork.wardrobeId() {
+                    let _ = fork_dict.insert("wardrobe_id", wardrobe_id);
+                }
+                let _ = fork_dict.insert("posted_tick", fork.postedTick() as i64);
+                if let Some(narration) = fork.narration() {
+                    let _ = fork_dict.insert("narration", &voice_lines_to_array(narration));
+                }
+                let mut choices = VarArray::new();
+                if let Some(entries) = fork.choices() {
+                    for choice in entries {
+                        let mut choice_dict = VarDictionary::new();
+                        if let Some(choice_id) = choice.choiceId() {
+                            let _ = choice_dict.insert("choice_id", choice_id);
+                        }
+                        if let Some(label) = choice.label() {
+                            let _ = choice_dict.insert("label", &voice_lines_to_array(label));
+                        }
+                        let _ = choice_dict.insert("is_defer", choice.isDefer());
+                        choices.push(&choice_dict.to_variant());
+                    }
+                }
+                let _ = fork_dict.insert("choices", &choices);
+                let mut gloss = VarArray::new();
+                if let Some(entries) = fork.gloss() {
+                    for entry in entries {
+                        let mut gloss_dict = VarDictionary::new();
+                        if let Some(signal) = entry.signal() {
+                            let _ = gloss_dict.insert("signal", signal);
+                        }
+                        let _ = gloss_dict.insert("value", entry.value());
+                        gloss.push(&gloss_dict.to_variant());
+                    }
+                }
+                let _ = fork_dict.insert("gloss", &gloss);
+                forks.push(&fork_dict.to_variant());
+            }
+        }
+        let _ = dict.insert("forks", &forks);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// Per-faction stance axes — the EFFECTIVE value of each axis in [-1, 1] (behaviour + declared
+/// offsets). `axis` is a free-form string for the same reason `register` is.
+fn stance_axes_to_array(states: Vector<'_, ForwardsUOffset<fb::StanceState<'_>>>) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let mut axes = VarArray::new();
+        if let Some(entries) = state.axes() {
+            for entry in entries {
+                let mut axis_dict = VarDictionary::new();
+                if let Some(axis) = entry.axis() {
+                    let _ = axis_dict.insert("axis", axis);
+                }
+                let _ = axis_dict.insert("value", entry.value());
+                axes.push(&axis_dict.to_variant());
+            }
+        }
+        let _ = dict.insert("axes", &axes);
         array.push(&dict.to_variant());
     }
     array

@@ -245,6 +245,18 @@ pub struct SpeciesDef {
     /// [`DEFAULT_HUSBANDRY_DENSITY`], validated finite & `>= 1.0`.
     #[serde(default = "default_husbandry_density")]
     pub pen_density: f32,
+    /// **Plural form** of the species, lowercase, reading naturally mid-sentence ("the *deer* did
+    /// not run"). Consumed by The Telling's fauna noun resolvers (`core_sim/src/telling/nouns.rs`).
+    ///
+    /// Optional, defaulting to `display_name` — deliberately **data, not a heuristic**: many of
+    /// these names are already collective ("aurochs", "deer", "fowl") and a naive `+s` would
+    /// produce "deers".
+    #[serde(default)]
+    pub plural: Option<String>,
+    /// **Adjectival form** of the species, lowercase ("*deer* bones"). Optional, defaulting to
+    /// `display_name`. Same rationale as [`SpeciesDef::plural`].
+    #[serde(default)]
+    pub adjective: Option<String>,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -293,6 +305,16 @@ pub(crate) fn default_loiter_radius() -> u32 {
 }
 
 impl SpeciesDef {
+    /// The species' plural form, falling back to its display name when the table omits one.
+    pub fn plural_or_name(&self) -> &str {
+        self.plural.as_deref().unwrap_or(&self.display_name)
+    }
+
+    /// The species' adjectival form, falling back to its display name when the table omits one.
+    pub fn adjective_or_name(&self) -> &str {
+        self.adjective.as_deref().unwrap_or(&self.display_name)
+    }
+
     /// Sample a route length within the configured inclusive range (>= 1).
     pub fn sample_route_len(&self, rng: &mut SmallRng) -> u32 {
         let lo = self.route_len[0].max(1);

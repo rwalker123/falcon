@@ -15,6 +15,9 @@ signal cancel_order_requested(band: Dictionary)
 ##   x, y (forage/hunt readout), herd_id, policy (hunt) }. Main formats the
 ## `assign_labor …` text command. workers==0 removes/zeroes the assignment.
 signal assign_labor_requested(payload: Dictionary)
+## The Telling (docs/plan_the_telling.md): the player answered a pending narrative fork.
+## Payload keys: { faction, beat_id, choice_id }. Main formats the `answer_fork …` command.
+signal answer_fork_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
@@ -87,6 +90,9 @@ var _server_build: String = "?"
 @onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
 @onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
+@onready var telling_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel as PanelCard
+@onready var telling_scroll: ScrollContainer = %TellingScroll
+@onready var telling_label: RichTextLabel = %TellingLabel
 @onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
 @onready var tile_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel as PanelCard
 @onready var tile_detail: RichTextLabel = %TileDetail
@@ -104,6 +110,7 @@ var _server_build: String = "?"
 @onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
+@onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
 @onready var turn_orb: TurnOrb = $LayoutRoot/RootColumn/BottomBar/TurnCluster
 @onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/MinimapContainer
 
@@ -146,6 +153,25 @@ const ATTENTION_PEN_LABEL_FORMAT := "%s pen starving"
 # appending "· Band 1" pushed this row past it (rendered, looked at, cut). The row already names the
 # herd, and its Jump lands on that herd — the band adds nothing the player can act on here.
 const ATTENTION_PEN_DETAIL_FORMAT := "%d%% fed — the herd is shrinking"
+## The Telling (docs/plan_the_telling.md): a narrative fork awaiting the player's answer.
+##
+## CRITICAL and, uniquely, `blocking` — it is the one producer that holds the end-turn. That is a
+## deliberate asymmetry with every other row: a starving band is a loss you can choose to accept,
+## but a fork is the game asking who your people ARE, and letting it scroll past unanswered is the
+## one outcome the arc cannot afford. The out is not "ignore it" but the DEFER choice, which the
+## panel always offers and always keeps enabled.
+##
+## It is NON-LOCATING (x/y = -1): the question lives in a panel, not on a hex, so the orb row reads
+## `Open ▸` and routes through `panel_requested` rather than a map jump.
+const ATTENTION_KIND_DECISION := "decision"
+const ATTENTION_NON_LOCATING := -1
+## The orb's rows CLIP at POPOVER_WIDTH, and a fork's narration is a paragraph — so the row carries
+## only a fixed prompt and the fork's own first clause; the QUESTION itself belongs in the panel.
+const ATTENTION_DECISION_LABEL := "A question awaits an answer"
+const ATTENTION_DECISION_DETAIL_MAX_CHARS := 64
+const ATTENTION_DECISION_DETAIL_ELLIPSIS := "…"
+const UNANSWERED_FORK_LABEL := "A question went unanswered"
+const UNANSWERED_FORK_DETAIL := "The turn advanced past a pending fork — it will settle as if nothing was said."
 const ATTENTION_SEVERITY_CRITICAL := "critical"
 const ATTENTION_SEVERITY_WARN := "warn"
 # Awaiting expeditions are listed ONE ROW EACH (not one aggregate like idle workers): each parked
@@ -272,12 +298,25 @@ const ACTIVITY_GLYPHS := {
 const STORE_ITEM_PROVISIONS := "provisions"
 const FOOD_UNLIMITED_GLYPH := "∞"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
+# Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
+# register into — one prefs file, its own section; the path/section constants are borrowed.
+const HUD_PANELS_CONFIG_SECTION := "hud_panels"
+const CONFIG_KEY_LEGEND_SUPPRESSED := "legend_suppressed"
+const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
+# Both reference cards start HIDDEN: the right dock is the narrative surface's home, and Victory /
+# Terrain Types are look-it-up readouts the player opens on demand (V / L) rather than standing
+# furniture competing with the telling for dock height.
+const PANEL_SUPPRESSED_BY_DEFAULT := true
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
 # The legend card (rows + sort header + suppress state) is owned by _legend; the
-# command feed card by _command_feed. Hud delegates to both.
+# command feed card by _command_feed; the narrative panel by _telling. Hud delegates to all three.
 var _legend: LegendController = null
 var _command_feed: CommandFeedController = null
+var _telling: TellingPanel = null
+# Victory's counterpart to the legend's `legend_suppressed` — the player-hidden state of a dock
+# card, distinct from "no victory data to show".
+var _victory_suppressed: bool = PANEL_SUPPRESSED_BY_DEFAULT
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
@@ -1233,6 +1272,19 @@ var right_dock: PanelDock
 # registers a (edge, size) contribution keyed by a StringName id; the whole HUD
 # insets by the summed per-edge totals.
 var _reservations: Dictionary = {}
+# ---- The Telling (docs/plan_the_telling.md) --------------------------------
+# The player faction's pending forks + stance axes, cached from the snapshot. `_band_attention` is
+# the band/expedition half of the orb registry, cached so a fork arriving on its own delta can
+# rebuild the registry WITHOUT re-running the band producers (set_attention is a full replace, and
+# _prev_band_sizes is consumed by the losing-population producer, so re-invoking update_band_alerts
+# would silently eat that alert).
+var _pending_forks: Array = []
+var _stance_axes: Array = []
+var _band_attention: Array = []
+# Beats already auto-opened this session, so a fork the player dismissed does not re-open on
+# every subsequent snapshot. Keyed by beat_id.
+var _auto_opened_forks: Dictionary = {}
+var _fork_panel: NarrativeForkPanel = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -1241,14 +1293,19 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
+    # The telling lives in the RIGHT dock, so its scroll-fit ceiling is the right dock's scroll
+    # container — passing the left one would compute height against a dock it is not in.
+    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, right_dock_scroll)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
+    _ensure_fork_panel()
     _setup_tooltip()
     _legend.refresh_rows()
     _refresh_campaign_label()
     _refresh_victory_status()
     _command_feed.render()
+    _telling.render()
     _connect_selection_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
@@ -1256,8 +1313,13 @@ func _ready() -> void:
     left_dock.add(occupants_panel, 12)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
-    right_dock.add(victory_panel, 10)
-    right_dock.add(terrain_legend_panel, 20)
+    # The right dock is the narrative surface's home: the telling owns the top of it and, with both
+    # reference cards hidden by default, effectively the whole column. Sharing the left dock left it
+    # cramped under the selection cards + command feed.
+    right_dock.add(telling_panel, 10)
+    right_dock.add(victory_panel, 20)
+    right_dock.add(terrain_legend_panel, 30)
+    _load_hud_panel_prefs()
     if stockpile_panel != null:
         stockpile_panel.visible = false
     if stockpile_title != null:
@@ -2227,6 +2289,170 @@ func _connect_turn_orb() -> void:
         turn_orb.focus_requested.connect(_on_turn_orb_focus)
     if not turn_orb.is_connected("advance_requested", Callable(self, "_on_turn_orb_advance")):
         turn_orb.advance_requested.connect(_on_turn_orb_advance)
+    if not turn_orb.is_connected("panel_requested", Callable(self, "_on_turn_orb_panel_requested")):
+        turn_orb.panel_requested.connect(_on_turn_orb_panel_requested)
+
+# ---- The Telling: the fork decision surface --------------------------------
+
+## Build the narrative-fork panel once. It is a child of the HUD CanvasLayer itself, NOT of
+## `layout_root`: the panel is a modal overlay over the whole window, so it must not inset with
+## the reserved docks the way the layout column does. Added last so it draws above every card.
+func _ensure_fork_panel() -> void:
+    if _fork_panel != null:
+        return
+    _fork_panel = NarrativeForkPanel.new()
+    _fork_panel.name = "NarrativeForkPanel"
+    _fork_panel.answer_selected.connect(_on_fork_answer_selected)
+    add_child(_fork_panel)
+
+## Cache the PLAYER faction's pending forks and rebuild the orb registry.
+##
+## The caller only invokes this when the snapshot actually CARRIES the key (deltas omit an
+## unchanged field), so this is never reached with "absent means cleared" semantics.
+func update_pending_forks(forks_variant: Variant) -> void:
+    _pending_forks = _faction_rows(forks_variant, "forks")
+    _push_attention()
+    _maybe_auto_open_fork()
+
+## Cache the PLAYER faction's stance axes — what the people's behaviour and their answers together
+## say about who they are. Displayed by the fork panel; no other consumer yet.
+func update_stance_axes(axes_variant: Variant) -> void:
+    _stance_axes = _faction_rows(axes_variant, "axes")
+
+## The player faction's narrator MEDIUM — oral saga → painted chronicle → written record.
+##
+## Follows the `sedentarization` ingest precedent exactly: a per-faction wire array, scanned for
+## PLAYER_FACTION_ID. The caller only invokes this when the snapshot actually CARRIES the key
+## (a delta omits an unchanged field), so absence means "unchanged" and never "cleared".
+##
+## Presentational only — it never selects different copy. Both narrative surfaces take it, so the
+## panel's title/accent and the fork panel's header age together rather than drifting apart.
+func update_voice_medium(medium_variant: Variant) -> void:
+    if not (medium_variant is Array):
+        return
+    var medium_id := ""
+    for entry_variant in (medium_variant as Array):
+        if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == PLAYER_FACTION_ID:
+            medium_id = String((entry_variant as Dictionary).get("medium_id", ""))
+            break
+    if _telling != null:
+        _telling.set_voice_medium(medium_id)
+    if _fork_panel != null:
+        _fork_panel.set_voice_medium(medium_id)
+
+## Pull the player faction's nested child array out of a per-faction wire array
+## (`[{faction, <key>: [...]}, …]`), the shape `discovered_sites`/`sedentarization` also use.
+func _faction_rows(variant: Variant, key: String) -> Array:
+    if not (variant is Array):
+        return []
+    for entry_variant in (variant as Array):
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
+            continue
+        var rows: Variant = entry.get(key, [])
+        return rows if rows is Array else []
+    return []
+
+## The orb registry = the cached band/expedition producers + the fork producer, pushed as ONE
+## replace. `TurnOrb.set_attention` replaces wholesale, so the fork producer must fold in here
+## rather than call it separately — a second call would wipe every band row.
+func _push_attention() -> void:
+    if turn_orb == null:
+        return
+    var attention: Array = _band_attention.duplicate(true)
+    attention.append_array(_pending_fork_attention())
+    turn_orb.set_attention(attention)
+
+## Producer 6 — a narrative fork awaiting an answer. One row per pending fork, `blocking` so the
+## orb disables its `Advance ▸` footer (the client-side end-turn gate; the server never blocks).
+func _pending_fork_attention() -> Array:
+    var rows: Array = []
+    var register := NarrativeForkPanel.load_voice_register()
+    for fork_variant in _pending_forks:
+        if not (fork_variant is Dictionary):
+            continue
+        var fork: Dictionary = fork_variant
+        rows.append({
+            "kind": ATTENTION_KIND_DECISION,
+            "severity": ATTENTION_SEVERITY_CRITICAL,
+            "blocking": true,
+            "label": ATTENTION_DECISION_LABEL,
+            "detail": _fork_row_detail(fork, register),
+            "x": ATTENTION_NON_LOCATING, "y": ATTENTION_NON_LOCATING,
+        })
+    return rows
+
+## The orb row's one-line taste of the question. The narration is a paragraph and orb rows CLIP,
+## so it is truncated here on purpose — the full telling is the panel's job.
+func _fork_row_detail(fork: Dictionary, register: String) -> String:
+    var narration := NarrativeForkPanel.text_in_register(fork.get("narration", []), register)
+    if narration.length() <= ATTENTION_DECISION_DETAIL_MAX_CHARS:
+        return narration
+    return narration.substr(0, ATTENTION_DECISION_DETAIL_MAX_CHARS).strip_edges() + ATTENTION_DECISION_DETAIL_ELLIPSIS
+
+## Open the panel automatically the FIRST time a fork appears — an identity-defining moment should
+## not wait behind a click. Tracked by beat_id so a dismissed fork does not re-open every snapshot.
+func _maybe_auto_open_fork() -> void:
+    var fork := _first_pending_fork()
+    if fork.is_empty():
+        return
+    var beat_id := String(fork.get("beat_id", ""))
+    if beat_id == "" or _auto_opened_forks.has(beat_id):
+        return
+    _auto_opened_forks[beat_id] = true
+    _open_fork_panel()
+
+func _first_pending_fork() -> Dictionary:
+    for fork_variant in _pending_forks:
+        if fork_variant is Dictionary:
+            return fork_variant
+    return {}
+
+func _open_fork_panel() -> void:
+    _ensure_fork_panel()
+    var fork := _first_pending_fork()
+    if fork.is_empty():
+        return
+    _fork_panel.show_fork(fork)
+
+## A non-locating orb row was activated. The orb reports only the KIND; the Hud owns which panel
+## a kind opens, so a future non-locating producer needs no orb change.
+func _on_turn_orb_panel_requested(kind: String) -> void:
+    if kind == ATTENTION_KIND_DECISION:
+        _open_fork_panel()
+
+## The player answered. Drop the fork from the local cache OPTIMISTICALLY (so the orb's gate lifts
+## immediately) and let the next snapshot be authoritative.
+func _on_fork_answer_selected(payload: Dictionary) -> void:
+    var beat_id := String(payload.get("beat_id", ""))
+    var choice_id := String(payload.get("choice_id", ""))
+    if beat_id == "" or choice_id == "":
+        return
+    var remaining: Array = []
+    for fork_variant in _pending_forks:
+        if fork_variant is Dictionary and String((fork_variant as Dictionary).get("beat_id", "")) == beat_id:
+            continue
+        remaining.append(fork_variant)
+    _pending_forks = remaining
+    _push_attention()
+    emit_signal("answer_fork_requested", {
+        "faction": PLAYER_FACTION_ID,
+        "beat_id": beat_id,
+        "choice_id": choice_id,
+    })
+
+## Is a fork holding the turn? Read by the Inspector-path advance note (the dev toolbar and
+## autoplay are deliberately NOT gated — see docs/plan_the_telling.md).
+func has_pending_fork() -> bool:
+    return not _pending_forks.is_empty()
+
+## The dev toolbar / autoplay advanced past an unanswered fork. Not a gate — a RECEIPT: the
+## server will expire the fork to its defer branch, which is a real narrative outcome, so a
+## developer who skipped the question must be able to see that they did.
+func note_unanswered_fork() -> void:
+    _note_command_feed(UNANSWERED_FORK_LABEL, UNANSWERED_FORK_DETAIL)
 
 ## The labor-allocation UI (allocation panel, herd/tile assign controls) is built at
 ## runtime with its own per-widget signal connections, so there are no static selection
@@ -4589,6 +4815,10 @@ func _refresh_campaign_label() -> void:
     campaign_title_label.text = title_text if has_title else ""
     campaign_subtitle_label.text = subtitle_text if has_subtitle else ""
 
+## Clear the command FEED only — a full snapshot re-seeds it from the server's ring, so keeping
+## stale receipts would double them up. The Telling panel is deliberately NOT reset here: its
+## signature de-dup makes re-ingesting the ring harmless, and clearing would throw away every
+## telling that has already scrolled past the server's 32-entry ring.
 func reset_command_feed() -> void:
     _command_feed.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
@@ -6384,16 +6614,24 @@ func _load_ui_balance_config() -> void:
         if cap_value > 0:
             travel_preview_turn_cap = cap_value
 
+## Fan one batch of command events out to BOTH surfaces. Each controller filters for the kinds it
+## owns (the split's one definition is `TellingPanel.handles_kind`), so passing the whole array to
+## both is correct and keeps each one's own retention + de-duplication.
+##
+## This is also the Telling panel's BACKFILL: a full snapshot carries the server's whole
+## `commandEvents` ring, so a player opening the client mid-session sees recent history.
 func ingest_command_events(events_variant: Variant) -> void:
     _command_feed.ingest_events(events_variant)
+    _telling.ingest_events(events_variant)
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return
     var populations: Array = populations_variant
     var new_sizes: Dictionary = {}
     # Turn-orb attention registry: one loop over the player faction feeds three producers
-    # per band (starving / losing_population / idle_workers). Pushed to the orb below, which
-    # severity-sorts (critical floats up). New producers (wars/decisions/…) append here later.
+    # per band (starving / losing_population / idle_workers). Pushed to the orb below (via
+    # `_push_attention`, which folds in the snapshot-driven fork producer), which severity-sorts
+    # (critical floats up). New band-derived producers append here.
     var attention: Array = []
     # Bands-only counter: increments for resident bands, NOT expeditions, so the "Band N"
     # attention labels match the band-picker (`_build_band_picker`, `i + 1`) and the panel
@@ -6474,8 +6712,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     _player_band = player_band
     _player_bands = player_bands
     _player_expeditions = player_expeditions
-    if turn_orb != null:
-        turn_orb.set_attention(attention)
+    # Cache the band/expedition half and push the whole registry (bands + the fork producer) as
+    # ONE replace — set_attention is wholesale, so a separate call would wipe these rows.
+    _band_attention = attention
+    _push_attention()
     # This snapshot is authoritative: drop optimistic pending actions the server has now
     # processed (issued on an older turn), then let the panels render the confirmed state.
     _reconcile_pending()
@@ -6518,6 +6758,8 @@ func _band_display_name(_entry: Dictionary, index: int) -> String:
 func _note_command_feed(label: String, detail: String) -> void:
     _command_feed.note(label, detail)
 func _refresh_victory_status() -> void:
+    # A data refresh never un-hides a card the player suppressed.
+    _apply_victory_visibility()
     if victory_status_label == null:
         return
     if victory_state.is_empty():
@@ -6592,6 +6834,60 @@ func _on_legend_sort_pressed(field: String) -> void:
 
 func toggle_legend() -> void:
     _legend.toggle_suppressed()
+    _refit_right_dock()
+    _save_panel_pref(CONFIG_KEY_LEGEND_SUPPRESSED, _legend.legend_suppressed)
+
+## Victory's counterpart to `toggle_legend` (bound to `V` in Main). Hides/shows the card through the
+## dock so the stack reflows with no gap, and remembers the choice for next session.
+func toggle_victory() -> void:
+    _victory_suppressed = not _victory_suppressed
+    _apply_victory_visibility()
+    _save_panel_pref(CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
+
+func _apply_victory_visibility() -> void:
+    if victory_panel == null:
+        return
+    var should_show := not _victory_suppressed
+    if right_dock != null:
+        right_dock.set_relevant(victory_panel, should_show)
+    else:
+        victory_panel.visible = should_show
+    _refit_right_dock()
+
+## The Telling panel sits ABOVE the two toggleable cards and grows to fill the dock, so showing or
+## hiding one of them changes how much room it may take. Nothing else in the right dock resizes.
+func _refit_right_dock() -> void:
+    if _telling != null:
+        _telling.refit()
+
+# ---- dock-card visibility persistence --------------------------------------
+
+func _load_hud_panel_prefs() -> void:
+    var cfg := ConfigFile.new()
+    if cfg.load(NarrativeForkPanel.config_path()) == OK:
+        if _legend != null:
+            _legend.set_suppressed(bool(cfg.get_value(
+                HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
+        _victory_suppressed = bool(cfg.get_value(
+            HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT))
+    elif _legend != null:
+        # No prefs file yet (or unreadable): fall back to the hidden-by-default layout.
+        _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
+    _apply_victory_visibility()
+
+## Persist ONE panel's preference — never the whole section.
+##
+## Writing both keys on either toggle is how a transient state becomes a stored preference: pressing
+## `V` used to also write whatever the legend happened to be showing at that instant. That is fine
+## while both values are genuine user choices, but it makes the file a snapshot of live UI state
+## rather than of decisions, and anything that sets visibility WITHOUT intending to persist it (a
+## preview harness, a future "peek" affordance) silently corrupts the other panel's preference. A
+## toggle owns its own key and nothing else.
+func _save_panel_pref(key: String, suppressed: bool) -> void:
+    var cfg := ConfigFile.new()
+    cfg.load(NarrativeForkPanel.config_path())   # preserve every other section/key; ignore load errors
+    cfg.set_value(HUD_PANELS_CONFIG_SECTION, key, suppressed)
+    cfg.save(NarrativeForkPanel.config_path())
 func _setup_tooltip() -> void:
     tooltip_panel = PanelContainer.new()
     tooltip_panel.visible = false

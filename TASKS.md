@@ -1045,3 +1045,207 @@ retires the static `game_trail` food-site (which never survives food-site curati
 
 ### Market hunting ✅
 - [x] Commercial-hunt Follow policy. `FollowPolicy::Market` (Sustain | Surplus | **Market** | Eradicate) takes `market.take_fraction * biomass` each turn — a large commercial share that declines the herd fast into the Phase D depensation collapse — and sells it at `market.trade_goods_multiplier`× the normal trade-goods rate (`advance_fauna_pursuits`). New `market` config block; the policy is a free string parsed via `FollowPolicy::from_str`, so no proto/schema change — only the `FromStr`/`as_str`/resolve arms + the client policy picker (`FollowMarketButton`, `FOLLOW_POLICIES`). Completes the overlay's depletion-vs-domestication design. Deferred: the pastoral→corral→settlement chain (`Camp`, `SedentarizationScore`).
+
+---
+
+## Script Sandbox Hardening
+
+Found during the code scan for the emergent-narrative arc (`docs/plan_the_telling.md`
+§1a), which evaluated the QuickJS sandbox as a possible host for the beat engine and
+rejected it. None of these block that arc — the engine lives in `core_sim` — but they
+are real gaps between `clients/godot_thin_client/CLAUDE.md` § Scripting Capability
+Model (now corrected to mark them) and the implementation in
+`clients/godot_thin_client/native/src/runtime.rs`.
+
+- [ ] **`ensure_capability` uses a prefix match, not equality.** `runtime.rs:214` checks
+      `cap.starts_with(required)`, so a declared capability is treated as a *prefix
+      source*: a manifest declaring a capability whose name begins with the required
+      string satisfies the check. This is looser than it reads and than the capability
+      registry implies. Decide whether prefix semantics are intended (namespaced
+      capabilities like `telemetry.subscribe.overlays` would justify it) — if so,
+      document and match on a dot boundary; if not, use equality. Add tests for the
+      chosen semantics. (Owner: TBD, Estimate: 0.5d; Deps: none.)
+- [ ] **`commands.issue` has no allowlist or throttle.** A script declaring the
+      capability may submit free-form command lines (`payload.line`) at player
+      privilege, either through GDScript (`ScriptHostManager._handle_command_issue`) or
+      — when a command endpoint is configured — over a raw `TcpStream` from the script
+      thread (`transmit_proto_command`, `runtime.rs:1076`), bypassing Godot entirely.
+      CLAUDE.md promised "vetted command endpoints with throttle windows"; neither
+      exists. Add a per-script command allowlist declared in the manifest plus a rate
+      limit, and decide whether the direct-TCP path should exist at all given it evades
+      any client-side gate. (Owner: TBD, Estimate: 1.5d; Deps: capability-check
+      semantics above.)
+- [ ] **The tick budget cannot stop a runaway script.** `SCRIPT_TICK_BUDGET_MS` (8 ms,
+      `ScriptHostManager.gd:13`) is measured *after* `onTick` returns and only logs an
+      `OverBudget` warning, and there is no memory limit, stack limit, interrupt
+      handler, or preemption. An infinite loop in `onTick` hangs that script's thread
+      permanently with no recovery path. Wire `rquickjs`'s interrupt handler to abort a
+      script exceeding the budget, add `set_memory_limit` / `set_max_stack_size`, and
+      implement the "suspension on sandbox violations" lifecycle step CLAUDE.md already
+      documents. (Owner: TBD, Estimate: 2d; Deps: none.)
+- [ ] **`ui.compose` is declared but unimplemented.** It exists in `CAPABILITY_SPECS`
+      (`sim_runtime/src/scripting.rs`) and in the docs, but `handle_host_request` has no
+      arm for it, so a call logs "Unhandled host request". Either implement the
+      declarative widget graph or drop the capability from the registry so manifests
+      cannot declare something inert. Note this is also the prerequisite for hosting
+      Telling presentation/Voice packs script-side (`docs/plan_the_telling.md` §1b).
+      (Owner: TBD, Estimate: 3d+ if implemented; Deps: none.)
+- [ ] **Subscription wildcards do not match at dispatch.** The capability registry
+      advertises wildcard topics (`overlays.*`, `alerts.*`), but `broadcast_topic`
+      (`ScriptHostManager.gd:114-126`) dispatches on exact string equality, so a script
+      subscribing to a wildcard receives nothing. Either implement prefix/glob matching
+      at dispatch or replace the wildcards with concrete topic names. (Owner: TBD,
+      Estimate: 0.5d; Deps: none.)
+
+---
+
+## The Telling — Emergent Narrative Layer
+
+Concept: `docs/Emergent Narrative.md`. Engineering plan, schema, and PR slicing:
+`docs/plan_the_telling.md`. Turns sim events into a continuous voiced story and lets
+the player author a disposition that colors and steers which beats surface. Sliced so
+each PR is independently playtestable.
+
+### PR-A — beat engine + ambient tier (no new client code) ✅
+- [x] `core_sim/src/telling/` module + `BeatLedger` resource (fired-set, edge state,
+      wardrobe usage/novelty memory, stance vector, consequence flags, pending forks),
+      saved and restored with the sim.
+- [x] Signal registry — named accessors over sim state, the engine/content boundary.
+      Content composes signals; it cannot invent them. Seed with the signals the
+      opening arc needs (`sedentarization.score`, `turn.index`, `culture.axis.*`).
+- [x] Predicate grammar (`all`/`any`/`not`, scalar comparisons, `crosses`
+      rising/falling edges, `trend`, `flag`, `fired within`). `crosses` generalizes the
+      `sedentarization_tick` rising-edge pattern; edge state in the ledger so a beat
+      fires once per crossing, not every tick the condition holds.
+- [x] Noun-slot resolver registry (`fauna.most_hunted`, `fauna.dominant_local`,
+      `site.last_discovered`, `biome.current_dominant`, …) returning
+      `{ name, plural, adjective }`, with fallback chains. A wardrobe entry whose
+      required slot fails to resolve is excluded from selection so no line renders
+      with a hole in it.
+- [x] Beat catalog loader — `core_sim/src/data/beat_definitions.json`, mirroring
+      `great_discovery_definitions.json`'s shape and load path, with a `validate()`
+      following the `FaunaConfig`/`ExpeditionConfig` convention (error-level log +
+      builtin fallback on a broken invariant).
+- [x] Weighted wardrobe selection (`fit × novelty × stance_affinity`), seeded per
+      decision from `hash(world_seed, turn_index, beat_id)` — never a rolling global
+      stream — so selection is reproducible and independent of beat evaluation order.
+      All weights and the novelty window in `beat_config.json`.
+- [x] `telling_tick` turn-pipeline stage, placed after the systems whose state it
+      reads; ambient/beat tiers emit through the existing `CommandEventLog` (renders
+      today, no client change). Per-tier per-turn budget + cooldowns in config.
+- [x] Opening-arc ambient content: enough wardrobe depth to judge whether emergent
+      noun dressing produces copy worth reading. Both voice registers (`mythic`,
+      `warm`) per entry.
+
+### PR-B — the fork tier ✅
+- [x] Snapshot field carrying pending forks + the choice-submission command path.
+- [x] The one genuinely new client component: an interrupt decision surface
+      (no modal/choice UI exists today; nearest patterns are the TurnOrb attention
+      popover and the top-center targeting banner).
+- [x] Stance write-back and the stance vector's backing-signal map
+      (`roam_settle` → `SedentarizationScore`, `appetite_restraint` →
+      `culture.axis.ascetic_indulgent`, …; axis list is config, not code).
+- [x] Stance re-coloring of *shared* events, not just unlocking stance-specific beats
+      — the concept's §6 "key nuance" and the cheapest characterful win in the design.
+- [x] Player-facing voice-register toggle (both registers already carried as data).
+
+### PR-C — voice evolution + callbacks ✅
+- [x] Voice medium progression (oral saga → painted chronicle → written record →
+      institutional archive) tied to `CapabilityFlags` milestone crossings.
+- [x] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
+      callback beats that reference them — what makes a 200-turn emergent game feel
+      authored.
+
+**PR-A landed** (`23f55bc`). Deviations and notes carried forward:
+- `band.count` sums people, not bands — the authored copy needs "There are {count} of us".
+- `sites.discovered_this_turn` keeps its cumulative count under a reserved ledger key
+  (`internal.sites.discovered_total`) that the signal registry rejects, so it persists
+  through rollback for free and content cannot reference it.
+- `culture.axis.*` reads the **global** culture layer. There is no faction-level culture
+  rollup and PR-B needs a decision on whether to build one.
+- A `fit.biome` narrative tag vocabulary (`nouns.rs`) was added beyond spec — an
+  exhaustive `TerrainType` match, load-time validated, so a new terrain forces a
+  narrative decision instead of silently failing to match.
+- **Known behaviour:** a beat whose signal is already above its threshold the first turn
+  it is sampled never fires — there is no `prev` to cross from, and it never falls back
+  to re-arm. Correct for the current content (scores start at 0) but a trap for any
+  future beat gated on a signal that starts high.
+- `core_sim/tests/grazing_2d_pen::extend_pen_...` failed once during a combined-package
+  run and passed on every rerun. Unrelated to this arc; possible flake, worth a second
+  look if it recurs.
+
+**PR-B landed** (server `763efed`, client `5e04128`). Carried forward:
+- The end-turn gate is **client-side and covers the turn orb only**. The Inspector
+  toolbar and autoplay advance freely (a hard gate deadlocks autoplay, which disables
+  itself on any failed advance) and push a feed note; the fork then rides its
+  server-side expiry to defer. Revisit if the dev path proves too easy to skip.
+- **The command feed does not scale to narrative prose.** Two narrative beats fill the
+  entire visible feed and push ordinary command receipts off. The binding limit is the
+  card's height, not `COMMAND_FEED_LIMIT` (6) — a wrapped prose line plus gloss is ~3×
+  a command receipt. Needs either a separate narrative surface or a per-kind quota
+  before ambient volume rises. **This is the top open issue in the arc.**
+- No per-fork expiry turn on the wire, so the panel cannot tell the player how long the
+  question keeps before it auto-defers — which is exactly what makes deferring a real
+  choice rather than a shrug. Wants an `expiresTick` on `PendingForkState`.
+- `answer_fork` failing (socket down) clears the fork locally until the next snapshot
+  re-adds it, briefly lifting the gate. Self-correcting within a turn; flagged rather
+  than given a rollback path.
+- `PendingForkState.wardrobeId`/`postedTick` are currently unused by the client.
+
+**PR-C landed** (server `91ec7c6`, client `9333b20`) — arc complete. Carried forward:
+
+- **The voice never lies, enforced structurally.** Each fork declaration has a *kept*
+  and a *broken* beat, exactly complementary on the stance sign, so a player always
+  gets the one that is true of them. Any future beat asserting something about the
+  player's history must gate the same way — elapsed time alone is not evidence the
+  claim still holds.
+- **Medium is presentational and must stay that way.** Three rungs ship
+  (oral/painted/written); `archive` was left out because its only plausible source
+  (`CapabilityFlags`) is not a registered signal, and an unattainable rung is worse
+  than an absent one. Do not "complete" the feature by authoring per-medium copy —
+  that is a 4x8 authoring cost for the thinnest payoff in the layer.
+- **The ui_preview harness renders at whatever size the display allows.** The same
+  states captured 3456x2168 on one run and 5120x1410 on another; `--resolution` does
+  not override it, and the letterboxed frames make dock panels look far more cramped
+  than they are in a normal window. Frames are therefore not comparable across runs
+  or machines. Worth rendering to a fixed-size SubViewport instead of grabbing the
+  window texture — this degrades every visual verification, not just this arc's.
+
+### The Telling — remaining / possible next
+- [ ] Ambient beat volume tuning once the Telling panel has been played with — the
+      per-tier budgets and cooldowns were set before there was a surface that could
+      hold the output.
+- [ ] `expiresTick` on `PendingForkState` so the fork panel can say how long the
+      question keeps before it auto-defers (see the PR-B notes).
+- [ ] Tent-pole tier (concept §5) — the authored spine moments. Deliberately not
+      built: the catalog format should be proven in play before committing writing
+      effort at volume.
+- [ ] A faction-level culture rollup consumer beyond the stance signals, if stance
+      axes beyond `roam_settle` ever get forks of their own.
+
+---
+
+## HUD Discoverability
+
+- [ ] **In-game hotkey list.** There is no on-screen key reference — the bindings live
+      only in `clients/godot_thin_client/CLAUDE.md`. This became load-bearing when the
+      Victory and Terrain Types panels moved to hidden-by-default (The Telling arc):
+      both are now reachable *only* by an unlabelled key (`L`, and the newly added
+      Victory toggle), so a player who doesn't already know the keys will reasonably
+      conclude the panels were removed. Any future hidden-by-default panel makes this
+      worse. Wants a toggleable overlay listing the live bindings, sourced from the
+      same action-binding registration in `Main.gd` (`_ensure_action_binding`) rather
+      than a hand-maintained second list that can drift. (Owner: TBD, Estimate: 0.5d;
+      Deps: none.)
+
+- [ ] **The ui_preview harness is not byte-deterministic**, so pixel-diffing is unreliable
+      as a regression gate. Roughly 22 states (`band*`, `expedition*`, `forage_policy`,
+      `turn_orb_clear*`, `dock_fresh_profile_default`) flap between runs on *identical*
+      code. Nothing in CI consumes the PNGs, so this gates no automation — but it does
+      mean "the frames are byte-identical to baseline" is only a trustworthy claim for
+      the stable subset, and a reviewer comparing a flappy state will chase a phantom
+      diff. The `blend_probe` state was deliberately made bit-stable and is the precedent
+      to copy; a likely culprit class is hover/cursor artefacts (that probe disables
+      `_unhandled_input` for exactly this reason), but it has not been investigated.
+      Either stabilise the flappy states or mark them explicitly non-comparable so nobody
+      diffs them. (Owner: TBD, Estimate: 0.5d; Deps: none.)

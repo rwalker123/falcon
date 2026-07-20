@@ -672,6 +672,257 @@ pub struct GrazeState {
     pub ecology: EcologyState,
 }
 
+/// Which ticks one narrative beat has fired on (`core_sim::telling::BeatLedger`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatFiredState {
+    #[serde(default)]
+    pub beat: String,
+    #[serde(default)]
+    pub ticks: Vec<u64>,
+}
+
+/// One `signal → value` pair in the beat ledger's edge state (or one `axis → value` pair of the
+/// stance vector — the same shape, keyed differently). `value` is **fixed-point raw**
+/// (`Scalar::SCALE` = 1.0), so a rollback restores bit-exact samples.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatSignalValueState {
+    #[serde(default)]
+    pub signal: String,
+    /// Fixed-point raw (`Scalar::SCALE` = 1.0).
+    #[serde(default)]
+    pub value: i64,
+}
+
+/// One signal's rolling sample history, oldest first, capped at `trend.max_history_turns`.
+/// Samples are **fixed-point raw** (`Scalar::SCALE` = 1.0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatSignalHistoryState {
+    #[serde(default)]
+    pub signal: String,
+    #[serde(default)]
+    pub samples: Vec<i64>,
+}
+
+/// When a wardrobe entry was last used (the novelty memory).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatWardrobeUsageState {
+    #[serde(default)]
+    pub wardrobe: String,
+    #[serde(default)]
+    pub last_used_tick: u64,
+}
+
+/// Authoritative mirror of The Telling's `BeatLedger` — the narrative memory (what fired, what the
+/// signals read last turn, which dressings are stale). Round-tripped through the rollback snapshot
+/// **including restore**, so a rollback past a beat lets that beat fire again instead of leaving it
+/// wrongly marked fired. Every map crosses as a sorted `Vec` so the record is stable.
+///
+/// Per-turn scratch (the tier budget counters) is deliberately absent — it is recomputed each
+/// turn, so a rehydrated ledger starts neutral. Sim-side only; not on the FlatBuffers client
+/// stream (beats reach the client as `CommandEvent`s). See `docs/plan_the_telling.md` §3.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatLedgerState {
+    #[serde(default)]
+    pub fired: Vec<BeatFiredState>,
+    #[serde(default)]
+    pub edge_state: Vec<BeatSignalValueState>,
+    #[serde(default)]
+    pub history: Vec<BeatSignalHistoryState>,
+    #[serde(default)]
+    pub wardrobe_usage: Vec<BeatWardrobeUsageState>,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    /// The player's **declared stance offsets** (the fork tier's write-back). Only the offsets are
+    /// stored — the effective stance is `normalize(signal) + offset`, recomputed each turn.
+    #[serde(default)]
+    pub stance: Vec<BeatSignalValueState>,
+    /// Forks posted and not yet answered.
+    #[serde(default)]
+    pub pending_forks: Vec<BeatPendingForkState>,
+    /// Beat id → the choice id the player took, so later beats can call back to what was decided.
+    #[serde(default)]
+    pub answers: Vec<BeatAnswerState>,
+    /// Beat id → the tick a `once` beat's guard lifts (the defer branch's `rearm_after_turns`).
+    #[serde(default)]
+    pub rearm: Vec<BeatRearmState>,
+    /// The memory threads — durable nouns later beats can call back to. Flat and kind-grouped by
+    /// construction (the ledger iterates a `BTreeMap<kind, Vec<Thread>>`), so the record is stable.
+    #[serde(default)]
+    pub threads: Vec<BeatThreadState>,
+    /// Faction → the narrator's **attained** medium. Persisted because it is monotone: a people
+    /// that learned to write does not forget, so the live evaluation takes the max against this.
+    #[serde(default)]
+    pub mediums: Vec<BeatVoiceMediumState>,
+}
+
+/// One memory thread: a noun **snapshotted at first sight and never re-resolved**, so a callback
+/// still lands after the herd went extinct or the site fell four hundred turns behind.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatThreadState {
+    pub kind: String,
+    /// Dedupe identity — the resolved noun's `name`.
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub plural: String,
+    #[serde(default)]
+    pub adjective: String,
+    #[serde(default)]
+    pub first_seen_tick: u64,
+    /// The eviction clock: least recently *referenced* is what gets dropped, not oldest first-seen.
+    #[serde(default)]
+    pub last_referenced_tick: u64,
+}
+
+/// A faction's attained narrator medium, sim-side (the client-facing twin is [`VoiceMediumState`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatVoiceMediumState {
+    pub faction: u32,
+    pub medium_id: String,
+    #[serde(default)]
+    pub medium_index: u32,
+}
+
+/// A faction's narrator **medium** on the client stream: oral saga → painted chronicle → written
+/// record. Presentational — it changes how the telling *looks*; it does **not** select different
+/// copy (see `core_sim/src/telling/medium.rs`).
+///
+/// `mediumId` is a string (the `species` / `policy` / `register` convention) so adding a medium
+/// needs no schema change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct VoiceMediumState {
+    pub faction: u32,
+    pub medium_id: String,
+    #[serde(default)]
+    pub medium_index: u32,
+}
+
+/// One register's rendering of a player-visible narrative string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatVoiceLineState {
+    pub register: String,
+    pub text: String,
+}
+
+/// One answer offered by a pending fork, rendered at post time in every register.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatForkChoiceState {
+    pub choice_id: String,
+    #[serde(default)]
+    pub is_defer: bool,
+    #[serde(default)]
+    pub label: Vec<BeatVoiceLineState>,
+    /// The line pushed to the feed once this choice is taken. Rendered at post time so the nouns
+    /// stay pinned to the moment the fork fired.
+    #[serde(default)]
+    pub echo: Vec<BeatVoiceLineState>,
+}
+
+/// A fork awaiting an answer. Every register is rendered up front, because the register is a live
+/// user toggle — storing a single string would freeze the fork in whichever voice was active when
+/// it fired.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatPendingForkState {
+    pub beat_id: String,
+    #[serde(default)]
+    pub wardrobe_id: String,
+    #[serde(default)]
+    pub faction: u32,
+    #[serde(default)]
+    pub posted_tick: u64,
+    #[serde(default)]
+    pub narration: Vec<BeatVoiceLineState>,
+    #[serde(default)]
+    pub choices: Vec<BeatForkChoiceState>,
+    /// The sampled signals behind the question ("the voice never lies"), fixed-point like every
+    /// other persisted number.
+    #[serde(default)]
+    pub gloss: Vec<BeatSignalValueState>,
+}
+
+/// Per-faction pending narrative forks, on the client stream (the `SedentarizationState` /
+/// `DiscoveredSitesState` per-faction shape). Distinct from the sim-side `BeatPendingForkState`:
+/// this is what the client renders and answers with `answer_fork`.
+///
+/// **The turn gate is client-side.** The server never blocks turn resolution on a pending fork —
+/// it auto-resolves one to its defer choice after `beat_config.budget.fork_expire_turns`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PendingForksState {
+    pub faction: u32,
+    #[serde(default)]
+    pub forks: Vec<PendingForkState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PendingForkState {
+    pub beat_id: String,
+    #[serde(default)]
+    pub wardrobe_id: String,
+    #[serde(default)]
+    pub posted_tick: u64,
+    /// Every configured register, rendered when the fork fired.
+    #[serde(default)]
+    pub narration: Vec<VoiceLineState>,
+    #[serde(default)]
+    pub choices: Vec<ForkChoiceState>,
+    #[serde(default)]
+    pub gloss: Vec<GlossEntryState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct VoiceLineState {
+    pub register: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ForkChoiceState {
+    pub choice_id: String,
+    #[serde(default)]
+    pub label: Vec<VoiceLineState>,
+    /// Computed server-side (the choice writes nothing) so the client never has to know what
+    /// makes a choice a defer.
+    #[serde(default)]
+    pub is_defer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GlossEntryState {
+    pub signal: String,
+    pub value: f64,
+}
+
+/// A faction's **effective** stance per axis: normalized backing signal + declared offset, in
+/// `[-1, 1]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct StanceState {
+    pub faction: u32,
+    #[serde(default)]
+    pub axes: Vec<StanceAxisState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct StanceAxisState {
+    pub axis: String,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatAnswerState {
+    pub beat: String,
+    pub choice: String,
+    /// The tick the fork was answered on. Load-bearing: the `answered` predicate's
+    /// `min_turns_since` reads it, so a callback can mean "some time after you said that".
+    #[serde(default)]
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BeatRearmState {
+    pub beat: String,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,
@@ -871,6 +1122,54 @@ impl TerrainType {
         TerrainType::AquiferCeiling,
         TerrainType::NavigableRiver,
     ];
+
+    /// Lowercase, human-readable adjective for the biome, reading naturally mid-sentence
+    /// ("the *alluvial* ground", "the *high grassland* ground"). Written out rather than derived
+    /// from the enum's debug name, which would produce copy like "AlluvialPlain ground".
+    ///
+    /// Consumed by The Telling's `biome.current_dominant` noun resolver (`core_sim/src/telling`).
+    pub const fn as_adjective(self) -> &'static str {
+        match self {
+            TerrainType::DeepOcean => "deep water",
+            TerrainType::ContinentalShelf => "shallow-sea",
+            TerrainType::InlandSea => "inland-sea",
+            TerrainType::CoralShelf => "coral",
+            TerrainType::HydrothermalVentField => "vent-field",
+            TerrainType::TidalFlat => "tidal",
+            TerrainType::RiverDelta => "delta",
+            TerrainType::MangroveSwamp => "mangrove",
+            TerrainType::FreshwaterMarsh => "marsh",
+            TerrainType::Floodplain => "floodplain",
+            TerrainType::AlluvialPlain => "alluvial",
+            TerrainType::PrairieSteppe => "grassland",
+            TerrainType::MixedWoodland => "woodland",
+            TerrainType::BorealTaiga => "taiga",
+            TerrainType::PeatHeath => "peat",
+            TerrainType::HotDesertErg => "desert",
+            TerrainType::RockyReg => "stony",
+            TerrainType::SemiAridScrub => "scrub",
+            TerrainType::SaltFlat => "salt-flat",
+            TerrainType::OasisBasin => "oasis",
+            TerrainType::Tundra => "tundra",
+            TerrainType::PeriglacialSteppe => "cold-steppe",
+            TerrainType::Glacier => "glacier",
+            TerrainType::SeasonalSnowfield => "snowfield",
+            TerrainType::RollingHills => "hill",
+            TerrainType::HighPlateau => "high grassland",
+            TerrainType::AlpineMountain => "mountain",
+            TerrainType::KarstHighland => "karst",
+            TerrainType::CanyonBadlands => "badland",
+            TerrainType::ActiveVolcanoSlope => "volcano-slope",
+            TerrainType::BasalticLavaField => "lava-field",
+            TerrainType::AshPlain => "ash",
+            TerrainType::FumaroleBasin => "fumarole",
+            TerrainType::ImpactCraterField => "crater",
+            TerrainType::KarstCavernMouth => "cavern",
+            TerrainType::SinkholeField => "sinkhole",
+            TerrainType::AquiferCeiling => "aquifer",
+            TerrainType::NavigableRiver => "river",
+        }
+    }
 }
 
 /// The class of river running along **one side of a hex** (an odd-r hex *edge*).
@@ -2354,6 +2653,15 @@ pub struct WorldSnapshot {
     pub campaign_profiles: Vec<CampaignProfileState>,
     #[serde(default)]
     pub command_events: Vec<CommandEventState>,
+    /// The Telling's fork tier, per faction: what is on the table right now.
+    #[serde(default)]
+    pub pending_forks: Vec<PendingForksState>,
+    /// The Telling's effective stance per faction and axis.
+    #[serde(default)]
+    pub stance_axes: Vec<StanceState>,
+    /// The Telling's narrator medium per faction (presentational — see `VoiceMediumState`).
+    #[serde(default)]
+    pub voice_medium: Vec<VoiceMediumState>,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
     /// Authoritative herd sim state (`HerdRegistry`), round-tripped for rollback correctness —
@@ -2372,6 +2680,11 @@ pub struct WorldSnapshot {
     /// per-tile `TileState.graze_*` fields. Restore reads it via `GrazeRegistry::update_from_states`.
     #[serde(default)]
     pub graze_registry: Vec<GrazeState>,
+    /// The Telling's narrative memory (`BeatLedger`), round-tripped for rollback correctness.
+    /// Like the registries above this is the *sim* record and is not on the FlatBuffers client
+    /// stream; restore reads it via `BeatLedger::from_state`.
+    #[serde(default)]
+    pub beat_ledger: BeatLedgerState,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]
@@ -2434,6 +2747,9 @@ pub struct WorldDelta {
     pub victory: Option<VictorySnapshotState>,
     pub capability_flags: Option<u32>,
     pub command_events: Option<Vec<CommandEventState>>,
+    pub pending_forks: Option<Vec<PendingForksState>>,
+    pub stance_axes: Option<Vec<StanceState>>,
+    pub voice_medium: Option<Vec<VoiceMediumState>>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
@@ -2938,12 +3254,18 @@ fn serialize_campaign_section<'a>(
 ) -> WIPOffset<fb::CampaignSection<'a>> {
     let campaign_profiles = create_campaign_profiles(builder, &snapshot.campaign_profiles);
     let command_events = create_command_events(builder, &snapshot.command_events);
+    let pending_forks = create_pending_forks(builder, &snapshot.pending_forks);
+    let stance_axes = create_stance_axes(builder, &snapshot.stance_axes);
+    let voice_medium = create_voice_medium(builder, &snapshot.voice_medium);
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
             campaignProfiles: Some(campaign_profiles),
             commandEvents: Some(command_events),
             victory: Some(victory_state),
+            pendingForks: Some(pending_forks),
+            stanceAxes: Some(stance_axes),
+            voiceMedium: Some(voice_medium),
         },
     )
 }
@@ -3234,12 +3556,27 @@ fn serialize_campaign_section_delta<'a>(
         .command_events
         .as_ref()
         .map(|entries| create_command_events(builder, entries));
+    let pending_forks = delta
+        .pending_forks
+        .as_ref()
+        .map(|entries| create_pending_forks(builder, entries));
+    let stance_axes = delta
+        .stance_axes
+        .as_ref()
+        .map(|entries| create_stance_axes(builder, entries));
+    let voice_medium = delta
+        .voice_medium
+        .as_ref()
+        .map(|entries| create_voice_medium(builder, entries));
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
             campaignProfiles: None,
             commandEvents: command_events,
             victory: victory_state,
+            pendingForks: pending_forks,
+            stanceAxes: stance_axes,
+            voiceMedium: voice_medium,
         },
     )
 }
@@ -3451,6 +3788,136 @@ fn create_faction_inventory<'a>(
             },
         );
         entries.push(faction_entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_voice_lines<'a>(
+    builder: &mut FbBuilder<'a>,
+    lines: &[VoiceLineState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::VoiceLine<'a>>>> {
+    let mut entries = Vec::with_capacity(lines.len());
+    for line in lines {
+        let register = builder.create_string(line.register.as_str());
+        let text = builder.create_string(line.text.as_str());
+        entries.push(fb::VoiceLine::create(
+            builder,
+            &fb::VoiceLineArgs {
+                register: Some(register),
+                text: Some(text),
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_pending_forks<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[PendingForksState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::PendingForksState<'a>>>> {
+    let mut faction_entries = Vec::with_capacity(states.len());
+    for state in states {
+        let mut fork_entries = Vec::with_capacity(state.forks.len());
+        for fork in &state.forks {
+            let beat_id = builder.create_string(fork.beat_id.as_str());
+            let wardrobe_id = builder.create_string(fork.wardrobe_id.as_str());
+            let narration = create_voice_lines(builder, &fork.narration);
+            let mut choice_entries = Vec::with_capacity(fork.choices.len());
+            for choice in &fork.choices {
+                let choice_id = builder.create_string(choice.choice_id.as_str());
+                let label = create_voice_lines(builder, &choice.label);
+                choice_entries.push(fb::ForkChoiceState::create(
+                    builder,
+                    &fb::ForkChoiceStateArgs {
+                        choiceId: Some(choice_id),
+                        label: Some(label),
+                        isDefer: choice.is_defer,
+                    },
+                ));
+            }
+            let choices = builder.create_vector(&choice_entries);
+            let mut gloss_entries = Vec::with_capacity(fork.gloss.len());
+            for entry in &fork.gloss {
+                let signal = builder.create_string(entry.signal.as_str());
+                gloss_entries.push(fb::GlossEntry::create(
+                    builder,
+                    &fb::GlossEntryArgs {
+                        signal: Some(signal),
+                        value: entry.value,
+                    },
+                ));
+            }
+            let gloss = builder.create_vector(&gloss_entries);
+            fork_entries.push(fb::PendingForkState::create(
+                builder,
+                &fb::PendingForkStateArgs {
+                    beatId: Some(beat_id),
+                    wardrobeId: Some(wardrobe_id),
+                    postedTick: fork.posted_tick,
+                    narration: Some(narration),
+                    choices: Some(choices),
+                    gloss: Some(gloss),
+                },
+            ));
+        }
+        let forks = builder.create_vector(&fork_entries);
+        faction_entries.push(fb::PendingForksState::create(
+            builder,
+            &fb::PendingForksStateArgs {
+                faction: state.faction,
+                forks: Some(forks),
+            },
+        ));
+    }
+    builder.create_vector(&faction_entries)
+}
+
+fn create_stance_axes<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[StanceState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::StanceState<'a>>>> {
+    let mut faction_entries = Vec::with_capacity(states.len());
+    for state in states {
+        let mut axis_entries = Vec::with_capacity(state.axes.len());
+        for axis in &state.axes {
+            let name = builder.create_string(axis.axis.as_str());
+            axis_entries.push(fb::StanceAxisState::create(
+                builder,
+                &fb::StanceAxisStateArgs {
+                    axis: Some(name),
+                    value: axis.value,
+                },
+            ));
+        }
+        let axes = builder.create_vector(&axis_entries);
+        faction_entries.push(fb::StanceState::create(
+            builder,
+            &fb::StanceStateArgs {
+                faction: state.faction,
+                axes: Some(axes),
+            },
+        ));
+    }
+    builder.create_vector(&faction_entries)
+}
+
+/// The narrator's medium, per faction. `mediumId` rides as a string so a new rung on the ladder
+/// needs no schema change.
+fn create_voice_medium<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[VoiceMediumState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::VoiceMediumState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let medium_id = builder.create_string(state.medium_id.as_str());
+        entries.push(fb::VoiceMediumState::create(
+            builder,
+            &fb::VoiceMediumStateArgs {
+                faction: state.faction,
+                mediumId: Some(medium_id),
+                mediumIndex: state.medium_index,
+            },
+        ));
     }
     builder.create_vector(&entries)
 }

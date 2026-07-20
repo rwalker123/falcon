@@ -25,7 +25,9 @@ var _list: VBoxContainer = null
 var _description: Label = null
 
 var overlay_legend: Dictionary = {}
-var legend_suppressed: bool = false
+# Hidden by default — the legend is a look-it-up reference the player opens with `L`, not standing
+# dock furniture. Hud overrides this from the persisted prefs on ready.
+var legend_suppressed: bool = true
 # Terrain-legend sort mode (display-only, persisted across legend pushes).
 # Default: Count, descending — most common biome first, a sensible read of a
 # map's composition. Direction is remembered per field so toggling is intuitive.
@@ -108,6 +110,15 @@ func update(legend: Dictionary) -> void:
 
 		_list.add_child(row)
 	_resize_panel()
+
+## Restore a persisted suppress state (Hud's prefs load). Same effect as toggling into it, but
+## idempotent, so it is safe to call before any legend data has arrived.
+func set_suppressed(suppressed: bool) -> void:
+	legend_suppressed = suppressed
+	if legend_suppressed:
+		_hide_panel()
+	else:
+		update(overlay_legend)
 
 func toggle_suppressed() -> void:
 	legend_suppressed = not legend_suppressed

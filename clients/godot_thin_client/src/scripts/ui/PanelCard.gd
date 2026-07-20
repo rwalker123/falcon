@@ -40,6 +40,9 @@ const CONTENT_NODE_NAME := "CardContent"
 var _header: RichTextLabel
 var _content: VBoxContainer
 var _built: bool = false
+## Header ink. Defaults to the shared INK; `set_title_color` re-tints it for a card whose title
+## itself carries meaning (the Telling panel's title ages with the narrator's medium).
+var _title_color: Color = HudStyle.INK
 
 func _ready() -> void:
 	_build()
@@ -54,6 +57,15 @@ func set_card_title(value: String) -> void:
 
 func set_card_kind(value: String) -> void:
 	card_kind = value
+
+## Tint the header ink. For cards where the TITLE is itself a signal rather than just a name —
+## today only the Telling panel, whose title and accent age together with the narrator's medium.
+## Most cards should leave this alone and stay on the shared INK.
+func set_title_color(color: Color) -> void:
+	_title_color = color
+	_build()
+	if _header != null:
+		_header.add_theme_color_override("default_color", _title_color)
 
 func _build() -> void:
 	if _built:
@@ -82,7 +94,7 @@ func _build() -> void:
 	_header.scroll_active = false
 	_header.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_header.add_theme_font_size_override("normal_font_size", 14)
-	_header.add_theme_color_override("default_color", HudStyle.INK)
+	_header.add_theme_color_override("default_color", _title_color)
 	_header.add_theme_stylebox_override("normal", HudStyle.header_stylebox())
 	_content.add_child(_header)
 	_content.move_child(_header, 0)

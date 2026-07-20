@@ -255,6 +255,17 @@ message ExtendPenCommand {
   uint32 target_y = 3;
 }
 
+// The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
+// has on the table and `choice_id` one of that beat's authored choices; the choice's writes land in
+// the BeatLedger (declared stance offsets, flags), the beat is marked fired, and its echo line joins
+// the command feed. Every fork carries exactly one "defer" choice (validated at catalog load), which
+// is the explicit out the client's turn gate depends on.
+message AnswerForkCommand {
+  uint32 faction_id = 1;
+  string beat_id = 2;
+  string choice_id = 3;
+}
+
 message CancelOrderCommand {
   uint32 faction_id = 1;
   optional uint64 band_entity_bits = 2;
@@ -363,5 +374,8 @@ message CommandEnvelope {
     ExtendPenCommand extend_pen = 39;
     TameCommand tame = 40;
     SowCommand sow = 41;
+    // Field numbers are immutable once released — 40 and 41 are held by `tame` and
+    // `sow`, so `answer_fork` takes 42. Never renumber a field that has shipped.
+    AnswerForkCommand answer_fork = 42;
   }
 }
