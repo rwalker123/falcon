@@ -108,8 +108,9 @@ pub(crate) fn snapshot_sedentarization(
 /// the list rows and the scalar `ceiling*` fields below are literally the same numbers, so they cannot
 /// drift.
 ///
-/// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus `Corral`** (a legitimate
-/// Hunt policy whose dipped yield is exactly what a player must see *before* committing to the pen).
+/// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus the two investment rungs
+/// `Tame` and `Corral`** (legitimate Hunt policies whose dipped yield is exactly what a player must see
+/// *before* committing to taming the herd or building the pen).
 /// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
 /// forecast, `Corral` is automatically **phase-correct**: the `animal:pen` rung's
 /// `yield_fraction_while_building × MSY` dip

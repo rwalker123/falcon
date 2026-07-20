@@ -1068,8 +1068,9 @@ table HuntTripEstimate {
   turnsToFill:uint = 0;
   // false for eradicate (denial) — render "no food delivered", never an ETA.
   deliversFood:bool = false;
-  // Whole animals the raid delivers (append-only) — the payload the client headlines "≈N animals over
-  // M turns", combined with HerdTelemetryState.foodPerAnimal for the food total. Bounded by the
+  // Whole animals the raid KILLS over M turns (append-only) — a kill count, the client headlines "≈N
+  // animals over M turns"; the delivered food total is `deliveredFood`, NOT `animalsTaken × foodPerAnimal`
+  // (a party too small to seat a whole animal still kills one and wastes the rest). Bounded by the
   // standing surplus, so it plateaus with partyWorkers once the surplus (not the pack) binds — that
   // plateau IS the max-useful party size (ceil(surplus_food / per_worker_carry)). 0 = herd at/below
   // the policy's floor, no surplus to raid (the honest non-viable case). NOTE: `animalsTaken` is now a
