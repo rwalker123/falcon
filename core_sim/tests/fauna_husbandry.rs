@@ -9,10 +9,10 @@ use bevy::MinimalPlugins;
 
 use bevy::math::UVec2;
 use core_sim::{
-    advance_herds, advance_husbandry, advance_labor_allocation, herd_ecology, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventEntry,
-    CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
+    advance_herds, advance_husbandry, advance_labor_allocation, herd_ecology, quantise_animal_take,
+    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger,
+    FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
     GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
@@ -70,18 +70,41 @@ fn spawn_world() -> App {
     app
 }
 
-/// A stationary game herd (route length 1) primed to half its cap → Thriving and a clean
-/// domestication candidate. Returns its id.
+/// The species every husbandry-ladder fixture in this file runs on, **pinned by name on purpose**.
+///
+/// These tests measure *rates* — the Tame dip, the pen's MSY harvest, its upkeep debit — and a take
+/// is quantized to **whole animals**. So the fixture needs a species whose one-turn MSY comfortably
+/// exceeds one `body_mass`; on a heavy-bodied or slow-breeding one the same correct code takes `0`
+/// this turn and banks kill-credit instead, and the assertions read a rate of zero. The Rabbit
+/// Warren (`r` 0.35, the lightest body on the roster, `pen` husbandry ceiling) is the species that
+/// makes every rung's rate visible in a single turn.
+///
+/// **It used to be whichever short-range herd worldgen happened to place first**, which is an
+/// incidental dependency on map generation, not a property of the mechanic under test: a
+/// `macro_land` retune that moved one herd swapped the fixture to Crag Goats and failed four tests
+/// with "expected ~0.2, got 0" — a fixture artifact wearing the costume of a husbandry regression.
+const FIXTURE_SPECIES: &str = "Rabbit Warren";
+
+/// A stationary [`FIXTURE_SPECIES`] herd (route length 1) primed to half its cap → Thriving and a
+/// clean domestication candidate. Returns its id.
 fn prime_thriving_herd(app: &mut App) -> String {
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
         registry
             .herds
             .iter()
-            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
-            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .find(|h| {
+                h.id.starts_with("game_") && h.route_length() == 1 && h.species == FIXTURE_SPECIES
+            })
             .map(|h| h.id.clone())
-            .expect("expected short-range game to spawn")
+            .unwrap_or_else(|| {
+                panic!(
+                    "husbandry fixtures need a stationary {FIXTURE_SPECIES} on the generated map \
+                     and worldgen placed none — see FIXTURE_SPECIES for why the species is pinned. \
+                     Re-point the constant at another light-bodied, fast-breeding `pen`-ceiling \
+                     species rather than falling back to an arbitrary herd."
+                )
+            })
     };
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
@@ -173,12 +196,21 @@ fn herd_of(app: &App, id: &str) -> Herd {
 
 /// Re-seat a herd at a chosen carrying capacity / biomass — how a *species*' K is put under test
 /// without depending on which species the map happened to spawn.
+///
+/// **Seats `biomass_before_regrowth` too, and that is load-bearing.** A Sustain hunt sizes its rate
+/// against the herd's *pre-regrowth* biomass (`Herd::biomass_before_regrowth`, captured at the top of
+/// `regrow_biomass` — see "The hunt policy axis"), **not** `biomass`. A fixture that seats only
+/// `biomass` therefore leaves the rate reading whatever biomass **worldgen** happened to spawn the herd
+/// at, so any test that runs the labor arm without first running `advance_herds` silently measures a
+/// worldgen artifact instead of the state it asked for. Seating both says "this herd has been standing
+/// here", which is exactly what the fixture is claiming.
 fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.carrying_capacity = cap;
     herd.biomass = biomass;
+    herd.biomass_before_regrowth = biomass;
     herd.refresh_ecology_phase(&fauna);
 }
 
@@ -661,9 +693,21 @@ fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_do
     let cap = herd_of(&app, &id).carrying_capacity;
     let (expected_take, expected_provisions) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = herd_of(&app, &id);
         // Per-species pastoral rate (Grazing 2d): read the same seam the sim harvests through.
-        let pastoral_r = herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate;
-        let take = pastoral_r * cap / 4.0;
+        let pastoral_r = herd_ecology(&herd, &fauna).regrowth_rate;
+        let msy = pastoral_r * cap / 4.0;
+        // **Quantised through the take path's OWN helper, never a second copy of the rule.** A hunt
+        // pays in whole animals (slice 8), so the continuous MSY is only ever *approximately* what the
+        // herd hands over — the residue is `msy mod body_mass`, and it is a hard 1-animal step. Which
+        // species this harness measures is decided by **worldgen** (`prime_thriving_herd` takes the
+        // first game herd the map placed), and since Grazing 2b-ii `K` is derived from the graze under
+        // the herd's range — so a worldgen change moves both `body_mass` and `cap` and the residue
+        // with them. Comparing against the quantised expectation makes the assertion exact for every
+        // species instead of accidentally-tight for the one the current seed happens to place.
+        // `HUNT_WORKERS` is sized so the carry cap never binds, so the crew hauls everything it kills:
+        // the MSY is both the policy ceiling and the collection.
+        let take = quantise_animal_take(msy, msy, herd.body_mass).carried;
         (take, take * fauna.hunt.provisions_per_biomass)
     };
     // **Seated at the OPERATING POINT, not at capacity** (slice 8). A Sustain hunt is constant

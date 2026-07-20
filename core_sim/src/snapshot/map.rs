@@ -35,6 +35,20 @@ pub(crate) fn terrain_overlay_from_tiles(
     }
 }
 
+/// The u16 lattice the elevation overlay's samples are quantized onto.
+///
+/// **The samples and the published `sea_level` MUST share this one lattice.** The client's
+/// relative-height readout (`MapView.gd:2437-2445`) decodes `sample / SCALE` and compares the result
+/// against the published `sea_level`; if the threshold is left unquantized, a tile sitting *exactly*
+/// at sea level encodes to `round(sea_level * SCALE)` and decodes back to a value **strictly greater
+/// than** `sea_level` — so it reads as land-height water. That is not hypothetical: a live export
+/// showed 42 salt-water tiles above sea level, every one of them with the identical raw sample
+/// `40632 = round(0.62 * 65535)` and zero variance.
+///
+/// Two independent literals are exactly how that drift happened, so there is one constant and both
+/// call sites use it.
+const ELEVATION_SAMPLE_SCALE: f32 = u16::MAX as f32;
+
 pub(crate) fn elevation_overlay_from_field(
     field: &ElevationField,
     grid_size: UVec2,
@@ -68,14 +82,21 @@ pub(crate) fn elevation_overlay_from_field(
             }
             let value = field.sample(x, y);
             let normalised = ((value - min_value) / range).clamp(0.0, 1.0);
-            samples[idx] = (normalised * 65535.0).round().clamp(0.0, 65535.0) as u16;
+            samples[idx] = (normalised * ELEVATION_SAMPLE_SCALE)
+                .round()
+                .clamp(0.0, ELEVATION_SAMPLE_SCALE) as u16;
         }
     }
 
     // Express sea level on the same [min_value, max_value] scale as the samples so the
     // client can compare it directly against decoded (0..1) samples for its
-    // relative-height / LOS readout.
-    let sea_level = ((field.sea_level - min_value) / range).clamp(0.0, 1.0);
+    // relative-height / LOS readout — and then put it on the same QUANTIZATION LATTICE, with the
+    // identical `round() / SCALE` treatment the samples get. Normalizing alone is not enough: a
+    // quantized value compared against an unquantized threshold makes every tile sitting exactly at
+    // sea level read as above it. See [`ELEVATION_SAMPLE_SCALE`].
+    let sea_level_normalised = ((field.sea_level - min_value) / range).clamp(0.0, 1.0);
+    let sea_level =
+        (sea_level_normalised * ELEVATION_SAMPLE_SCALE).round() / ELEVATION_SAMPLE_SCALE;
 
     ElevationOverlayState {
         width,

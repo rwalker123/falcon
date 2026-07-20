@@ -33,7 +33,7 @@ mod graze;
 mod great_discovery;
 pub mod grid_utils;
 pub mod hashing;
-mod heightfield;
+pub mod heightfield;
 mod hydrology;
 mod influencers;
 mod intensification;

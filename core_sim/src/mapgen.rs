@@ -1,7 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{BinaryHeap, VecDeque},
-};
+use std::{cmp::Ordering, collections::VecDeque};
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
@@ -115,11 +112,6 @@ const PLATEAU_RIM_BOOST_FACTOR: f32 = 4.0;
 const DOME_CELL_STRENGTH: u8 = 4;
 const POLAR_FAULT_STRENGTH: u8 = 4;
 // Land-ratio rebalance coastline-scoring weights.
-const REBALANCE_GROW_ADJACENT: f32 = 0.35;
-const REBALANCE_GROW_ISOLATED: f32 = 0.15;
-const REBALANCE_SHRINK_ADJACENT: f32 = 0.25;
-const REBALANCE_SHRINK_ISOLATED: f32 = 0.1;
-const REBALANCE_JITTER: f32 = 0.05;
 
 #[derive(Debug, Clone)]
 pub struct MountainMask {
@@ -220,41 +212,6 @@ struct LandMask {
     land_count: usize,
 }
 
-#[derive(Clone, Copy)]
-struct QueueItem {
-    priority: f32,
-    idx: usize,
-    continent: usize,
-}
-
-impl PartialEq for QueueItem {
-    fn eq(&self, other: &Self) -> bool {
-        self.idx == other.idx
-            && self.continent == other.continent
-            && self.priority.to_bits() == other.priority.to_bits()
-    }
-}
-
-impl Eq for QueueItem {}
-
-impl PartialOrd for QueueItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for QueueItem {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.priority.total_cmp(&other.priority) {
-            Ordering::Equal => match self.idx.cmp(&other.idx) {
-                Ordering::Equal => self.continent.cmp(&other.continent),
-                ordering => ordering,
-            },
-            ordering => ordering,
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn build_bands(
     elevation: &ElevationField,
@@ -273,7 +230,12 @@ pub fn build_bands(
 ) -> BandsResult {
     let w = elevation.width as usize;
     let h = elevation.height as usize;
-    let LandMask { mask, land_count } = generate_land_mask(elevation, macro_cfg, sea_level, seed);
+    // A private working copy of the field. Every coastline edit below writes HERE and the mask is
+    // re-derived — no stage writes `land`/`is_ocean` directly. It is this edited field that flows
+    // into `restamp_elevation` and out through `BandsResult.elevation`, so the published bathymetry
+    // and the published terrain are the same surface.
+    let mut field = elevation.clone();
+    let LandMask { mask, land_count } = generate_land_mask(&field, sea_level);
     let mut land = mask;
     let initial_land_ratio = land_count as f32 / (w * h) as f32;
     tracing::debug!(
@@ -282,7 +244,6 @@ pub fn build_bands(
         target_land_pct = macro_cfg.target_land_pct,
         continents = macro_cfg.continents,
         min_area = macro_cfg.min_area,
-        jitter = macro_cfg.jitter,
         wrap_horizontal,
         "mapgen.macro_land.initial_ratio"
     );
@@ -291,31 +252,19 @@ pub fn build_bands(
 
     // Optionally connect inland seas to ocean via simple strait rule
     if inland.merge_strait_width > 0 {
-        connect_inland_seas_via_straits(
-            &mut land,
-            &mut is_ocean,
-            inland.merge_strait_width as usize,
-            w,
-            h,
-        );
+        connect_inland_seas_via_straits(&mut field, &land, &is_ocean, inland, sea_level, w, h);
+        land = generate_land_mask(&field, sea_level).mask;
         is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
     }
 
     // Place islands before classifying so shelves wrap correctly.
-    place_islands(&mut land, &mut is_ocean, islands, shelf, w, h, seed);
+    place_islands(&mut field, &is_ocean, islands, shelf, sea_level, w, h, seed);
+    land = generate_land_mask(&field, sea_level).mask;
     is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
 
-    rebalance_land_ratio(
-        &mut land,
-        &mut is_ocean,
-        elevation,
-        macro_cfg.target_land_pct,
-        0.015,
-        w,
-        h,
-        seed,
-    );
-    is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
+    // `rebalance_land_ratio`/`adjust_land_tiles` are GONE. The contour anchor already holds land% to
+    // within a few tenths of `target_land_pct` by construction, so they had nothing to correct — and
+    // they corrected it by repainting the mask, which is the defect this arc removes.
 
     let land_distance = compute_land_distance_wrapped(&land, w, h, wrap_horizontal);
     let coastal_land = compute_coastal_land(&land, &is_ocean, w, h);
@@ -323,7 +272,7 @@ pub fn build_bands(
         &land,
         &is_ocean,
         &land_distance,
-        elevation,
+        &field,
         mountain_cfg,
         mountain_scale,
         w,
@@ -336,7 +285,7 @@ pub fn build_bands(
         &is_ocean,
         &land_distance,
         &mountains,
-        elevation,
+        &field,
         mountain_cfg,
         ocean_cfg,
         sea_level,
@@ -436,13 +385,22 @@ fn neighbor_dirs() -> [(i32, i32); 8] {
     ]
 }
 
+/// Connect landlocked water bodies to the open ocean by **lowering a corridor of land below sea
+/// level**, then re-deriving the mask. It used to flip `land`/`is_ocean` along the corridor, which
+/// left the strait's tiles sitting above sea level in the published field — a channel you could see
+/// on the map and not in the bathymetry.
 fn connect_inland_seas_via_straits(
-    land: &mut [bool],
-    is_ocean: &mut [bool],
-    max_width: usize,
+    field: &mut ElevationField,
+    land: &[bool],
+    is_ocean: &[bool],
+    inland: &InlandSeaConfig,
+    sea_level: f32,
     w: usize,
     h: usize,
 ) {
+    let max_width = inland.merge_strait_width as usize;
+    // The corridor floor: unambiguously below sea level, so the re-derived mask reads it as water.
+    let strait_floor = sea_level - inland.strait_depth_margin.max(0.0);
     // For each inland water tile near ocean within max_width, carve shortest corridor through land.
     let idx = |x: usize, y: usize| -> usize { y * w + x };
     // Collect inland edge tiles
@@ -499,8 +457,9 @@ fn connect_inland_seas_via_straits(
                 if dist[i] == 0 {
                     break;
                 }
-                land[i] = false;
-                is_ocean[i] = true;
+                // The one edit: sink the tile. `min` so an already-deeper cell is left alone.
+                let values = field.values_mut();
+                values[i] = values[i].min(strait_floor).clamp(0.0, 1.0);
                 // pick next with minimal distance
                 let mut best: Option<(usize, usize, u16)> = None;
                 for (nx, ny) in neighbors4(cx, cy, w, h) {
@@ -521,11 +480,61 @@ fn connect_inland_seas_via_straits(
     }
 }
 
+/// Island size levers. The old boolean `carve_blob_into` painted a disc of `land` at these radii;
+/// they now size a radial elevation blob instead. Kept as named constants rather than moved into
+/// `IslandConfig` so island *placement* stays exactly as config-driven as it was — only the
+/// mechanism changed.
+const ISLAND_CONTINENTAL_RADIUS_MIN: usize = 1;
+/// How many discrete radii a continental fragment may take (`MIN`, `MIN + 1`).
+const ISLAND_CONTINENTAL_RADIUS_VARIANTS: u32 = 2;
+/// Oceanic islands are lone specks — one radius, no variance.
+const ISLAND_OCEANIC_RADIUS: usize = 1;
+/// The blob's rim height as a fraction of its peak margin. Strictly positive so the whole disc
+/// clears sea level (matching the old paint-the-disc behavior) while still reading as a dome
+/// rather than a mesa.
+const ISLAND_RIM_HEIGHT_FRACTION: f32 = 0.25;
+/// The window `place_islands` scans when measuring a candidate tile's distance to the nearest land.
+const ISLAND_LAND_SCAN_RADIUS: isize = 8;
+/// Placement attempts per island, as a multiple of the target count, plus a floor so a sparse map
+/// still gets a fair number of tries.
+const ISLAND_CONTINENTAL_ATTEMPT_FACTOR: u32 = 10;
+const ISLAND_CONTINENTAL_ATTEMPT_FLOOR: u32 = 100;
+const ISLAND_OCEANIC_ATTEMPT_FACTOR: u32 = 20;
+const ISLAND_OCEANIC_ATTEMPT_FLOOR: u32 = 200;
+
+/// One island dome's geometry and height, bundled so `raise_island_blob` keeps a readable signature.
+struct IslandDome {
+    center: (usize, usize),
+    radius: usize,
+    /// Sea level on the field's normalized scale — the dome's rim is measured from it.
+    sea_level: f32,
+    /// The dome's centre height. `peak - sea_level` is `IslandConfig::island_peak_margin`.
+    peak: f32,
+}
+
+/// Seed islands by **raising seamounts above sea level**, then re-deriving the mask. Placement
+/// (densities, fringe band, min distance from a continent) is unchanged and still config-driven;
+/// only the mechanism moved from painting `land` to editing the field the mask is derived from.
+///
+/// Land is read **live off `field`** (`elevation > sea_level`) rather than from a pre-call mask, so
+/// each iteration sees the islands earlier iterations raised — that is what keeps two fragments from
+/// stacking on one tile and keeps oceanic specks honouring `min_distance_from_continent`. Reading
+/// the mask live *is* the derived-mask contract.
+///
+/// `is_ocean` is a different question — **not** `!land`, since an inland sea is water but not ocean,
+/// and an oceanic speck must be seeded in open ocean rather than in a lake. It cannot be re-derived
+/// from the field by a threshold, so it is *maintained incrementally* instead: raising a dome only
+/// ever **removes** tiles from the ocean body (elevation only goes up here, so water never appears),
+/// which makes "clear the carved tiles" the complete update. That keeps the candidate filter exact
+/// regardless of `shelf.width_tiles` — with a zero-width fringe the live land check alone would let
+/// a fragment re-seed on a tile an earlier fragment already raised.
+#[allow(clippy::too_many_arguments)]
 fn place_islands(
-    land: &mut [bool],
-    is_ocean: &mut [bool],
+    field: &mut ElevationField,
+    is_ocean: &[bool],
     islands: &IslandConfig,
     shelf: &ShelfConfig,
+    sea_level: f32,
     w: usize,
     h: usize,
     seed: u64,
@@ -534,13 +543,18 @@ fn place_islands(
     // and in abyssal for oceanic islands.
     let idx = |x: usize, y: usize| -> usize { y * w + x };
     let mut rng = SmallRng::seed_from_u64(seed ^ 0xA51C_E55E);
+    let peak = sea_level + islands.island_peak_margin.max(0.0);
+    // Maintained across iterations: a tile a dome raised is no longer open ocean.
+    let mut is_ocean = is_ocean.to_vec();
 
     // Continental fragments along slope fringe (distance in [shelf, shelf+slope])
     let fringe_min = shelf.width_tiles as usize;
     let fringe_max = (shelf.width_tiles + shelf.slope_width_tiles) as usize;
     let mut placed_cf = 0u32;
     let target_cf = ((w * h) as f32 * islands.continental_density) as u32;
-    for _ in 0..(target_cf * 10).max(100) {
+    for _ in
+        0..(target_cf * ISLAND_CONTINENTAL_ATTEMPT_FACTOR).max(ISLAND_CONTINENTAL_ATTEMPT_FLOOR)
+    {
         if placed_cf >= target_cf {
             break;
         }
@@ -552,23 +566,34 @@ fn place_islands(
         }
         // approximate distance by scanning for nearest land within small window
         let mut near_dist = usize::MAX;
-        for dy in -8..=8 {
-            for dx in -8..=8 {
+        for dy in -ISLAND_LAND_SCAN_RADIUS..=ISLAND_LAND_SCAN_RADIUS {
+            for dx in -ISLAND_LAND_SCAN_RADIUS..=ISLAND_LAND_SCAN_RADIUS {
                 let nx = x as isize + dx;
                 let ny = y as isize + dy;
                 if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
                     continue;
                 }
-                let ni = idx(nx as usize, ny as usize);
-                if land[ni] {
+                if field.sample(nx as u32, ny as u32) > sea_level {
                     let d = dx.unsigned_abs() + dy.unsigned_abs();
                     near_dist = near_dist.min(d);
                 }
             }
         }
         if near_dist >= fringe_min && near_dist <= fringe_max {
-            let radius = 1 + (rng.gen::<u32>() % 2) as usize;
-            carve_blob_into(land, is_ocean, w, h, x, y, radius);
+            let radius = ISLAND_CONTINENTAL_RADIUS_MIN
+                + (rng.gen::<u32>() % ISLAND_CONTINENTAL_RADIUS_VARIANTS) as usize;
+            raise_island_blob(
+                field,
+                w,
+                h,
+                &IslandDome {
+                    center: (x, y),
+                    radius,
+                    sea_level,
+                    peak,
+                },
+            );
+            clear_ocean_under_dome(&mut is_ocean, w, h, (x, y), radius);
             placed_cf += 1;
         }
     }
@@ -576,7 +601,7 @@ fn place_islands(
     // Oceanic islands: far from continents; place in deep ocean
     let mut placed_oi = 0u32;
     let target_oi = ((w * h) as f32 * islands.oceanic_density) as u32;
-    for _ in 0..(target_oi * 20).max(200) {
+    for _ in 0..(target_oi * ISLAND_OCEANIC_ATTEMPT_FACTOR).max(ISLAND_OCEANIC_ATTEMPT_FLOOR) {
         if placed_oi >= target_oi {
             break;
         }
@@ -599,7 +624,7 @@ fn place_islands(
                 if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
                     continue;
                 }
-                if land[idx(nx as usize, ny as usize)] {
+                if field.sample(nx as u32, ny as u32) > sea_level {
                     ok = false;
                     break 'scan;
                 }
@@ -608,21 +633,54 @@ fn place_islands(
         if !ok {
             continue;
         }
-        carve_blob_into(land, is_ocean, w, h, x, y, 1);
+        raise_island_blob(
+            field,
+            w,
+            h,
+            &IslandDome {
+                center: (x, y),
+                radius: ISLAND_OCEANIC_RADIUS,
+                sea_level,
+                peak,
+            },
+        );
+        clear_ocean_under_dome(&mut is_ocean, w, h, (x, y), ISLAND_OCEANIC_RADIUS);
         placed_oi += 1;
     }
 }
 
-fn carve_blob_into(
-    land: &mut [bool],
-    is_ocean: &mut [bool],
+/// Raise a radial elevation dome centred on `(cx, cy)`: `peak` at the centre falling linearly to
+/// `ISLAND_RIM_HEIGHT_FRACTION * margin` above sea level at `radius`. `max` against the existing
+/// field, so an island never *lowers* ground it lands on.
+fn raise_island_blob(field: &mut ElevationField, w: usize, h: usize, dome: &IslandDome) {
+    let IslandDome {
+        center: (cx, cy),
+        radius,
+        sea_level,
+        peak,
+    } = *dome;
+    let margin = (peak - sea_level).max(0.0);
+    let rim = sea_level + margin * ISLAND_RIM_HEIGHT_FRACTION;
+    let values = field.values_mut();
+    for_each_dome_tile(w, h, (cx, cy), radius, |i, dist| {
+        let target = peak + (rim - peak) * dist;
+        values[i] = values[i].max(target).clamp(0.0, 1.0);
+    });
+}
+
+/// The dome's footprint — every in-bounds tile of the disc `dx² + dy² <= radius²`, with its distance
+/// from the centre normalized to `[0, 1]`. Shared by `raise_island_blob` and
+/// `clear_ocean_under_dome` so the raised tiles and the tiles removed from the ocean body can never
+/// disagree.
+fn for_each_dome_tile(
     w: usize,
     h: usize,
-    cx: usize,
-    cy: usize,
+    center: (usize, usize),
     radius: usize,
+    mut visit: impl FnMut(usize, f32),
 ) {
-    let idx = |x: usize, y: usize| -> usize { y * w + x };
+    let (cx, cy) = center;
+    let radius_f = (radius as f32).max(f32::EPSILON);
     for dy in -(radius as isize)..=(radius as isize) {
         for dx in -(radius as isize)..=(radius as isize) {
             let nx = cx as isize + dx;
@@ -630,299 +688,54 @@ fn carve_blob_into(
             if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
                 continue;
             }
-            let dist2 = (dx * dx + dy * dy) as usize;
-            if dist2 as f32 <= (radius as f32 * radius as f32) {
-                let i = idx(nx as usize, ny as usize);
-                land[i] = true;
-                is_ocean[i] = false;
+            let dist = ((dx * dx + dy * dy) as f32).sqrt() / radius_f;
+            if dist > 1.0 {
+                continue;
             }
+            visit(ny as usize * w + nx as usize, dist);
         }
     }
 }
 
-fn generate_land_mask(
-    elevation: &ElevationField,
-    macro_cfg: &MacroLandConfig,
-    _sea_level: f32,
-    seed: u64,
-) -> LandMask {
-    let w = elevation.width as usize;
-    let h = elevation.height as usize;
-    let total = w * h;
-    let idx = |x: usize, y: usize| -> usize { y * w + x };
-
-    if total == 0 {
-        return LandMask {
-            mask: Vec::new(),
-            land_count: 0,
-        };
-    }
-
-    let target_pct = macro_cfg.target_land_pct.clamp(0.01, 0.99);
-    let mut desired_land = ((total as f32) * target_pct).round() as usize;
-    desired_land = desired_land.clamp(1, total);
-
-    let mut tile_scores = vec![0.0f32; total];
-    for y in 0..h {
-        for x in 0..w {
-            let e = elevation.sample(x as u32, y as u32);
-            let jitter_scale = macro_cfg.jitter.max(0.0);
-            let jitter_noise = if jitter_scale > 0.0 {
-                (terrain_hash(seed, x as u32, y as u32) & 0xFFFF) as f32 / 65535.0 * jitter_scale
-            } else {
-                0.0
-            };
-            tile_scores[idx(x, y)] = e + jitter_noise;
-        }
-    }
-
-    let mut sorted_indices: Vec<usize> = (0..total).collect();
-    sorted_indices.sort_unstable_by(|a, b| tile_scores[*b].total_cmp(&tile_scores[*a]));
-
-    let mut continents = macro_cfg.continents.max(1) as usize;
-    continents = continents.min(desired_land.max(1));
-
-    let raw_min_area = macro_cfg.min_area.max(1) as usize;
-    let per_continent_cap = (desired_land / continents.max(1)).max(1);
-    let effective_min_area = raw_min_area.min(per_continent_cap);
-
-    let mut seeds: Vec<usize> = Vec::new();
-    let spacing = ((total as f32 / continents as f32).sqrt() as usize).max(3);
-
-    for &candidate in &sorted_indices {
-        if seeds.len() >= continents {
-            break;
-        }
-        let cx = candidate % w;
-        let cy = candidate / w;
-        if seeds.iter().all(|&existing| {
-            let ex = existing % w;
-            let ey = existing / w;
-            let dist = cx.abs_diff(ex) + cy.abs_diff(ey);
-            dist >= spacing
-        }) {
-            seeds.push(candidate);
-        }
-    }
-
-    if seeds.len() < continents {
-        for &candidate in &sorted_indices {
-            if seeds.len() >= continents {
-                break;
-            }
-            if !seeds.contains(&candidate) {
-                seeds.push(candidate);
-            }
-        }
-    }
-
-    let mut targets = vec![0usize; continents];
-    let mut areas = vec![0usize; continents];
-    let base_target = desired_land / continents;
-    let mut remainder = desired_land % continents;
-    for target in targets.iter_mut().take(continents) {
-        let mut t = base_target;
-        if remainder > 0 {
-            remainder -= 1;
-            t += 1;
-        }
-        *target = t.max(effective_min_area);
-    }
-    if targets.iter().sum::<usize>() > desired_land {
-        let mut excess = targets.iter().sum::<usize>() - desired_land;
-        for target in targets.iter_mut().rev() {
-            if excess == 0 {
-                break;
-            }
-            let min_allowed = effective_min_area;
-            if *target > min_allowed {
-                let reducible = (*target - min_allowed).min(excess);
-                *target -= reducible;
-                excess -= reducible;
-            }
-        }
-    }
-
-    let mut land = vec![false; total];
-    let mut assignment = vec![None::<usize>; total];
-    let mut heap = BinaryHeap::new();
-    let mut overflow = BinaryHeap::new();
-    let mut total_land = 0usize;
-
-    for (id, &seed_idx) in seeds.iter().enumerate() {
-        if assignment[seed_idx].is_some() {
-            continue;
-        }
-        assignment[seed_idx] = Some(id);
-        land[seed_idx] = true;
-        areas[id] += 1;
-        total_land += 1;
-        push_neighbors(seed_idx, id, w, h, &assignment, &tile_scores, &mut heap);
-    }
-
-    let mut pending_targets = targets
-        .iter()
-        .enumerate()
-        .filter(|(i, t)| areas[*i] < **t)
-        .count();
-
-    while pending_targets > 0 && total_land < desired_land {
-        if let Some(item) = heap.pop() {
-            if assignment[item.idx].is_some() {
-                continue;
-            }
-            let continent = item.continent;
-            if areas[continent] >= targets[continent] {
-                overflow.push(item);
-                continue;
-            }
-            assignment[item.idx] = Some(continent);
-            land[item.idx] = true;
-            areas[continent] += 1;
-            total_land += 1;
-            if areas[continent] >= targets[continent] {
-                pending_targets = pending_targets.saturating_sub(1);
-            }
-            push_neighbors(
-                item.idx,
-                continent,
-                w,
-                h,
-                &assignment,
-                &tile_scores,
-                &mut heap,
-            );
-        } else {
-            break;
-        }
-    }
-
-    heap.append(&mut overflow);
-
-    while total_land < desired_land {
-        if let Some(item) = heap.pop() {
-            if assignment[item.idx].is_some() {
-                continue;
-            }
-            let continent = item.continent.min(areas.len().saturating_sub(1));
-            assignment[item.idx] = Some(continent);
-            land[item.idx] = true;
-            areas[continent] = areas[continent].saturating_add(1);
-            total_land += 1;
-            push_neighbors(
-                item.idx,
-                continent,
-                w,
-                h,
-                &assignment,
-                &tile_scores,
-                &mut heap,
-            );
-        } else {
-            break;
-        }
-    }
-
-    if total_land < desired_land {
-        let mut remaining = desired_land - total_land;
-        for &candidate in &sorted_indices {
-            if remaining == 0 {
-                break;
-            }
-            if !land[candidate] {
-                land[candidate] = true;
-                remaining -= 1;
-            }
-        }
-        total_land = desired_land - remaining;
-    }
-
-    LandMask {
-        mask: land,
-        land_count: total_land,
-    }
-}
-
-fn push_neighbors(
-    idx_tile: usize,
-    continent_id: usize,
-    w: usize,
-    h: usize,
-    assignment: &[Option<usize>],
-    tile_scores: &[f32],
-    heap: &mut BinaryHeap<QueueItem>,
-) {
-    let x = idx_tile % w;
-    let y = idx_tile / w;
-    for (nx, ny) in neighbors4(x, y, w, h) {
-        let nidx = ny * w + nx;
-        if assignment[nidx].is_none() {
-            heap.push(QueueItem {
-                priority: tile_scores[nidx],
-                idx: nidx,
-                continent: continent_id,
-            });
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn rebalance_land_ratio(
-    land: &mut [bool],
+/// A tile a dome raised above sea level is land, so it has left the open-ocean body. Elevation only
+/// rises in `place_islands`, so removal is the only update the ocean classification can need.
+fn clear_ocean_under_dome(
     is_ocean: &mut [bool],
-    elevation: &ElevationField,
-    target_pct: f32,
-    tolerance: f32,
     w: usize,
     h: usize,
-    seed: u64,
+    center: (usize, usize),
+    radius: usize,
 ) {
-    let total_tiles = land.len();
-    if total_tiles == 0 {
-        return;
-    }
-    let target_pct = target_pct.clamp(0.01, 0.99);
-    let target_tiles = ((total_tiles as f32) * target_pct).round() as isize;
-    let tolerance_tiles = ((total_tiles as f32) * tolerance.clamp(0.0, 0.2)).round() as isize;
-    let lower_bound = (target_tiles - tolerance_tiles).max(0);
-    let upper_bound = (target_tiles + tolerance_tiles).min(total_tiles as isize);
+    for_each_dome_tile(w, h, center, radius, |i, _dist| is_ocean[i] = false);
+}
 
-    let mut land_count = land.iter().filter(|&&is_land| is_land).count() as isize;
-    if land_count >= lower_bound && land_count <= upper_bound {
-        return;
-    }
-
-    if land_count < target_tiles {
-        let needed = (target_tiles - land_count) as usize;
-        if needed > 0 {
-            adjust_land_tiles(
-                land,
-                is_ocean,
-                elevation,
-                w,
-                h,
-                seed,
-                needed,
-                true,
-                &mut land_count,
-            );
-        }
-    } else if land_count > target_tiles {
-        let surplus = (land_count - target_tiles) as usize;
-        if surplus > 0 {
-            adjust_land_tiles(
-                land,
-                is_ocean,
-                elevation,
-                w,
-                h,
-                seed,
-                surplus,
-                false,
-                &mut land_count,
-            );
+/// The land mask, a **pure derived function of the heightfield**: `land = elevation > sea_level`.
+///
+/// Elevation is the sole authority. Everything that shapes the coastline — continental structure,
+/// coastline roughness, erosion, and the contour anchor that puts the `target_land_pct` quantile
+/// exactly on `sea_level` — happens in `heightfield::build_elevation_field`, *upstream* of this
+/// threshold. That is what makes "a water tile above sea level" unrepresentable rather than merely
+/// rare: this function has no way to express it.
+///
+/// It used to rank tiles by `elevation + jitter` and grow boolean blobs from spaced seeds to fixed
+/// per-continent area quotas, which invalidated the anchor's whole justification (a jittered ranking
+/// *is* a reordering, so the mask selected a different 38% than the contour the anchor had aligned)
+/// and produced both failure modes it was supposed to prevent: sunken land (quota-driven growth
+/// swallowed sub-sea-level tiles) and floating high ground (seed-reachable-only growth left tall
+/// tiles as ocean). `macro_land.jitter` now lives in the field as
+/// `macro_land.coastline_roughness`, and `macro_land.continents` as the continental bias.
+fn generate_land_mask(elevation: &ElevationField, sea_level: f32) -> LandMask {
+    let total = (elevation.width as usize) * (elevation.height as usize);
+    let mut mask = Vec::with_capacity(total);
+    let mut land_count = 0usize;
+    for y in 0..elevation.height {
+        for x in 0..elevation.width {
+            let is_land = elevation.sample(x, y) > sea_level;
+            land_count += usize::from(is_land);
+            mask.push(is_land);
         }
     }
+    LandMask { mask, land_count }
 }
 
 fn pick_plate_seeds(cells: &[usize], plate_count: usize, w: usize, seed: u64) -> Vec<usize> {
@@ -971,86 +784,6 @@ fn pick_plate_seeds(cells: &[usize], plate_count: usize, w: usize, seed: u64) ->
         seeds.push(cells[0]);
     }
     seeds
-}
-
-#[allow(clippy::too_many_arguments)]
-fn adjust_land_tiles(
-    land: &mut [bool],
-    is_ocean: &mut [bool],
-    elevation: &ElevationField,
-    w: usize,
-    h: usize,
-    seed: u64,
-    count: usize,
-    grow: bool,
-    land_count: &mut isize,
-) {
-    if count == 0 {
-        return;
-    }
-    let idx = |x: usize, y: usize| -> usize { y * w + x };
-    let mut candidates: Vec<(usize, f32)> = Vec::new();
-    for y in 0..h {
-        for x in 0..w {
-            let tile_idx = idx(x, y);
-            if grow == land[tile_idx] {
-                continue;
-            }
-            let mut score = elevation.sample(x as u32, y as u32);
-            let mut adjacent = false;
-            for (nx, ny) in neighbors4(x, y, w, h) {
-                if land[idx(nx, ny)] {
-                    adjacent = true;
-                    break;
-                }
-            }
-            if grow {
-                if adjacent {
-                    score += REBALANCE_GROW_ADJACENT;
-                } else {
-                    score -= REBALANCE_GROW_ISOLATED;
-                }
-            } else if adjacent {
-                score -= REBALANCE_SHRINK_ADJACENT;
-            } else {
-                score += REBALANCE_SHRINK_ISOLATED;
-            }
-            let noise = terrain_hash(seed ^ 0xA962_4D3B, x as u32, y as u32);
-            let jitter = ((noise & 0xFFFF) as f32 / 65535.0 - 0.5) * REBALANCE_JITTER;
-            score += jitter;
-            candidates.push((tile_idx, score));
-        }
-    }
-    if candidates.is_empty() {
-        return;
-    }
-    if grow {
-        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-    } else {
-        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
-    }
-
-    let mut remaining = count;
-    for (tile_idx, _) in candidates.into_iter() {
-        if remaining == 0 {
-            break;
-        }
-        if grow {
-            if land[tile_idx] {
-                continue;
-            }
-            land[tile_idx] = true;
-            is_ocean[tile_idx] = false;
-            *land_count += 1;
-        } else {
-            if !land[tile_idx] {
-                continue;
-            }
-            land[tile_idx] = false;
-            *land_count -= 1;
-        }
-        remaining -= 1;
-    }
 }
 
 #[cfg(test)]
@@ -2658,7 +2391,12 @@ fn restamp_elevation(
                 let hash = terrain_hash(seed, x as u32, y as u32);
                 let sample = (hash & 0xFFFF) as f32 / 65535.0;
                 if sample < ocean_cfg.ridge_density {
-                    v += ocean_cfg.ridge_amplitude * (1.0 - sample / ocean_cfg.ridge_density);
+                    // Capped AT sea level: a mid-ocean ridge is bathymetry, not an island. A
+                    // positive `ridge_amplitude` on a shallow cell would otherwise lift an
+                    // `is_ocean` tile above sea level — the exact state this arc makes
+                    // unrepresentable in the mask, reintroduced one stage later in the field.
+                    v = (v + ocean_cfg.ridge_amplitude * (1.0 - sample / ocean_cfg.ridge_density))
+                        .min(sea_level);
                 }
             }
 
@@ -2682,12 +2420,23 @@ fn restamp_elevation(
                 let floor = mountain_floor(cell.ty, mountains.relief_scale(i));
                 values[i] = values[i].max(floor);
             } else {
-                values[i] = values[i].min(elevation_base);
+                // Floored AT sea level as well as capped at `elevation_base`. `apply_coastal_smoothing`
+                // blends a coastal land tile toward an ocean-inclusive 3x3 mean, which can drag it
+                // *below* sea level — the other half of the original defect (land under water). The
+                // floor is `sea_level` itself, not `sea_level + eps`: a tile sitting exactly on the
+                // coastline contour is a real, meaningful value, and inventing an epsilon offset just
+                // to satisfy a strict inequality would be a magic number standing in for a fact.
+                values[i] = values[i].clamp(sea_level, elevation_base);
             }
         }
     }
 
+    // Propagate the input field's sea level: a restamp reshapes the surface, it does not redefine
+    // where the sea is. Without this the restamped field silently reverts to `DEFAULT_SEA_LEVEL`,
+    // and any consumer that inserts it as a resource without re-attaching (there was one, in
+    // `spawn_initial_world`) publishes a coastline at the wrong height.
     ElevationField::new(base_elevation.width, base_elevation.height, values)
+        .with_sea_level(base_elevation.sea_level)
 }
 
 fn apply_coastal_smoothing(
@@ -2829,6 +2578,7 @@ fn terrain_hash(seed: u64, x: u32, y: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::{
         heightfield::build_elevation_field,
@@ -3534,22 +3284,74 @@ mod tests {
         );
     }
 
+    /// Grid the `polar_contrast` band fixture runs at — small next to a shipped 256x192 preset,
+    /// but large enough to hold two landmasses that each clear the plate-splitting area threshold.
+    const POLAR_FIXTURE_WIDTH: usize = 64;
+    const POLAR_FIXTURE_HEIGHT: usize = 44;
+    /// Ocean floor the fixture starts from, well below `polar_contrast`'s 0.6 sea level, so every
+    /// tile is water until a peak lifts it.
+    const POLAR_FIXTURE_BASE_DEPTH: f32 = 0.2;
+    /// Elevation added at a peak's centre. `BASE_DEPTH + PEAK_HEIGHT` is the fixture's summit.
+    const POLAR_FIXTURE_PEAK_HEIGHT: f32 = 0.8;
+    /// Radius, in tiles, over which a peak falls linearly back to the ocean floor. Only the inner
+    /// half of the cone clears sea level, so this yields a ~609-tile landmass per peak.
+    const POLAR_FIXTURE_PEAK_RADIUS: f32 = 28.0;
+    /// Centres of the fixture's two landmasses, separated so their above-sea discs stay disjoint
+    /// with open ocean between them.
+    const POLAR_FIXTURE_PEAK_CENTERS: [(usize, usize); 2] = [(15, 22), (49, 22)];
+
+    /// Synthetic elevation for the `polar_contrast` band test: an all-ocean plane with two
+    /// well-separated radial cones poking above sea level.
+    ///
+    /// The structure here is load-bearing, not decorative. `derive_mountain_mask` derives tectonic
+    /// plates from the land mask's *connected components*, splitting each component into 1-4 plates
+    /// purely by area (`mountains.plate_area_bucket_*`), and fold belts form only along a boundary
+    /// between two plates whose drift converges. So a fixture earns `fold > 0` only if it contains
+    /// a landmass big enough to be split into **two or more plates** — under
+    /// `plate_area_bucket_2` (192 tiles for this preset) every component is a single plate, there
+    /// are no plate boundaries anywhere on the map, and no fold belt can exist.
+    ///
+    /// The previous fixture was a pure linear diagonal plane (`((x + y) / (w + h)).fract()`, which
+    /// never wraps at 48x32), yielding exactly one small triangular corner of land. It passed only
+    /// because stray island placement occasionally coined an extra component. Both peaks here clear
+    /// the threshold with wide margin, and the mountain counts stay positive with island placement
+    /// disabled — so the assertions below are structural rather than an island artifact.
+    ///
+    /// If you retune this field, keep the landmasses above the plate-splitting threshold.
+    fn polar_fixture_elevation() -> ElevationField {
+        let mut values = Vec::with_capacity(POLAR_FIXTURE_WIDTH * POLAR_FIXTURE_HEIGHT);
+        for y in 0..POLAR_FIXTURE_HEIGHT {
+            for x in 0..POLAR_FIXTURE_WIDTH {
+                let mut value = POLAR_FIXTURE_BASE_DEPTH;
+                for (center_x, center_y) in POLAR_FIXTURE_PEAK_CENTERS {
+                    let dx = x as f32 - center_x as f32;
+                    let dy = y as f32 - center_y as f32;
+                    let distance = dx.hypot(dy);
+                    if distance < POLAR_FIXTURE_PEAK_RADIUS {
+                        let falloff = 1.0 - distance / POLAR_FIXTURE_PEAK_RADIUS;
+                        value = value
+                            .max(POLAR_FIXTURE_BASE_DEPTH + POLAR_FIXTURE_PEAK_HEIGHT * falloff);
+                    }
+                }
+                values.push(value);
+            }
+        }
+        ElevationField::new(
+            POLAR_FIXTURE_WIDTH as u32,
+            POLAR_FIXTURE_HEIGHT as u32,
+            values,
+        )
+    }
+
     #[test]
     fn polar_contrast_preset_builds_bands() {
         let presets = crate::map_preset::MapPresets::builtin();
         let preset = presets
             .get("polar_contrast")
             .expect("polar_contrast preset");
-        let width = 48usize;
-        let height = 32usize;
-        let mut values = Vec::with_capacity(width * height);
-        for y in 0..height {
-            for x in 0..width {
-                let base = ((x + y) as f32) / ((width + height) as f32);
-                values.push(base.fract());
-            }
-        }
-        let elevation = ElevationField::new(width as u32, height as u32, values);
+        let width = POLAR_FIXTURE_WIDTH;
+        let height = POLAR_FIXTURE_HEIGHT;
+        let elevation = polar_fixture_elevation();
         let seed = preset.map_seed.unwrap_or(99);
         let bands = build_bands(
             &elevation,
@@ -3574,101 +3376,287 @@ mod tests {
         assert!(volcanic > 0, "expected volcanic terrain");
     }
 
+    /// Prints every regression metric for both shipped presets, so a deliberate re-pin can read all
+    /// the new centres at once. The `*_regression_metrics_stable` assertions stop at the **first**
+    /// drift, which otherwise turns a re-pin into a one-metric-per-run loop.
+    #[test]
+    #[ignore]
+    fn print_regression_metrics() {
+        println!(
+            "earthlike: {:?}",
+            regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64))
+        );
+        println!(
+            "polar_contrast: {:?}",
+            regression_metrics_for_preset("polar_contrast", None)
+        );
+    }
+
     #[test]
     fn earthlike_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64));
         assert!(
-            (metrics.land_ratio - 0.394).abs() <= 0.01,
+            (metrics.land_ratio - 0.403).abs() <= 0.01,
             "earthlike land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 1462).abs() <= 32,
+            (metrics.fold as isize - 2326).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 186).abs() <= 16,
+            (metrics.fault as isize - 254).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 14).abs() <= 6,
+            (metrics.volcanic as isize - 24).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 865).abs() <= 32,
+            (metrics.dome as isize - 707).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 887).abs() <= 32,
+            (metrics.polar_fold as isize - 613).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 57).abs() <= 16,
+            (metrics.polar_fault as isize - 157).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 188).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 136).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 9).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 12).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
+    }
+
+    /// **Why a relief term can collapse a preset's fold belts** — the measurement that explained
+    /// `polar_contrast`'s fold count falling 3556 -> 544 under the tilt (run with
+    /// `-- --ignored --nocapture`).
+    ///
+    /// Fold belts form only at boundaries **between plates inside one land component**, and
+    /// [`derive_mountain_mask`] buckets plate count by component area with a **cap of 4**. So the
+    /// fold count tracks *how many multi-plate landmasses there are*, not how much land there is:
+    /// five separate 1.5k-9k-tile bodies carry ~14 plates and a long boundary network, while one
+    /// fused 18k-tile supercontinent carries **4 plates** and almost none.
+    ///
+    /// Measured, that is exactly what happened: the tilt fused `polar_contrast`'s five multi-plate
+    /// components into **two** (largest 9053 -> 18313 tiles, i.e. 85% of all land in one body) and
+    /// the folds went with them. It is the same land-bridging failure the tilt window was added to
+    /// prevent, surviving the window on this preset.
+    ///
+    /// It also **refutes the obvious suspect**: `polar_contrast`'s much stricter
+    /// `belt_convergence` (-0.1 vs earthlike's 0.25) is *not* the sensitivity. Under the dome the
+    /// two gates give 3556 vs 3782 — 6% apart. The gate was never the mechanism; landmass fusion
+    /// was.
+    #[test]
+    #[ignore]
+    fn polar_contrast_fold_investigation() {
+        /// (label, warp, tilt, spine)
+        const RELIEFS: [(&str, f64, f64, f64); 5] = [
+            ("dome", 0.0, 0.0, 0.0),
+            ("warp-only", 0.18, 0.0, 0.0),
+            ("spine-only", 0.0, 0.0, 0.35),
+            ("tilt-on", 0.18, 2.0, 0.35),
+            ("tilt-off (SHIPPED)", 0.18, 0.0, 0.35),
+        ];
+
+        fn plate_structure(
+            land: &[bool],
+            w: usize,
+            h: usize,
+            cfg: &crate::map_preset::MountainsConfig,
+        ) -> String {
+            let total = w * h;
+            let mut comp = vec![usize::MAX; total];
+            let mut sizes: Vec<usize> = Vec::new();
+            for start in 0..total {
+                if !land[start] || comp[start] != usize::MAX {
+                    continue;
+                }
+                let id = sizes.len();
+                let mut size = 0usize;
+                let mut stack = vec![start];
+                comp[start] = id;
+                while let Some(idx) = stack.pop() {
+                    size += 1;
+                    let (x, y) = (idx % w, idx / w);
+                    for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                        let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                        if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                            continue;
+                        }
+                        let n = ny as usize * w + nx as usize;
+                        if land[n] && comp[n] == usize::MAX {
+                            comp[n] = id;
+                            stack.push(n);
+                        }
+                    }
+                }
+                sizes.push(size);
+            }
+            let plates_for = |area: usize| -> usize {
+                let mut n = if area < cfg.plate_area_bucket_2 as usize {
+                    1
+                } else if area < cfg.plate_area_bucket_3 as usize {
+                    2
+                } else if area < cfg.plate_area_bucket_4 as usize {
+                    3
+                } else {
+                    4
+                };
+                if n <= 1 && area >= cfg.plate_area_bump as usize {
+                    n = 2;
+                }
+                n.min(area.max(1))
+            };
+            let plates: usize = sizes.iter().map(|&a| plates_for(a)).sum();
+            let multi: usize = sizes.iter().filter(|&&a| plates_for(a) > 1).count();
+            let in_multi: usize = sizes.iter().filter(|&&a| plates_for(a) > 1).sum();
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            format!(
+                "comps {:>4} | plates {:>4} | multi-plate comps {:>3} (land in them {:>6}) | largest {:?}",
+                sizes.len(),
+                plates,
+                multi,
+                in_multi,
+                &sizes[..sizes.len().min(6)]
+            )
+        }
+
+        fn report(id: &str, relief: (&str, f64, f64, f64), convergence: Option<f64>) {
+            let mut file: serde_json::Value =
+                serde_json::from_str(crate::map_preset::BUILTIN_MAP_PRESETS).expect("presets");
+            for preset in file["presets"].as_array_mut().expect("presets").iter_mut() {
+                let macro_land = preset["macro_land"].as_object_mut().expect("macro_land");
+                macro_land.insert("continental_warp_amplitude".into(), relief.1.into());
+                macro_land.insert("continental_tilt_strength".into(), relief.2.into());
+                macro_land.insert("continental_spine_amplitude".into(), relief.3.into());
+                if let Some(c) = convergence {
+                    preset["mountains"]
+                        .as_object_mut()
+                        .expect("mountains")
+                        .insert("belt_convergence".into(), c.into());
+                }
+            }
+            let presets = MapPresets::from_json_str(&file.to_string()).expect("patched presets");
+            let preset = presets.get(id).expect("preset");
+            let seed = preset_seed(preset, None);
+
+            let mut config = SimulationConfig::builtin();
+            config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+            config.map_seed = seed;
+            config.map_preset_id = preset.id.clone();
+
+            let elevation = build_elevation_field(&config, Some(preset), seed);
+            let bands = build_bands(
+                &elevation,
+                preset.sea_level,
+                &preset.macro_land,
+                &preset.shelf,
+                &preset.islands,
+                &preset.inland_sea,
+                &preset.ocean,
+                preset.moisture_scale,
+                &preset.biomes,
+                seed,
+                preset.mountain_scale,
+                &preset.mountains,
+                false,
+            );
+            let (fold, fault, volcanic, dome) = bands.mountains.iter_counts();
+            let land = bands.land_mask.iter().copied().filter(|&v| v).count();
+            let (w, h) = (
+                preset.dimensions.width as usize,
+                preset.dimensions.height as usize,
+            );
+            println!(
+                "  {:<20} gate {:>5} | fold {:>5} fault {:>4} volc {:>3} dome {:>5} | land {:.3}",
+                relief.0,
+                preset.mountains.belt_convergence,
+                fold,
+                fault,
+                volcanic,
+                dome,
+                land as f64 / (w * h) as f64
+            );
+            println!(
+                "      {}",
+                plate_structure(&bands.land_mask, w, h, &preset.mountains)
+            );
+        }
+
+        println!("=== polar_contrast @ shipped gate (belt_convergence -0.1) ===");
+        for relief in RELIEFS {
+            report("polar_contrast", relief, None);
+        }
+        println!("=== polar_contrast @ earthlike's gate (belt_convergence 0.25) ===");
+        for relief in [RELIEFS[0], RELIEFS[4]] {
+            report("polar_contrast", relief, Some(0.25));
+        }
+        println!("=== earthlike @ its own gate (0.25), for reference ===");
+        for relief in [RELIEFS[0], RELIEFS[4]] {
+            report("earthlike", relief, None);
+        }
     }
 
     #[test]
     fn polar_contrast_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("polar_contrast", None);
         assert!(
-            (metrics.land_ratio - 0.415).abs() <= 0.01,
+            (metrics.land_ratio - 0.440).abs() <= 0.01,
             "polar_contrast land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 2114).abs() <= 40,
+            (metrics.fold as isize - 3004).abs() <= 40,
             "polar_contrast fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 365).abs() <= 24,
+            (metrics.fault as isize - 702).abs() <= 24,
             "polar_contrast fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 71).abs() <= 10,
+            (metrics.volcanic as isize - 52).abs() <= 10,
             "polar_contrast volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 1033).abs() <= 40,
+            (metrics.dome as isize - 981).abs() <= 40,
             "polar_contrast dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 561).abs() <= 36,
+            (metrics.polar_fold as isize - 1471).abs() <= 36,
             "polar_contrast polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 182).abs() <= 18,
+            (metrics.polar_fault as isize - 244).abs() <= 18,
             "polar_contrast polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 18).abs() <= 14,
+            (metrics.polar_uplift_cells as isize - 233).abs() <= 14,
             "polar_contrast polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 139).abs() <= 18,
+            (metrics.polar_relief_cells as isize - 368).abs() <= 18,
             "polar_contrast polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
@@ -3879,6 +3867,224 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+        }
+    }
+
+    /// The largest radius a continental fragment can roll — how far its tiles reach past its
+    /// centre. Derived from the placement constants rather than restated, so a retune moves it.
+    const ISLAND_CONTINENTAL_RADIUS_MAX: usize =
+        ISLAND_CONTINENTAL_RADIUS_MIN + ISLAND_CONTINENTAL_RADIUS_VARIANTS as usize - 1;
+    /// Tiles in a max-radius continental dome — `raise_island_blob` fills the disc
+    /// `dx² + dy² <= r²`, which at `r = 2` is 13 tiles. The most land one fragment can cover alone.
+    const ISLAND_CONTINENTAL_DOME_MAX_TILES: usize = 13;
+
+    /// Sea level used by the island-placement tests, on the field's normalized 0..1 scale.
+    const ISLAND_TEST_SEA_LEVEL: f32 = 0.5;
+    /// How far above `ISLAND_TEST_SEA_LEVEL` the test continent's tiles sit.
+    const ISLAND_TEST_CONTINENT_HEIGHT: f32 = 0.3;
+
+    /// Connected components (4-neighbour) of the tiles selected by `member`, as tile-index sets.
+    fn island_components(
+        member: &dyn Fn(usize) -> bool,
+        w: usize,
+        h: usize,
+    ) -> Vec<std::collections::HashSet<usize>> {
+        let mut seen = vec![false; w * h];
+        let mut components = Vec::new();
+        for start in 0..w * h {
+            if seen[start] || !member(start) {
+                continue;
+            }
+            let mut component = std::collections::HashSet::new();
+            let mut stack = vec![start];
+            seen[start] = true;
+            while let Some(i) = stack.pop() {
+                component.insert(i);
+                let (x, y) = ((i % w) as isize, (i / w) as isize);
+                for (dx, dy) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                        continue;
+                    }
+                    let ni = ny as usize * w + nx as usize;
+                    if !seen[ni] && member(ni) {
+                        seen[ni] = true;
+                        stack.push(ni);
+                    }
+                }
+            }
+            components.push(component);
+        }
+        components
+    }
+
+    /// Minimum Manhattan distance between two tile-index sets — the same metric `place_islands`
+    /// uses when it measures a candidate's distance to the nearest land.
+    fn min_manhattan_between(
+        a: &std::collections::HashSet<usize>,
+        b: &std::collections::HashSet<usize>,
+        w: usize,
+    ) -> usize {
+        let mut best = usize::MAX;
+        for &i in a {
+            for &j in b {
+                let (ax, ay) = ((i % w) as isize, (i / w) as isize);
+                let (bx, by) = ((j % w) as isize, (j / w) as isize);
+                best = best.min((ax - bx).unsigned_abs() + (ay - by).unsigned_abs());
+            }
+        }
+        best
+    }
+
+    /// Oceanic islands must honour `min_distance_from_continent` **against each other**, not just
+    /// against the pre-existing continents: each placement raises land, and the next candidate's
+    /// scan reads that land live off the field. Before the live read this scan consulted a stale
+    /// pre-call snapshot, so specks could stack on one tile or cluster inside the exclusion radius.
+    #[test]
+    fn oceanic_islands_never_stack_and_respect_min_distance() {
+        let w = 96usize;
+        let h = 96usize;
+        // Open ocean everywhere: no continent, so every rejection must come from another island.
+        let mut field = ElevationField::new(w as u32, h as u32, vec![0.0f32; w * h]);
+        let is_ocean = vec![true; w * h];
+        let islands = IslandConfig {
+            continental_density: 0.0,
+            oceanic_density: 0.002,
+            ..IslandConfig::default()
+        };
+        let shelf = ShelfConfig::default();
+        let min_distance = islands.min_distance_from_continent as usize;
+
+        place_islands(
+            &mut field,
+            &is_ocean,
+            &islands,
+            &shelf,
+            ISLAND_TEST_SEA_LEVEL,
+            w,
+            h,
+            0xDEAD_BEEF,
+        );
+
+        let is_land =
+            |i: usize| field.sample((i % w) as u32, (i / w) as u32) > ISLAND_TEST_SEA_LEVEL;
+        let components = island_components(&is_land, w, h);
+        assert!(
+            components.len() > 1,
+            "test is vacuous: only {} island(s) placed",
+            components.len()
+        );
+
+        // Non-overlap: every island the loop placed must be its own connected component. Two specks
+        // stacked on one tile (or merged into one blob) would show up as a shortfall here. The
+        // target is the same expression `place_islands` uses to size its run.
+        let target_oi = ((w * h) as f32 * islands.oceanic_density) as usize;
+        assert_eq!(
+            components.len(),
+            target_oi,
+            "oceanic islands stacked or merged: {} distinct islands for {target_oi} placements",
+            components.len()
+        );
+
+        // Spacing: the placement scan rejects any candidate with land inside the exclusion square,
+        // so distinct islands end up strictly beyond `min_distance_from_continent`.
+        for (a_idx, a) in components.iter().enumerate() {
+            for b in components.iter().skip(a_idx + 1) {
+                let d = min_manhattan_between(a, b, w);
+                assert!(
+                    d > min_distance,
+                    "two oceanic islands are {d} tiles apart, inside min_distance_from_continent \
+                     ({min_distance})"
+                );
+            }
+        }
+    }
+
+    /// The continental-fringe path has the same contract: an island raised on one iteration is land
+    /// for the next, so later fragments must sit at least `shelf.width_tiles` away from it rather
+    /// than only from the original continent.
+    #[test]
+    fn continental_fringe_islands_stay_off_previously_placed_islands() {
+        let w = 96usize;
+        let h = 96usize;
+        // A 2-column continent on the west edge gives the fringe scan something to measure from.
+        const CONTINENT_WIDTH: usize = 2;
+        let mut elev = vec![0.0f32; w * h];
+        for y in 0..h {
+            for x in 0..CONTINENT_WIDTH {
+                elev[y * w + x] = ISLAND_TEST_SEA_LEVEL + ISLAND_TEST_CONTINENT_HEIGHT;
+            }
+        }
+        let mut field = ElevationField::new(w as u32, h as u32, elev);
+        let is_ocean = (0..w * h)
+            .map(|i| i % w >= CONTINENT_WIDTH)
+            .collect::<Vec<_>>();
+        let islands = IslandConfig {
+            continental_density: 0.002,
+            oceanic_density: 0.0,
+            ..IslandConfig::default()
+        };
+        // A wide fringe band well clear of the max continental dome radius, so the surviving
+        // separation below is comfortably positive.
+        let shelf = ShelfConfig {
+            width_tiles: 6,
+            slope_width_tiles: 6,
+            ..ShelfConfig::default()
+        };
+        let fringe_min = shelf.width_tiles as usize;
+
+        place_islands(
+            &mut field,
+            &is_ocean,
+            &islands,
+            &shelf,
+            ISLAND_TEST_SEA_LEVEL,
+            w,
+            h,
+            0x1234_5678,
+        );
+
+        // Exclude the seed continent; only compare the fragments against one another.
+        let is_island = |i: usize| {
+            i % w >= CONTINENT_WIDTH
+                && field.sample((i % w) as u32, (i / w) as u32) > ISLAND_TEST_SEA_LEVEL
+        };
+        let components = island_components(&is_island, w, h);
+        assert!(
+            components.len() > 1,
+            "test is vacuous: only {} fragment(s) placed",
+            components.len()
+        );
+
+        // Non-overlap. The loop may legitimately place fewer than its target (each fragment eats
+        // into the fringe band, so later attempts find fewer valid candidates), so the count is not
+        // the invariant — the *size* is: no single fragment may exceed one max-radius dome. Two
+        // stacked or touching fragments would merge into a component larger than that.
+        for component in &components {
+            assert!(
+                component.len() <= ISLAND_CONTINENTAL_DOME_MAX_TILES,
+                "a continental fragment covers {} tiles, more than one radius-\
+                 {ISLAND_CONTINENTAL_RADIUS_MAX} dome ({ISLAND_CONTINENTAL_DOME_MAX_TILES}) — \
+                 fragments overlapped",
+                component.len()
+            );
+        }
+
+        // Spacing. The fringe scan measures a *candidate centre* against existing land, so a new
+        // centre lands `>= fringe_min` (Manhattan) from the nearest tile of every earlier fragment.
+        // Its own dome then reaches out by up to `ISLAND_CONTINENTAL_RADIUS_MAX`, so the surviving
+        // tile-to-tile separation is that band minus one dome radius.
+        let min_separation = fringe_min - ISLAND_CONTINENTAL_RADIUS_MAX;
+        for (a_idx, a) in components.iter().enumerate() {
+            for b in components.iter().skip(a_idx + 1) {
+                let d = min_manhattan_between(a, b, w);
+                assert!(
+                    d >= min_separation,
+                    "two continental fragments are {d} tiles apart, closer than the fringe band \
+                     minimum ({fringe_min}) allows for a dome of radius \
+                     {ISLAND_CONTINENTAL_RADIUS_MAX} ({min_separation})"
+                );
+            }
         }
     }
 }

@@ -77,12 +77,63 @@ fn earthlike_world_full(
     hydrology: Option<HydrologyOverrides>,
     presets: Arc<MapPresets>,
 ) -> World {
+    earthlike_world_sized(seed, hydrology, presets, None)
+}
+
+/// The grid the **navigable-river structural invariants** run on, and why it is not the shipped
+/// `SimulationConfig::builtin()` size.
+///
+/// A navigable river needs a drainage basin clearing `river_class_navigable_min_discharge` (25.0).
+/// Measured across this generator, pre- and post-`elevation-authority`, **the largest basin on a
+/// landmass tops out at ~5% of that landmass** — the drainage surface is ~95% divided into small
+/// independent basins, and that ratio is unchanged by the arc. At the shipped 80x52 the largest
+/// landmass is ~286-444 tiles, so the biggest basin reaches only 11-20: **no seed produces a
+/// navigable river, and that is an honest outcome, not a regression.**
+///
+/// Before the arc, `generate_land_mask`'s BFS grew a single accidental ~1,580-tile supercontinent at
+/// this size while the preset asked for 4 continents. That surplus area was the only thing clearing
+/// the threshold, and it did so as a *lottery*: across six seeds the pre-arc counts were
+/// `0, 1, 1, 6, 5, 1`, with a single 41.7%-basin outlier seed carrying most of them. These tests
+/// used to assert on that coin flip.
+///
+/// So the fixture is **the shipped preset at a larger grid** — `continents: 4` and every other lever
+/// untouched, only more area per landmass. A sweep (80x52 / 128x96 / 192x128 / 256x192 x
+/// `continents` 4 / 2 / 1) found 128x96 to be the smallest grid producing navigable rivers on
+/// **every** seed (5-9 per seed); `continents` barely moved the result at that size, confirming the
+/// binding constraint is landmass area, not continent count.
+///
+/// **Do not "fix" a dry map by lowering `river_class_navigable_min_discharge` or any other hydrology
+/// threshold.** Rivers are emergent; forcing a fixed river share onto whatever terrain exists is the
+/// repaint-the-output-to-hit-a-quota pattern this arc deleted. If more rivers are wanted, the input
+/// to change is basin coherence or landmass size.
+const NAVIGABLE_FIXTURE_GRID: UVec2 = UVec2::new(128, 96);
+
+/// A world on [`NAVIGABLE_FIXTURE_GRID`] with the shipped presets — the river-capable fixture the
+/// navigable structural invariants sweep.
+fn navigable_fixture_world(seed: u64) -> World {
+    earthlike_world_sized(
+        seed,
+        None,
+        MapPresets::builtin(),
+        Some(NAVIGABLE_FIXTURE_GRID),
+    )
+}
+
+fn earthlike_world_sized(
+    seed: u64,
+    hydrology: Option<HydrologyOverrides>,
+    presets: Arc<MapPresets>,
+    grid_size: Option<UVec2>,
+) -> World {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = seed;
+    if let Some(grid_size) = grid_size {
+        config.grid_size = grid_size;
+    }
     if let Some(hydrology) = hydrology {
         config.hydrology = hydrology;
     }
@@ -358,7 +409,7 @@ fn river_classes_are_mostly_minor_with_a_navigable_trunk_on_the_biggest_drainage
 fn navigable_hex_chains_are_contiguous_and_terminate_at_water() {
     let mut checked = 0usize;
     for seed in CENSUS_SEEDS {
-        let world = earthlike_world_seeded(seed);
+        let world = navigable_fixture_world(seed);
         let config = world.resource::<SimulationConfig>();
         let (width, height, wrap) = (
             config.grid_size.x,
@@ -435,6 +486,80 @@ fn navigable_hex_chains_are_contiguous_and_terminate_at_water() {
     println!("navigable rivers checked: {checked}");
 }
 
+/// The same structural properties, held **conditionally** on the SHIPPED map size
+/// ([`SimulationConfig::builtin`], 80x52) rather than on [`NAVIGABLE_FIXTURE_GRID`]: *if* a navigable
+/// river appears there, its chain must still be contiguous, fully stamped, and terminate at water.
+///
+/// Today this finds **zero** rivers at that size and is therefore vacuous — deliberately so. It is a
+/// tripwire, not a guarantee: the shipped grid produces no basin clearing the navigable discharge
+/// threshold (see [`NAVIGABLE_FIXTURE_GRID`] for the measured basin-size ceiling), so this asserts
+/// nothing today and will start asserting the moment a worldgen or hydrology change makes rivers
+/// possible there. The non-vacuous version of these invariants runs on the fixture; **that** is
+/// where the coverage lives, and this must never be mistaken for it.
+#[test]
+fn navigable_chains_are_well_formed_at_the_shipped_map_size_if_any_exist() {
+    let mut checked = 0usize;
+    for seed in CENSUS_SEEDS {
+        let world = earthlike_world_seeded(seed);
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+        let hydrology = world.resource::<HydrologyState>();
+        let terrain_at = |pos: UVec2| -> TerrainType {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+                .terrain
+        };
+
+        for river in &hydrology.rivers {
+            if river.navigable_hexes.is_empty() {
+                continue;
+            }
+            checked += 1;
+            for pair in river.navigable_hexes.windows(2) {
+                let contiguous = hex_neighbors_wrapped(pair[0].x, pair[0].y, width, height, wrap)
+                    .any(|(x, y)| UVec2::new(x, y) == pair[1]);
+                assert!(
+                    contiguous,
+                    "seed {seed}: river {} navigable chain breaks between {:?} and {:?}",
+                    river.id, pair[0], pair[1]
+                );
+            }
+            let last = *river.navigable_hexes.last().expect("non-empty");
+            for &pos in &river.navigable_hexes {
+                let terrain = terrain_at(pos);
+                let ok = if pos == last {
+                    matches!(
+                        terrain,
+                        TerrainType::NavigableRiver | TerrainType::RiverDelta
+                    )
+                } else {
+                    terrain == TerrainType::NavigableRiver
+                };
+                assert!(
+                    ok,
+                    "seed {seed}: river {} chain hex {pos:?} is {terrain:?}",
+                    river.id
+                );
+            }
+            let reaches_water = hex_neighbors_wrapped(last.x, last.y, width, height, wrap)
+                .any(|(x, y)| is_water(terrain_at(UVec2::new(x, y))));
+            assert!(
+                reaches_water,
+                "seed {seed}: river {} navigable chain ends at {last:?}, which borders no water",
+                river.id
+            );
+        }
+    }
+    println!("navigable rivers at the shipped map size: {checked} (0 is expected today)");
+}
+
 /// **Part B + C.** A navigable river must *be* a waterway: its chain must CONNECT to standing water
 /// (a landlocked navigable dead-end on dry land is demoted to the edge model) and must be no shorter
 /// than `river_navigable_min_hexes` (a 1- or 2-hex navigable is a puddle, not a river). Swept over
@@ -443,7 +568,7 @@ fn navigable_hex_chains_are_contiguous_and_terminate_at_water() {
 fn navigable_rivers_connect_to_water() {
     let mut checked = 0usize;
     for seed in CENSUS_SEEDS {
-        let world = earthlike_world_seeded(seed);
+        let world = navigable_fixture_world(seed);
         let config = world.resource::<SimulationConfig>();
         let (width, height, wrap) = (
             config.grid_size.x,
@@ -611,7 +736,7 @@ fn navigable_chain_joins_the_edge_chain_on_a_shared_edge() {
     let mut total_navigable_hexes = 0usize;
 
     for seed in CENSUS_SEEDS {
-        let world = earthlike_world_seeded(seed);
+        let world = navigable_fixture_world(seed);
         let config = world.resource::<SimulationConfig>();
         let (width, height, wrap) = (
             config.grid_size.x,
@@ -741,7 +866,7 @@ fn every_river_inflow_is_a_real_tributary_handover_vertex() {
     let mut navigable_from_first_step = 0usize;
 
     for seed in CENSUS_SEEDS {
-        let world = earthlike_world_seeded(seed);
+        let world = navigable_fixture_world(seed);
         let config = world.resource::<SimulationConfig>();
         let (width, height, wrap) = (
             config.grid_size.x,

@@ -40,7 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a `cultivation` block** — the plant ladder's **two rung payoffs, in two different currencies (slice 7)**: **`tended_regrowth_gain` (1.5, rung 2 — the plant twin of `husbandry.pastoral_gain`, at its value: a tended patch is STILL A WILD STAND on a boosted curve, gathered under the full policy axis and drawn down)** and **`field_provisions_per_biomass` (0.02, rung 3 — a managed rate on the standing crop, no drawdown, policy axis collapsed, because at rung 3 the source is YOURS)**; both PLAYTEST DIALS, and each rung must beat the one below it or climbing buys nothing (**now `validate()`-enforced, scale-free in `K`**). The retired `tended_provisions_per_biomass` (0.01) made rung 2 a *managed* rate a full rung earlier than the animal side's, so a tended patch could not be over-farmed and every policy paid the identical number (**the plant rung-2 BUILD dials — the old `progress_per_turn`/`decay_per_turn`/`cultivating_yield_fraction` — moved to `intensification_ladder.json`'s `plant:tended` rung**, and in slice 4 **the earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` moved to that file's ladder-level `knowledge` block** too, so both food webs climb *and learn* on the same numbers) (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only the `plant:tended` rung's `yield_fraction_while_building × its Sustain/MSY ceiling` (the investment cost) and accrues that rung's `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: working a **wild** patch under a stewardship policy earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**; the accrual is the ladder's, driven off the rung — see "The knowledge pattern"); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
-| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0** — the pace of EVERY rung's `earns_knowledge` and the bar at which a faction may act on one, ~20 turns per lesson; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_earned`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands no prior patch at all), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. every rung but `plant:field`. **Rung 4 (Worked Land) will be a looser copy of this record and nothing else**), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**, `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/`0.25`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/`0.25`, `fixed`, site `{ min_forage_capacity 195, requires_fresh_water true }` → **46 sowable tiles of 4160** on the standard map)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0** — the pace of EVERY rung's `earns_knowledge` and the bar at which a faction may act on one, ~20 turns per lesson; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_earned`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands no prior patch at all), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. every rung but `plant:field`. **Rung 4 (Worked Land) will be a looser copy of this record and nothing else**), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**, `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/`0.25`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/`0.25`, `fixed`, site `{ min_forage_capacity 195, requires_fresh_water true }` → **49 sowable tiles of 4160** on the standard map)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`taming_rate`** (intensification ladder slice 3c — a **per-species multiplier on the `animal:pastoral` rung's BUILD**, default **1.0**; the rung owns the taming mechanic, the species scales it (the `regrowth_rate`/`pastoral_gain` split again). It scales **`progress_per_turn` AND `decay_per_turn`** — a whole **timescale**, so the rung's 4:1 ratio is invariant: *slow to tame, slow to forget*. Roster: rabbit/fowl/crag_goat 1.0 (25 turns), boar 0.8 (~31), aurochs 0.5 (50), steppe_runner/marsh_grazer 0.2 (125); deer/mammoth omit it (`wild` ceiling — never tame). **Playtest dials.** Validated finite & `> 0`; resolved live by display name (`FaunaConfig::taming_rate_for`), *not* cached on `Herd`, so a retune reaches herds already on the map. See "The `Tame` verb") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d") + **`pastoral_density` / `pen_density`** (the per-species husbandry DENSITY (K) multiplier per rung, default **1.0** = neutral; domestication makes the LAND hold more animals, non-linearly by species — DISTINCT from the global r-gains, which scale the breeding rate not the ceiling. Roster: crag_goat/aurochs 2.0/5.0, boar 1.5/4.0, rabbit/fowl 1.1/1.5, steppe_runner/marsh_grazer 1.5/1.0 (pastoral only — pen inert), deer/mammoth omit both (wild → ×1). Applied at the one K seam `ecological_carrying_capacity` via `fauna::herd_density_gain`, resolved live by display name (`FaunaConfig::pen_density_for`/`pastoral_density_for`), *not* cached on `Herd`. **Playtest dials.** Validated finite & `>= 1.0` (a gain below 1 would make domestication reduce capacity). See "The husbandry yield ladder")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (**the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 2.0 / `pen_gain` 4.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 1.0, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), the **`Corral` policy**'s investment levers having **moved to `intensification_ladder.json`'s `animal:pen` rung** (the old `corralling_yield_fraction` → `yield_fraction_while_building` 0.50, `corral_build_progress_per_turn` → `progress_per_turn` 0.04); every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -108,8 +108,26 @@ use.**
 
 Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, climate bands, resources, and wildlife spawners. Player-facing framing: manual §3a World Bootstrapping, §3b Terrain Palette.
 
+> ### Elevation is the sole authority
+>
+> **The land mask is a pure derived function of the heightfield — `land[i] = elevation[i] > sea_level`
+> — and is never stored and edited. Any stage that wants to move a coastline writes elevation and
+> re-derives.** Guarded by `core_sim/tests/elevation_authority.rs`.
+>
+> This is not style, it is the fix for a real defect: the mask used to be grown as a boolean blob and
+> then repainted by later stages, so the published bathymetry and the published terrain disagreed —
+> 543 water tiles sat *above* sea level and 218 land tiles *below* it on a sampled map. A water tile
+> above sea level is now **unrepresentable** rather than merely rare, because no stage has a way to
+> express one. `target_land_pct` is met by *shaping the field* (`anchor_contour_to_sea_level`), and
+> `continents` by the continental bias term — never by repainting tiles.
+>
+> Consequences a new stage must respect: `place_islands` raises a seamount above sea level;
+> `connect_inland_seas_via_straits` lowers a corridor below it; both then re-derive. There is no
+> `rebalance_land_ratio` and no tag-solver water branch — both were deleted because they corrected a
+> quota by repainting the output. Design: `docs/plan_elevation_authority.md`.
+
 ### Pipeline Stages
-1. **Macro landmask** - Continent seeds via weighted BFS to reach `target_land_pct`
+1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
 2. **Tectonics** - Drift vectors, collision belts, fault seams, volcanic arcs, dome plateaus → mountain mask
 3. **Polar microplates** - Subdivide polar tiles, converging vectors raise fold strength
 4. **Heightfield** - Multi-octave height raster with erosion smoothing → `elevation_m`
@@ -459,14 +477,58 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   off the corner network, which the segmentation fix does not touch). Per-seed spread is large and
   *should* be — see the verdict below.
 
+  > **These figures are PRE-`elevation-authority` and no longer describe an 80×52 map.** Post-arc,
+  > that size yields **zero navigable rivers on every seed**, and land-corner accumulation maxes at
+  > **10–20**, not 587. This is **not a regression** — measured, the largest basin is ~5% of its
+  > landmass both before and after the arc (the drainage surface is ~95% divided into small
+  > independent basins either way). What changed is *landmass size*: the old BFS grew an accidental
+  > ~1,580-tile supercontinent at 80×52 while the preset asked for 4 continents, and that surplus area
+  > was the only thing clearing the navigable discharge threshold of 25.0. It cleared it as a
+  > **lottery** — pre-arc counts across six seeds were `0, 1, 1, 6, 5, 1`, with one 41.7%-basin
+  > outlier seed carrying most of them. The arc removed the bug that was masking a pre-existing
+  > drainage deficiency.
+  >
+  > **Update (the divides arc).** The dome has been replaced by a warped / tilted / ridged envelope
+  > (see `macro_land` below). At 80×52 navigable rivers now appear on **3 of 6 seeds** rather than 1,
+  > and the standard map carries **49 sowable tiles** — but the **coherence ratio is unchanged**, and
+  > the measured reason is geometric, not tuning: with a mean depth-to-coast of ~2.9 tiles the largest
+  > landmass has roughly one ocean-touching (⇒ sink) corner per two interior corners, so a basin
+  > cannot grow long enough to clear a discharge of 25 except by luck. **Landmass area remains the
+  > binding constraint at this grid size.**
+  >
+  > **A related correction:** the claim that the arc took sowable tiles "46 → 0" was a **test-harness
+  > defect, not a worldgen result**. `core_sim/tests/forage_field.rs` never ran `generate_hydrology`,
+  > so its map had no rivers, no `RiverDelta`, and no `river_edges` — and `plant:field`'s site rule
+  > requires fresh water, which on that map nothing could satisfy. The harness now runs hydrology and
+  > pins its own grid; see the test split below.
+  >
+  > Consequently the navigable structural invariants run against a **river-capable fixture** at
+  > `NAVIGABLE_FIXTURE_GRID` = **128×96** (shipped presets, `continents: 4`, only the grid differs) —
+  > the smallest grid producing navigable rivers on every seed (5–9 each). A sweep over
+  > 80×52 / 128×96 / 192×128 / 256×192 × `continents` 4 / 2 / 1 showed `continents` barely moves the
+  > result, confirming **landmass area** is the binding constraint. See `hydrology_earthlike.rs`.
+  >
+  > **Do not "fix" a dry map by lowering `river_class_navigable_min_discharge`** or any hydrology
+  > threshold. Rivers are emergent; forcing a fixed river share onto whatever terrain exists is the
+  > repaint-to-hit-a-quota pattern `elevation-authority` deleted. The input to change is basin
+  > coherence or landmass size — `TASKS.md` → "Capture: the divides, not the valleys".
+
 ### Fluvial erosion — the heightfield the drainage runs on
 The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
 **sponges** (48–64% of a continent's tiles touched water, because the coastline is an iso-contour of
 fractal noise) and they **shed radially** with no trunk valleys to capture drainage across a divide.
 `heightfield::apply_fluvial_erosion` attacks the landscape directly, at the end of
 `build_elevation_field` — **before** `mapgen::generate_land_mask`, which is the whole point: the mask
-ranks tiles by elevation, so the coastline *is* a level set of this field, and reshaping the field
+is a pure threshold of this field, so the coastline **is** a level set of it, and reshaping the field
 reshapes the coast.
+
+> Since `elevation-authority` this is *literally* true rather than approximately so. The passage
+> above used to read "the mask **ranks** tiles by elevation" — it ranked them by
+> `elevation + macro_land.jitter × noise`, which is a **reordering**, so the coastline was a rank
+> contour over a jittered score and not a level set of anything. The conclusion held only by luck.
+> `jitter` is retired; its coastline raggedness now lives in the field itself as
+> `macro_land.coastline_roughness`, applied *before* `land_contour`, where it perturbs the shoreline
+> without decoupling the mask from the surface.
 
 - **The model** is the classic landscape-evolution equation minus uplift: `∂z/∂t = D∇²z − K·A^m·S^n`,
   iterated on the **square raster** (D8 — the hex/corner graph is hydrology's and stays there). Per
@@ -482,18 +544,28 @@ reshapes the coast.
 
 > #### Two things the pass had to learn the hard way — do not "simplify" them away
 >
-> **1. Base level is the land-mask's rank contour, NOT `sea_level`.** On the earthlike preset only
-> **24–37%** of cells sit above `sea_level = 0.62`, while `macro_land.target_land_pct` claims **38%**
-> of them for land — so the coastline actually falls at elevation **0.55–0.61, *below* sea level**.
-> A pass that freezes everything under `sea_level` freezes the entire coastal band it exists to
-> reshape, and measures as a **no-op** (it did: coastal 59.2% → 58.8%). `heightfield::land_contour`
-> computes the real thing.
+> **1. Base level is `land_contour`, which the anchor then makes equal to `sea_level`.**
+> `apply_fluvial_erosion` still takes its base level from `heightfield::land_contour` (the
+> `1 − target_land_pct` quantile) rather than from `sea_level`, and **that ordering still matters**:
+> erosion runs *before* `anchor_contour_to_sea_level`, so at the moment it runs the two are not yet
+> the same number.
 >
-> **2. A valley incised *to* base level DROWNS.** The mask ranks by elevation, so a trunk cut to the
-> contour ranks below it and becomes a sea inlet — taking its basin with it (measured: seed 4's
-> biggest basin collapsed **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0**
-> because measurement said the drowned stretches read as *estuaries* and leave the coast **smoother**
-> — but the lever is there, and the failure mode is real.
+> *Historical note — do not restore the old reasoning.* This note used to say base level is the
+> "land-mask's **rank** contour, NOT `sea_level`", justified by only **24–37%** of cells sitting above
+> `sea_level = 0.62` while the mask claimed **38%** for land, putting the coastline at **0.55–0.61,
+> *below* sea level**. That gap was a symptom of the jittered-rank mask, and it is **gone**: realized
+> land is now **37.7–37.8%** against a 0.38 target, and after the anchor the contour and `sea_level`
+> are identical by construction. The warning the note was protecting is still live — a pass that
+> freezes everything under a *wrong* base level freezes the coastal band it exists to reshape and
+> measures as a no-op (it did: coastal 59.2% → 58.8%) — but the specific 24–37%-vs-38% discrepancy no
+> longer describes this pipeline.
+>
+> **2. A valley incised *to* base level DROWNS.** Now direct rather than indirect: the mask is
+> `elevation > sea_level`, so a trunk cut below the contour simply **is** water on the next derive —
+> a sea inlet that takes its basin with it (measured pre-arc: seed 4's biggest basin collapsed
+> **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0** because measurement said
+> the drowned stretches read as *estuaries* and leave the coast **smoother** — but the lever is there,
+> and the failure mode is real.
 >
 > **3. `anchor_contour_to_sea_level` is what lets the carving reach hydrology at all.**
 > `restamp_elevation`'s lowland branch is only order-preserving *above* sea level; below it,
@@ -503,6 +575,13 @@ reshapes the coast.
 > monotone, piecewise-linear rescale that puts the coastline exactly on `sea_level`, making the
 > pipeline's "land ⟺ above sea level" assumption *true*. Monotone ⇒ it cannot reorder the field, so
 > the land mask still picks the same tiles.
+>
+> Since `elevation-authority` the anchor is **load-bearing rather than merely helpful**: it is the
+> only thing that makes `target_land_pct` come out right, because nothing downstream repaints the
+> mask to hit the target any more. It is also the reason the invariant is exact — the mask thresholds
+> the very surface the anchor just aligned. Its own justification finally holds too: monotonicity
+> guarantees the mask is unchanged *only* if the mask ranks on elevation, which before this arc it
+> did not.
 
 **Config** — the `erosion` block of each preset in `map_presets.json` (`ErosionConfig`):
 
@@ -521,7 +600,9 @@ reshapes the coast.
 | `anchor_contour_to_sea_level` | true | See note 3. |
 
 **Measured A/B** (`hydrology_earthlike::drainage_census`, `#[ignore]`d, 6 seeds, 80×52, shipped
-river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
+river thresholds held at 3.0/12.0/25.0 so the comparison is clean). **Measured PRE-`elevation-authority`**
+— the erosion-OFF-vs-ON comparison is still valid (both arms moved together), but the absolute
+navigable counts belong to the pre-arc landmass and are ~0 at this size today; see the note above:
 
 | metric | erosion OFF | erosion ON |
 |---|---|---|
@@ -536,7 +617,17 @@ river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
 > 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
 > single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
 > has; it does not move its divides.** The divides come from the continent-scale fbm, so the next
-> lever is the *noise*, not the erosion — see `TASKS.md`.
+> lever is the *noise*, not the erosion — see `TASKS.md` → "Capture: the divides, not the valleys".
+>
+> **`elevation-authority` added `continental_weight` / `continental_radius`, and they do NOT fix
+> capture.** They make `continents` a real lever for the first time (the old BFS grew a single
+> accidental supercontinent at 80×52 while the preset asked for 4), but the bias is a **radial
+> falloff — dome-shaped by construction**, so it moves landmasses apart without giving any one of them
+> an internal divide structure. A dome sheds radially; that is exactly the "sheds radially with no
+> trunk valleys" failure this section opens with, just at continent scale. Measured after the arc: the
+> largest basin still tops out at **~5% of its landmass**, statistically unchanged pre/post. Capture
+> needs a term that shapes *divides* — anisotropic/warped noise, tectonic uplift fields — not a
+> smoother continent outline. Design context: `docs/plan_elevation_authority.md`.
 >
 > `apply_coastal_smoothing` was **measured, not assumed** (the suspicion was that its 3×3 blur would
 > soften the incised valleys right where they matter). It does not blunt the result: the sponge metric
@@ -571,7 +662,84 @@ pole = −5° at sea level (mountains up to 12° colder).
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
 
-The active preset's `sea_level` is carried on the `ElevationField` resource (`heightfield.rs`, via `with_sea_level`; falls back to `DEFAULT_SEA_LEVEL` = 0.6) and exported in the snapshot as `ElevationOverlay.seaLevel` — **pre-normalized to the overlay's [minValue, maxValue] sample scale** (`snapshot.rs` `elevation_overlay_from_field`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+**`macro_land` — landmass shape** (`MacroLandConfig`, `map_preset.rs`). Since `elevation-authority`
+every one of these is honored by *shaping the heightfield*, never by editing the mask:
+
+| Key | earthlike | Meaning |
+|---|---|---|
+| `target_land_pct` | 0.38 | Land fraction. Delivered by `anchor_contour_to_sea_level` putting this quantile exactly on `sea_level`; realized **37.7–37.8%** pre-island with nothing correcting it downstream. |
+| `continents` | 4 | Number of continental bias centres, chosen deterministically from the world seed with Poisson-ish spacing (wrap-aware in x). Realized landmasses ≥`min_area`: 3–5. |
+| `min_area` | 256 | The landmass size that counts as a continent when auditing the above. |
+| `continental_weight` | 0.5 | Amplitude of the low-frequency continental bias added before erosion. `0.0` reproduces the pure fractal field — which thresholds into **one dominant supercontinent**, which is why the term exists. |
+| `continental_radius` | 0.35 | A continent's radius of influence, as a fraction of the **smaller** grid dimension. Beyond it the bias saturates at its minimum, which is what actively sinks inter-continental gaps rather than merely making them less high. |
+| `continental_falloff_exponent` | 1.5 | Shape of the falloff, `bias = 1 − 2·t^exponent` over `t = dist/radius`, taken as a **max over centres, not a sum** (summing fuses adjacent centres into a land bridge). |
+| `continental_warp_amplitude` | 0.18 | **Domain warp** — how far the envelope's sample coordinates are displaced by low-frequency noise before the envelope is evaluated, as a fraction of the **smaller** grid dimension. Makes a continent lobed rather than circular. `0.0` restores a perfectly radial envelope. |
+| `continental_warp_frequency` | 1.6 | Cycles of warp noise across the map. Low by design: the warp reshapes *landmasses*; fraying the *coastline* is `coastline_roughness`'s job. |
+| `continental_tilt_strength` | **0.0 (off)** | **Per-continent tilt** — a directional gradient across each centre, its heading hashed per centre from the world seed, windowed by `1 − t^4` so it vanishes at the rim. A dome sheds water in every direction; a *tilted* surface drains one way. Ships as a **tilted trough**, not a tilted plane: `heightfield::CONTINENT_TROUGH_GAIN` (0.5) lifts the ground away from the drainage axis, because a bare tilt gives **parallel** flow (many short rivers) rather than convergence onto a trunk. **Both presets ship it at `0.0`**: at `2.0` it buys one extra seed-with-a-river in six but fuses continents into a supercontinent, collapsing `polar_contrast`'s fold belts by 85% (see the note below). The machinery is retained, live and inert at zero — raising it is how you get the drainage back, at that cost. |
+| `continental_spine_amplitude` | 0.35 | **Ridged spine** — ridged noise gated to the continent interiors (`clamp(bias, 0, 1)`), so a landmass carries an internal **divide** with two drainage sides instead of one summit. Also the term that keeps mountain ranges narrow (see below). |
+| `continental_spine_frequency` | 2.2 | Cycles of spine noise across the map — roughly how many range-scale divides a continent can carry. |
+| `coastline_roughness` | 0.05 | High-frequency shoreline raggedness, applied to the field **before** `land_contour`. Replaces the retired `macro_land.jitter`, which perturbed the mask's *ranking* instead of the field and thereby decoupled the two. |
+
+> `macro_land.jitter` **no longer exists** and must not be reintroduced — it is the specific lever
+> that broke "land ⟺ above sea level". Its intent lives on as `coastline_roughness`.
+>
+> **The bias is no longer purely radial.** `continental_weight`/`continental_radius`/
+> `continental_falloff_exponent` are now only the *base envelope*; the warp, tilt and spine terms above
+> shape divides and drainage direction on top of it. **The tilt ships at `0.0`** — the lever is live
+> and fully wired, but both shipped presets set it to zero; see the two findings below.
+>
+> Measured over 6 seeds at 80×52 (`core_sim/tests/relief_sweep.rs`, `-- --ignored --nocapture`),
+> dome → warp+spine (**the shipped configuration**): **sowable ground on the standard map 35 → 49
+> tiles**, navigable rivers present on **1/6 → 2/6 seeds** (3 segments total), max drainage
+> accumulation mean **25.4 → 28.4**, land fraction unchanged (0.387–0.400 → 0.386–0.397), landmasses
+> ≥ `min_area` 2.8 → 2.2 per map. Adding the tilt on top buys one further seed with a river
+> (3/6, 4 segments) and costs what the second finding below describes.
+>
+> **What it did NOT fix, and the trade-off it carries — read before retuning:**
+> - **Basin coherence is still ~0.02–0.08** (max accumulation ÷ largest landmass), statistically where
+>   the dome left it. Measured root cause: a corner is a sink iff any of its 3 hexes is ocean, and the
+>   largest landmass has a **mean depth-to-coast of only ~2.9 tiles** with ~360 coastal (⇒ sink) corners
+>   against ~800 land corners. Flow terminates within ~3 steps whatever the relief looks like, so at
+>   80×52 with `continents: 4` a discharge of 25 is *geometrically marginal* — not a tuning failure.
+>   Ruled out by direct measurement: `river_flat_jitter` (5e-4 → 1e-6 moves nothing) and
+>   `continental_weight` (0.5 → 2.0 improves compactness but *lowers* max accumulation).
+> - **NONE of these terms controls mountain-range WIDTH — the earlier claim that the tilt widens
+>   ranges was a metric error.** It rested on mean alpine connected-component **area**, which does not
+>   measure width (a long thin cordillera and a fat blob can share an area) and whose per-seed value
+>   swings up to **27×** on one configuration — noise, read as signal off a single seed. Measuring
+>   thickness directly (every alpine tile's hex distance to the nearest non-alpine tile,
+>   `relief_sweep::alpine_thickness`, 6 seeds at 384×288) gives **mean 2.22 / 2.32 / 2.26 / 2.28 /
+>   2.43 and p95 4.3–5.0 for dome / warp-only / spine-only / tilt-on / warp+spine** — flat. If ranges
+>   read as too wide, the lever is downstream in the mountain mask (`derive_mountain_mask`'s
+>   `belt_width_tiles` dilation, `apply_belt_relief`, `terrain_classifier.alpine_relief_threshold`),
+>   **not** in the continental envelope. Do not re-derive a width claim from component area.
+> - **The tilt FUSES CONTINENTS, and that is why it ships at `0.0`.** On `polar_contrast` it collapsed
+>   the five multi-plate land components into **two**, the largest going 9,053 → **18,313 tiles — 85%
+>   of all land in one body**. Fold belts form only between plates *within* a component and plate
+>   count is area-bucketed with a **cap of 4**, so fusing the map into one supercontinent starves the
+>   plate-boundary network: `polar_contrast` fold count fell **3556 → 544 (−85%)**. With the tilt off
+>   it recovers to **3004**. This is the same land-bridging failure `CONTINENT_TILT_WINDOW_EXPONENT`
+>   was introduced to prevent — the window mitigates it but does not eliminate it on this preset.
+>   Measurement: `mapgen::tests::polar_contrast_fold_investigation`.
+
+**Coastline-editing levers** — the two stages permitted to move a coastline, both of which write
+elevation and re-derive:
+
+| Key | Block | Default | Meaning |
+|---|---|---|---|
+| `island_peak_margin` | `islands` | 0.06 | How far above `sea_level` an island's peak is raised. `place_islands` raises a radial dome and the mask is re-derived; this margin is what makes the dome *become* land. Placement (`continental_density`, `oceanic_density`, `min_distance_from_continent`) is unchanged. |
+| `strait_depth_margin` | `inland_sea` | 0.02 | How far **below** `sea_level` a strait corridor is cut by `connect_inland_seas_via_straits`. Deep enough to read as water on the re-derive, shallow enough to read as a channel and not a trench. |
+
+The active preset's `sea_level` is carried on the `ElevationField` resource, attached at the field's origin in `build_elevation_field` and propagated through `restamp_elevation` (`heightfield.rs` / `mapgen.rs`; falls back to `DEFAULT_SEA_LEVEL` = 0.6 only when no preset resolves — which also logs a `warn`, because a preset-less field skips erosion and the contour anchor entirely). It is exported in the snapshot as `ElevationOverlay.seaLevel` — **normalized to the overlay's [minValue, maxValue] sample scale AND quantized onto the same u16 lattice as the samples** (`snapshot/map.rs` `elevation_overlay_from_field`, `ELEVATION_SAMPLE_SCALE`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+
+> **Samples and the published `sea_level` must share one quantization lattice.** The client decodes
+> `sample / 65535` and compares against `seaLevel`; publishing the threshold *unquantized* made every
+> tile sitting exactly at sea level decode to `0.6200046 > 0.62` and read as land-height water — 42 of
+> them in a live export, all with the identical raw sample `40632 = round(0.62 × 65535)`. Do not
+> reintroduce a second `65535.0` literal. Guarded by
+> `elevation_authority::the_published_sea_level_lies_on_the_sample_quantization_lattice`, which
+> asserts on the **encoded overlay** rather than the in-process `ElevationField` — the earlier test
+> read the f32 field, reported 0 violations, and missed all 42.
 
 **Continental shelf width** (`classify_bands` + `effective_shelf_width`, `mapgen.rs`; `ShelfConfig`, `map_preset.rs`): `ContinentalShelf` is the ocean band within a computed distance of the coast (slope collapses to `DeepOcean` downstream, so only the shelf boundary affects ocean composition). The model mirrors real margins — a **continuous ≥1-tile shelf off gentle (passive-margin) coasts, and deep water right at steep/cliff (active-margin) coasts** — via two knobs on top of the width scaling:
 - `min_width_tiles` (default **1.0**) — floors the computed width so a qualifying coast gets a *continuous* ≥1-tile ring instead of a sub-tile sparse fringe. Applied after the `width_frac`/`width_exp` (or `width_tiles`) computation, so a preset that bumps `width_frac` still scales the shelf wider than the floor on big maps.
@@ -582,13 +750,43 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
   **Final reconciliation pass — the shelf is hex-exact on the *final* map, not just at band time.** `classify_bands` decides the shelf early (stage 6), but later Startup stages repaint terrain near the coast *after* the shelf exists: `generate_hydrology` stamps `RiverDelta`/`Floodplain`/`FreshwaterMarsh` at river mouths, and `apply_tag_budget_solver` paints polar `Tundra` over near-shore ocean — each creating fresh gentle-land-vs-`DeepOcean` adjacencies with no shelf between them (band-level zero-gap ≠ final-map zero-gap). `reconcile_coastal_shelf` (`systems.rs`) is a deterministic post-pass registered in the Startup `.chain()` **right after `apply_biome_palette_clamp`** (so after hydrology + tag solver + palette clamp — the last word on ocean tiles): every `DeepOcean` tile odd-r hex-adjacent (`grid_utils::hex_neighbors_wrapped`, wrap-aware, honoring the active `map_topology.wrap_horizontal`) to a **gentle** land tile — non-`WATER` tags, rise `elevation.sample − sea_level < coast_height_threshold` (the SAME gate + hex convention as `classify_bands`) — is reclassified to `ContinentalShelf` (a `must_have` palette biome, so no palette conflict). So downstream-created coasts (deltas, marshes, solver tundra) all get a shelf seaward, while **steep** coasts (every land hex-neighbour rises `≥` threshold) still keep deep water right at the edge. Guarantees on the final map: **no `DeepOcean` tile touches gentle land.** Guarded by `integration_tests/tests/shelf_ratio.rs::earthlike_no_deep_ocean_touches_gentle_land_on_final_map` (0 gaps across sizes/seeds, + a steep-coast-keeps-deep-water assertion) and `earthlike_delta_and_marsh_coasts_have_shelf_not_deep_water`.
 - `width_tiles` (default 2) — legacy absolute band width, used only when `width_frac` is unset (e.g. `polar_contrast`). `width_frac` + `width_exp` (earthlike) scale the pre-floor width with map size as `width_frac * min(w, h)^width_exp`.
 
-  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs ~29-33% of ocean at 80×52 down to ~14% at 256×192 (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
+  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs **~15-19% of ocean at 80×52 down to ~8.5% at 256×192** (re-measured after `elevation-authority`; the pre-arc figures were ~29-33% down to ~14%, and the drop is a *consequence* of the derived mask producing fewer, smoother landmasses — less coastline per unit of ocean, with the zero-gap invariant still holding) (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
 
   The gate keys off the *immediately-adjacent* (hex-neighbour) coast land, which fully covers the 1-tile default (every shelf tile touches land). Deferred: a preset that widens the shelf past `d==1` leaves outer-ring tiles ungated (they touch no land, so they pass) and those outer rings still ride the square-connected `ocean_distance` — carrying the nearest-coast rise through a hex distance-transform is the follow-up for wide shelves. Also still deferred: a true *depth-based* shelf would need real offshore bathymetry (today ocean elevation is fractal noise with no coast-relative deepening); and if the narrower shelf's reduced `CoastalUpwelling` forage frontage matters for gameplay, lock the `Coastal` tag to stamp compensating `TidalFlat` (the tag solver's coastal pass). Neither shipped preset locks `Coastal` today.
 
 **Elevation ↔ biome coupling** (`restamp_elevation`, `mapgen.rs`): mountain biomes come from the tectonic mountain mask + relief, so the elevation field is tied to that same signal to keep them consistent (mountains genuinely tall — see the `mountain_tiles_out_top_lowland_tiles` regression test). Every mountain-mask tile is floored into `[elevation_base, 1.0]`, ordered by relief and scaled by per-type prominence; non-mountain land is compressed into `[sea_level, elevation_base]`. Tunables live in each preset's `mountains` block: `elevation_base`, `fold_prominence`, `fault_prominence`, `volcanic_prominence`, `dome_prominence`, `belt_texture` (small spine-vs-edge elevation texture added on top of the relief floor; bounded so it never reorders relief bands). The non-mountain `elev ≥ high_dry_elevation → CanyonBadlands` / `elev ≥ high_wet_elevation → RollingHills` cutoffs (`terrain.rs`) live in `terrain_classifier` and default to the top of the compressed lowland band.
 
-**Highland biomes are mask-driven, never noise-driven.** `classify_terrain` (the base climate classifier) does NOT pick AlpineMountain/HighPlateau/CanyonBadlands/etc. — it has no real elevation, so it used to invent them from a tile hash and scatter flat "mountains." Mountain biomes now come only from the tectonic mask (`select_mountain_terrain`) + the real-elevation `terrain.rs` branches. `apply_belt_relief` (`mapgen.rs`) scales belt-tile relief by belt strength (`mountains.relief_belt_gain`, default 1.2) so belt cores clear the AlpineMountain relief threshold (`terrain_classifier.alpine_relief_threshold`, default 1.45) and taper to plateaus/hills — genuine Alpine spines that are also tall. Polar rows are skipped (they keep their low-relief-basin tuning). Regression guards: `mountain_tiles_out_top_lowland_tiles`, `alpine_biome_tiles_are_tall`.
+**Highland biomes are mask-driven, never noise-driven.** `classify_terrain` (the base climate classifier) does NOT pick AlpineMountain/HighPlateau/CanyonBadlands/etc. — it has no real elevation, so it used to invent them from a tile hash and scatter flat "mountains." Mountain biomes now come only from the tectonic mask (`select_mountain_terrain`) + the real-elevation `terrain.rs` branches. `apply_belt_relief` (`mapgen.rs`) scales belt-tile relief by belt strength (`mountains.relief_belt_gain`, default 1.2) so belt cores clear the AlpineMountain relief threshold (`terrain_classifier.alpine_relief_threshold`, **1.85**) and taper to plateaus/hills — genuine Alpine spines that are also tall. Polar rows are skipped (they keep their low-relief-basin tuning). Regression guards: `mountain_tiles_out_top_lowland_tiles`, `alpine_biome_tiles_are_tall`.
+
+> **`alpine_relief_threshold` is the alpine range's WIDTH lever — and it is the only one that
+> narrows the range without also flattening or shrinking it.** Belt relief ramps linearly with belt
+> strength (`1 + relief_belt_gain × strength / (belt_width + 1)`, `strength = belt_width + 1 −
+> dist`), so the threshold picks an integer distance-from-plate-boundary cutoff `D`; the boundary is
+> stamped on **both** plates, so the alpine ribbon is **`2D + 1` tiles wide** and two boundaries
+> within `2D + 1` merge into a slab. At earthlike's `belt_width = 4` / `relief_belt_gain = 1.2` the
+> bands are `≤ 1.60` ⇒ `D = 3` (a **7-tile slab**), `(1.60, 1.72]` ⇒ 5 tiles, `(1.72, 1.96]` ⇒
+> **3 tiles (shipped, 1.85 — mid-band, so a small retune of `relief_belt_gain`/`mountain_scale`
+> cannot silently step the ribbon a whole tile wider)**, `> 1.96` ⇒ single-tile peaks.
+>
+> **Measured** (`core_sim/tests/relief_sweep.rs::belt_sweep`, `--ignored --nocapture`, 6 seeds), the
+> shipped `1.45 → 1.85` move at 384×288: alpine **thickness mean 2.43 → 1.57, p95 5.0 → 3.0**;
+> alpine **6.1% → 3.0% of land**; connected **components 27.0 → 28.0** — the count *rises* as slabs
+> break into distinct ranges, which is the wanted direction. At the shipped 80×52: thickness
+> **1.80 → 1.36**, p95 **3.83 → 2.33**, alpine **15.9% → 7.0%** of land. Sowable ground at seed
+> 119304647 is **unchanged at 49** and land fraction is unchanged (0.391).
+>
+> **The other two belt levers were measured and rejected**, both of which reach at best the same
+> integer cutoff while costing something else: `mountains.belt_width_tiles` 3 → 2 only reaches
+> `D = 2` and shrinks the whole belt — the **foothill skirt** goes with it (it also perturbs
+> downstream terrain: sowable 49 → 51); `mountains.relief_belt_gain` 1.2 → 0.70 reaches `D = 1` but
+> **lowers the belt core's relief 2.2 → 1.7**, i.e. it makes the mountains *shorter*, when the
+> complaint was width. Raising the threshold leaves the relief profile — and so every peak height
+> and the `restamp_elevation` relief ordering — **byte-identical**, and merely reclassifies the
+> belt's shoulders to HighPlateau/RollingHills/CanyonBadlands. That is what makes a range read as a
+> **range with foothills** instead of a slab. **Do not "simplify" this back into `belt_width_tiles`.**
+>
+> The continental-envelope terms (warp/tilt/spine) **cannot** do this — measured flat at 2.22–2.43
+> thickness across every combination; see the `macro_land` note above.
 
 **Number of ranges** is emergent tectonics: land connected-components → plates (area buckets, ≤4/continent) → fold belts form only where two plates' drift *converges* (`dot <= mountains.belt_convergence`, `derive_mountain_mask`). Drift is radial-outward so most boundaries diverge; raising `belt_convergence` toward 0 (earthlike default **0.25**; polar_contrast keeps the tighter **−0.1** to preserve its low-relief-basin contrast) lets more boundaries become ranges. Range count also scales strongly with **map size** — a full 256×192 map has 30+ ranges, an 80×52 "Standard" ~4–13, a 56×36 "Tiny" ~2–6.
 
@@ -596,7 +794,20 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
 
 **Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`.
 
-  **`terrain_tag_targets.Water` MUST track `1 − macro_land.target_land_pct`.** The landmask decides land vs. water; a locked `Water` target only tells the solver what that same map should *already* look like. Disagreement makes the solver invent bathymetry the pipeline never modeled: too high and its **add-water** branch scatters `DeepOcean` over `COASTAL`-tagged land (earthlike's old `Water = 0.65` vs `target_land_pct = 0.38` ⇒ 62% water would have drowned ~125 coastal tiles — the border-ring bug was accidentally supplying that missing 3%); too low and its **remove-water** branch mass-converts ocean into `Tundra`/`AlluvialPlain`. earthlike now sets `Water = 0.62` (`= 1 − 0.38`) and the water pass is **inert** (0 conversions in either direction on all sampled seeds). Any preset that changes `target_land_pct` must move `Water` with it (see the `_comment_water_target` note in `map_presets.json`).
+  **The solver has NO water branch, and `terrain_tag_targets.Water` is INERT.** Water share is an
+  elevation outcome: the mask is a pure threshold and the contour anchor already places
+  `target_land_pct` exactly. `elevation-authority` deleted the branch outright — it converted arbitrary
+  land tiles to `DeepOcean` (and ocean back to `Tundra`/`AlluvialPlain`) **with no elevation term at
+  all**, which is precisely how a "water" tile ended up above sea level. Listing `Water` in
+  `locked_terrain_tags` no longer does anything.
+
+  The target is kept only so the tag census has a reference figure, and should still track
+  `1 − macro_land.target_land_pct` for that reading to be meaningful (earthlike `0.62`;
+  polar_contrast was corrected `0.64 → 0.58` against its `target_land_pct = 0.42` during the arc —
+  the map had been right and the target stale). *Historical:* when the branch existed, a mismatched
+  target made the solver invent bathymetry the pipeline never modeled — earthlike's old `Water = 0.65`
+  vs `target_land_pct = 0.38` would have drowned ~125 `COASTAL` tiles. That failure mode is now
+  structurally impossible rather than avoided by convention.
 
 **Per-Map Biome Palette** (`biome_palette.rs`, design `docs/plan_biome_palette.md`): a curated,
 seed-driven, map-size-scaled subset of the 37 biomes chosen at world-gen time — small maps read
@@ -1856,10 +2067,13 @@ herd has one appetite).
     of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
     hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
     `hex_neighbors_wrapped`). A **salt coast is not water** for this — you do not farm sea spray.
-  - **Measured on the standard map** (earthlike 80×52, seed 119304647): **46 sowable tiles of 4160
-    (1.1%)** — AlluvialPlain 31 + RiverDelta 15 — against **2328** tiles that merely bear food. The
-    **conjunction is doing the work**: 337 tiles clear the fertility floor, and the water rule cuts
-    **291 of them (86%)**. Few sowable tiles ⇒ *which* tile matters ⇒ a band may have to **move** to
+  - **Measured on the standard map** (earthlike 80×52, seed 119304647): **49 sowable tiles of 4160
+    (1.2%)** post the "divides, not valleys" arc — **35** on the pre-arc dome — against **2328** tiles
+    that merely bear food. (The historical **46** figure predates that arc.) **The measurement only
+    means anything with `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are
+    hydrology's, so a fixture that skips it measures 0 at every grid size and every seed. The
+    **conjunction is still doing the work** (pre-arc measurement: 337 tiles cleared the fertility
+    floor and the water rule cut 291 of them, 86%). Few sowable tiles ⇒ *which* tile matters ⇒ a band may have to **move** to
     farm at all. That friction is the design pillar, not a side effect.
   - **The refusal names the fault** (`SiteRefusal::{TooPoor, TooDry, TooPoorAndTooDry}` — the rung
     judges, the caller phrases) and points at **rung 4, Worked Land** (plows/irrigation, a future arc):

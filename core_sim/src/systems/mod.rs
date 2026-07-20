@@ -40,7 +40,7 @@ use crate::{
         tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,
-    heightfield::{build_elevation_field, ElevationField},
+    heightfield::{build_elevation_field, ElevationField, DEFAULT_SEA_LEVEL},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{

@@ -56,9 +56,11 @@
 ### Fluvial erosion in the heightfield
 `heightfield::apply_fluvial_erosion` (shipped, `enabled: true` on both presets) runs the classic
 landscape-evolution model minus uplift — `∂z/∂t = D∇²z − K·A^m·S^n` — at the end of
-`build_elevation_field`, i.e. **before the land mask**, which is what makes it bite: the mask ranks
-tiles by elevation, so the coastline is a level set of that field. Authoritative spec + config table
-+ the full measured A/B: `core_sim/CLAUDE.md` → Rivers → "Fluvial erosion".
+`build_elevation_field`, i.e. **before the land mask**, which is what makes it bite: the coastline is
+a level set of that field. (Since PR #133 the mask *is* `elevation > sea_level` outright, so this is
+now exact rather than approximate — it used to be a rank contour over a jittered score.)
+Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` → Rivers →
+"Fluvial erosion".
 
 - [x] **Fluvial erosion pass on the elevation field.** Result, measured over 6 seeds with the river
       thresholds held fixed: **SPONGE fixed** — coastal tiles of the largest landmass 59.2% → **52.8%**,
@@ -73,12 +75,93 @@ tiles by elevation, so the coastline is a level set of that field. Authoritative
       monotonically re-anchored (`anchor_contour_to_sea_level`) or the carved valleys never reach
       hydrology.
 
-- [ ] **Capture: the divides, not the valleys.** Incision deepens the valleys a continent already has;
-      it does not move its **divides**, which come from the continent-scale fbm in
-      `build_elevation_field`. A noise-dome continent (seeds 1/3) sheds radially no matter how deep the
-      valleys get. The next lever is therefore the **noise itself** — a tilted / warped / multi-ridge
-      continent field (domain warping, or a large-scale tilt term), not more erosion. Measure with
-      `hydrology_earthlike::drainage_census`'s CAPTURE column, which now A/Bs erosion on and off.
+- [~] **Capture: the divides, not the valleys.** *(Attempted — partially delivered; see the outcome
+      note at the end of this item before picking it back up.)*
+      Incision deepens the valleys a continent already has; it does not move its **divides**, which come
+      from the continent-scale fbm in `build_elevation_field`. A noise-dome continent (seeds 1/3) sheds
+      radially no matter how deep the valleys get. The next lever is therefore the **noise itself** — a
+      tilted / warped / multi-ridge continent field (domain warping, or a large-scale tilt term), not
+      more erosion. Measure with `hydrology_earthlike::drainage_census`'s CAPTURE column, which now A/Bs
+      erosion on and off.
+
+      **Confirmed and sharpened by the elevation-authority arc (PR #133, `docs/plan_elevation_authority.md`).**
+      Measured across 4 configs × 5 seeds plus a pre-arc baseline: max basin tops out at **~5% of
+      landmass** and the coherence ratio (max accumulation ÷ largest landmass) sits at **0.045–0.164
+      in every configuration, including pre-arc**. The largest landmass carries **50–200 terminal
+      basins**, and the great majority terminate at the **coast**, not at interior pits — so this is
+      landmass *shape*, not interior pitting. Post-arc landmasses are in fact *less* crenellated
+      (coastal fraction 29–40% vs 51–65% pre-arc) while basins stayed small, which rules out coastline
+      noise as the cause. Ruled out by direct measurement: `coastline_roughness` (removing it changes
+      nothing) and the continental bias term (removing it changes nothing).
+
+      **Note the trap this arc walked into:** `macro_land.continental_weight`/`continental_radius`
+      apply a **radial falloff**, i.e. they build exactly the noise-dome this task identifies as the
+      problem. They were added to make `continents` a real lever (they do) — but they are dome-shaped
+      by construction, so they cannot produce trunk rivers. Replacing that radial term with tilted /
+      warped relief is the same change this task already calls for.
+
+      Consequence today: **navigable rivers do not form at 80×52** (max basin ~20 vs a discharge
+      threshold of 25). This is honest emergent behaviour, not a regression — pre-arc rivers were a
+      lottery carried by one outlier seed in six (a 41.7% basin against a 2–8% norm), and the old BFS's
+      accidental ~1,580-tile supercontinent was the only reason anything cleared the threshold. Do
+      **not** "fix" this by lowering `river_class_navigable_min_discharge` or by making navigability a
+      percentile of the accumulation distribution — that is a quota applied to the output, which is the
+      pattern the elevation-authority arc exists to delete. Rivers must emerge from the field.
+
+      **OUTCOME of the first attempt (the three-term continental relief).** `apply_continental_bias`
+      now applies **domain warp + per-continent tilt (as a tilted *trough*) + ridged spine** on top of
+      the radial envelope, each a `macro_land` lever (see `core_sim/CLAUDE.md` → Map Presets).
+      Measured over 6 seeds at 80×52 (`core_sim/tests/relief_sweep.rs`), dome → **the shipped
+      warp+spine** (the tilt ships at `0.0`, see finding 2): **sowable ground 35 → 49**, navigable
+      rivers on **1/6 → 2/6 seeds**, max accumulation mean **25.4 → 28.4**, land fraction unchanged.
+
+      **What is still open, with the root cause now measured rather than inferred:**
+      1. **Basin coherence did not move** (~0.02–0.08, as before). It is bounded by *sink density*, not
+         by relief: a corner is a sink iff any of its 3 hexes is ocean, and the largest landmass at
+         80×52 has a **mean depth-to-coast of ~2.9 tiles** — roughly one sink corner per two interior
+         corners. Ruled out by direct measurement: `river_flat_jitter` (5e-4 → 1e-6 changes nothing)
+         and `continental_weight` (0.5 → 2.0 improves compactness but *lowers* max accumulation). The
+         remaining levers are therefore **landmass compactness** (raise mean depth-to-coast) or
+         **fewer, larger continents** — not more relief terms.
+      2. **The tilt is now OFF (`continental_tilt_strength: 0.0` on both presets), and range width is
+         still unsolved — they are two separate findings.**
+         - The earlier claim that *"the tilt widens ranges 55.2 → ~102"* was a **metric error**: it
+           read mean alpine connected-component **area** as a width. Area does not measure width, and
+           that statistic swings up to **27× between seeds** on a single configuration. Measuring
+           thickness directly (`relief_sweep::alpine_thickness` — every alpine tile's hex distance to
+           the nearest non-alpine tile, 6 seeds at 384×288) shows it is **flat at ~2.2–2.4 across the
+           bare dome and every combination of warp/tilt/spine**. **No continental-envelope lever moves
+           range width.** The open work is downstream in the mountain mask —
+           `derive_mountain_mask`'s `belt_width_tiles` dilation, `apply_belt_relief`, and
+           `terrain_classifier.alpine_relief_threshold`.
+         - The tilt was switched off for a **different, measured reason**: it **fuses continents**.
+           On `polar_contrast` it merged five multi-plate landmasses into two (largest 9,053 →
+           **18,313** tiles, 85% of all land), starving the plate-boundary network fold belts form on
+           and cutting that preset's fold count **3556 → 544 (−85%)**; with the tilt off it recovers
+           to **3004**. The cost of switching it off is one seed in six that no longer grows a
+           navigable river (3/6 → 2/6); the sowable gate is unaffected (**49** tiles).
+      3. **A defect this arc found and fixed, unrelated to worldgen:** the reported "sowable 46 → 0"
+         was a **test-harness bug**, not a regression. `core_sim/tests/forage_field.rs` never ran
+         `generate_hydrology`, so its map had no rivers, no deltas and no `river_edges`, and
+         `plant:field`'s fresh-water rule could not be satisfied by any tile at any grid size. The
+         harness now runs the real pipeline and pins its own grid, and the shipped-map playability
+         check is a separate, deliberately config-reading test.
+
+- [ ] **Fold-mountain counts are knife-edge sensitive to plate-drift RNG.** *(Surfaced by PR #133
+      review; test-level symptom fixed there, root cause untouched.)* `derive_mountain_mask` splits each
+      land component into 1–4 plates by area bucket, and whether those plates actually *collide* turns
+      out to hinge on plate seed placement rather than on landmass structure. Measured during the PR #133
+      review: removing a **single 3-tile island** flipped `polar_contrast_preset_builds_bands` from
+      `fold = 202` to `fold = 0`, and a geometry sweep flipped fold between 0 and several hundred on small
+      radius changes. Two well-separated 69-tile masses give `fold = 0` outright — the binding constraint
+      is landmass area ≥ `plate_area_bucket_2`, not component count.
+
+      The fixture was replaced with two 609-tile radial cones so its `fold > 0` assertion is earned
+      (still 298 with island placement disabled), but that only removes the *test's* dependence on luck.
+      The durable fix is a mountain-mask unit test that **constructs plates directly** — as
+      `polar_microplates_*` already does — rather than routing through `build_bands` and hoping the
+      geometry cooperates. Worth doing alongside the divides work above: both are cases of relief
+      structure deriving from an incidental artifact rather than from the field.
 - [ ] *(Optional, cheap)* **Morphological open/close on the land mask** — a majority filter that fills
       1-hex nooks and deletes 1-hex specks. Erosion took the sponge from 59% → 53%; a compact blob is
       ~14%, so there is still headroom that a direct attack on crenellation could take.
