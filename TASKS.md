@@ -106,6 +106,22 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       **not** "fix" this by lowering `river_class_navigable_min_discharge` or by making navigability a
       percentile of the accumulation distribution — that is a quota applied to the output, which is the
       pattern the elevation-authority arc exists to delete. Rivers must emerge from the field.
+
+- [ ] **Fold-mountain counts are knife-edge sensitive to plate-drift RNG.** *(Surfaced by PR #133
+      review; test-level symptom fixed there, root cause untouched.)* `derive_mountain_mask` splits each
+      land component into 1–4 plates by area bucket, and whether those plates actually *collide* turns
+      out to hinge on plate seed placement rather than on landmass structure. Measured during the PR #133
+      review: removing a **single 3-tile island** flipped `polar_contrast_preset_builds_bands` from
+      `fold = 202` to `fold = 0`, and a geometry sweep flipped fold between 0 and several hundred on small
+      radius changes. Two well-separated 69-tile masses give `fold = 0` outright — the binding constraint
+      is landmass area ≥ `plate_area_bucket_2`, not component count.
+
+      The fixture was replaced with two 609-tile radial cones so its `fold > 0` assertion is earned
+      (still 298 with island placement disabled), but that only removes the *test's* dependence on luck.
+      The durable fix is a mountain-mask unit test that **constructs plates directly** — as
+      `polar_microplates_*` already does — rather than routing through `build_bands` and hoping the
+      geometry cooperates. Worth doing alongside the divides work above: both are cases of relief
+      structure deriving from an incidental artifact rather than from the field.
 - [ ] *(Optional, cheap)* **Morphological open/close on the land mask** — a majority filter that fills
       1-hex nooks and deletes 1-hex specks. Erosion took the sponge from 59% → 53%; a compact blob is
       ~14%, so there is still headroom that a direct attack on crenellation could take.
