@@ -68,7 +68,9 @@ var _server_build: String = "?"
 @onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
+@onready var discoveries_row: HBoxContainer = %DiscoveriesRow
 @onready var discoveries_label: Label = %DiscoveriesLabel
+@onready var discoveries_strip: HBoxContainer = %DiscoveriesStrip
 @onready var intensification_label: Label = %IntensificationLabel
 @onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
 @onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
@@ -161,6 +163,13 @@ const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
 const ATTENTION_TILE_FORMAT := "(%d, %d)"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
+# Drawn for a discovered site whose catalog row has NEITHER bundled art nor a non-empty `glyph`.
+# A site the player has found must never render as blank space in the strip, so this is the
+# last-resort mark: an outline of DISCOVERIES_GLYPH, reading as "a site, kind unillustrated".
+const DISCOVERIES_UNKNOWN_GLYPH := "◇"
+# Gap between the "◈ Discoveries N" text and the site strip, and between strip entries. Matches the
+# double-space the glyphs used to be joined with, now that they are mixed Labels and TextureRects.
+const DISCOVERIES_STRIP_SEPARATION := 6
 # Separator between the four knowledge tracks in the top-bar intensification readout.
 const INTENSIFICATION_SEGMENT_SEP := "  ·  "
 # Leads the top-bar knowledge strip. This strip is the FACTION half of the two-meter split (§4.1) —
@@ -1892,11 +1901,21 @@ func update_demographics(demographics_variant: Variant) -> void:
     # A high dependency ratio (more mouths than hands) is the warning state.
     demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
 
-## Show the player faction's count of discovered Wondrous Sites as a compact top-bar readout
-## (`◈ Discoveries N  ⛰ ⛲`, appending the distinct site glyphs so landmark vs settle_site reads
-## at a glance). Hidden until at least one site is known.
+## Show the player faction's discovered Wondrous Sites as a compact top-bar readout: the count
+## (`◈ Discoveries N`) followed by a strip of one mark per distinct site KIND, so landmark vs
+## settle_site reads at a glance. Hidden until at least one site is known.
+##
+## THE TWO NUMBERS MEAN DIFFERENT THINGS AND ARE BOTH RIGHT: `N` is `sites.size()`, the count of
+## INSTANCES found (site identity is the tile `(x, y)`); the strip shows KINDS, so three peaks are
+## `N = 3` behind one peak mark. Do not "reconcile" them to a unique count.
+##
+## KEYED ON `site_id`, NOT on the glyph — the same rule `SecondaryMarkerRenderer` and `WonderSprites`
+## follow. `site_id` is the sim's stable catalog key (`core_sim/src/data/sites_config.json`), while
+## `glyph` is presentation the server happens to also send: two distinct sites may share one emoji
+## (the fixture's `sky_arch` reuses ⛰), and deduping on the glyph collapsed them into a single strip
+## entry that then silently disagreed with the count beside it.
 func update_discoveries(discovered_variant: Variant) -> void:
-    if discoveries_label == null:
+    if discoveries_row == null or discoveries_label == null or discoveries_strip == null:
         return
     var sites: Array = []
     if discovered_variant is Array:
@@ -1907,21 +1926,68 @@ func update_discoveries(discovered_variant: Variant) -> void:
                     sites = faction_sites
                 break
     if sites.is_empty():
-        discoveries_label.visible = false
+        discoveries_row.visible = false
         return
-    discoveries_label.visible = true
-    var glyphs: Array[String] = []
+    discoveries_row.visible = true
+    discoveries_row.add_theme_constant_override("separation", DISCOVERIES_STRIP_SEPARATION)
+    discoveries_label.text = "%s Discoveries %d" % [DISCOVERIES_GLYPH, sites.size()]
+    discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    _rebuild_discoveries_strip(sites)
+
+## One mark per distinct site KIND, first-seen order preserved. Called per snapshot, so the previous
+## children are freed rather than accumulated.
+func _rebuild_discoveries_strip(sites: Array) -> void:
+    for child in discoveries_strip.get_children():
+        child.queue_free()
+        discoveries_strip.remove_child(child)
+    discoveries_strip.add_theme_constant_override("separation", DISCOVERIES_STRIP_SEPARATION)
+    # Sprites are sized to the readout's own font so the strip keeps the text baseline it had when
+    # every entry was an emoji — derived, never a hardcoded pixel size.
+    var mark_size := discoveries_label.get_theme_font_size("font_size")
+    var seen: Array[String] = []
     for site in sites:
         if not (site is Dictionary):
             continue
-        var glyph := String((site as Dictionary).get("glyph", "")).strip_edges()
-        if glyph != "" and not glyphs.has(glyph):
-            glyphs.append(glyph)
-    var suffix := ""
-    if not glyphs.is_empty():
-        suffix = "  %s" % " ".join(glyphs)
-    discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
-    discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        var entry := site as Dictionary
+        var site_id := String(entry.get("site_id", "")).strip_edges()
+        # A catalog-pruned site with no id still deserves one entry, so fall back to its tile —
+        # instance identity — rather than dropping it or collapsing every such site together.
+        var key := site_id
+        if key == "":
+            key = "%d,%d" % [int(entry.get("x", 0)), int(entry.get("y", 0))]
+        if seen.has(key):
+            continue
+        seen.append(key)
+        # Presentation precedence: bundled art, else the server's emoji, else the fallback mark.
+        var name := String(entry.get("display_name", "")).strip_edges()
+        var texture := WonderSprites.for_site_id(site_id)
+        if texture != null:
+            discoveries_strip.add_child(_discoveries_sprite(texture, mark_size, name))
+        else:
+            discoveries_strip.add_child(_discoveries_glyph_label(entry, name))
+
+## A strip entry backed by bundled art, boxed to the text's font size and drawn aspect-preserved so
+## a non-square illustration still sits on the same baseline as its emoji neighbours.
+func _discoveries_sprite(texture: Texture2D, mark_size: int, site_name: String) -> TextureRect:
+    var rect := TextureRect.new()
+    rect.texture = texture
+    rect.custom_minimum_size = Vector2(mark_size, mark_size)
+    rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+    rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    rect.tooltip_text = site_name
+    return rect
+
+## A strip entry drawn as text: the site's server-provided emoji, or the named fallback mark when the
+## catalog row carries neither art nor a glyph.
+func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
+    var label := Label.new()
+    var glyph := String(entry.get("glyph", "")).strip_edges()
+    label.text = glyph if glyph != "" else DISCOVERIES_UNKNOWN_GLYPH
+    label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    label.tooltip_text = site_name
+    return label
 
 ## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
 ## faction's intensification-ladder knowledge as a compact top-bar block-glyph strip, mirroring the
