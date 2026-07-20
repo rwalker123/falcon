@@ -1,0 +1,24 @@
+[package]
+name = "launcher"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "shadowscale_launcher"
+path = "src/main.rs"
+
+[dependencies]
+# Readiness gate: the launcher must confirm the ports handshake file parses as a
+# complete payload, not merely that it exists, before starting the client.
+serde_json = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    # CreateJobObjectW takes a SECURITY_ATTRIBUTES pointer, so it only exists
+    # when this feature is enabled.
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

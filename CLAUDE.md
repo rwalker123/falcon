@@ -117,4 +117,20 @@ Guidance:
 ---
 
 ## UI Panel Sizing
-Reuse the shared helper at `clients/godot_thin_client/src/scripts/ui/AutoSizingPanel.gd` for any HUD panels that need to expand to fit content (e.g., selection panel, command feed, future hex-info widgets). Attach the script to the panel node and call `fit_to_content` from the owning script; this prevents each panel from reimplementing bespoke height/scroll logic.
+**The rule is "never reimplement bespoke height/scroll logic."** Which shared
+helper you reuse depends on what the panel *is* — there are two, and picking the
+wrong one silently misbehaves rather than failing:
+
+- **Free-floating panels** (anchored against the viewport — selection panel,
+  hex-info widgets): `clients/godot_thin_client/src/scripts/ui/AutoSizingPanel.gd`.
+  Attach the script to the panel node and call `fit_to_content`. It sizes against
+  the *viewport*, using `global_position` + anchors + `offset_bottom`.
+- **Dock cards** (children of a `PanelDock` `VBoxContainer` — command feed,
+  Telling panel): `src/scripts/ui/hud/DockScrollFit.gd`, via `PanelCard`. A dock
+  child has its size overwritten by the container on every layout pass, and the
+  ceiling that matters is the *dock's* remaining height, not the window's — so
+  `AutoSizingPanel` is the wrong tool there and will fight the container.
+
+If you find yourself writing height math by hand, you have picked the wrong
+helper or found a third case worth extracting — extract it rather than
+open-coding it.

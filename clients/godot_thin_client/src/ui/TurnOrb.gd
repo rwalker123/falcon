@@ -18,7 +18,13 @@ class_name TurnOrb
 ##     label:    String   # "3 idle workers"      one-line summary
 ##     detail:   String   # "Band 2"              secondary context
 ##     x: int, y: int     # map focus for the jump; (-1, -1) = non-locating
+##     blocking: bool     # OPTIONAL, default false — see below
 ##   }
+##
+## `blocking` is the end-turn GATE: while ANY entry carries it, the popover's `Advance ▸`
+## button is disabled and wears the reason instead of its label. The orb stays generic —
+## it never learns what a narrative fork is, only that *something* is holding the turn —
+## and every existing producer is unaffected because the field defaults to false.
 ##
 ## Palette comes entirely from HudStyle (no hardcoded hexes).
 
@@ -31,6 +37,10 @@ const FoodIcons := preload("res://src/scripts/ui/FoodIcons.gd")
 signal focus_requested(x: int, y: int)
 ## Advance the turn (the popover footer's Advance button).
 signal advance_requested
+## A NON-LOCATING row was activated: the thing it names lives in a panel, not on the map.
+## Carries the entry's `kind` so the orb stays producer-agnostic — the Hud decides which
+## panel a kind opens, and a new non-locating producer needs no orb change.
+signal panel_requested(kind: String)
 
 # ---- severity model --------------------------------------------------------
 const SEVERITY_INFO := "info"
@@ -46,12 +56,19 @@ const KIND_AWAITING_ORDERS := "awaiting_orders"
 # The icon is the corral glyph the whole husbandry ladder already wears (herd drawer badge, Corral
 # policy button, the band ledger's pen-feed row), so the row reads as "your pen" at a glance.
 const KIND_STARVING_PEN := "starving_pen"
+# A narrative fork awaiting an answer (The Telling). Non-locating — it opens a panel, not a hex —
+# and the only `blocking` producer today.
+const KIND_DECISION := "decision"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
 	KIND_LOSING_POPULATION: "📉",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
+	# A question put to the people, awaiting their answer. Line art, NOT the ❔ emoji: emoji
+	# presentation renders as tofu/a blob at row size (the hazard that forced MagnifierButton and
+	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.
+	KIND_DECISION: "?",
 }
 const KIND_ICON_FALLBACK := "●"
 
@@ -102,6 +119,14 @@ const ROW_H_PADDING := 12
 const ROW_SEPARATION := 12
 const SEV_STRIPE_WIDTH := 3
 const ROW_ICON_SIZE := 30
+
+# The end-turn gate. When a `blocking` entry is present the footer button wears the reason in
+# place of `Advance ▸` — an unexplained dead button is worse than no button at all.
+const ADVANCE_LABEL := "Advance ▸"
+# Deliberately NOT the same string as the entry row's label (`Hud.ATTENTION_DECISION_LABEL`):
+# the row states what is waiting, the footer states why you cannot advance. Repeating the row
+# verbatim reads like a rendering bug rather than a reason.
+const ADVANCE_BLOCKED_LABEL := "Answer first to advance"
 
 var _entries: Array = []
 var _accent_color: Color = HudStyle.SIGNAL
@@ -502,15 +527,26 @@ func _reason_row(entry: Variant) -> Button:
 	row.add_child(jump)
 
 	button.add_child(row)
-	button.pressed.connect(_on_reason_pressed.bind(x, y, locates))
+	button.pressed.connect(_on_reason_pressed.bind(x, y, locates, String(entry.get("kind", ""))))
 	return button
 
+## Is any entry holding the turn? The orb does not know WHAT blocks — only that something does.
+func has_blocking_entry() -> bool:
+	for entry in _entries:
+		if entry is Dictionary and bool(entry.get("blocking", false)):
+			return true
+	return false
+
 func _popover_footer() -> Control:
+	var blocked := has_blocking_entry()
 	var advance := Button.new()
-	advance.text = "Advance ▸"
+	advance.text = ADVANCE_BLOCKED_LABEL if blocked else ADVANCE_LABEL
 	advance.focus_mode = Control.FOCUS_NONE
 	advance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	HudStyle.apply_button(advance, "primary")
+	# `ghost` while blocked: the primary (cyan) treatment reads as "do this next", which is
+	# exactly the wrong invitation on a button that cannot be pressed.
+	HudStyle.apply_button(advance, "ghost" if blocked else "primary")
+	advance.disabled = blocked
 	advance.pressed.connect(_on_advance_pressed)
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", ROW_H_PADDING)
@@ -520,12 +556,14 @@ func _popover_footer() -> Control:
 	margin.add_child(advance)
 	return margin
 
-func _on_reason_pressed(x: int, y: int, locates: bool) -> void:
+func _on_reason_pressed(x: int, y: int, locates: bool, kind: String) -> void:
 	if locates:
 		emit_signal("focus_requested", x, y)
-		_close_popover()
-	# Non-locating entries are a no-op stub for now (only idle_workers exists, and
-	# it always locates). Future non-locating kinds (decisions) open a panel here.
+	else:
+		# The thing this row names lives in a panel, not on the map. The orb only says WHICH
+		# kind was activated; the Hud owns the kind → panel mapping.
+		emit_signal("panel_requested", kind)
+	_close_popover()
 
 func _on_advance_pressed() -> void:
 	emit_signal("advance_requested")

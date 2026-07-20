@@ -12,6 +12,9 @@ extends Node
 ## then read ui_preview_out/*.png.
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
+## Scratch prefs file for this harness — NEVER the player's `user://narrative.cfg`. See the
+## prefs-isolation block in `_ready()` for the incident that made this non-negotiable.
+const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
 # Force-compile MapView here so the harness also acts as a full-context compile
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
@@ -55,6 +58,15 @@ const BOAR_FOOD_PER_ANIMAL := 4.0
 # 0 = the raid ran the whole forecast horizon still delivering (a long raid), used by the no-surplus /
 # collapsed fixtures where the raid also lands 0 animals.
 const NEVER_FILLS_TRIP_TURNS := 0
+# The Telling fixture's two authored voice registers. Named here ONLY so the harness can pin the
+# preference deterministically — nothing in the client hardcodes a register (VoiceLine.register is
+# free-form by design; the panel builds its toggle from what the fork actually carries).
+const FORK_REGISTER_MYTHIC := "mythic"
+const FORK_REGISTER_WARM := "warm"
+# The Telling panel's medium rungs. Named here only so the states read; the client keys its styling
+# off a table with an `oral` fallback, never off these three being exhaustive.
+const TELLING_MEDIUM_ORAL := "oral"
+const TELLING_MEDIUM_WRITTEN := "written"
 # The pen-keeping band's entity id — its own, so the force-expanded Food breakdown override
 # (`_breakdown_expanded` is keyed `food:<entity>`) doesn't collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
@@ -99,6 +111,19 @@ func _ready() -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg_layer.add_child(bg)
 
+	# ---- prefs isolation — FIRST, before anything can read OR write a preference ----------------
+	# THE HARNESS MUST NEVER TOUCH THE PLAYER'S PROFILE. It once did, and it cost a real debugging
+	# session: a state called the persisting `toggle_victory()` while the legend was open for a
+	# frame, `_save_hud_panel_prefs` wrote BOTH keys, and `legend_suppressed=false` landed in the
+	# developer's `user://narrative.cfg` — so their next real game came up with the Terrain Types
+	# panel visible and the shipped default looked broken. Redirect every read/write to a scratch
+	# file and DELETE it, which is both the isolation and a genuine fresh profile.
+	NarrativeForkPanel.config_path_override = PREVIEW_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_PREFS_PATH))
+	# The Telling panel restores its collapsed state in its constructor, so pin it expanded BEFORE
+	# the HUD instantiates (into the scratch file, now that the override is set).
+	TellingPanel.save_collapsed(false)
+
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
 	await get_tree().process_frame
@@ -122,13 +147,20 @@ func _ready() -> void:
 	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
 
-	# Top-bar Wondrous-Sites discoveries readout (faction 0): a landmark + a settle-site, so
-	# the count reads `◈ Discoveries 2  ⛰ ⛲` and the distinct glyphs show.
+	# Top-bar Wondrous-Sites discoveries readout (faction 0). The strip keys on `site_id`, so this
+	# fixture is built to prove the two cases the glyph could not distinguish:
+	#   • GLYPH COLLISION — `great_peak` and `sky_arch` both ship ⛰, and must stay TWO entries:
+	#     great_peak's bundled sprite, then sky_arch's ⛰ emoji (it has no art).
+	#   • REPEAT INSTANCE — the second `great_peak` is a different tile, so it lifts the count to 4
+	#     while adding no strip entry: the number counts instances, the strip counts kinds.
+	# `verdant_basin` is the other bundled sprite. Reads `◈ Discoveries 4` + 3 marks.
 	_hud.update_discoveries([{
 		"faction": 0,
 		"sites": [
 			{"x": 12, "y": 8, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
 			{"x": 20, "y": 14, "site_id": "verdant_basin", "category": "settle_site", "display_name": "Verdant Basin", "glyph": "⛲"},
+			{"x": 26, "y": 9, "site_id": "sky_arch", "category": "landmark", "display_name": "Sky Arch", "glyph": "⛰"},
+			{"x": 31, "y": 17, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
 		],
 	}])
 
@@ -144,6 +176,22 @@ func _ready() -> void:
 	_hud.update_food_modules([
 		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
 	])
+
+	# State 0-fresh-profile — THE SHIPPED DEFAULT DOCK LAYOUT, rendered on the path a real player
+	# travels and nothing else: prefs section erased above, HUD freshly instantiated, and the first
+	# real terrain legend arriving from MapView exactly as `Main._on_overlay_legend_changed` pushes
+	# it. NOTHING may call `set_suppressed` / `toggle_legend` / `toggle_victory` before this point —
+	# that is the whole value of the state. The right dock must be EMPTY of both reference cards:
+	# no Terrain Types, no Victory. This state is FIRST on purpose, so no later state can leak into
+	# it, and it is the regression guard for "the legend is visible by default in the real game".
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	_hud.update_victory_state(_victory_state_fixture())
+	await _settle()
+	await _save("dock_fresh_profile_default")
+	_assert_hud("fresh profile: Terrain Types legend is hidden",
+		not _hud.terrain_legend_panel.visible)
+	_assert_hud("fresh profile: Victory panel is hidden",
+		not _hud.victory_panel.visible)
 
 	# State 1 — a single band selected (GOOD state): the Occupants roster + the labor allocation panel.
 	# Food + Morale are healthy, so BOTH summary rows read collapsed with a ▸ disclosure caret
@@ -447,9 +495,13 @@ func _ready() -> void:
 	# MapView._build_pasture_legend; see map_preview's "pasture" state for the map itself). The barren
 	# tones sit OFF the straw→grass ramp: dead ground and water are their own rows, so "no pasture at
 	# all" can never be read as "poor pasture".
+	# The legend card ships SUPPRESSED (the player opens it with `L`), so every legend state opens it
+	# and CLOSES IT AGAIN around its own frames — see `_open_legend` / `_close_legend`.
+	_open_legend()
 	_hud.update_overlay_legend(_pasture_legend_fixture())
 	await _settle()
 	await _save("pasture_legend")
+	_close_legend()
 	_hud.clear_selection()
 
 	# State 2-forage-legend — the map legend for the `forage` overlay channel (rows produced by
@@ -457,9 +509,11 @@ func _ready() -> void:
 	# pasture legend, but honest about the OPPOSITE meaning of absence: NO water row (shelves carry
 	# forage and ride the ramp), a single "No forage" barren row (deep ocean/glacier/lava only), and a
 	# "Gathering sites: N" sub-count so the ramp reads as POTENTIAL without calling the rest dead.
+	_open_legend()
 	_hud.update_overlay_legend(_forage_legend_fixture())
 	await _settle()
 	await _save("forage_legend")
+	_close_legend()
 	_hud.clear_selection()
 
 	# ---- Hex-edge rivers on the Tile card (ui/RiverEdges.gd, the shared text formatter) -----------
@@ -1455,6 +1509,8 @@ func _ready() -> void:
 	# biomes of varying tile counts so the default count-desc order + the Name/Count
 	# sort toggles + sort persistence across a regen push are all visible. Rendered
 	# before the full-screen icon probe below so the right-dock legend isn't covered.
+	# Opened here and closed at the end of THIS block (not hundreds of lines later).
+	_open_legend()
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("terrain_legend_count_desc")  # default: Count, high→low
@@ -1480,6 +1536,119 @@ func _ready() -> void:
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("terrain_legend_persist")
+	_close_legend()
+
+	# ---- The Telling (docs/plan_the_telling.md) -----------------------------------------------
+	# The narrative fork decision surface + the client-side end-turn gate. The fixture is the REAL
+	# authored copy from core_sim/src/data/beat_definitions.json (`sedentarization.soft_drift`, the
+	# `soft_drift.long_chase` wardrobe entry, nouns resolved as the sim resolves them at post time),
+	# so the frame shows prose at real length rather than lorem that flatters the layout.
+	_hud.clear_selection()
+	_hud.update_overlay(41, {})
+	# Pin the register so the run is deterministic (the preference persists in user://).
+	NarrativeForkPanel.save_voice_register(FORK_REGISTER_MYTHIC)
+
+	# State F1 — the panel, auto-opened the first time the fork appears: the narration as the hero
+	# element, three choices in catalog order (the defer choice styled `ghost`, and ALWAYS enabled —
+	# it is the out the gate depends on), the gloss collapsed, the voice toggle in the footer.
+	_hud.update_pending_forks(_pending_forks_fixture())
+	_hud.update_stance_axes(_stance_axes_fixture())
+	await _settle()
+	await _save("narrative_fork_panel")
+
+	# State F2 — the SAME fork in the other register. Verifies the toggle and that the noticeably
+	# shorter/looser `warm` copy lays out as well as the long `mythic` one. The registers come from
+	# the fork itself, never a hardcoded list.
+	_hud._fork_panel._on_register_picked(FORK_REGISTER_WARM)
+	await _settle()
+	await _save("narrative_fork_panel_warm")
+
+	# State F3 — THE GATE, and the single most important assertion in this file. With a blocking
+	# fork seeded, an orb-face click must NOT advance the turn (it opens the reasons popover
+	# instead), and the popover's Advance button must be DISABLED and wear the reason. This is the
+	# exact inverse of `turn_orb_clear_click_advances`.
+	_hud._fork_panel.close()
+	NarrativeForkPanel.save_voice_register(FORK_REGISTER_MYTHIC)
+	var fork_advance_hits := [0]
+	var fork_advance_cb := func() -> void: fork_advance_hits[0] += 1
+	_hud.turn_orb.advance_requested.connect(fork_advance_cb)
+	_hud.turn_orb._on_face_pressed()
+	await _settle()
+	var fork_footer := _turn_orb_advance_button()
+	_assert_turn_orb("blocking fork: face click does not advance",
+		fork_advance_hits[0] == 0 and _hud.turn_orb._popover_open)
+	_assert_turn_orb("blocking fork: Advance is disabled",
+		fork_footer != null and fork_footer.disabled)
+	await _save("turn_orb_fork_blocks")
+	_hud.turn_orb.advance_requested.disconnect(fork_advance_cb)
+	_hud.turn_orb.toggle_popover()
+
+	# (The old State F4 `narrative_feed` — narrative prose styled INSIDE the command feed — was
+	# retired with PR-C. The feed no longer renders narrative kinds at all, so the state could only
+	# ever have shown their absence; `telling_and_feed` below is its replacement and tests the
+	# thing that now matters: that the receipts survive alongside real narrative volume.)
+
+	# ---- The Telling panel (PR-C) ------------------------------------------------------------
+	# States G1–G3. The dock is cleared first so the two narrative cards are judged on their own
+	# chrome rather than on whatever the previous state left selected.
+	# `clear_selection()` deliberately KEEPS the tile card (deselecting an occupant should not
+	# forget the hex), so the tile info has to go first or the Tile card fills the dock and both
+	# narrative cards get squeezed out of the frame entirely.
+	_hud._selected_tile_info.clear()
+	_hud.clear_selection()
+	_hud.reset_command_feed()
+	_hud._telling.reset()
+
+	# G1 — the panel under the FIRST medium, on real authored copy (incl. the longest line in the
+	# catalog, so wrapping is genuinely exercised).
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events(_telling_fixture_events())
+	await _settle()
+	await _save("telling_panel_oral")
+
+	# G2 — the SAME entries under the LAST medium. Nothing about the copy changes (per-medium copy
+	# is a deliberate non-goal); only the title and the accent age, which is the whole point.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	await _settle()
+	await _save("telling_panel_written")
+
+	# G3 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel is still holding its six
+	# beats while the command feed carries ordinary receipts: before PR-C, two beats filled the
+	# feed card outright and pushed every receipt off screen. The receipts must be READABLE here.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events(_telling_command_receipts())
+	await _settle()
+	await _save("telling_and_feed")
+
+	# G4 — THE DEFAULT DOCK LAYOUT. The right dock holds the Telling panel ALONE: Victory and
+	# Terrain Types both ship suppressed, so the narrative surface gets the full right-dock height
+	# instead of the squeezed share it had while it lived under the left dock's selection cards.
+	# The command feed stays on the left, which is the layout this frame exists to show.
+	_hud.update_victory_state(_victory_state_fixture())
+	await _settle()
+	await _save("dock_default_layout")
+	# The Telling panel is registered with `right_dock.add(..., 10)`, and `PanelDock._reorder`
+	# reparents. Screenshotting the dock only shows it LOOKS right; assert WHERE it lives, so a
+	# dropped/reordered registration (or a scene edit that re-authors it under the left dock)
+	# fails here instead of silently reverting the narrative surface to the left column.
+	_assert_hud("default layout: Telling panel lives in the right dock stack",
+		_hud.telling_panel.get_parent() == _hud.right_stack)
+
+	# G5 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
+	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the
+	# Telling panel is seen to yield height rather than overlap.
+	# Victory goes through the REAL `toggle_victory` (the `V` path, prefs write included — the harness
+	# cleared the section at startup, and this toggles back below); the legend uses the harness helper.
+	_hud.toggle_victory()
+	_open_legend()
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	await _settle()
+	await _save("dock_panels_revealed")
+	_assert_hud("toggled on: Terrain Types legend is visible", _hud.terrain_legend_panel.visible)
+	_assert_hud("toggled on: Victory panel is visible", _hud.victory_panel.visible)
+	# Restore the shipped default so any later state renders the real layout.
+	_hud.toggle_victory()
+	_close_legend()
 
 	# ---- Hunt/husbandry render-honesty pass (intensification ladder client UX) ----------------------
 	# Fix #1 + #5 — CURRENT ACTIONS rows: a summary row headlines the honest per-turn FOOD rate
@@ -1541,6 +1710,75 @@ func _ready() -> void:
 
 	get_tree().quit()
 
+## Victory progress shaped as `Hud._refresh_victory_status` consumes it: no winner declared yet and
+## a few modes at differing progress, so the card has real height when it is toggled on and the
+## progress sort (highest first) is visible.
+func _victory_state_fixture() -> Dictionary:
+	return {
+		"winner": {},
+		"modes": [
+			{"id": "cultural_ascendancy", "progress_pct": 0.42, "achieved": false},
+			{"id": "great_works", "progress_pct": 0.18, "achieved": false},
+			{"id": "hegemony", "progress_pct": 0.06, "achieved": false},
+		],
+	}
+
+## Open / close the Terrain Types legend around a block of legend states.
+##
+## The card ships SUPPRESSED, so a legend state must open it — and every legend state MUST close it
+## again at the end of its own block. An earlier cut opened it once and restored it ~700 lines later,
+## which meant a dozen intervening states silently rendered with a non-default right dock and NO
+## state anywhere exercised the shipped default. That is precisely how a default-visibility bug
+## hides, so scope stays tight and local.
+##
+## Set through the controller rather than `Hud.toggle_legend`, which would PERSIST the choice to the
+## prefs file this harness clears at startup — a harness must not write the preference it is testing.
+func _open_legend() -> void:
+	_hud._legend.set_suppressed(false)
+
+func _close_legend() -> void:
+	_hud._legend.set_suppressed(true)
+
+## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
+## `core_sim/src/data/beat_definitions.json` with their nouns filled in as the sim would fill them.
+## Real copy, not lorem: the panel's whole job is prose, and placeholder text of the wrong length
+## would make both the wrapping and the density read wrong.
+##
+## The first entry is `cold_open.bone_ground` — the LONGEST line in the catalog (225 chars) — so
+## the multi-line wrap case is exercised in every telling frame rather than by luck.
+func _telling_fixture_events() -> Array:
+	return [
+		{"tick": 0, "kind": "narrative_beat",
+			"label": "We are 24. The ground behind us is bone, and we will not go back to it. Ahead lies a country with no names — not the hills, not the waters, not the years to come. Naming it is your work now. Walk well, and be remembered.",
+			"detail": "turn.index = 0 · band.count = 24"},
+		{"tick": 3, "kind": "narrative_beat",
+			"label": "The scouts came back thinner and louder than they left. Salt Pillar Reach, they said, over and over, until we all knew the word.",
+			"detail": "sites.discovered_this_turn = 1"},
+		{"tick": 9, "kind": "narrative_beat",
+			"label": "The portions grew smaller without anyone deciding it. That is how it always begins.",
+			"detail": "provisions.total falling for 3 turns"},
+		{"tick": 14, "kind": "narrative_beat",
+			"label": "A woman pressed seed into the mud to see what it would do. The mud answered. We know a new thing.",
+			"detail": "knowledge.cultivation = 1.00"},
+		{"tick": 18, "kind": "narrative_beat",
+			"label": "The chase is longer every season and ends in less. The aurochs were the road we walked; the road is going quiet under us.",
+			"detail": "herd.ecology_phase = collapsing"},
+		{"tick": 22, "kind": "narrative_fork",
+			"label": "There are paths here now, worn by our own feet, going to places only we go. That is how a country becomes a home, or a trap.",
+			"detail": "sedentarization.score = 41"},
+	]
+
+## Ordinary command receipts for the split frame — the transactional acknowledgements that used to
+## be pushed off the feed by two beats. Deliberately MORE than one, so "the feed is legible again"
+## is something the frame can actually show rather than imply.
+func _telling_command_receipts() -> Array:
+	return [
+		{"tick": 22, "kind": "command", "label": "Assign labor", "detail": "6 foragers → (27, 26)"},
+		{"tick": 22, "kind": "command", "label": "Assign labor", "detail": "3 hunters → Aurochs Herd"},
+		{"tick": 23, "kind": "command", "label": "Move band", "detail": "Band 1 → (28, 25)"},
+		{"tick": 23, "kind": "site_discovered", "label": "Salt Pillar Reach", "detail": "Wondrous site at (31, 22)"},
+	]
+
 func _settle() -> void:
 	await get_tree().process_frame
 	# Force a synchronous frame rather than awaiting `RenderingServer.frame_post_draw`.
@@ -1577,6 +1815,56 @@ func _turn_orb_advance_button() -> Button:
 		return null
 	var btn := footer.get_child(0)
 	return btn as Button
+
+## The Telling: a pending fork on the wire, in the per-faction shape the native decoder produces
+## (`[{faction, forks: [...]}]`). Copy is verbatim from beat_definitions.json —
+## `sedentarization.soft_drift` / `soft_drift.long_chase` — with `{beast.plural}` resolved the way
+## the sim resolves nouns at post time, so the frame judges REAL prose at REAL length.
+func _pending_forks_fixture() -> Array:
+	return [{
+		"faction": 0,
+		"forks": [{
+			"beat_id": "sedentarization.soft_drift",
+			"wardrobe_id": "soft_drift.long_chase",
+			"posted_tick": 41,
+			"narration": [
+				{"register": FORK_REGISTER_MYTHIC, "text": "Three seasons, and each one we chased the mammoths and left the seed-ground unturned. The children do not remember a walled night. At the fires, they have begun to call us the People of the Long Chase. Is that who we are?"},
+				{"register": FORK_REGISTER_WARM, "text": "Three seasons now, all of them spent following the mammoths, and nobody's turned the seed-ground once. The children have never slept behind a wall. People have started calling us the People of the Long Chase. Is that us?"},
+			],
+			"choices": [
+				{"choice_id": "yes_trail", "is_defer": false, "label": [
+					{"register": FORK_REGISTER_MYTHIC, "text": "We are the trail"},
+					{"register": FORK_REGISTER_WARM, "text": "Yes — we're trail people"},
+				]},
+				{"choice_id": "no_root", "is_defer": false, "label": [
+					{"register": FORK_REGISTER_MYTHIC, "text": "We were meant to root"},
+					{"register": FORK_REGISTER_WARM, "text": "No — we were meant to settle"},
+				]},
+				# Exactly one choice carries is_defer, and the SERVER computes it — the client reads
+				# the flag and never re-derives which choice writes nothing.
+				{"choice_id": "defer", "is_defer": true, "label": [
+					{"register": FORK_REGISTER_MYTHIC, "text": "Say nothing"},
+					{"register": FORK_REGISTER_WARM, "text": "Let it lie for now"},
+				]},
+			],
+			"gloss": [
+				{"signal": "sedentarization.score", "value": 41.0},
+				{"signal": "stance.roam_settle", "value": -0.18},
+			],
+		}],
+	}]
+
+func _stance_axes_fixture() -> Array:
+	return [{"faction": 0, "axes": [{"axis": "roam_settle", "value": -0.18}]}]
+
+## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
+## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
+## for someone to notice a card that should not be there.
+func _assert_hud(label: String, ok: bool) -> void:
+	if ok:
+		print("ui_preview: PASS hud — ", label)
+	else:
+		push_error("ui_preview: FAIL hud — %s" % label)
 
 func _assert_turn_orb(label: String, ok: bool) -> void:
 	if ok:

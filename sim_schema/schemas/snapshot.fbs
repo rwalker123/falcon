@@ -1439,10 +1439,79 @@ table VisionSection {
   militaryRaster:ScalarRaster;
 }
 
+// --- The Telling: the fork tier's wire contract (append-only) ---------------------------------
+// One register's rendering of a player-visible narrative string. `register` is a string (the
+// `species` / `policy` convention) so adding a voice register needs no schema change.
+table VoiceLine {
+  register:string;
+  text:string;
+}
+
+// One answer a pending fork offers. `isDefer` is computed SERVER-side (the choice writes nothing) —
+// the client must not have to know what makes a choice a defer, and its turn gate depends on every
+// fork carrying exactly one (guaranteed at catalog load).
+table ForkChoiceState {
+  choiceId:string;
+  label:[VoiceLine];
+  isDefer:bool = false;
+}
+
+// One sampled signal behind a fork's question ("the voice never lies").
+table GlossEntry {
+  signal:string;
+  value:double = 0;
+}
+
+// A narrative fork posted to a faction and awaiting an answer. `narration` and each choice's
+// `label` carry EVERY configured register, rendered at post time — the register is a live user
+// toggle, and the nouns belong to the moment the fork fired. Answer with the `answer_fork` command.
+// NOTE: the turn gate for an unanswered fork is CLIENT-side; the server never blocks turn
+// resolution on one, and auto-resolves a fork to its defer choice after
+// `beat_config.budget.fork_expire_turns`.
+table PendingForkState {
+  beatId:string;
+  wardrobeId:string;
+  postedTick:ulong = 0;
+  narration:[VoiceLine];
+  choices:[ForkChoiceState];
+  gloss:[GlossEntry];
+}
+
+table PendingForksState {
+  faction:uint;
+  forks:[PendingForkState];
+}
+
+// One stance axis's EFFECTIVE value for a faction, in [-1, 1]: the normalized backing signal (what
+// the player's behaviour says) plus the declared offset from the forks they have answered (what
+// they said). `axis` is a string so adding a stance axis needs no schema change.
+table StanceAxisState {
+  axis:string;
+  value:float = 0;
+}
+
+table StanceState {
+  faction:uint;
+  axes:[StanceAxisState];
+}
+
+// A faction's narrator MEDIUM (The Telling, concept §7): oral saga -> painted chronicle ->
+// written record. Presentational only: it changes how the telling is *presented*, and never
+// selects different copy. `mediumId` is a string (the species/policy/register convention) so
+// adding a medium needs no schema change; `mediumIndex` is its 0-based rung.
+table VoiceMediumState {
+  faction:uint;
+  mediumId:string;
+  mediumIndex:uint = 0;
+}
+
 table CampaignSection {
   campaignProfiles:[CampaignProfile]; // snapshot-only
   commandEvents:[CommandEventState];
   victory:VictoryState;
+  pendingForks:[PendingForksState];
+  stanceAxes:[StanceState];
+  voiceMedium:[VoiceMediumState];
 }
 
 table WorldSnapshot {

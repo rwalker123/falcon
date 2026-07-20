@@ -6,15 +6,17 @@
 # toolchain, no Godot, and no config files on their side:
 #
 #   ShadowScale-windows/
+#     ShadowScale.exe                # double-click THIS — starts the server, then the client
 #     server.exe                     # core_sim server (binds 127.0.0.1:41000-41003)
 #     ShadowScaleClient.exe          # Godot thin client (+ its .pck)
 #     shadow_scale_godot.dll         # the GDExtension, beside the client exe
-#     run.bat                        # launches the server, then the client
 #     README.txt
 #
-# This is a CLIENT/SERVER game: the Godot client connects to the server over TCP
-# (defaults line up — client STREAM=41002/COMMAND=41001/LOG=41003 vs the server's
-# default binds), so the package ships BOTH and run.bat starts them in order.
+# This is a CLIENT/SERVER game: the Godot client connects to the server over TCP,
+# so the package ships BOTH and ShadowScale.exe starts them in order. The launcher
+# hands both halves an explicit SIM_PORTS_FILE so they rendezvous on whatever block
+# the server actually binds (see core_sim/src/port_alloc.rs), and puts the server in
+# a Job Object so Windows reaps it even if the launcher is killed.
 #
 # Prerequisites (one-time, see docs/desktop_builds.md):
 #   - rustup target add x86_64-pc-windows-msvc
@@ -38,6 +40,10 @@ GODOT_PROJECT="clients/godot_thin_client"
 DLL_NAME="shadow_scale_godot.dll"
 SERVER_NAME="server.exe"
 CLIENT_EXE="ShadowScaleClient.exe"
+# cargo names the binary after the [[bin]] target; the package presents it as the
+# thing the player double-clicks, so it is renamed on copy.
+LAUNCHER_BIN="shadowscale_launcher.exe"
+LAUNCHER_EXE="ShadowScale.exe"
 PRESET="Windows Desktop"
 
 DIST_ROOT="$ROOT_DIR/dist/windows"
@@ -69,13 +75,15 @@ command -v "$GODOT_BIN" >/dev/null || die "Godot ('$GODOT_BIN') not on PATH — 
 command -v zip >/dev/null         || die "zip not found (needed to package the build)"
 
 # --- 1. cross-compile the Rust artifacts (server + GDExtension) ---------------
-info "Cross-compiling server + GDExtension for $TARGET ..."
+info "Cross-compiling server + launcher + GDExtension for $TARGET ..."
 cargo xwin build --release --locked --target "$TARGET" -p core_sim --bin server
+cargo xwin build --release --locked --target "$TARGET" -p launcher
 cargo xwin build --release --locked --target "$TARGET" -p shadow_scale_godot
 
 REL="$ROOT_DIR/target/$TARGET/release"
-[ -f "$REL/$SERVER_NAME" ] || die "server build produced no $SERVER_NAME"
-[ -f "$REL/$DLL_NAME" ]    || die "GDExtension build produced no $DLL_NAME"
+[ -f "$REL/$SERVER_NAME" ]   || die "server build produced no $SERVER_NAME"
+[ -f "$REL/$LAUNCHER_BIN" ]  || die "launcher build produced no $LAUNCHER_BIN"
+[ -f "$REL/$DLL_NAME" ]      || die "GDExtension build produced no $DLL_NAME"
 
 # --- 2. stage the DLL where the .gdextension expects it, so export bundles it --
 DLL_DEST="$ROOT_DIR/$GODOT_PROJECT/native/bin/windows"
@@ -108,7 +116,7 @@ cp "$REL/$SERVER_NAME" "$PKG_DIR/$SERVER_NAME"
 # case the export embed setting changes. Not silenced — the source is verified to
 # exist above, so a failure here is a real problem worth surfacing.
 cp "$REL/$DLL_NAME" "$PKG_DIR/$DLL_NAME"
-cp "$SCRIPT_DIR/windows_dist/run.bat"    "$PKG_DIR/run.bat"
+cp "$REL/$LAUNCHER_BIN" "$PKG_DIR/$LAUNCHER_EXE"
 cp "$SCRIPT_DIR/windows_dist/README.txt" "$PKG_DIR/README.txt"
 
 # --- 5. zip it ----------------------------------------------------------------
@@ -120,4 +128,4 @@ info "Zipping package ..."
 info "Done."
 info "Package : $PKG_DIR"
 info "Zip     : $DIST_ROOT/$ZIP_NAME.zip"
-info "Hand the ZIP to a Windows playtester — they unzip and double-click run.bat."
+info "Hand the ZIP to a Windows playtester — they unzip and double-click ShadowScale.exe."

@@ -62,6 +62,7 @@ mod start_profile;
 mod supply;
 mod supply_network_config;
 mod systems;
+pub mod telling;
 mod terrain;
 mod turn_pipeline_config;
 mod victory;
@@ -263,6 +264,13 @@ pub use systems::{
     TradeDiffusionEvent,
 };
 pub use systems::{apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf};
+pub use telling::{
+    load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
+    BeatCatalogHandle, BeatCatalogMetadata, BeatChoice, BeatConfig, BeatConfigHandle,
+    BeatConfigMetadata, BeatDefinition, BeatLedger, BeatTier, ChoiceWrites, CompareOp, EdgeDir,
+    ForkAnswerError, ForkResolution, Noun, NounField, PendingFork, Predicate, RenderedChoice,
+    SignalSample, WardrobeEntry, TELLING_SEED_SALT,
+};
 pub use terrain::{
     biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,
     BathymetryContext, BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
@@ -277,6 +285,10 @@ pub enum TurnStage {
     Population,
     Visibility,
     Crisis,
+    /// The Telling's beat engine. Between `Crisis` and `Finalize` so it sees population, fauna,
+    /// sedentarization and crisis output, and lands before `Snapshot` so a beat reaches the client
+    /// the same turn it fires.
+    Telling,
     Finalize,
     Victory,
     Snapshot,
@@ -394,6 +406,10 @@ pub fn build_headless_app() -> App {
         settlement_stage_config::load_settlement_stage_config_from_env();
     let settlement_stage_handle =
         settlement_stage_config::SettlementStageConfigHandle::new(settlement_stage_config);
+    let (beat_config, beat_config_metadata) = telling::load_beat_config_from_env();
+    let (beat_catalog, beat_catalog_metadata) = telling::load_beat_catalog_from_env(&beat_config);
+    let beat_config_handle = telling::BeatConfigHandle::new(beat_config);
+    let beat_catalog_handle = telling::BeatCatalogHandle::new(beat_catalog);
     let (sites_config, sites_metadata) = sites_config::load_sites_config_from_env();
     let sites_handle = sites_config::SitesConfigHandle::new(sites_config);
     let (expedition_config, expedition_metadata) =
@@ -465,6 +481,11 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(beat_config_handle)
+        .insert_resource(beat_config_metadata)
+        .insert_resource(beat_catalog_handle)
+        .insert_resource(beat_catalog_metadata)
+        .insert_resource(telling::BeatLedger::default())
         .insert_resource(settlement_stage_handle)
         .insert_resource(settlement_stage_metadata)
         .insert_resource(sites_handle)
@@ -545,6 +566,7 @@ pub fn build_headless_app() -> App {
                 TurnStage::Population,
                 TurnStage::Visibility,
                 TurnStage::Crisis,
+                TurnStage::Telling,
                 TurnStage::Finalize,
                 TurnStage::Victory,
                 TurnStage::Snapshot,
@@ -682,6 +704,7 @@ pub fn build_headless_app() -> App {
             Update,
             crisis::advance_crisis_system.in_set(TurnStage::Crisis),
         )
+        .add_systems(Update, telling::telling_tick.in_set(TurnStage::Telling))
         .add_systems(
             Update,
             (

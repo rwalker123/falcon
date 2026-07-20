@@ -134,11 +134,13 @@ jobs:
           Automated playtest build **b${BUILD}** from \`${SHA}\`.
 
           **Downloads**
-          - \`ShadowScale-windows-b${BUILD}.zip\` — unzip, double-click \`run.bat\`.
-          - \`ShadowScale-macos-b${BUILD}.zip\` — unzip, see \`README.txt\` (macOS quarantines
-            unsigned apps; one \`xattr\` command clears it), then \`run.command\`.
+          - \`ShadowScale-windows-b${BUILD}.zip\` — unzip, double-click \`ShadowScale.exe\`.
+          - \`ShadowScale-macos-b${BUILD}.zip\` — unzip, double-click \`ShadowScale.app\`. The first
+            launch needs a one-time approval in System Settings > Privacy & Security; see \`README.txt\`.
 
-          These builds are unsigned; SmartScreen (Windows) / Gatekeeper (macOS) will warn.
+          Neither build is code-signed by a paid developer account, so SmartScreen (Windows) /
+          Gatekeeper (macOS) will warn once. The macOS bundle is ad-hoc signed, which avoids the
+          harder "app is damaged" failure but does not remove the prompt.
           EOF
           )
           gh release create latest release-assets/*.zip \
