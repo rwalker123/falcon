@@ -265,6 +265,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_pending_forks", [snapshot["pending_forks"]])
     if snapshot.has("stance_axes"):
         _hud_invoke("update_stance_axes", [snapshot["stance_axes"]])
+    if snapshot.has("voice_medium"):
+        _hud_invoke("update_voice_medium", [snapshot["voice_medium"]])
     if snapshot.has("populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:

@@ -1247,6 +1247,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         let _ = dict.insert("stance_axes", &stance_axes_to_array(stance_axes));
     }
 
+    if let Some(voice_medium) = delta.campaign().and_then(|s| s.voiceMedium()) {
+        let _ = dict.insert("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
     if let Some(herds) = delta.subsistence().and_then(|s| s.herds()) {
         let _ = dict.insert("herds", &herds_to_array(herds));
     }
@@ -2810,6 +2814,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         let _ = dict.insert("stance_axes", &stance_axes_to_array(stance_axes));
     }
 
+    if let Some(voice_medium) = snapshot.campaign().and_then(|s| s.voiceMedium()) {
+        let _ = dict.insert("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
     if let Some(server_build) = header.serverBuild() {
         let _ = dict.insert("server_build", server_build);
     }
@@ -3103,6 +3111,27 @@ fn sedentarization_to_array(
         if let Some(stage) = state.stage() {
             let _ = dict.insert("stage", stage);
         }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The Telling (docs/plan_the_telling.md): each faction's narrator MEDIUM — oral saga ->
+/// painted chronicle -> written record. PRESENTATIONAL only; it never selects different copy.
+/// `medium_id` stays a free-form string (the species/policy/register convention), so a new
+/// medium needs no schema change and the client must key its styling off a table with a
+/// fallback rather than a match assuming the shipped three are exhaustive.
+fn voice_medium_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::VoiceMediumState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        if let Some(medium_id) = state.mediumId() {
+            let _ = dict.insert("medium_id", medium_id);
+        }
+        let _ = dict.insert("medium_index", state.mediumIndex() as i64);
         array.push(&dict.to_variant());
     }
     array

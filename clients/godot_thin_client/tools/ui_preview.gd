@@ -57,6 +57,10 @@ const IMPOSSIBLE_SMALL_PARTY := 1
 # free-form by design; the panel builds its toggle from what the fork actually carries).
 const FORK_REGISTER_MYTHIC := "mythic"
 const FORK_REGISTER_WARM := "warm"
+# The Telling panel's medium rungs. Named here only so the states read; the client keys its styling
+# off a table with an `oral` fallback, never off these three being exhaustive.
+const TELLING_MEDIUM_ORAL := "oral"
+const TELLING_MEDIUM_WRITTEN := "written"
 
 const RABBIT_SUSTAIN_ROW := [0, 0, 0, 0, 0, 0, 0, 0]
 const RABBIT_SURPLUS_ROW := [23, 0, 0, 0, 0, 0, 0, 0]
@@ -107,6 +111,11 @@ func _ready() -> void:
 	bg.color = Color(0.10, 0.15, 0.16)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg_layer.add_child(bg)
+
+	# The Telling panel restores its collapsed state from `user://narrative.cfg` in its constructor,
+	# so a previous interactive run could otherwise render every telling state folded shut. Pin it
+	# expanded BEFORE the HUD instantiates, the same way the fork states pin the voice register.
+	TellingPanel.save_collapsed(false)
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
@@ -1193,21 +1202,42 @@ func _ready() -> void:
 	_hud.turn_orb.advance_requested.disconnect(fork_advance_cb)
 	_hud.turn_orb.toggle_popover()
 
-	# State F4 — the command feed carrying narrative entries beside an ordinary command entry, so
-	# the styling difference is visible: a beat is PROSE (glyph + the line, no `Turn N` prefix, no
-	# bold kind label), a command keeps its receipt shape.
+	# (The old State F4 `narrative_feed` — narrative prose styled INSIDE the command feed — was
+	# retired with PR-C. The feed no longer renders narrative kinds at all, so the state could only
+	# ever have shown their absence; `telling_and_feed` below is its replacement and tests the
+	# thing that now matters: that the receipts survive alongside real narrative volume.)
+
+	# ---- The Telling panel (PR-C) ------------------------------------------------------------
+	# States G1–G3. The dock is cleared first so the two narrative cards are judged on their own
+	# chrome rather than on whatever the previous state left selected.
+	# `clear_selection()` deliberately KEEPS the tile card (deselecting an occupant should not
+	# forget the hex), so the tile info has to go first or the Tile card fills the dock and both
+	# narrative cards get squeezed out of the frame entirely.
+	_hud._selected_tile_info.clear()
+	_hud.clear_selection()
 	_hud.reset_command_feed()
-	_hud.ingest_command_events([
-		{"tick": 40, "kind": "command", "label": "Assign labor", "detail": "6 foragers → (27, 26)"},
-		{"tick": 41, "kind": "narrative_beat",
-			"label": "The children's ribs are counting themselves. No one says so at the fire.",
-			"detail": "provisions.total falling for 3 turns"},
-		{"tick": 41, "kind": "narrative_fork",
-			"label": "There are paths here now, worn by our own feet, going to places only we go.",
-			"detail": "sedentarization.score = 41"},
-	])
+	_hud._telling.reset()
+
+	# G1 — the panel under the FIRST medium, on real authored copy (incl. the longest line in the
+	# catalog, so wrapping is genuinely exercised).
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events(_telling_fixture_events())
 	await _settle()
-	await _save("narrative_feed")
+	await _save("telling_panel_oral")
+
+	# G2 — the SAME entries under the LAST medium. Nothing about the copy changes (per-medium copy
+	# is a deliberate non-goal); only the title and the accent age, which is the whole point.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	await _settle()
+	await _save("telling_panel_written")
+
+	# G3 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel is still holding its six
+	# beats while the command feed carries ordinary receipts: before PR-C, two beats filled the
+	# feed card outright and pushed every receipt off screen. The receipts must be READABLE here.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events(_telling_command_receipts())
+	await _settle()
+	await _save("telling_and_feed")
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -1224,6 +1254,46 @@ func _ready() -> void:
 	await _save("food_icons")
 
 	get_tree().quit()
+
+## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
+## `core_sim/src/data/beat_definitions.json` with their nouns filled in as the sim would fill them.
+## Real copy, not lorem: the panel's whole job is prose, and placeholder text of the wrong length
+## would make both the wrapping and the density read wrong.
+##
+## The first entry is `cold_open.bone_ground` — the LONGEST line in the catalog (225 chars) — so
+## the multi-line wrap case is exercised in every telling frame rather than by luck.
+func _telling_fixture_events() -> Array:
+	return [
+		{"tick": 0, "kind": "narrative_beat",
+			"label": "We are 24. The ground behind us is bone, and we will not go back to it. Ahead lies a country with no names — not the hills, not the waters, not the years to come. Naming it is your work now. Walk well, and be remembered.",
+			"detail": "turn.index = 0 · band.count = 24"},
+		{"tick": 3, "kind": "narrative_beat",
+			"label": "The scouts came back thinner and louder than they left. Salt Pillar Reach, they said, over and over, until we all knew the word.",
+			"detail": "sites.discovered_this_turn = 1"},
+		{"tick": 9, "kind": "narrative_beat",
+			"label": "The portions grew smaller without anyone deciding it. That is how it always begins.",
+			"detail": "provisions.total falling for 3 turns"},
+		{"tick": 14, "kind": "narrative_beat",
+			"label": "A woman pressed seed into the mud to see what it would do. The mud answered. We know a new thing.",
+			"detail": "knowledge.cultivation = 1.00"},
+		{"tick": 18, "kind": "narrative_beat",
+			"label": "The chase is longer every season and ends in less. The aurochs were the road we walked; the road is going quiet under us.",
+			"detail": "herd.ecology_phase = collapsing"},
+		{"tick": 22, "kind": "narrative_fork",
+			"label": "There are paths here now, worn by our own feet, going to places only we go. That is how a country becomes a home, or a trap.",
+			"detail": "sedentarization.score = 41"},
+	]
+
+## Ordinary command receipts for the split frame — the transactional acknowledgements that used to
+## be pushed off the feed by two beats. Deliberately MORE than one, so "the feed is legible again"
+## is something the frame can actually show rather than imply.
+func _telling_command_receipts() -> Array:
+	return [
+		{"tick": 22, "kind": "command", "label": "Assign labor", "detail": "6 foragers → (27, 26)"},
+		{"tick": 22, "kind": "command", "label": "Assign labor", "detail": "3 hunters → Aurochs Herd"},
+		{"tick": 23, "kind": "command", "label": "Move band", "detail": "Band 1 → (28, 25)"},
+		{"tick": 23, "kind": "site_discovered", "label": "Salt Pillar Reach", "detail": "Wondrous site at (31, 22)"},
+	]
 
 func _settle() -> void:
 	await get_tree().process_frame

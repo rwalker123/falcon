@@ -78,6 +78,10 @@ const CLOSE_TOOLTIP := "Set the question aside — it will keep until you answer
 var _fork: Dictionary = {}
 var _register: String = ""
 var _gloss_expanded: bool = false
+# The narrator's medium (The Telling §7). Presentational ONLY — it tints this panel's eyebrow so a
+# fork wears the same-aged voice as the Telling panel, and never selects different copy. The
+# accent table + its `oral` fallback live in TellingPanel, so the two surfaces cannot drift.
+var _medium_accent: Color = TellingPanel.accent_for(TellingPanel.MEDIUM_ORAL)
 
 var _card: AutoSizingPanel = null
 var _body: VBoxContainer = null
@@ -143,6 +147,17 @@ func close() -> void:
 
 func is_open() -> bool:
 	return visible
+
+## Age this panel's header to the faction's narrator medium. Unknown/absent ids fall back to
+## `oral` (see `TellingPanel.accent_for`). Re-renders only when already open — the accent is read
+## fresh on every `_render()`, so a closed panel needs no work.
+func set_voice_medium(medium_id: String) -> void:
+	var accent := TellingPanel.accent_for(medium_id)
+	if accent == _medium_accent:
+		return
+	_medium_accent = accent
+	if visible:
+		_render()
 
 ## The beat this panel is currently showing ("" when closed / empty) — lets the Hud decide
 ## whether an incoming snapshot still concerns what the player is looking at.
@@ -239,7 +254,9 @@ func _build_header() -> Control:
 	eyebrow.text = EYEBROW_TEXT
 	eyebrow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	eyebrow.add_theme_font_size_override("font_size", EYEBROW_FONT_SIZE)
-	eyebrow.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	# The eyebrow carries the voice's AGE (see `set_voice_medium`) — the one place a fork shows the
+	# medium, since the narration itself is medium-independent by design.
+	eyebrow.add_theme_color_override("font_color", _medium_accent)
 	header.add_child(eyebrow)
 
 	var close_button := Button.new()

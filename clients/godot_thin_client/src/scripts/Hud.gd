@@ -85,6 +85,9 @@ var _server_build: String = "?"
 @onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
 @onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
+@onready var telling_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TellingPanel as PanelCard
+@onready var telling_scroll: ScrollContainer = %TellingScroll
+@onready var telling_label: RichTextLabel = %TellingLabel
 @onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
 @onready var tile_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel as PanelCard
 @onready var tile_detail: RichTextLabel = %TileDetail
@@ -267,9 +270,10 @@ const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
 # The legend card (rows + sort header + suppress state) is owned by _legend; the
-# command feed card by _command_feed. Hud delegates to both.
+# command feed card by _command_feed; the narrative panel by _telling. Hud delegates to all three.
 var _legend: LegendController = null
 var _command_feed: CommandFeedController = null
+var _telling: TellingPanel = null
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
@@ -998,6 +1002,7 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
+    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, left_dock_scroll)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
@@ -1007,6 +1012,7 @@ func _ready() -> void:
     _refresh_campaign_label()
     _refresh_victory_status()
     _command_feed.render()
+    _telling.render()
     _connect_selection_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
@@ -1014,6 +1020,9 @@ func _ready() -> void:
     left_dock.add(occupants_panel, 12)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
+    # Below the command feed: the receipts are the transient thing you glance at, the telling is
+    # what you scroll back through, so the log sits above the story.
+    left_dock.add(telling_panel, 40)
     right_dock.add(victory_panel, 10)
     right_dock.add(terrain_legend_panel, 20)
     if stockpile_panel != null:
@@ -1690,6 +1699,27 @@ func update_pending_forks(forks_variant: Variant) -> void:
 ## say about who they are. Displayed by the fork panel; no other consumer yet.
 func update_stance_axes(axes_variant: Variant) -> void:
     _stance_axes = _faction_rows(axes_variant, "axes")
+
+## The player faction's narrator MEDIUM — oral saga → painted chronicle → written record.
+##
+## Follows the `sedentarization` ingest precedent exactly: a per-faction wire array, scanned for
+## PLAYER_FACTION_ID. The caller only invokes this when the snapshot actually CARRIES the key
+## (a delta omits an unchanged field), so absence means "unchanged" and never "cleared".
+##
+## Presentational only — it never selects different copy. Both narrative surfaces take it, so the
+## panel's title/accent and the fork panel's header age together rather than drifting apart.
+func update_voice_medium(medium_variant: Variant) -> void:
+    if not (medium_variant is Array):
+        return
+    var medium_id := ""
+    for entry_variant in (medium_variant as Array):
+        if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == PLAYER_FACTION_ID:
+            medium_id = String((entry_variant as Dictionary).get("medium_id", ""))
+            break
+    if _telling != null:
+        _telling.set_voice_medium(medium_id)
+    if _fork_panel != null:
+        _fork_panel.set_voice_medium(medium_id)
 
 ## Pull the player faction's nested child array out of a per-faction wire array
 ## (`[{faction, <key>: [...]}, …]`), the shape `discovered_sites`/`sedentarization` also use.
@@ -3740,6 +3770,10 @@ func _refresh_campaign_label() -> void:
     campaign_title_label.text = title_text if has_title else ""
     campaign_subtitle_label.text = subtitle_text if has_subtitle else ""
 
+## Clear the command FEED only — a full snapshot re-seeds it from the server's ring, so keeping
+## stale receipts would double them up. The Telling panel is deliberately NOT reset here: its
+## signature de-dup makes re-ingesting the ring harmless, and clearing would throw away every
+## telling that has already scrolled past the server's 32-entry ring.
 func reset_command_feed() -> void:
     _command_feed.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
@@ -5465,8 +5499,15 @@ func _load_ui_balance_config() -> void:
         if cap_value > 0:
             travel_preview_turn_cap = cap_value
 
+## Fan one batch of command events out to BOTH surfaces. Each controller filters for the kinds it
+## owns (the split's one definition is `TellingPanel.handles_kind`), so passing the whole array to
+## both is correct and keeps each one's own retention + de-duplication.
+##
+## This is also the Telling panel's BACKFILL: a full snapshot carries the server's whole
+## `commandEvents` ring, so a player opening the client mid-session sees recent history.
 func ingest_command_events(events_variant: Variant) -> void:
     _command_feed.ingest_events(events_variant)
+    _telling.ingest_events(events_variant)
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return
