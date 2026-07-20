@@ -1602,8 +1602,10 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   sim state), so a rollback rewinds a half-built pen (or an in-flight fence extension) rather than losing
   the investment;
   `corralled_tended_this_turn`, **`pen_fed_fraction`, `pen_starving`, `footprint_intake` and
-  `pen_pasture_fraction`** are transient (not persisted) — a rehydrated pen reads "untended, fully fed",
-  so a rollback can only *delay* an escape or a starvation turn by one turn, never invent a famine.
+  `pen_pasture_fraction`** are transient (not persisted) — a rehydrated pen reads "tended (a
+  deliberate one-turn grace, seeded in `herd_from_state` so the first post-restore Logistics escape
+  pass spares a pen a keeper tends every turn), fully fed", so a rollback can only *delay* an escape or
+  a starvation turn by one turn, never invent a famine — and never *destroy* a standing pen on restore.
 - **Config** (`fauna_config.json` `husbandry`): the **`pen`** block — `ecology` carries **phase bands
   only** now (its `regrowth_rate` is unused; the pen `r` is per-species — Grazing 2d),
   **`upkeep_per_biomass` (0.002 — the feed, now footprint-offset)** and `starve_shrink_rate` (**0.10** —
