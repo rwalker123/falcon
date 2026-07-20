@@ -202,12 +202,20 @@ func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> v
 	var slot: int = _secondary_slot_lookup.get(_wonder_key(site), -1)
 	if slot < 0:
 		return
+	# Bundled PNG art where we have it (identical on every OS), the server's emoji otherwise —
+	# WonderSprites returns null for a site_id with no art and we fall through unchanged. Resolved
+	# BEFORE the empty-glyph guard on purpose: a site we have art for must still draw even if the
+	# server sent no glyph, while the guard keeps governing the emoji path exactly as before.
+	var site_sprite := WonderSprites.for_site_id(String(site.get("site_id", "")))
 	var glyph := String(site.get("glyph", ""))
-	if glyph == "":
+	if site_sprite == null and glyph == "":
 		return
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	_view._draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
+	if site_sprite != null:
+		_view._draw_marker_sprite(icon_center, site_sprite, _secondary_icon_size(radius))
+	else:
+		_view._draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func draw_harvest_markers(radius: float, origin: Vector2) -> void:
 	if _view.harvest_sites.is_empty():
