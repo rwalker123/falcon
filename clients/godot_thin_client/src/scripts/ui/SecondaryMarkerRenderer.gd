@@ -38,7 +38,7 @@ func compute_slots() -> void:
 			continue
 		if _view._visibility_state_at(wx, wy) == "unexplored":
 			continue
-		if String((wsite as Dictionary).get("glyph", "")) == "":
+		if not _wonder_renders(wsite as Dictionary):
 			continue
 		_append_secondary(per_tile, Vector2i(wx, wy), _wonder_key(wsite))
 	for site in _view.food_sites:
@@ -64,6 +64,18 @@ func _append_secondary(per_tile: Dictionary, tile: Vector2i, key: String) -> voi
 	var list: Array = per_tile.get(tile, [])
 	list.append(key)
 	per_tile[tile] = list
+
+## Whether a discovered site will render ANYTHING: bundled PNG art for its `site_id`, or the
+## server's emoji glyph. `compute_slots` (slot eligibility) and `draw_discovered_site` (the draw
+## guard) MUST agree on this — a site denied a slot can never draw, whatever art it has — so both
+## ask HERE rather than repeating the condition and drifting. Testing glyph alone (as slot
+## eligibility once did) silently dropped sprite-only sites: they were skipped before the draw
+## path's sprite check could ever run. The `WonderSprites` lookup is a cached dictionary hit
+## (`IconSprites`), not a load, so calling it from the per-frame slot pass is cheap.
+static func _wonder_renders(wsite: Dictionary) -> bool:
+	if WonderSprites.for_site_id(String(wsite.get("site_id", ""))) != null:
+		return true
+	return String(wsite.get("glyph", "")) != ""
 
 func _wonder_key(wsite: Dictionary) -> String:
 	var fallback := "%d,%d" % [int(wsite.get("x", -1)), int(wsite.get("y", -1))]
@@ -128,7 +140,11 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
+	var herd_label := String(herd.get("label", herd.get("id", "Herd")))
+	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that
+	# don't have art yet — FaunaSprites returns null for those and we fall through unchanged.
+	var herd_sprite := FaunaSprites.for_herd(herd_label)
+	var herd_icon := FoodIcons.for_herd(herd_label)
 	var icon_size := _secondary_icon_size(radius)
 	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
 	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
@@ -138,7 +154,10 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	if starving:
 		_view.draw_arc(icon_center, radius * _view.HERD_DISTRESS_RING_FACTOR, 0, TAU, _view.HERD_DISTRESS_RING_SEGMENTS,
 			_view.HERD_DISTRESS_COLOR, _view.HERD_DISTRESS_RING_WIDTH)
-	_view._draw_marker_glyph(icon_center, herd_icon, icon_size, _view.SECONDARY_ICON_COLOR)
+	if herd_sprite != null:
+		_view._draw_marker_sprite(icon_center, herd_sprite, icon_size)
+	else:
+		_view._draw_marker_glyph(icon_center, herd_icon, icon_size, _view.SECONDARY_ICON_COLOR)
 	if starving:
 		_draw_distress_badge(icon_center, icon_size)
 
@@ -169,10 +188,18 @@ func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var is_hunt := kind == "game_trail"
-	var icon := FoodIcons.for_site(module_key, is_hunt, int(site.get("terrain_id", -1)))
+	var terrain_id := int(site.get("terrain_id", -1))
+	# Bundled PNG art where we have it (identical on every OS), OS emoji otherwise — SiteSprites
+	# returns null for an unmapped art key and we fall through unchanged. Both resolve the same
+	# module/hunt/terrain triple through `FoodIcons.site_key_for`, so they cannot disagree.
+	var site_sprite := SiteSprites.for_site(module_key, is_hunt, terrain_id)
+	var icon := FoodIcons.for_site(module_key, is_hunt, terrain_id)
 	if _view._food_harvest_active(x, y):
 		_view.draw_arc(icon_center, radius * _view.FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), _view.FOOD_HARVEST_RING_WIDTH)
-	_view._draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
+	if site_sprite != null:
+		_view._draw_marker_sprite(icon_center, site_sprite, _secondary_icon_size(radius))
+	else:
+		_view._draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -187,12 +214,20 @@ func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> v
 	var slot: int = _secondary_slot_lookup.get(_wonder_key(site), -1)
 	if slot < 0:
 		return
-	var glyph := String(site.get("glyph", ""))
-	if glyph == "":
+	# Same renders-anything test compute_slots used to allot the slot (see _wonder_renders): a site
+	# we have art for must still draw even if the server sent no glyph, so this cannot be a bare
+	# empty-glyph guard. Bundled PNG art where we have it (identical on every OS), the server's
+	# emoji otherwise — WonderSprites returns null for a site_id with no art and we fall through.
+	if not _wonder_renders(site):
 		return
+	var site_sprite := WonderSprites.for_site_id(String(site.get("site_id", "")))
+	var glyph := String(site.get("glyph", ""))
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
-	_view._draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
+	if site_sprite != null:
+		_view._draw_marker_sprite(icon_center, site_sprite, _secondary_icon_size(radius))
+	else:
+		_view._draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func draw_harvest_markers(radius: float, origin: Vector2) -> void:
 	if _view.harvest_sites.is_empty():

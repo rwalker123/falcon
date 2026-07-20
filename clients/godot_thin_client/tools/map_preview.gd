@@ -452,6 +452,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_riverine_split")
 
+	# State "site sprites" — the FOOD-SITE SPRITE ROSTER: every bundled site icon in one frame,
+	# including the hunted-site deer and the unknown-module sprig. Judge swapped/clipped art here.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_site_sprites())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_site_sprites")
+
 	# State I — far-zoom level-of-detail: a large grid makes fitted hexes tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS), so secondary edge icons + count/overflow chips are suppressed — only
 	# the primary band tokens draw. Regression guard that far zoom stays legible, not a glyph soup.
@@ -486,6 +497,15 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_herd_starving")
+
+	# State J-sprites — the FAUNA SPRITE ROSTER: one herd per bundled-art species, each on its own
+	# hex, so every `FaunaSprites` PNG is judged at true marker size in one frame (right species, no
+	# clipping, no key fringe). Every HERD_SPECIES key now has art, so this frame is the coverage
+	# check that used to be spread across whichever fixtures happened to name a species.
+	_map.display_snapshot(_snapshot_fauna_sprites())
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_fauna_sprites")
 
 	# State K — split-state guard: the selected band (selected_unit_id) stands on a DIFFERENT hex than
 	# selected_tile, simulating a band that migrated off the clicked hex on turn-advance. The outline
@@ -1220,7 +1240,53 @@ func _snapshot_pens() -> Dictionary:
 		"x": 10, "y": 7, "biomass": 310.0, "huntable": true,
 		"corralled": true, "pen_fed_fraction": 0.4,
 	}
-	return _base_snapshot(_band([], 2, 2), [fed, starving])
+	# A THIRD pen, starving, whose species has BUNDLED SPRITE ART (boar) — the aurochs above is an
+	# emoji species, so without this the frame never proves the distress ring/badge still reads over a
+	# sprite marker (the sprite is drawn untinted, exactly like the emoji, so the geometry is the whole
+	# distress signal on both paths).
+	var starving_sprite := {
+		"id": "game_boar_05", "label": "Wild Boar (game_boar_05)",
+		"x": 7, "y": 7, "biomass": 260.0, "huntable": true,
+		"corralled": true, "pen_fed_fraction": 0.3,
+	}
+	return _base_snapshot(_band([], 2, 2), [fed, starving, starving_sprite])
+
+## Every species in `FoodIcons.HERD_SPECIES`, one herd per ALIAS GROUP, laid out on its own hex so
+## each `FaunaSprites` marker can be judged at TRUE marker size. This is the roster frame: it is the
+## only place the whole bundled-art set is visible at once, so a swapped/clipped/fringed sprite shows
+## up here and nowhere else. One entry per group is enough — aliases resolve to the same PNG.
+const FAUNA_SPRITE_ROSTER := [
+	["game_rabbit_01", "Rabbit Warren"],
+	["game_deer_01", "Red Deer"],
+	["game_boar_01", "Wild Boar"],
+	["game_mammoth_01", "Thunder Mammoth"],
+	["game_aurochs_01", "Aurochs"],
+	["game_cattle_01", "Cattle"],
+	["game_goat_01", "Wild Goat"],
+	["game_horse_01", "Wild Horse"],
+	["game_sheep_01", "Sheep"],
+	["game_fowl_01", "Jungle Fowl"],
+]
+## The roster is laid out as ONE row: MapView is cover-fit, so on this wide preview window only a
+## few middle rows are on screen and a second roster row is cropped away unseen.
+const FAUNA_ROSTER_COLUMNS := 10
+## A middle row (well inside the cover-fit crop) and a leading margin off the map border.
+const FAUNA_ROSTER_ORIGIN := Vector2i(3, 5)
+## Hexes between roster entries — one apart, so ten fit across GRID_W without markers colliding.
+const FAUNA_ROSTER_SPACING := 1
+
+func _snapshot_fauna_sprites() -> Dictionary:
+	var herds: Array = []
+	for i in FAUNA_SPRITE_ROSTER.size():
+		var entry: Array = FAUNA_SPRITE_ROSTER[i]
+		var col := FAUNA_ROSTER_ORIGIN.x + (i % FAUNA_ROSTER_COLUMNS) * FAUNA_ROSTER_SPACING
+		var row := FAUNA_ROSTER_ORIGIN.y + (i / FAUNA_ROSTER_COLUMNS) * FAUNA_ROSTER_SPACING
+		herds.append({
+			"id": entry[0],
+			"label": "%s (%s)" % [entry[1], entry[0]],
+			"x": col, "y": row, "biomass": 400.0, "huntable": true,
+		})
+	return _base_snapshot(_band([], 2, 2), herds)
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. The ⚠ overhunt flag is now the
@@ -1341,6 +1407,39 @@ func _snapshot_riverine_split() -> Dictionary:
 			{"x": RIVERINE_FISH_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
 			{"x": RIVERINE_REED_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
 		],
+	}
+
+## The FOOD-SITE SPRITE ROSTER — one site per bundled-art key on its own hex, so the whole art set is
+## judged at once for swapped/clipped/fringed sprites (the food twin of `map_fauna_sprites`). One row
+## per band of keys because MapView is cover-fit and rows past the fit are cropped away unseen.
+## Includes the two NON-module art keys — a hunted site (`kind = game_trail` → the fauna deer) and an
+## unknown module (→ the `default` sprig) — since neither is reachable from `FoodIcons.ICONS`.
+const SITE_ROSTER_MODULES := [
+	"coastal_littoral", "savanna_grassland", "temperate_forest", "boreal_arctic",
+	"montane_highland", "wetland_swamp", "semi_arid_scrub", "coastal_upwelling",
+	"mixed_woodland",
+]
+const SITE_ROSTER_Y := 4                  # shared row so every sprite sits at the same height
+const SITE_ROSTER_X0 := 2                 # first column of the roster row
+const SITE_ROSTER_STEP := 1               # one hex between sites — no tile shares a slot
+const SITE_ROSTER_HUNT_MODULE := "savanna_grassland"   # a hunted site; `kind` is what picks the deer
+const SITE_ROSTER_UNKNOWN_MODULE := "berry_patch"      # not in ICONS → the `default` sprig
+
+func _snapshot_site_sprites() -> Dictionary:
+	var sites: Array = []
+	var x := SITE_ROSTER_X0
+	for module in SITE_ROSTER_MODULES:
+		sites.append({"x": x, "y": SITE_ROSTER_Y, "module": module, "kind": "forage"})
+		x += SITE_ROSTER_STEP
+	sites.append({"x": x, "y": SITE_ROSTER_Y, "module": SITE_ROSTER_HUNT_MODULE, "kind": "game_trail"})
+	x += SITE_ROSTER_STEP
+	sites.append({"x": x, "y": SITE_ROSTER_Y, "module": SITE_ROSTER_UNKNOWN_MODULE, "kind": "forage"})
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": [],
+		"herds": [],
+		"food_modules": sites,
 	}
 
 ## One band sharing (BAND_X, BAND_Y) with 1 herd + 1 food site + 3 wonders → 3 edge slots + `+2` chip.
