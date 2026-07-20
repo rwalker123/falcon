@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BinaryHeap, sync::Arc};
 use bevy::prelude::*;
 
 use crate::{
-    map_preset::{ErosionConfig, MapPreset},
+    map_preset::{ErosionConfig, MacroLandConfig, MapPreset},
     resources::SimulationConfig,
 };
 
@@ -45,6 +45,18 @@ impl ElevationField {
         debug_assert!(x < self.width && y < self.height);
         let idx = (y * self.width + x) as usize;
         self.values[idx]
+    }
+
+    /// Mutable access to the raw samples, for the **only** legitimate way to move a coastline:
+    /// edit the field and re-derive the mask (`mapgen::generate_land_mask`). No stage may write to
+    /// `land`/`is_ocean` directly — elevation is the sole authority, so a stage that wants land
+    /// where there is water raises the ground, and one that wants water lowers it.
+    ///
+    /// `Arc::make_mut` clones the buffer only if the field is shared, so the common case (a private
+    /// working copy inside `build_bands`) is in-place.
+    #[inline]
+    pub fn values_mut(&mut self) -> &mut [f32] {
+        Arc::make_mut(&mut self.values).as_mut_slice()
     }
 
     /// Height above sea level remapped to `[0, 1]` (0 = at/below sea level, 1 = the field's max
@@ -122,6 +134,28 @@ pub fn build_elevation_field(
 
     let mut values = normalise_values(values);
 
+    // Continental structure + coastline raggedness go into the field BEFORE erosion and before the
+    // contour is anchored to sea level, because the land mask is a pure threshold of this field:
+    // `land = elevation > sea_level`. Anything that wants to move a coastline edits the field here.
+    if let Some(p) = preset {
+        apply_continental_bias(
+            &mut values,
+            width as usize,
+            height as usize,
+            &p.macro_land,
+            seed,
+            config.map_topology.wrap_horizontal,
+        );
+        apply_coastline_roughness(
+            &mut values,
+            width as usize,
+            height as usize,
+            &p.macro_land,
+            seed,
+        );
+        values = normalise_values(values);
+    }
+
     // Erosion runs on the NORMALISED field, and it runs *before* the caller sees it — and therefore
     // before `mapgen::generate_land_mask`, whose elevation ranking makes the coastline an
     // iso-contour of exactly this surface. With no preset there is no config, so the preset-less
@@ -141,7 +175,162 @@ pub fn build_elevation_field(
         }
     }
 
-    ElevationField::new(width, height, values)
+    // Attach the preset's sea level HERE, at the field's origin, rather than leaving every
+    // downstream consumer to remember `with_sea_level`. `ElevationField::new` resets to
+    // `DEFAULT_SEA_LEVEL`, so a field that travels through any constructor without it silently
+    // reverts — which is exactly how the snapshot came to ship 0.6 while `earthlike` specifies 0.62.
+    let sea_level = preset.map_or(DEFAULT_SEA_LEVEL, |p| p.sea_level);
+    ElevationField::new(width, height, values).with_sea_level(sea_level)
+}
+
+/// Hash salt for the continent-centre sampler, so the centres are a deterministic function of the
+/// world seed alone and share no stream with the fractal/ridge/roughness noise.
+const CONTINENT_CENTER_SEED_SALT: u32 = 0x5EED_C047;
+/// Hash salt for the coastline-roughness noise field, likewise disjoint from every other stream.
+const COASTLINE_ROUGHNESS_SEED_SALT: u32 = 0x0C0A_5751;
+/// How many candidate centres the Poisson-ish sampler may reject before it accepts one anyway. The
+/// spacing rule is a *preference*, not a hard constraint — with many continents on a small grid the
+/// rejection region can cover most of the map, and a sampler that could fail to place a centre would
+/// silently deliver fewer continents than the preset asked for.
+const CONTINENT_CENTER_MAX_ATTEMPTS: u32 = 64;
+/// The minimum centre separation, as a fraction of `sqrt(grid_area / continents)` — the same
+/// "one continent's worth of area per continent" spacing rule the retired BFS seed placement used
+/// (`mapgen::generate_land_mask`), expressed in continuous coordinates. Below 1.0 so a crowded map
+/// can still seat every centre without exhausting the attempt budget.
+const CONTINENT_MIN_SEPARATION_FRACTION: f32 = 0.75;
+/// Cycles of coastline-roughness noise across the map's smaller dimension. High enough that it
+/// perturbs the coastline tile-to-tile rather than moving whole landmasses (that is
+/// [`apply_continental_bias`]'s job), low enough that the fbm's octaves stay above the raster's
+/// Nyquist limit.
+const COASTLINE_ROUGHNESS_FREQUENCY: f32 = 24.0;
+/// Octaves / lacunarity / gain of the coastline-roughness fbm — a short, fast-decaying stack, since
+/// this term exists to add fine detail, not structure.
+const COASTLINE_ROUGHNESS_OCTAVES: u32 = 3;
+const COASTLINE_ROUGHNESS_LACUNARITY: f32 = 2.0;
+const COASTLINE_ROUGHNESS_GAIN: f32 = 0.5;
+
+/// The low-frequency **continental bias**: `elevation += continental_weight * bias(x, y)`, where
+/// `bias = max_i(falloff(dist_i / radius))` over `macro_land.continents` seed-derived centres.
+///
+/// Two properties are load-bearing:
+/// - **`max`, not sum.** Summing lets two nearby centres add into a land bridge, fusing exactly the
+///   continents the lever exists to separate; the maximum keeps each continent's profile its own.
+/// - **The falloff spans `[-1, 1]`, not `[0, 1]`.** A bias that only ever *adds* height leaves the
+///   inter-continental gaps merely lower than the continents, which after renormalisation and the
+///   contour anchor can still land above sea level. Reaching `-1` actively sinks them.
+fn apply_continental_bias(
+    values: &mut [f32],
+    width: usize,
+    height: usize,
+    cfg: &MacroLandConfig,
+    seed: u64,
+    wrap_horizontal: bool,
+) {
+    let weight = cfg.continental_weight;
+    let continents = cfg.continents.max(1) as usize;
+    if weight <= 0.0 || width == 0 || height == 0 {
+        return;
+    }
+    let radius = cfg.continental_radius.max(f32::EPSILON) * width.min(height) as f32;
+    let exponent = cfg.continental_falloff_exponent.max(f32::EPSILON);
+    let centers = continent_centers(width, height, continents, seed, wrap_horizontal);
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut bias = -1.0f32;
+            for &(cx, cy) in &centers {
+                let dx = torus_delta(x as f32, cx, width as f32, wrap_horizontal);
+                let dy = y as f32 - cy;
+                let t = ((dx * dx + dy * dy).sqrt() / radius).clamp(0.0, 1.0);
+                bias = bias.max(1.0 - 2.0 * t.powf(exponent));
+            }
+            values[y * width + x] += weight * bias;
+        }
+    }
+}
+
+/// Poisson-ish continent centres, sampled deterministically from the world seed in **continuous**
+/// grid coordinates: reject a candidate that lands closer than the spacing rule to an accepted one,
+/// and accept unconditionally once the attempt budget is spent so the count is always honored.
+fn continent_centers(
+    width: usize,
+    height: usize,
+    continents: usize,
+    seed: u64,
+    wrap_horizontal: bool,
+) -> Vec<(f32, f32)> {
+    let total = (width * height) as f32;
+    let min_separation = (total / continents as f32).sqrt() * CONTINENT_MIN_SEPARATION_FRACTION;
+    let min_separation_sq = min_separation * min_separation;
+    let mut centers: Vec<(f32, f32)> = Vec::with_capacity(continents);
+
+    for index in 0..continents {
+        for attempt in 0..CONTINENT_CENTER_MAX_ATTEMPTS {
+            let salt = CONTINENT_CENTER_SEED_SALT
+                .wrapping_add((index as u32).wrapping_mul(CONTINENT_CENTER_MAX_ATTEMPTS))
+                .wrapping_add(attempt);
+            let hash_seed = mix_seed(CONTINENT_CENTER_SEED_SALT, seed, salt);
+            let cx = hash2(index as i32, attempt as i32, hash_seed) * width as f32;
+            let cy = hash2(attempt as i32, index as i32, hash_seed) * height as f32;
+            let spaced = centers.iter().all(|&(ex, ey)| {
+                let dx = torus_delta(cx, ex, width as f32, wrap_horizontal);
+                let dy = cy - ey;
+                dx * dx + dy * dy >= min_separation_sq
+            });
+            if spaced || attempt + 1 == CONTINENT_CENTER_MAX_ATTEMPTS {
+                centers.push((cx, cy));
+                break;
+            }
+        }
+    }
+    centers
+}
+
+/// Signed x-separation, taking the short way around when the map wraps horizontally.
+#[inline]
+fn torus_delta(a: f32, b: f32, span: f32, wrap: bool) -> f32 {
+    let d = (a - b).abs();
+    if wrap {
+        d.min(span - d)
+    } else {
+        d
+    }
+}
+
+/// The high-frequency term that gives the coastline its raggedness, applied **before**
+/// [`land_contour`] so the anchor runs on the field that is actually thresholded. This is where the
+/// retired land-mask `jitter` belongs: perturbing the field is a coastline detail, perturbing the
+/// mask's *ranking* was a decoupling.
+fn apply_coastline_roughness(
+    values: &mut [f32],
+    width: usize,
+    height: usize,
+    cfg: &MacroLandConfig,
+    seed: u64,
+) {
+    let amplitude = cfg.coastline_roughness;
+    if amplitude <= 0.0 || width == 0 || height == 0 {
+        return;
+    }
+    let noise_seed = mix_seed(COASTLINE_ROUGHNESS_SEED_SALT, seed, 0);
+    let aspect = width as f32 / height.max(1) as f32;
+    for y in 0..height {
+        for x in 0..width {
+            let nx = x as f32 / width as f32 * COASTLINE_ROUGHNESS_FREQUENCY * aspect;
+            let ny = y as f32 / height as f32 * COASTLINE_ROUGHNESS_FREQUENCY;
+            let noise = fbm_noise(
+                nx,
+                ny,
+                COASTLINE_ROUGHNESS_OCTAVES,
+                COASTLINE_ROUGHNESS_LACUNARITY,
+                COASTLINE_ROUGHNESS_GAIN,
+                noise_seed,
+            );
+            // fbm is 0..1; centre it so roughness perturbs the coastline symmetrically instead of
+            // adding a net uplift that would shift the land fraction.
+            values[y * width + x] += amplitude * (noise - 0.5) * 2.0;
+        }
+    }
 }
 
 /// Rescale the field so the land-mask's coastline ([`land_contour`]) lands **exactly on

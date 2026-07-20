@@ -22,11 +22,11 @@
       "river_navigable_enabled": true,
       "river_navigable_min_hexes": 3,
       "lake_chance": 0.15,
-      "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "jitter": 0.18 },
+      "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "continental_weight": 0.5, "continental_radius": 0.35, "continental_falloff_exponent": 1.5, "coastline_roughness": 0.05 },
       "erosion": { "enabled": true, "iterations": 40, "erodibility": 0.1, "area_exponent": 0.5, "slope_exponent": 1.0, "timestep": 0.1, "min_slope": 1.0e-4, "fill_epsilon": 1.0e-6, "diffusivity": 1.0, "incision_floor": 0.0, "anchor_contour_to_sea_level": true },
       "shelf": { "width_tiles": 2, "slope_width_tiles": 3, "width_frac": 0.040, "width_exp": 0.4, "min_width_tiles": 1.0, "coast_height_threshold": 0.10 },
-      "islands": { "continental_density": 0.0025, "oceanic_density": 0.0012, "fringing_shelf_width": 2, "min_distance_from_continent": 12 },
-      "inland_sea": { "min_area": 24, "merge_strait_width": 2 },
+      "islands": { "continental_density": 0.0025, "oceanic_density": 0.0012, "fringing_shelf_width": 2, "min_distance_from_continent": 12, "island_peak_margin": 0.06 },
+      "inland_sea": { "min_area": 24, "merge_strait_width": 2, "strait_depth_margin": 0.02 },
       "ocean": { "ridge_density": 0.0, "ridge_amplitude": 0.0 },
       "biomes": {
         "orographic_strength": 0.6,
@@ -91,7 +91,7 @@
         "volcanic_coastal_gain": 0.7
       },
       "climate_band_weights": { "polar": 0.12, "temperate": 0.46, "tropical": 0.42 },
-      "_comment_water_target": "terrain_tag_targets.Water MUST track 1 - macro_land.target_land_pct (0.38 -> 0.62). The landmask decides land vs. water; this locked target only tells the tag-budget solver what that same map should already look like. Set it too high and the solver's add-water branch scatters DeepOcean over COASTAL land tiles (~125 drowned at 0.65); too low and it mass-converts ocean into Tundra/AlluvialPlain. Either way the solver invents bathymetry the pipeline never modeled. Keep the two in lockstep.",
+      "_comment_water_target": "INERT. The tag-budget solver no longer has a water branch: water share is an ELEVATION outcome (the land mask is a pure threshold of the heightfield, and the contour anchor puts the target_land_pct quantile exactly on sea_level). This target is kept only so the tag census has a reference figure, and should still track 1 - macro_land.target_land_pct for that reading to be meaningful. Listing \"Water\" in locked_terrain_tags no longer does anything.",
       "terrain_tag_targets": {
         "Water": 0.62,
         "Coastal": 0.06,
@@ -163,11 +163,11 @@
       "river_navigable_enabled": true,
       "river_navigable_min_hexes": 3,
       "lake_chance": 0.2,
-      "macro_land": { "continents": 4, "min_area": 220, "target_land_pct": 0.42, "jitter": 0.24 },
+      "macro_land": { "continents": 4, "min_area": 220, "target_land_pct": 0.42, "continental_weight": 0.5, "continental_radius": 0.35, "continental_falloff_exponent": 1.5, "coastline_roughness": 0.05 },
       "erosion": { "enabled": true, "iterations": 40, "erodibility": 0.1, "area_exponent": 0.5, "slope_exponent": 1.0, "timestep": 0.1, "min_slope": 1.0e-4, "fill_epsilon": 1.0e-6, "diffusivity": 1.0, "incision_floor": 0.0, "anchor_contour_to_sea_level": true },
       "shelf": { "width_tiles": 3, "slope_width_tiles": 3 },
-      "islands": { "continental_density": 0.002, "oceanic_density": 0.0015, "fringing_shelf_width": 2, "min_distance_from_continent": 10 },
-      "inland_sea": { "min_area": 18, "merge_strait_width": 3 },
+      "islands": { "continental_density": 0.002, "oceanic_density": 0.0015, "fringing_shelf_width": 2, "min_distance_from_continent": 10, "island_peak_margin": 0.06 },
+      "inland_sea": { "min_area": 18, "merge_strait_width": 3, "strait_depth_margin": 0.02 },
       "ocean": { "ridge_density": 0.05, "ridge_amplitude": 0.08 },
       "biomes": {
         "orographic_strength": 0.7,
@@ -232,7 +232,7 @@
       },
       "climate_band_weights": { "polar": 0.18, "temperate": 0.42, "tropical": 0.4 },
       "terrain_tag_targets": {
-        "Water": 0.64,
+        "Water": 0.58,
         "Coastal": 0.07,
         "Wetland": 0.06,
         "Fertile": 0.2,

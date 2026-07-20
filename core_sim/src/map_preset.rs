@@ -640,7 +640,27 @@ pub struct MacroLandConfig {
     pub continents: u32,
     pub min_area: u32,
     pub target_land_pct: f32,
-    pub jitter: f32,
+    /// How hard the low-frequency **continental bias** pushes the heightfield around, on the
+    /// normalized 0..1 elevation scale, before erosion and before the coastline contour is anchored
+    /// to sea level (`heightfield::apply_continental_bias`). Thresholding raw fractal noise yields
+    /// one dominant supercontinent, so `continents` is honored by *shaping the field* rather than by
+    /// growing boolean blobs — this is the amplitude of that shaping. `0.0` disables it and
+    /// reproduces the pure-fractal field.
+    pub continental_weight: f32,
+    /// A continent's radius of influence, as a fraction of the **smaller** grid dimension. Beyond it
+    /// the bias saturates at its minimum (`-1`), which is what actively sinks the inter-continental
+    /// gaps instead of merely making them less high.
+    pub continental_radius: f32,
+    /// Shape of the continental falloff: `bias = 1 - 2 * t^exponent` for `t = dist / radius`.
+    /// `1.0` is a linear cone; above it the interior stays high longer and the drop to ocean is
+    /// steeper (a shelf-and-plateau profile); below it the continent domes.
+    pub continental_falloff_exponent: f32,
+    /// Amplitude of the high-frequency noise that gives the coastline its raggedness, applied to the
+    /// field **before** `land_contour`. This replaces the retired land-mask `jitter`, which
+    /// perturbed the mask's *ranking* rather than the field — reordering the very surface the
+    /// contour anchor had just aligned to sea level. Applied here it is harmless: the anchor runs on
+    /// the field that is actually thresholded.
+    pub coastline_roughness: f32,
 }
 
 impl Default for MacroLandConfig {
@@ -649,7 +669,10 @@ impl Default for MacroLandConfig {
             continents: 3,
             min_area: 128,
             target_land_pct: 0.35,
-            jitter: 0.15,
+            continental_weight: 0.5,
+            continental_radius: 0.35,
+            continental_falloff_exponent: 1.5,
+            coastline_roughness: 0.05,
         }
     }
 }
@@ -721,6 +744,11 @@ pub struct IslandConfig {
     pub oceanic_density: f32,
     pub fringing_shelf_width: u32,
     pub min_distance_from_continent: u32,
+    /// How far above `sea_level` an island's **peak** is raised, on the normalized 0..1 elevation
+    /// scale. `place_islands` no longer paints the land mask — it raises a radial elevation blob and
+    /// the mask is re-derived, so this margin is what makes the blob *become* land at all. It also
+    /// sets how tall the island reads on the client's relative-height overlay.
+    pub island_peak_margin: f32,
 }
 
 impl Default for IslandConfig {
@@ -730,6 +758,7 @@ impl Default for IslandConfig {
             oceanic_density: 0.001,
             fringing_shelf_width: 2,
             min_distance_from_continent: 12,
+            island_peak_margin: 0.06,
         }
     }
 }
@@ -739,6 +768,12 @@ impl Default for IslandConfig {
 pub struct InlandSeaConfig {
     pub min_area: u32,
     pub merge_strait_width: u32,
+    /// How far **below** `sea_level` a strait corridor is cut, on the normalized 0..1 elevation
+    /// scale. `connect_inland_seas_via_straits` lowers the corridor's elevation and the mask is
+    /// re-derived, rather than flipping `land`/`is_ocean` behind the field's back. Large enough that
+    /// the corridor is unambiguously water; small enough that it reads as a shallow channel and not
+    /// a trench.
+    pub strait_depth_margin: f32,
 }
 
 impl Default for InlandSeaConfig {
@@ -746,6 +781,7 @@ impl Default for InlandSeaConfig {
         Self {
             min_area: 24,
             merge_strait_width: 2,
+            strait_depth_margin: 0.02,
         }
     }
 }

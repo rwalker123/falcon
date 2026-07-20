@@ -36,7 +36,7 @@ use crate::{
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{forage_take, tended_provisions, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::GenerationRegistry,
-    heightfield::{build_elevation_field, ElevationField},
+    heightfield::{build_elevation_field, ElevationField, DEFAULT_SEA_LEVEL},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     labor_config::{LaborConfig, LaborConfigHandle},

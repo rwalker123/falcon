@@ -827,6 +827,12 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
             let mut app = spawn_world();
             let id = prime_thriving_herd(&mut app);
             reseat(&mut app, &id, cap, biomass);
+            // Seat this species' wild `r` on EVERY rung, not just the wild one. The managed rungs are
+            // multiples of the herd's own wild rate (`pastoral_gain`/`pen_gain`), so a rung that reads
+            // the spawned herd's rate instead compares two different species and the ladder appears
+            // inverted — which is exactly what happened when a worldgen change altered which species
+            // `prime_thriving_herd` finds first at this seed.
+            set_wild_regrowth_rate(&mut app, &id, wild_r);
             domesticate(&mut app, &id);
             app.world.run_system_once(advance_herds);
             app.world.run_system_once(advance_husbandry);
@@ -836,6 +842,7 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
             let mut app = spawn_world();
             let id = prime_thriving_herd(&mut app);
             reseat(&mut app, &id, cap, cap);
+            set_wild_regrowth_rate(&mut app, &id, wild_r); // same-species basis as the other rungs
             corral_herd(&mut app, &id);
             reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
             let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
