@@ -1329,6 +1329,16 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
 	# per-map value (older native/server builds omit the key).
 	if overlay_dict.has("elevation_sea_level"):
 		_elevation_sea_level = float(overlay_dict["elevation_sea_level"])
+	# The climate-band cut points are a sim-owned per-map constant published beside the
+	# sea level (MapSection.climateBands). Presence-based like the sea level: a delta that
+	# omits them leaves the last full snapshot's values in place. The native emits all three
+	# together or none, so testing one key is enough.
+	if overlay_dict.has("climate_polar_max_temp"):
+		TileClimate.set_cut_points(
+			float(overlay_dict["climate_polar_max_temp"]),
+			float(overlay_dict["climate_boreal_max_temp"]),
+			float(overlay_dict["climate_temperate_max_temp"]),
+		)
 	if overlay_dict.has("channels"):
 		var channel_variant: Variant = overlay_dict["channels"]
 		if channel_variant is Dictionary:

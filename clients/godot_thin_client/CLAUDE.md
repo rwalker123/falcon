@@ -93,7 +93,7 @@ never writes, deletes, or liveness-checks the file.
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`Hud._corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
-| `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
+| `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate LABELS + classification: maps `TileState.temperature` (°) into **Polar/Boreal/Temperate/Tropical** using the SIM's PUBLISHED cut points (`MapSection.climateBands`, adopted via `set_cut_points` from MapView's overlay ingest — the client no longer keeps its own `cool_min`, retired with the Climate Authority arc so the shown climate can't disagree with the sim's biome). Mirrors `climate::climate_band_for_temperature` exactly (inclusive upper bounds). `has_bands()` gates the row — until the sim publishes, the Climate row is skipped (no invented threshold). INFORMATIONAL only — neutral ink, no HEALTHY/WARN/DANGER tint. Consumed by `Hud._tile_terrain_lines` |
 | `ui/RiverEdges.gd` | Single source of truth for the TEXT reading of hex-EDGE rivers: owns the class vocabulary (Minor/Major), the 6 direction names, and the mask bit-widths as named constants, and formats `TileState.riverEdges` into `Major River: NE, NW` / `Minor River: SW` rows (`summary_lines`, Major first, directions in compass order from NE). Consumed by BOTH `Hud._tile_terrain_lines` (Tile card) and `Hud.show_tooltip` (map hover) — one formatter, two surfaces. See Edge Blending → Rivers |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -2574,11 +2574,25 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   copied onto the `_tile_info_at` dict): `Hud._tile_terrain_lines` adds a `Climate: <band>` row
   next to Habitability (before the FoW discovered/unexplored returns — it's terrain-intrinsic, so
   fine on a remembered tile; only shown when the field is present so rehydrated tiles degrade
-  gracefully). `ui/TileClimate.gd` is the single source of truth — config
-  `src/config/tile_climate_config.json` (`climate.{tropical_min,warm_min,temperate_min,cool_min}`
-  = `26`/`20`/`12`/`3`) maps the temperature into Tropical/Warm/Temperate/Cool/Polar, making the
-  latitude gradient legible ("far south → Polar"). The row is **informational** — neutral ink, no
-  HEALTHY/WARN/DANGER tint, so it doesn't overload the Habitability row's warning semantics.
+  gracefully). **The band CUT POINTS are the SIM's, not the client's** (Climate Authority arc,
+  `docs/plan_climate_authority.md`): the sim derives a tile's BIOME from a temperature-based
+  `ClimateBand` and PUBLISHES the cut points per-map in the snapshot (`MapSection.climateBands` →
+  the native surfaces `overlays.climate_{polar,boreal,temperate}_max_temp`, °C — mirroring the
+  `elevation_sea_level` precedent). `MapView._ingest_overlay_channels` adopts them via
+  `TileClimate.set_cut_points(...)` (presence-based like the sea level; a per-map constant that
+  persists across deltas). `ui/TileClimate.gd` is the single source of truth for the LABELS and the
+  classification, which mirrors `climate::climate_band_for_temperature` (`core_sim/src/climate.rs`)
+  EXACTLY — inclusive upper bounds, a tile AT a cut point sits in the colder band: `temp <=
+  polar_max → Polar`, `<= boreal_max → Boreal`, `<= temperate_max → Temperate`, else `Tropical`.
+  The **client's own `cool_min` (3.0) threshold is RETIRED** — it could show a biome and a climate
+  that disagree, the exact defect this arc removes; `tile_climate_config.json` is emptied and no
+  longer read (its whole 5-band `tropical_min/warm_min/temperate_min/cool_min` scheme is gone). The
+  four band names mirror the sim's own vocabulary (Polar/Boreal/Temperate/Tropical) so the label can
+  never drift from the band the sim decided. **Fallback:** until the sim publishes cut points (older
+  sim / table absent — a bug, not a supported case), `TileClimate.has_bands()` is false and
+  `Hud._tile_terrain_lines` SKIPS the Climate row rather than inventing a threshold (`band_for`
+  returns `BAND_UNKNOWN "—"`). The row is **informational** — neutral ink, no HEALTHY/WARN/DANGER
+  tint, so it doesn't overload the Habitability row's warning semantics.
 - **Band alerts → the turn orb** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the
   snapshot `populations`): the standalone left-dock **Alerts panel was removed** and its alerts folded
   into the turn-orb attention model (see next bullet) — the single player-faction loop now builds the

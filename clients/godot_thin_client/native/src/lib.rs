@@ -584,6 +584,13 @@ struct OverlaySlices<'a> {
     /// Sea level on the same normalized 0..1 scale as `elevation`, surfaced to the
     /// client as the `elevation_sea_level` scalar for its relative-height readout.
     elevation_sea_level: f32,
+    /// The per-map climate-band cut points `[polarMaxTemp, borealMaxTemp, temperateMaxTemp]`
+    /// (°C), published by the sim so the client renders the band it is TOLD rather than
+    /// deciding one (the same reason `elevation_sea_level` rides the elevation overlay).
+    /// `None` when the snapshot carries no `ClimateBands` table — the keys are then omitted
+    /// entirely rather than published as a fabricated threshold, so the client can render the
+    /// Climate line blank instead of inventing a cut point that could disagree with the sim.
+    climate_bands: Option<[f32; 3]>,
     moisture: &'a [f32],
     visibility: &'a [f32],
     /// The GRAZE (pasture) layer's per-tile CAPACITY — how much pasture this tile's biome can
@@ -661,6 +668,7 @@ fn snapshot_dict(
     let crisis_base = copy_into(overlays.crisis);
     let elevation_base = copy_into(overlays.elevation);
     let elevation_sea_level = overlays.elevation_sea_level;
+    let climate_bands = overlays.climate_bands;
     let moisture_base = copy_into(overlays.moisture);
     let pasture_base = copy_into(overlays.pasture_capacity);
     let forage_base = copy_into(overlays.forage_capacity);
@@ -1052,6 +1060,14 @@ fn snapshot_dict(
     let _ = overlays.insert("elevation_raw", &elevation_raw_array.clone());
     let _ = overlays.insert("elevation_contrast", &elevation_contrast_array.clone());
     let _ = overlays.insert("elevation_sea_level", elevation_sea_level);
+    // Per-map climate-band cut points, published only when the snapshot carries them (a
+    // missing table leaves the keys absent so the client renders the Climate line blank
+    // rather than inheriting a stale or fabricated cut point — see OverlaySlices).
+    if let Some([polar_max, boreal_max, temperate_max]) = climate_bands {
+        let _ = overlays.insert("climate_polar_max_temp", polar_max);
+        let _ = overlays.insert("climate_boreal_max_temp", boreal_max);
+        let _ = overlays.insert("climate_temperate_max_temp", temperate_max);
+    }
     let _ = overlays.insert("moisture", &moisture_array.clone());
     let _ = overlays.insert("moisture_raw", &moisture_raw_array.clone());
     let _ = overlays.insert("moisture_contrast", &moisture_contrast_array.clone());
@@ -1225,6 +1241,9 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     }
     if let Some(overlay) = delta.map().and_then(|s| s.elevationOverlay()) {
         agg.apply_elevation_overlay(overlay);
+    }
+    if let Some(bands) = delta.map().and_then(|s| s.climateBands()) {
+        agg.apply_climate_bands(bands);
     }
     if let Some(raster) = delta.map().and_then(|s| s.moistureRaster()) {
         agg.apply_moisture_raster(raster);
@@ -1455,6 +1474,11 @@ struct DeltaAggregator {
     // Sea level on the same normalized 0..1 scale as `elevation_samples`, streamed from
     // the active map's preset so the client's relative-height readout floors at it.
     elevation_sea_level: f32,
+    // Per-map climate-band cut points `[polarMaxTemp, borealMaxTemp, temperateMaxTemp]` (°C).
+    // `None` unless this delta actually carried a `ClimateBands` table, so a delta that omits
+    // it publishes no climate keys and the client keeps the last full snapshot's per-map value
+    // (the bands are a per-map constant) rather than being handed a fabricated one.
+    climate_bands: Option<[f32; 3]>,
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
@@ -1664,6 +1688,14 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_climate_bands(&mut self, bands: fb::ClimateBands<'_>) {
+        self.climate_bands = Some([
+            bands.polarMaxTemp(),
+            bands.borealMaxTemp(),
+            bands.temperateMaxTemp(),
+        ]);
+    }
+
     fn apply_moisture_raster(&mut self, raster: fb::FloatRaster<'_>) {
         self.moisture_width = raster.width();
         self.moisture_height = raster.height();
@@ -1721,6 +1753,7 @@ impl DeltaAggregator {
             elevation_height,
             elevation_samples,
             elevation_sea_level,
+            climate_bands,
             moisture_width,
             moisture_height,
             moisture_samples,
@@ -1965,6 +1998,7 @@ impl DeltaAggregator {
                 crisis: &crisis,
                 elevation: &elevation,
                 elevation_sea_level,
+                climate_bands,
                 moisture: &moisture,
                 visibility: &visibility,
                 // A delta carries only the tiles that CHANGED, so it can never assemble a whole
@@ -2382,6 +2416,14 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
+    let climate_bands = snapshot.map().and_then(|s| s.climateBands()).map(|bands| {
+        [
+            bands.polarMaxTemp(),
+            bands.borealMaxTemp(),
+            bands.temperateMaxTemp(),
+        ]
+    });
+
     if let Some(overlay) = snapshot.map().and_then(|s| s.elevationOverlay()) {
         let width = overlay.width();
         let height = overlay.height();
@@ -2769,6 +2811,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             crisis: &crisis_resized,
             elevation: &elevation_resized,
             elevation_sea_level,
+            climate_bands,
             moisture: &moisture_resized,
             visibility: &visibility_resized,
             pasture_capacity: &pasture_capacity_vec,

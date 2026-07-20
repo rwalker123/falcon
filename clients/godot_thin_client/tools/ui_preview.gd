@@ -105,6 +105,13 @@ func _ready() -> void:
 	await get_tree().process_frame
 	Input.warp_mouse(MOUSE_PARK_POSITION)
 
+	# The Tile-card Climate band is driven by the sim's PUBLISHED cut points, which the live
+	# client adopts from the snapshot's overlays (MapSection.climateBands) via MapView. This
+	# harness has no MapView, so seed TileClimate with the shipped values (polar ≤0 / boreal ≤3
+	# / temperate ≤18 °C) exactly as a first snapshot would — otherwise every tile card would
+	# skip the Climate row (has_bands() == false, the honest pre-publish blank).
+	TileClimate.set_cut_points(0.0, 3.0, 18.0)
+
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
 
@@ -400,6 +407,25 @@ func _ready() -> void:
 	_hud.show_tile_selection(_stressed_tile_fixture())
 	await _settle()
 	await _save("food_tile_stressed")
+
+	# ---- Climate band: rendered off the sim's PUBLISHED cut points (Climate Authority) -----------
+	# The Climate row is classified by the sim's cut points (polar ≤0 / boreal ≤3 / temperate ≤18 °C),
+	# NOT a client threshold. Drive the same tile card at four temperatures spanning the ladder and
+	# confirm the label tracks the sim's inclusive-upper-bound bands. A cold highland reads Polar/Boreal,
+	# a warm lowland reads Temperate/Tropical — and "Polar" now appears ONLY where the sim says so, which
+	# is the whole point of retiring the client's own cool_min.
+	_hud.show_tile_selection(_climate_tile_fixture(-6.0, "Frost Highland"))
+	await _settle()
+	await _save("climate_polar")
+	_hud.show_tile_selection(_climate_tile_fixture(2.0, "Boreal Upland"))
+	await _settle()
+	await _save("climate_boreal")
+	_hud.show_tile_selection(_climate_tile_fixture(12.0, "Temperate Vale"))
+	await _settle()
+	await _save("climate_temperate")
+	_hud.show_tile_selection(_climate_tile_fixture(27.0, "Tropical Lowland"))
+	await _settle()
+	await _save("climate_tropical")
 
 	# ---- Pasture: the ANIMAL-edible stock on the tile card (Grazing Phase 2a) --------------------
 	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Pasture 61 / 240" with a
@@ -2274,6 +2300,16 @@ func _food_tile_fixture() -> Dictionary:
 ## `Pasture ecology` row reads a WARN-amber "⚠ Stressed" — the SAME label + tint a stressed herd or a
 ## stressed forage patch gets (one ecology vocabulary, one styling path). Nothing eats graze until
 ## Phase 2b, so this state cannot occur in a live 2a map; it renders the path the tint will take.
+## A tile whose Climate row is under test: same card as `_food_tile_fixture`, only the
+## `temperature` (and a label) vary, so the ONLY thing moving between the four climate_* frames
+## is the band the sim's cut points classify that temperature into.
+func _climate_tile_fixture(temperature: float, terrain_label: String) -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["temperature"] = temperature
+	tile["terrain_label"] = terrain_label
+	return tile
+
+
 func _overgrazed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["x"] = 68

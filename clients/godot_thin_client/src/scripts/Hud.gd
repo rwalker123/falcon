@@ -4809,8 +4809,10 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append("Habitability: %s" % TileHabitability.rating_for(drain))
     # Climate is the tile's latitude+elevation temperature band (informational, not a
     # warning). Terrain-intrinsic, so fine on a remembered tile; only when the snapshot
-    # carries the field (a rehydrated tile may lack it) so we never invent a band.
-    if tile_info.has("temperature"):
+    # carries the field (a rehydrated tile may lack it) so we never invent a band. The band
+    # cut points are the SIM's (published as MapSection.climateBands); until they arrive we
+    # skip the row rather than guess a threshold that could disagree with the biome.
+    if tile_info.has("temperature") and TileClimate.has_bands():
         var temperature := float(tile_info["temperature"])
         lines.append("Climate: %s" % TileClimate.band_for(temperature))
     # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
