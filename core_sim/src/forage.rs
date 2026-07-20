@@ -167,8 +167,11 @@ pub struct ForagePatch {
     /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
     /// Sparing a *preparing* patch too is what makes the investment accrue at the full
     /// `progress_per_turn` (25 turns) rather than net-of-decay. **Not** snapshot-persisted (derived,
-    /// transient) — a rehydrated patch reads `false` until it is worked again, so a rollback can only
-    /// *delay* a feral reversion by one turn, never resurrect a farm.
+    /// transient) — a rehydrated patch reads `true` for **one turn** (a deliberate grace, seeded in
+    /// `forage_patch_from_state`), so the first post-restore Logistics decay pass — which runs before
+    /// the labor arm can re-mark a patch a band is working — spares it rather than reverting a tended
+    /// patch / Field a band tends every turn. A genuinely abandoned patch still goes feral next turn;
+    /// a rollback can only *delay* a feral reversion by one turn, never resurrect a farm.
     pub tended_this_turn: bool,
 }
 
@@ -373,8 +376,15 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
         cultivation_progress: state.ecology.progress,
         field_progress: state.field_progress,
         owner: state.ecology.owner.map(FactionId),
-        // Transient (not persisted) — a rehydrated patch is "untended" until worked again.
-        tended_this_turn: false,
+        // Transient (not persisted) — seeded `true` for a **one-turn grace**: the same signal the
+        // Cultivate/Sow arm of `advance_labor_allocation` sets on any patch a band worked this turn,
+        // and the plant twin of the grace `Herd::corral_at` grants a freshly-penned herd. The
+        // rollback-restore path runs the Logistics decay pass (`advance_cultivation`) *before* the
+        // Population labor arm can re-mark a patch a band is working, so seeding this `false` would
+        // decay a tended patch / Field one tick on the very first post-restore turn — flipping
+        // `is_managed()` false and destroying the improvement even while a band tends it every turn.
+        // The grace spares exactly that turn; a genuinely abandoned patch still goes feral next turn.
+        tended_this_turn: true,
     }
 }
 

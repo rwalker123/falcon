@@ -162,7 +162,9 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       `polar_microplates_*` already does — rather than routing through `build_bands` and hoping the
       geometry cooperates. Worth doing alongside the divides work above: both are cases of relief
       structure deriving from an incidental artifact rather than from the field.
-- [ ] **Climate Authority — temperature decides the biome, not latitude.** *(Reported from play
+- [x] **Climate Authority — temperature decides the biome, not latitude.** *(Landed by PR #139;
+      `docs/plan_climate_authority.md` reads "Status: implemented (sim + schema + client)". Retained
+      below for the measurements and the secondary-bug notes.)* *(Reported from play
       2026-07-20; investigated and measured the same day. Design:
       `docs/plan_climate_authority.md`.)* Reported as "a tile read `Climate: Polar` but was an
       `AlluvialPlain`" — a freezing fertile floodplain.
@@ -404,8 +406,16 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
 
 ## Core Simulation — Bugs
 
-- [ ] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** Strongly evidenced,
-  **not yet proven end-to-end** — verify through a real snapshot round-trip before fixing.
+- [x] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** **Fixed.** Proven
+  end-to-end first: `core_sim/tests/rollback_tended_survival.rs` drives a real
+  `recapture_snapshot_in_place` → `restore_world_from_snapshot` → `run_turn` cycle and, on the
+  unmodified code, showed a worked Field decaying 1.0 → 0.99 on the first post-restore Logistics pass
+  (`is_managed()` flips false) — the diagnosed mechanism, reproduced without a hand-built rollback
+  state. The fix seeds `tended_this_turn` / `corralled_tended_this_turn` `true` in the two restore
+  constructors (`forage.rs` `forage_patch_from_state`, `fauna.rs` `herd_from_state`) — a one-turn
+  grace mirroring `Herd::corral_at`; the flags stay transient (no schema change). The test now passes
+  and guards both the patch/Field and the pen-escape paths.
+  ~~Strongly evidenced, **not yet proven end-to-end** — verify through a real snapshot round-trip before fixing.~~
   **The mechanism:** `tended_this_turn` (and the pen's `corralled_tended_this_turn`) are **transient**,
   and the restore path seeds them `false` (`forage.rs:377`, `fauna.rs:850`). The maintenance writer that
   spares a source from decay is gated on `is_managed()` (`labor.rs:233`). So on the first Logistics pass

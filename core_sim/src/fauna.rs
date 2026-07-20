@@ -333,8 +333,12 @@ pub struct Herd {
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
     /// untended one **escapes** (reverts to mobile). Mirrors `ForagePatch::tended_this_turn`. **Not**
-    /// snapshot-persisted (derived) — a rehydrated corralled herd reads `false` until tended again,
-    /// so a rollback can only *delay* an escape by one turn, never resurrect a broken-out herd.
+    /// snapshot-persisted (derived) — a rehydrated corralled herd reads `true` for **one turn** (a
+    /// deliberate grace, seeded in `herd_from_state`), so the first post-restore Logistics escape pass
+    /// — which runs before the labor arm can re-mark a pen its keeper is tending — spares it rather
+    /// than escaping a pen a keeper tends every turn (which would clear `corralled_at`/`pen_radius` and
+    /// throw away the whole rebuild). A truly abandoned pen still escapes next turn; a rollback can
+    /// only *delay* an escape by one turn, never resurrect a broken-out herd.
     pub corralled_tended_this_turn: bool,
     /// Transient per-turn flag: the fraction of the pen's **feed** demand its keeper actually paid last
     /// turn (`paid / demand ∈ [0, 1]`; `1.0` = fully fed, and the value when nothing was demanded).
@@ -1171,11 +1175,17 @@ fn herd_from_state(state: &HerdState) -> Herd {
         pen_extend_progress: state.pen_extend_progress,
         pen_extending: state.pen_extending,
         // Transient (not persisted) — recomputed each turn (footprint/pasture) or reset to the neutral
-        // value: a rehydrated corralled herd is "untended" until worked again, and "fed" (so a rollback
-        // can delay a starvation turn but never invent one).
+        // value: a rehydrated corralled herd is "fed" (so a rollback can delay a starvation turn but
+        // never invent one). `corralled_tended_this_turn` is seeded `true` for a **one-turn grace**,
+        // the exact precedent `Herd::corral_at` already sets on a freshly-penned herd. The
+        // rollback-restore path runs the Logistics escape pass (`advance_husbandry`)
+        // *before* the Population labor arm can re-mark a pen its keeper is tending, so seeding this
+        // `false` would make a corralled herd **escape outright** on the very first post-restore turn
+        // — clearing `corralled_at`/`pen_radius` and throwing away the whole pen rebuild plus every
+        // ExtendPen ring. The grace spares exactly that turn; a truly abandoned pen still escapes next.
         footprint_intake: 0.0,
         pen_pasture_fraction: 0.0,
-        corralled_tended_this_turn: false,
+        corralled_tended_this_turn: true,
         pen_fed_fraction: PEN_FULLY_FED,
         herded_fraction: FULLY_HERDED,
         pen_starving: false,
