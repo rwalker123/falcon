@@ -203,7 +203,12 @@ message HuntFaunaCommand {
   optional uint64 band_entity_bits = 3;
 }
 
-message DomesticateCommand {
+// The intensification ladder's animal rung-2 verb: set the Tame policy on the bands already hunting
+// this herd (needs Herding knowledge, earned by Sustain-hunting a Thriving herd, and a species whose
+// husbandry_ceiling allows domestication). Taming pays a reduced take while the herd is gentled,
+// then the herd becomes pastoral livestock. Replaces the retired DomesticateCommand early-claim,
+// which let the player skip that investment.
+message TameCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
 }
@@ -214,9 +219,25 @@ message CultivateCommand {
   uint32 target_y = 3;
 }
 
-// Rung 1c: pen the domesticated herd standing on the target tile into a fixed corral (needs Herding
-// knowledge, built by Sustain-hunting a Thriving herd). A corralled herd stops roaming and pays its
-// keeper place-local.
+// The intensification ladder's plant rung-3 verb: set the Sow policy on the bands already foraging
+// this tile (needs Seed Selection knowledge, earned by working tended patches). Sow PLACES a food
+// source — it builds a Field even on a tile that carries no forage site at all, because seed travels.
+// But rung 3 carries seed, NOT water or fertilizer, so the land must already do the fertilizing: only
+// ground that is ALREADY VERY FERTILE (min_forage_capacity 195 — the delta/floodplain/alluvial class)
+// AND NEAR FRESH WATER will take it (the plant:field rung's site_requirement). That is ~46 of 4160
+// tiles on a standard map — merely bearing some food is nowhere near enough. Thin or dry ground waits
+// for rung 4 (Worked Land). The refusal says which: too_poor / too_dry / too_poor_and_too_dry.
+message SowCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+}
+
+// The intensification ladder's animal rung-3 verb: pen the domesticated herd standing on the target
+// tile into a fixed corral. Needs PENNING knowledge — earned by working an already-TAMED (pastoral)
+// herd, not by hunting a wild one: you learn to pen by keeping. (Herding gates `tame`, and only
+// `tame` — one knowledge per rung-transition.) A corralled herd stops roaming and pays its keeper
+// place-local.
 message CorralCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
@@ -224,9 +245,10 @@ message CorralCommand {
 }
 
 // Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
-// over turns by the keeper band's labor (the corral build ladder). Needs Herding knowledge, an owned
-// penned herd whose corral tile is (target_x, target_y), pen_radius below the configured max, and no
-// extension already in flight.
+// over turns by the keeper band's labor (the corral build ladder). A ring rides the SAME animal:pen
+// rung as the initial build, so it takes that rung's gate too: needs PENNING knowledge (not Herding —
+// see CorralCommand), an owned penned herd whose corral tile is (target_x, target_y), pen_radius below
+// the configured max, and no extension already in flight.
 message ExtendPenCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
@@ -294,8 +316,13 @@ message ExportMapCommand {
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
-  reserved 24;
-  reserved "found_camp";
+  // Retired field numbers. Never reuse one: a stale client's message would silently decode as the
+  // wrong command.
+  //   24 `found_camp`  — retired.
+  //   30 `domesticate` — the intensification ladder's animal rung-2 EARLY-CLAIM, retired in favour
+  //      of `tame` (field 40), which makes the player actually pay the taming investment.
+  reserved 24, 30;
+  reserved "found_camp", "domesticate";
 
   oneof command {
     TurnCommand turn = 1;
@@ -325,7 +352,6 @@ message CommandEnvelope {
     FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
     HuntFaunaCommand hunt_fauna = 29;
-    DomesticateCommand domesticate = 30;
     CancelOrderCommand cancel_order = 31;
     AssignLaborCommand assign_labor = 32;
     MoveBandCommand move_band = 33;
@@ -335,5 +361,7 @@ message CommandEnvelope {
     CultivateCommand cultivate = 37;
     CorralCommand corral = 38;
     ExtendPenCommand extend_pen = 39;
+    TameCommand tame = 40;
+    SowCommand sow = 41;
   }
 }

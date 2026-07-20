@@ -34,13 +34,27 @@
 //!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
 //!   Sustain **never** accrues a patch's `cultivation_progress`.
 //! - Taming a patch means **paying the `Cultivate` policy's investment**: a reduced take
-//!   (`cultivating_yield_fraction ×` the Sustain/MSY ceiling) while `cultivation_progress` accrues
+//!   (the `plant:tended` rung's `yield_fraction_while_building ×` the Sustain/MSY ceiling — read off
+//!   the shared ladder, `crate::intensification`) while `cultivation_progress` accrues
 //!   toward `1.0`. The `cultivate` command only **sets that policy** on bands already foraging the
 //!   tile; it claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
 //!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
 //!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
 //!   below the cultivated threshold, reverting it to a wild gather patch).
+//!
+//! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` fills `field_progress`, and a
+//! completed Field pays its workers `biomass × field_provisions_per_biomass` — the tended patch's
+//! shape at twice the rate. Unlike every other rung, **it needs no source below it**: seed travels, so
+//! sowing a qualifying tile with no spawned patch *creates* one (`ForagePatch::sown`), at that tile's
+//! own biome capacity.
+//!
+//! **Where it may be sown is SCARCE, and that is the mechanic** — rung 3 moves seed but cannot
+//! fertilize, so the land must already be **very fertile** *and* **near fresh water** (the
+//! `plant:field` rung's `site_requirement`; `rung_site_refusal` + `tile_is_fresh_watered` are the one
+//! seam the command, the labor arm and the wire all judge through). **46 of 4160 tiles** on the
+//! standard map — the river valleys. Thin or dry ground waits for rung 4 (Worked Land). Design:
+//! `docs/plan_intensification_ladder.md` §2.
 
 use std::collections::HashMap;
 
@@ -51,10 +65,14 @@ use crate::{
     components::{FollowPolicy, SourceYield, Tile},
     fauna::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
-        sustainable_yield, EcologyPhase, SourceYieldForecast,
+        sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
+    intensification::{
+        LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, RUNG_COMPLETE,
+        RUNG_TIMESCALE_UNSCALED,
+    },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
@@ -69,6 +87,44 @@ use crate::{
 /// it is deliberately **not** listed in any start profile's `starting_knowledge_tags`, so no faction
 /// starts knowing it. Next free id after `nomadic_wayfinding` (2001) / `portable_forge` (2002).
 pub const CULTIVATION_DISCOVERY_ID: u32 = 2003;
+
+/// Discovery id for the faction-level **Seed Selection** knowledge — the plant ladder's **rung-3**
+/// gate (`docs/plan_intensification_ladder.md` §2a/§4.3), and the twin of `fauna::PENNING_DISCOVERY_ID`.
+///
+/// **Earned by practising rung 2**: working a *tended* patch under a stewardship policy teaches it
+/// (`RungDef::knowledge_earned`, driven by the `plant:tended` rung's `earns_knowledge`) — you learn
+/// to select seed by *farming*, not by gathering wild stands. Like every other ladder knowledge it is
+/// declared as a start-profile knowledge tag (`seed_selection` → this id in
+/// `data/start_profile_knowledge_tags.json`) purely so it is mappable, and is deliberately **not**
+/// listed in any start profile's `starting_knowledge_tags` — nothing on the ladder is start-granted.
+///
+/// **Its consumer landed in slice 5**: it gates the `Sow` verb (the `plant:field` rung's
+/// `unlock_knowledge`), so a faction may only place a Field once it has learned to select seed by
+/// farming. Earned in slice 4, spent here — a knowledge you accumulate before its verb exists is
+/// exactly the "practice paces the ladder" model. Next free id after `herding` (2004).
+pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
+
+/// **The gather season of a tile with no `FoodModuleTag`** — i.e. no wild gather at all: the season
+/// scales a forager's *throughput* (`forage_per_worker_biomass`), so a zero here means no worker can
+/// gather anything there, which is exactly right for ground the wild put no food site on.
+///
+/// It became a reachable reading in slice 5: `Sow` places a Field on any ground the `plant:field`
+/// rung's `site_requirement` accepts — module or not — so a patch may now stand on a tile with no
+/// module. Such a patch offers nothing to
+/// **gather** — the only thing to work there is the crop you sowed, whose managed harvest is
+/// biomass-based and seasonless (`field_provisions`). Shared by the Forage labor arm, the assign-time
+/// yield seed and the snapshot forecast, so all three read the same "no season" answer.
+pub const NO_FORAGE_SEASON: f32 = 0.0;
+
+/// **The season a MANAGED harvest is worked at** — full weight, always. A Field's crop is not a wild
+/// stand whose bounty comes and goes with the year: it is standing where you planted it, and its
+/// harvest is biomass-based and seasonless (`field_provisions`). So the crew's collection cap on it
+/// reads the throughput at full season rather than the tile's `FoodModuleTag::seasonal_weight`.
+///
+/// **Load-bearing, not cosmetic:** `Sow` may place a Field on ground with **no food module at all**
+/// (slice 5), whose gather season is [`NO_FORAGE_SEASON`] — zero. Capping a Field's collection by that
+/// would let a crew carry home exactly nothing from the rung the whole arc climbs toward.
+const MANAGED_HARVEST_SEASON: f32 = 1.0;
 
 /// A live depletable forage patch on a `FoodModuleTag` tile. Mirrors the herd biomass model's
 /// ecology subset, including cultivation (`cultivation_progress`/`owner`) — the plant analog of a
@@ -91,10 +147,22 @@ pub struct ForagePatch {
     /// patch Thriving); decays on a patch nobody is working (see `advance_cultivation`). The plant
     /// mirror of `Herd::corral_progress`.
     pub cultivation_progress: f32,
-    /// Faction tending/owning this patch (`Some` iff `cultivation_progress > 0`).
+    /// **Field**-build progress in `[0.0, 1.0]`; `1.0` = a sown Field (the plant ladder's **rung 3**).
+    /// Accrues only while a band works this patch under the explicit `FollowPolicy::Sow` policy
+    /// (faction knows **Seed Selection**); decays on a patch nobody is working (see
+    /// `advance_cultivation`). The plant mirror of `Herd::corral_progress` — and, exactly like the
+    /// herd's two meters, it is **its own** meter rather than a second reading of
+    /// `cultivation_progress`: a branch with two investment rungs carries two meters, one per rung.
+    ///
+    /// **Independent of `cultivation_progress`, deliberately.** `Sow` needs no prior patch (§2 — seed
+    /// travels), so a Field may stand on ground that was never tended, and a Field that lapses simply
+    /// reveals whatever rung the tile still supports underneath (today: wild, since the same untended
+    /// turn bleeds both meters).
+    pub field_progress: f32,
+    /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
     /// Transient per-turn flag: a Forage assignment **worked this patch as an improvement** this turn
-    /// — either tending a completed patch, or preparing it under `FollowPolicy::Cultivate` (set in
+    /// — tending a completed patch/Field, or preparing one under `FollowPolicy::Cultivate`/`Sow` (set in
     /// `advance_labor_allocation`, Population). `advance_cultivation` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
     /// Sparing a *preparing* patch too is what makes the investment accrue at the full
@@ -114,8 +182,28 @@ impl ForagePatch {
             carrying_capacity,
             ecology_phase: EcologyPhase::Thriving,
             cultivation_progress: 0.0,
+            field_progress: 0.0,
             owner: None,
             tended_this_turn: false,
+        }
+    }
+
+    /// **A patch a crew has just put seed into** — the plant rung-3 verb's create-from-nothing case
+    /// (`FollowPolicy::Sow` on hospitable ground that carried no forage site at all,
+    /// `docs/plan_intensification_ladder.md` §2). It is an ordinary patch from this moment on: same
+    /// biomass model, same **tile** capacity (`tile_forage_capacity` — the *same* source a wild patch
+    /// is seeded from, never a Field-specific table), same logistic regrowth.
+    ///
+    /// It starts at the **reseed floor**'s standing crop, not at capacity: sown ground is seed, and
+    /// the floor is already this module's word for "the smallest stand plants recover from". So a new
+    /// Field is worth nothing on the turn it is placed and grows into its yield — which is also why
+    /// the `Sow` accrual is *not* gated on the patch being Thriving (see `advance_labor_allocation`):
+    /// a freshly sown tile is Collapsing by construction, and gating it would make sowing bare ground
+    /// impossible.
+    pub(crate) fn sown(tile: UVec2, carrying_capacity: f32, reseed_floor_fraction: f32) -> Self {
+        Self {
+            biomass: carrying_capacity * reseed_floor_fraction,
+            ..Self::new(tile, carrying_capacity)
         }
     }
 
@@ -129,7 +217,24 @@ impl ForagePatch {
     /// wild gather patch the moment `cultivation_progress` decays below `1.0` (feral — see
     /// `advance_cultivation`). The plant mirror of `Herd::is_domesticated`.
     pub fn is_cultivated(&self) -> bool {
-        self.cultivation_progress >= 1.0
+        self.cultivation_progress >= RUNG_COMPLETE
+    }
+
+    /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it a *higher*
+    /// managed yield than a tended patch (`field_provisions`) and, like a tended patch, is not
+    /// gather-drawn. Reverts the moment `field_progress` decays below `1.0` (see
+    /// `advance_cultivation`). The plant mirror of `Herd::is_corralled`.
+    pub fn is_field(&self) -> bool {
+        self.field_progress >= RUNG_COMPLETE
+    }
+
+    /// Is this patch a **completed improvement** — a Field or a tended patch? The single predicate
+    /// for "this source is worked, not gathered": its harvest is biomass-based and never overdraws
+    /// (`sustainable == actual`, no ⚠) and one worker suffices
+    /// ([`crate::fauna::TENDED_SOURCE_WORKERS_NEEDED`]). Both the payout path and the forecast branch
+    /// on it, so the two cannot disagree about which patches are managed.
+    pub fn is_managed(&self) -> bool {
+        self.is_field() || self.is_cultivated()
     }
 
     /// Accrue cultivation progress for `faction` (the preparing band, working the patch under
@@ -145,22 +250,50 @@ impl ForagePatch {
             self.owner = Some(faction);
         }
         if self.owner == Some(faction) {
-            self.cultivation_progress = (self.cultivation_progress + amount).min(1.0);
+            self.cultivation_progress = (self.cultivation_progress + amount).min(RUNG_COMPLETE);
         }
     }
 
-    /// Decay cultivation progress toward zero by `amount`; ownership lapses once progress reaches
-    /// zero. Applies to **any** patch — a completed (`is_cultivated`) patch decays too (going feral
-    /// once it drops below `1.0`, reverting to a wild gather patch); the *caller*
-    /// (`advance_cultivation`) decides when to spare a tended patch. Mirrors
-    /// `Herd::decay_domestication` (minus the domesticated short-circuit — a tended patch left
+    /// Accrue **Field**-build progress for `faction` (the sowing band, working the patch under
+    /// `FollowPolicy::Sow`) — the exact twin of `accrue_cultivation` one rung up, with the same
+    /// owner-locking, the same clamp, and the same "no-op once complete". Mirrors `Herd::accrue_corral`.
+    pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32) {
+        if self.is_field() {
+            return;
+        }
+        if self.owner.is_none() {
+            self.owner = Some(faction);
+        }
+        if self.owner == Some(faction) {
+            self.field_progress = (self.field_progress + amount).min(RUNG_COMPLETE);
+        }
+    }
+
+    /// Decay cultivation progress toward zero by `amount`. Applies to **any** patch — a completed
+    /// (`is_cultivated`) patch decays too (going feral once it drops below `1.0`, reverting to a wild
+    /// gather patch); the *caller* (`advance_cultivation`) decides when to spare a worked patch.
+    /// Mirrors `Herd::decay_domestication` (minus the domesticated short-circuit — a tended patch left
     /// untended is meant to go feral).
     pub(crate) fn decay_cultivation(&mut self, amount: f32) {
         self.cultivation_progress = (self.cultivation_progress - amount).max(0.0);
-        // Reconcile the `owner is Some ⟺ progress > 0` invariant unconditionally, so a patch that
-        // reaches zero progress never keeps a stale owner (which would block another faction from
-        // ever tending it).
-        if self.cultivation_progress <= 0.0 {
+        self.reconcile_owner();
+    }
+
+    /// Decay **Field**-build progress toward zero by `amount` — the rung-3 twin of
+    /// `decay_cultivation`, and (unlike the pen, which is lost outright when its herd bolts) a
+    /// *gradual* bleed for the same reason cultivation bleeds gradually: **a patch is a place and a
+    /// herd is not**, so leftover progress still refers to the same ground.
+    pub(crate) fn decay_field(&mut self, amount: f32) {
+        self.field_progress = (self.field_progress - amount).max(0.0);
+        self.reconcile_owner();
+    }
+
+    /// Hold the `owner is Some ⟺ some improvement remains` invariant: ownership lapses only once
+    /// **both** meters are spent, so a decaying Field doesn't strand a stale owner (which would block
+    /// another faction from ever working the tile) and doesn't drop its owner while its cultivation —
+    /// or its own remaining progress — is still standing.
+    fn reconcile_owner(&mut self) {
+        if self.cultivation_progress <= 0.0 && self.field_progress <= 0.0 {
             self.owner = None;
         }
     }
@@ -211,20 +344,26 @@ impl ForageRegistry {
         registry
     }
 
-    /// Number of cultivated patches owned by `faction`. Folded (with domesticated herds) into the
-    /// sedentarization "domestication" signal — plant + animal domestication share one driver.
-    /// The plant mirror of `HerdRegistry::domesticated_count`.
+    /// Number of **completed plant improvements** owned by `faction` — tended patches *and* sown
+    /// Fields (`ForagePatch::is_managed`). Folded (with domesticated herds) into the sedentarization
+    /// "domestication" signal — plant + animal domestication share one driver. The plant mirror of
+    /// `HerdRegistry::domesticated_count`.
+    ///
+    /// It counts Fields deliberately: a Field is rung **3**, so reading it as *less* domesticated
+    /// than the rung-2 patch below it would invert the signal (and a bare-ground Field carries no
+    /// cultivation meter at all — see `ForagePatch::field_progress`).
     pub fn cultivated_count(&self, faction: FactionId) -> usize {
         self.patches
             .values()
-            .filter(|patch| patch.is_cultivated() && patch.owner == Some(faction))
+            .filter(|patch| patch.is_managed() && patch.owner == Some(faction))
             .count()
     }
 }
 
 /// Reconstruct a live `ForagePatch` from its snapshot mirror (the rollback restore side of
 /// `snapshot::forage_state`). The `progress`/`owner` `EcologyState` fields carry cultivation
-/// (Phase 1a), mirroring `herd_from_state`.
+/// (Phase 1a) and the record's own `field_progress` the rung-3 Field meter, mirroring
+/// `herd_from_state` (whose `corral_progress` likewise sits beside the ecology's own progress).
 fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
     ForagePatch {
         tile: UVec2::new(state.x, state.y),
@@ -232,10 +371,78 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
         carrying_capacity: state.ecology.carrying_capacity,
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         cultivation_progress: state.ecology.progress,
+        field_progress: state.field_progress,
         owner: state.ecology.owner.map(FactionId),
         // Transient (not persisted) — a rehydrated patch is "untended" until worked again.
         tended_this_turn: false,
     }
+}
+
+/// **Is this tile on or beside FRESH water?** — the water half of a rung's
+/// [`RungSiteRequirement`], and the reason rung 3 lands in river valleys.
+///
+/// Three ways to be watered, all read off **existing** hydrology seams (`hydrology.rs` — this
+/// invents no adjacency concept of its own):
+/// 1. **The tile is fresh-water ground** (`TerrainTags::FRESHWATER`) — a floodplain, a river delta,
+///    an oasis basin, a marsh, a lake, a navigable channel.
+/// 2. **A river runs along one of its six sides** (`Tile::has_any_river_edge`) — the riverbank. This
+///    is *the* edge-river primitive, and `generate_hydrology` sets it on **both** hexes flanking every
+///    traced edge, so "I am on the river" needs no neighbour lookup at all.
+/// 3. **A fresh-water hex is next door** — the lake shore, the bank of a navigable trunk. Odd-r hex
+///    adjacency (`hex_neighbors_wrapped`, wrap-aware), the same adjacency gameplay and the client use.
+///
+/// **A salt coast is NOT water for this purpose.** `ContinentalShelf`, `TidalFlat`, `MangroveSwamp`
+/// and `CoralShelf` are `COASTAL` without `FRESHWATER`; you cannot farm on sea spray, and admitting
+/// them would hand every shoreline the rung-3 gate the rule exists to withhold.
+///
+/// `neighbor_tags` resolves a coord to that tile's tags (`None` = off-map / no tile). A closure rather
+/// than a `&TileRegistry` + query pair because the two callers reach tiles differently — the `sow`
+/// command through `&App`, the labor arm through its `Query` — and the *rule* must live in one place
+/// even though the lookup cannot.
+pub fn tile_is_fresh_watered(
+    tile: &Tile,
+    grid_width: u32,
+    grid_height: u32,
+    wrap_horizontal: bool,
+    neighbor_tags: impl Fn(UVec2) -> Option<sim_runtime::TerrainTags>,
+) -> bool {
+    if tile
+        .terrain_tags
+        .contains(sim_runtime::TerrainTags::FRESHWATER)
+        || tile.has_any_river_edge()
+    {
+        return true;
+    }
+    crate::grid_utils::hex_neighbors_wrapped(
+        tile.position.x,
+        tile.position.y,
+        grid_width,
+        grid_height,
+        wrap_horizontal,
+    )
+    .any(|(x, y)| {
+        neighbor_tags(UVec2::new(x, y))
+            .is_some_and(|tags| tags.contains(sim_runtime::TerrainTags::FRESHWATER))
+    })
+}
+
+/// **Does `rung`'s site requirement admit this tile?** — the one place the two readings a
+/// [`RungSiteRequirement`] judges (the tile's own forage capacity, and whether it is fresh-watered)
+/// are gathered, so the `sow` command's rejection and the labor arm's placement gate cannot drift into
+/// disagreeing about which ground is farmable.
+///
+/// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
+/// way the ground fell short, so the caller can phrase *too poor* and *too dry* distinctly (they are
+/// different problems with different answers — move, or wait for rung 4).
+pub fn rung_site_refusal(
+    rung: &RungDef,
+    tile: &Tile,
+    forage: &ForageLaborConfig,
+    fresh_water: bool,
+) -> Option<SiteRefusal> {
+    rung.site_requirement
+        .as_ref()?
+        .refusal(tile_forage_capacity(forage, tile), fresh_water)
 }
 
 /// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,
@@ -294,7 +501,7 @@ pub fn advance_forage_regrowth(
     let labor = labor_config.get();
     let forage = &labor.forage;
     for patch in registry.patches.values_mut() {
-        regrow_patch(patch, &forage.ecology, forage.reseed_floor_fraction);
+        regrow_patch(patch, forage);
     }
 }
 
@@ -305,15 +512,23 @@ pub fn advance_forage_regrowth(
 /// (`advance_labor_allocation`, Population) to the band whose Forage assignment actually tends the
 /// patch, at a higher-than-wild rate — see that system. This pass now only handles **decay/feral**:
 /// - A patch **worked as an improvement this turn** (`tended_this_turn`) is **spared**. That covers
-///   both a completed patch being tended *and* a patch being prepared under `FollowPolicy::Cultivate`
-///   — so the Cultivate investment accrues at the full `progress_per_turn` (25 turns at the shipped
-///   default) instead of net-of-decay.
+///   a completed patch/Field being worked *and* one being prepared under `FollowPolicy::Cultivate` /
+///   `FollowPolicy::Sow` — so an investment accrues at the full `progress_per_turn` (25 turns at the
+///   shipped default) instead of net-of-decay.
 /// - An **untended** cultivated patch **goes feral**: `cultivation_progress` decays by
 ///   `decay_per_turn`, dropping below `1.0` so it reverts to a wild depletable gather patch, and keeps
 ///   decaying toward 0 over ~`1/decay_per_turn` turns (owner clears at 0 — the investment is fully
 ///   lost, and re-preparing must re-accrue from wherever progress landed).
 /// - An **abandoned** part-prepared patch's partial accrual decays the same way (walk away mid-
 ///   investment and the cleared ground grows back over).
+///
+/// **One feral rule, both plant rungs.** An untended patch bleeds **both** improvement meters, each
+/// at its own rung's `decay_per_turn` — so an abandoned **Field** reverts to a wild gather patch after
+/// one untended turn, exactly as an abandoned tended patch does, and both meters lapse to zero over
+/// ~100 turns (ownership clearing only once nothing is left of either). It does *not* step down to a
+/// tended patch on the way: that would pay the deserter the rung-2 managed yield for free while the
+/// rung-3 improvement lapsed, and the plant web has exactly one story here — *an improvement you stop
+/// working goes back to the wild*.
 ///
 /// **Stage ordering.** Logistics runs *before* Population, so the `tended_this_turn` flag this pass
 /// reads was written by the labor arm **last** turn (a one-turn lag) — the flag is a deliberate
@@ -323,16 +538,26 @@ pub fn advance_forage_regrowth(
 /// `fauna::advance_husbandry`'s decay side.
 pub fn advance_cultivation(
     mut registry: ResMut<ForageRegistry>,
-    labor_config: Res<LaborConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
 ) {
-    let labor = labor_config.get();
-    let cultivation = &labor.forage.cultivation;
+    let ladder = ladder_config.get();
+    // Each plant rung's own build decay — the shared ladder seam (`crate::intensification`), not a
+    // plant-only lever. Two rungs, two rates, one pass: the ladder can be retuned per rung without
+    // this system knowing anything about either number.
+    let tended_decay = ladder
+        .rung(RungKey::PlantTended)
+        .build_decay(RUNG_TIMESCALE_UNSCALED);
+    let field_decay = ladder
+        .rung(RungKey::PlantField)
+        .build_decay(RUNG_TIMESCALE_UNSCALED);
     for patch in registry.patches.values_mut() {
-        // Spare any patch a band worked as an improvement this turn (tending a completed patch, or
-        // preparing one under Cultivate). Everything else decays: an untended cultivated patch goes
-        // feral (reverts to wild once < 1.0), and an abandoned part-prepared patch reverts toward 0.
+        // Spare any patch a band worked as an improvement this turn (working a completed
+        // Field/patch, or preparing one under Cultivate/Sow). Everything else decays, on both rungs:
+        // an untended Field or cultivated patch goes feral (reverts to wild once < 1.0), and an
+        // abandoned part-prepared patch reverts toward 0.
         if !patch.tended_this_turn {
-            patch.decay_cultivation(cultivation.decay_per_turn);
+            patch.decay_field(field_decay);
+            patch.decay_cultivation(tended_decay);
         }
         // Clear the transient per-turn flag after reading it (re-set next Population stage if worked).
         patch.tended_this_turn = false;
@@ -352,16 +577,22 @@ pub fn advance_cultivation(
 /// recovers from that floor via the normal logistic curve. The lift only touches patches below the
 /// floor — a healthy patch is untouched — and the floor is small (below `collapse_fraction`), so
 /// Eradicate still crashes a patch hard into the Collapsing band; it just can't hold it at `0`.
-fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_fraction: f32) {
+///
+/// **The patch's OWN ecology** ([`patch_ecology`]), never `forage.ecology` reached for directly: a
+/// tended patch regrows on the boosted `r` its rung bought, which is what makes its faster MSY a
+/// harvest the land can actually sustain rather than a promise the stock cannot keep. The animal
+/// mirror is `fauna::regrow_biomass`, which resolves `herd_ecology` for exactly this reason.
+fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
+    let ecology = patch_ecology(patch, forage);
     // The reseed lift + logistic step is the shared plant curve (`fauna::reseeding_logistic_regrowth`),
     // so the human-edible forage stock and the animal-edible graze stock can never drift apart.
     patch.biomass = reseeding_logistic_regrowth(
         patch.biomass,
         patch.carrying_capacity,
         ecology.regrowth_rate,
-        reseed_floor_fraction,
+        forage.reseed_floor_fraction,
     );
-    patch.refresh_ecology_phase(ecology);
+    patch.refresh_ecology_phase(&ecology);
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the per-policy ecology ceiling, cap it by
@@ -375,21 +606,51 @@ fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_f
 /// **Surplus** = that × `surplus_multiplier` (overdraws a healthy
 /// patch → slow decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast
 /// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
-/// biomass` (strip the patch, no floor); **Cultivate** = `cultivating_yield_fraction × MSY` — the
+/// biomass` (strip the patch, no floor); **Cultivate** = the `plant:tended` rung's
+/// `yield_fraction_while_building × MSY` — the
 /// investment dip while the ground is being prepared. All are then throughput-capped and clamped to
 /// biomass.
+/// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
+/// `plant:field`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
+/// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
+/// rung declares, rather than re-deriving the ladder from `is_cultivated()` at the call site.
+///
+/// Its one reader today is the Forage arm of `advance_labor_allocation` — **which knowledge this
+/// patch's rung teaches** (`RungDef::knowledge_earned`, slice 4). The plant web has no movement
+/// primitive to dispatch (a patch is a place), so unlike the animal side there is no second caller.
+pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &'a RungDef {
+    ladder.rung(if patch.is_field() {
+        RungKey::PlantField
+    } else if patch.is_cultivated() {
+        RungKey::PlantTended
+    } else {
+        RungKey::PlantWild
+    })
+}
+
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     workers: u32,
     policy: FollowPolicy,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     output_multiplier: f32,
     seasonal: f32,
 ) -> Scalar {
     // Per-policy ecology ceiling + gather throughput, both from the shared helpers the pre-commit
-    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree.
-    let policy_ceiling =
-        forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage);
+    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree. The ceiling
+    // rides the patch's **own** curve (`patch_ecology`), so a tended patch is gathered on its boosted
+    // MSY rather than the wild one — the whole of the rung-2 payoff, and the reason this one call
+    // serves rungs 1 and 2 alike.
+    let ecology = patch_ecology(patch, forage);
+    let policy_ceiling = forage_policy_ceiling(
+        policy,
+        patch.biomass,
+        patch.carrying_capacity,
+        &ecology,
+        forage,
+        ladder,
+    );
     let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
     let take = worker_cap
         .min(policy_ceiling)
@@ -405,17 +666,24 @@ pub(crate) fn forage_take(
 /// and `forage_forecast` (the pre-commit forecast). Sustain = Maximum Sustainable Yield (regrowth at
 /// K/2, so a full patch still yields and a collapsed one yields nothing), Surplus = that ×
 /// `surplus_multiplier`, Market = `market.take_fraction × biomass`, Eradicate =
-/// `eradicate.take_fraction × biomass`, **Cultivate** = `cultivation.cultivating_yield_fraction ×`
-/// the *same* `sustainable_yield` MSY ceiling (the preparing dip — reusing the shared helper, never a
-/// second formula). Not yet clamped to biomass — callers do that alongside their own throughput cap.
-/// The plant mirror of `fauna::hunt_policy_ceiling`.
+/// `eradicate.take_fraction × biomass`, **Cultivate** = the `plant:tended` rung's
+/// `yield_fraction_while_building ×` the *same* `sustainable_yield` MSY ceiling (the preparing dip —
+/// reusing the shared helper, never a second formula). Not yet clamped to biomass — callers do that
+/// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_ceiling`.
+///
+/// `ecology` is **the patch's own** — resolved by [`patch_ecology`], never by the caller reaching for
+/// `forage.ecology` directly. The tended rung is expressed *entirely* by handing this function a
+/// different ecology (wild `r` = 0.25 / tended = wild × `tended_regrowth_gain`), exactly as the
+/// husbandry ladder is expressed to `hunt_policy_ceiling`, so a call site that re-derives one silently
+/// gathers a tended patch on the wild curve.
 pub(crate) fn forage_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
+    ecology: &EcologyConfig,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
 ) -> f32 {
-    let ecology = &forage.ecology;
     match policy {
         FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
         FollowPolicy::Surplus => {
@@ -423,16 +691,30 @@ pub(crate) fn forage_policy_ceiling(
         }
         FollowPolicy::Market => forage.market.take_fraction * biomass,
         FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
-        // The investment dip: a *fraction* of the MSY ceiling, so the preparing take is sustainable
-        // and the patch stays Thriving (which the progress gate requires).
+        // The two plant investment dips: a *fraction* of the MSY ceiling, so the preparing take is
+        // sustainable and the patch stays healthy while the work goes on. Each read off its **own**
+        // rung — the same seam the animal side's `Tame`/`Corral` dips read, so every rung's
+        // investment cost is tuned in one file, and the two plant rungs' dips stay independently
+        // tunable (the `ceiling_tame` lesson: never fold two rungs onto one number just because
+        // today's levers happen to agree).
         FollowPolicy::Cultivate => {
             sustainable_yield(biomass, carrying_capacity, ecology)
-                * forage.cultivation.cultivating_yield_fraction
+                * ladder
+                    .rung(RungKey::PlantTended)
+                    .yield_fraction_while_building()
+                    .expect("the tended rung is an investment — it has a build meter")
         }
-        // `Corral` is an animal-only policy — rejected on a Forage assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively yields nothing
-        // rather than silently gathering under a nonsense policy.
-        FollowPolicy::Corral => 0.0,
+        // On BARE ground this is a fraction of nothing — a freshly sown patch is below the Allee
+        // threshold, so its MSY is `0` and the sow honestly pays ~0 while it builds (a pure
+        // investment). On ground that already carries a stand it is the familiar dip.
+        FollowPolicy::Sow => {
+            sustainable_yield(biomass, carrying_capacity, ecology)
+                * field_yield_fraction_while_building(ladder)
+        }
+        // `Tame`/`Corral` are animal-only policies — rejected on a Forage assignment at
+        // `assign_labor` (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively
+        // yield nothing rather than silently gathering under a nonsense policy.
+        FollowPolicy::Tame | FollowPolicy::Corral => 0.0,
     }
 }
 
@@ -454,41 +736,153 @@ pub(crate) fn forage_provisions(
     biomass_take * forage.provisions_per_biomass * output_multiplier
 }
 
-/// The place-local managed harvest a **tended** (cultivated) patch pays the band tending it each turn
-/// (`biomass × cultivation.tended_provisions_per_biomass`, no biomass drawn down). Shared by the
-/// Forage arm of `advance_labor_allocation` (the payout) and `forage_forecast` (the forecast). The
-/// plant mirror of `fauna::corral_provisions`.
+/// **What a patch would pay its gatherers as a TENDED patch**, in provisions — its Sustain (MSY)
+/// ceiling on the *tended* curve ([`tended_ecology`]), clamped to the standing crop.
+///
+/// This is the plant ladder's **rung-2 payoff quote**, and slice 7 retargeted what it means. It used
+/// to be `biomass × tended_provisions_per_biomass` — a *managed rate*, paid whatever the policy, never
+/// drawing the patch down. But rung 2 is **still a wild stand**: what tending buys is a faster curve,
+/// so the honest quote is "the best sustainable skim this patch will offer once tended", which is
+/// exactly the number the tended patch's own `ceiling_sustain` then reads. Its consumer is the
+/// forecast's `managed_yield` — the "then Y" of Cultivate's *"preparing X → then Y"* pair — and the
+/// wire's `ForagePatchState.tendedYield`.
+///
+/// The rung-3 twin, [`field_provisions`], **stays** a managed rate: a Field is yours.
 pub(crate) fn tended_provisions(
+    biomass: f32,
+    carrying_capacity: f32,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        sustainable_yield(biomass, carrying_capacity, &tended_ecology(forage)).clamp(0.0, biomass),
+        forage,
+        output_multiplier,
+    )
+}
+
+/// **THE ecology a patch actually lives under** — the plant twin of `fauna::herd_ecology`, and the one
+/// place the plant ladder's rung → growth-rate mapping lives. Tending buys a *growth rate*, and
+/// nothing else:
+///
+/// - **wild** (`forage.ecology`, `r` = 0.25) — an untended stand;
+/// - **managed** (a tended patch or a Field) — [`tended_ecology`]: `r × cultivation.tended_regrowth_gain`.
+///
+/// Every consumer of a patch's ecology — regrowth, the MSY/policy ceilings, the phase classification,
+/// the forecast — resolves it *here*. **No call site may re-derive it**: a second copy of this mapping
+/// is exactly how a forecast starts promising a number the take won't pay (the lesson `herd_ecology`
+/// already paid for).
+///
+/// **Both managed rungs share one curve, deliberately.** A Field is never drawn down (its harvest is a
+/// managed rate on the standing crop), so its `r` moves nothing but how fast it recovers from a
+/// collapse — inventing a `field_regrowth_gain` nobody's yield reads would be a lever that lies about
+/// having an effect. Rung 3's payoff is `field_provisions`, not a curve.
+pub fn patch_ecology(patch: &ForagePatch, forage: &ForageLaborConfig) -> EcologyConfig {
+    if patch.is_managed() {
+        tended_ecology(forage)
+    } else {
+        forage.ecology
+    }
+}
+
+/// The **tended** curve: the wild forage ecology with only its `regrowth_rate` scaled by the rung's
+/// `cultivation.tended_regrowth_gain`, leaving the shared phase bands
+/// (`collapse_fraction`/`stressed_fraction`/`extinction_floor`) intact — the exact shape
+/// `fauna::pastoral_ecology_for` gives a tamed herd. Split out from [`patch_ecology`] because the
+/// forecast must also answer it for a patch that is **not tended yet** ("what will this pay once
+/// cultivated?").
+fn tended_ecology(forage: &ForageLaborConfig) -> EcologyConfig {
+    EcologyConfig {
+        regrowth_rate: forage.ecology.regrowth_rate * forage.cultivation.tended_regrowth_gain,
+        ..forage.ecology
+    }
+}
+
+/// The place-local managed harvest a sown **Field** (rung 3) pays the band working it each turn:
+/// `biomass × cultivation.field_provisions_per_biomass`, no biomass drawn down — the *same shape* as
+/// [`tended_provisions`] one rung down, at a higher rate. That shape is the point: rung 3 must
+/// out-yield rung 2 on the same tile at the same biomass, or the rung is pointless, and holding the
+/// shape fixed makes the comparison a single lever rather than a re-derivation.
+///
+/// Shared by the Forage arm of `advance_labor_allocation` (the payout) and `forage_forecast`, so
+/// forecast == actual.
+pub(crate) fn field_provisions(
     biomass: f32,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
 ) -> f32 {
-    biomass * forage.cultivation.tended_provisions_per_biomass * output_multiplier
+    biomass * forage.cultivation.field_provisions_per_biomass * output_multiplier
 }
 
+/// **The `plant:field` rung's investment dip**, resolved off the ladder — the fraction of what a
+/// patch would otherwise pay that it *does* pay while a crew sows a Field into it. One lookup, shared
+/// by `forage_policy_ceiling` (via the rung), the managed-patch forecast and the managed-patch payout,
+/// so a Sow on a tended patch can never be quoted one dip and paid another.
+pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 {
+    ladder
+        .rung(RungKey::PlantField)
+        .yield_fraction_while_building()
+        .expect("the field rung is an investment — it has a build meter")
+}
+
+/// `SourceYieldForecast::body_mass_yield` for a plant source (slice 8) — `0` = *do not quantise*.
+///
+/// **A deliberate asymmetry with the animal web, and a principled one — do not "fix" it.** A hunt take
+/// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
+/// harvest grain by the handful. The two food webs quantise differently because *their products
+/// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
+const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
+
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
-/// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same per-policy ceilings, same
-/// seasonal-folded per-worker throughput, same biomass clamp, same biomass→provisions conversion — so
-/// the client's `min(workers × per_worker_yield, ceiling[policy])` IS the take the sim pays. A
-/// **cultivated (tended)** patch forecasts its tended yield with one worker (see
-/// `SourceYieldForecast::tended`). The plant mirror of `fauna::hunt_forecast`.
+/// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same resolved ecology
+/// ([`patch_ecology`]), same per-policy ceilings, same seasonal-folded per-worker throughput, same
+/// biomass clamp, same biomass→provisions conversion — so the client's
+/// `min(workers × per_worker_yield, ceiling[policy])` IS the take the sim pays. The plant mirror of
+/// `fauna::hunt_forecast`.
+///
+/// **Two shapes, one per rung-kind** (slice 7 — this is where the plant ladder stopped collapsing a
+/// rung early):
+/// - A **Field** (rung 3) is *yours*: it pays a managed rate whatever the policy, so it forecasts
+///   through [`SourceYieldForecast::managed`] — every ceiling is that rate, and `per_worker_yield` is
+///   the crew's real throughput, so `max_useful_workers` falls out as the honest
+///   `ceil(production / per_worker)` rather than a hardcoded 1.
+/// - A **wild or tended** patch (rungs 1–2) is a wild stand either way, so it takes the full
+///   policy-live path below — the *same* code, differing only in the ecology `patch_ecology` hands
+///   it. That is the whole rung-2 fix: a tended patch's Sustain/Surplus/Market/Eradicate are four
+///   different numbers again, and it can be over-farmed.
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
-    if patch.is_cultivated() {
-        return SourceYieldForecast::tended(tended_provisions(
-            patch.biomass,
-            forage,
-            output_multiplier,
-        ));
+    // A Field's harvest is biomass-based and **seasonless** — the crop is standing in the field you
+    // built it to stand in — so its collection cap is too, and it must not read the gather season
+    // (which is `NO_FORAGE_SEASON` on module-less ground a crew sowed: a Field there would forecast,
+    // and be paid, exactly nothing).
+    if patch.is_field() {
+        return SourceYieldForecast::managed(
+            field_provisions(patch.biomass, forage, output_multiplier),
+            managed_per_worker_yield(forage, output_multiplier),
+            // Plants never quantise — you harvest grain by the handful (slice 8; see
+            // `SourceYieldForecast::body_mass_yield`). The whole-animal rule is animal-only because
+            // *the products differ*, not by omission.
+            PLANTS_DO_NOT_QUANTISE,
+        );
     }
+    let ecology = patch_ecology(patch, forage);
     let ceiling = |policy| {
         forage_provisions(
-            forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage)
-                .clamp(0.0, patch.biomass),
+            forage_policy_ceiling(
+                policy,
+                patch.biomass,
+                patch.carrying_capacity,
+                &ecology,
+                forage,
+                ladder,
+            )
+            .clamp(0.0, patch.biomass),
             forage,
             output_multiplier,
         )
@@ -499,15 +893,60 @@ pub(crate) fn forage_forecast(
             forage,
             output_multiplier,
         ),
+        body_mass_yield: PLANTS_DO_NOT_QUANTISE,
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_market: ceiling(FollowPolicy::Market),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
-        // The investment rung: what the patch pays *while preparing* (Cultivate), and what it will
-        // pay *once prepared* — so the client can show "preparing X → then Y" before committing.
+        // The investment rungs: what the patch pays *while preparing* (Cultivate at rung 2, Sow at
+        // rung 3 — each its own field, since the two dips are independently tunable), and what it
+        // will pay *once prepared* — so the client can show "preparing X → then Y" before committing.
+        //
+        // **Both stay honest on an ALREADY-TENDED patch**, which is the copy bug slice 7 fixed: this
+        // branch used to be `SourceYieldForecast::tended(managed)`, whose every ceiling — the
+        // "preparing" dip and the "then" payoff alike — was the one managed number, so a completed
+        // rung-2 patch quoted "preparing 0.66 → then 0.66". Now `ceiling_prepare` is Cultivate's dip
+        // on this patch's own (already boosted) curve, `ceiling_sow` is Sow's dip on it, and
+        // `managed_yield` below is the rung-2 payoff — each computed, none copied.
         ceiling_prepare: ceiling(FollowPolicy::Cultivate),
-        managed_yield: tended_provisions(patch.biomass, forage, output_multiplier),
+        ceiling_sow: ceiling(FollowPolicy::Sow),
+        // `Tame` is animal-only — a patch has no taming rung, and `forage_policy_ceiling` yields `0`
+        // for it. Resolved through the same `ceiling` closure rather than a literal, so the "not a
+        // forage policy" rule stays stated in exactly one place.
+        ceiling_tame: ceiling(FollowPolicy::Tame),
+        // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
+        // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
+        // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
+        // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
+        // one field doing both jobs.)
+        managed_yield: tended_provisions(
+            patch.biomass,
+            patch.carrying_capacity,
+            forage,
+            output_multiplier,
+        ),
+        // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
+        // plant twin of `ceiling_tame: 0`).
+        pastoral_yield: NO_PASTORAL_YIELD,
     }
+}
+
+/// **What one worker can carry home from a MANAGED plant source** (a Field), in provisions/turn — the
+/// gather throughput `forage_per_worker_biomass` gives, at the seasonless weight, through the gather
+/// conversion.
+///
+/// This is the **collection** half of production-vs-collection (slice 7): rung 3 collapses the *policy*
+/// axis (the crop is yours; there is no wild stock to over-skim) but **not** the worker cap — you
+/// still have to carry the harvest home, so a Field's actual take is
+/// `min(field_provisions, workers × this)` and the surplus it offered beyond that is wasted. Deliberately
+/// **not** a new lever: it is the same `per_worker_biomass_capacity` a wild gather is capped by, which
+/// is what keeps "a worker can carry X" one number for the whole plant web.
+pub(crate) fn managed_per_worker_yield(forage: &ForageLaborConfig, output_multiplier: f32) -> f32 {
+    forage_provisions(
+        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        forage,
+        output_multiplier,
+    )
 }
 
 /// The assign-time yield telemetry seed for a **Forage** source: what staffing `patch` with `workers`
@@ -518,24 +957,29 @@ pub(crate) fn forage_forecast(
 pub fn forage_source_yield_preview(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
 ) -> SourceYield {
-    let forecast = forage_forecast(patch, forage, seasonal, output_multiplier);
+    let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
+    // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
+    // curve, so a Sustain gather of it reads no ⚠ while a Surplus gather of it does. Reading
+    // `forage.ecology` here would flag every tended Sustain as an overdraw.
     let sustainable = forage_provisions(
-        sustainable_yield(patch.biomass, patch.carrying_capacity, &forage.ecology),
+        sustainable_yield(
+            patch.biomass,
+            patch.carrying_capacity,
+            &patch_ecology(patch, forage),
+        ),
         forage,
         output_multiplier,
     );
-    forecast_source_yield(
-        &forecast,
-        sustainable,
-        patch.is_cultivated(),
-        workers,
-        policy,
-    )
+    // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
+    // and since rung 2 went back to being a drawn-down wild stand, a *tended* patch can be over-farmed
+    // like any other, so it must keep its real sustainable line and its real ⚠.
+    forecast_source_yield(&forecast, sustainable, patch.is_field(), workers, policy)
 }
 
 #[cfg(test)]
@@ -634,7 +1078,15 @@ mod tests {
         // First Sustain gather off the full patch: take equals MSY (positive), no longer 0.
         let biomass_before = patch.biomass;
         let expected_sustainable = sustainable_yield(biomass_before, cap, &forage.ecology);
-        let provisions = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
+        let provisions = forage_take(
+            &mut patch,
+            20,
+            FollowPolicy::Sustain,
+            &forage,
+            &LadderConfig::builtin(),
+            1.0,
+            1.0,
+        );
         let take = biomass_before - patch.biomass;
         assert!(
             take > 0.0,
@@ -655,9 +1107,17 @@ mod tests {
         let mut last_take = take;
         for turn in 0..200 {
             let before = patch.biomass;
-            let _ = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
+            let _ = forage_take(
+                &mut patch,
+                20,
+                FollowPolicy::Sustain,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             last_take = before - patch.biomass;
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             if turn >= 190 {
                 assert!(
                     (patch.biomass - prev).abs() < 1.0,
@@ -698,8 +1158,16 @@ mod tests {
         let mut last = patch.biomass;
         let mut saw_stressed = false;
         for _ in 0..40 {
-            let _ = forage_take(&mut patch, 3, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            let _ = forage_take(
+                &mut patch,
+                3,
+                FollowPolicy::Eradicate,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
+            regrow_patch(&mut patch, &forage);
             assert!(patch.biomass < last + 1e-3, "biomass must trend downward");
             last = patch.biomass;
             if patch.ecology_phase == EcologyPhase::Stressed {
@@ -729,7 +1197,15 @@ mod tests {
         let take_under = |policy: FollowPolicy| -> (f32, f32) {
             let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
             patch.biomass = start;
-            let provisions = forage_take(&mut patch, workers, policy, &forage, 1.0, 1.0);
+            let provisions = forage_take(
+                &mut patch,
+                workers,
+                policy,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
             let take = start - patch.biomass;
             (take, provisions.to_f32())
         };
@@ -768,7 +1244,7 @@ mod tests {
 
         let mut prev = patch.biomass;
         for _ in 0..30 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
             assert!(patch.biomass >= prev, "regrowth must be monotonic upward");
             prev = patch.biomass;
         }
@@ -790,7 +1266,7 @@ mod tests {
         assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
 
         for _ in 0..80 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
@@ -813,7 +1289,7 @@ mod tests {
         patch.refresh_ecology_phase(&forage.ecology);
 
         // One turn off dead-zero: reseeded to the floor and already regrowing above it (> 0).
-        regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+        regrow_patch(&mut patch, &forage);
         assert!(
             patch.biomass > 0.0,
             "a 0-biomass patch must escape 0 via the reseed floor: {}",
@@ -824,7 +1300,7 @@ mod tests {
         // Over subsequent turns it recovers toward a healthy level (Thriving), just like a patch
         // seeded a hair above 0 — no permanent stall at 0.
         for _ in 0..80 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
@@ -844,8 +1320,16 @@ mod tests {
         // Hammer with Eradicate + regrowth: biomass crashes but never sits at 0 — it floats at/above
         // the reseed floor while still reading Collapsing (a hard crash, not extinction).
         for _ in 0..60 {
-            let _ = forage_take(&mut patch, 50, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            let _ = forage_take(
+                &mut patch,
+                50,
+                FollowPolicy::Eradicate,
+                &forage,
+                &LadderConfig::builtin(),
+                1.0,
+                1.0,
+            );
+            regrow_patch(&mut patch, &forage);
             assert!(
                 patch.biomass > 0.0,
                 "Eradicate must not permanently zero a patch"
@@ -861,7 +1345,7 @@ mod tests {
 
         // Stop hunting: from the crashed floor the patch recovers all the way back to Thriving.
         for _ in 0..120 {
-            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            regrow_patch(&mut patch, &forage);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass >= floor);
@@ -872,6 +1356,11 @@ mod tests {
         // A patch above the floor must regrow identically with or without the reseed lift (the floor
         // only reseeds depleted patches — a healthy patch is untouched).
         let forage = test_forage_config();
+        // The "no reseed" baseline — the shipped config with only the lift switched off.
+        let no_floor_forage = ForageLaborConfig {
+            reseed_floor_fraction: 0.0,
+            ..forage.clone()
+        };
         let cap = forage.capacity_for(TEST_BIOME);
         let start = 0.5 * cap; // comfortably above reseed_floor_fraction × cap.
 
@@ -881,13 +1370,9 @@ mod tests {
         without_floor.biomass = start;
 
         for _ in 0..30 {
-            regrow_patch(
-                &mut with_floor,
-                &forage.ecology,
-                forage.reseed_floor_fraction,
-            );
+            regrow_patch(&mut with_floor, &forage);
             // A zero floor is the "no reseed" baseline.
-            regrow_patch(&mut without_floor, &forage.ecology, 0.0);
+            regrow_patch(&mut without_floor, &no_floor_forage);
         }
         assert!(
             (with_floor.biomass - without_floor.biomass).abs() < 1e-6,
@@ -927,11 +1412,13 @@ mod tests {
 
     #[test]
     fn forage_state_roundtrip_is_identity() {
-        // A ForageState with non-default ecology AND cultivation so biomass / cap / phase /
-        // progress / owner all round-trip (Phase 1a: cultivation now rides the snapshot).
+        // A ForageState with non-default ecology AND **both** improvement meters, so biomass / cap /
+        // phase / cultivation / field / owner all round-trip (a rollback must rewind a half-sown
+        // Field, not lose the investment).
         let original = ForageState {
             x: 7,
             y: 3,
+            field_progress: 0.4,
             ecology: EcologyState {
                 biomass: 42.5,
                 carrying_capacity: 120.0,
@@ -946,6 +1433,7 @@ mod tests {
             .patch(UVec2::new(7, 3))
             .expect("one patch restored");
         assert_eq!(patch.cultivation_progress, 0.6);
+        assert_eq!(patch.field_progress, 0.4);
         assert_eq!(patch.owner, Some(FactionId(3)));
         let restored = crate::snapshot::forage_state(patch);
         assert_eq!(restored, original);
@@ -1002,7 +1490,12 @@ mod tests {
     #[test]
     fn tended_patch_spared_untended_goes_feral() {
         let forage = test_forage_config();
-        let decay = forage.cultivation.decay_per_turn;
+        // The feral rate is the `plant:tended` rung's build decay — the same value
+        // `advance_cultivation` bleeds.
+        let ladder = LadderConfig::builtin();
+        let decay = ladder
+            .rung(RungKey::PlantTended)
+            .build_decay(RUNG_TIMESCALE_UNSCALED);
         assert!(decay > 0.0);
 
         // Tended every turn → never decays, stays cultivated.
@@ -1033,7 +1526,7 @@ mod tests {
             "one untended turn reverts a farm to wild"
         );
         // Over ~1/decay_per_turn total turns it fully decays and clears ownership.
-        let turns_to_zero = (1.0 / decay).ceil() as usize + 2;
+        let turns_to_zero = (1.0_f32 / decay).ceil() as usize + 2;
         for _ in 0..turns_to_zero {
             if !(feral.is_cultivated() && feral.tended_this_turn) {
                 feral.decay_cultivation(decay);

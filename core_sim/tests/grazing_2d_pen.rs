@@ -26,10 +26,11 @@ use core_sim::{
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
     ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    RUNG_COMPLETE,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
@@ -84,6 +85,7 @@ fn base_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
@@ -92,19 +94,30 @@ fn base_world() -> App {
 }
 
 /// The richest pasture tile on the map (a prairie-class patch). Returns `(tile, capacity)`.
+///
+/// Delegates to `GrazeRegistry::richest_patch`, whose **deterministic tie-break** this test depends on:
+/// every tile of the richest biome shares the maximum capacity, so picking the winner off raw `HashMap`
+/// order would sample a different neighbourhood (and a different pen footprint) each process.
 fn richest_pasture(app: &App) -> (UVec2, f32) {
     app.world
         .resource::<GrazeRegistry>()
-        .patches
-        .iter()
-        .map(|(tile, patch)| (*tile, patch.carrying_capacity))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .richest_patch()
         .expect("the earthlike map seeds graze patches")
 }
 
 /// Seat a single **penned** herd at `tile` with the given fenced `radius`, wild `r` / metabolic
 /// `fodder`, spawn `carrying_capacity` and starting `biomass`. Domesticated (collapse-immune) so it is
 /// a managed population, not a wild one. Returns its id.
+///
+/// **Density-neutral by construction** — the fixture's display name is deliberately *not* a roster
+/// species, so its per-species husbandry density gain resolves to the neutral `1.0`
+/// ([`fauna_config::DEFAULT_HUSBANDRY_DENSITY`]). These tests validate the pen **economy** (r-driven
+/// convergence, the footprint-K, the pasture/larder feed offset), which is **orthogonal** to the
+/// per-species density ladder — mixing a real species' density gain (a penned rabbit is `×1.5`) into a
+/// single-tile footprint would erode the "lush footprint feeds the pen for free" invariant (§2.3) and
+/// the convergence band for reasons that have nothing to do with what these tests measure. The density
+/// ladder has its own test (`the_husbandry_density_ladder_scales_carrying_capacity_per_species`).
+#[allow(clippy::too_many_arguments)] // every knob of the pen's ecology is a lever under test
 fn seat_pen(
     app: &mut App,
     tile: UVec2,
@@ -113,21 +126,24 @@ fn seat_pen(
     r: f32,
     cap: f32,
     biomass: f32,
+    body_mass: f32,
 ) -> String {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     registry.herds.clear();
     let mut herd = Herd::new(
         "pen_0".to_string(),
-        "Rabbit Warren".to_string(),
+        // A fixture name (NOT a roster species) → neutral density gain; see the doc comment.
+        "Fixture Warren".to_string(),
         SizeClass::Small,
         vec![tile],
         biomass,
         cap,
         fodder,
         r,
+        body_mass,
     );
-    herd.claim_domestication(FactionId(0));
-    herd.corral_at(tile);
+    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    assert!(herd.corral_at(tile), "the fixture species must be pennable");
     herd.pen_radius = radius;
     registry.herds.push(herd);
     "pen_0".to_string()
@@ -225,11 +241,28 @@ fn tail_spread(series: &[f32]) -> f32 {
     }
 }
 
+/// The fixture species' per-animal body mass — **rabbit-class** (2), matching the `r = 0.35` these
+/// fixtures use (the density-neutral `Fixture Warren` carries a rabbit's *metabolism* without its
+/// density gain — see `seat_pen`). The pen quantises to whole animals like every other rung (slice 8),
+/// so the fixture has to declare a real one: at the pen's `r = min(0.75, 0.35 × 3) = 0.75` on `cap =
+/// 300` its MSY is ~56, i.e. ~28 rabbits a turn — the pen never has to wait, the *emergent* steadiness
+/// `the_pen_slaughters_whole_animals_every_turn` measures across the roster.
+const PEN_BODY_MASS: f32 = 2.0;
+
 /// Run a penned herd (radius `r`, start biomass `start`) to convergence and return its settled biomass.
 fn run_pen_to_settle(radius: u32, start: f32, cap: f32, fodder: f32, wild_r: f32) -> f32 {
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, radius, fodder, wild_r, cap, start);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        radius,
+        fodder,
+        wild_r,
+        cap,
+        start,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
 
     let mut series = Vec::with_capacity(TURNS as usize);
@@ -317,7 +350,16 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     // pays. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
     for _ in 0..SETTLE_TURNS {
         run_pen_turn(&mut app, keeper);
@@ -341,7 +383,16 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     // preserved worst case. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     app.world
         .resource_mut::<GrazeRegistry>()
         .patches
@@ -415,7 +466,16 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
     // Seat a radius-0 pen at equilibrium-ish so K is stable before the extension.
-    let id = seat_pen(&mut app, tile, 0, FODDER, WILD_R, 300.0, 150.0);
+    let id = seat_pen(
+        &mut app,
+        tile,
+        0,
+        FODDER,
+        WILD_R,
+        300.0,
+        150.0,
+        PEN_BODY_MASS,
+    );
     let keeper = spawn_keeper(&mut app, &id, tile);
     for _ in 0..60 {
         run_pen_turn(&mut app, keeper);
@@ -485,5 +545,116 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     assert!(
         !begin_extension(&mut app, &id, radius_max),
         "a pen at pen_radius_max ({radius_max}) refuses to extend further"
+    );
+}
+
+/// **The husbandry DENSITY ladder** — the per-species K multiplier: domestication makes the *land*
+/// hold more animals, non-linearly by species. On the **same pasture tile** a wild herd's carrying
+/// capacity is unchanged (`×1.0`), a **mobile-tamed** (pastoral) herd's is `base × pastoral_density`,
+/// and a **corralled** herd's footprint K is `base × pen_density`. A species with the **default**
+/// (neutral) dials is byte-identical at every rung — so this is orthogonal to the r-gains (which scale
+/// the breeding *rate*, not the ceiling — measured in
+/// `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder`).
+///
+/// All three rungs read the **same single-tile footprint** at `tile` (a `Small` herd's roam radius is
+/// 0, a `pen_radius = 0` pen is one tile), and `advance_herd_grazing` is **not** run, so the graze is at
+/// capacity for every probe — the base K is identical and the ratio isolates the density gain.
+#[test]
+fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
+    #[derive(Clone, Copy)]
+    enum Rung {
+        Wild,
+        Pastoral,
+        Pen,
+    }
+
+    // The range-derived K a herd of `species` settles on at `tile` in the given rung, after one
+    // `advance_herds` (which is the one seam that writes `carrying_capacity`).
+    fn k_for(app: &mut App, tile: UVec2, species: &str, rung: Rung) -> f32 {
+        let mut herd = Herd::new(
+            "k_probe".to_string(),
+            species.to_string(),
+            SizeClass::Small,
+            vec![tile],
+            100.0, // biomass
+            100.0, // spawn cap (overwritten by the ecological recompute)
+            0.10,  // fodder_per_biomass — same for every probe, so the base is shared
+            0.20,  // wild r
+            20.0,  // body_mass
+        );
+        match rung {
+            Rung::Wild => {}
+            Rung::Pastoral => {
+                herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+            }
+            Rung::Pen => {
+                herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+                assert!(
+                    herd.corral_at(tile),
+                    "the fixture herd defaults to the full ladder"
+                );
+            }
+        }
+        {
+            let mut reg = app.world.resource_mut::<HerdRegistry>();
+            reg.herds.clear();
+            reg.herds.push(herd);
+        }
+        app.world.run_system_once(advance_herds);
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find("k_probe")
+            .expect("the probe herd survives");
+        assert_eq!(
+            herd.position(),
+            tile,
+            "a single-anchor Small herd stays on the probe tile, so the base footprint is shared"
+        );
+        herd.carrying_capacity
+    }
+
+    let mut app = base_world();
+    let (tile, _) = richest_pasture(&app);
+    // Leave graze on ONLY the probe tile: every neighbour is barren, so a mobile (wild/pastoral) herd
+    // is hemmed in and stays put, and the single-tile footprint K is shared across all three rungs — so
+    // the ratio isolates the density gain from any incidental roam.
+    {
+        let mut graze = app.world.resource_mut::<GrazeRegistry>();
+        graze.patches.retain(|&t, _| t == tile);
+    }
+
+    // --- Crag Goats: the prime grazer domesticate, dials 2.0 / 5.0. ---
+    let goat_wild = k_for(&mut app, tile, "Crag Goats", Rung::Wild);
+    let goat_pastoral = k_for(&mut app, tile, "Crag Goats", Rung::Pastoral);
+    let goat_pen = k_for(&mut app, tile, "Crag Goats", Rung::Pen);
+    assert!(
+        goat_wild > 0.0,
+        "a wild goat has a positive range-derived K"
+    );
+    let eps = goat_wild * 1e-3;
+    assert!(
+        (goat_pastoral - goat_wild * 2.0).abs() < eps,
+        "a tamed goat's K = base × pastoral_density (2.0): base {goat_wild} → {goat_pastoral}"
+    );
+    assert!(
+        (goat_pen - goat_wild * 5.0).abs() < eps,
+        "a penned goat's K = base × pen_density (5.0): base {goat_wild} → {goat_pen}"
+    );
+
+    // --- Red Deer: a `wild`-ceiling species that omits the dials → neutral 1.0 at every rung. ---
+    let deer_wild = k_for(&mut app, tile, "Red Deer", Rung::Wild);
+    let deer_pastoral = k_for(&mut app, tile, "Red Deer", Rung::Pastoral);
+    let deer_pen = k_for(&mut app, tile, "Red Deer", Rung::Pen);
+    let deer_eps = deer_wild * 1e-3;
+    assert!(
+        (deer_pastoral - deer_wild).abs() < deer_eps && (deer_pen - deer_wild).abs() < deer_eps,
+        "a default-dial species is byte-identical up the ladder: wild {deer_wild}, \
+         pastoral {deer_pastoral}, pen {deer_pen}"
+    );
+    // The goat's wild K matches the deer's (same tile, same fodder) — the ladder diverges only above wild.
+    assert!(
+        (goat_wild - deer_wild).abs() < eps,
+        "the two species share the same wild base on the same tile ({goat_wild} vs {deer_wild})"
     );
 }

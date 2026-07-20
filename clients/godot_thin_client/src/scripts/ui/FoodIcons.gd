@@ -60,12 +60,33 @@ const HERD_SPECIES := {
 ## corral glyph). The picker/map look policies up by their snapshot string; the orb has no policy in
 ## hand, so it needs the constant.
 const POLICY_CORRAL := "corral"
+# The four INVESTMENT rungs, one per rung-transition of the two ladders
+# (docs/plan_intensification_ladder.md §2a):
+#   plants:  wild --cultivate--> Tended Patch --sow--> Field
+#   animals: wild --tame------> Pastoral herd --corral--> Pen
+# Each verb wears the glyph of THE RUNG IT BUILDS (🌱 the crop Cultivate starts, 🐄 the livestock
+# Corral pens), so `tame` and `sow` follow the same rule: ▦ = the plotted Field that Sow places (and
+# it reads as laid-out ground — a *different thing* from the 🌾 Tended Patch badge, which is the
+# point of rung 3); ◎ = the pastoral herd that now keeps to your camp, the rung's defining effect
+# (proximity: far → near → fixed, §3).
+#
+# BOTH ARE TEXT-PRESENTATION SYMBOLS, DELIBERATELY — and that is a sharper rule than "bold line art".
+# ♻ ⬆ ⇄ render BOLD because they inherit the label's font colour; an EMOJI carries its own colours
+# and cannot be tinted, so it renders at whatever contrast its art happens to have. 🐾 was tried for
+# `tame` and REJECTED on exactly that: at picker size it came out a faint washed-out tan against the
+# dark console — the weakest glyph in the row, next to a crisp white 💀 (see the first cut of
+# `two_meter_split.png`). This is the 🪙/💰 hazard's real mechanism, and it is why a *disabled* rung
+# also matters: a text glyph greys out with its button, an emoji stays stubbornly coloured.
+const POLICY_TAME := "tame"
+const POLICY_SOW := "sow"
 const POLICY_ICONS := {
 	"sustain": "♻",
 	"surplus": "⬆",
 	"market": "⇄",
 	"eradicate": "💀",
 	"cultivate": "🌱",
+	POLICY_SOW: "▦",
+	POLICY_TAME: "◎",
 	POLICY_CORRAL: "🐄",
 }
 
@@ -135,18 +156,43 @@ const ICONS := {
 static func for_module(module_key: String) -> String:
 	return String(ICONS.get(module_key.strip_edges(), DEFAULT))
 
+# Site ART KEYS that are not themselves food-module keys. Deliberately disjoint from `ICONS`'
+# keys so `site_key_for`'s return value is unambiguous: no food module is named "hunt", "reeds"
+# or "default", and none may be added with those names.
+const SITE_KEY_HUNT := "hunt"
+const SITE_KEY_REEDS := "reeds"
+const SITE_KEY_DEFAULT := "default"
+
+## The stable ART KEY for a food site. This is the ONE site-resolution implementation: `for_site`
+## maps the key to an emoji and `SiteSprites.for_site` maps the same key to a bundled PNG, exactly
+## as `species_key_for` is shared by the herd pair. A hunted site is `hunt`; a riverine_delta site
+## on dry floodplain LAND is `reeds`; any known food module is its own key (riverine_delta with an
+## unknown terrain therefore lands here, keyed as itself — the open-river 🐟 reading, not `reeds`);
+## only an unknown module is `default`.
+static func site_key_for(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
+	if is_hunt:
+		return SITE_KEY_HUNT
+	var key := module_key.strip_edges()
+	if key == RIVERINE_DELTA_MODULE and terrain_id >= 0:
+		if RIVERINE_REED_TERRAINS.has(_terrain_name(terrain_id)):
+			return SITE_KEY_REEDS
+	if ICONS.has(key):
+		return key
+	return SITE_KEY_DEFAULT
+
 ## Icon for a food site, using the game-trail (hunt) icon when the site is hunted
 ## rather than gathered. `terrain_id` (>=0) splits the riverine_delta module's glyph
 ## by tile terrain — dry floodplain LAND reads as reeds (🎋), open river keeps 🐟;
 ## terrain_id < 0 (unknown) or any other module falls through to the plain module glyph.
 static func for_site(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
-	if is_hunt:
+	var key := site_key_for(module_key, is_hunt, terrain_id)
+	if key == SITE_KEY_HUNT:
 		return HUNT
-	var key := module_key.strip_edges()
-	if key == RIVERINE_DELTA_MODULE and terrain_id >= 0:
-		if RIVERINE_REED_TERRAINS.has(_terrain_name(terrain_id)):
-			return RIVERINE_REED_ICON
-	return for_module(key)
+	if key == SITE_KEY_REEDS:
+		return RIVERINE_REED_ICON
+	# SITE_KEY_DEFAULT is not an ICONS key, so it lands on DEFAULT — the same sprig `for_module`
+	# would have returned for an unknown module.
+	return String(ICONS.get(key, DEFAULT))
 
 # Terrain id → config `name`, memoized. Uses `get_names_dict()` (not the `get_name(id)` static): a
 # script resource's built-in 0-arg `get_name` shadows that static when called via the global class, so
@@ -163,16 +209,28 @@ static func _terrain_name(terrain_id: int) -> String:
 # runs per herd from the map draw loop, so this avoids re-sorting every frame.
 static var _herd_keywords_by_length: Array = []
 
-## Icon for a migratory herd, inferred from a species keyword in its label
-## (falls back to a generic grazer). Matches the longest keyword first so a
-## specific species wins over a shorter substring (e.g. "reindeer" is not
-## mistaken for "deer") regardless of HERD_SPECIES declaration order.
-static func for_herd(label: String) -> String:
+## The HERD_SPECIES key matched by a species keyword in a herd label, or "" when the label
+## names no species we know. Matches the longest keyword first so a specific species wins
+## over a shorter substring (e.g. "reindeer" is not mistaken for "deer") regardless of
+## HERD_SPECIES declaration order.
+##
+## This is the ONE species-matching implementation: `for_herd` maps the key to an emoji, and
+## `FaunaSprites.for_herd` maps the same key to a bundled PNG. Adding a species keyword here
+## therefore serves both renderers.
+static func species_key_for(label: String) -> String:
 	if _herd_keywords_by_length.is_empty():
 		_herd_keywords_by_length = HERD_SPECIES.keys()
 		_herd_keywords_by_length.sort_custom(func(a, b): return String(a).length() > String(b).length())
 	var lower := label.to_lower()
 	for keyword in _herd_keywords_by_length:
 		if lower.find(keyword) != -1:
-			return String(HERD_SPECIES[keyword])
-	return HERD_DEFAULT
+			return String(keyword)
+	return ""
+
+## Icon for a migratory herd, inferred from a species keyword in its label
+## (falls back to a generic grazer).
+static func for_herd(label: String) -> String:
+	var key := species_key_for(label)
+	if key == "":
+		return HERD_DEFAULT
+	return String(HERD_SPECIES[key])

@@ -687,3 +687,64 @@ pub fn snapshot_profiles(handle: &StartProfilesHandle) -> Vec<CampaignProfileSna
         .map(CampaignProfileSnapshot::from_profile)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
+        forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
+    };
+
+    /// Every knowledge the intensification ladder gates on, and the id it must map to.
+    const LADDER_KNOWLEDGE: [(&str, u32); 4] = [
+        ("cultivation", CULTIVATION_DISCOVERY_ID),
+        ("herding", HERDING_DISCOVERY_ID),
+        ("seed_selection", SEED_SELECTION_DISCOVERY_ID),
+        ("penning", PENNING_DISCOVERY_ID),
+    ];
+
+    /// **Nothing on the ladder is start-granted** (`docs/plan_intensification_ladder.md` §2a) — the
+    /// whole model is that knowledge is *earned by practice*, so a profile that shipped one would
+    /// silently hand the player a rung they never climbed.
+    ///
+    /// Each tag is declared in `start_profile_knowledge_tags.json` **purely so it is mappable**, and
+    /// that is exactly the hazard this pins: the mapping's existence is what would let a profile list
+    /// it by name. Every doc comment on the four ids asserts this in prose; here it is a test.
+    #[test]
+    fn no_start_profile_grants_a_ladder_knowledge() {
+        let profiles = StartProfiles::builtin();
+        for profile in &profiles.profiles {
+            for (tag, _) in LADDER_KNOWLEDGE {
+                assert!(
+                    !profile
+                        .overrides
+                        .starting_knowledge_tags
+                        .iter()
+                        .any(|granted| granted == tag),
+                    "start profile '{}' grants the ladder knowledge '{tag}' — it must be EARNED \
+                     (practice rung N unlocks rung N+1), never handed out at start",
+                    profile.id
+                );
+            }
+        }
+    }
+
+    /// The four ladder knowledges are **mappable** — each tag resolves to its discovery id. This is
+    /// what lets `intensification::discovery_id_for` name them, and it is the other half of the
+    /// contract above: declared, but never granted.
+    #[test]
+    fn every_ladder_knowledge_tag_maps_to_its_discovery() {
+        let catalog = StartProfileKnowledgeTags::builtin();
+        for (tag, id) in LADDER_KNOWLEDGE {
+            let def = catalog
+                .get(tag)
+                .unwrap_or_else(|| panic!("'{tag}' must be declared in the knowledge-tag catalog"));
+            assert_eq!(
+                def.discovery_id(),
+                id,
+                "'{tag}' maps to the wrong discovery"
+            );
+        }
+    }
+}

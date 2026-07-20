@@ -102,9 +102,13 @@ never writes, deletes, or liveness-checks the file.
 | `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
-| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`, which takes an optional tile `terrain_id`: **`riverine_delta` splits fish 🐟 ↔ reeds 🎋** — dry floodplain LAND (`alluvial_plain`/`floodplain`) reads as reeds via `RIVERINE_REED_ICON`, open `navigable_river` keeps 🐟; MapView stamps each food site's `terrain_id` so the map marker + HUD Forage row resolve the same glyph), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
+| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`, which takes an optional tile `terrain_id`: **`riverine_delta` splits fish 🐟 ↔ reeds 🎋** — dry floodplain LAND (`alluvial_plain`/`floodplain`) reads as reeds via `RIVERINE_REED_ICON`, open `navigable_river` keeps 🐟; MapView stamps each food site's `terrain_id` so the map marker + HUD Forage row resolve the same glyph — the resolution itself is factored into the public **`site_key_for(module_key, is_hunt, terrain_id)`**, which returns a stable ART KEY (`"hunt"` / `"reeds"` / a module key verbatim / `"default"`, the three non-module keys deliberately disjoint from `ICONS`) so `SiteSprites` resolves the same site without a second copy of the fish↔reeds branch; `for_site` is written in terms of it, so there is exactly ONE implementation — the twin of `species_key_for` on the herd side), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first — the matching itself is factored into the public **`species_key_for(label)`**, which returns the matched HERD_SPECIES key (`""` when none) so `FaunaSprites` can resolve the same species without a second copy of the matcher; `for_herd` is written in terms of it, so there is exactly ONE implementation), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the **four investment** rungs of the Intensification Ladder — cultivate 🌱 / sow ▦ / tame ◎ / corral 🐄. Each verb wears the glyph of **the rung it builds** (🌱 the crop, ▦ the plotted Field, ◎ the pastoral herd that now keeps near your camp — the rung's defining effect is proximity — 🐄 the penned livestock; 🐄 is also the herd drawer's Domesticated/Corralled badge, and ▦ the tile card's `▦ Field` badge). Verified legible at picker size in `forage_cultivate.png` / `forage_sow.png` / `two_meter_split.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately TEXT-PRESENTATION symbols** (♻ ⬆ ⇄ ▦ ◎) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. **The mechanism is sharper than "prefer line art", and it decides the choice:** a text-presentation glyph **inherits the label's font colour**, so it renders at the button's full contrast and greys out *with* the button when a rung is disabled; an **emoji carries its own colours and cannot be tinted**, so it renders at whatever contrast its art happens to have and stays stubbornly coloured while disabled. 🐾 was tried for `tame` and rejected on exactly that — at picker size it came out a faint washed-out tan against the dark console, the weakest glyph in a row next to a crisp white 💀 (see the first cut of `two_meter_split.png`) — and ◎ replaced it. Prefer a text-presentation symbol for any NEW policy glyph; the surviving emoji (💀 🌱 🐄) are grandfathered and legible. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
+| `ui/FaunaSprites.gd` | Bundled PNG art for map HERD markers — the sprite half of `FoodIcons`' herd vocabulary, and the reason a rabbit no longer renders white on macOS and pink on Windows: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned the look. Static-only (same reasoning as `ServerPortsFile.gd`): `SPRITE_PATHS` maps a species KEY (a `FoodIcons.HERD_SPECIES` key, resolved via `FoodIcons.species_key_for` — **never a second matcher**) to a file in `assets/icons/fauna/`, aliasing shared art exactly as HERD_SPECIES aliases emoji (deer/reindeer/caribou/elk → `deer.png`). `for_herd(label) -> Texture2D` returns the cached texture or **`null` when this species has no art yet**, which is the fallback contract: `SecondaryMarkerRenderer.draw_herd` resolves the sprite first and calls `MapView._draw_marker_sprite`, else falls through to the unchanged emoji `_draw_marker_glyph`. **Coverage is now COMPLETE** — all 17 HERD_SPECIES keys map to one of 10 PNGs (aliases share art: bison/buffalo → `aurochs.png`, oxen → `cattle.png`, ibex → `goat.png`, reindeer/caribou/elk → `deer.png`), so no herd species in the game draws an OS emoji. Adding a species is still: drop the PNG in, add the key here. **The `null` fallback stays load-bearing even at full coverage** — it catches a herd label naming a species the client does not know (`species_key_for` → `""`) and the `HERD_DEFAULT` case, both of which still render emoji. Because every known species now has art, **no map_preview fixture exercises the emoji path any more**; a fixture herd labelled with an unknown species is what would restore that guard. Loaded with `load()` (not `preload()`) so a missing file degrades to the emoji rather than breaking scene load, with one warning per missing path. **The sprite is drawn UNTINTED**, like the emoji — a starving pen still reads as the distress ring + badge GEOMETRY drawn under/over the marker, never a modulate. **Import options are load-bearing**: the sources are 256px but `MapView.texture_filter` is pinned `TEXTURE_FILTER_NEAREST` (to keep the terrain-cache blit seam-free), so the `.import` files set `process/size_limit=64` to cut a 7:1 nearest minification down to ~1.8:1; `mipmaps/generate=true` is set too but is INERT under NEAREST — it only starts paying if that filter is ever raised to linear-with-mipmaps. Judge any art change at TRUE marker size (10–41px), not in a fitted preview frame, which renders them ~2.5× too big |
+| `ui/SiteSprites.gd` | Bundled PNG art for map FOOD-SITE markers — the sprite half of `FoodIcons`' site vocabulary, and the food-module twin of `FaunaSprites` (same reasoning: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned what a shellfish bed or a nut grove looked like). `SPRITE_PATHS` maps a site ART KEY — resolved via **`FoodIcons.site_key_for`, never a second copy of the fish↔reeds branch** — to a file in `assets/icons/sites/`; `for_site(module_key, is_hunt, terrain_id) -> Texture2D` takes the SAME arguments as `FoodIcons.for_site`, so the sprite and the emoji can never disagree about which site this is. **Coverage is COMPLETE** — all 10 `ICONS` modules plus the three non-module keys map to bundled art (12 PNGs, with **`hunt` reusing the fauna `deer.png`**: a hunted site IS game, and a second copy under `sites/` would be one more thing to keep in sync), so no food site in the game draws an OS emoji and — exactly as on the fauna side — **no map_preview fixture exercises the emoji path any more**. The `null` fallback stays load-bearing: it catches an art key with no art (a new food module added to `ICONS` without a PNG), which still renders the emoji. `SecondaryMarkerRenderer.draw_food_site` resolves the sprite first and calls `MapView._draw_marker_sprite`, else falls through to the unchanged `_draw_marker_glyph`. **Same import options as fauna** (`process/size_limit=64`, `mipmaps/generate=true` — inert under the pinned `TEXTURE_FILTER_NEAREST`, see the FaunaSprites row) and the same judging rule: at true marker size. The **reeds are the busiest icon in the set** — at ~36px the individual blades merge into a mass, though the vertical tuft + brown cattail heads stay unmistakable and unique; it is the first one to re-check on any sizing change. Verify the whole set on `map_preview`'s **`map_site_sprites`** (the SPRITE ROSTER: one site per art key in one row, incl. the hunted-site deer and an unknown module's `default` sprig) + **`map_riverine_split`** (the decisive frame: ONE module, `riverine_delta`, drawing the FISH on open navigable river and the REEDS on dry alluvial plain — the branch `site_key_for` exists for) |
+| `ui/WonderSprites.gd` | Bundled PNG art for map **DISCOVERED-SITE (Wondrous Site)** markers — the third art family behind `IconSprites`, after `FaunaSprites` and `SiteSprites` (same reasoning: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned what a Great Peak looked like, and ⛰/⛲ blob at marker size). **Keyed on `site_id`** — the sim's stable catalog key from `core_sim/src/data/sites_config.json`, **already on the wire** (decoded in `native/src/lib.rs`, already read by `SecondaryMarkerRenderer._wonder_key`), so this needed **no schema or server change**. Deliberately NOT keyed on the `glyph` string: that is presentation the server also happens to send, and two sites may share one glyph (the fixture's `sky_arch` reuses ⛰), so keying on it would collapse distinct sites onto one sprite. `for_site_id(site_id) -> Texture2D` returns the cached texture or `null`. **THE `null` FALLBACK IS GENUINELY LIVE HERE — the one way this table differs from `FaunaSprites`/`SiteSprites`**, whose coverage is complete and whose fallbacks only guard an unknown key. `great_peak` + `verdant_basin` are the whole catalog *today*, but that catalog is **data-driven** and expected to grow: a designer adds a site entry with a glyph and it ships with no art, so falling through to the server-provided emoji is a real, **exercised** path (`map_sites.png`'s `sky_arch` renders it). Adding art stays: drop the PNG in `assets/icons/wonders/`, add the id here. A site with art must draw **even if the server sent no glyph**, and that takes BOTH halves of `SecondaryMarkerRenderer`, which is why they share one predicate, `_wonder_renders(site)` = *has a sprite OR a non-empty glyph*: (1) `compute_slots` must admit sprite-only sites to **slot eligibility** — it originally tested the glyph alone, so such a site got no slot and `draw_discovered_site` bailed at its `slot < 0` return long before any sprite check, making the guarantee unreachable; and (2) `draw_discovered_site`'s own early-return must likewise account for the sprite, not just the glyph. Past that guard it calls `MapView._draw_marker_sprite`, else falls through to the unchanged emoji `_draw_marker_glyph`. Latent while every shipped site carries a glyph — keep the two tests on the shared helper so they cannot drift back apart. **Same import options as fauna/sites** (`process/size_limit=64`, `mipmaps/generate=true` — inert under the pinned `TEXTURE_FILTER_NEAREST`) and the same judging rule: at true marker size. At ~36px `great_peak`'s snow-capped silhouette is unmistakable; `verdant_basin`'s leaf fronds merge into the green mass (the `reeds` caveat again) but its green-ring-around-blue-water read stays distinct — re-check it first on any sizing change. Verify on `map_preview`'s **`map_sites`** (both sprites + the unmapped `sky_arch` falling to emoji) and **`map_sites_fogged`** (the case unique to this marker: a site persists on a *remembered* tile under the mist tint — both sprites must still read there) |
+| `ui/IconSprites.gd` | The shared texture cache behind ALL THREE bundled-art tables (`FaunaSprites`, `SiteSprites`, `WonderSprites`): `texture_for(path) -> Texture2D` owns the lazily-populated path→`Texture2D` dictionary, the `load()`-not-`preload()` (so a missing file degrades to the emoji rather than breaking scene load) and the **one warning per bad path** (a failed path caches `null`, so the load is attempted once, not once per marker per frame). Extracted because the tables would otherwise carry that cache verbatim three times; a new art family is now just a `SPRITE_PATHS` table plus a key resolver (`WonderSprites` was exactly that — a table keyed on `site_id`, no cache code). Static-only, same reasoning as `FoodIcons` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
-| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are judged on — `map_rivers_head_minor.png`: a second navigable head fed by a **Minor tributary only**, the frame the HEAD TAPER is judged on; **`map_rivers_midchain.png`**: a Minor tributary handing over at a vertex of a **MID-CHAIN** trunk hex (upstream *and* downstream channel exits) — the frame the head-taper's **exit-count gate** is judged on: the trunk must hold **constant full width through the junction** (any pinch-and-swell at the hex centre is the HOURGLASS the gate exists to prevent) while the spur still reaches its vertex. The case the drainage-network rewrite created and the fixtures never had; **`map_rivers_notch.png`**: a chain HEAD whose tributary hands over at its BOTTOM vertex (corner 1) and whose single channel exit is the ADJACENT SW side — both flanking the same corner, the geometry the old centre-hub routing drew a NOTCH / inverted-V on. The direct inflow-corner→exit-midpoint routing must draw ONE smooth tapered channel with no notch (zoomed via `NOTCH_ZOOM_IN`); **`map_rivers_lake_alongside.png`**: a one-hex `inland_sea` ringed by three navigable hexes whose `river_channel` exits all run along their own chain / out to the sea — NONE into the lake (the @21,61 case). The shore pass's per-edge MOUTH test must draw the lake's FULL beach/foam ring INCLUDING the navigable-adjacent edges (the old "any navigable adjacency" exclusion ate them); the true mouth into the eastern sea in the same frame STAYS open; and `map_rivers_web.png`: a solid CLUMP of adjacent navigable hexes with `river_channel` winding through it as ONE snake — the **regression guard** for the spider-web bug, since the other river fixtures build their chain by hand and are paths by construction, which is why the harness never caught it. Any cross-link/triangle there = the terrain-inferred arm rule is back) and the **starving-pen distress badge** (`map_herd_starving` — a starving pen beside a fed one) Also state **"pasture"** (`map_pasture.png`) — the **graze distribution** on an earthlike-shaped fixture map under the `pasture` overlay channel (see Overlay Channels): the frame Phase 2a exists to be judged on (is prairie really pasture? is the alluvial fallback dominant? are glacier/lava/water distinct from merely-poor ground?). It stages a **woodland block a live map does not have** (the palette thins forest out), sizes the window to the grid's aspect (MapView is **cover-fit**, so a mismatch CROPS exactly the distribution you came to see), and **prints the legend dict** (this harness has no HUD to draw it into). Also state **"forage"** (`map_forage.png`) — the **human-food distribution**, the SAME earthlike fixture painted from the human-food table under the `forage` channel, so it compares tile-for-tile with `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor on pasture; the shelf column glows on forage where it is barren on pasture) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are judged on — `map_rivers_head_minor.png`: a second navigable head fed by a **Minor tributary only**, the frame the HEAD TAPER is judged on; **`map_rivers_midchain.png`**: a Minor tributary handing over at a vertex of a **MID-CHAIN** trunk hex (upstream *and* downstream channel exits) — the frame the head-taper's **exit-count gate** is judged on: the trunk must hold **constant full width through the junction** (any pinch-and-swell at the hex centre is the HOURGLASS the gate exists to prevent) while the spur still reaches its vertex. The case the drainage-network rewrite created and the fixtures never had; **`map_rivers_notch.png`**: a chain HEAD whose tributary hands over at its BOTTOM vertex (corner 1) and whose single channel exit is the ADJACENT SW side — both flanking the same corner, the geometry the old centre-hub routing drew a NOTCH / inverted-V on. The direct inflow-corner→exit-midpoint routing must draw ONE smooth tapered channel with no notch (zoomed via `NOTCH_ZOOM_IN`); **`map_rivers_lake_alongside.png`**: a one-hex `inland_sea` ringed by three navigable hexes whose `river_channel` exits all run along their own chain / out to the sea — NONE into the lake (the @21,61 case). The shore pass's per-edge MOUTH test must draw the lake's FULL beach/foam ring INCLUDING the navigable-adjacent edges (the old "any navigable adjacency" exclusion ate them); the true mouth into the eastern sea in the same frame STAYS open; and `map_rivers_web.png`: a solid CLUMP of adjacent navigable hexes with `river_channel` winding through it as ONE snake — the **regression guard** for the spider-web bug, since the other river fixtures build their chain by hand and are paths by construction, which is why the harness never caught it. Any cross-link/triangle there = the terrain-inferred arm rule is back) and the **starving-pen distress badge** (`map_herd_starving` — a starving pen beside a fed one, **plus a third starving pen (boar)**: every species now has bundled sprite art, so all three pens are `FaunaSprites` markers and the frame proves the ring/badge reads over a sprite — it no longer exercises the emoji fallback at all) and **`map_fauna_sprites`** (the SPRITE ROSTER: one herd per bundled-art species on its own hex, in one row because MapView is cover-fit and a second row is cropped away unseen — the only frame where the whole art set is judged at once for swapped/clipped/fringed sprites) and its food twin **`map_site_sprites`** (the same idea for `SiteSprites`: one food site per bundled art key in one row, including a `game_trail` site — which must draw the fauna DEER — and an unknown module, which must fall to the `default` sprig; the riverine fish↔reeds pair is judged separately on `map_riverine_split`, since one module drawing two icons needs two terrains, not two hexes) Also state **"pasture"** (`map_pasture.png`) — the **graze distribution** on an earthlike-shaped fixture map under the `pasture` overlay channel (see Overlay Channels): the frame Phase 2a exists to be judged on (is prairie really pasture? is the alluvial fallback dominant? are glacier/lava/water distinct from merely-poor ground?). It stages a **woodland block a live map does not have** (the palette thins forest out), sizes the window to the grid's aspect (MapView is **cover-fit**, so a mismatch CROPS exactly the distribution you came to see), and **prints the legend dict** (this harness has no HUD to draw it into). Also state **"forage"** (`map_forage.png`) — the **human-food distribution**, the SAME earthlike fixture painted from the human-food table under the `forage` channel, so it compares tile-for-tile with `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor on pasture; the shelf column glows on forage where it is barren on pasture) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/blend_probe.gd` / `.tscn` | Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses *fit* their grid to the window (r ≈ 83–178) and the blend look is radius-relative, so every judgement made in a fitted frame was wrong. Pins a 1:1 1920×1080 canvas + a grid sized so `_fit_map_to_view` lands on the target radius (it prints the achieved radius and warns if it drifts). **Two states:** (1) a **band strip** of flat biomes at r≈45 (desert · prairie · scrub · alluvial · tundra · salt flat — every adjacent pair is a flat↔flat seam) → `blend_bands_*.png`; (2) **ISOLATED prairie hexes surrounded on all six sides by dark rocky soil** at **r≈75** (the user's on-screen size) → `blend_isolated_shipped.png` + one full frame & native-res close-up per tuning variant + a labelled contact sheet (`V6_*.png`). **State 2 is mandatory for any blend change**: a straight band seam looks fine even when the blend is tearing holes in hex interiors — only a surrounded hex exposes it (that is how the shredding regression shipped). **Two more states (V7, water↔water):** (3) an irregular **deep-ocean region embedded in continental shelf** (plus isolated deep hexes) at r≈77 → `V7_water_W1.png` (water on the shared LAND levers — still a soft-edged hexagon) vs `V7_water_W2.png` (the shipped `water_blend` block — the silhouette dissolves); (4) a ragged **coast** frame with a single water id → `V7_coast_unchanged.png`, the **bit-identical reference** any blend-eligibility change is pixel-diffed against (it must not move the shoreline). **Two more states:** (5, V8) the water patch rendered **FoW OFF vs FoW ON** (a mix of active + discovered hexes, nothing unexplored) → `V8_water_fow_off.png` / `V8_water_fow_on.png` — the FoW tint comes from a **per-hex, NEAREST-sampled vis-map**, which used to make every discovered↔active adjacency a **hard hex-shaped tint boundary that is not a terrain seam**. Any "hard straight edges are back" report must be checked against this pair BEFORE the blend is touched. This is also the frame the **FoW boundary softening** is judged on (see Fog-of-war softening: the steps must be gone, pure states unchanged); (6, V10) the shipped **shoreline profile** on the ragged coast at r≈75, rendered against TWO land biomes → `V10_shore.png` + `V10_shore_closeup.png` (prairie) and **`V10_shore_dark_land.png` + `V10_shore_dark_land_closeup.png`** (rocky_regolith). The close-ups are where the "is there a hard line anywhere on land→sand→foam→water?" call is made (the downscaled full frame hides a 1px line; see Shoreline), and **the DARK-land one is decisive** — prairie's tan hides sand-vs-land contrast and masked an invisible-beach bug through several passes, so never judge the beach on prairie alone. `_render_variant(overrides, name, crop…)` overrides any `terrain_config` lever (incl. the nested `water_blend` / `shore` blocks) live, which is how the shipped values were swept. **One more state (8, W): the FoW hex-step BEFORE vs AFTER the boundary softening** — one camera, one terrain, one visibility map, only `fow_softness` varying → `W_fow_off.png` (FoW off, the terrain-only reference: the deep-ocean blob's edges are already soft, which **exonerates the blend**), `W_fow_on.png` (softness `0` — reproduces the **unsmoothed per-hex tint**, i.e. the hard hexagonal brightness steps), `W_fow_fixed.png` (the shipped softness — steps gone, mist preserved). Each also dumps a `_closeup` and, decisively, a **`_same_terrain`** crop straddling hexes **(4,3) Active / (3,3) Discovered — BOTH continental shelf**, so the only thing that can draw an edge between them is the FoW tint. That crop answers any "hard straight edges in open water, even between hexes of the same terrain" report. **One more state (9, X): the DARK-WATER report on REAL game terrain** → `X_dark_water.png` + `X_dark_water_closeup.png`, rendered from a **verbatim 14×10 window of a LIVE snapshot's id-map** (`X_WATER_IDS`), FoW OFF, r≈75. The synthetic water states (3/5/8) never reproduced the "dark patches of open water with hard full-hexagon edges" report because their deep-ocean region is ONE clean ragged blob; the real ocean is **salt-and-pepper** shelf/deep, and a lone deep hex ringed by shelf can only read as a dark HEXAGON. **Any "dark water hexagons" report must be rendered on THIS state** — a synthetic blob will not show it. It is the frame the water **depth field** (see Edge Blending → water) was verified against. **One more state (10, L): the PER-WATER-TERRAIN shore profile on a SMALL INLAND SEA** → `L1_current.png` / `L2_no_wisp.png` / `L3_half.png` / `L4_tenth.png` (+ `*_full.png`), a 7-hex `inland_sea` lake in a field of **dark rocky_regolith** (prairie's tan camouflages both sand and foam) at r≈75, one camera/crop across all four. `_render_lake_variant` overrides the inland_sea entry's `shore_profile` in the live config and calls `TerrainTextureManager.rebuild_layer_shore_map()` — the sweep for choosing a lake's coast (now in the three-scale scheme; **L3 IS the shipped lake**, `sand 0.5 / foam 0.5 / wisp 0`, and L4 = the whole profile scaled so its OUTERMOST reach, `wisp_center + wisp_half` = 0.68·r, lands at ~0.10·r → 0.147). **The harness disables `MapView._unhandled_input`** — it renders in a REAL window, so the OS cursor otherwise drew a faint HOVER hex outline into the frames, a run-to-run difference of a few thousand pixels that silently defeats the pixel-diff the coast states exist for. With it off, consecutive runs are **byte-identical**, so `V7_coast_unchanged.png` / `V10_shore*.png` are usable as strict bit-identity references. **One more state (11, H): ROLLING HILLS "cut off at the hex edge"** → `H_*.png`, a `rolling_hills` (24) blob + **isolated** hills hexes + an **isolated alpine (26)** hex in a field that is dark `rocky_reg` west / tan `prairie` east, at r≈75 with the **hex grid overlay OFF** (a drawn hexagon would answer the very question under test). Frames: `H_before` (the artifact), **`H_base_only`** (peaks skipped by pushing `peak_min_radius` above the render radius — isolates the BASE floor, and is what proved the cut is the rugged base hexagon, **not** a weak mound overhang), `H_peaks_only` (the amplified `before − base_only` pixel diff = the peak pass's exact footprint: it shows the mounds DO overhang, and that the peak **cast shadow darkens the whole neighbour hex**, a second hard hexagon), and the candidate fixes `H_fix_overhang` / **`H_fix_base`** (`blend_rugged_land`) / `H_fix_both`. Each renders a full frame + a seam close-up + the **isolated-hex** and **alpine** close-ups (the mandatory shred checks). `H_gate_bands_full` / `H_gate_coast` re-render the flat↔flat strip and the coast with the rugged gate ON — they must byte-compare **identical** to `blend_bands_full` / `V7_coast_unchanged`. **One more state (12, R): the RUGGED-GATE SWEEP** — `blend_rugged_land` is GLOBAL, so shipping it lets EVERY rugged biome's base floor blend, and the failure mode is SHREDDING. R renders **each rugged biome as an ISOLATED hex** (even col + even row ⇒ never adjacent to another subject) in TWO fields, each **gate OFF vs gate ON** so every biome is a controlled A/B: `R_flatoff_*` / `R_flat_*` (dark `rocky_reg` west, tan `prairie` east) and `R_ruggedoff_*` / `R_rugged_*` (a field of `canyon_badlands` — the rugged↔rugged case), plus `R_*_field_full`. **The gate-OFF pair is not optional**: several biomes' own art (e.g. `karst_highland`'s semi-transparent overhanging spires) *looks* like neighbour texture leaking into the hex, and only the A/B tells art from tear. **One more state (13, S): the PEAK CAST-SHADOW HEXAGONS** — an alpine massif + an isolated `rolling_hills` hex in a light prairie field, grid OFF → `S_shadow.png` + `_closeup` + `_iso`, and decisively **`S_shadow_footprint*.png`**, the amplified diff against a `shadow_strength = 0` render (the cast shadow **in isolation** — the only frame on which "is it hex-shaped? is it still directional?" can actually be answered, since the semi-transparent mound fringe contaminates every other measurement). **Two harness bugs were fixed here and must not regress:** (a) `project.godot` opens the window **MAXIMIZED** (`window/size/mode=3`) and the WM applies that a few frames into the run — *after* `_ready` sized it — so the viewport became the whole monitor and every state after the second silently rendered at **r ≈ 154, not the game's 75** (and the taller states overflowed the canvas, clipping the close-ups). `_pin_canvas` re-asserts WINDOWED + 1920×1080 on every `_refit`. (b) Lever overrides now go through **`_override_config`/`_restore_config`**, which **ERASE** a key that was absent instead of writing `null` back: MapView reads levers as `bool(config.get(key, DEFAULT))`, the default only applies when the key is **missing**, and a present-but-null key reaches `bool(null)` — a **runtime error that aborts `_update_terrain_shader_quad` before it pushes a single uniform**, so every later frame renders with STALE uniforms and lies. **One more state (14, G): the REAL NEIGHBOURHOOD from the user's screenshot** — the "hills are STILL cut off, with the rugged gate ON" report → `G_*.png`. State H could not see why: its hills blob sits in FLAT fields only, so every peak edge in it is a peak↔non-peak one (which the overhang feathers). G rebuilds the screenshot — a `rolling_hills` blob against `canyon_badlands` (rugged, **no** peak asset), **`alpine_mountain` (which HAS one → the peak↔PEAK case)**, `high_plateau` (a peak at ~the SAME elevation as the hills → the near-zero-Δ case), `alluvial_plain`, `rocky_reg` and an `inland_sea` lake hex — at r ≈ 75, grid OFF. It is the **only** probe state that ships a real **elevation raster** (`G_ELEVATION_BY_ID` + `elevation_sea_level`): every other snapshot omits the channel, so MapView falls back to `PEAK_ELEV_FALLBACK` for EVERY hex and **no elevation asymmetry can be judged in them**. Frames: `G_before` (shipped), **`G_no_peaks`** (peak pass skipped — it renders the same seam as a soft ecotone, which **exonerated the base blend** and convicted the peak overlay), `G_no_shadow` (cast shadow off, peaks on — attributes a residual line to the shadow vs the art), `G_peaks_only` (the amplified diff = the peak pass's exact footprint), each with native-res crops `_peakpeak` (hills↔alpine, big Δelev), `_sameelev` (hills↔plateau, Δ≈0 → must stay a soft symmetric cross-fade), `_canyon` (peak↔non-peak — the control), `_lake` (the shoreline — hard BY DESIGN), `_iso` + `_iso_alpine` (the mandatory isolated-hex shred checks; both sit on the LEFT of the frame because MapView's minimap CanvasLayer is NOT hidden and a bottom-right crop captures IT). **A `--only=` state filter** (`godot --path . res://tools/blend_probe.tscn -- --only=G`, or `--only=1,4,G`; keys are `<number>/<letter>`, no filter = every state) renders one state instead of all 14 — a diagnosis loop re-renders one state many times. **A third harness bug was fixed here and must not regress:** `project.godot` opens the window **MAXIMIZED** and macOS applies — and **RE-applies** — that asynchronously, many frames in, so a fixed pair of `process_frame`s is a RACE that does not stay won. A filtered run puts a radius-critical state FIRST and it fitted at **r ≈ 154, not the game's 75**; a re-maximize BETWEEN two frames of one state rendered them at different resolutions (the pixel-diff then dies on a size mismatch); and one DURING a crop sequence made the captured image the monitor's while the viewport still reported the pinned size (`content_scale_size` pins the viewport, so **only `get_window().size` can see the maximize**) — the crop then landed off-frame as a 686×1 sliver. `_ensure_canvas` (called from `_settle`) re-pins and WAITS on the window; `_capture` re-draws until the captured geometry is the canvas's (or an integer HiDPI multiple) instead of silently saving a bad frame. **One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both sand and foam) at r≈75, **grid overlay OFF**, one camera/crop per comparison set. `_snapshot_coast(shore_id, water_id)` now takes the SEA's id, which is what selects the `shore_profile` under test. Frames: **`D1_cliff`** (`deep_ocean` meeting land — NO sand anywhere, big surf, and the full-strength surf peak must still conceal the base's own step at the waterline, since there is no sand out there to hide it); **`D2_shelf_C1/C2/C3`** (the shelf's muting ladder, `foam_scale` 0.85/0.75/0.65 × `wisp_scale` 0.5 — the surf's measured footprint falls 18.0k → 15.8k → 13.9k → 12.2k px against the cliff's; **C2 ships**); **`D3_mixed_coast`** — THE DECISIVE FRAME: a `deep_ocean` hex and a `continental_shelf` hex **adjacent along ONE coastline**, both touching the same land (`_snapshot_mixed_coast` swaps the sea by row), where a nearest-water PICK would jump the profile at their bisector and make the sand appear along a **hard line**; the weighted-mean profile field must instead **fade the beach in** along the shore (measured: the land-pixel difference vs `D1_cliff` ramps from 0.00 over ~220px ≈ 3 hex radii — not a step); and **`D4_lake_unchanged`** (the lake, shipped config — the two-lever → three-scale migration must be a no-op). **One more state (16, SURF): THE BRIGHT WHITE SHORELINE OUTLINE** → `W_*.png`, the state the **waterline base cross-fade** + **`foam_opacity`** were built and chosen on (r≈75, grid OFF; the archipelago frames also render at **r≈30 — map scale**, which is the zoom the complaint was made at). The report was that the surf reads as "an obvious bright white outline on most land". Every frame uses the **MIXED coast** (`_snapshot_mixed_coast`: deep_ocean CLIFF in the north rows, continental_shelf BEACH in the south, both against **dark rocky_reg**) so each rung is cropped on **both coast types at once** (`_cliff` / `_beach`) — they fail differently. Frames: `W_base` (the shipped near-white ring — the complaint, and it is unmistakable); **`W_optA_1/2/3`** (option A, the **recolour-only** ladder: still an OPAQUE ring, just greyer — rendered so the "just make it grey" idea can be *seen* to be insufficient); **`W_optB_1/2/3`** (option B's `foam_opacity` ladder 0.35/0.55/0.75 on the cross-fade + muted colour; **0.55 ships**); and **THE MAKE-OR-BREAK PAIR — `W_step_control` vs `W_optB_step_check`**, the CLIFF coast with the **foam disabled entirely** (`foam_opacity 0` kills surf *and* wisp): the control (cross-fade also off) shows the **raw base step — a razor-straight hex-edge cut**, which is what the opaque foam was hiding all along, and the step check must show it GONE. **Any change to the surf must re-render that pair** — a translucent surf over a live base step is exactly the bug that broke this shoreline four times. `W_step_wl_1/2/3` is the `waterline_width` sweep it was chosen on (0.08 dissolves the step, **0.14** reads as a wet-rock rim, 0.20 ghosts land pebbles out to sea). **Judge the step check at 4× magnification** — at 1:1 the cross-fade and the razor step look nearly identical, and the first (too-narrow) cut was wrongly passed by eye before the magnified strip caught it. `W_base_wide` / `W_optB_wide` (+ `_farzoom`) are the **archipelago** (`_snapshot_archipelago` — islands on a lattice, alternating shelf-ringed BEACH coasts and deep-touching CLIFF coasts, so both types are in one frame; deterministic and grid-size independent, so the same map renders at r≈75 and at map scale): **`W_base_farzoom` vs `W_optB_farzoom` is the frame that actually answers the complaint.** **One more state (17, BANK): the NAVIGABLE-RIVER BANK CORRIDOR reading as a CHAIN OF HEXAGONS** → `BANK_*.png`, the state the per-terrain **`blend_profile`** (see Edge Blending) was diagnosed and chosen on. A navigable hex is a silty **bank** whose `blend_class` is `flat`, so the flat↔flat interlock IS eligible on its land edges — and a shader probe (tint the mix factor `t` on id 37) confirmed it **FIRES**: this was never a gate/eligibility bug, and no amount of re-checking `blend_class` or the water gates will find one. It is a LOOK failure — the global ecotone is ~`0.35·r` wide and near-straight, which is invisible between two tan grasslands and glaring between grey gravel and orange grass. The frame renders the corridor (a real `river_channel` chain, so the water draws) at the game's **r ≈ 75** crossing a field that is **floodplain (9, luma 58) in its west half and prairie (11, luma 112) in its east** — **both ends of the brightness range a river corridor actually touches, in ONE frame**, because the bank is *darker* than prairie but *brighter* than floodplain and a fix tuned against only one of them fails on the other. Plus an **ISOLATED bank hex in each field** (the mandatory shred crops — a corridor seam cannot show a torn interior; they sit in the TOP rows because a bottom-right crop captures MapView's minimap). `_render_bank_variant` sweeps the profile live via `_set_blend_profile` + `TerrainTextureManager.rebuild_layer_blend_map()`: **`BANK_off` is the NEUTRAL profile — i.e. the BEFORE**, the shipped global levers, in the same camera, and it reproduces the report exactly. `BANK_v1/v2/v3` are the ladder (**v2 = 2.6/2.2/2.6 SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` is config's. `godot --path . res://tools/blend_probe.tscn` (or `-- --only=SURF` / `-- --only=BANK`) |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
@@ -1408,17 +1412,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
-  activity glyph; a **wildlife** row also carries the **fauna id** as a dim meta suffix
-  (`🦌 Red Deer   game_deer_07   Big game`). **A detail row never restates what its
+  activity glyph; a **wildlife** row reads **species + size class** and nothing else
+  (`🦌 Red Deer   Big game`). **A detail row never restates what its
   roster row already shows** (the same rule the Band/City panel header follows). The roster
-  row IS the identity line — name + size (+ the herd's fauna id) — so every drawer dropped
+  row IS the identity line — name + size — so every drawer dropped
   the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species` / `Size`
   (the name appeared three times, the size twice); expedition → `Unit` + `Party` (`Party`
-  printed the same `size` field the row's meta shows). The herd's **fauna id moved INTO the
-  row** as a dim meta — it appears nowhere else in the UI and the command feed names herds
-  by it, so it had to survive the `Herd:` row; nothing else was load-bearing (an expedition
-  rides `_roster_units`, so `_build_band_row` already prints the very `id` its `Unit` line
-  did). What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
+  printed the same `size` field the row's meta shows). **THE FAUNA ID IS A DATABASE KEY AND IS
+  NEVER RENDERED** (`game_fowl_27` means nothing to a player and crowded out the two things that
+  do). It briefly rode the row as a dim meta on the theory that the command feed named herds by
+  it — the right fix was to stop the FEED leaking it (`Main._on_hud_send_hunt_expedition` now
+  notes `fauna_label`, the species, while the command line keeps `fauna_id`), not to teach the
+  player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
+  `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
+  (`_herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
+  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
   Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
   Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
   Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
@@ -1454,8 +1462,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;
     `WORKERS_HEADER_FORMAT`, idle from `_effective_idle` so it counts optimistically), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
-    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A row states its
-    policy and its status as GLYPHS, not words** (`🌰 Forage (27, 26) +0.48 /turn  ♻  ●`) — the old
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A Forage/Hunt row is
+    TWO lines** (the `status_line` opt-in on `_build_worker_stepper` → a `VBoxContainer`; the
+    Scout/Warrior role rows and the compose steppers stay the single-line `HBoxContainer`): **line 1** is
+    the resource-glyph title + tile/species (`🌰 Forage (27, 26)`) beside the `−/+` stepper, keeping its
+    click-to-jump link; **line 2** is an INDENTED, smaller (`ALLOC_SECTION_FONT_SIZE`), `HFlowContainer`
+    that WRAPS carrying the yield + policy glyph + status glyph + any ⚠/overstaff/wasted notes
+    (`+0.48 /turn  ♻  ●  · only 2 of 5 working`), so the row reads narrow and never forces the panel
+    wider. `_build_two_line_stepper` / `_build_row_name_label` / `_build_status_part` /
+    `_add_stepper_controls` factor the title/stepper/status parts so both forms share them. **A row
+    states its policy and its status as GLYPHS, not words** — the old
     `[sustain]` / `· pending` word-tags were long and, for pending, redundant with the amber tint.
     Both come from the one glyph registry, `FoodIcons` (`for_policy` / `for_status`; see the
     **action-status vocabulary** header block in `Hud.gd`), and the WORDS move into the row tooltip
@@ -1469,12 +1485,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     is a modifier rather than a phase member, wins the glyph slot with `○`, and keeps the amber label
     tint). The policy glyph is read off the assignment's `policy` field (populated for forage too); an
     an assignment whose policy is unset falls back to no glyph. **Each source row headlines its per-turn food yield**
-    (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
-    `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
-    (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
-    patch** or an over-hunted herd pushes `actual` above `sustainable` → the flag trips (forage is no
-    longer hardcoded renewable now that the policy axis can decline a patch). A
-    `tooltip_text` spells out actual-vs-sustainable. **Each source row also flags overstaffing** — a
+    (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** driven by
+    the **sim-answered `overdraws` bool** on the assignment (`LaborAssignment.overdraws`, policy-driven:
+    `!managed && policy.overdraws()`, false for Sustain and managed/investment sources; decoded in
+    `native/src/lib.rs` beside `wasted_yield`). This **replaced** the old client-derived `actual >
+    sustainable + ε` test on the confirmed rows, which **false-positived on a hunt's kill turn** — cashing a
+    banked whole animal spikes `actual` above the steady `sustainable` even under Sustain, so the row wrongly
+    flashed ⚠. A Sustain source reads `… · renewable` (no flag); a Surplus/Market/Eradicate forage patch or
+    an over-hunted herd trips the flag. A `tooltip_text` spells out actual-vs-sustainable. (The **compose
+    previews** still derive it from the steady forecast via `_is_overdraw` — there is no assignment, hence no
+    `overdraws` field, at compose time, and the forecast is not a lumpy `actual`.) **Each source row also flags overstaffing** — a
     WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
     (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
     idled HERE and should be reassigned; the `tooltip_text` (`OVERSTAFF_TOOLTIP`) explains it. This is
@@ -1484,11 +1504,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     == 0` (rehydrated, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one.
     **ONE yield row per rung — each rung gets the row that informs ITS decision, never both.** On the
-    **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the same per-turn number PLUS
-    the sustainability verdict `· renewable` / `⚠ overdraws the herd`) and the INVESTMENT rung (Corral)
+    **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the crew's honest carry-aware
+    delivered take, ANIMALS-first — `≈1 Red Deer/turn` — PLUS the sustainability verdict `· renewable` /
+    `⚠ overdraws the herd`, and a WARN `· ⚠ N% wasted` suffix when a kill can't be carried; see the
+    animals-first preview note below) and the INVESTMENT rung (Corral)
     renders `_forecast_yield_row` (`Preparing: +0.23 → then +1.05` — the dip→payoff deal, which a single
     rate structurally cannot express; Corral draws sustainably, so no overdraw verdict is lost).
-    **Forage** has no local-preview twin, so it keeps `_forecast_yield_row` for all five rungs. Rendering
+    **Forage now mirrors the hunt split** — its EXTRACTIVE rungs render `_local_forage_preview_bbcode`
+    (the plant twin, a bare rate + `· renewable` / `⚠ … — overdraws the patch`; no animal rhythm, so no
+    waste suffix) and only its INVESTMENT rungs (Cultivate/Sow) keep `_forecast_yield_row`. Rendering
     both on a hunt was a merge artifact: the flat `per_worker_yield`/`ceiling_*` scalars and the
     `hunt_policy_ceilings` list are **two views of ONE sim hunt model** and agree numerically (verified:
     both give +0.54 on a Market take — the redundancy was measured before it was removed, not assumed), so
@@ -1529,7 +1553,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the band's sight — more scouts see further"; more staffed scouts extend the band's actual sight
     range, so the effect shows directly in the fog, not as a map-action or a reveal disc). Then
     **Move** / **Clear all**.
-    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on idle.
+    Each stepper re-sends `assign_labor_requested` with the new count (0 removes). **The Forage/Hunt
+    Current-actions rows are PER-SOURCE max-useful capped** (mirroring the compose controls' cap): each
+    row's `+` is gated on `idle > 0 AND workers < max_useful` via `_source_worker_cap_state` +
+    `_max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
+    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `HERD_FORECAST_PREFIX`); the
+    Forage row reads its patch from the new `_forage_patch_lookup` (Main pushes the snapshot
+    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the bare
+    `WIRE_FORAGE_PATCH_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
+    the `patch_`-prefixed tile_info cross-ref the compose control reads). An unknown forecast
+    (`MAX_USEFUL_UNBOUNDED`) falls back to the plain `idle > 0` gate; a source capped at max-useful with
+    idle still available spells the reason in the row tooltip (`MAX_USEFUL_CAPPED_TOOLTIP`). **Scout /
+    Warrior are band-wide roles with no ceiling — they keep the plain `idle > 0` gate.** Verified by
+    `band_panel_preview` state `band_panel_source_cap`.
   - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
     immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
     record a HUD-local **pending** entry per band entity (`_pending_labor[entity] = {turn, assign:{key→…},
@@ -1551,12 +1587,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     hex-steps away), and the **hunted
     herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
     = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
-    tile / hunted herd is labeled with its `actual_yield` (food/turn, from the assignment inside
+    tile / hunted herd is labeled with its per-turn rate (food/turn, from the assignment inside
     `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
-    food-income **green**; a source that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
-    panel's overdraw test) reads **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage
-    patch now that the forage policy axis can decline one (a Sustain forage gathers at regrowth, so it
-    stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
+    food-income **green**. **A HUNT label headlines `sustainable_yield`** (the steady per-turn rate),
+    **a FORAGE label `actual_yield`** — the exact split `Hud._source_yield_readout` uses for the Band
+    panel (a hunt's `actual_yield` is the kill-credit PULSE — 0 on a wait turn, a spike on a kill turn —
+    so its honest rate is `sustainable_yield`; forage has no pulse, `actual == sustainable`), so the map
+    label and the Band panel's hunt headline can never disagree. A source that overdraws (the
+    **sim-answered `overdraws` bool** on the assignment — the SAME wire flag the Band panel's
+    `_source_yield_readout` reads, NOT the client-derived `actual > sustainable`, which false-positives on a
+    hunt's kill turn) reads
+    **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage patch now that the forage
+    policy axis can decline one (a Sustain forage gathers at regrowth, so it stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
     pill chrome extracted out of `_draw_count_pill` — the `×N`/`+N` badges draw the same primitive):
     bare drop-shadowed text washed out on the light tan biomes (prairie/desert), so the plate is sized to
     the MEASURED text+glyph run plus symmetric padding (`YIELD_LABEL_PLATE_PAD_FACTOR`, a fraction of the
@@ -1642,86 +1684,151 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     default band. **Both branches show a LIVE forecast above the button** (everything — band, count,
     policy, herd — is known at compose time, and the block re-renders on every stepper tick / policy
     click, so it's live, not a confirmation; missing levers/ceilings → no line, panel otherwise
-    unchanged): the **expedition** branch renders the SAME turns-to-fill line as the targeting banner
+    unchanged): the **expedition** branch renders the SAME raid line as the targeting banner
     (`_hunt_trip_forecast` → `_hunt_forecast_line_bbcode`, shared — the two entry points can't quote
     different numbers) and gives the **button itself** the verdict (`_style_send_hunt_button`).
-    **WARNED vs BLOCKED — the line that matters:** a **slow** trip (finite ETA past
-    `viability_warn_turns`) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway
-    (≈54 turns)` and stays **enabled** — the player is told, then trusted (no confirm dialog, ever). A
-    **denial** mission likewise stays enabled (`Send (delivers no food)`). But a trip that **provably
-    cannot fill** (`_hunt_trip_impossible`: `delivers_food && turns_to_fill == 0`) is not a tradeoff —
-    it's a mistake with no upside, so the button is **DISABLED** (`Can't fill this party's packs`). The
-    `delivers_food` carve-out is essential: Eradicate never fills BY DESIGN, so blocking on "won't fill"
-    alone would ban denial outright. Keyed off the sim's per-(policy, **party-size**) verdict — never a
-    species/`size_class`/biomass proxy.
-    **The refusal SCANS THE ROW, it does not guess** (`_hunt_impossible_reason` → `_recommended_party`,
-    a table SCAN of the current policy's row — still zero client arithmetic): generic "send a smaller party"
-    advice was measurably WRONG against the sim's real tables. Three branches, one helper, used verbatim by
-    **both** entry points (panel reason line + disabled-button tooltip, and the targeting-click command-feed
-    refusal), so they can never disagree:
-      • **a viable size exists** → name the **largest party that fills AND is viable**
-        (`turns <= expedition_viability_warn_turns`, the band's own exported lever — never hardcoded) and its
-        ETA: `SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON`, "Red Deer can't fill packs for a party of 8. A party
-        of 5 fills in 5 turns." Largest-that-*fills* is the WRONG objective — on that row it names 7 (49
-        turns), a trip this same UI flags "too slow to be worth sending", i.e. recommending an option we
-        elsewhere warn against; the party of 5 hauls ~7× the food per turn. Maximize haul **among trips worth
-        making**. It is NOT "one smaller" either: the row is **not monotonic** (Surplus fills at 1–5 in 5
-        turns, 6 in 23, 7 in 49, never at 8 — cranking the party UP is what breaks the trip), so only the row
-        knows. Capped at `_expedition_party_cap` so the named party is one the band could actually field.
-      • **some size fills but NONE is viable** (Rabbit + Surplus: only 1 → 23 turns, past the warn line) →
-        name the best there is — the **fastest**-filling size, since with nothing viable left time dominates
-        haul — but word it as the marginal trip it is, not as a fix: `SEND_HUNT_IMPOSSIBLE_SLOW_REASON`,
-        "Rabbit Warren can't fill packs for a party of 4. A party of 1 fills, but takes 23 turns."
-      • **no size fills** (whole row zeros — a Rabbit Warren on Sustain) → say exactly that and point
-        elsewhere, never at the stepper: `SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON`, "Rabbit Warren can't fill
-        packs at any party size — hunt it locally instead."
-    Eradicate rows (`delivers_food == false`) are skipped by the scan — a denial mission is not "impossible".
-    Because a **bigger** party can break a working trip, the expedition Party stepper also carries a
-    `SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP` row tooltip when the very next size up is impossible (hover-only,
-    so no clutter on an otherwise-fine panel). `_hunt_estimate_key` is the one definition of the
-    `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and the row scan.
+    **A hunting expedition is a GREEDY RAID** (server `5a130e0`): it grabs the herd's standing surplus
+    above the policy floor in a burst and comes home. A party too small to carry a whole animal now
+    **kills one and hauls only the fraction its pack holds, wasting the rest** (mirroring the local hunt's
+    `quantise_animal_take`), so the headline is the delivered **PAYLOAD** — the animal count over the turns,
+    the FOOD the party actually LANDS, and the WASTE below it: **`delivers ≈1 Thunder Mammoth over ≈20
+    turns · ~4 food · ⚠ 75% wasted`** (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_TRAVEL_BREAKDOWN` +
+    `HUNT_FORECAST_FOOD_FORMAT` + a WARN-amber `HUNT_WASTE_SUFFIX_FORMAT`; `animals` =
+    `HuntTripEstimate.animalsTaken` (now a KILL count ≥ 1 whenever there's surplus), **food =
+    `HuntTripEstimate.deliveredFood`** — the sim's forward-simulated landed food, NOT `animals ×
+    foodPerAnimal`, which counts the whole kill and overstates a partial — and waste % =
+    `wastedFood / (deliveredFood + wastedFood)`). A high waste % is **informative, not a block** — the
+    button stays enabled. **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel is NOT in it;
+    the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL** itself
+    (`_round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
+    hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total** trip length, spelling
+    the split out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. `band_move_tiles_per_turn` (a
+    LaborConfig scalar echoed per-cohort) is **now decoded in `native/src/lib.rs` and flowed onto the band
+    marker** (`_rebuild_unit_markers`, guarded by `marker_field_guard`), so travel lights up on the live
+    wire (it degrades to hunting turns only if a snapshot omits it).
+    **WARNED vs BLOCKED — the line that matters:** a **slow** raid (finite `turnsToFill` past
+    `viability_warn_turns`) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
+    delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
+    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
+    false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
+    (`_hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
+    would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
+    (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
+    big game now delivers a partial (`animalsTaken 1`, high waste), which is NOT too lean; only a genuinely
+    at-floor herd blocks. Party size cannot fix it — **surplus is a property of the HERD, not the party** —
+    so the reason (`_hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size**
+    (the old row-scan / `_recommended_party` / step-up-impossible machinery is retired). `_hunt_estimate_key`
+    is the one definition of the `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and
+    the max-useful scan.
+    **The party stepper caps at MAX-USEFUL on both branches** (`_expedition_useful_cap`): **`deliveredFood`**
+    PLATEAUS with party size once the herd's surplus (not the pack) binds, so extra hunters past the plateau
+    raid no more food — a table SCAN for the smallest size at which delivered food stops rising, capped there
+    with the SAME "max N useful here — more would be idle" note the local hunt uses (`MAX_USEFUL_NOTE_FORMAT`).
+    It scans **`deliveredFood`, not `animalsTaken`** — the whole-animal count sits at a leading 1 across every
+    small-party size on big game (the leading-zeros bug that fooled the old scan into capping at 1); with
+    partials, delivered food rises smoothly, so the cap tracks the true bind. That closes the silent-idle-
+    hunter gap the whole pass exists for.
+    **Picking a policy AUTO-FILLS the crew/party to that policy's max-useful cap** (`_hunt_assign_autofill`,
+    a one-shot set only by a policy CLICK, consumed on the next rebuild before the clamp — the "give me
+    everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
+    the manual `−/+` stepper is untouched (it never sets the flag).
     The **band-first targeting flow gates identically**: `_try_dispatch_pending_send_hunt_expedition`
-    refuses to emit on an impossible herd and posts the SAME `_hunt_impossible_reason` sentence to the
+    refuses to emit on a no-surplus herd and posts the SAME `_hunt_no_surplus_reason` sentence to the
     command feed, staying in targeting — the click is never silently swallowed
-    (mirrors the existing "no huntable herd there" nudge). The **local** branch has no carry cap, so turns-to-fill is meaningless and
-    it instead previews the **per-turn food yield** of the standing assignment
-    (`_local_hunt_preview_bbcode`: `min(workers × hunt_per_worker_provisions, band_ceiling(policy)) ×
-    output_multiplier` — the resident band applies its morale/discontent productivity modifier at
-    payout, an expedition does not), income-green `≈ +0.27 /turn · renewable`, or WARN-amber
-    `⚠ … — overdraws the herd` when the take exceeds the herd's Sustain ceiling (the shared
-    `_is_overdraw` test the allocation rows use). **The two branches read DIFFERENT herd fields**
+    (mirrors the existing "no huntable herd there" nudge). The **local** branch has no carry cap, so a raid readout is meaningless and
+    it instead previews the crew's honest **carry-aware delivered take, ANIMALS-first**
+    (`_local_hunt_preview_bbcode` / `_hunt_delivered_and_waste`). A hunt takes WHOLE animals via a
+    kill-credit bank, so the crew's raw food throughput
+    (`workers × hunt_per_worker_provisions × output_multiplier`, capped by the band's flow ceiling)
+    is quantized to the whole bodies it can HAUL: `delivered = min(ceiling, floor(collection ÷
+    food_per_animal) × food_per_animal)`. The line reads `≈<delivered ÷ food_per_animal> <animal>/turn`
+    (e.g. `≈1 Red Deer/turn`, 2-dp trailing-zero-stripped via `_format_animal_rate`), income-green
+    `· renewable` or WARN-amber `⚠ … — overdraws the herd` when the delivered take exceeds the herd's
+    Sustain ceiling (the shared `_is_overdraw` test). When the crew can't carry even one whole animal the
+    surplus meat rots → a **separate** WARN-amber `· ⚠ N% wasted` suffix (`waste_pct`, its own flag,
+    rendered amber even on a green line; overdraw + waste can co-occur). Because the animal rate is a
+    long-run average of lumpy whole-animal delivery, EVERY extractive rung shows a **STABLE, always-on
+    averaging-WINDOW disclaimer** under the policy picker — `HUNT_AVG_WINDOW_FORMAT`: `This estimate is a
+    long-run average over ~<X> turns — you take whole animals, so per-turn delivery varies.` X =
+    `_hunt_avg_window_turns(herd, policy)`, derived from the SELECTED policy's raw flow ceiling (NOT the
+    crew's current delivered rate), so it is **worker-independent and never blinks out** as the Hunters
+    count steps up: `g = ceiling ÷ food_per_animal`; slow/big game (`g < 1`) → `ceil(1/g)` (deer Sustain →
+    ~2, mammoth Sustain → ~7), fast game → `ceil(1/frac)`, clamped to `HUNT_WINDOW_MAX_TURNS` (12). Keyed on
+    the composed policy (a faster policy averages over a different span), extractive rungs only (an
+    investment rung shows a dip→payoff, not a cadence), skipped when the window is unknown (missing
+    food_per_animal / ceiling → returns 0). The resident band applies its
+    morale/discontent productivity modifier at payout, an expedition does not; when `food_per_animal` is
+    unknown the line degrades to the old smoothed `≈ +X /turn · renewable` food line (unchanged). **The
+    two branches read DIFFERENT herd fields**
     (see "Hunting expedition" below): the expedition line is a pure LOOKUP into the sim's
     forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
-    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is arithmetic over
-    the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_take_rate` /
-    `_hunt_policy_ceiling`). The ecology/MSY model is NEVER re-derived client-side.
+    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is carry arithmetic over
+    the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_delivered_and_waste`
+    / `_hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
+    is NEVER re-derived client-side.
     Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
     `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
     snapshot `grid` key). Compose state re-seeds from current staffing when the selected herd changes.
     Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
     `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition),
-    plus the live-forecast states `herd_hunt_forecast_viable` / `herd_hunt_forecast_not_viable` /
-    `herd_hunt_forecast_surplus` (the SAME herd as not_viable, on Surplus: reads ≈6 turns out of the
-    sim's `hunt_trip_estimates` row — the regression test against re-deriving an expedition's trip
-    from the BAND's flow ceiling) /
-    `herd_hunt_forecast_never_fills` / `herd_hunt_forecast_eradicate` (expedition branch: cyan line +
-    primary button; amber "Send Anyway (≈54 turns)"; red collapsed-herd "Send Anyway — party returns
-    empty"; amber denial "Send (delivers no food)"), the BLOCKED set `herd_hunt_impossible` (disabled +
-    the row-scanned reason naming a party of 1 at ≈9 turns) / `herd_hunt_impossible_smaller_party` (SAME
-    herd, party 1 → button comes alive at ≈9 turns — the regression guard for gating on the real
-    per-party verdict) / `herd_hunt_impossible_no_size` (Rabbit Warren + Sustain on the REAL exported
-    row — every size is 0 → "can't fill packs at any party size", no stepper advice) /
-    `herd_hunt_impossible_slow_only` (SAME Rabbit on Surplus — only a lone hunter fills, past the warn line
-    → "A party of 1 fills, but takes 23 turns") / `herd_hunt_impossible_bigger_party` (Red Deer + Surplus,
-    party 8, REAL row → names the largest **viable** party: "A party of 5 fills in 5 turns", NOT the largest
-    that merely fills (7 → 49 turns, which the same UI calls too slow) — the guard that the recommendation
-    is scanned AND viability-filtered, not "one smaller") /
-    `herd_hunt_impossible_eradicate` (SAME herd, denial → still enabled), and `herd_hunt_local_sustain` /
-    `herd_hunt_local_overdraw` (local branch: green `≈ +0.27 /turn · renewable` vs amber `⚠ ≈ +0.54
-    /turn — overdraws the herd`).
+    plus the live-forecast states `herd_hunt_forecast_viable` (Mammoth Sustain: cyan "delivers ≈8 …
+    over ≈6 turns" + primary button) / `herd_hunt_forecast_slow` (Red Deer Sustain, 54 turns past the
+    warn line → amber "⚠ … — a slow raid" + "Send Anyway (≈54 turns)") / `herd_hunt_forecast_surplus`
+    (the SAME Red Deer on Surplus: a deeper floor → more animals, brisk turns) /
+    `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
+    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (denial → amber "Send (delivers no
+    food)", enabled), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
+    1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
+    buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
+    the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
+    `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
+    round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
+    `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
+    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → denial, still enabled), and
+    `herd_hunt_local_sustain` /
+    `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
+    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`), and the carry-aware set
+    `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
+    `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
-    `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) with a **forage-appropriate**
+    `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
+    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is ONE line:
+    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇄ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`).
+    **The picker is a `GridContainer` `POLICY_PICKER_COLUMNS` (3) wide, each button `SIZE_EXPAND_FILL`**, so
+    the six-rung forage/local-hunt pickers wrap to **two rows of three** (equal-width, filling the panel
+    content width) instead of one over-wide row; the six wide two-line `♻ Sustain / up to +0.90/turn`
+    buttons used to overflow, and even the compacted six-in-a-row read too wide docked. A picker with
+    `≤ POLICY_PICKER_MAX_SINGLE_ROW` (4) rungs — the 4-rung expedition launch/compose picker — stays a
+    **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
+    on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
+    compact `+0.96` (just `_format_signed(ceiling)`, fed by `_forage_policy_takes` off `_forecast_inputs`),
+    full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`
+    (`POLICY_PAYOFF_COMPACT`), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
+    `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
+    the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
+    taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
+    (under the picker) explains the lock. **The name lives ONLY in the tooltip now** — every button's
+    `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g. `Sustain — up
+    to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate reasons below
+    that (so a hover names the rung AND explains any lock; enabled buttons carry the name+metric tooltip
+    too). A rung with **no** metric (older snapshot / metric-less gated rung, or the send-expedition launch
+    picker that passes no `takes`) falls back to the **name** on the face, so a button is never a lone
+    glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
+    locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
+    forage / local hunt / expedition — now wear an **identical** face + metric: `+X` (extractive, `up to
+    X/turn` via `POLICY_CAP_FORMAT` / `_extractive_take`) and `→+X` (investment, Cultivate/Sow AND
+    Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    is retired) — `_expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
+    over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
+    is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
+    Surplus < Market. **Eradicate is denial** (`deliversFood == false`, never qualifies) → no rate, falls back
+    to its name + skull glyph. **Picking a policy AUTO-FILLS the
+    foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
+    `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
+    clamp; the manual `−/+` stepper never sets it). It carries a
+    **forage-appropriate**
     behaviour hint (`FORAGE_POLICY_HINTS` — "gather at the patch's regrowth" etc., NOT the herd-cull
     hints), an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`), and a
     **range-aware** **Forage** button → `assign_labor forage <x> <y> <policy> <workers>` (the policy is
@@ -1738,14 +1845,29 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
 
-  - **Cultivate / Corral — the INVESTMENT rungs** (on BOTH assign controls; the sim's
-    `FollowPolicy::Cultivate` / `Corral`): the extractive four take from a wild source; these two pay
-    an **up-front cost** — while the patch is being prepared / the pen built, the source yields only
-    its `ceilingCultivate` / `ceilingCorral` dip yield, then flips to the much higher `tendedYield` /
-    `corralYield`. **Kind-specific and the sim rejects the cross pairing**: Cultivate is forage-only
-    (`FORAGE_POLICY_OPTIONS`), Corral hunt-only (`HUNT_POLICY_OPTIONS`) — and Corral is offered on a
-    **local hunt only** (a hunting expedition follows the herd and builds no pen, so it keeps the
-    extractive `LABOR_HUNT_POLICIES`, as does the send-expedition launch picker).
+  - **Cultivate / Sow / Tame / Corral — the FOUR INVESTMENT rungs** (on BOTH assign controls; the
+    sim's `FollowPolicy::Cultivate` / `Sow` / `Tame` / `Corral`, and `INVESTMENT_POLICIES` names the
+    set). The extractive four take from a wild source; these pay an **up-front cost** — while the
+    source is being prepared it yields only its dip ceiling, then steps up a rung. Each ladder runs a
+    verb **twice**, one per rung-transition (`docs/plan_intensification_ladder.md` §2):
+    *plants:* wild --`cultivate`--> **Tended Patch** --`sow`--> **Field**;
+    *animals:* wild --`tame`--> **Pastoral herd** --`corral`--> **Pen**.
+    **Kind-specific and the sim rejects the cross pairing**: Cultivate + Sow are forage-only
+    (`FORAGE_POLICY_OPTIONS`), Tame + Corral hunt-only (`HUNT_POLICY_OPTIONS`) — and both hunt rungs
+    are offered on a **local hunt only** (a detached party follows the herd and builds nothing, so the
+    expedition keeps the extractive `LABOR_HUNT_POLICIES`, as does the send-expedition launch picker).
+    - **These are POLICIES, not standalone commands.** They ride the existing
+      `assign_labor … <policy> <workers>` path, exactly as Cultivate/Corral always have — so `Tame`
+      and `Sow` needed **zero** new command wiring. The server *also* exposes convenience verbs
+      (`tame <faction> <herd_id>` / `sow <faction> <x> <y>`, which switch the policy on bands already
+      working the source), but the client does not use them: the picker composes band + workers +
+      policy in one act, and routing through a second verb would fork the emit path.
+    - **The husbandry CEILING hides a rung outright; knowledge only greys it.** Both hunt rungs are
+      filtered against `HerdTelemetryState.husbandryCeiling` (Grazing 2d-δ): Corral needs `"pen"`,
+      Tame needs anything above `"wild"` (and retires once `domestication >= 1` — its meter is full
+      and Corral is what's next). Hidden, never greyed, because no amount of knowledge or work will
+      ever let you pen a `"pastoral"`-ceiling species — greying it would imply a reachable
+      prerequisite. Knowledge = "I know how"; ceiling = "this animal allows it" (§4.2, decoupled).
     - **Disabled-with-reason-AND-remedy, never hidden.** `_build_policy_picker(on_pick, selected,
       options, gates)` renders a gated option **greyed, with every reason in the tooltip (one per
       line) AND spelled out under the row**, so the player discovers the rung and its prerequisites
@@ -1754,24 +1876,56 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       render a `🐄 Corral needs:` header + one indented `· <reason>` bullet each (a reason now carries
       its remedy, so two on one line would not fit).
       **Each reason states what's missing + live progress + the action that fixes it** — naming the
-      prerequisite alone told the player a door was locked without saying where the key is. All three
-      tracks are taught by the same action, so the remedy names the **Sustain** glyph (pulled from
-      `FoodIcons.POLICY_ICONS`, i.e. literally the button beside it): `Cultivation knowledge 55% — ♻
-      Sustain-forage a Thriving patch to learn it` / `Herding knowledge 35% — ♻ Sustain-hunt a Thriving
-      herd to learn it` / `Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it`.
-      The **patch-ecology** gate is a *stock* condition, not a policy one — a fully staffed Sustain
-      takes the whole regrowth and holds a Stressed patch Stressed forever — so its remedy is the
-      opposite advice: `Patch is Stressed — ease workers off and let it regrow to Thriving` (live
-      `patch_ecology_phase`, capitalized). Gates (`_forage_policy_gates` / `_hunt_policy_gates`,
-      mirroring the sim's `assign_labor` validation): Cultivate needs faction `cultivation >= 1.0`
-      **and** a Thriving patch; Corral needs `herding >= 1.0` **and** `domestication >= 1.0`. A gated
-      rung can never be the composed policy (re-validated every render, since a patch can leave
-      Thriving under a standing selection). **Known gap:** `_hunt_policy_gates` does NOT check herd
-      **ownership** — the sim's domestication track is per-faction, so a herd domesticated by ANOTHER
-      faction would enable Corral client-side while the sim rejects the assign.
+      prerequisite alone told the player a door was locked without saying where the key is. **A reason
+      is one of exactly two kinds, and the split is the point** (see the two-meter split above): a
+      KNOWLEDGE reason is fixed by **practice** and names the ♻ Sustain glyph (pulled from
+      `FoodIcons.POLICY_ICONS`, i.e. literally the button beside it) — `Your people know Penning 45%
+      — ♻ Sustain-hunt a tamed herd to learn it`; a SOURCE reason is fixed by that rung's **verb** —
+      `This herd is 40% tamed — ◎ Tame it to finish`.
+      **THE GATE RESHUFFLE (§4.3) — one knowledge per transition, and the client encodes it in
+      `_hunt_policy_gates` / `_forage_policy_gates`** (mirroring the sim's `assign_labor` validation):
+      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch **and NOT already `is_cultivated`** —
+        a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
+        Tended Patch — ♻ Sustain-forage it to harvest"), because re-running the verb only pays the low
+        prep dip forever. The completed reason SUPERSEDES the prep prerequisites (a done patch's
+        Thriving/knowledge gates are moot). Since a gated rung can never be the composed policy, this is
+        also what STOPS the panel lying on a done patch: a standing Cultivate falls back to Sustain, so
+        the "Preparing → then" prep line disappears and the forecast reads the Sustain harvest.
+      * `Sow` ← `seed_selection >= 1` **and** the ground will take seed (see the Sow site gate below)
+        **and NOT already `patch_is_field`** — a finished Field retires Sow the same way
+        (`GATE_REASON_ALREADY_FIELD_FORMAT`). Deliberately **no** Thriving gate: sown ground starts at
+        the reseed floor (i.e. Collapsing), so a health gate would forbid the very case the rung exists for.
+      * `Tame` ← `herding >= 1`. **Herding gates Tame ALONE now** — it no longer gates Corral.
+      * `Corral` ← **`penning >= 1`** (the new rung-3 knowledge) **and** `domestication >= 1`.
+      Two more remedies are the *opposite* of "work harder", because their conditions are stocks, not
+      policies: the **patch-ecology** gate (a fully staffed Sustain takes the whole regrowth and holds
+      a Stressed patch Stressed forever) reads `Patch is Stressed — ease workers off and let it regrow
+      to Thriving`; and `_tame_stalled_hint` (below) says the same of a stalled tame. A gated rung can
+      never be the composed policy (re-validated every render, since a source can leave Thriving under
+      a standing selection). **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
+      **ownership** — the tracks are per-faction, so a herd tamed by ANOTHER faction reads as
+      available client-side while the sim rejects the assign.
+    - **`_tame_stalled_hint` — the one silent rule, said out loud.** Taming accrues only while the
+      herd is **Thriving**, but that is deliberately NOT a gate: a herd's phase swings as it is
+      hunted, so refusing the verb would be un-actionable churn. The sim just **pauses** the meter
+      (progress is neither lost nor switched). Silence would recreate exactly the hidden-rule problem
+      this arc exists to kill, so whenever `Tame` is composed on a non-Thriving herd the drawer states
+      the pause, its live phase, that progress is safe, and the ease-off remedy (WARN amber).
+      ui_preview `herd_tame_stalled`.
+    - **The Sow SITE gate — the refusal is an ANSWER, not a bool.** Only ~**46 of 4160** tiles (1.1%)
+      will take seed, so "why can't I sow here?" is *the* question rung 3 provokes — and the client
+      **cannot re-derive** it (no per-biome capacity table, no hydrology). The sim ships the verdict
+      as a stable key on `ForagePatchState.sowSiteRefusal` (`""` / `too_poor` / `too_dry` /
+      `too_poor_and_too_dry`), resolved through the same `RungSiteRequirement::refusal` seam the `sow`
+      command gates on, and `_sow_site_refusal_reason` maps it to `SOW_REFUSAL_REASONS` — each naming
+      the fault AND pointing at rung 4 (Worked Land — irrigation/the plough), in the manual's voice.
+      An **unknown key still refuses** (fail closed: the sim gates the command regardless, so a button
+      offered here would only fail unreadably). This is the only gate reason on either ladder a player
+      answers by **moving** rather than by working. ui_preview `forage_sow_too_dry` /
+      `forage_sow_too_poor`.
     - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
-      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` then reads
-      **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
+      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` (now INVESTMENT-only) then
+      reads **`Preparing: +0.24 /turn → then +1.20 /turn`** — the deal, not a single rate — both halves
       scaled by the band's `output_multiplier` like every other forecast. The managed source reports
       per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
       **Corral's payoff is GROSS** (`corralYield` does NOT deduct the pen's feed), so its row never
@@ -1789,24 +1943,117 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
       misled. ui_preview `herd_corral_depleted`.
-    - **Progress meters.** The tile card's `Cultivation N%` row is joined by the herd drawer's
-      `Corral: Building N%` (`corralProgress`, `_corral_label` / `_corral_value_hex`), flipping to the
-      SIGNAL-tinted `🐄 Corralled` once penned — the animal twin of `🌾 Tended Patch`.
-    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks and fires a
-      ONE-SHOT command-feed note the turn a track crosses to complete ("Cultivation learned — The
-      Cultivate policy is now available on Thriving patches."). Only a real `<1 → >=1` transition
-      fires it (a track already complete on the first snapshot / a rehydrated save is silent), and
-      only for the player faction; the announced set is keyed per faction+track.
-    - Wire fields decoded in `native/src/lib.rs` (snapshot + delta, both paths share the same
-      `herds_to_array` / `forage_patches_to_array`): `ForagePatchState.ceilingCultivate` /
-      `tendedYield` → `patch_ceiling_cultivate` / `patch_tended_yield` on `tile_info` (and in
-      `FOW_DISCOVERED_HIDDEN_KEYS`); `HerdTelemetryState.ceilingCorral` / `corralYield` /
-      `corralProgress` → bare keys on the herd dict.
+    - **TAME's dip has no scalar ceiling field — its DIP rides the list, its PAYOFF is a scalar.** There
+      is no flat `ceilingTame` on the wire (the Tame dip rides the `huntPolicyCeilings` LIST, so `tame`
+      has **no** `FORECAST_CEILING_KEYS` entry — adding one would silently fall back to Sustain's ceiling
+      and quote the wrong dip); `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
+      instead. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+      pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
+      `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
+      renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
+      (no feed term — Tame has no running cost). `INVESTMENT_POLICIES` still names the set (an investment
+      rung must never fall through to the extractive `renewable / ⚠ overdraws` preview), and both hunt
+      investment rungs' picker buttons wear the `→ +Y/turn` PAYOFF (Tame `→ pastoralYield`, Corral
+      `→ corralYield`) via `_hunt_policy_takes` — NOT the during-building dip, which reads below Sustain
+      and was identical for both, making taming/penning look worse than hunting. The payoff shows even on
+      a gated/greyed rung (the gate-reason line explains the lock). ui_preview `herd_tame` /
+      `two_meter_split` (gated Corral still quotes its payoff).
+    - **Progress meters — one row per rung, never merged.** Tile card: `Cultivation N%` → `🌾 Tended
+      Patch`, joined by its own **`Field`** row — `Sowing N%` → the SIGNAL-tinted **`▦ Field`**
+      (`patch_field_progress` / `patch_is_field`, `_field_label` / `_field_value_hex`). Herd drawer:
+      `Husbandry: Domesticating N%` → `🐄 Domesticated`, joined by `Corral: Building N%` → `🐄
+      Corralled`. **A patch carries BOTH plant meters at once** (a Field may stand on ground that was
+      never tended — seed travels, so `Sow` needs no prior patch), so they are two independent rows.
+      A completed **Field** deliberately reads as a *different thing* from a Tended Patch — different
+      word, different glyph — not as a bigger percentage; that IS rung 3's readout test.
+      `Sowing`/`Building`/`Fencing` share one build-verb convention.
+    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks (all four,
+      driven off `KNOWLEDGE_TRACK_LABELS` — adding a rung's knowledge is a label entry + a decoder
+      field, never an edit there) and fires a ONE-SHOT `KNOWLEDGE_UNLOCK_NOTES` command-feed note the
+      turn a track crosses to complete. Only a real `<1 → >=1` transition fires it (a track already
+      complete on first snapshot / a rehydrated save is silent), player faction only, keyed per
+      faction+track.
+    - **Wire fields decoded in `native/src/lib.rs`** (snapshot + delta share `herds_to_array` /
+      `forage_patches_to_array`). **This decoder has now FOUR times silently dropped appended fields
+      — check it FIRST when a new field "arrives as zero".** `ForagePatchState`: `ceilingCultivate` /
+      `tendedYield` → `patch_ceiling_cultivate` / `patch_tended_yield`, and the five slice-6a fields
+      `fieldProgress` / `isField` / `ceilingSow` / `fieldYield` / `sowSiteRefusal` →
+      `patch_field_progress` / `patch_is_field` / `patch_ceiling_sow` / `patch_field_yield` /
+      `patch_sow_site_refusal` (MapView cross-refs all onto `tile_info` with the `patch_` prefix; ALL
+      are in `FOW_DISCOVERED_HIDDEN_KEYS`, mirroring their rung-2 twins). `HerdTelemetryState`:
+      `ceilingCorral` / `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
+      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
+      **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
+      completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
+      `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
+      **`pastoralYield` → `pastoral_yield`** (the newest slot — Tame's payoff, the pastoral twin of
+      `corralYield`, which lets Tame render `→ +Y`; verified present on the herd dict) → bare keys
+      on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
+      **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) +
+      **`overdraws` → `overdraws`** (the sim-answered overhunting ⚠ for the confirmed rows/map labels,
+      policy-driven `!managed && policy.overdraws()`) → per-assignment keys
+      inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
+      slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
+      playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
+    - **The hunt row headlines the honest RATE, never the kill-credit PULSE** (`Hud._source_yield_readout`,
+      slice 8b UX + the local-hunt UX cleanup): a Current-actions Hunt SUMMARY row + the local-hunt preview
+      show `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on
+      a kill turn — the "+0.00 /turn" lie). **The summary row is now JUST the food rate + glyphs** — it reads
+      `Hunt <species> +X /turn ♻ ●` (food rate, policy glyph, status glyph). The **animals-per-turn cadence
+      (`≈<rate> <animal>/turn`) belongs to the COMPOSE-PREVIEW line only** (`_local_hunt_preview_bbcode` /
+      `_format_animal_rate` — `sustainable_yield ÷ food_per_animal`, up to 2 dp, trailing zeros stripped;
+      fast game `≈1.3 Marsh Fowl/turn`, big game `≈0.15 Woolly Mammoth/turn`): on a summary row the food rate
+      is enough, so the cadence suffix was dropped there (the old `_hunt_row_animal_rate` / `HUNT_RHYTHM_SEPARATOR`
+      helpers are gone). The **old fast/slow flip** (`_hunt_kill_rhythm`'s `≈1 Mammoth / N turns` slow form)
+      had already been retired — its jarring format switch confused the reading. **The preview cadence divides
+      FOOD by FOOD** — the rate (`sustainable_yield`, provisions) by **`food_per_animal`**
+      (`HerdTelemetryState.foodPerAnimal`, slot 72 = `body_mass × provisions_per_biomass` = the sim's
+      `SourceYieldForecast::body_mass_yield`, one animal's worth of yield in provisions). It must **NOT**
+      divide by `body_mass` (BIOMASS): with `provisions_per_biomass 0.02` that reads ~50× too long. A herd
+      whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
+      picker** (`_build_policy_picker(…, takes)`, fed
+      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the bare compact `+X` on
+      the button face (full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
+      used by the forage picker — the source's worker-independent ceiling, FOOD units, distinct from the
+      crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate
+      reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
+      mirror of the WARN overstaff note). A MANAGED
+      (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
+      (`_is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
+      the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
+      row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
+    - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt
+      SUMMARY rows — each `Hunt <species> +X /turn ♻ ●` with NO `≈… /turn` animals-per-turn cadence; the
+      big-game row also keeps the muted `· 1.90 wasted` under-crewed note) / `hunt_picker_ascending` (the local picker + the preview's per-crew line,
+      "Hunters" stepper on a wild herd) / **`herd_hunt_delivered_clean`** (2 hunters → `≈1 Red Deer/turn ·
+      renewable` + the four ascending `up to +2.33/+3.50/+5.00/+7.00 /turn` cap buttons) /
+      **`herd_hunt_delivered_waste`** (1 hunter can't carry one whole deer → green `≈0.65 Red Deer/turn ·
+      renewable` + amber `· ⚠ 35% wasted`) / **`herd_hunt_automax`** (a policy click auto-fills the crew to
+      the max-useful cap — count sits at 4) / **`herd_hunt_big_game_window`** (mammoth: auto-max staffs the
+      20 carriers, `≈0.15 Woolly Mammoth/turn` + the averaging-window disclaimer `This estimate is a
+      long-run average over ~7 turns — you take whole animals, so per-turn delivery varies.`; the deer
+      `delivered_*` states carry the same disclaimer reading ~2 turns at every worker count) /
+      `herd_hunt_local_sustain` +
+      `herd_hunt_local_overdraw` (green vs amber `⚠ … — overdraws the herd`) / `hunt_crew_herders`
+      (a corralled herd → "Herders" stepper + "Assign herders") / `knowledge_penning_climbing`
+      (Penning 34% climbing in the top strip) / `food_tile` (the "Cultivation Preparing 60%" row).
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
-      `forage_cultivate_locked` (1 reason — knowledge 55% + its Sustain-forage remedy) /
+      `forage_cultivate_locked` (1 reason — knowledge + its Sustain-forage remedy) /
       `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
-      (enabled + `Corral: Building 40%`) / `herd_corral_locked` (1 reason — herd 40% tamed) /
-      `herd_corral_locked_both` (**2 reasons** — the `🐄 Corral needs:` header + bullets layout).
+      (enabled + `Corral: Building 40%`) / `herd_corral_locked` (1 reason — the herd 40% tamed +
+      **`◎ Tame it to finish`**, the copy fix: it used to say "♻ Sustain-hunt this Thriving herd",
+      the hidden rule the arc exists to kill) / `herd_corral_locked_both` (**2 reasons** — the `🐄
+      Corral needs:` header + bullets, gated on **Penning** with Herding fully known, so the frame
+      guards the §4.3 reshuffle). Slice 6b adds: **`two_meter_split`** (THE headline frame — the
+      top-bar knowledge strip + this herd's own meter + the bridging gate reason, all at once) /
+      `herd_tame` / `herd_tame_stalled` / `forage_sow` (enabled, `Preparing: +0.02 → then +2.40` —
+      near-zero dip, 2× tended payoff) / `forage_sow_locked` (2 reasons, one fixed by practice and one
+      only by moving) / `forage_sow_too_dry` / `forage_sow_too_poor` (the two refusals must read
+      differently) / `forage_field_building` (`Sowing 45%` beside `🌾 Tended Patch`) / `forage_field`
+      (`▦ Field`) / `forage_cultivate_done` (a COMPLETED Tended Patch with a standing Cultivate: 🌱
+      Cultivate greys "Already a Tended Patch — ♻ Sustain-forage it to harvest", the "Preparing → then"
+      line is GONE, and the policy falls back to Sustain's extractive preview `+0.32 /turn · renewable`) /
+      `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
     were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
@@ -1820,13 +2067,44 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the controls via the herd dict and — for the patch — via `forage_patch_lookup` → `_tile_info_at`
     as `patch_`-prefixed keys (in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile redacts them).
     Two affordances, both recomputed on **every** stepper *and* policy change (both already re-render
-    the controls): a live HEALTHY-green **"Expected yield: +X.XX /turn"** row (scaled by the
-    **selected band's `output_multiplier`** — the sim exports at 1.0), and a **worker-stepper cap** of
+    the controls): a live forecast line (scaled by the **selected band's `output_multiplier`** — the sim
+    exports at 1.0), and a **worker-stepper cap** of
     `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
     max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
-    Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
-    `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
+    **The LOCAL-hunt cap's usefulness ceiling is `max(take/prepare max-useful, herders_needed)`** —
+    a managed (corralling/pastoral) herd needs `herders_needed` hands EVERY turn to hold its tameness,
+    but the take/prepare side alone ignores that (a Corral rung's prep forecast reports "1 worker
+    suffices to prepare"), which pinned the player at 1 even when a growing herd needed 2 herders — an
+    unwinnable trap where the corral slips and is lost. `_forecast_worker_cap(forecast, assignable,
+    useful_floor)` folds `herd.herders_needed` in as a floor on the usefulness ceiling (a RAISE, never a
+    new cap; an UNBOUNDED forecast stays unbounded), so the maintenance crew is always staffable and the
+    "max N useful here" note reads the corrected N. Auto-max on policy-select fills to it. A wild herd
+    reports `herders_needed 0`, so `max(useful, 0)` is a no-op there. **Local hunt ONLY** — the
+    expedition party has no herding crew, so `_expedition_useful_cap` is left alone. The Herders drawer
+    row (`N / N — under-herded`) and the tameness-slipping consequence line read the SAME
+    `herders_needed`, so the cap, the row and the consequence never contradict.
+    **When the *labor* cap binds instead** (idle workers run out *below* the usefulness ceiling), the
+    silent-disable case is filled by a companion note — `LABOR_BOUND_NOTE_FORMAT` = `"N of M useful —
+    free up idle workers to send more"` (M = the usefulness ceiling, so it tracks the selected policy;
+    the expedition's party-size sub-case, `idle >= max_party_size`, reads `PARTY_SIZE_BOUND_NOTE_FORMAT`
+    = "N of M useful — at the max party size"). The cap value is unchanged (still `min(labor,
+    usefulness)`); only the note now names *which* ceiling bound and the M you're working toward, so a
+    disabled `+` is never mute. (`_expedition_useful_cap` scans the full estimate table for M even past
+    the fieldable party, so "of M" can exceed the party you can currently staff.)
+    **ONE forecast row per rung, and forage now mirrors the local hunt exactly** (`Hud.gd`): an
+    **INVESTMENT** rung (Cultivate/Sow — the `_forage_assign_policy in INVESTMENT_POLICIES` branch)
+    keeps `_forecast_yield_row`'s dip→payoff deal (`Preparing: +X /turn → then +Y /turn`); an
+    **EXTRACTIVE** rung renders `_local_forage_preview_bbcode` — the plant twin of
+    `_local_hunt_preview_bbcode` — a bare rate + verdict (`+2.74 /turn · renewable`, or WARN-amber
+    `⚠ … — overdraws the patch` on Market/Eradicate via `_is_overdraw` against the Sustain-ceiling
+    yield), through the SAME `_forecast_label` RichTextLabel at `ALLOC_SECTION_FONT_SIZE` the hunt line
+    uses. This retires the old `"Expected yield:"` prefix for extractive forage (`FORECAST_LABEL_FORMAT`
+    is gone and `_forecast_yield_row`'s non-investment `else` branch was unreachable and removed — its
+    only two callers, hunt via `forecast_active` and forage via the `INVESTMENT_POLICIES` guard, both
+    gate on an investment rung) and fixes the gap where an Eradicate/Market forage rendered no overdraw
+    warning. Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
+    `_forecast_worker_cap` / `_forecast_yield_row` (investment-only now) serve both controls. **Guards:**
     `per_worker_yield == 0` (a dead-season tile) → no row,
     no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
     `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
@@ -1950,9 +2228,31 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
 - **Herd husbandry readout** (`Hud.gd` `_herd_summary_lines`): when a herd's
   `domestication` (snapshot `HerdTelemetryState.domestication`, 0–1) is above 0, a
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
-  (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
-  band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
-  `core_sim` Fauna & Wild Game — Domestication / husbandry).
+  (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. This is the **per-source** half
+  of the two-meter split — THIS herd's own meter (see "The Intensification Ladder" below). Progress
+  builds while a band works the herd under the **`Tame`** policy (and pauses, without loss, whenever
+  the herd is not Thriving — surfaced by `_tame_stalled_hint`). **NOT under Sustain**, and there is
+  no `domesticate` command: both were retired by the ladder arc (`docs/plan_intensification_ladder.md`
+  §4.1) — taming as a hidden Sustain side effect, with a visible-but-disabled `Corral` beside it, is
+  the exact UX problem that arc exists to fix. See `core_sim` Fauna & Wild Game — Domestication /
+  husbandry.
+- **Herd staffing / "Herders" row — the under-herded deficit made VISIBLE** (`Hud.gd`
+  `_herd_summary_lines`; snapshot `HerdTelemetryState.herdersNeeded` / `herdedFraction` → decoded in
+  `native/src/lib.rs herds_to_array` as `herders_needed` (int) / `herded_fraction` (float)). A managed
+  herd needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction <
+  1`) its domestication decays, it slips back to WILD, and stops earning Penning — the silent stall a
+  playtest hit ("🐄 Domesticated" with no signal Penning had stopped). Immediately after the Husbandry
+  row, ONLY when `herders_needed > 0` (0 = wild/unmanaged, `herded_fraction` defaults to `FULLY_HERDED`
+  = 1.0 = "no problem"), a **Herders** row shows a calm `N / N` when fully staffed (neutral ink) or an
+  amber `A / N — under-herded` (`assigned = round(herded_fraction · needed)`) when slipping, tinted via
+  `_herders_value_hex` (WARN, the shared overgrazing/pen-debit path). When under-herded AND
+  `domestication > 0`, a muted consequence line — `Tameness slipping — teaching Herding, not Penning.
+  Staff all N herders to hold it.` — states WHY Penning stalled and the one lever that fixes it. The
+  honest-label choice: the Husbandry label is LEFT as-is (0.98 still reads "Domesticating 100%") — the
+  new Herders + consequence lines carry the warning. ui_preview `herd_fully_herded` (calm `4 / 4`) /
+  `herd_under_herded` (amber `2 / 4 — under-herded` + the slipping line, Husbandry 98%). **Server half
+  (`herdersNeeded`/`herdedFraction` on `HerdTelemetryState`) already landed** — this is the client
+  consumer.
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
   `docs/plan_grazing_2d.md` §4a; snapshot `HerdTelemetryState.husbandryCeiling` → `husbandry_ceiling`,
   decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the
@@ -2040,8 +2340,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, all in `FOW_DISCOVERED_HIDDEN_KEYS`
   so a remembered tile redacts them). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
-  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`. See `core_sim`
-  intensification ladder — cultivation.
+  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated` — and, beside it, its own
+  **Field** row for plant rung 3: "Sowing N%" → "▦ Field" (`patch_field_progress` / `patch_is_field`,
+  `_field_label` / `_field_value_hex`). The two are **independent meters on one source** and never
+  merge: `Sow` needs no prior patch (seed travels), so a Field may stand on ground that was never
+  tended. See `core_sim` intensification ladder — cultivation, and the two-meter split above.
   It also shows an **Ecology** row (`patch_ecology_phase`) for **every** tile carrying a patch —
   cultivated or not, directly under **Forage biomass**. The phase gates whether cultivation can
   accrue at all, so it is the tile's headline condition; it is deliberately **not** gated on
@@ -2086,14 +2389,39 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
   meaningful. The soft/hard threshold prompts themselves arrive in the command feed
   (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
-- **Intensification-knowledge meters** (`Hud.gd` `update_intensification`, dispatched from
-  `Main.gd`): the player faction's Cultivation / Herding knowledge from
-  `IntensificationKnowledgeState` (snapshot `intensification_knowledge[]`, decoded in
-  `native/src/lib.rs intensification_knowledge_to_array` into snapshot + delta dicts) shows as a
-  compact top-bar block-glyph meter mirroring the Sedentarization one (`Cultivation ▰▰▰▱▱▱
-  learning · Herding ✔ known`, `IntensificationLabel` in `TurnBlock`). Each track (0..1 progress)
-  is hidden until the faction begins learning it (the snapshot row is sparse) and reads "✔ known"
-  once complete; the label tints cyan when every learned track is fully known, else neutral ink.
+- **The Intensification Ladder — THE TWO-METER SPLIT** (`docs/plan_intensification_ladder.md` §4.1;
+  the arc's root fix). Two meters advance from one action and they are **different kinds of thing**;
+  the client's whole job here is to never let them read as two numbers in a list:
+  - **FACTION KNOWLEDGE — the top-bar strip, and the ONLY place a knowledge meter appears.**
+    `Hud.update_intensification` (dispatched from `Main.gd`) renders all **four** tracks of
+    `IntensificationKnowledgeState` (`intensification_knowledge[]`, decoded in `native/src/lib.rs
+    intensification_knowledge_to_array`) — `cultivation` / `seed_selection` / `herding` / `penning`,
+    in `KNOWLEDGE_TRACK_LABELS` order (each web's ladder, bottom rung first, so the strip reads as
+    two ladders climbing). Prefixed **`⚒ Your people know:`** (`KNOWLEDGE_STRIP_PREFIX`) — that
+    prefix is load-bearing: it is what stops the strip reading as a stat of whatever is selected.
+    A track is hidden until the faction begins it (the row is sparse), reads a bare `✔`
+    (`KNOWLEDGE_KNOWN_BADGE` — the prefix already supplies "know") once complete, else a
+    **5-cell** bar + the live percent. **The narrow bar + the bare ✔ are not cosmetic**: at the
+    shared 10-cell `_meter_bar` width plus the word "learning", four tracks overflowed the top bar
+    and clipped the last one off-screen (caught in `two_meter_split.png`). `_meter_bar(score, cells)`
+    takes the width as a defaulted param, so Sedentarization is untouched. **AND the strip WRAPS** —
+    even narrowed, four tracks on one line ran off the right edge (the "Penning clipped" playtest
+    report), so `update_intensification` groups the tracks into rows of `KNOWLEDGE_STRIP_TRACKS_PER_LINE`
+    (2) joined by explicit `\n` (the prefix rides the first row). The label lives in the content-sized
+    right-docked `TurnBlock`, so Godot autowrap can't engage without a bounded width — the explicit rows
+    are what guarantee no track is ever lost off the edge, at any window width or ladder length.
+  - **PER-SOURCE PROGRESS — the source's own drawer row, never the strip.** A herd's `Husbandry`
+    (`domestication`) + `Corral` (`corral_progress`); a patch's `Cultivation` (`cultivation_progress`)
+    + `Field` (`patch_field_progress`). Local to ONE source, decays if abandoned.
+  - **THE BRIDGE — a gated verb's reason line** (`_hunt_policy_gates` / `_forage_policy_gates`,
+    rendered under the policy picker by `_build_policy_picker`). This is the one place the two meet,
+    and the one line that teaches the ladder: a KNOWLEDGE reason names the track, its live percent
+    and the **practice** that fills it (`Your people know Penning 45% — ♻ Sustain-hunt a tamed herd
+    to learn it`); a SOURCE reason names the meter and the **verb** that fills it (`This herd is 40%
+    tamed — ◎ Tame it to finish`). Judge on `two_meter_split.png`.
+  - **The `KNOWLEDGE_UNLOCK_NOTES` one-shot feed nudge** fires per track on a real `<1 → >=1`
+    transition (player faction only). Note `herding`'s note now names **Tame**, not Corral — see the
+    gate reshuffle below.
   See `core_sim` intensification ladder — knowledge.
 - **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
   faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
@@ -2109,9 +2437,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `discovered_sites`. Surfaced three ways, all filtered to `PLAYER_FACTION_ID`:
   (1) **Top-bar readout** (`Hud.gd update_discoveries`, dispatched from `Main.gd`): a compact
   `◈ Discoveries N  <distinct glyphs>` line (`DiscoveriesLabel` in `TurnBlock`, cyan), hidden when 0.
-  (2) **Map glyph markers** (`MapView.gd`): ingested into `discovered_sites` + a `discovered_site_lookup`
-  (`Vector2i → site`) mirroring `food_modules`; `_draw_discovered_site` draws the site's `glyph` (drop-shadow,
-  no backing disc) in a fixed **edge slot** via the shared secondary-marker system (see Map markers below),
+  (2) **Map markers** (`MapView.gd`): ingested into `discovered_sites` + a `discovered_site_lookup`
+  (`Vector2i → site`) mirroring `food_modules`; `SecondaryMarkerRenderer.draw_discovered_site` draws the
+  site's **bundled sprite where we have art for its `site_id`** (`WonderSprites` — see its row above; the
+  sprite is resolved BEFORE the `glyph == ""` guard) and the server's `glyph` (drop-shadow, no backing disc)
+  otherwise — and unlike the fauna/food tables that emoji path is **live**, since the site catalog is
+  data-driven and can outgrow the art. Either way in a fixed **edge slot** via the shared secondary-marker system (see Map markers below),
   gated on `_visibility_state_at != "unexplored"` (persists on any known/remembered tile — Discovered OR
   Active — since a site is permanent geographic knowledge, unlike the Active-only food-site/herd markers).
   (3) **Tile card** (`Hud._tile_terrain_lines`): a `Site: <display_name>` row (from `_tile_info_at`'s
@@ -2397,67 +2728,69 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView._draw_targeting` glows huntable herds + reticles the hovered hex for `need == "herd"`.
   (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
   `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
-  (5) **Pre-launch turns-to-fill forecast** (Sustain = maximum sustainable yield): Sustain is a small
-  per-turn *flow*, not a one-trip stock target, so a party filling its carry cap off a **small** herd
-  honestly takes a very long time (≈6 turns on a mammoth, ≈54 on red deer, effectively never on a
-  collapsing flock — for the same 4-worker party). The player must know **before** committing workers,
-  but the herd isn't chosen until the *targeting* step (the outfit block only picks party + policy), so
-  the forecast hangs off the **targeting banner**: while `_pending_send_hunt_expedition` is armed,
-  `Hud.show_tooltip` (already fed by `MapView.tile_hovered`) records the hovered hex in
-  `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
-  `_hunt_forecast_bbcode` — cyan `<Herd> · ≈N turns to fill`, WARN-amber `⚠ … — too slow to be worth
-  sending` past the viability threshold, DANGER-red `⚠ <Herd> can't fill a party this size — the packs
-  would never fill` when the sim's forward simulation does not fill the party within its
-  `forecast_horizon_turns` (`turns_to_fill == 0`) — a "can't fill" verdict, **not** a collapsed herd: a
-  thriving herd whose yield is too slow for this party's packs lands here too. The click still commits
-  (information, not a gate).
-  **The forecast also shows the HAUL — the food a filled pack delivers** (`HUNT_FORECAST_HAUL_FORMAT`,
-  ` · ~%d food`): the whole point of the party stepper is a tradeoff (a bigger party climbs the turns
-  AND the food it brings home), and turns-only hid the upside. The haul = `party_workers ×
-  expedition_per_worker_carry` — the same **blessed party×lever arithmetic as the band ceiling**, NOT
-  the ecology/turns-to-fill lookup the expedition discipline protects. It is computed in
-  `_hunt_trip_forecast` (which already has band + party) and rides the returned dict as `haul`, so the
-  shared `_hunt_forecast_line_bbcode` renders it identically at **both** entry points (banner + herd
-  panel). Shown ONLY when the pack **fills** (viable → `≈6 turns to fill · ~16 food`; too-slow →
-  `⚠ … ≈54 turns to fill · ~16 food — too slow to be worth sending`); **omitted** on the won't-fill and
-  denial states — those packs never reach the cap, so a haul there would be a lie. `expedition_per_worker_carry`
-  (`PopulationCohortState.expeditionPerWorkerCarry`, shipped 4.0) is decoded in `native/src/lib.rs`
-  beside the other expedition levers and flowed onto the MapView unit marker / covered by
-  `marker_field_guard`; **absent/0 → no `haul` key → the turns line renders alone** (live guard, no divide).
-  **The client does ZERO arithmetic for an expedition's trip — it is a pure TABLE LOOKUP.** A band and
+  (5) **Pre-launch RAID forecast — the delivered payload + waste** (server `5a130e0`): a hunting expedition
+  is a **greedy raid** — it grabs the herd's standing surplus above the policy floor in a burst and comes
+  home. A party too small to carry a whole animal now **kills one and hauls the fraction its pack holds,
+  wasting the rest**, so the readout headlines the delivered PAYLOAD: **the animal count over the turns, the
+  FOOD landed, and the WASTE**, `delivers ≈1 Thunder Mammoth over ≈20 turns · ~4 food · ⚠ 75% wasted`. The
+  player must know **before** committing workers, but the herd isn't chosen until the *targeting* step (the
+  outfit block only picks party + policy), so the forecast hangs off the **targeting banner**: while
+  `_pending_send_hunt_expedition` is armed, `Hud.show_tooltip` (already fed by `MapView.tile_hovered`)
+  records the hovered hex in `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
+  `_hunt_forecast_bbcode` — cyan `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for
+  a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
+  over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
+  delivering), amber denial `<Herd> — denial mission … delivers no food` (Eradicate), and DANGER-red
+  `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
+  policy floor — a small party on big game delivers a partial with waste and is NOT too lean). The click
+  still commits (information, not a gate — except the no-surplus case, which the herd panel's button
+  DISABLES; see `%HerdAssignControls`).
+  **The food total** is `HuntTripEstimate.deliveredFood` — the sim's forward-simulated landed food (NOT
+  `animals × foodPerAnimal`, which counts the whole kill and overstates a partial), set on the returned dict
+  as `food` (always present on a delivering forecast); the waste % is `wastedFood / (deliveredFood +
+  wastedFood)`. All rendered by the shared `_hunt_forecast_line_bbcode` at **both** entry points (banner +
+  herd panel), so the two can never quote different numbers.
+  **The client does ZERO arithmetic for an expedition's raid — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
     decoded in `native/src/lib.rs` into `hunt_trip_estimates` on the herd dict, keyed
-    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}` (so it flows through
-    `tile_info.herds` untouched). `_hunt_trip_forecast` just looks it up: `delivers_food == false` →
-    **denial** (eradicate — "delivers no food", never an ETA; the SIM decides this, the client does not
-    infer it from the policy string); `turns_to_fill == 0` → **won't fill** within the sim's forecast
-    horizon; else the turns, flagged **not viable** when `> expeditionViabilityWarnTurns`. **Do not
-    re-derive this with a `carryCap / rate` division** — that closed form is *wrong* for Surplus/Market,
-    whose per-policy ceiling is a **stock**, not a flow: the party strips the headroom in a turn or two
-    and then crawls at the herd's regrowth trickle. On a **full Rabbit Warren** (K=200) the sim's real
-    exported rows read (`0` = does not fill within the 60-turn horizon):
-    `sustain` — every party size **0** (never fills at ANY size); `surplus`/`market` — **1** worker
-    fills in **23** turns, every larger party **0**. A party of 4 under Surplus does **not fill at
-    all**; a closed form would cheerfully quote it an ETA. The sim forward-simulates the trip — the
-    herd's state moves under the party and a horizon bounds the answer — and exports that.
+    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken, delivered_food,
+    wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
+    the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
+    appended fields 6× now, always audit it first**). `_hunt_trip_forecast` just looks it up:
+    `delivers_food == false` → **denial** (Eradicate — "delivers no food", the SIM decides this, the client
+    never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
+    case — the raid returns empty at every party size; NOT `animals_taken == 0`, which is now ≥ 1 whenever
+    there's any surplus since a small party still kills one animal and wastes the uncarried meat); else the
+    raid delivers `delivered_food` food (`animals_taken` kills, `wasted_food` rotted), with `turns_to_fill
+    == 0` meaning a **long raid** (ran the whole horizon) and `> expeditionViabilityWarnTurns` flagged
+    **slow**. `deliveredFood` PLATEAUS with party size once the surplus binds — that plateau is the
+    **max-useful** party the stepper caps at (`_expedition_useful_cap`), and the per-policy picker cap is the
+    max over party sizes of `deliveredFood / (turnsToFill + travel)`. **Do not re-derive any of this** — the
+    sim forward-simulates the raid (the herd's state moves under the party, a horizon bounds the answer) and
+    exports the numbers.
   - **Resident band → `huntPolicyCeilings`** (`provisionsPerTurn`, the herd's renewable **flow**),
     decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
     `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
     `_local_hunt_preview_bbcode`) — but it must still never re-derive the ecology/MSY model.
   Plus the global levers echoed on every cohort (same idiom as `maxExpeditionPartySize`, decoded +
   flowed onto the MapView unit marker + covered by `marker_field_guard`). **Neither of them is an
-  input to an expedition's trip length** — that is the lookup above, and the client must NEVER divide
-  a carry cap by a take rate. Their real jobs: `expeditionViabilityWarnTurns` = the
-  **viable/not-viable threshold** applied to `turnsToFill`, and
+  input to an expedition's raid** — that is the lookup above. Their real jobs: `expeditionViabilityWarnTurns`
+  = the **slow-raid threshold** applied to `turnsToFill`, and
   `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
   client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
   that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
-  levers absent → no forecast line, banner unchanged.
-  `SEND_HUNT_POLICY_HINTS["sustain"]` was rewritten when Sustain became the MSY *flow* (it used to
-  promise "one conservative harvest"). ui_preview states `hunt_forecast_viable` /
-  `hunt_forecast_not_viable` / `hunt_forecast_never_fills` + `expedition_launch_policy_sustain` (dock
-  scrolled to the fold, so the hint is visible).
+  levers absent → no forecast line, banner unchanged. (The old `haul` key — `party ×
+  expeditionPerWorkerCarry` — is retired: a raid's payload is the sim's `animalsTaken`, not a
+  party×lever product. `expeditionPerWorkerCarry` is still decoded onto the marker for completeness but
+  no longer feeds the forecast.)
+  ui_preview banner states `hunt_forecast_viable` / `hunt_forecast_slow` / `hunt_forecast_no_surplus`
+  + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
+  partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
+  `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (denial, enabled),
+  the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
+  (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker caps correctly lower) /
+  `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
   `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click

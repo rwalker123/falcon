@@ -208,6 +208,12 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Visualise selected culture layers on the map: from the Culture tab, highlight the chosen regional/local footprint, dim non-selected tiles, and align overlay stats with the selection so divergence hotspots match the list (Owner: TBD, Estimate: 2d; Deps: culture overlay rendering hooks, selection broadcast). _Status_: Inspector selection now persists across refreshes, passes highlighted layer ids to the map, dims non-selected tiles, and reuses the selection set for overlay stats/legend context so divergence hotspots match the list._
 - [x] Hook espionage mission control into the Godot inspector Knowledge tab: surface mission queues, success odds, misinformation flags, and counter-intel posture/budget controls using the existing command envelopes (`queue_espionage_mission`, `counterintel_policy`, `counterintel_budget`) per `docs/architecture.md` Knowledge Ledger follow-up notes (Owner: TBD, Estimate: 2d; Deps: command bridge, Knowledge telemetry bindings). _Status_: Knowledge inspector now renders mission telemetry/queue data, including success odds, MISINFO tags, and live counter-intel posture/budget feedback (`clients/godot_thin_client/src/Main.tscn`, `clients/godot_thin_client/src/scripts/Inspector.gd`). Documentation updated (`docs/architecture.md`, `shadow_scale_strategy_game_concept_technical_plan_v_0.md`) to match the new UI flow.
 
+### Fauna Icon Sprites (map markers)
+- [ ] **Decide the map's `texture_filter` so bundled sprites can be filtered — the fauna icons currently render with slightly ragged, speckled edges.** `MapView._ready` pins `texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST` (commented as preventing seams from bilinear interpolation on the terrain-cache blit), and Godot 4 has **no per-draw-command filter override** — filter is a CanvasItem property, so the `draw_texture_rect` calls in `MapView._draw_marker_sprite` inherit NEAREST and the `mipmaps/generate=true` set on `clients/godot_thin_client/assets/icons/fauna/*.png.import` is **never sampled**. A 256px source nearest-minified to a ~36px marker (the game's on-screen size at hex radius ≈ 75) shows speckled leg/outline pixels. **Current workaround** (shipped in PR #132): `process/size_limit=64` on those `.import` files, so the *importer* does a filtered downscale and in-engine minification drops from ~7:1 to ~1.8:1; the mipmap flag was left on so it pays off if the filter is ever raised. **The proper fix** is `TEXTURE_FILTER_LINEAR_WITH_MIPMAPS` on MapView plus dropping `size_limit` back to `0` to recover full source resolution — but that is a **terrain-rendering** change, not an icon change: the NEAREST guard protects the cached-viewport blit at fractional pan offsets (`CachedMapRenderer` / `_build_hex_texture_cache`) and the blend-OFF per-hex texture path. The shader terrain path binds its own samplers and is unaffected. **Verify by pixel-diff, not by eye**: `tools/blend_probe.tscn` states must byte-compare unchanged where they should (`blend_bands_full`, `V7_coast_unchanged`, `V10_shore*`, the `H_gate_*` pair), and `map_preview`'s terrain frames plus a fractional pan/zoom must show no seams reappearing at hex boundaries — that is exactly the artifact the comment exists to prevent, and it is invisible in a downscaled screenshot. If seams do return, the fallback is to keep NEAREST and instead pre-downscale the icon assets to their true drawn size. (Owner: TBD, Estimate: 0.5d; Deps: none — PR #132 landed the sprites and the workaround.)
+- [ ] **Generate and wire the remaining ~22 pictographic icons** to the recipe proven in PR #132 (gpt-image-2 · solid magenta background · thick dark charcoal outline · mid-tone body clearly lighter than the outline · calm neutral pose · chunky forms over fine detail · no ground shadow), keyed through `scripts/texture/icon_key.py`. Outstanding: **6 animals** (aurochs/bison, cattle/ox, horse, goat/ibex, sheep, fowl), **11 food sites** (shell, fish, reeds, grain, chestnut, seal, potato, lotus, cactus, shrimp, mushroom), **3 settlement stages** (tent, hut, village). Judge every candidate **shrunk to 24/32/41px over tan, dark and green ground** — full-size renders are not evidence. Two known hazards: the **white species** (sheep, fowl) need an off-white/cream body, since pure white both washes out on tan terrain and risks being clipped by the keyer's background-distance test; and **aurochs/cattle/goat** are the next silhouette-collision group (all horned mid-brown quadrupeds), to be separated by tone and horn shape the way boar/mammoth were. Add each new species to `FaunaSprites.SPRITE_PATHS`; unmapped species keep falling through to emoji, so this can land incrementally. (Owner: TBD, Estimate: 1.5d; Deps: none.)
+- [ ] **Migrate the HUD's pictographic icons from emoji strings to sprites.** Scoped in PR #132 and **cheaper than first assumed** — no `FoodIcons` string is embedded in BBCode, so `[img]` is not required and no RichTextLabel work is needed. Two sites need restructuring: the Current-actions **Forage** and **Hunt** stepper rows (`Hud.gd` ≈ `:2596-2633`) weld the pictographic prefix into a single format string alongside the symbolic policy/status suffixes and pass it to a `Label`/`Button`, so `_build_worker_stepper` (`:2150`) must split its label into an icon child + text child (it already builds a row HBox). The roster herd row (`Hud.gd` ≈ `:3986`) is nearly free — that row already composes multiple child labels. **Leave the symbolic glyphs as text**: `for_policy` (♻ ⬆ ⇄ 💀 🌱 🐄) and `for_status` (● ○ ➤ ◄ ▮▮) are semantically **tinted** (WARN amber / DANGER red), and a full-colour sprite cannot take a tint — the same constraint that forces the starving-pen badge to be drawn geometry. The turn orb's corral 🐄 (`ui/TurnOrb.gd:53-54`) is the one genuine conflict (pictographic *and* severity-tinted) and should stay text. (Owner: TBD, Estimate: 1d; Deps: icon set generation.)
+- [ ] **Send a settlement-stage KEY on the wire instead of an emoji glyph, so stage tokens can be sprites.** `core_sim/src/settlement_stage_config.rs:71,77` ships literal emoji (`"⛺"`, `"🛖"`) as `icon`, which flows through `native/src/lib.rs` → `MapView` marker dict → `BandMarkerRenderer.gd:109-128` (map token) and `BandCityPanel.set_header` (`:172-181`, two `Label`s). Because only the glyph and the display label cross the wire, the client cannot map a stage to a sprite without reverse-mapping the emoji string, which is brittle. Add a stable stage key to the snapshot and have the client resolve key → texture (map) / key → text (panel). Note `Hud.gd:1422-1431` similarly concatenates server-provided **site** glyphs for the discoveries readout and has the same shape of problem. Server + client halves must land in the same PR (a wire change with no visible client half is not testable). (Owner: TBD, Estimate: 1d; Deps: icon set generation.)
+
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
 - [x] Surface axis driver diagnostics listing top contributors per tick (Owner: Ravi, Estimate: 1.5d).
@@ -257,11 +263,146 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Formalize the scripting manifest contract: publish JSON schema, add lint/validation tooling against `CapabilitySpec`, document host runtime checks, and sync manual/architecture references (Owner: TBD, Estimate: 2d; Deps: capability registry finalized). _Status_: Schema emitted to `docs/scripting_manifest.schema.json`, `cargo xtask validate-manifests` enforces shape + capability coverage, and docs/manual sections reference the contract + runtime checks.
 - [ ] Decide and document the distribution model for inspector scripts/mods (signed bundles vs Workshop-style feeds), outline load/unload flows, and sync the plan between `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §Next Steps (Frontend) and `docs/architecture.md` Shared Scripting Capability Model (Owner: TBD, Estimate: 2d; Deps: stakeholder interviews, packaging spike).
 
+### Roaming Bands — the missing half of settle/don't-settle (FUTURE ARC, design-doc first)
+
+**The gap, in one line: we have built the *rooted* column carefully and left the *roaming* column without a
+payoff.** Scarcity ([[scarcity-drives-the-real-decision]]), Fields on 46 river tiles, pens fixed at your
+fence, the sedentarization pull — everything pushes one way. Staying nomadic currently reads as *a phase
+you haven't grown out of*, not a strategy you chose. The design pillar says move/stay/fork must all be
+live options with real advantages; today only "stay" has any.
+
+**Four strategies, two of them under-built:**
+
+| | rooted | roaming |
+|---|---|---|
+| **plants** | **Field** — you cannot carry a farm | *(nothing — plants don't travel)* |
+| **animals** | **Pen** — fixed at your fence | **pastoral: your herd follows you** (`drift_to_owner`, 3b) · **big game: you follow the herd** |
+
+**The seed of the payoff — megafauna is food too big to carry.** A mammoth is ~2,000–2,500 kg of usable
+meat ≈ **60–100 person-loads**; nobody hauled one home, they *moved to the kill*, butchered, dried, cached,
+and moved on. So:
+- On an **expedition**, a big animal is mostly waste (a 3-hunter party keeps ~5% of a mammoth) — *"it may
+  just not be worth killing a mammoth on an expedition"*, which is the game telling the truth, not a bug.
+- **Move the band to it** and the carry cost vanishes — you're standing on the carcass. The whole beast is
+  yours.
+That is a food source that **rewards mobility and punishes rootedness** — the counterweight the rooted
+column has been missing, and historically exactly what happened.
+
+**Pieces that already exist** (this arc is mostly *connecting* them, not inventing): `drift_to_owner` (a
+tamed herd travels with the band — 3b); migratory herds + loiter ranges; Seasonal Camps + trail knowledge;
+the Nomadic Default start profile; `SedentarizationScore` (currently only models the pull *toward* rooting
+— it has no opposite).
+
+**Open questions for the design doc:** what does a roaming band *accumulate* if not buildings? (trail
+knowledge, herd relationships, cached stores?) How does storage/spoilage interact — a lump you can't
+preserve rots, so does drying/caching become the nomad's granary? Does `SedentarizationScore` need an
+opposing "mobility" reading rather than being a one-way meter? What does forking a band to seed a second
+group cost and gain? Does pastoral nomadism (herd follows you) and hunting nomadism (you follow the herd)
+want different support?
+
+**Depends on:** slice 8 (whole animals — megafauna only becomes a reason to move once a carcass is
+indivisible and huge); the local-hunt carry distinction below. **Manual-first** when opened.
+(Owner: TBD, Estimate: design-doc then phased; Deps: slice 8.)
+
+## Core Simulation — Bugs
+
+- [ ] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** Strongly evidenced,
+  **not yet proven end-to-end** — verify through a real snapshot round-trip before fixing.
+  **The mechanism:** `tended_this_turn` (and the pen's `corralled_tended_this_turn`) are **transient**,
+  and the restore path seeds them `false` (`forage.rs:377`, `fauna.rs:850`). The maintenance writer that
+  spares a source from decay is gated on `is_managed()` (`labor.rs:233`). So on the first Logistics pass
+  after a restore:
+  - **Tended patch / Field** — decays one tick → `is_cultivated()` flips false → the `is_managed()` gate
+    **never re-fires** → the improvement is lost *even with a band working it every turn*, bleeding to 0
+    over ~100 turns.
+  - **Pen** — worse: `advance_husbandry` doesn't decay an untended pen, it **escapes** it outright
+    (`corralled_at = None`, `pen_radius` zeroed) — the full ~25-turn rebuild *plus* every ExtendPen ring.
+  **Pre-existing** — the pre-slice-7 managed branch used the identical `is_managed()` predicate; the
+  intensification arc only surfaced it (a probe accidentally constructed the rollback state and
+  "proved" a bug that turns out to be real only *after* a restore).
+  **Minimal fix:** have the restore path seed the flag `true` — a one-turn grace, exactly the precedent
+  `corral_at` already sets (`fauna.rs:502`). **Add a regression test that survives a real
+  capture→restore→advance cycle**, since that's the only thing that would have caught this.
+  (Owner: TBD, Estimate: 0.5d; Deps: none.)
+
+- [ ] **A local hunt should not pay the carry-home cost.** `hunt_take` applies the same
+  `per_worker_biomass_capacity` cap whether the band is **standing on the herd** (within its hunt reach)
+  or a detached party is hauling the kill back N tiles. Those are different acts: **hunt = reach + carry;
+  harvest-at-home = no haul, you're already there.** This is what makes megafauna coherent — a 3-hunter
+  expedition keeps ~5% of a mammoth (correct: don't hunt mammoths from a distance), but a band that
+  *moves to the carcass* should keep the beast. Without it, "go to the mammoth" is merely the absence of a
+  punishment rather than a reward, and the Roaming Bands arc above has nothing to stand on. Small change,
+  large consequence. Next slice after slice 8. (Owner: TBD, Estimate: 0.5d; Deps: slice 8.)
+- [ ] **~~Hunting expeditions never say a hunter is idle~~ — LARGELY SUPERSEDED by slice 8.** The ticket
+  below proposed *explaining the smooth model better*; the user's read was that **the smooth model was the
+  bug**, and slice 8 replaced it (whole animals + real escapement). Extra hunters now genuinely change the
+  take. **What remains is the UI half**: surfacing why a hunter is idle, and that Surplus is the answer to
+  "more food, faster — at the herd's expense". Original analysis kept for the seam map:
+  Playtest: 1 worker → 6 turns/4 food, 2 → 11/8, 3 → 16/12. Adding hunters didn't hunt faster,
+  it just made the trip longer. **Not a bug at the time — the model was self-consistent and the UI silent.**
+  `expedition_take_biomass` (`expeditions.rs:650-666`) is `min(workers × per_worker_biomass_capacity,
+  policy_ceiling)`, so throughput *does* scale with the party; it just wasn't binding:
+  - **Sustain** → ceiling = the herd's MSY (`hunt_policy_ceiling`, a *herd* property). **This is close to
+    systematic, not a one-off:** one hunter's throughput is **40 biomass/turn**
+    (`hunt.per_worker_biomass_capacity`), and most of the roster's `MSY = r·K/4` sits well under it —
+    Rabbit ~16, Boar ~25, Aurochs ~29, Red Deer ~30. So on Sustain **hunter #2 is idle for nearly every
+    herd in the game**, and only grows the pack (`workers × hunt.per_worker_carry` 4.0) → a longer trip at
+    the same rate. The playtest herd was **Steppe Runners, K 3890, r 0.04 → MSY 38.9** (≈0.78 prov/turn,
+    matching the observed 0.8). Extra hunters only earn their keep where MSY > 40: megafauna, or a
+    migratory herd on rich range (Steppe Runners at the species-median K≈9000 → MSY ~90 → 3 hunters).
+    Since 2b made **K ecological**, a herd's *pasture* decides how many hunters it can support — arguably
+    good design, but wholly invisible. **Worth deciding separately:** whether
+    `hunt.per_worker_biomass_capacity` 40 is simply too high relative to the roster's MSY, which would
+    make the party slider meaningful on Sustain rather than only on Surplus.
+  - **Surplus/Market** → the expedition ceiling is **stock headroom to the Allee floor** (`0.15·K`, via
+    `hunt_expedition_floor:621-637`) — **not** the resident band's `MSY × surplus_multiplier`; the two
+    paths deliberately disagree (documented `expeditions.rs:568-572`). So the *hunters* bind: rate scales
+    linearly and **trip length stays flat** (bag and rate both ×N) until the stock is stripped, then the
+    party crawls on the regrowth trickle. (That regime change is why the forecast simulates instead of
+    dividing — see the 4-workers-on-a-rabbit-warren note at `expeditions.rs:879-891`.)
+  So the same slider is *dead weight* on one policy and *the main lever* on another, and nothing says so.
+  **Scope:** there is **no max-useful-workers concept in the expedition path at all** —
+  `workers_needed_for_take` (`expeditions.rs:552-560`) exists but every caller is in-place labor
+  (`labor.rs`, `fauna::forecast_source_yield`); `HuntTripForecast` carries only `turns_to_fill` /
+  `delivers_food` / `first_turn_provisions`. Add it as a field on `HuntTripForecast`, populated in
+  `simulate_hunt_trip` from the `expedition_take_biomass` result the sim already computes, exported
+  beside `turns_to_fill` in `HuntTripEstimateState` (the outfit UI is a pure lookup by design — see
+  `native/src/lib.rs:4117`, "Band = flow arithmetic; expedition = lookup"). Then surface *why* a hunter
+  is idle, and that Surplus is the answer to "more food, faster — at the herd's expense".
+  (Owner: TBD, Estimate: 1d; Deps: none.)
+
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
 - [x] Integrate tracing/tracing-subscriber metrics dump accessible via CLI.
 - [x] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work). _Status_: Exercised by `snapshot::tests::terrain_overlay_delta_updates_on_biome_change` covering biome/tag mutation delta emission.
+- [ ] **Config Tuning panel (inspector) — collapse the playtest turnaround loop.** Every balance
+  question this project asks ("does 0.16 consumption feel right?", "is 125 turns to tame a Steppe
+  Runner too long?", "should `pen_gain` be higher?") is answered by *editing a JSON file, rebuilding,
+  and replaying from turn 0*. That edit→rebuild→replay cycle is now the slowest part of design
+  iteration, and the dial count keeps growing (`demographics_config`, `fauna_config`, `labor_config`,
+  `intensification_ladder`, `graze`, `map_presets`, …). Build a Godot inspector panel that **lists the
+  tunable parameters, lets you edit them, and restarts the sim with the overrides** — no rebuild, no
+  hand-editing JSON.
+  - **Restart-scoped is enough** (the ask): tune → restart → observe. Live hot-reload is a non-goal;
+    most of these dials only make sense applied from turn 0, and several configs deliberately are not
+    on the reload path.
+  - **Ride the existing seam, don't invent one:** each config already loads via `from_json_str` with a
+    `*_CONFIG_PATH` / `*_PATH` env override and its own `validate()` that logs
+    `<config>.invalid_rejected` and falls back to the builtin. The panel should write an override file
+    (or push overrides to the server) and use that same path, so **validation is enforced for free and
+    a bad dial can't silently corrupt a run** — surface the rejection in the panel rather than failing
+    quietly.
+  - **Discoverability is the real design question:** the configs are hand-written JSON with rich
+    `_comment_*` documentation (deliberately — see the no-magic-numbers rule). A panel that drops those
+    comments loses the *why* behind each dial. Prefer surfacing the comment as help text over inventing
+    a parallel schema; consider whether the server should serve a config catalog (name, current value,
+    bounds from `validate()`, comment) the way `great_discovery_definitions` is streamed, so the client
+    doesn't re-read local JSON.
+  - Scope to decide when picked up: which configs are in (start with the balance-heavy ones —
+    `demographics_config`, `fauna_config`, `intensification_ladder`, `labor_config`), whether values
+    persist to disk or live only for the session, and whether a "reset to builtin" is per-dial or
+    per-config. (Owner: TBD, Estimate: 2–3d; Deps: none — every config seam it needs already exists.)
 
 ## Core Simulation Roadmap
 - [x] Implement per-faction order submission and turn resolution phases (Owner: Sam, Estimate: 4d).
@@ -503,6 +644,18 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no
   mutation); policy becomes a visible tradeoff. Lands alongside Phase 0/1.
+- [ ] **Market's DIFFERENTIAL crash — slow breeders go extinct *fastest*, fast ones endure longest.**
+  **Plain extinction from Market is now SHIPPED** (slice 8b: hunt policies are ascending multiples of MSY
+  banked into a per-herd kill-credit — Sustain=MSY, Surplus=1.5×, Market=2.5×; a rate above MSY has no
+  equilibrium, so Market drives any herd to 0 on the map). What remains deferred is only the *differential*
+  the manual promises — that a slow breeder under commercial pressure dies **faster** than a fast one.
+  Today Market (2.5×MSY) extincts every species; the time-to-extinction does vary with `r` (a fast
+  breeder's MSY is larger, so 2.5×MSY strips more biomass/turn — but its regrowth is also larger), so the
+  differential is *muted*, not absent. **This arc sharpens it** into the depletion mechanic — e.g. an
+  Allee/depensation threshold a slow breeder can't climb back over once Market pushes it low, so it dies
+  while a fast breeder recovers if you ease off. Do it **without** re-inverting the panel's ascending take
+  ordering (the property playtest demanded and the multiplier model guarantees). (Owner: TBD, Estimate:
+  1–2d; Deps: none, but belongs with Phase 0 depletion.)
 - [ ] Deferred (documented): full improvement catalog (dwellings/storage/defense), larder spoilage +
   storage tiers, richer crop/livestock variety, settlement-cluster derivation — owned by
   `plan_settlement_population.md`; this arc delivers the food-tending seam that feeds them.
@@ -524,14 +677,38 @@ from `display_name`; keywords for aurochs/bison/horse/goat/sheep already mapped 
 `species`/`sizeClass`/`husbandryCeiling` are free-form wire strings — **no Rust, client, or schema edit
 to add an animal whose fields fit the existing enums.**
 
-- [ ] **Fill out the start-game roster (config).** Add the missing animals as `fauna_config.json`
-  entries with designed ecology (biome affinity via `host_biomes`, stat block, husbandry ceiling):
-  **Bison** (migratory, `pastoral` — the plains counterpart to Steppe Runners); **Wild Horse**
-  (grassland; decide `pastoral` vs `pen`); more **regional game** to give each biome a distinct fauna
-  signature (currently many biomes share a short game list). Manual-first (new gameplay content →
-  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
-  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
-  never spawns.
+- [ ] **SHEEP — the missing Neolithic founder. DO THIS FIRST, right after slice 8.** We ship three of the
+  four founder animals — **cattle** (Wild Aurochs), **pig** (Wild Boar), **goat** (Crag Goats) — and no
+  **sheep**. Goats do not cover them: goats *browse* (anything, on rough marginal ground — which is why we
+  put Crag Goats on `montane_highland`/`semi_arid_scrub`), sheep *graze* (they want open grass) and are
+  famously **docile**, which is why one shepherd minds three hundred of them. Proposed entry — **pure
+  config, no code** (and 🐑 is *already* mapped in `FoodIcons.gd`, so it renders on arrival):
+  - `display_name: "Wild Sheep"` — **the name must contain "sheep"** or the icon falls back to the generic
+    grazer; matches the Wild Boar / Wild Fowl / Wild Aurochs pattern.
+  - `size_class`: mirror `crag_goat` · `migratory: false` · `host_biomes: ["savanna_grassland"]` (open
+    grass — deliberately *not* highland/scrub, so it doesn't collapse into the goat's niche; sharing
+    grassland with the aurochs is correct, that's what a pasture is)
+  - `biomass: [300, 700]` · `fodder_per_biomass: 0.05` · `regrowth_rate: 0.20` (between aurochs 0.09 and
+    rabbit 0.35) · `husbandry_ceiling: "pen"` · `body_mass: 25` · `taming_rate: 1.0` (the most docile
+    animal in the roster) · **`animals_per_herder: 50`** (vs aurochs 12 — a shepherd:cowherd ratio of ~4:1,
+    which is the real one)
+  - **Why it's worth doing before the rest of the roster:** sheep are the first species whose *signature*
+    is `animals_per_herder` — not the biggest yield, not the fastest breeder, but **the one you can keep a
+    lot of with almost no labor**. That's a genuinely different answer to "how do I feed people", and it's
+    the clearest test of whether the herder mechanic added in slice 8 earns its keep. **Deps: slice 8**
+    (the lever must exist first). Verify it spawns (live `host_biomes` key + non-zero `abundance.per_biome`).
+- [ ] **Fill out the rest of the start-game roster (config).** Add the remaining animals as
+  `fauna_config.json` entries with designed ecology (biome affinity via `host_biomes`, stat block,
+  husbandry ceiling): **Wild Horse** (grassland; decide `pastoral` vs `pen`); more **regional game** to
+  give each biome a distinct fauna signature (currently many biomes share a short game list). Manual-first
+  (new gameplay content → `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config
+  entries. Verify each actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an
+  unmatched key silently never spawns.
+  **NOTE — Bison is already in the roster.** It was listed here as a gap, but Steppe Runners *are* bison
+  conceptually (settled with the user: 120/head, ~76 head at K — bison/wild-horse scale, not the mammoth's
+  800/head), and they carry the **only** `pastoral` ceiling in the game. Don't add a duplicate; and don't
+  demote them to `wild` — "herd it but never fence it" would become a category with no members, right as
+  the Roaming Bands arc goes to depend on it.
 - [ ] **(Optional) Predators / threat fauna.** Wolves/big cats etc. are NOT husbandry — they need the
   M1 predator-pressure model (see Early-Game Labor → *M1-threats*), not a `SpeciesDef` alone. Scope
   with that arc, not this one.

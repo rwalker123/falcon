@@ -66,6 +66,8 @@ pub(crate) fn labor_assignment_to_state(
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
+        wasted_yield: yields.wasted,
+        overdraws: yields.overdraws,
         ..Default::default()
     };
     match &assignment.target {
@@ -125,6 +127,10 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
+    /// `labor_config.band_move_tiles_per_turn` — a band's move speed, echoed per-cohort so the client
+    /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
+    /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
+    pub(crate) band_move_tiles_per_turn: u32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -168,11 +174,7 @@ pub(crate) fn population_state(
     let idle_workers = working_age.saturating_sub(assigned);
     // Zip each assignment with its retained per-source yield telemetry (same index order). A
     // rehydrated allocation has an empty `last_yields` until the next tick → default 0 yields.
-    const NO_YIELD: SourceYield = SourceYield {
-        actual: 0.0,
-        sustainable: 0.0,
-        workers_needed: 0,
-    };
+    const NO_YIELD: SourceYield = SourceYield::ZERO;
     let labor_assignments = allocation
         .map(|a| {
             a.assignments
@@ -343,6 +345,7 @@ pub(crate) fn population_state(
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
+        band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
     }
 }
 

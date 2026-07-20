@@ -14,7 +14,7 @@ use core_sim::{
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, Scalar,
     SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, FOOD,
+    StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
 };
 
 fn spawn_world() -> App {
@@ -101,12 +101,29 @@ fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
     }
 }
 
-/// Claim `count` herds as domesticated for `faction` (drives the domestication input).
+/// Tame `count` herds fully for `faction` (drives the domestication input).
+///
+/// **Only herds the husbandry ceiling actually allows** (Grazing 2d-δ): this runs the real
+/// `accrue_domestication`, which self-guards on `can_domesticate()`, so a `wild`-ceiling species
+/// (deer, mammoth) silently refuses and would leave the fixture short of `count`. The retired
+/// `claim_domestication` snapped progress to `1.0` unconditionally and so could fabricate a
+/// domesticated mammoth — filtering here keeps the fixture honest *and* gets the count it asks for.
 fn domesticate(app: &mut App, faction: FactionId, count: usize) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
-    for herd in registry.herds.iter_mut().take(count) {
-        herd.claim_domestication(faction);
+    let tameable = registry
+        .herds
+        .iter_mut()
+        .filter(|herd| herd.can_domesticate())
+        .take(count);
+    let mut tamed = 0;
+    for herd in tameable {
+        herd.accrue_domestication(faction, RUNG_COMPLETE);
+        tamed += 1;
     }
+    assert_eq!(
+        tamed, count,
+        "the seeded map must hold {count} domesticable herds for this fixture"
+    );
 }
 
 /// Insert `count` cultivated forage patches owned by `faction` — the plant half of the

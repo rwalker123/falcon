@@ -1202,6 +1202,8 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            // A body mass this fixture never divides by — it is a fog-reveal test, not a take test.
+            10.0,
         );
 
         let mut allocation = LaborAllocation::default();

@@ -634,6 +634,11 @@ table PopulationCohortState {
   // auto-Delivering; the launched-party echo is `expeditionCarryCap`). Appended last (append-only
   // schema discipline).
   expeditionPerWorkerCarry:float = 0;
+  // A band's move speed = labor_config.band_move_tiles_per_turn. Global config echoed per-cohort (same
+  // idiom as the levers above). The client adds a raid's round-trip travel to the band-agnostic
+  // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
+  // Appended last (append-only schema discipline).
+  bandMoveTilesPerTurn:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -646,16 +651,36 @@ table LaborAssignment {
   policy:string;     // Hunt take policy (sustain|surplus|market|eradicate)
   // Per-source food-income breakdown (derived per-turn at capture, 0 on a rehydrated save before the
   // next tick). actualYield = provisions this source produced this turn; sustainableYield = what it
-  // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). A per-turn
-  // actualYield > sustainableYield is the client-derived overhunting signal. Appended (append-only).
+  // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). The
+  // overhunting ⚠ is now the sim-answered `overdraws` flag (below), NOT the client-derived
+  // actualYield > sustainableYield test — that test mis-fires on a hunt's lumpy per-turn take (a kill
+  // turn cashes a whole banked animal, so actualYield spikes above the steady sustainable rate even
+  // under Sustain). Appended (append-only).
   actualYield:float = 0;
   sustainableYield:float = 0;
   // Minimum workers that would have produced this turn's take = the overstaffing signal. workers >
   // workersNeeded ⇒ the binding constraint was not labor, so the extra workers were idle (client
-  // flags the wasted labor). 0 when the source produced nothing; a tended patch / corralled herd
-  // (maintenance labor) reports 1. Derived per-turn at capture (0 on a rehydrated save before the
-  // next tick). Appended (append-only).
+  // flags the wasted labor). 0 when the source produced nothing. DERIVED AT EVERY RUNG since the
+  // intensification ladder's slice 7 — a tended patch / Field / corralled herd used to report a
+  // hardcoded 1, which claimed one worker could carry home whatever the land offered. Derived
+  // per-turn at capture (0 on a rehydrated save before the next tick). Appended (append-only).
   workersNeeded:uint = 0;
+  // Provisions this source OFFERED that the crew could not collect = the UNDERSTAFFING signal, and
+  // the exact mirror of workersNeeded's overstaffing one: production − actualYield, where production
+  // is what the source hands over this turn (the policy ceiling on a wild/tended source, the managed
+  // rate on a Field/pen) and collection is workers × per-worker throughput. So the pair answers both
+  // halves of "is this correctly staffed?": workers > workersNeeded ⇒ drop some, wastedYield > 0 ⇒
+  // add some. On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it
+  // stays in the stock and regrows. Derived per-turn at capture (0 on a rehydrated save before the
+  // next tick). Appended (append-only).
+  wastedYield:float = 0;
+  // THE overhunting ⚠, answered by the sim rather than derived by the client from
+  // actualYield > sustainableYield (which mis-fires on a hunt's lumpy per-turn take — see actualYield).
+  // = SourceYield.overdraws: `!managed && policy.overdraws()` — false for Sustain and the investment
+  // rungs (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/
+  // Eradicate. A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
+  // Derived per-turn at capture. Appended (append-only).
+  overdraws:bool = false;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -907,16 +932,65 @@ table ForagePatchState {
   // commits to the investment. Cultivate is FORAGE-ONLY (the herd twin is Corral).
   ceilingCultivate:float = 0;
   tendedYield:float = 0;
+  // --- The Sow investment rung + the Field (appended, slice 5/6a) --- plant RUNG 3, the twin of the
+  // herd's Corral block. `fieldProgress` is the per-patch `plant:field` build meter 0..1 (the mirror
+  // of `HerdTelemetryState.corralProgress`); `isField` is the completed rung — read the BOOL, never
+  // infer a rung from the float. Note the plant branch now has TWO build meters on one source, and
+  // both ship: `cultivationProgress`/`isCultivated` (rung 2, already shipped above) and these. They
+  // are independent — `Sow` needs no prior patch, so a Field may stand on ground that was never
+  // tended.
+  fieldProgress:float = 0;
+  isField:bool = false;
+  // `ceilingSow` = food/turn WHILE the ground is being sown under the Sow policy (the rung's
+  // `yield_fraction_while_building` × what the ground would otherwise pay — the MSY dip on a wild
+  // patch, the *tended-harvest* dip on a tended one being upgraded). On ground the crew has only just
+  // seeded that is honestly ~0: there is no standing crop to take a fraction of, so a bare-ground sow
+  // is pure investment. `fieldYield` = food/turn the patch will pay ONCE sown (maintenance labor: one
+  // worker suffices), the Field's rate on its current standing crop — 2× `tendedYield` on the shipped
+  // dials. Together they are Sow's "preparing X → then Y" pre-commit pair, exactly as
+  // `ceilingCultivate`/`tendedYield` are Cultivate's. Its OWN field rather than reusing
+  // `ceilingCultivate`: the plant branch has two investment rungs whose dips are independently
+  // tunable, and folding them onto one number would pass every forecast==actual test by coincidence
+  // and lie the moment either rung is retuned (the `ceilingTame` lesson).
+  ceilingSow:float = 0;
+  fieldYield:float = 0;
+  // **WHY this ground will not take seed** — "" when it will (and on a rung with no site requirement).
+  // Otherwise the verdict of the `plant:field` rung's `site_requirement`, as a stable key:
+  //   "too_poor"             — the ground is watered, but too thin to take a crop without fertilizing
+  //   "too_dry"              — the ground is rich, but too dry to farm without irrigation
+  //   "too_poor_and_too_dry" — both
+  // Free-form string (the `species`/`sizeClass`/`husbandryCeiling` convention), so a future refusal
+  // needs no schema change.
+  //
+  // SHIPPED AS AN ANSWER, not a bool, because only ~1% of tiles are sowable (46 of 4160 on the
+  // standard map) — so "why can't I sow here?" is the question players will actually ask, and the
+  // client CANNOT re-derive it: it has neither the per-biome capacity table nor the hydrology. The
+  // server resolves it through the SAME seam (`RungSiteRequirement::refusal`) that the `sow` command
+  // and the labor arm gate on, so the wire, the rejection and the sim cannot disagree.
+  sowSiteRefusal:string;
 }
 
-// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
-// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
-// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
-// learning/known meters. Only factions that have begun learning either ladder appear here.
+// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
+// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
+// renders learning/known meters. Only factions that have begun learning SOME ladder appear here.
+//
+// One field per rung-transition — "practice rung N unlocks rung N+1"
+// (docs/plan_intensification_ladder.md §4), so these read as the ladder itself:
+//   plant:  wild --cultivation--> tended --seedSelection--> field (the Sow rung, a later slice)
+//   animal: wild --herding------> pastoral --penning------> pen
+// APPEND-ONLY: cultivation/herding keep their shipped slots; seedSelection/penning are appended
+// strictly after (slice 4's two new discoveries, ids 2005/2006).
 table IntensificationKnowledgeState {
   faction:uint;
+  // Gates `cultivate`. Earned by working a WILD patch under a stewardship policy.
   cultivation:float = 0;
+  // Gates `tame` (and `tame` ONLY, since the §4.3 reshuffle). Earned by working a WILD herd.
   herding:float = 0;
+  // Gates `sow` (slice 5 — earned now, spent later). Earned by working a TENDED patch.
+  seedSelection:float = 0;
+  // Gates `corral` + `extend_pen` — the §4.3 reshuffle took this off `herding`. Earned by working a
+  // PASTORAL (tamed) herd.
+  penning:float = 0;
 }
 
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
@@ -987,11 +1061,29 @@ table HuntPolicyCeiling {
 table HuntTripEstimate {
   policy:string;           // sustain|surplus|market|eradicate (free-form, like `species`)
   partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
-  // Turns of hunting to fill the party's carry cap. 0 = DOES NOT FILL within
-  // expedition_config.hunt.forecast_horizon_turns → render "won't fill", not a number.
+  // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
+  // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
+  // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
+  // is a successful short trip. 0 = never completed within forecast_horizon_turns.
   turnsToFill:uint = 0;
   // false for eradicate (denial) — render "no food delivered", never an ETA.
   deliversFood:bool = false;
+  // Whole animals the raid KILLS over M turns (append-only) — a kill count, the client headlines "≈N
+  // animals over M turns"; the delivered food total is `deliveredFood`, NOT `animalsTaken × foodPerAnimal`
+  // (a party too small to seat a whole animal still kills one and wastes the rest). Bounded by the
+  // standing surplus, so it plateaus with partyWorkers once the surplus (not the pack) binds — that
+  // plateau IS the max-useful party size (ceil(surplus_food / per_worker_carry)). 0 = herd at/below
+  // the policy's floor, no surplus to raid (the honest non-viable case). NOTE: `animalsTaken` is now a
+  // KILL count — a party too small to seat a whole animal still kills one and wastes the rest (mirroring
+  // the resident band), so the delivered payload is `deliveredFood`, not `animalsTaken × foodPerAnimal`.
+  animalsTaken:uint = 0;
+  // Food the party actually LANDS in its larder over the raid (append-only) — the PRIMARY readout. A
+  // small party on a big animal now brings home a partial (with waste), so "too lean to raid" means
+  // `deliveredFood == 0` (no surplus at any party size), NOT "party too small to carry a whole animal".
+  deliveredFood:float = 0;
+  // Food killed but not hauled home over the raid (append-only). `wastedFood / (deliveredFood +
+  // wastedFood)` is the waste fraction the client shows beside the delivered total.
+  wastedFood:float = 0;
 }
 
 table HerdTelemetryState {
@@ -1106,6 +1198,37 @@ table HerdTelemetryState {
   // hides the corral/extend affordance on a non-"pen" herd and the whole domestication track on a
   // "wild" one. A free-form string like `species`/`sizeClass` (empty → "pen", the full ladder).
   husbandryCeiling:string;
+  // --- Body mass (intensification ladder slice 8b, appended last) --- the biomass of ONE animal of
+  // this species (`Herd::body_mass`). The client needs it to turn a per-turn biomass/food RATE into a
+  // kill-RHYTHM: a hunt take is whole animals, so a herd whose MSY is lighter than one body pays a
+  // kill every `bodyMass / rate` turns (a mammoth ~7, a rabbit several per turn). Render the honest
+  // rhythm ("~1 animal / N turns") from `sustainableYield` (or a `huntPolicyCeilings` row) ÷ this,
+  // NOT the raw per-turn `actualYield`, which is 0 on the wait turns of the pulse. 0 if unknown.
+  bodyMass:float = 0;
+  // --- Food per animal (intensification ladder slice 8b, appended last) --- one whole animal's worth
+  // of yield in PROVISIONS (`SourceYieldForecast::body_mass_yield` = body_mass × provisions_per_biomass,
+  // the same conversion every other yield field uses). The client's kill-rhythm is `foodPerAnimal /
+  // sustainableYield` — both in provisions, so dimensionally clean — and it doubles as a "a mammoth is
+  // ~16 food" display. 0 if unknown.
+  foodPerAnimal:float = 0;
+  // --- Herd staffing (appended last) --- how many herders a MANAGED herd owes this turn to hold its
+  // tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) / animals_per_herder)), and how
+  // well it is currently staffed. Together they let the client show an honest "herders 1 / 6": the
+  // labor assignment's `workersNeeded` blends this with the take crew (`max(herdersNeeded, haulers)`),
+  // so it cannot distinguish an under-HERDING shortfall (tameness bleeds, the herd goes feral) from an
+  // under-CARRYING one (wasted food). `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
+  herdersNeeded:uint = 0;
+  // `herdedFraction` = `min(1, assigned / herdersNeeded)` — the share of the needed herders present.
+  // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
+  // `domestication` bleeds proportionally and the herd risks reclassifying as wild. Render a warning.
+  herdedFraction:float = 1;
+  // --- The Tame rung's payoff (appended last) --- the pastoral twin of `corralYield`: food/turn a
+  // Sustain hunt pays ONCE this herd is tamed (the pastoral MSY at the herd's CURRENT biomass). While
+  // `ceilingTame` in `huntPolicyCeilings` is Tame's DURING-BUILDING dip, this is what the herd pays
+  // after taming completes — so the client can render Tame as "→ +Y" (like Cultivate/Sow/Corral)
+  // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
+  // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
+  pastoralYield:float = 0;
 }
 
 table CommandEventState {
