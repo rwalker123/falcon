@@ -7,6 +7,11 @@ edition = "2021"
 name = "shadowscale_launcher"
 path = "src/main.rs"
 
+[dependencies]
+# Readiness gate: the launcher must confirm the ports handshake file parses as a
+# complete payload, not merely that it exists, before starting the client.
+serde_json = "1.0"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

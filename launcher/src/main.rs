@@ -13,7 +13,8 @@
 //! * they only cleaned the server up on the *clean* exit path, so a crashed or
 //!   force-killed launcher orphaned a running server holding the ports.
 //!
-//! Readiness here is the ports handshake file (`core_sim::port_alloc`), and
+//! Readiness here is a fully written ports handshake file
+//! (`core_sim::port_alloc`), at a path unique to this launcher process, and
 //! shutdown is a `Drop` guard plus, on Windows, a kill-on-close Job Object that
 //! the OS honours even if this process is terminated.
 
@@ -33,14 +34,28 @@ use std::time::{Duration, Instant};
 
 /// Environment variable that both the server (`core_sim::port_alloc::
 /// ports_file_path`) and the client (`ServerPortsFile.gd`) honour *verbatim*
-/// when set. The launcher sets it for both children so this run's handshake
-/// cannot be confused with a file left behind by a previous crashed run.
+/// when set. The launcher sets it for both children to a path unique to this
+/// process (see [`ports_file_path`]), so this run's handshake is confused
+/// neither with a file left behind by a crashed run nor with a *concurrently
+/// running* second launcher.
 const ENV_PORTS_FILE: &str = "SIM_PORTS_FILE";
 
-/// Handshake file name. Deliberately *not* `ports.json`: keeping the launcher's
-/// file distinct from the server's default means a developer running the server
-/// by hand and a player running the packaged game never collide.
-const PORTS_FILE_NAME: &str = "launcher-ports.json";
+/// Handshake file name, assembled as `{prefix}{pid}{extension}`.
+///
+/// Deliberately *not* `ports.json`: keeping the launcher's file distinct from
+/// the server's default means a developer running the server by hand and a
+/// player running the packaged game never collide.
+///
+/// The pid is what makes the name per-run rather than merely per-install, and
+/// that matters because two launchers can legitimately run at once —
+/// `core_sim::port_alloc::allocate` auto-bumps by `PORT_BLOCK_STRIDE` when no
+/// explicit base is given, precisely so a second copy gets its own port block.
+/// With one fixed name the second launcher's startup cleanup deleted the *first*
+/// server's live handshake file; since the server writes that file exactly once
+/// and never rewrites it, the first launcher then waited out the whole
+/// [`READY_TIMEOUT`] and blamed a server that was perfectly healthy.
+const PORTS_FILE_PREFIX: &str = "launcher-ports-";
+const PORTS_FILE_EXTENSION: &str = ".json";
 
 /// Directory name under the per-user app-data root. Contract twin of
 /// `PORTS_FILE_DIR` in `core_sim/src/port_alloc.rs`.
@@ -107,9 +122,10 @@ fn run() -> Result<(), String> {
     fs::create_dir_all(&data_dir)
         .map_err(|err| format!("Could not create {}: {err}", data_dir.display()))?;
 
-    let ports_file = data_dir.join(PORTS_FILE_NAME);
-    // A leftover file from a previous crashed run would satisfy the readiness
-    // wait instantly and hand the client dead ports. Start from a clean slate.
+    let ports_file = ports_file_path(&data_dir);
+    // Still required even though the name carries our pid: PIDs are recycled, so
+    // a crashed run can have left a stale file at exactly this path, and it would
+    // satisfy the readiness wait instantly and hand the client dead ports.
     remove_ports_file(&ports_file);
 
     let server = Command::new(&layout.server)
@@ -303,6 +319,23 @@ fn app_data_dir() -> Result<PathBuf, String> {
     Ok(root.join(APP_DATA_DIR))
 }
 
+/// This run's handshake path: the shared app-data directory plus a file name
+/// carrying our own process id, so concurrent launchers never touch each other's
+/// file (neither the startup cleanup nor [`Session::drop`]).
+///
+/// Accepted tradeoff, decided rather than overlooked: a launcher killed with
+/// SIGKILL / `taskkill /f` leaves its ~100-byte file behind, where the old fixed
+/// name self-limited the litter to one. This crate deliberately does *not* sweep
+/// orphaned `launcher-ports-*.json` files — a sweep would have to distinguish a
+/// dead pid from a live one on two platforms to avoid deleting a healthy
+/// concurrent run's handshake, which is far more machinery than the leak costs.
+fn ports_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!(
+        "{PORTS_FILE_PREFIX}{}{PORTS_FILE_EXTENSION}",
+        std::process::id()
+    ))
+}
+
 fn env_path(key: &str) -> Result<PathBuf, String> {
     std::env::var_os(key)
         .map(PathBuf::from)
@@ -313,16 +346,35 @@ fn env_path(key: &str) -> Result<PathBuf, String> {
 // Readiness
 // ---------------------------------------------------------------------------
 
-/// Blocks until the server publishes its handshake file, it exits, or
+/// Keys the client reads out of the handshake file, and therefore the definition
+/// of a *complete* one. Contract twin of `KEY_HOST` / `KEY_COMMAND` / `KEY_LOG` /
+/// `KEY_SNAPSHOT_FLAT` in
+/// `clients/godot_thin_client/src/scripts/ServerPortsFile.gd`.
+///
+/// Note the stream port is `snapshot_flat`, **not** `snapshot`: `snapshot` is the
+/// legacy JSON socket, and a client pointed at it connects to a live socket and
+/// then silently never renders. Any change here must move in lockstep with that
+/// script.
+const REQUIRED_PORTS_KEYS: [&str; 4] = ["host", "command", "log", "snapshot_flat"];
+
+/// Blocks until the server publishes a *complete* handshake file, it exits, or
 /// [`READY_TIMEOUT`] elapses.
 ///
-/// The file appearing is the only signal that the server has actually bound its
-/// ports (it is written immediately after an all-or-nothing bind), which is why
-/// this replaces the fixed `sleep 2` both launch scripts used.
+/// That file is the only signal that the server has actually bound its ports (it
+/// is written immediately after an all-or-nothing bind), which is why this
+/// replaces the fixed `sleep 2` both launch scripts used.
+///
+/// Existence alone is not enough to hand off on, though. `core_sim::port_alloc::
+/// write_ports_file_at` uses `fs::write`, i.e. create + truncate + write, so an
+/// empty or half-written file is briefly observable. The window is tiny, but
+/// losing that race fails *silently*: `ServerPortsFile.gd` degrades a failed
+/// parse to an empty dict and falls back to the hardcoded 41000 block, dialling a
+/// dead port with no error anywhere. So the gate is "parses as an object carrying
+/// every key the client reads" instead.
 fn wait_for_ready(session: &mut Session, ports_file: &Path) -> Result<(), String> {
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if ports_file.exists() {
+        if ports_file_complete(ports_file) {
             return Ok(());
         }
         // A server that already died will never write the file; report why now
@@ -341,6 +393,26 @@ fn wait_for_ready(session: &mut Session, ports_file: &Path) -> Result<(), String
         }
         thread::sleep(READY_POLL_INTERVAL);
     }
+}
+
+/// Whether the handshake file is readable, parseable, and carries every key in
+/// [`REQUIRED_PORTS_KEYS`].
+///
+/// Every failure mode here — missing, unreadable, truncated mid-write, missing a
+/// key — means the same thing to the caller: *not ready yet*. None is fatal on
+/// its own; only [`READY_TIMEOUT`] elapsing is an error, so this returns a plain
+/// bool rather than a `Result` the poll loop would only discard.
+fn ports_file_complete(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(serde_json::Value::Object(entries)) = serde_json::from_str::<serde_json::Value>(&text)
+    else {
+        return false;
+    };
+    REQUIRED_PORTS_KEYS
+        .iter()
+        .all(|key| entries.contains_key(*key))
 }
 
 fn server_exit_message(code: Option<i32>) -> String {
