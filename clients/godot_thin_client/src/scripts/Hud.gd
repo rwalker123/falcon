@@ -56,11 +56,14 @@ signal alert_focus_requested(x: int, y: int)
 ## chosen occupant without a hex click.
 signal roster_occupant_selected(kind: String, id: Variant)
 
-## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
-## changes.** Shown in the lower-left version overlay next to the server build (streamed
-## in the snapshot header) so the running client+server builds can be confirmed at a
-## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-10.3"
+## PURE FALLBACK build identifier of THIS client — used only when no git stamp is present.
+## The real build id is the git stamp `scripts/run_stack.sh` writes to `res://build_stamp.txt`
+## (`<commit-date>-<short-hash>[-dirty]`, mirroring the server's `CORE_SIM_BUILD_ID`), read via
+## `ClientBuild.current()`. **No more hand-bumping** — the git stamp is the source of truth, and
+## this const matches the server's own `dev-unknown` fallback. Shown in the bottom-centre overlay
+## beside the server build so the running client+server builds can be confirmed at a glance.
+const CLIENT_BUILD := "dev-unknown"
+const ClientBuild := preload("res://src/scripts/ClientBuild.gd")
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -1293,9 +1296,10 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    # The telling lives in the RIGHT dock, so its scroll-fit ceiling is the right dock's scroll
-    # container — passing the left one would compute height against a dock it is not in.
-    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, right_dock_scroll)
+    # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
+    # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
+    # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
+    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
@@ -1857,20 +1861,23 @@ func cancel_active_targeting() -> void:
     _cancel_pending_send_expedition()
     _cancel_pending_send_hunt_expedition()
 
-## Lower-left version overlay showing the client build and the streamed server build,
-## so the running builds can be confirmed at a glance. Mouse-transparent so it never
-## intercepts map clicks.
+## Bottom-CENTRE version overlay showing the client build and the streamed server build,
+## so the running builds can be confirmed at a glance. It lives centre-bottom rather than
+## lower-left because the minimap + zoom rail own the lower-left corner and hid it. Spans the
+## full width with centred text (so it can never collide with the corner clusters) and is
+## mouse-transparent so it never intercepts map clicks.
 func _setup_build_overlay() -> void:
     _build_label = Label.new()
     _build_label.name = "BuildOverlay"
     _build_label.anchor_left = 0.0
-    _build_label.anchor_right = 0.0
+    _build_label.anchor_right = 1.0
     _build_label.anchor_top = 1.0
     _build_label.anchor_bottom = 1.0
-    _build_label.offset_left = 8.0
+    _build_label.offset_left = 0.0
     _build_label.offset_top = -26.0
-    _build_label.offset_right = 480.0
+    _build_label.offset_right = 0.0
     _build_label.offset_bottom = -6.0
+    _build_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     _build_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     _build_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0, 0.65))
     add_child(_build_label)
@@ -1878,7 +1885,7 @@ func _setup_build_overlay() -> void:
 
 func _refresh_build_overlay() -> void:
     if _build_label != null:
-        _build_label.text = "build  cli %s · srv %s" % [CLIENT_BUILD, _server_build]
+        _build_label.text = "build  cli %s · srv %s" % [ClientBuild.current(CLIENT_BUILD), _server_build]
 
 ## Called from Main with the server build id from each snapshot header.
 func update_build_info(server_build: String) -> void:
@@ -2489,6 +2496,10 @@ func _on_turn_orb_focus(x: int, y: int) -> void:
     emit_signal("alert_focus_requested", x, y)
 
 func _on_turn_orb_advance() -> void:
+    # Advancing the turn is "catch me up": reveal the newest telling so a player who moves on isn't left
+    # parked on an old page (mid-turn beats only mark the book unread — see TellingPanel.reveal_newest).
+    if _telling != null:
+        _telling.reveal_newest()
     emit_signal("next_turn_requested", 1)
 
 # ---- Early-Game Labor allocation (slice 3b) --------------------------------
@@ -6856,8 +6867,10 @@ func _apply_victory_visibility() -> void:
         victory_panel.visible = should_show
     _refit_right_dock()
 
-## The Telling panel sits ABOVE the two toggleable cards and grows to fill the dock, so showing or
-## hiding one of them changes how much room it may take. Nothing else in the right dock resizes.
+## The Telling panel grows to fit its own (bounded) page, so a sibling's visibility flip no longer
+## changes its height — `refit()` just re-syncs the page geometry and re-fits the current page's height
+## (it does NOT touch the inner scroll). Kept so this call stays valid and the right dock reflows the
+## toggleable cards below it.
 func _refit_right_dock() -> void:
     if _telling != null:
         _telling.refit()
