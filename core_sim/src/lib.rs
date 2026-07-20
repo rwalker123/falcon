@@ -247,7 +247,7 @@ pub use resources::{
     DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
     FoodSiteRegistry, HydrologyOverrides, MapTopology, PendingCrisisSeeds, PendingCrisisSpawns,
     SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+    TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -454,6 +454,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(PowerGridState::default())
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
+        // Default epoch (0) so `capture_snapshot` always finds the resource. The server overwrites
+        // it with the live counter on every world (re)build; the idle boot app never captures.
+        .insert_resource(WorldEpoch::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(crisis_telemetry_resource)

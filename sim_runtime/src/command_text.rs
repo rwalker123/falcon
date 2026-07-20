@@ -26,6 +26,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "map_size <width> <height>",
     },
     CommandVerbHelp {
+        verb: "new_game",
+        aliases: &[],
+        summary: "Generate a world on demand (the server boots idle). seed 0 randomizes.",
+        usage: "new_game <preset_id> <width> <height> <seed> <profile_id>",
+    },
+    CommandVerbHelp {
         verb: "heat",
         aliases: &[],
         summary: "Adjust an entity's heat budget by the provided delta (default 100000).",
@@ -303,6 +309,30 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let width = parse_u32(width_str, "map width")?;
             let height = parse_u32(height_str, "map height")?;
             Ok(CommandPayload::ResetMap { width, height })
+        }
+        "new_game" => {
+            let preset_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("preset_id"))?;
+            let width_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("width"))?;
+            let height_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("height"))?;
+            let seed_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("seed"))?;
+            let profile_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("profile_id"))?;
+            Ok(CommandPayload::NewGame {
+                preset_id: preset_id.to_string(),
+                width: parse_u32(width_str, "new_game width")?,
+                height: parse_u32(height_str, "new_game height")?,
+                seed: parse_u64(seed_str, "new_game seed")?,
+                profile_id: profile_id.to_string(),
+            })
         }
         "heat" => {
             let entity_str = parts
@@ -1200,6 +1230,49 @@ mod tests {
         assert!(matches!(
             parse_command_line("answer_fork 0 sedentarization.soft_drift"),
             Err(CommandParseError::MissingArgument("choice_id"))
+        ));
+    }
+
+    #[test]
+    fn parse_new_game_command() {
+        assert_eq!(
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe").unwrap(),
+            CommandPayload::NewGame {
+                preset_id: "earthlike".to_string(),
+                width: 80,
+                height: 52,
+                seed: 0,
+                profile_id: "late_forager_tribe".to_string(),
+            }
+        );
+        // A non-zero seed is preserved verbatim (u64 range).
+        assert_eq!(
+            parse_command_line("new_game earthlike 80 52 119304647 late_forager_tribe").unwrap(),
+            CommandPayload::NewGame {
+                preset_id: "earthlike".to_string(),
+                width: 80,
+                height: 52,
+                seed: 119304647,
+                profile_id: "late_forager_tribe".to_string(),
+            }
+        );
+        // Every positional argument is required.
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52 0"),
+            Err(CommandParseError::MissingArgument("profile_id"))
+        ));
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52"),
+            Err(CommandParseError::MissingArgument("seed"))
+        ));
+        assert!(matches!(
+            parse_command_line("new_game"),
+            Err(CommandParseError::MissingArgument("preset_id"))
+        ));
+        // Non-numeric width is a parse error, not a silent default.
+        assert!(matches!(
+            parse_command_line("new_game earthlike wide 52 0 late_forager_tribe"),
+            Err(CommandParseError::InvalidInteger { .. })
         ));
     }
 

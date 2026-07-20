@@ -612,6 +612,15 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
 
+/// Monotonic world-build counter, identical for every snapshot within one world and incremented on
+/// every world (re)build (`new_game` / `ResetMap`). It lives OUTSIDE the app (the server `main`
+/// loop, like `world_active`), because each rebuild constructs a brand-new [`bevy::prelude::App`];
+/// the server inserts the current value into each fresh app so `capture_snapshot` can stamp it onto
+/// the snapshot header. A client compares it to tell a freshly-generated world from a stale one the
+/// snapshot server replays to reconnecting subscribers. The idle boot app carries `0`.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorldEpoch(pub u32);
+
 bitflags! {
     #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub struct CapabilityFlags: u32 {

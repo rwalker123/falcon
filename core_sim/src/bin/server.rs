@@ -28,7 +28,8 @@ use core_sim::{
     ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
     Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag,
     ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand,
-    RungKey, SiteRefusal, StartProfileOverrides, WellbeingConfigHandle, NO_FORAGE_SEASON,
+    RungKey, SiteRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
+    NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -48,7 +49,7 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
     StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
     SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, FOOD,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -214,12 +215,15 @@ fn main() {
             .restart_crisis_telemetry(Some(path), command_tx.clone());
     }
 
-    run_turn(&mut app);
-
-    {
-        let history = app.world.resource::<SnapshotHistory>();
-        broadcast_latest(&snapshot_server, &snapshot_flat_server, history);
-    }
+    // Boot IDLE: do NOT run the Startup worldgen or broadcast a first snapshot. Bevy's `Startup`
+    // schedule only runs on the first `app.update()`, so not calling `run_turn` here leaves the world
+    // ungenerated (and `ElevationField` uninserted, so the Snapshot stage must never run — see the
+    // `world_active` gate below). A world is generated on demand by `new_game` (or `map_size`/ResetMap).
+    let mut world_active = false;
+    // The monotonic world-build counter (lives outside the app, like `world_active`, because every
+    // rebuild constructs a brand-new `App`). `rebuild_world_from_config` increments it and inserts a
+    // `WorldEpoch` into each fresh app before its first capture; the idle boot app carries 0.
+    let mut world_epoch: u32 = 0;
 
     let bind_host = config.snapshot_bind.ip();
     if port_base_bumped {
@@ -243,7 +247,7 @@ fn main() {
             .map(|guard| guard.path().display().to_string())
             .unwrap_or_else(|| "unavailable".to_string()),
         log_stream_enabled,
-        "Shadow-Scale headless server ready"
+        "Shadow-Scale headless server ready (idle — send new_game to generate a world)"
     );
 
     while let Ok(command) = command_rx.recv() {
@@ -251,6 +255,13 @@ fn main() {
         let flat_server = &snapshot_flat_server;
         match command {
             Command::Turn(turns) => {
+                if !world_active {
+                    warn!(
+                        target: "shadow_scale::server",
+                        "turn.rejected=no active game — send new_game first"
+                    );
+                    continue;
+                }
                 for _ in 0..turns {
                     {
                         let mut queue = app.world.resource_mut::<TurnQueue>();
@@ -296,36 +307,7 @@ fn main() {
                 let should_randomize_seed = seed_random_requested && preset_seed.is_none();
                 let same_dimensions =
                     current_config.grid_size.x == width && current_config.grid_size.y == height;
-                let sim_watch_path = app
-                    .world
-                    .resource::<SimulationConfigMetadata>()
-                    .path()
-                    .cloned();
-                let turn_pipeline_watch_path = app
-                    .world
-                    .resource::<TurnPipelineConfigMetadata>()
-                    .path()
-                    .cloned();
-                let snapshot_overlays_watch_path = app
-                    .world
-                    .resource::<SnapshotOverlaysConfigMetadata>()
-                    .path()
-                    .cloned();
-                let crisis_archetypes_watch_path = app
-                    .world
-                    .resource::<CrisisArchetypeCatalogMetadata>()
-                    .path()
-                    .cloned();
-                let crisis_modifiers_watch_path = app
-                    .world
-                    .resource::<CrisisModifierCatalogMetadata>()
-                    .path()
-                    .cloned();
-                let crisis_telemetry_watch_path = app
-                    .world
-                    .resource::<CrisisTelemetryConfigMetadata>()
-                    .path()
-                    .cloned();
+                let watch_paths = collect_watch_paths(&app);
                 info!(
                     target: "shadow_scale::server",
                     width,
@@ -339,87 +321,43 @@ fn main() {
                     new_config.map_seed = 0;
                 }
 
-                let mut new_app = build_headless_app();
-                {
-                    let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
-                    *config_res = new_config;
-                }
-                new_app.insert_resource(SimulationMetrics::default());
-                new_app.insert_resource(CommandSenderResource(command_sender.clone()));
-                new_app.insert_resource(ConfigWatcherRegistry::default());
-                {
-                    let mut metadata = new_app.world.resource_mut::<SimulationConfigMetadata>();
-                    metadata.set_path(sim_watch_path.clone());
-                    metadata.set_seed_random(seed_random_requested);
-                }
-                {
-                    let mut metadata = new_app.world.resource_mut::<TurnPipelineConfigMetadata>();
-                    metadata.set_path(turn_pipeline_watch_path.clone());
-                }
-                {
-                    let mut metadata = new_app
-                        .world
-                        .resource_mut::<SnapshotOverlaysConfigMetadata>();
-                    metadata.set_path(snapshot_overlays_watch_path.clone());
-                }
-                {
-                    let mut metadata = new_app
-                        .world
-                        .resource_mut::<CrisisArchetypeCatalogMetadata>();
-                    metadata.set_path(crisis_archetypes_watch_path.clone());
-                }
-                {
-                    let mut metadata = new_app
-                        .world
-                        .resource_mut::<CrisisModifierCatalogMetadata>();
-                    metadata.set_path(crisis_modifiers_watch_path.clone());
-                }
-                {
-                    let mut metadata = new_app
-                        .world
-                        .resource_mut::<CrisisTelemetryConfigMetadata>();
-                    metadata.set_path(crisis_telemetry_watch_path.clone());
-                }
-                {
-                    let mut watcher_registry =
-                        new_app.world.resource_mut::<ConfigWatcherRegistry>();
-                    watcher_registry
-                        .restart_simulation(sim_watch_path.clone(), command_sender.clone());
-                    watcher_registry.restart_turn_pipeline(
-                        turn_pipeline_watch_path.clone(),
-                        command_sender.clone(),
-                    );
-                    watcher_registry.restart_snapshot_overlays(
-                        snapshot_overlays_watch_path.clone(),
-                        command_sender.clone(),
-                    );
-                    watcher_registry.restart_crisis_archetypes(
-                        crisis_archetypes_watch_path.clone(),
-                        command_sender.clone(),
-                    );
-                    watcher_registry.restart_crisis_modifiers(
-                        crisis_modifiers_watch_path.clone(),
-                        command_sender.clone(),
-                    );
-                    watcher_registry.restart_crisis_telemetry(
-                        crisis_telemetry_watch_path.clone(),
-                        command_sender.clone(),
-                    );
-                }
-                run_turn(&mut new_app);
-
-                {
-                    let history = new_app.world.resource::<SnapshotHistory>();
-                    broadcast_latest(bin_server, flat_server, history);
-                }
-
-                app = new_app;
+                app = rebuild_world_from_config(
+                    new_config,
+                    seed_random_requested,
+                    command_sender,
+                    &watch_paths,
+                    bin_server,
+                    flat_server,
+                    &mut world_epoch,
+                    |_| {},
+                );
+                world_active = true;
                 info!(
                     target: "shadow_scale::server",
                     width,
                     height,
                     same_dimensions,
                     "map.reset.completed"
+                );
+            }
+            Command::NewGame {
+                preset_id,
+                width,
+                height,
+                seed,
+                profile_id,
+            } => {
+                handle_new_game(
+                    &mut app,
+                    &mut world_active,
+                    &mut world_epoch,
+                    preset_id,
+                    width,
+                    height,
+                    seed,
+                    profile_id,
+                    bin_server,
+                    flat_server,
                 );
             }
             Command::ExportMap { path } => {
@@ -673,7 +611,11 @@ fn main() {
         // Re-capture + broadcast the fresh world (incl. the feed) so an immediate, synchronous
         // command mutation (expedition launch, move_band, assign_labor, …) reaches the client now,
         // not only at the next turn (replaces the feed-only splice that reused last turn's world).
-        recapture_and_broadcast(&mut app, bin_server, flat_server);
+        // Gated on `world_active`: on the idle (pre-`new_game`) world there is no `ElevationField`,
+        // so recapture would panic in the Snapshot stage.
+        if world_active {
+            recapture_and_broadcast(&mut app, bin_server, flat_server);
+        }
     }
 }
 
@@ -829,6 +771,15 @@ enum Command {
     },
     ExportMap {
         path: Option<String>,
+    },
+    /// Boot-idle new game: generate a world on demand (the server boots with none). `seed == 0`
+    /// randomizes the map seed (mirrors `ResetMap`); an unknown `profile_id` is rejected. Field 43.
+    NewGame {
+        preset_id: String,
+        width: u32,
+        height: u32,
+        seed: u64,
+        profile_id: String,
     },
 }
 
@@ -1335,14 +1286,238 @@ fn write_map_export(app: &bevy::prelude::App, requested_path: Option<String>) {
     }
 }
 
-fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
+/// The config-file watch paths carried across a world rebuild, so the fresh app keeps watching the
+/// same files the old one did. Gathered once from the live app by [`collect_watch_paths`].
+struct WatchPaths {
+    simulation: Option<PathBuf>,
+    turn_pipeline: Option<PathBuf>,
+    snapshot_overlays: Option<PathBuf>,
+    crisis_archetypes: Option<PathBuf>,
+    crisis_modifiers: Option<PathBuf>,
+    crisis_telemetry: Option<PathBuf>,
+}
+
+fn collect_watch_paths(app: &bevy::prelude::App) -> WatchPaths {
+    WatchPaths {
+        simulation: app
+            .world
+            .resource::<SimulationConfigMetadata>()
+            .path()
+            .cloned(),
+        turn_pipeline: app
+            .world
+            .resource::<TurnPipelineConfigMetadata>()
+            .path()
+            .cloned(),
+        snapshot_overlays: app
+            .world
+            .resource::<SnapshotOverlaysConfigMetadata>()
+            .path()
+            .cloned(),
+        crisis_archetypes: app
+            .world
+            .resource::<CrisisArchetypeCatalogMetadata>()
+            .path()
+            .cloned(),
+        crisis_modifiers: app
+            .world
+            .resource::<CrisisModifierCatalogMetadata>()
+            .path()
+            .cloned(),
+        crisis_telemetry: app
+            .world
+            .resource::<CrisisTelemetryConfigMetadata>()
+            .path()
+            .cloned(),
+    }
+}
+
+/// The shared world-build path used by BOTH `ResetMap` and `NewGame`: build a fresh headless app on
+/// `config`, re-attach the runtime resources and file watchers, run one Startup pass (worldgen), and
+/// broadcast the first snapshot. `configure` runs after the config/metadata/watchers are in place but
+/// BEFORE Startup, so a caller (e.g. `new_game`) can apply a start profile that worldgen must see.
+/// Returns the new app for the caller to swap in.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_world_from_config(
+    config: SimulationConfig,
+    seed_random: bool,
+    command_sender: Sender<Command>,
+    watch_paths: &WatchPaths,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
+    world_epoch: &mut u32,
+    configure: impl FnOnce(&mut bevy::prelude::App),
+) -> bevy::prelude::App {
+    let mut new_app = build_headless_app();
+    {
+        let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
+        *config_res = config;
+    }
+    new_app.insert_resource(SimulationMetrics::default());
+    new_app.insert_resource(CommandSenderResource(command_sender.clone()));
+    new_app.insert_resource(ConfigWatcherRegistry::default());
+    {
+        let mut metadata = new_app.world.resource_mut::<SimulationConfigMetadata>();
+        metadata.set_path(watch_paths.simulation.clone());
+        metadata.set_seed_random(seed_random);
+    }
+    {
+        let mut metadata = new_app.world.resource_mut::<TurnPipelineConfigMetadata>();
+        metadata.set_path(watch_paths.turn_pipeline.clone());
+    }
+    {
+        let mut metadata = new_app
+            .world
+            .resource_mut::<SnapshotOverlaysConfigMetadata>();
+        metadata.set_path(watch_paths.snapshot_overlays.clone());
+    }
+    {
+        let mut metadata = new_app
+            .world
+            .resource_mut::<CrisisArchetypeCatalogMetadata>();
+        metadata.set_path(watch_paths.crisis_archetypes.clone());
+    }
+    {
+        let mut metadata = new_app
+            .world
+            .resource_mut::<CrisisModifierCatalogMetadata>();
+        metadata.set_path(watch_paths.crisis_modifiers.clone());
+    }
+    {
+        let mut metadata = new_app
+            .world
+            .resource_mut::<CrisisTelemetryConfigMetadata>();
+        metadata.set_path(watch_paths.crisis_telemetry.clone());
+    }
+    {
+        let mut watcher_registry = new_app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_registry.restart_simulation(watch_paths.simulation.clone(), command_sender.clone());
+        watcher_registry
+            .restart_turn_pipeline(watch_paths.turn_pipeline.clone(), command_sender.clone());
+        watcher_registry.restart_snapshot_overlays(
+            watch_paths.snapshot_overlays.clone(),
+            command_sender.clone(),
+        );
+        watcher_registry.restart_crisis_archetypes(
+            watch_paths.crisis_archetypes.clone(),
+            command_sender.clone(),
+        );
+        watcher_registry
+            .restart_crisis_modifiers(watch_paths.crisis_modifiers.clone(), command_sender.clone());
+        watcher_registry
+            .restart_crisis_telemetry(watch_paths.crisis_telemetry.clone(), command_sender.clone());
+    }
+
+    // Advance the world epoch for this fresh world and stamp it onto the app BEFORE the first
+    // `run_turn` capture, so every snapshot in this world carries the same epoch (first real world →
+    // 1, next rebuild → 2, …). The shared path for BOTH `NewGame` and `ResetMap`.
+    *world_epoch += 1;
+    new_app.insert_resource(WorldEpoch(*world_epoch));
+
+    // Apply any caller-supplied configuration (e.g. the start profile) before Startup worldgen runs.
+    configure(&mut new_app);
+
+    run_turn(&mut new_app);
+
+    {
+        let history = new_app.world.resource::<SnapshotHistory>();
+        broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+    }
+
+    new_app
+}
+
+/// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
+/// dimensions and the start profile, then rebuilds the world through the shared
+/// [`rebuild_world_from_config`] path and flips `world_active` so turns are accepted.
+#[allow(clippy::too_many_arguments)]
+fn handle_new_game(
+    app: &mut bevy::prelude::App,
+    world_active: &mut bool,
+    world_epoch: &mut u32,
+    preset_id: String,
+    width: u32,
+    height: u32,
+    seed: u64,
+    profile_id: String,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
+) {
+    if width == 0 || height == 0 {
+        warn!(
+            target: "shadow_scale::server",
+            width,
+            height,
+            preset = %preset_id,
+            "new_game.rejected=invalid_dimensions"
+        );
+        return;
+    }
+
+    // Resolve the requested start profile. An unknown `profile_id` is a hard reject — we do NOT build
+    // a world with an arbitrary fallback profile. (An unknown `preset_id`, by contrast, falls through
+    // to the worldgen default, mirroring ResetMap.)
     let handle = app.world.resource::<StartProfilesHandle>().clone();
     let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
+    if used_fallback {
+        warn!(
+            target: "shadow_scale::server",
+            requested = %profile_id,
+            "new_game.rejected=unknown_profile"
+        );
+        return;
+    }
 
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+    let watch_paths = collect_watch_paths(app);
+
+    let mut new_config = app.world.resource::<SimulationConfig>().clone();
+    new_config.grid_size = UVec2::new(width, height);
+    new_config.map_preset_id = preset_id.clone();
+    // `seed == 0` randomizes: worldgen resolves a `map_seed` of 0 to a fresh entropy seed, exactly the
+    // mechanism ResetMap uses (map_seed 0 + seed_random true).
+    new_config.map_seed = seed;
+
+    info!(
+        target: "shadow_scale::server",
+        preset = %preset_id,
+        width,
+        height,
+        seed,
+        profile = %profile.id,
+        "new_game.begin"
+    );
+
+    *app = rebuild_world_from_config(
+        new_config,
+        seed == 0,
+        command_sender,
+        &watch_paths,
+        snapshot_server_bin,
+        snapshot_server_flat,
+        world_epoch,
+        move |new_app| apply_start_profile(new_app, &profile),
+    );
+    *world_active = true;
+
+    info!(
+        target: "shadow_scale::server",
+        preset = %preset_id,
+        "new_game.completed"
+    );
+}
+
+/// Apply a resolved start profile to the app's campaign resources (config overrides,
+/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`). Shared by `handle_set_start_profile`
+/// and the `new_game` rebuild — it does NOT regenerate the world; the caller runs Startup afterward.
+fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
     {
         let mut config = app.world.resource_mut::<SimulationConfig>();
         config.start_profile_id = profile.id.clone();
-        config.start_profile_overrides = StartProfileOverrides::from_profile(&profile);
+        config.start_profile_overrides = StartProfileOverrides::from_profile(profile);
     }
     {
         let mut lookup = app.world.resource_mut::<StartProfileLookup>();
@@ -1354,8 +1529,15 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     }
     {
         let mut label = app.world.resource_mut::<CampaignLabel>();
-        *label = CampaignLabel::from_profile(&profile);
+        *label = CampaignLabel::from_profile(profile);
     }
+}
+
+fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
+    let handle = app.world.resource::<StartProfilesHandle>().clone();
+    let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
+
+    apply_start_profile(app, &profile);
 
     info!(
         target: "shadow_scale::campaign",
@@ -4129,6 +4311,19 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             band_entity_bits,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::NewGame {
+            preset_id,
+            width,
+            height,
+            seed,
+            profile_id,
+        } => Some(Command::NewGame {
+            preset_id,
+            width,
+            height,
+            seed,
+            profile_id,
+        }),
     }
 }
 
@@ -5351,6 +5546,140 @@ mod tests {
 
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
+
+    /// A snapshot broadcaster bound to an ephemeral loopback port — enough to satisfy the
+    /// world-build path's broadcast without a real client.
+    fn loopback_snapshot_server() -> SnapshotServer {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        start_snapshot_server(listener)
+    }
+
+    /// Boot-idle + `new_game`: the server boots with no world (Startup never ran), `new_game` builds
+    /// one on demand, an unknown profile is rejected without building, and zero dimensions are rejected.
+    #[test]
+    fn new_game_builds_a_world_and_rejects_bad_input() {
+        let mut app = build_headless_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        // Idle boot: Startup never ran, so the worldgen-inserted `TileRegistry` does not exist yet.
+        assert!(
+            app.world.get_resource::<TileRegistry>().is_none(),
+            "server boots idle — no world generated"
+        );
+
+        let bin = loopback_snapshot_server();
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+
+        // Unknown profile → rejected, no world built.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "no_such_profile".to_string(),
+            &bin,
+            &flat,
+        );
+        assert!(!world_active, "an unknown profile must not build a world");
+        assert!(
+            app.world.get_resource::<TileRegistry>().is_none(),
+            "no world after a rejected new_game"
+        );
+        assert_eq!(
+            world_epoch, 0,
+            "a rejected new_game does not advance the epoch"
+        );
+
+        // Zero dimensions → rejected.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            0,
+            32,
+            7,
+            "late_forager_tribe".to_string(),
+            &bin,
+            &flat,
+        );
+        assert!(!world_active, "zero width must be rejected");
+        assert!(app.world.get_resource::<TileRegistry>().is_none());
+        assert_eq!(
+            world_epoch, 0,
+            "a rejected new_game does not advance the epoch"
+        );
+
+        // Valid new_game → world built, turns now accepted.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "late_forager_tribe".to_string(),
+            &bin,
+            &flat,
+        );
+        assert!(world_active, "a valid new_game activates the world");
+        assert_eq!(
+            app.world.resource::<TileRegistry>().width,
+            48,
+            "the generated grid matches the new_game width"
+        );
+        // The first real world is epoch 1, and every snapshot it captured carries it on the header.
+        assert_eq!(world_epoch, 1, "the first real world is epoch 1");
+        assert_eq!(
+            app.world.resource::<WorldEpoch>().0,
+            1,
+            "the fresh app carries the live epoch resource"
+        );
+        assert_eq!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .last_snapshot
+                .as_ref()
+                .expect("the built world captured a snapshot")
+                .header
+                .world_epoch,
+            1,
+            "the captured snapshot header carries the world epoch"
+        );
+
+        // A second build (e.g. NewGame or ResetMap) strictly increases the epoch, and the newly
+        // captured header reflects it.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "late_forager_tribe".to_string(),
+            &bin,
+            &flat,
+        );
+        assert_eq!(world_epoch, 2, "the next world build increments the epoch");
+        assert_eq!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .last_snapshot
+                .as_ref()
+                .expect("the rebuilt world captured a snapshot")
+                .header
+                .world_epoch,
+            2,
+            "the rebuilt world's snapshot header carries the incremented epoch"
+        );
+    }
 
     /// The policy the band's single assignment currently carries.
     fn band_policy(app: &bevy::prelude::App, band: Entity) -> FollowPolicy {

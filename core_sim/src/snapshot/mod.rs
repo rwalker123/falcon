@@ -90,6 +90,7 @@ use crate::{
         CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
         DiscoveryProgressLedger, FactionInventory, FogRevealLedger, MoistureRaster,
         SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        WorldEpoch,
     },
     scalar::{scalar_zero, Scalar},
     sedentarization::SedentarizationScore,

@@ -1279,6 +1279,10 @@ table SnapshotHeader {
   // Build identifier of the server binary that produced this snapshot, so the client
   // can display it and confirm which build is actually running. Appended field.
   serverBuild:string;
+  // Monotonic counter incremented on every world (re)build (new_game / ResetMap). Identical
+  // for every snapshot within a given world; a client uses it to tell a freshly-generated world
+  // from a stale one the server replays to reconnecting subscribers. Appended field.
+  worldEpoch:uint = 0;
 }
 
 table KnownTechFragment {
