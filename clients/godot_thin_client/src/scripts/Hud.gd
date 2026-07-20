@@ -56,11 +56,14 @@ signal alert_focus_requested(x: int, y: int)
 ## chosen occupant without a hex click.
 signal roster_occupant_selected(kind: String, id: Variant)
 
-## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
-## changes.** Shown in the lower-left version overlay next to the server build (streamed
-## in the snapshot header) so the running client+server builds can be confirmed at a
-## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-20.2"
+## PURE FALLBACK build identifier of THIS client — used only when no git stamp is present.
+## The real build id is the git stamp `scripts/run_stack.sh` writes to `res://build_stamp.txt`
+## (`<commit-date>-<short-hash>[-dirty]`, mirroring the server's `CORE_SIM_BUILD_ID`), read via
+## `ClientBuild.current()`. **No more hand-bumping** — the git stamp is the source of truth, and
+## this const matches the server's own `dev-unknown` fallback. Shown in the bottom-centre overlay
+## beside the server build so the running client+server builds can be confirmed at a glance.
+const CLIENT_BUILD := "dev-unknown"
+const ClientBuild := preload("res://src/scripts/ClientBuild.gd")
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -1882,7 +1885,7 @@ func _setup_build_overlay() -> void:
 
 func _refresh_build_overlay() -> void:
     if _build_label != null:
-        _build_label.text = "build  cli %s · srv %s" % [CLIENT_BUILD, _server_build]
+        _build_label.text = "build  cli %s · srv %s" % [ClientBuild.current(CLIENT_BUILD), _server_build]
 
 ## Called from Main with the server build id from each snapshot header.
 func update_build_info(server_build: String) -> void:

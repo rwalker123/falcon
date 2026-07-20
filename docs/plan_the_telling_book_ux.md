@@ -51,15 +51,24 @@ display from it every render.
 - `_at_newest` — `_page_index == _pages.size() - 1`.
 - `_unread` — a page newer than the visible one exists and the player has not turned to it.
 
-### Fixed size
+### Size — grow to fit the page, up to a cap
 
-The card is a **fixed height** (`PAGE_HEIGHT`, a named const — size it to hold ~3 short prose beats
-+ their gloss; judge on the ui_preview frames). Drop the `DockScrollFit.fit` call and the
-`_dock_scroll` dependency. Keep the inner `ScrollContainer` **only** as an overflow fallback for a
-rare over-long single page (a turn with several long beats); the *card's* height no longer depends on
-content, which is the entire point. `refit()` becomes a no-op that at most re-clamps the inner scroll
-(keep the method so `Hud._refit_right_dock`'s call stays valid — with a fixed card, a sibling's
-visibility flip no longer changes the telling's height, so there is nothing to refit).
+The card **grows to fit the current page's content height, capped at `PAGE_MAX_HEIGHT`** (a named
+const, additionally clamped to `PAGE_MAX_HEIGHT_VIEWPORT_CEIL` of the viewport so it can never dominate
+the dock). A single short beat gives a short card; a turn that fires two beats grows the card to show
+both — the playtest fix. Only a genuinely *over-long* page (several long beats on one tick, past the
+cap) engages the inner `ScrollContainer`; everything below the cap fits with no scrollbar.
+
+This does **not** reopen the dock-sizing problem the old fixed height solved. A PAGE is **bounded** —
+one speaking turn's beats, itself bounded by the beat budget — unlike the old scroll log that
+accumulated all 40 entries without limit. The cap is the backstop, so grow-to-fit-capped is the correct
+model and strictly-fixed was over-conservative. Drop the `DockScrollFit.fit` call and the `_dock_scroll`
+dependency. `refit()` re-syncs the page geometry and re-fits the current page (keep the method so
+`Hud._refit_right_dock`'s call stays valid).
+
+Because pages now differ in height, the page-turn animation holds the frame at `max(outgoing, incoming)`
+(capped) for the tween's duration so neither page clips mid-motion, then settles to the incoming page's
+fitted height. An interrupted turn settles to the correct final page **and** its correct fitted height.
 
 ### The three rungs (per-medium presentation)
 

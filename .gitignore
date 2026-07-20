@@ -18,3 +18,6 @@ shadow_scale_flatbuffers/src/generated/snapshot_generated.rs
 # Python bytecode from the scripts/texture image toolchain
 __pycache__/
 *.pyc
+
+# Per-launch client git build stamp written by scripts/run_stack.sh (like the ports file).
+clients/godot_thin_client/build_stamp.txt

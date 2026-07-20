@@ -14,8 +14,10 @@ extends RefCounted
 ## THE BOOK MODEL. The controller keeps its full retention buffer (`_entries`, cap 40 — the
 ## backfill/dedup source of truth) and DERIVES the display from it every render. A **page = one speaking
 ## turn's beats** (the entries sharing a `tick`); `_pages` is rebuilt on each render. The card is a
-## **fixed height** (`PAGE_HEIGHT`) — no `DockScrollFit`, no grow-and-cap; the inner `ScrollContainer`
-## is kept only as an overflow fallback for a rare over-long single page. Capabilities grow with the
+## height that **grows to fit the current page, capped at `PAGE_MAX_HEIGHT`** — no `DockScrollFit`, no
+## unbounded grow-and-cap; a PAGE is bounded (one turn's beats), so fit-to-content is safe, and the inner
+## `ScrollContainer` only engages BEYOND the cap (the extreme: many long beats on one tick). Capabilities
+## grow with the
 ## medium (the per-medium `MODE_TABLE`, `oral` fallback):
 ##   • `oral`    — current utterance only; no furniture, no back, the page is pinned to the newest.
 ##   • `painted` — the accumulating wall; walk FORWARD one page at a time, no back, a marks/position cue.
@@ -55,10 +57,17 @@ static func handles_kind(kind: String) -> bool:
 const ENTRY_LIMIT := 40
 
 # ---- geometry / typography (named constants; no magic literals) ------------
-# The FIXED page height: sized to hold ~3 short prose beats + their gloss. The card never grows — that
-# is the whole point — so the dock's own scroll trivially stacks Telling + Victory + Terrain Types with
-# no bespoke height math. A rare over-long single page overflows into the inner ScrollContainer.
-const PAGE_HEIGHT := 150.0
+# The page GROWS TO FIT its current content, capped at PAGE_MAX_HEIGHT. A page is BOUNDED (one turn's
+# beats, itself bounded by the beat budget) — unlike the old scroll log that accumulated all 40 entries —
+# so fit-to-content is safe and does NOT reopen the dock-sizing problem the cap is the backstop for. Only
+# a genuinely extreme page (many long beats on one tick) exceeds the cap; the inner ScrollContainer
+# scrolls only THEN. PAGE_MAX_HEIGHT is additionally clamped to PAGE_MAX_HEIGHT_VIEWPORT_CEIL of the
+# viewport so it can never dominate the dock on a short window. PAGE_MIN_HEIGHT keeps a one-line page from
+# collapsing; PAGE_FIT_PADDING is the hairline below the last line so descenders are not clipped.
+const PAGE_MAX_HEIGHT := 320.0
+const PAGE_MAX_HEIGHT_VIEWPORT_CEIL := 0.5
+const PAGE_MIN_HEIGHT := 48.0
+const PAGE_FIT_PADDING := 4.0
 # Prose, so it is set a touch larger than the command feed's UI copy and given real leading.
 const NARRATION_FONT_SIZE := 14
 const GLOSS_FONT_SIZE := 12
@@ -80,9 +89,9 @@ const FORK_LINE_FORMAT := "[color=#%s]%s[/color]  %s"
 # ---- page-turn animation ---------------------------------------------------
 # Snappy: a page turn is a state change, not a transition to sit through. Named per the plan's 0.16–0.20s.
 const PAGE_TURN_DURATION := 0.18
-# The painted page rises from this fraction of the page height below its resting spot (a modest offset —
-# an accumulation cue, not a scroll).
-const PAGE_RISE_OFFSET_RATIO := 0.22
+# The painted page rises from this many px below its resting spot (a modest offset — an accumulation cue,
+# not a scroll). A fixed px, so it reads the same whatever the fitted page height.
+const PAGE_RISE_OFFSET := 30.0
 const MOTION_CROSSFADE := 0   # oral: dissolve in place
 const MOTION_RISE := 1        # painted: lift from below with a fade
 const MOTION_SLIDE := 2       # written: horizontal slide in the leaf direction
@@ -165,6 +174,9 @@ var _has_painted: bool = false
 var _turn_motion: int = MOTION_CROSSFADE
 var _turn_dir: int = 1
 var _turn_extent: Vector2 = Vector2.ZERO
+# The fitted height the frame settles to once the turn ends (the INCOMING page's height, capped). During
+# the turn the frame holds max(outgoing, incoming) so neither page clips mid-motion.
+var _turn_settle_height: float = PAGE_MIN_HEIGHT
 
 func _init(panel: PanelCard, scroll: ScrollContainer, label: RichTextLabel) -> void:
 	_panel = panel
@@ -332,7 +344,8 @@ func _build_chrome() -> void:
 	_page_frame = Control.new()
 	_page_frame.name = "TellingPageFrame"
 	_page_frame.clip_contents = true
-	_page_frame.custom_minimum_size = Vector2(0.0, PAGE_HEIGHT)
+	# Start at the floor; every paint fits it to the current page's content (capped).
+	_page_frame.custom_minimum_size = Vector2(0.0, PAGE_MIN_HEIGHT)
 	_page_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_child(_page_frame)
 	content.move_child(_page_frame, 3)
@@ -485,6 +498,10 @@ func _paint_page(animate: bool, direction: int) -> void:
 		_kill_tween()
 		_end_turn_visuals()
 		_label.text = new_text
+		# Grow the frame to fit the new page (capped). Sync now, and again deferred: on the very first
+		# paint the label has no width yet, so `get_content_height()` is only reliable post-layout.
+		_fit_page_height()
+		call_deferred("_fit_page_height")
 	_shown_bbcode = new_text
 	_has_painted = true
 	if _scroll != null:
@@ -500,13 +517,24 @@ func _paint_page(animate: bool, direction: int) -> void:
 ## already set `_label` to the FINAL page, so a kill settles correctly.
 func _begin_turn(old_text: String, new_text: String, motion: int, direction: int) -> void:
 	_kill_tween()
-	_sync_page_geometry()
 	_turn_motion = motion
 	_turn_dir = 1 if direction >= 0 else -1
-	_turn_extent = _page_frame.size
 	_outgoing.text = old_text
 	_outgoing.visible = true
 	_label.text = new_text
+	# Pages have different heights: the frame must hold BOTH for the tween (so neither slide/rise/crossfade
+	# clips mid-motion), then settle to the incoming page's fitted height. Widths are stable across a turn,
+	# so `get_content_height()` measures reliably here.
+	_sync_page_geometry()
+	var cap := _page_max_height()
+	var h_in := _measure_page_height(_label)
+	var h_out := _measure_page_height(_outgoing)
+	var base := maxf(h_in, h_out)
+	if base <= 0.0:
+		base = _page_frame.size.y   # not measurable yet — keep what we have
+	_page_frame.custom_minimum_size.y = clampf(base + PAGE_FIT_PADDING, PAGE_MIN_HEIGHT, cap)
+	_turn_settle_height = clampf(h_in + PAGE_FIT_PADDING, PAGE_MIN_HEIGHT, cap)
+	_turn_extent = _page_frame.size
 	_apply_turn_frame(0.0)
 	_tween = _page_frame.create_tween()
 	_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
@@ -523,7 +551,7 @@ func _apply_turn_frame(progress: float) -> void:
 	if _scroll == null or _outgoing == null:
 		return
 	var width := _turn_extent.x
-	var rise := PAGE_HEIGHT * PAGE_RISE_OFFSET_RATIO
+	var rise := PAGE_RISE_OFFSET
 	match _turn_motion:
 		MOTION_RISE:
 			_set_page_visual(_outgoing, Vector2.ZERO, 1.0 - progress)
@@ -540,10 +568,14 @@ func _set_page_visual(node: Control, pos: Vector2, alpha: float) -> void:
 	node.position = pos
 	node.modulate = Color(1.0, 1.0, 1.0, alpha)
 
-## Tween-finished callback: drop the outgoing snapshot and restore the resting transforms.
+## Tween-finished callback: drop the outgoing snapshot, settle the frame to the incoming page's fitted
+## height, and restore the resting transforms.
 func _end_turn() -> void:
 	_end_turn_visuals()
 	_tween = null
+	if _page_frame != null:
+		_page_frame.custom_minimum_size.y = _turn_settle_height
+	_sync_page_geometry()
 
 ## Settle the page visuals to their static resting state (incoming full + centred, outgoing hidden). The
 ## end state after any interruption equals this, so a killed tween never leaves a half-slid page.
@@ -559,8 +591,10 @@ func _kill_tween() -> void:
 		_tween.kill()
 	_tween = null
 
-## Size the incoming page + the outgoing snapshot to the frame; reset their positions only when no turn
-## is running (a running tween owns them).
+## Size the incoming page + the outgoing snapshot to the frame; reset their positions only when NO turn
+## is on screen. The outgoing snapshot being visible means a turn owns the positions — a live tween OR a
+## debug freeze — so a `resized` (the frame's height changed for the turn) must re-SIZE the pages without
+## stomping their in-flight positions.
 func _sync_page_geometry() -> void:
 	if _page_frame == null:
 		return
@@ -569,11 +603,45 @@ func _sync_page_geometry() -> void:
 		_scroll.size = frame_size
 	if _outgoing != null:
 		_outgoing.size = frame_size
-	if _tween == null:
+	var turn_owns_positions := _outgoing != null and _outgoing.visible
+	if not turn_owns_positions:
 		if _scroll != null:
 			_scroll.position = Vector2.ZERO
 		if _outgoing != null:
 			_outgoing.position = Vector2.ZERO
+
+## Grow the frame to fit the CURRENT page's content, capped. No-op while a turn owns the height (the turn
+## drives the frame height itself and settles it in `_end_turn`). A 0 measurement means the label has not
+## laid out yet — leave the height and let the deferred re-fit catch it.
+func _fit_page_height() -> void:
+	if _page_frame == null:
+		return
+	if _outgoing != null and _outgoing.visible:
+		return
+	var height := _measure_page_height(_label)
+	if height <= 0.0:
+		return
+	var target := clampf(height + PAGE_FIT_PADDING, PAGE_MIN_HEIGHT, _page_max_height())
+	if absf(_page_frame.custom_minimum_size.y - target) > 0.5:
+		_page_frame.custom_minimum_size.y = target
+	_sync_page_geometry()
+
+## The content height a page label needs at its current width. `get_content_height()` forces the line
+## cache to validate, so it is reliable once the label has a width (stable across a turn / after layout).
+func _measure_page_height(rtl: RichTextLabel) -> float:
+	if rtl == null:
+		return 0.0
+	return float(rtl.get_content_height())
+
+## The height ceiling: the named px cap, additionally clamped so it can never take more than half the
+## viewport on a short window.
+func _page_max_height() -> float:
+	var cap := PAGE_MAX_HEIGHT
+	if _page_frame != null and _page_frame.is_inside_tree():
+		var viewport_height := _page_frame.get_viewport_rect().size.y
+		if viewport_height > 0.0:
+			cap = minf(cap, viewport_height * PAGE_MAX_HEIGHT_VIEWPORT_CEIL)
+	return cap
 
 ## Show/hide and populate the furniture row for the current medium. Hidden entirely at `oral` (no page
 ## chrome) and while collapsed (the header + collapse control stay so the player can expand it back).
@@ -624,10 +692,12 @@ func _mode() -> Dictionary:
 func _is_oral() -> bool:
 	return not bool(_mode()["retain_pages"])
 
-## No-op now that the card is a fixed size — a sibling's visibility flip no longer changes the telling's
-## height. Kept so `Hud._refit_right_dock`'s call stays valid; it only re-syncs the page geometry.
+## A sibling's visibility flip no longer changes the telling's height (the page fits its own content), so
+## this only re-syncs the page geometry and re-fits the current page. Kept so `Hud._refit_right_dock`'s
+## call stays valid.
 func refit() -> void:
 	_sync_page_geometry()
+	_fit_page_height()
 
 func _refresh_collapse() -> void:
 	if _collapse_button == null:
@@ -677,3 +747,11 @@ func debug_visible_index() -> int:
 
 func debug_overlay_visible() -> bool:
 	return _outgoing != null and _outgoing.visible
+
+## True when the current page overflows its fitted frame and the inner ScrollContainer is scrolling — the
+## beyond-cap extreme. A grown-to-fit page (e.g. a two-beat turn under the cap) must report false.
+func debug_page_scrolls() -> bool:
+	if _scroll == null:
+		return false
+	var bar := _scroll.get_v_scroll_bar()
+	return bar != null and bar.visible

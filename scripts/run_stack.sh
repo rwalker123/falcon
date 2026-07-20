@@ -184,6 +184,22 @@ if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   "$ROOT_DIR/scripts/build_terrain_textures.sh"
   # Refresh the global class-name cache if scripts changed since it was built.
   ensure_godot_class_cache
+  # Stamp the client build id (mirrors core_sim/build.rs' CORE_SIM_BUILD_ID): the
+  # git <commit-date>-<short-hash>, plus -dirty when the tree has uncommitted edits.
+  # ClientBuild.gd reads this into the build overlay, so the shown cli build can never
+  # go stale. On any git failure, remove the stamp so the client falls back to its const.
+  stamp_file="$ROOT_DIR/clients/godot_thin_client/build_stamp.txt"
+  if build_date=$(git -C "$ROOT_DIR" show -s --format=%cs HEAD 2>/dev/null) \
+     && build_hash=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null) \
+     && [[ -n "$build_date" && -n "$build_hash" ]]; then
+    build_stamp="${build_date}-${build_hash}"
+    [[ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]] && build_stamp="${build_stamp}-dirty"
+    printf '%s\n' "$build_stamp" > "$stamp_file"
+    echo "[run_stack] Client build stamp: $build_stamp"
+  else
+    rm -f "$stamp_file"
+    echo "[run_stack] Client build stamp: git unavailable, using const fallback"
+  fi
 fi
 
 cleanup() {

@@ -1673,6 +1673,17 @@ func _ready() -> void:
 	_hud.toggle_victory()
 	_close_legend()
 
+	# TWO-BEAT ORAL — a single speaking turn firing TWO beats (both sharing one tick, so they are ONE
+	# page). The page must GROW to fit both beats + gloss with NO scrollbar — the playtest fix (the
+	# strictly-fixed height scrolled the second beat out of view). Assert the inner scroll is not engaged.
+	_hud._telling.reset()
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events(_telling_two_beat_oral_fixture())
+	await _settle()
+	_assert_hud("two-beat oral page grows to fit both beats with no scrollbar",
+		not _hud._telling.debug_page_scrolls())
+	await _save("telling_panel_oral_two_beats")
+
 	# ---- Page-turn animation: motion matures with the medium (mid-transition capture) --------------
 	# The harness dumps single frames, so each state DRIVES a page turn, then FREEZES the tween at its
 	# midpoint (`debug_freeze_turn_at`) so the outgoing and incoming pages COEXIST in the captured PNG —
@@ -1847,6 +1858,18 @@ func _telling_fixture_events() -> Array:
 		{"tick": 22, "kind": "narrative_fork",
 			"label": "There are paths here now, worn by our own feet, going to places only we go. That is how a country becomes a home, or a trap.",
 			"detail": "sedentarization.score = 41"},
+	]
+
+## TWO beats sharing ONE tick — a single speaking turn that said two things, so they form ONE page.
+## Reproduces the playtest bug (the fixed-height page scrolled the second beat off instead of growing).
+func _telling_two_beat_oral_fixture() -> Array:
+	return [
+		{"tick": 6, "kind": "narrative_beat",
+			"label": "We have stopped catching rabbits and started keeping them. A fence, a little grass, and they breed under our own eyes.",
+			"detail": "husbandry.penning = 0.34"},
+		{"tick": 6, "kind": "narrative_beat",
+			"label": "We are more now than we were when we left the bone ground. The children born on this road have never slept anywhere else.",
+			"detail": "band.count = 31"},
 	]
 
 ## Ordinary command receipts for the split frame — the transactional acknowledgements that used to
