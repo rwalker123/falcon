@@ -877,17 +877,17 @@ each PR is independently playtestable.
       noun dressing produces copy worth reading. Both voice registers (`mythic`,
       `warm`) per entry.
 
-### PR-B — the fork tier
-- [ ] Snapshot field carrying pending forks + the choice-submission command path.
-- [ ] The one genuinely new client component: an interrupt decision surface
+### PR-B — the fork tier ✅
+- [x] Snapshot field carrying pending forks + the choice-submission command path.
+- [x] The one genuinely new client component: an interrupt decision surface
       (no modal/choice UI exists today; nearest patterns are the TurnOrb attention
       popover and the top-center targeting banner).
-- [ ] Stance write-back and the stance vector's backing-signal map
+- [x] Stance write-back and the stance vector's backing-signal map
       (`roam_settle` → `SedentarizationScore`, `appetite_restraint` →
       `culture.axis.ascetic_indulgent`, …; axis list is config, not code).
-- [ ] Stance re-coloring of *shared* events, not just unlocking stance-specific beats
+- [x] Stance re-coloring of *shared* events, not just unlocking stance-specific beats
       — the concept's §6 "key nuance" and the cheapest characterful win in the design.
-- [ ] Player-facing voice-register toggle (both registers already carried as data).
+- [x] Player-facing voice-register toggle (both registers already carried as data).
 
 ### PR-C — voice evolution + callbacks
 - [ ] Voice medium progression (oral saga → painted chronicle → written record →
@@ -913,3 +913,21 @@ each PR is independently playtestable.
 - `core_sim/tests/grazing_2d_pen::extend_pen_...` failed once during a combined-package
   run and passed on every rerun. Unrelated to this arc; possible flake, worth a second
   look if it recurs.
+
+**PR-B landed** (server `763efed`, client `5e04128`). Carried forward:
+- The end-turn gate is **client-side and covers the turn orb only**. The Inspector
+  toolbar and autoplay advance freely (a hard gate deadlocks autoplay, which disables
+  itself on any failed advance) and push a feed note; the fork then rides its
+  server-side expiry to defer. Revisit if the dev path proves too easy to skip.
+- **The command feed does not scale to narrative prose.** Two narrative beats fill the
+  entire visible feed and push ordinary command receipts off. The binding limit is the
+  card's height, not `COMMAND_FEED_LIMIT` (6) — a wrapped prose line plus gloss is ~3×
+  a command receipt. Needs either a separate narrative surface or a per-kind quota
+  before ambient volume rises. **This is the top open issue in the arc.**
+- No per-fork expiry turn on the wire, so the panel cannot tell the player how long the
+  question keeps before it auto-defers — which is exactly what makes deferring a real
+  choice rather than a shrug. Wants an `expiresTick` on `PendingForkState`.
+- `answer_fork` failing (socket down) clears the fork locally until the next snapshot
+  re-adds it, briefly lifting the gate. Self-correcting within a turn; flagged rather
+  than given a rollback path.
+- `PendingForkState.wardrobeId`/`postedTick` are currently unused by the client.
