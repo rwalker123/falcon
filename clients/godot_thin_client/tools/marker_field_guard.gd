@@ -73,7 +73,8 @@ const PANEL_CONSUMED_KEYS := [
 	# divides nothing. Band = flow arithmetic; expedition = lookup.
 	"hunt_per_worker_provisions",      # RESIDENT-BAND local-hunt take rate (Hud._hunt_take_rate)
 	"expedition_viability_warn_turns", # viable/not-viable threshold applied to turns_to_fill
-	"expedition_per_worker_carry"      # per-worker carry → pre-launch HAUL = party × this
+	"expedition_per_worker_carry",     # per-worker carry → pre-launch HAUL = party × this
+	"band_move_tiles_per_turn"         # round-trip TRAVEL turns = ceil(2 × dist / this)
 ]
 
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
@@ -129,6 +130,7 @@ const FIXTURE_ENTRY := {
 	"hunt_per_worker_provisions": 0.8,
 	"expedition_viability_warn_turns": 20,
 	"expedition_per_worker_carry": 4.0,
+	"band_move_tiles_per_turn": 3.0,
 }
 
 var _failures: Array[String] = []
@@ -178,6 +180,7 @@ func _ready() -> void:
 	_expect_float(marker, "hunt_per_worker_provisions", 0.8)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	_expect_float(marker, "expedition_per_worker_carry", 4.0)
+	_expect_float(marker, "band_move_tiles_per_turn", 3.0)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)

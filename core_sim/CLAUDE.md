@@ -2498,16 +2498,26 @@ mission:
 >   Eradicate `0`. A deeper policy leaves a leaner herd — *"Surplus/Market raid deeper"*. (Expedition
 >   Market no longer drives extinction — it strips to 0.15·K and stops; extinction is the *resident*
 >   band's multiples-of-MSY axis, unchanged.)
-> - **The take brings home only what it can carry — it does NOT over-kill.** The party's processing
->   throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's `hunt_credit`, and the
->   bank meters *when* the next whole animal is **ready** (a body heavier than one turn's work takes
->   `body / throughput` turns) — but a readied animal is **killed and carried whole** into the pack,
->   bounded only by the room the pack can seat whole. So `killed == carried`, **`wasted` is 0**, and
->   `animals_taken` is the **delivered/carried** count (the client multiplies it by `foodPerAnimal`) —
->   NOT a kill count inflated by carcass the party had to leave. This is the fix for the over-kill bug
->   (the old model killed at the throughput rate and could carry only one turn's throughput of each,
->   wasting the rest — a 1-hunter Marsh Grazer killed a 100-body animal and wasted 60). One hunter per
->   herd, so sharing `hunt_credit` with the band is safe.
+> - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
+>   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
+>   `hunt_credit`, and the bank meters *when* the next whole animal is **ready** (a body heavier than one
+>   turn's work takes `body / throughput` turns). Once one is banked (`affordable >= 1`) the party
+>   **kills it even if the pack cannot seat it whole**, carries the pack's worth, and **wastes the
+>   remainder** — exactly the resident band's `max(1, carryable)` rule (`fauna::quantise_animal_take`): a
+>   1-hunter party on an 800-biomass mammoth (16 food) whose pack holds only `per_worker_carry` = 4 food
+>   (200 biomass) kills it, delivers ~200 (≈ 25%), wastes ~600. So **`animals_taken` is now a KILL
+>   count**, and the delivered payload is `delivered_food` (`Σ hunt_provisions(carried)`), not
+>   `animals_taken × foodPerAnimal`. **"Too lean to raid" means `delivered_food == 0` (no surplus at any
+>   party size)**, NOT "party too small to carry a whole animal". This reconciles the expedition with the
+>   band's waste model; the earlier no-waste rule (`killed == carried`, `wasted == 0`) is retired.
+>   - **This does NOT reintroduce the over-kill bug** the no-waste rule guarded against. That bug was
+>     killing *many* animals per trip and carrying a sliver of each; the guard now is the **pack-full
+>     completion**. When the pack cannot seat a whole animal, the one forced-partial kill carries
+>     `min(body, room) = room` — a **full pack** — so `larder >= cap` fires and the trip ends after that
+>     ONE kill. The completion's "can't seat another whole animal" branch is now gated on
+>     `larder > 0` (already delivered), so it no longer sends a small-pack party home empty on turn 1
+>     before it can bank credit for its forced partial. One hunter per herd, so sharing `hunt_credit`
+>     with the band is safe.
 
 - **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
   **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
@@ -2526,8 +2536,13 @@ mission:
   - **`turns_to_fill`** — turns until the raid **completes** (*"turns until the party comes home"*, NOT
     *"turns until the pack is full"*: a big party on a full herd leaves a partial pack once it strips
     the surplus, a successful short trip). `None` = never completed within the horizon.
-  - **`animals_taken`** — whole animals the raid delivers, the payload the client headlines. `0` = the
+  - **`animals_taken`** — whole animals the raid **kills** (carried whole or partially wasted). `0` = the
     herd is at/below the policy's floor with **no surplus to raid** (the honest non-viable case).
+  - **`delivered_food`** — food actually landed in the larder (`Σ hunt_provisions(carried)`), the primary
+    readout. **`wasted_food`** — food killed but not hauled (`Σ hunt_provisions(wasted)`); the waste
+    fraction is `wasted_food / (delivered_food + wasted_food)`. A small party on a big animal now
+    delivers a partial with waste, so **"too lean to raid" is `delivered_food == 0`**, not "party too
+    small to seat a whole animal".
   - **Travel is not counted**; the herd is assumed stationary and in reach. **Eradicate** delivers no
     food (`delivers_food == false`) → no ETA.
   - *(The old O(1) "cannot fill" short-circuit + its `hunt_trip_bound_tests` sweep were **retired** with
@@ -2635,18 +2650,21 @@ a formula** (see the forecast above: a small-herd Surplus party exhausts *stock*
 describes the trip), so the sim exports the **answer** it simulated, and the client's job is a **table
 lookup**:
 - `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
-  turnsToFill:uint, deliversFood:bool, animalsTaken:uint }]` — per **huntable** herd, one entry per
-  `FollowPolicy::EXTRACTIVE` × every legal party size (`1..=expedition_config.max_party_size`, so
-  4 × 8 = 32 rows/herd; `policy` is a free-form string like `species`, so a new policy needs no schema
-  change). **The four extractive rungs ONLY** — the investment policies are launch-rejected (above), so
-  a `Cultivate`/`Corral` row would be a number for a trip that cannot be launched. **`turnsToFill`** is
-  turns until the raid **completes** (comes home — pack full OR surplus spent), **`0` = never completed**
-  within `hunt.forecast_horizon_turns`. **`animalsTaken`** (append-only) is the whole animals the raid
-  delivers — the payload the client headlines *"≈N animals over M turns"* (combined with
-  `HerdTelemetryState.foodPerAnimal` for the food total); `0` = the herd is at/below the policy's floor
-  with no surplus to raid (the honest non-viable case). Because `animalsTaken` is bounded by the standing
-  surplus, it **plateaus** with `partyWorkers` once the surplus binds — that plateau is the max-useful
-  party size (`ceil(surplus_food / per_worker_carry)`), so the client caps its worker stepper there.
+  turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
+  per **huntable** herd, one entry per `FollowPolicy::EXTRACTIVE` × every legal party size
+  (`1..=expedition_config.max_party_size`, so 4 × 8 = 32 rows/herd; `policy` is a free-form string like
+  `species`, so a new policy needs no schema change). **The four extractive rungs ONLY** — the investment
+  policies are launch-rejected (above), so a `Cultivate`/`Corral` row would be a number for a trip that
+  cannot be launched. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
+  surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
+  (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
+  the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
+  hunt_provisions(carried)`, appended strictly after `animalsTaken`), NOT `animalsTaken × foodPerAnimal`.
+  **`wastedFood`** (`Σ hunt_provisions(wasted)`, appended) gives the waste fraction `wastedFood /
+  (deliveredFood + wastedFood)`. **"Too lean to raid" is `deliveredFood == 0`** (no surplus at any party
+  size); a herd at/below its floor reads `0` on all three. Because the take is bounded by the standing
+  surplus, `deliveredFood`/`animalsTaken` **plateau** with `partyWorkers` once the surplus binds — that
+  plateau is the max-useful party size (`ceil(surplus_food / per_worker_carry)`) the stepper caps at.
   `deliversFood == false` (Eradicate) → "no food delivered (denial)", never an ETA. **Travel is
   excluded** — the number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
@@ -2675,9 +2693,11 @@ lookup**:
 
 **The two hunt readouts, and what each reads:**
 - **Expedition (pre-launch raid)** — a lookup: `huntTripEstimates[(policy, partyWorkers)]` →
-  `animalsTaken` (the payload; `0` = no surplus to raid), `turnsToFill` (comes home in ~N turns; `0` =
-  never completes in the horizon), `deliversFood`. Headline *"≈animalsTaken animals over turnsToFill
-  turns"*; the stepper caps where `animalsTaken` plateaus. No arithmetic, no ecology model, no rate.
+  `deliveredFood` (the payload; `0` = too lean, no surplus at any party size), `wastedFood` (the waste
+  fraction is `wastedFood / (deliveredFood + wastedFood)`), `animalsTaken` (the KILL count), `turnsToFill`
+  (comes home in ~N turns; `0` = never completes in the horizon), `deliversFood`. Headline *"≈deliveredFood
+  food over turnsToFill turns"* with the animal count + waste % below; the stepper caps where
+  `deliveredFood` plateaus. No arithmetic, no ecology model, no rate.
 - **Resident band (local-hunt yield preview)** — pure arithmetic over the **band** ceiling, **× the
   cohort's already-exported `outputMultiplier`** (a band applies its morale/discontent productivity
   modifier at payout): `rate = min(workers × huntPerWorkerProvisions, bandCeiling_for(policy)) ×

@@ -700,12 +700,10 @@ const POLICY_CAP_FORMAT := "up to %s/turn"
 # rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward X/turn".
 const POLICY_PAYOFF_COMPACT := "→%s"
 const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
-# The EXPEDITION picker's per-policy metric — the whole animals a raid at this policy delivers at the
-# composed party size (`animalsTaken`), so the extractive rungs read as ASCENDING (Sustain leaves K/2,
-# Surplus/Market raid deeper, Eradicate takes all). The raid analog of the cap rate: `≈8` on the compact
-# face, `≈8 taken` in the tooltip.
-const EXPEDITION_TAKE_COMPACT := "≈%d"
-const EXPEDITION_TAKE_FORMAT := "≈%d taken"
+# The EXPEDITION picker wears the SAME "up to X/turn" cap metric as the local hunt + forage pickers
+# (`POLICY_CAP_FORMAT` via `_extractive_take`): each policy's MAX obtainable food/turn, computed in
+# `_expedition_policy_takes` as the max over party sizes of delivered_food / trip_turns. No bespoke
+# raid-animals face any more — the three pickers read identically.
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
 # forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
@@ -1460,18 +1458,25 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
             HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
         ]
-    # A real raid: headline the PAYLOAD (whole animals over turns), + the food it's worth. `food` is set
-    # only when the herd carried `food_per_animal`, so a missing lever renders animals+turns alone.
+    # A real raid: headline the delivered PAYLOAD (the animal count over turns + the food it LANDS), then
+    # the waste. `food` is the sim's `delivered_food` (always set on a delivering forecast).
     var animals := int(forecast.get("animals", 0))
     var food: String = HUNT_FORECAST_FOOD_FORMAT % int(forecast["food"]) if forecast.has("food") else ""
+    # The waste % rides BELOW the food as its own WARN-amber segment (even on a cyan line — a high-waste
+    # partial is informative, not a block). Empty when the raid carried its full kill home.
+    var waste := ""
+    var waste_pct := float(forecast.get("waste_pct", 0.0))
+    if waste_pct > 0.0:
+        waste = "[color=#%s]%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
     if bool(forecast.get("long_raid", false)):
         # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
         var long_text: String = HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name]
         var long_travel := int(forecast.get("travel", 0))
         if long_travel > 0:
             long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
-        return "[color=#%s]%s%s%s[/color]" % [
-            HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX,
+        return "[color=#%s]%s%s%s[/color]%s" % [
+            HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
         ]
     # `turns` is the TOTAL (hunting + round-trip travel); the breakdown spells the split out when there's
     # travel to show — a band-relative addition the band-agnostic estimate table can't carry.
@@ -1483,10 +1488,10 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
     # Slow raid (past the band's warn threshold) — still a real delivery, just a long one: amber, told
     # then trusted. A brisk raid reads income-cyan.
     if bool(forecast.get("slow", false)):
-        return "[color=#%s]%s%s%s%s[/color]" % [
-            HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, food, HUNT_FORECAST_SLOW_SUFFIX,
+        return "[color=#%s]%s%s%s%s[/color]%s" % [
+            HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
         ]
-    return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, food]
+    return "[color=#%s]%s%s[/color]%s" % [HudStyle.SIGNAL_HEX, text, food, waste]
 
 ## The raid `workers` from `band` deliver hunting `herd` under `policy`. A PURE TABLE LOOKUP into the
 ## sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO arithmetic: the sim
@@ -1509,12 +1514,15 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     # carve-out MUST come first: it takes animals (down to the 0 floor) but banks none as food.
     if not bool(estimate.get("delivers_food", false)):
         return {"available": true, "denial": true, "empty": false}
-    # animals_taken == 0 = the herd is at/below the policy's floor: no standing surplus to raid, the
+    # delivered_food == 0 = the herd is at/below the policy's floor: no standing surplus to raid, the
     # party returns empty. The ONE non-viable case (the raid always completes; the herd has nothing).
-    # Keyed off the sim's per-(policy, party-size) verdict, never a species/biomass proxy.
-    var animals := int(estimate.get("animals_taken", 0))
-    if animals <= 0:
+    # NOT `animals_taken == 0`: a party too small to carry a whole animal now KILLS one and hauls the
+    # fraction its pack holds (mirroring the local hunt), so `animals_taken >= 1` whenever there's any
+    # surplus — the delivered PAYLOAD (with waste) is the honest bind, not the whole-animal kill count.
+    var delivered_food := float(estimate.get("delivered_food", 0.0))
+    if delivered_food <= 0.0:
         return {"available": true, "denial": false, "empty": true}
+    var animals := int(estimate.get("animals_taken", 0))
     # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
     # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
     # counts HUNTING turns only; the band-relative round trip is added on top so the headline is honest.
@@ -1524,39 +1532,39 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
     var slow: bool = not long_raid and warn_turns > 0 and total > warn_turns
-    var result := {
+    # Waste fraction: killed-but-not-carried food over total killed. A small party on big game raids one
+    # animal and hauls only the pack's worth, wasting the rest — a high % here is informative, not a block.
+    var wasted_food := float(estimate.get("wasted_food", 0.0))
+    var killed := delivered_food + wasted_food
+    var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
+    return {
         "available": true, "denial": false, "empty": false,
         "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
         "long_raid": long_raid, "slow": slow,
+        # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
+        # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
+        # whole kill and overstates a partial). Guaranteed > 0 here (empty returned above otherwise).
+        "food": int(round(delivered_food)), "waste_pct": waste_pct,
     }
-    # The food those animals are worth: animals × food_per_animal — a lookup product of two exported
-    # numbers, NOT the ecology model. Only when the herd carried the lever (> 0), so the renderer guards
-    # on the key rather than a fake zero.
-    var food_per_animal := float(herd.get("food_per_animal", 0.0))
-    if food_per_animal > 0.0:
-        result["food"] = int(round(float(animals) * food_per_animal))
-    return result
 
 ## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
 ## remainder of the trip length the band-agnostic `hunt_trip_estimates` table cannot carry (one row
 ## serves every band). Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
 ## / band_move_tiles_per_turn), from the SELECTED band's tile + the exported move rate.
 ## Returns 0 — so the forecast degrades to hunting turns only, never a fabricated travel — when the move
-## rate isn't on the band dict or a position is unknown.
-## SERVER-SIDE WORK REMAINS: `band_move_tiles_per_turn` is a LaborConfig scalar that is NOT yet echoed
-## onto `PopulationCohortState` nor decoded onto the band marker, so `band.band_move_tiles_per_turn` is
-## absent on the live wire today and travel reads 0. The arithmetic here is ready to light up the moment
-## the field ships (schema + population snapshot + native decode). See the report.
+## rate isn't on the band dict or a position is unknown. `band_move_tiles_per_turn` (a LaborConfig scalar
+## echoed per-cohort) is now decoded in `native/src/lib.rs` and flowed onto the band marker, so this
+## lights up on the live wire; it degrades gracefully if a future snapshot omits it.
 func _round_trip_travel_turns(band: Dictionary, herd: Dictionary) -> int:
-    var move_rate := int(band.get("band_move_tiles_per_turn", 0))
-    if move_rate <= 0:
+    var move_rate := float(band.get("band_move_tiles_per_turn", 0.0))
+    if move_rate <= 0.0:
         return 0
     var band_tile := _band_tile(band)
     var one_way := _hex_distance_wrapped(
         band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
     if one_way < 0:
         return 0
-    return int(ceil(float(2 * one_way) / float(move_rate)))
+    return int(ceil(float(2 * one_way) / move_rate))
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
 ## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
@@ -3671,9 +3679,10 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     if cap_note != "":
         herd_assign_controls.add_child(_alloc_hint_label(cap_note))
     # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
-    # the same button metric: the local hunt shows each policy's per-turn ceiling (Sustain < Surplus <
-    # Market < Eradicate), the expedition shows each policy's raid haul in animals at the composed party.
-    var policy_takes := _expedition_policy_takes(herd, _hunt_assign_count) if is_expedition \
+    # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
+    # Market < Eradicate). Worker-independent on both branches (the expedition's is the max over party
+    # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
+    var policy_takes := _expedition_policy_takes(band, herd) if is_expedition \
         else _hunt_policy_takes(herd)
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
@@ -3826,12 +3835,15 @@ func _hunt_estimate_key(policy: String, workers: int) -> String:
 func _hunt_no_surplus_reason(herd: Dictionary) -> String:
     return SEND_HUNT_NO_SURPLUS_REASON % _herd_display_name(herd)
 
-## The max-useful party for a raid: `animals_taken` PLATEAUS with party size once the standing surplus
-## (not the pack) binds, so beyond the plateau extra hunters raise the haul by nothing. Scan the current
-## policy's row for the smallest size at which animals stops rising and cap there — the raid twin of
+## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
+## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the current
+## policy's row for the smallest size at which delivered food stops rising and cap there — the raid twin of
 ## `_forecast_worker_cap`, and it mirrors its `{cap, note}` shape + "max N useful" note so the expedition
-## and local pickers explain a dead `+` the same way. A table SCAN, zero client arithmetic. Returns the
-## full `assignable` (no note) when the row carries no data or never plateaus within the band's reach.
+## and local pickers explain a dead `+` the same way. Scans DELIVERED FOOD (not the whole-animal
+## `animals_taken`, which sits at 1 across every small-party size on big game — its leading-zeros plateau
+## fooled the old scan into capping at 1; with partials delivered food rises smoothly, so the cap tracks
+## the true bind). A table SCAN, zero client arithmetic. Returns the full `assignable` (no note) when the
+## row carries no data or never plateaus within the band's reach.
 func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, assignable: int) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if not (estimates_variant is Dictionary):
@@ -3847,18 +3859,18 @@ func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, 
         var parts := String(key).split(":")
         if parts.size() == 2 and String(parts[0]) == policy:
             scan_cap = maxi(scan_cap, int(parts[1]))
-    var prev_animals := -1
+    var prev_delivered := -1.0
     var plateau := 0
     for workers in range(1, scan_cap + 1):
         var cell_variant: Variant = estimates.get(_hunt_estimate_key(policy, workers), null)
         if not (cell_variant is Dictionary):
             continue
-        var animals := int((cell_variant as Dictionary).get("animals_taken", 0))
-        if animals > prev_animals:
-            prev_animals = animals
-            plateau = workers   # the haul is still rising — this size is useful
+        var delivered := float((cell_variant as Dictionary).get("delivered_food", 0.0))
+        if delivered > prev_delivered:
+            prev_delivered = delivered
+            plateau = workers   # the payload is still rising — this size is useful
         else:
-            break               # the haul stopped rising — the previous size is the plateau
+            break               # the payload stopped rising — the previous size is the plateau
     if plateau <= 0:
         return {"cap": assignable, "note": ""}
     var useful: int = mini(plateau, assignable)
@@ -3878,25 +3890,38 @@ func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, 
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## Each extractive policy's raid haul at `party` — `animals_taken` from the sim's estimate table, keyed
-## policy → display string, for the EXPEDITION picker's ascending per-policy readout (Sustain < Surplus <
-## Market < Eradicate raid deeper). The raid twin of `_hunt_policy_takes`. Empty when the herd carries no
-## estimates (older snapshot / non-huntable); a policy with no cell for this party size is skipped.
-func _expedition_policy_takes(herd: Dictionary, party: int) -> Dictionary:
+## Each extractive policy's MAX obtainable food/turn — the raid twin of the local hunt's per-policy cap,
+## so all three pickers (forage / local hunt / expedition) wear the same "up to X/turn" button metric and
+## the four read ASCENDING (Sustain < Surplus < Market < Eradicate; deeper floors free more surplus). The
+## metric is WORKER-INDEPENDENT: the max over every party size of `delivered_food / trip_turns`, where
+## `trip_turns = turns_to_fill + round-trip travel` (a far herd's best rate is correctly lower). A bigger
+## party delivers more food in fewer turns, so the rate rises then plateaus — the max is the honest cap.
+## Eradicate is a DENIAL rung (`delivers_food == false`, `delivered_food == 0`): it never qualifies, so it
+## carries no rate and falls back to its name + skull glyph — its existing denial treatment. A table SCAN,
+## zero client arithmetic. Empty when the herd carries no estimates (older snapshot / non-huntable).
+func _expedition_policy_takes(band: Dictionary, herd: Dictionary) -> Dictionary:
     var takes := {}
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
-    if party <= 0 or not (estimates_variant is Dictionary):
+    if not (estimates_variant is Dictionary):
         return takes
     var estimates := estimates_variant as Dictionary
+    var travel := _round_trip_travel_turns(band, herd)
     for policy in LABOR_HUNT_POLICIES:
-        var cell_variant: Variant = estimates.get(_hunt_estimate_key(String(policy), party), null)
-        if not (cell_variant is Dictionary):
-            continue
-        var animals := int((cell_variant as Dictionary).get("animals_taken", 0))
-        takes[String(policy)] = {
-            "compact": EXPEDITION_TAKE_COMPACT % animals,
-            "full": EXPEDITION_TAKE_FORMAT % animals,
-        }
+        var best_rate := -1.0
+        for key in estimates:
+            var parts := String(key).split(HUNT_ESTIMATE_KEY_SEPARATOR)
+            if parts.size() != 2 or String(parts[0]) != String(policy):
+                continue
+            var cell: Dictionary = estimates[key]
+            if not bool(cell.get("delivers_food", false)):
+                continue
+            var delivered := float(cell.get("delivered_food", 0.0))
+            var trip_turns := int(cell.get("turns_to_fill", 0)) + travel
+            if delivered <= 0.0 or trip_turns <= 0:
+                continue
+            best_rate = maxf(best_rate, delivered / float(trip_turns))
+        if best_rate >= 0.0:
+            takes[String(policy)] = _extractive_take(best_rate)
     return takes
 
 ## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared

@@ -2392,8 +2392,10 @@ fn handle_send_hunt_expedition(
                 .to_string(),
             " eta_turns=none viability=denial".to_string(),
         ),
-        // The herd has no surplus above the policy's floor — the honest non-viable case.
-        Some(f) if f.animals_taken == 0 => (
+        // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
+        // now means the raid lands NO food at all (a small party on a big animal still delivers a
+        // partial with waste, so the signal is `delivered_food == 0`, not "the party is too small").
+        Some(f) if f.delivered_food <= 0.0 => (
             format!(
                 " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
                  return empty",
@@ -2402,32 +2404,39 @@ fn handle_send_hunt_expedition(
             ),
             " eta_turns=none viability=no_surplus".to_string(),
         ),
-        // A completed raid: "delivers ~N animals over ~M turns". `turns_to_fill == None` means it ran
-        // the whole horizon still delivering (a slow breeder a big party can neither fill nor exhaust).
+        // A completed raid: headline the food landed, with the kill count + waste below. A pack too
+        // small to seat a whole animal delivers a partial and wastes the rest, so food (not the animal
+        // count) is the payload. `turns_to_fill == None` means it ran the whole horizon still delivering
+        // (a slow breeder a big party can neither fill nor exhaust).
         Some(f) => {
             let animals = f.animals_taken;
+            let food = f.delivered_food;
+            let wasted = f.wasted_food;
             match f.turns_to_fill {
                 Some(hunt_turns) => {
                     let total = hunt_turns + travel_turns;
                     (
                         format!(
-                            " — est. ~{} animals over ~{} turns ({} hunting + {} travel)",
-                            animals, total, hunt_turns, travel_turns
+                            " — est. ~{:.1} food ({} animals, {:.1} wasted) over ~{} turns ({} hunting \
+                             + {} travel)",
+                            food, animals, wasted, total, hunt_turns, travel_turns
                         ),
                         format!(
-                            " eta_turns={} hunt_turns={} travel_turns={} animals={}",
-                            total, hunt_turns, travel_turns, animals
+                            " eta_turns={} hunt_turns={} travel_turns={} animals={} food={:.2} \
+                             wasted={:.2}",
+                            total, hunt_turns, travel_turns, animals, food, wasted
                         ),
                     )
                 }
                 None => (
                     format!(
-                        " — a long raid: ~{} animals over {}+ hunting turns (+{} travel)",
-                        animals, cfg.hunt.forecast_horizon_turns, travel_turns
+                        " — a long raid: ~{:.1} food ({} animals, {:.1} wasted) over {}+ hunting turns \
+                         (+{} travel)",
+                        food, animals, wasted, cfg.hunt.forecast_horizon_turns, travel_turns
                     ),
                     format!(
-                        " eta_turns=none travel_turns={} animals={}",
-                        travel_turns, animals
+                        " eta_turns=none travel_turns={} animals={} food={:.2} wasted={:.2}",
+                        travel_turns, animals, food, wasted
                     ),
                 ),
             }

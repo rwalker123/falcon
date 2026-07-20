@@ -178,12 +178,19 @@ pub struct HuntTripEstimateState {
     /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
     /// delivered", never an ETA.
     pub delivers_food: bool,
-    /// **Whole animals the raid delivers** (append-only) — the payload the client headlines ("≈N
-    /// animals over M turns"), combined with `HerdTelemetryState::food_per_animal` for the food total.
-    /// Bounded by the standing surplus, so it plateaus with `party_workers` once the surplus (not the
-    /// pack) binds — and that plateau is the max-useful party size (`ceil(surplus_food /
-    /// per_worker_carry)`). `0` = the herd is at/below the policy's floor with no surplus to raid.
+    /// **Whole animals the raid KILLS** (append-only) — the kill count. A party too small to seat a
+    /// whole animal now kills one and wastes the rest (mirroring the resident band), so this is a kill
+    /// count, not a delivered count. Bounded by the standing surplus, so it plateaus with `party_workers`
+    /// once the surplus (not the pack) binds. `0` = the herd is at/below the policy's floor with no
+    /// surplus to raid. The delivered payload is `delivered_food`, not `animals_taken × food_per_animal`.
     pub animals_taken: u32,
+    /// **Food the party actually LANDS in its larder over the raid** (append-only) — the PRIMARY
+    /// readout. A small party on a big animal brings home a partial (with waste), so "too lean to raid"
+    /// is `delivered_food == 0` (no surplus at any party size), not "party too small to carry an animal".
+    pub delivered_food: f32,
+    /// **Food killed but not hauled home over the raid** (append-only). `wasted_food / (delivered_food +
+    /// wasted_food)` is the waste fraction the client shows beside the delivered total.
+    pub wasted_food: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -3566,6 +3573,8 @@ fn create_herds<'a>(
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
                             animalsTaken: estimate.animals_taken,
+                            deliveredFood: estimate.delivered_food,
+                            wastedFood: estimate.wasted_food,
                         },
                     )
                 })

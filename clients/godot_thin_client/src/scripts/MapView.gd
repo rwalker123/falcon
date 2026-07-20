@@ -2661,6 +2661,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				# party × this lever (the same blessed party×lever arithmetic as the band ceiling, NOT
 				# the turns-to-fill lookup). 0 when absent → no haul rendered.
 				"expedition_per_worker_carry": float(entry.get("expedition_per_worker_carry", 0.0)),
+				# Band move speed (tiles/turn). The hunt-expedition forecast's round-trip TRAVEL turns
+				# are ceil(2 × hex_distance(band, herd) / this), added to the herd's hunting turns for
+				# the total trip length (and the per-turn averaging denominator). 0/absent → travel 0.
+				"band_move_tiles_per_turn": float(entry.get("band_move_tiles_per_turn", 0.0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})

@@ -964,16 +964,31 @@ func _ready() -> void:
 		await _settle()
 		await _save(String(state["name"]))
 
-	# States 3p–3s — the RAID readout in ANIMALS + the party stepper capped at max-useful. A hunting
-	# expedition is a greedy raid: it grabs the herd's standing surplus in a burst and comes home, so the
-	# headline is the PAYLOAD, and `animalsTaken` PLATEAUS with party size once the surplus (not the
-	# pack) binds — that plateau IS max-useful. The Wild Boar carries the server's measured raid.
-	#   3p boar raid   — a 1-hunter raid: "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", cyan +
-	#                    primary "Send Hunting Expedition".
-	#   3q max useful  — 2 hunters: "delivers ≈8 Wild Boar over ≈8 turns · ~32 food"; a 3rd raids NO more
-	#                    animals (the surplus binds), so the stepper caps at 2 and the `+` note reads
+	# AUTO-MAX on a policy click (expedition branch): picking a policy fills the Party to that policy's
+	# max-useful cap. The mammoth's Sustain payload keeps rising to the fieldable ceiling, so a Sustain
+	# click sets the party to 6 (min(plateau, idle 6)) — the "give me everything, zero idle hunters"
+	# default. `_hunt_assign_autofill` is the one-shot flag a policy CLICK sets; the rebuild consumes it.
+	var automax_herd := _partial_waste_mammoth()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(automax_herd)
+	_hud._hunt_assign_policy = "sustain"
+	_hud._hunt_assign_autofill = true
+	_hud._build_herd_assign_controls(automax_herd)
+	await _settle()
+	await _save("herd_hunt_expedition_automax")
+
+	# States 3p–3s — the RAID readout (delivered payload + waste) + the party stepper capped at max-useful.
+	# A hunting expedition is a greedy raid: it grabs the herd's standing surplus in a burst and comes home,
+	# so the headline is the delivered PAYLOAD, and `deliveredFood` PLATEAUS with party size once the surplus
+	# (not the pack) binds — that plateau IS max-useful. The clean Wild Boar carries the server's measured
+	# raid (hauls its whole kill, no waste). The picker buttons read each policy's MAX food/turn, ascending.
+	#   3p boar raid   — a 1-hunter raid: "delivers ≈5 Wild Boar over ≈7 turns · ~20 food" (no waste), cyan +
+	#                    primary "Send Hunting Expedition"; picker "up to +10.67 / +13.33 / +14.67 /turn".
+	#   3q max useful  — 2 hunters: "delivers ≈8 Wild Boar over ≈8 turns · ~32 food"; a 3rd delivers NO more
+	#                    food (the surplus binds), so the stepper caps at 2 and the `+` note reads
 	#                    "max 2 workers useful here — more would be idle". The silent-idle-hunter gap, closed.
-	#   3r no surplus  — a herd stripped to its floor: animalsTaken = 0 at EVERY size → the raid returns
+	#   3r no surplus  — a herd stripped to its floor: deliveredFood = 0 at EVERY size → the raid returns
 	#                    empty → red "too lean to raid" + the DISABLED "Herd too lean to raid" button (party
 	#                    size can't fix it — surplus is a property of the herd, not the party).
 	#   3s eradicate   — the boar on Eradicate: delivers no food BY DESIGN → amber "Send (delivers no
@@ -1852,7 +1867,8 @@ func _hunt_distance_herd() -> Dictionary:
 func _raid_boar_herd() -> Dictionary:
 	var herd := _assign_preview_herd("game_boar_04", "Wild Boar", "thriving", 0.30, 0, 0)
 	herd["food_per_animal"] = BOAR_FOOD_PER_ANIMAL
-	herd["hunt_trip_estimates"] = _raid_estimate_table(BOAR_RAID_TURNS, BOAR_RAID_ANIMALS)
+	herd["hunt_trip_estimates"] = _raid_estimate_table(
+		BOAR_RAID_TURNS, BOAR_RAID_ANIMALS, BOAR_FOOD_PER_ANIMAL)
 	return herd
 
 ## A raid estimate TABLE from a per-party Sustain (turns, animals) pair (index i = a party of i+1). The
@@ -1860,22 +1876,29 @@ func _raid_boar_herd() -> Dictionary:
 ## per-policy ASCENDING the picker buttons read. Eradicate takes the most but delivers NO food (denial —
 ## `delivers_food = false`). The per-policy bumps are illustrative fixture data; the live sim exports the
 ## real per-floor counts.
-func _raid_estimate_table(turns_row: Array, animals_row: Array) -> Dictionary:
+func _raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float) -> Dictionary:
 	var table := {}
 	for i in animals_row.size():
 		var turns := int(turns_row[i])
 		var base := int(animals_row[i])
+		# A CLEAN raid: the party hauls its whole kill home, so delivered_food = animals × fpa, waste 0.
+		# delivered_food is the PRIMARY payload the client headlines + the field the max-useful scan and
+		# "too lean" test read — every cell must carry it.
 		table["sustain:%d" % (i + 1)] = {
 			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base,
+			"delivered_food": float(base) * fpa, "wasted_food": 0.0,
 		}
 		table["surplus:%d" % (i + 1)] = {
 			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base + 2,
+			"delivered_food": float(base + 2) * fpa, "wasted_food": 0.0,
 		}
 		table["market:%d" % (i + 1)] = {
 			"turns_to_fill": turns, "delivers_food": true, "animals_taken": base + 3,
+			"delivered_food": float(base + 3) * fpa, "wasted_food": 0.0,
 		}
 		table["eradicate:%d" % (i + 1)] = {
 			"turns_to_fill": turns, "delivers_food": false, "animals_taken": base + 5,
+			"delivered_food": 0.0, "wasted_food": 0.0,
 		}
 	return table
 
@@ -1889,13 +1912,18 @@ func _labor_bound_raid_herd() -> Dictionary:
 	var sustain_animals := [3, 5, 7, 9, 9, 9, 9, 9]     # plateau at party 4
 	var surplus_animals := [4, 6, 8, 10, 12, 12, 12, 12] # plateau at party 5
 	var market_animals := [5, 7, 9, 11, 13, 15, 17, 17]  # plateau at party 7
+	var fpa := 4.0    # matches food_per_animal above; clean raid → delivered = animals × fpa, waste 0
 	var table := {}
 	for i in sustain_animals.size():
 		var w := i + 1
-		table["sustain:%d" % w] = {"turns_to_fill": 8, "delivers_food": true, "animals_taken": int(sustain_animals[i])}
-		table["surplus:%d" % w] = {"turns_to_fill": 6, "delivers_food": true, "animals_taken": int(surplus_animals[i])}
-		table["market:%d" % w] = {"turns_to_fill": 5, "delivers_food": true, "animals_taken": int(market_animals[i])}
-		table["eradicate:%d" % w] = {"turns_to_fill": 4, "delivers_food": false, "animals_taken": int(market_animals[i]) + 2}
+		table["sustain:%d" % w] = {"turns_to_fill": 8, "delivers_food": true,
+			"animals_taken": int(sustain_animals[i]), "delivered_food": float(sustain_animals[i]) * fpa, "wasted_food": 0.0}
+		table["surplus:%d" % w] = {"turns_to_fill": 6, "delivers_food": true,
+			"animals_taken": int(surplus_animals[i]), "delivered_food": float(surplus_animals[i]) * fpa, "wasted_food": 0.0}
+		table["market:%d" % w] = {"turns_to_fill": 5, "delivers_food": true,
+			"animals_taken": int(market_animals[i]), "delivered_food": float(market_animals[i]) * fpa, "wasted_food": 0.0}
+		table["eradicate:%d" % w] = {"turns_to_fill": 4, "delivers_food": false,
+			"animals_taken": int(market_animals[i]) + 2, "delivered_food": 0.0, "wasted_food": 0.0}
 	herd["hunt_trip_estimates"] = table
 	return herd
 
@@ -1905,14 +1933,18 @@ func _labor_bound_raid_herd() -> Dictionary:
 func _no_surplus_herd() -> Dictionary:
 	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05, 0, 0)
 	herd["size_class"] = "small"
+	# The herd is at its floor: no surplus at ANY party size → delivered_food 0 everywhere, so the raid
+	# comes home empty and the button DISABLES ("too lean — no surplus above this policy's floor").
 	var table := {}
 	for w in range(1, 9):
 		for policy in ["sustain", "surplus", "market"]:
 			table["%s:%d" % [policy, w]] = {
 				"turns_to_fill": 0, "delivers_food": true, "animals_taken": 0,
+				"delivered_food": 0.0, "wasted_food": 0.0,
 			}
 		table["eradicate:%d" % w] = {
 			"turns_to_fill": 0, "delivers_food": false, "animals_taken": 0,
+			"delivered_food": 0.0, "wasted_food": 0.0,
 		}
 	herd["hunt_trip_estimates"] = table
 	return herd
@@ -1972,13 +2004,14 @@ func _plain_herd_tile_info() -> Dictionary:
 func _hunt_assign_forecast_states() -> Array:
 	return [
 		{
-			# A brisk raid: Sustain on a Thunder Mammoth delivers ≈8 animals in 6 turns → cyan line,
-			# primary "Send Hunting Expedition".
+			# THE PARTIAL-WITH-WASTE case: a Thunder Mammoth is big game (16 food/animal), and a party of
+			# 4 can't carry a whole one — it kills the 1-animal surplus and hauls only 4 food, wasting 12.
+			# So the line reads a brisk-but-lossy "delivers ≈1 Thunder Mammoth over ≈6 turns · ~4 food ·
+			# ⚠ 75% wasted" (cyan headline + amber waste), and the button STAYS ENABLED (a partial is a
+			# real delivery, the waste % is just informative). This is the case the whole pass exists for.
 			"name": "herd_hunt_forecast_viable",
 			"policy": "sustain",
-			"herd": _assign_preview_herd("game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
-				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
-				MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS),
+			"herd": _partial_waste_mammoth(),
 		},
 		{
 			# A SLOW raid: Sustain on a Red Deer still delivers ≈6 animals, but over 54 turns — past the
@@ -2017,6 +2050,34 @@ func _hunt_assign_forecast_states() -> Array:
 				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
 	]
+
+## The partial-with-waste raid herd: a Thunder Mammoth (16 food/animal) whose standing surplus is ONE
+## animal. Any fieldable party kills that 1 animal but cannot carry a whole mammoth — a party of `w` hauls
+## ~`w` food and wastes the rest — so `delivered_food` rises with party size while `animals_taken` stays 1.
+## At the composed party of 4: delivered 4, wasted 12 → 75% wasted, button ENABLED. The per-policy turns
+## descend Sustain(6) > Surplus(4) > Market(3) so the picker's max-food/turn caps read ASCENDING. This is
+## exactly the case the old `animals_taken`-based "too lean" test and plateau scan got wrong (a leading 1).
+func _partial_waste_mammoth() -> Dictionary:
+	var herd := _assign_preview_herd("game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
+		MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
+		MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS)
+	var fpa := 16.0
+	herd["food_per_animal"] = fpa
+	var policy_turns := {"sustain": 6, "surplus": 4, "market": 3}
+	var table := {}
+	for w in range(1, 9):
+		var delivered := minf(float(w), fpa)     # each hunter hauls ~1 food of the 16-food kill
+		for policy in policy_turns:
+			table["%s:%d" % [policy, w]] = {
+				"turns_to_fill": int(policy_turns[policy]), "delivers_food": true,
+				"animals_taken": 1, "delivered_food": delivered, "wasted_food": fpa - delivered,
+			}
+		table["eradicate:%d" % w] = {
+			"turns_to_fill": 2, "delivers_food": false,
+			"animals_taken": 1, "delivered_food": 0.0, "wasted_food": 0.0,
+		}
+	herd["hunt_trip_estimates"] = table
+	return herd
 
 ## A forecast herd (carrying BOTH sim-exported per-policy ceiling tables) as a SELECTED herd — i.e. on
 ## a plain tile, the way `show_herd_selection` receives it — rather than as a hovered hex.
@@ -2280,6 +2341,13 @@ func _hunt_forecast_states() -> Array:
 func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling: float,
 		trip_turns: int = 0, surplus_trip_turns: int = 0,
 		sustain_animals: int = 0, surplus_animals: int = 0) -> Dictionary:
+	# A CLEAN raid: the party hauls its whole kill home, so delivered_food = animals × food_per_animal
+	# and nothing rots. `delivered_food` is now the PRIMARY payload the client headlines (and the field
+	# the "too lean" test / max-useful scan read), so every fixture cell must carry it; a partial-with-
+	# waste cell is built explicitly (see `_partial_waste_mammoth`).
+	var fpa := 2.0
+	var sustain_delivered := float(sustain_animals) * fpa
+	var surplus_delivered := float(surplus_animals) * fpa
 	return {
 		"id": id,
 		"label": "%s (%s)" % [species, id],
@@ -2290,8 +2358,8 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"x": 66, "y": 10,
 		"biomass": 820.0,
 		# One animal's worth of FOOD (provisions), `HerdTelemetryState.foodPerAnimal` — drives the
-		# kill-rhythm on the local-hunt preview (food ÷ food).
-		"food_per_animal": 2.0,
+		# kill-rhythm on the local-hunt preview (food ÷ food). Matches `fpa` above (the clean delivered).
+		"food_per_animal": fpa,
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
 		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
@@ -2315,18 +2383,23 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 			"sustain:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": trip_turns, "delivers_food": true,
 				"animals_taken": sustain_animals,
+				"delivered_food": sustain_delivered, "wasted_food": 0.0,
 			},
 			"surplus:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
 				"animals_taken": surplus_animals,
+				"delivered_food": surplus_delivered, "wasted_food": 0.0,
 			},
 			"market:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
 				"animals_taken": surplus_animals,
+				"delivered_food": surplus_delivered, "wasted_food": 0.0,
 			},
-			# Denial: the sim says so via `delivers_food`, the client never infers it from the policy.
+			# Denial: the sim says so via `delivers_food` (delivered_food 0), the client never infers it
+			# from the policy string.
 			"eradicate:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": 0, "delivers_food": false, "animals_taken": surplus_animals,
+				"delivered_food": 0.0, "wasted_food": 0.0,
 			},
 		},
 	}

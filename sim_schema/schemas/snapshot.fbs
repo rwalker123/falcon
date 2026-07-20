@@ -1072,8 +1072,17 @@ table HuntTripEstimate {
   // M turns", combined with HerdTelemetryState.foodPerAnimal for the food total. Bounded by the
   // standing surplus, so it plateaus with partyWorkers once the surplus (not the pack) binds — that
   // plateau IS the max-useful party size (ceil(surplus_food / per_worker_carry)). 0 = herd at/below
-  // the policy's floor, no surplus to raid (the honest non-viable case).
+  // the policy's floor, no surplus to raid (the honest non-viable case). NOTE: `animalsTaken` is now a
+  // KILL count — a party too small to seat a whole animal still kills one and wastes the rest (mirroring
+  // the resident band), so the delivered payload is `deliveredFood`, not `animalsTaken × foodPerAnimal`.
   animalsTaken:uint = 0;
+  // Food the party actually LANDS in its larder over the raid (append-only) — the PRIMARY readout. A
+  // small party on a big animal now brings home a partial (with waste), so "too lean to raid" means
+  // `deliveredFood == 0` (no surplus at any party size), NOT "party too small to carry a whole animal".
+  deliveredFood:float = 0;
+  // Food killed but not hauled home over the raid (append-only). `wastedFood / (deliveredFood +
+  // wastedFood)` is the waste fraction the client shows beside the delivered total.
+  wastedFood:float = 0;
 }
 
 table HerdTelemetryState {

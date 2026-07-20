@@ -469,6 +469,67 @@ fn a_herd_at_its_floor_has_no_surplus() {
     );
 }
 
+/// **A party too small to seat a whole animal still KILLS one and wastes the rest** — the reconciliation
+/// with the resident band's `quantise_animal_take` (`max(1, carryable)`). The motivating case: a Thunder
+/// Mammoth herd (body 800 biomass = 16 food) with real surplus above K/2, raided by a 1-worker party
+/// whose pack holds only `per_worker_carry` = 4 food = 200 biomass < one body. It used to deliver a flat
+/// 0 ("too lean to raid"); it now kills ONE, carries the pack's ~200 biomass (≈ 25%), and wastes ~600.
+/// "Too lean" now means only `delivered_food == 0` (no surplus), which a genuinely at-floor herd still is.
+#[test]
+fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
+    let fauna = FaunaConfig::builtin();
+    let labor = LaborConfig::builtin();
+    let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (4 food/worker = 200 biomass)
+    const MAMMOTH_BODY: f32 = 800.0; // 16 food; a 1-worker pack (200 biomass) seats 0 whole
+    const MAMMOTH_K: f32 = 15600.0;
+    const MAMMOTH_R: f32 = 0.04;
+    let ppb = fauna.hunt.provisions_per_biomass; // 0.02
+    let pack_biomass = cfg.hunt.per_worker_carry / ppb; // 200 biomass for one worker
+    let body_food = MAMMOTH_BODY * ppb; // 16 food
+
+    // Standing surplus above K/2 ≈ 3213 biomass ≈ 4 whole mammoths — NOT lean.
+    let herd = wild_herd(11013.0, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
+    let f = hunt_trip_forecast(1, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    println!(
+        "[partial] 1-worker mammoth: killed {} animals, delivered {:.2} / wasted {:.2} food over {:?} turns",
+        f.animals_taken, f.delivered_food, f.wasted_food, f.turns_to_fill
+    );
+    // The pack-full stop ends the trip after exactly ONE forced-partial kill — kills 1, not many.
+    assert_eq!(
+        f.animals_taken, 1,
+        "the party kills exactly one animal it cannot seat whole (the pack-full stop prevents over-kill)"
+    );
+    // Delivers ≈ the pack's worth (200 biomass → 4 food), wasting the remainder of the body (12 food).
+    assert!(
+        (f.delivered_food - pack_biomass * ppb).abs() <= TAKE_ABS_EPSILON,
+        "delivers ≈ one pack's worth of food (≈ per_worker_carry): {} vs {}",
+        f.delivered_food,
+        pack_biomass * ppb
+    );
+    assert!(
+        f.delivered_food > 0.0,
+        "a partial delivery is non-zero — the herd is not too lean to raid"
+    );
+    assert!(
+        (f.wasted_food - (body_food - f.delivered_food)).abs() <= TAKE_ABS_EPSILON,
+        "wastes the rest of the body it could not haul: {} vs {}",
+        f.wasted_food,
+        body_food - f.delivered_food
+    );
+
+    // A genuinely at-floor herd (surplus < one body) still delivers NOTHING — the true too-lean case.
+    let at_floor = wild_herd(MAMMOTH_K * 0.5, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
+    let lean = hunt_trip_forecast(1, &at_floor, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    assert_eq!(
+        lean.animals_taken, 0,
+        "a herd at K/2 has no surplus to raid — kills nothing"
+    );
+    assert_eq!(
+        lean.delivered_food, 0.0,
+        "…and delivers nothing: THIS is 'too lean to raid'"
+    );
+}
+
 /// (2) **Scoping fix.** A party still walking (beyond `hunt.reach_tiles`) must not take, and must not
 /// conclude the trip — the completion check is inside the in-reach guard.
 #[test]

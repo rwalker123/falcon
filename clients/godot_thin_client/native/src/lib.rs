@@ -3197,10 +3197,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // horizon, and under Sustain no party size fills at any size). The sim therefore
         // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
         // table lookup keyed
-        // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken}`:
-        //   turns_to_fill == 0  → the raid ran the whole horizon still delivering (a long raid)
-        //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
-        //   animals_taken == 0  → herd at/below the policy floor, no surplus to raid (too lean)
+        // `"<policy>:<party_workers>"` →
+        // `{turns_to_fill, delivers_food, animals_taken, delivered_food, wasted_food}`:
+        //   turns_to_fill == 0   → the raid ran the whole horizon still delivering (a long raid)
+        //   delivers_food false  → eradicate, a denial mission ("no food delivered", never an ETA)
+        //   delivered_food == 0  → herd at/below the policy floor, no surplus to raid (too lean); NOT
+        //                          animals_taken == 0, which is ≥ 1 whenever there's surplus (a small
+        //                          party kills one animal and wastes the meat it can't carry)
         // Empty for a non-huntable herd (the HUD then shows no forecast).
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
@@ -3213,6 +3216,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
                     // ("delivers ≈N animals over M turns") and the plateau it caps the party stepper
                     // at. Dropped from this dict on four prior appended fields; this is the newest.
                     let _ = entry.insert("animals_taken", i64::from(estimate.animalsTaken()));
+                    // The PRIMARY payload: food the party actually LANDS over the raid (a partial
+                    // for a small party) + the food killed-but-not-carried it wastes. The client
+                    // headlines `delivered_food` (NOT animals × food_per_animal, which overstates a
+                    // partial) and shows the waste fraction `wasted / (delivered + wasted)` beside
+                    // it; `delivered_food == 0` (not `animals_taken == 0`) is now "too lean to raid".
+                    let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
+                    let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
                     let key = format!("{}:{}", policy, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }

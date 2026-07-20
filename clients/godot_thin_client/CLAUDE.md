@@ -1649,36 +1649,46 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     (`_hunt_trip_forecast` → `_hunt_forecast_line_bbcode`, shared — the two entry points can't quote
     different numbers) and gives the **button itself** the verdict (`_style_send_hunt_button`).
     **A hunting expedition is a GREEDY RAID** (server `5a130e0`): it grabs the herd's standing surplus
-    above the policy floor in a burst and comes home, so the headline is the **PAYLOAD** — the whole
-    animals delivered over the turns it takes: **`delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8
-    travel) · ~32 food`** (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_TRAVEL_BREAKDOWN` +
-    `HUNT_FORECAST_FOOD_FORMAT`; `animals` = `HuntTripEstimate.animalsTaken`, food = `animals ×
-    HerdTelemetryState.foodPerAnimal`). **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel
-    is NOT in it; the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL**
-    itself (`_round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
-    hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total**, spelling the split
-    out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. **SERVER-SIDE WORK REMAINS:**
-    `band_move_tiles_per_turn` is a LaborConfig scalar NOT yet echoed onto `PopulationCohortState` nor
-    decoded onto the band marker, so travel reads 0 on the live wire today (the readout degrades to the
-    hunting turns, never a fabricated travel) — the arithmetic lights up the moment the field ships.
+    above the policy floor in a burst and comes home. A party too small to carry a whole animal now
+    **kills one and hauls only the fraction its pack holds, wasting the rest** (mirroring the local hunt's
+    `quantise_animal_take`), so the headline is the delivered **PAYLOAD** — the animal count over the turns,
+    the FOOD the party actually LANDS, and the WASTE below it: **`delivers ≈1 Thunder Mammoth over ≈20
+    turns · ~4 food · ⚠ 75% wasted`** (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_TRAVEL_BREAKDOWN` +
+    `HUNT_FORECAST_FOOD_FORMAT` + a WARN-amber `HUNT_WASTE_SUFFIX_FORMAT`; `animals` =
+    `HuntTripEstimate.animalsTaken` (now a KILL count ≥ 1 whenever there's surplus), **food =
+    `HuntTripEstimate.deliveredFood`** — the sim's forward-simulated landed food, NOT `animals ×
+    foodPerAnimal`, which counts the whole kill and overstates a partial — and waste % =
+    `wastedFood / (deliveredFood + wastedFood)`). A high waste % is **informative, not a block** — the
+    button stays enabled. **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel is NOT in it;
+    the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL** itself
+    (`_round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
+    hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total** trip length, spelling
+    the split out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. `band_move_tiles_per_turn` (a
+    LaborConfig scalar echoed per-cohort) is **now decoded in `native/src/lib.rs` and flowed onto the band
+    marker** (`_rebuild_unit_markers`, guarded by `marker_field_guard`), so travel lights up on the live
+    wire (it degrades to hunting turns only if a snapshot omits it).
     **WARNED vs BLOCKED — the line that matters:** a **slow** raid (finite `turnsToFill` past
     `viability_warn_turns`) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
     `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
     false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
-    (`_hunt_trip_no_surplus`: `animalsTaken == 0`) — the herd is at/below the policy's floor, so the raid
-    would return empty: a mistake with no upside, so the button is **DISABLED** (`Herd too lean to
-    raid`). Party size cannot fix it — **surplus is a property of the HERD, not the party** — so the
-    reason (`_hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size** (the
-    old row-scan / `_recommended_party` / step-up-impossible machinery is retired: under the raid model
-    every party delivers, and a bigger party takes MORE animals in fewer-or-equal turns, never breaks a
-    working trip). `_hunt_estimate_key` is the one definition of the `"<policy>:<workers>"` estimate key,
-    shared by the single-cell lookup and the max-useful plateau scan.
-    **The party stepper caps at MAX-USEFUL on both branches** (`_expedition_useful_cap`): `animalsTaken`
-    PLATEAUS with party size once the herd's surplus (not the pack) binds, so extra hunters past the
-    plateau raid no more animals — a table SCAN for the smallest size at which animals stops rising, capped
-    there with the SAME "max N useful here — more would be idle" note the local hunt uses
-    (`MAX_USEFUL_NOTE_FORMAT`). That closes the silent-idle-hunter gap the whole pass exists for.
+    (`_hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
+    would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
+    (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
+    big game now delivers a partial (`animalsTaken 1`, high waste), which is NOT too lean; only a genuinely
+    at-floor herd blocks. Party size cannot fix it — **surplus is a property of the HERD, not the party** —
+    so the reason (`_hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size**
+    (the old row-scan / `_recommended_party` / step-up-impossible machinery is retired). `_hunt_estimate_key`
+    is the one definition of the `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and
+    the max-useful scan.
+    **The party stepper caps at MAX-USEFUL on both branches** (`_expedition_useful_cap`): **`deliveredFood`**
+    PLATEAUS with party size once the herd's surplus (not the pack) binds, so extra hunters past the plateau
+    raid no more food — a table SCAN for the smallest size at which delivered food stops rising, capped there
+    with the SAME "max N useful here — more would be idle" note the local hunt uses (`MAX_USEFUL_NOTE_FORMAT`).
+    It scans **`deliveredFood`, not `animalsTaken`** — the whole-animal count sits at a leading 1 across every
+    small-party size on big game (the leading-zeros bug that fooled the old scan into capping at 1); with
+    partials, delivered food rises smoothly, so the cap tracks the true bind. That closes the silent-idle-
+    hunter gap the whole pass exists for.
     **Picking a policy AUTO-FILLS the crew/party to that policy's max-useful cap** (`_hunt_assign_autofill`,
     a one-shot set only by a policy CLICK, consumed on the next rebuild before the clamp — the "give me
     everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
@@ -1768,9 +1778,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     picker that passes no `takes`) falls back to the **name** on the face, so a button is never a lone
     glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
     locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
-    forage / local hunt / expedition — wear an identical face format, only the compact metric differs:
-    `+X` (extractive), `→+X` (investment, Cultivate/Sow AND Tame/Corral), `≈N` (expedition raid,
-    `EXPEDITION_TAKE_COMPACT`). **Picking a policy AUTO-FILLS the
+    forage / local hunt / expedition — now wear an **identical** face + metric: `+X` (extractive, `up to
+    X/turn` via `POLICY_CAP_FORMAT` / `_extractive_take`) and `→+X` (investment, Cultivate/Sow AND
+    Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    is retired) — `_expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
+    over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
+    is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
+    Surplus < Market. **Eradicate is denial** (`deliversFood == false`, never qualifies) → no rate, falls back
+    to its name + skull glyph. **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a
@@ -2659,40 +2674,47 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView._draw_targeting` glows huntable herds + reticles the hovered hex for `need == "herd"`.
   (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
   `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
-  (5) **Pre-launch RAID forecast — the payload in animals** (server `5a130e0`): a hunting expedition is
-  a **greedy raid** — it grabs the herd's standing surplus above the policy floor in a burst and comes
-  home — so the readout headlines the PAYLOAD: **whole animals delivered over the turns it takes**,
-  `delivers ≈5 Wild Boar over ≈7 turns · ~20 food`. The player must know **before** committing workers,
-  but the herd isn't chosen until the *targeting* step (the outfit block only picks party + policy), so
-  the forecast hangs off the **targeting banner**: while `_pending_send_hunt_expedition` is armed,
-  `Hud.show_tooltip` (already fed by `MapView.tile_hovered`) records the hovered hex in
-  `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from `_hunt_forecast_bbcode`
-  — cyan `delivers ≈N <Herd> over ≈M turns · ~F food` for a brisk raid, WARN-amber
-  `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd> over many turns …
-  — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still delivering),
-  amber denial `<Herd> — denial mission … delivers no food` (Eradicate), and DANGER-red
-  `⚠ <Herd> is too lean to raid — its surplus is spent` when `animalsTaken == 0` (the herd at/below the
-  policy floor). The click still commits (information, not a gate — except the no-surplus case, which the
-  herd panel's button DISABLES; see `%HerdAssignControls`).
-  **The food total** is `animals × HerdTelemetryState.foodPerAnimal` — a lookup product of two exported
-  numbers (NOT the ecology model), set on the returned dict as `food` only when `food_per_animal > 0`
-  (older snapshot → animals+turns render alone). All rendered by the shared `_hunt_forecast_line_bbcode`
-  at **both** entry points (banner + herd panel), so the two can never quote different numbers.
+  (5) **Pre-launch RAID forecast — the delivered payload + waste** (server `5a130e0`): a hunting expedition
+  is a **greedy raid** — it grabs the herd's standing surplus above the policy floor in a burst and comes
+  home. A party too small to carry a whole animal now **kills one and hauls the fraction its pack holds,
+  wasting the rest**, so the readout headlines the delivered PAYLOAD: **the animal count over the turns, the
+  FOOD landed, and the WASTE**, `delivers ≈1 Thunder Mammoth over ≈20 turns · ~4 food · ⚠ 75% wasted`. The
+  player must know **before** committing workers, but the herd isn't chosen until the *targeting* step (the
+  outfit block only picks party + policy), so the forecast hangs off the **targeting banner**: while
+  `_pending_send_hunt_expedition` is armed, `Hud.show_tooltip` (already fed by `MapView.tile_hovered`)
+  records the hovered hex in `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
+  `_hunt_forecast_bbcode` — cyan `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for
+  a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
+  over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
+  delivering), amber denial `<Herd> — denial mission … delivers no food` (Eradicate), and DANGER-red
+  `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
+  policy floor — a small party on big game delivers a partial with waste and is NOT too lean). The click
+  still commits (information, not a gate — except the no-surplus case, which the herd panel's button
+  DISABLES; see `%HerdAssignControls`).
+  **The food total** is `HuntTripEstimate.deliveredFood` — the sim's forward-simulated landed food (NOT
+  `animals × foodPerAnimal`, which counts the whole kill and overstates a partial), set on the returned dict
+  as `food` (always present on a delivering forecast); the waste % is `wastedFood / (deliveredFood +
+  wastedFood)`. All rendered by the shared `_hunt_forecast_line_bbcode` at **both** entry points (banner +
+  herd panel), so the two can never quote different numbers.
   **The client does ZERO arithmetic for an expedition's raid — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
     decoded in `native/src/lib.rs` into `hunt_trip_estimates` on the herd dict, keyed
-    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken}` (so it flows through
-    `tile_info.herds` untouched — **`animals_taken` is the newest appended field, added to this decoder
-    dict in this pass; the decoder has silently dropped appended fields 5× now, always audit it first**).
-    `_hunt_trip_forecast` just looks it up: `delivers_food == false` → **denial** (Eradicate — "delivers
-    no food", the SIM decides this, the client never infers it from the policy string); `animals_taken
-    == 0` → **no surplus** (the one blocked case — the raid returns empty); else the raid delivers, with
-    `turns_to_fill == 0` meaning a **long raid** (ran the whole horizon) and `> expeditionViabilityWarnTurns`
-    flagged **slow**. `animalsTaken` PLATEAUS with party size once the surplus binds — that plateau is
-    the **max-useful** party the stepper caps at (`_expedition_useful_cap`). **Do not re-derive any of
-    this** — the sim forward-simulates the raid (the herd's state moves under the party, a horizon bounds
-    the answer) and exports the numbers.
+    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken, delivered_food,
+    wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
+    the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
+    appended fields 6× now, always audit it first**). `_hunt_trip_forecast` just looks it up:
+    `delivers_food == false` → **denial** (Eradicate — "delivers no food", the SIM decides this, the client
+    never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
+    case — the raid returns empty at every party size; NOT `animals_taken == 0`, which is now ≥ 1 whenever
+    there's any surplus since a small party still kills one animal and wastes the uncarried meat); else the
+    raid delivers `delivered_food` food (`animals_taken` kills, `wasted_food` rotted), with `turns_to_fill
+    == 0` meaning a **long raid** (ran the whole horizon) and `> expeditionViabilityWarnTurns` flagged
+    **slow**. `deliveredFood` PLATEAUS with party size once the surplus binds — that plateau is the
+    **max-useful** party the stepper caps at (`_expedition_useful_cap`), and the per-policy picker cap is the
+    max over party sizes of `deliveredFood / (turnsToFill + travel)`. **Do not re-derive any of this** — the
+    sim forward-simulates the raid (the herd's state moves under the party, a horizon bounds the answer) and
+    exports the numbers.
   - **Resident band → `huntPolicyCeilings`** (`provisionsPerTurn`, the herd's renewable **flow**),
     decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
     `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
@@ -2709,7 +2731,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   party×lever product. `expeditionPerWorkerCarry` is still decoded onto the marker for completeness but
   no longer feeds the forecast.)
   ui_preview banner states `hunt_forecast_viable` / `hunt_forecast_slow` / `hunt_forecast_no_surplus`
-  + `expedition_launch_policy_sustain`.
+  + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
+  partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
+  `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (denial, enabled),
+  the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
+  (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker caps correctly lower) /
+  `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
   `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click

@@ -163,6 +163,8 @@ pub(crate) fn hunt_trip_estimate_entries(
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
                 delivers_food: forecast.delivers_food,
                 animals_taken: forecast.animals_taken,
+                delivered_food: forecast.delivered_food,
+                wasted_food: forecast.wasted_food,
             });
         }
     }
