@@ -303,6 +303,9 @@ func _band_fixture() -> Dictionary:
 		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"hunt_reach": 16,
+		# `settlement_stage_id` is the panel header's SPRITE key (the icon is only the emoji
+		# fallback for a stage with no bundled art) — see `StageSprites`.
+		"settlement_stage_id": "camp",
 		"settlement_stage_icon": "🛖",
 		"settlement_stage_label": "Camp",
 		"activity": "forage",

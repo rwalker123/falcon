@@ -31,6 +31,9 @@ const SEAM_THICKNESS := 2.0
 
 # ---- chrome typography / sizing --------------------------------------------
 const STAGE_GLYPH_FONT_SIZE := 20
+## Bundled stage sprite box, sized to the glyph label's font size so swapping a `Label` for a
+## `TextureRect` leaves the header's height and the rows beside it exactly where they were.
+const STAGE_SPRITE_SIZE := Vector2(STAGE_GLYPH_FONT_SIZE, STAGE_GLYPH_FONT_SIZE)
 const NAME_FONT_SIZE := 15
 const STAGE_LABEL_FONT_SIZE := 10
 const CYCLER_FONT_SIZE := 13
@@ -113,6 +116,10 @@ var _header_rail: VBoxContainer
 var _subject_cluster: PanelContainer
 var _stage_glyph_label: Label
 var _rail_glyph_label: Label
+## Bundled-sprite siblings of the two glyph labels. Exactly one of each pair is visible at a time
+## (see `set_header`): the sprite when the stage has bundled art, else the emoji label.
+var _stage_glyph_sprite: TextureRect
+var _rail_glyph_sprite: TextureRect
 var _name_label: Label
 var _stage_label: Label
 var _count_label: Label
@@ -168,13 +175,14 @@ func _ready() -> void:
 
 # ---- public API ------------------------------------------------------------
 
-## Push the header subject: settlement stage glyph, display name, stage label.
-func set_header(glyph: String, subject_name: String, stage_label: String) -> void:
+## Push the header subject: settlement stage id (the server's stable key), its emoji glyph
+## fallback, display name, stage label. The stage renders as bundled art when `StageSprites` has
+## a texture for the id; a stage with no bundled art (the config is user-editable) keeps its emoji.
+func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String) -> void:
 	var resolved_glyph := glyph if not glyph.is_empty() else DEFAULT_STAGE_GLYPH
-	if _stage_glyph_label != null:
-		_stage_glyph_label.text = resolved_glyph
-	if _rail_glyph_label != null:
-		_rail_glyph_label.text = resolved_glyph
+	var sprite := StageSprites.for_stage(stage_id)
+	_apply_stage_visual(_stage_glyph_label, _stage_glyph_sprite, sprite, resolved_glyph)
+	_apply_stage_visual(_rail_glyph_label, _rail_glyph_sprite, sprite, resolved_glyph)
 	if _name_label != null:
 		_name_label.text = subject_name
 	if _stage_label != null:
@@ -396,6 +404,9 @@ func _build_header_full() -> HBoxContainer:
 	_stage_glyph_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cluster_row.add_child(_stage_glyph_label)
 
+	_stage_glyph_sprite = _make_stage_glyph_sprite()
+	cluster_row.add_child(_stage_glyph_sprite)
+
 	var subject := VBoxContainer.new()
 	subject.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	subject.add_theme_constant_override("separation", 0)
@@ -499,6 +510,9 @@ func _build_header_rail() -> VBoxContainer:
 	_rail_glyph_label.text = DEFAULT_STAGE_GLYPH
 	_rail_glyph_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rail.add_child(_rail_glyph_label)
+
+	_rail_glyph_sprite = _make_stage_glyph_sprite()
+	rail.add_child(_rail_glyph_sprite)
 
 	_rail_expand_button = _make_icon_button(EXPAND_GLYPH, "Expand")
 	_rail_expand_button.pressed.connect(_on_collapse_pressed)
@@ -888,6 +902,31 @@ func _make_icon_button(glyph: String, tooltip: String) -> Button:
 	btn.add_theme_font_size_override("font_size", ICON_BUTTON_FONT_SIZE)
 	HudStyle.apply_button(btn, "ghost")
 	return btn
+
+## A stage-sprite `TextureRect` sized to the glyph label it sits beside, so it occupies the same
+## box in the header flow. Starts hidden — `set_header` decides sprite-vs-emoji per stage.
+func _make_stage_glyph_sprite() -> TextureRect:
+	var rect := TextureRect.new()
+	rect.custom_minimum_size = STAGE_SPRITE_SIZE
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Centred in its box on both axes, mirroring the glyph labels it replaces (the cluster label
+	# centres vertically, the rail label horizontally).
+	rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.visible = false
+	return rect
+
+## Show exactly ONE of the sprite / emoji pair for a stage: the bundled art when it resolved,
+## else the emoji label (a stage defined in config with no bundled art keeps its glyph).
+func _apply_stage_visual(label: Label, sprite_rect: TextureRect, sprite: Texture2D, glyph: String) -> void:
+	if sprite_rect != null:
+		sprite_rect.texture = sprite
+		sprite_rect.visible = sprite != null
+	if label != null:
+		label.text = glyph
+		label.visible = sprite == null
 
 func _panel_stylebox() -> StyleBoxFlat:
 	# Square-edged card (the strip meets the screen edge — no rounding/shadow).

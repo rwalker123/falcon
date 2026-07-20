@@ -5168,12 +5168,14 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # can't strand itself between Active expeditions and Current actions.
     blocks.append_array(_build_allocation_sections(_panel_band, rebuild, false))
     _band_city_panel.set_band_sections(blocks)
-    # Header: settlement stage glyph + name + stage label (glyph/label already flow onto the
-    # marker/cohort dict; fall back to a neutral glyph when the stage is absent).
+    # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
+    # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
+    # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
+    var stage_id := String(_panel_band.get("settlement_stage_id", "")).strip_edges()
     var glyph := String(_panel_band.get("settlement_stage_icon", "")).strip_edges()
     var stage_label := String(_panel_band.get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_panel_band.get("entity", -1)))
-    _band_city_panel.set_header(glyph, _band_display_name(_panel_band, index + 1), stage_label)
+    _band_city_panel.set_header(stage_id, glyph, _band_display_name(_panel_band, index + 1), stage_label)
     _band_city_panel.set_cycler(index, _player_bands.size())
     # `set_band_sections` above already flipped the panel to band-present (non-empty block list);
     # just make sure it's shown.
