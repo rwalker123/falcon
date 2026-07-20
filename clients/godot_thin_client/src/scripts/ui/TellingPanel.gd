@@ -87,12 +87,21 @@ const FORK_GLYPH := "?"
 const FORK_LINE_FORMAT := "[color=#%s]%s[/color]  %s"
 
 # ---- page-turn animation ---------------------------------------------------
-# Snappy: a page turn is a state change, not a transition to sit through. Named per the plan's 0.16–0.20s.
+# Snappy: a slide/rise is a state change, not a transition to sit through — 0.18s for painted/written.
 const PAGE_TURN_DURATION := 0.18
+# ORAL is SLOWER and eased-in-out on purpose. A pure alpha crossfade over 0.18s (front-loaded EASE_OUT)
+# on dark text is a flicker, not a motion — it read as a "hard switch" in playtest. Oral wants a
+# perceptible dissolve, so it gets its own longer duration AND a positional DRIFT (below) so the eye can
+# track one recitation settling in as the last drifts off.
+const PAGE_TURN_DURATION_ORAL := 0.42
 # The painted page rises from this many px below its resting spot (a modest offset — an accumulation cue,
 # not a scroll). A fixed px, so it reads the same whatever the fitted page height.
 const PAGE_RISE_OFFSET := 30.0
-const MOTION_CROSSFADE := 0   # oral: dissolve in place
+# Oral's drift: the incoming utterance settles DOWN into place from this many px above rest as it fades in,
+# the outgoing drifts the same distance further down as it fades out. Small — a settle, not a scroll — and
+# DOWNWARD, deliberately opposite painted's rise-from-below, so the two mediums never read alike.
+const PAGE_ORAL_DRIFT := 16.0
+const MOTION_CROSSFADE := 0   # oral: dissolve-in-place + gentle downward settle
 const MOTION_RISE := 1        # painted: lift from below with a fade
 const MOTION_SLIDE := 2       # written: horizontal slide in the leaf direction
 
@@ -536,9 +545,13 @@ func _begin_turn(old_text: String, new_text: String, motion: int, direction: int
 	_turn_settle_height = clampf(h_in + PAGE_FIT_PADDING, PAGE_MIN_HEIGHT, cap)
 	_turn_extent = _page_frame.size
 	_apply_turn_frame(0.0)
+	# Oral gets a longer, EASE_IN_OUT dissolve (a flicker otherwise); the spatial mediums stay snappy EASE_OUT.
+	var is_crossfade := motion == MOTION_CROSSFADE
+	var duration := PAGE_TURN_DURATION_ORAL if is_crossfade else PAGE_TURN_DURATION
+	var ease := Tween.EASE_IN_OUT if is_crossfade else Tween.EASE_OUT
 	_tween = _page_frame.create_tween()
-	_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_tween.tween_method(_set_turn_progress, 0.0, 1.0, PAGE_TURN_DURATION)
+	_tween.set_trans(Tween.TRANS_SINE).set_ease(ease)
+	_tween.tween_method(_set_turn_progress, 0.0, 1.0, duration)
 	_tween.tween_callback(_end_turn)
 
 func _set_turn_progress(progress: float) -> void:
@@ -560,9 +573,10 @@ func _apply_turn_frame(progress: float) -> void:
 			var sign_dir := float(_turn_dir)   # +1 forward (exit left, enter right); -1 the reverse
 			_set_page_visual(_outgoing, Vector2(-sign_dir * width * progress, 0.0), 1.0)
 			_set_page_visual(_scroll, Vector2(sign_dir * width * (1.0 - progress), 0.0), 1.0)
-		_:  # MOTION_CROSSFADE
-			_set_page_visual(_outgoing, Vector2.ZERO, 1.0 - progress)
-			_set_page_visual(_scroll, Vector2.ZERO, progress)
+		_:  # MOTION_CROSSFADE (oral): dissolve + a gentle DOWNWARD settle so the swap reads as motion, not a flicker
+			var drift := PAGE_ORAL_DRIFT
+			_set_page_visual(_outgoing, Vector2(0.0, drift * progress), 1.0 - progress)
+			_set_page_visual(_scroll, Vector2(0.0, -drift * (1.0 - progress)), progress)
 
 func _set_page_visual(node: Control, pos: Vector2, alpha: float) -> void:
 	node.position = pos
@@ -747,6 +761,12 @@ func debug_visible_index() -> int:
 
 func debug_overlay_visible() -> bool:
 	return _outgoing != null and _outgoing.visible
+
+## True while a real page-turn tween is live (created, not paused/finished). Lets the harness assert the
+## LIVE ingest→render→_begin_turn path actually created a running tween — proof distinct from the
+## `debug_freeze_turn_at` render test, which only shows the tween CAN paint both pages.
+func debug_turn_active() -> bool:
+	return _tween != null and _tween.is_valid() and _tween.is_running()
 
 ## True when the current page overflows its fitted frame and the inner ScrollContainer is scrolling — the
 ## beyond-cap extreme. A grown-to-fit page (e.g. a two-beat turn under the cap) must report false.

@@ -1684,6 +1684,35 @@ func _ready() -> void:
 		not _hud._telling.debug_page_scrolls())
 	await _save("telling_panel_oral_two_beats")
 
+	# LIVE-PATH ORAL ARRIVAL — the REAL trigger, no debug hook. Drive the actual per-snapshot Hud entry
+	# points (`update_voice_medium` THEN `ingest_command_events`, plus the `_refit_right_dock` a real
+	# snapshot fires) with a genuinely new beat, and PROVE a running tween is created AND survives to paint
+	# frames (an idempotent re-render / refit in the same cycle must not `_kill_tween` it). This is the gap
+	# the mid-transition freeze states could not cover: they show the tween CAN render, not that the live
+	# beat-arrival path TRIGGERS one.
+	_hud._telling.reset()
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events([{"tick": 0, "kind": "narrative_beat",
+		"label": "The scouts came back thinner and louder than they left, all of them saying one word: Salt Pillar Reach.",
+		"detail": "sites.discovered_this_turn = 1"}])
+	await _settle()   # initial population — no animation by design
+	# A new snapshot: medium re-pushed unchanged (must NOT clobber), then a genuinely new beat arrives.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud.ingest_command_events([{"tick": 5, "kind": "narrative_beat",
+		"label": "The portions grew smaller without anyone deciding it. That is how it always begins.",
+		"detail": "provisions.total falling for 3 turns"}])
+	_hud._refit_right_dock()   # a refit in the same cycle must not kill the in-flight turn tween
+	_assert_hud("live oral beat-arrival creates a running page-turn tween",
+		_hud._telling.debug_turn_active())
+	# Let the REAL tween advance a few frames (0.42s oral dissolve, so a handful of frames stays mid-motion).
+	for _i in range(4):
+		await get_tree().process_frame
+	_assert_hud("live oral tween survives an in-cycle refit and is still running mid-motion",
+		_hud._telling.debug_turn_active())
+	await _settle()
+	await _save("telling_live_oral_arrival")
+	_hud._telling.debug_end_turn()   # settle deterministically before the next state
+
 	# ---- Page-turn animation: motion matures with the medium (mid-transition capture) --------------
 	# The harness dumps single frames, so each state DRIVES a page turn, then FREEZES the tween at its
 	# midpoint (`debug_freeze_turn_at`) so the outgoing and incoming pages COEXIST in the captured PNG —

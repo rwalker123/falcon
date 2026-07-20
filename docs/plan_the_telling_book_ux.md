@@ -128,19 +128,24 @@ telling waits" cue) — restrained, `HudStyle`, no emoji.
 **Motion mirrors the furniture.** The animation plays **only when the player TURNS the page** (a leaf
 control, or `reveal_newest()` catch-up, or — for `oral` — a new utterance replacing the last), **never on
 a beat merely arriving to a retaining medium**: that only marks `_unread`, so animating it would fight the
-yields-to-reader rule. Each medium's motion is a short, snappy tween (`PAGE_TURN_DURATION`, ~0.18s):
+yields-to-reader rule. The spatial mediums are snappy (`PAGE_TURN_DURATION`, ~0.18s, `EASE_OUT`); oral is
+slower and eased-in-out (below):
 
-- **`oral` → a CROSSFADE in place.** Oral has no leafing; its only "turn" is one recitation replacing the
-  last, so the outgoing page fades out and the incoming fades in at the same spot. No spatial motion. (Oral
-  pins to the newest on every beat arrival, so this fires on the utterance-replacement — that IS oral's turn,
-  and it has no held page for the yields rule to protect.)
-- **`painted` → the incoming page RISES** from `PAGE_RISE_OFFSET_RATIO · PAGE_HEIGHT` below with a fade (new
-  marks drifting up onto the wall — accumulation).
+- **`oral` → a CROSSFADE + a gentle downward SETTLE.** Oral has no leafing; its only "turn" is one
+  recitation replacing the last. A **bare** alpha crossfade read as a "hard switch" in playtest — a 0.18s
+  front-loaded fade on dark text is a flicker, not a motion — so oral is **slower** (`PAGE_TURN_DURATION_ORAL`
+  ~0.42s, `EASE_IN_OUT`) and carries a **small downward drift** (`PAGE_ORAL_DRIFT`): the incoming utterance
+  settles DOWN into place from just above rest as it fades in, the outgoing drifts the same distance further
+  down as it fades out. The drift is deliberately downward — **opposite painted's rise-from-below** — so the
+  two never read alike. (Oral pins to the newest on every beat arrival, so this fires on the
+  utterance-replacement — that IS oral's turn, and it has no held page for the yields rule to protect.)
+- **`painted` → the incoming page RISES** from `PAGE_RISE_OFFSET` px below with a fade (new marks drifting up
+  onto the wall — accumulation).
 - **`written` → a horizontal SLIDE**, direction = leaf direction: leaf **forward** → outgoing exits left /
   incoming enters from the right; leaf **back** → the reverse. The real page turn, and the payoff that
   `written` is the actual book.
 
-**Mechanism.** A clipped fixed-height page frame (`clip_contents`) holds the incoming page (the
+**Mechanism.** A clipped page frame (`clip_contents`) holds the incoming page (the
 `ScrollContainer`) and an **outgoing snapshot** (a second `RichTextLabel` carrying the pre-swap BBCode). A
 tween drives a single `progress` 0→1 that `_apply_turn_frame` maps to the two nodes' position + alpha per the
 medium's motion; the primary label is already showing the FINAL page, so the outgoing snapshot animates OUT
@@ -213,9 +218,15 @@ The animation is verified in the same PNG harness by DRIVING a turn and FREEZING
 - `telling_turn_written_mid` — the two pages offset **horizontally** (one sliding out left, one in from the
   right), with the ‹ › book furniture.
 - `telling_turn_painted_mid` — the incoming page **risen partway + fading in** over the fading outgoing one.
-- `telling_turn_oral_mid` — both pages at **partial alpha in the same spot** (the crossfade), no furniture.
+- `telling_turn_oral_mid` — both pages at **partial alpha, vertically offset** by the settle drift (the
+  crossfade + downward settle), no furniture.
 - `telling_turn_interrupted` — a rapid second turn: an **assertion** that the visible page equals the
   expected final page and no outgoing overlay survives (the interruption-safe settle).
+- `telling_live_oral_arrival` — **the LIVE-path proof, no debug hook.** Drives the real per-snapshot Hud
+  entry points (`update_voice_medium` then `ingest_command_events`, plus the in-cycle `_refit_right_dock`)
+  with a genuinely new oral beat and **asserts** a running tween is created (`debug_turn_active()`) AND
+  survives the refit / advances real frames mid-motion — closing the gap the freeze states can't: they prove
+  the tween CAN render, not that beat-arrival TRIGGERS one.
 
 The settled `telling_panel_*` end-state frames use the non-animating `debug_jump_to` park, so they capture
 the static book, not a tween mid-flight.
