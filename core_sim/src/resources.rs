@@ -73,6 +73,18 @@ pub struct ClimateConfig {
     /// Multiplier applied to the element's `thermal_bias` to keep it a small local jitter (~±1.5°)
     /// rather than the temperature driver.
     pub element_jitter_scale: f32,
+    /// **Climate band ladder cut points** (`docs/plan_climate_authority.md` §8.1) — the inclusive
+    /// upper bound of each band, read through the single seam
+    /// [`crate::climate::climate_band_for_temperature`]. Since this arc these decide **biome
+    /// eligibility**, not merely a client label, so they are worldgen levers: moving one moves the
+    /// map. See that module for why the ladder has four rungs rather than one polar cut point.
+    ///
+    /// Polar: at or below freezing. Ice, tundra, glacier — the cold ladder's core.
+    pub polar_max_temp: f32,
+    /// Boreal: the taiga/subarctic fringe. Cold enough for the cold biome ladder, above freezing.
+    pub boreal_max_temp: f32,
+    /// Temperate: Köppen's classic temperate/tropical boundary. Above it a tile is tropical.
+    pub temperate_max_temp: f32,
 }
 
 /// Global configuration parameters for the headless simulation prototype.
@@ -299,6 +311,12 @@ struct ClimateConfigData {
     elevation_lapse_span: f32,
     #[serde(default = "default_element_jitter_scale")]
     element_jitter_scale: f32,
+    #[serde(default = "default_polar_max_temp")]
+    polar_max_temp: f32,
+    #[serde(default = "default_boreal_max_temp")]
+    boreal_max_temp: f32,
+    #[serde(default = "default_temperate_max_temp")]
+    temperate_max_temp: f32,
 }
 
 impl Default for ClimateConfigData {
@@ -308,6 +326,9 @@ impl Default for ClimateConfigData {
             polar_temp: default_polar_temp(),
             elevation_lapse_span: default_elevation_lapse_span(),
             element_jitter_scale: default_element_jitter_scale(),
+            polar_max_temp: default_polar_max_temp(),
+            boreal_max_temp: default_boreal_max_temp(),
+            temperate_max_temp: default_temperate_max_temp(),
         }
     }
 }
@@ -319,6 +340,9 @@ impl ClimateConfigData {
             polar_temp: self.polar_temp,
             elevation_lapse_span: self.elevation_lapse_span,
             element_jitter_scale: self.element_jitter_scale,
+            polar_max_temp: self.polar_max_temp,
+            boreal_max_temp: self.boreal_max_temp,
+            temperate_max_temp: self.temperate_max_temp,
         }
     }
 }
@@ -337,6 +361,34 @@ fn default_elevation_lapse_span() -> f32 {
 
 fn default_element_jitter_scale() -> f32 {
     0.25
+}
+
+/// Freezing. A tile at or below 0° carries the polar ladder wherever it sits — which is what makes
+/// alpine tundra expressible (`docs/plan_climate_authority.md` §5.3).
+fn default_polar_max_temp() -> f32 {
+    0.0
+}
+
+/// The taiga/subarctic fringe — the top of the **cold ladder**, so this is the boundary that
+/// decides whether a tile may carry a `POLAR`-tagged biome at all.
+///
+/// Boreal exists as its own rung because `BorealTaiga` was 1,601 of the 4,397 measured warm-polar
+/// tiles — a boreal-band failure a single polar cut point cannot express (§8.1).
+///
+/// **The value is 3.0 because that is the client's retired `cool_min`** — the temperature below
+/// which a tile card already read as cold
+/// (`clients/godot_thin_client/src/config/tile_climate_config.json`). §5.2 requires the sim's biome
+/// gate and the client's `Climate:` band to be the *same* boundary, or the tile card can still show
+/// a biome and a climate that disagree — the exact defect this arc removes. Ceding the number to
+/// the client's existing one means the sim now owns it (§8.3) without silently relabelling every
+/// tile the player has already learned to read.
+fn default_boreal_max_temp() -> f32 {
+    3.0
+}
+
+/// Köppen's classic temperate/tropical boundary (coldest-month 18°).
+fn default_temperate_max_temp() -> f32 {
+    18.0
 }
 
 fn default_temperature_morale_tolerance() -> f32 {

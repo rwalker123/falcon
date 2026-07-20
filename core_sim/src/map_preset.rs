@@ -897,8 +897,6 @@ pub struct TerrainClassifierConfig {
     pub coastal_deep_ocean_edge: f32,
     pub coastal_shelf_edge: f32,
     pub coastal_inland_edge: f32,
-    pub polar_latitude_cutoff: f32,
-    pub high_latitude_threshold: f32,
     /// Relief scale (from the mountain mask) at/above which a Fold belt tile becomes an
     /// AlpineMountain. `MountainsConfig::relief_belt_gain` and `elevation_base` defaults
     /// are tuned relative to this, so belt cores clear it and edges taper to plateaus/hills.
@@ -945,8 +943,6 @@ impl TerrainClassifierConfig {
             coastal_deep_ocean_edge: 0.04,
             coastal_shelf_edge: 0.08,
             coastal_inland_edge: 0.12,
-            polar_latitude_cutoff: 0.35,
-            high_latitude_threshold: 0.15,
             alpine_relief_threshold: 1.85,
             high_dry_elevation: 0.68,
             high_wet_elevation: 0.66,

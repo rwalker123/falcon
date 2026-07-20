@@ -133,7 +133,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 4. **Heightfield** - Multi-octave height raster with erosion smoothing → `elevation_m`
 5. **Coastal smoothing** - Blend shoreline tiles via 3×3 blur
 6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; inland seas. See "Continental shelf width" below — the shelf is a continuous ≥1-tile ring off gentle coasts, gated to deep water at steep/cliff coasts. A **final reconciliation post-pass** (`reconcile_coastal_shelf`, Startup chain after hydrology + tag solver + palette clamp) restamps the shelf so no Deep Ocean touches gentle land on the *final* map, covering coasts created later by deltas/marshes/solver tundra.
-7. **Climate** - Assign `climate_band` using latitude + elevation + moisture
+7. **Climate** - Temperature (latitude base − elevation lapse + jitter) is computed **first** and the biome band is derived from it via `climate::climate_band_for_temperature` — see "Temperature is the climate authority" below. Latitude is an input to temperature, never a parallel biome gate.
 8. **Hydrology** - Rivers on hex **edges** + navigable rivers as water **hexes**. See "Rivers" below. `RiverDelta` is stamped **only here**, at the last **gentle-coast** land hex of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth hex must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's **reduction *and* addition** passes so genuine river mouths survive — every branch that would restamp a tile carries a `terrain != RiverDelta` guard. This includes the **Fertile-add** branch (both its primary candidate filter and its fallback loop): a delta cut through a **polar/non-fertile** biome lacks the `Fertile` tag, so it is not caught by the Fertile/Water skips and was the one path that clobbered a real mouth back to `AlluvialPlain` (orphaning its `river_channel` bit on dry land). Guarded by `core_sim/tests/navigable_mouth_delta.rs` — the invariant *no hex carries a `river_channel` bit while rendering non-`NavigableRiver`/non-`RiverDelta` terrain*, run through the **real** Startup chain (hydrology → tag solver → palette clamp → reconcile) via `build_headless_app`, so a later-pass clobber cannot hide the way it does in the hydrology-last `hydrology_earthlike.rs` harness.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
 10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass
@@ -659,6 +659,57 @@ this value **after** elevation exists (a `climate_elevation` field with sea leve
 the element target), so turn 1 has no jump. On an 80×52 map: equator ≈ 29–30°, mid-latitude ≈ 18°,
 pole = −5° at sea level (mountains up to 12° colder).
 
+### Temperature is the climate authority — the biome band is derived from it
+Since the **climate-authority arc** (`docs/plan_climate_authority.md`), a biome's climate
+eligibility is a function of the tile's **temperature**, never its latitude. Temperature is now
+computed in the *first* worldgen loop (before the biome is assigned, `systems/worldgen.rs`), and one
+seam — **`climate::climate_band_for_temperature(temp, &ClimateConfig) -> ClimateBand`** — maps it to
+a four-rung ladder (**polar ≤ 0° / boreal ≤ 3° / temperate ≤ 18° / tropical**, cut points in the
+`climate` block: `polar_max_temp` / `boreal_max_temp` / `temperate_max_temp`). `ClimateBand`'s
+`admits_cold_biomes()` (polar **or** boreal) is THE predicate every cold-biome gate reads; **no call
+site may re-derive a band or compare a raw temperature to a literal.** The gate reads the **jittered**
+temperature deliberately, so band boundaries come out ragged rather than as clean horizontal lines
+(design §8.2 — the lever if it is ever too noisy is `climate.element_jitter_scale`, never re-gating on
+an un-jittered temperature).
+
+- **What this retired.** The old `terrain_classifier.polar_latitude_cutoff` (0.35) and
+  `high_latitude_threshold` (0.15) fields, `systems/mod.rs`'s `POLAR_LATITUDE_THRESHOLD` (which read
+  the *default* preset, a latent desync bug), and `worldgen.rs`'s `climate_band_for_position` (a
+  third arithmetic copy with a bare `0.18` literal) are all **gone**. The six former latitude-gate
+  sites — the base classifier's cold ladder, the mountain glaciation branch, the two palette remaps
+  (prototype-loop + post-solver `apply_biome_palette_clamp`), `bias_terrain_for_preset`, and the tag
+  solver's wetland/fertile/polar passes — now all read the temperature band.
+- **The boreal band is its own rung, not a wider polar.** Polar tiles get the ice ladder
+  (Tundra/PeriglacialSteppe/SeasonalSnowfield), boreal tiles get the taiga ladder
+  (BorealTaiga/MixedWoodland/PeatHeath). A single polar cut point could not express the boreal-fringe
+  incoherence (measured: BorealTaiga was 1,601 of 4,397 warm-polar tiles), which is why the ladder has
+  four rungs (§8.1).
+- **The tag solver has a climate veto** (§5.4): its polar family pass may only paint a cold biome on a
+  tile whose band admits one; where the `Polar` tag target cannot be met without violating climate it
+  **under-fills and logs** (`mapgen.tag_solver.under_filled_climate_gated`) rather than repainting —
+  the repaint-to-hit-a-quota pattern this repo has rejected before. This closed 64% of the warm-polar
+  tiles (the fallback loop had **no** climate test at all).
+- **Alpine tundra is now expressible** (§5.3): a cold mid-latitude highland (a mountain at −1.6°)
+  glaciates to Glacier/SeasonalSnowfield because the mountain branch reads the band, not the row.
+  Measured ~10% of land, up from ~0.
+- **`boreal_max_temp` == the client's retired `cool_min` (3.0)** — one boundary, stated once (§5.2/§8.3).
+  The sim owns the cut points and **publishes** them in the snapshot (`MapSection.climateBands`, the
+  `ClimateBands` table — the same way `seaLevel` rides the elevation overlay) so the client renders the
+  band it is told rather than keeping an independent opinion. **Client half (a separate task): consume
+  `climateBands`, drop the local `tile_climate_config.json` `cool_min`, and render `Climate:` off the
+  published bands.**
+- **Secondary fixes that rode along** (§7): `PeatHeath` is now `POLAR`-tagged (it is the cold wetland
+  — the only WETLAND+POLAR biome, and the classifier/solver/palette already treated it as such; only
+  its tag disagreed); `RiverDelta` now takes its own definition's tags wholesale in `hydrology.rs`
+  (it used to OR only WETLAND|FRESHWATER and *keep the underlying biome's tags*, leaking `POLAR`
+  through a delta cut through Tundra into `BiomePalette::remap`, `food.rs` and the tag census).
+- **Measured before/after** (`core_sim/tests/climate_authority.rs`, ≥5 seeds × 2 grids × both presets,
+  run the `#[ignore]`d `climate_band_report` for the full tables): cold-but-temperate **6.9% → 0.16%**
+  of land, warm-polar **7.9% → 0.00%** — both directions collapsed, neither traded for the other. Land
+  share per band (aggregate): polar 19.5% / boreal 8.7% / temperate 48.1% / tropical 23.7%. The
+  worldgen *tectonic* regression baselines (`mapgen.rs` fold/fault/dome counts, land ratio) are
+  **unchanged** — this arc touches only which biome a land tile wears, not the elevation/mountain masks.
+
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
 
@@ -792,7 +843,7 @@ The active preset's `sea_level` is carried on the `ElevationField` resource, att
 
 **`classify_terrain`'s map-border "edge rings" are LEGACY, preset-less-only.** The classifier opens with three `edge < coastal_deep_ocean_edge / coastal_shelf_edge / coastal_inland_edge` early-returns that stamp DeepOcean / shelf / InlandSea+marsh. `edge` is the distance to the **map frame**, not to a coastline: it was the only coastline proxy the pre-bands (preset-less) world had. Under a preset the map has **real bathymetry** — `classify_bands` already partitioned it into Land / ContinentalShelf / InlandSea / DeepOcean, and `terrain_for_position_with_classifier` is called *only* for band-`Land` tiles — so running the rings there noise-coin-flipped **248–295 band-`Land` tiles per 80×52 map (~16–19% of all land)** into water biomes hugging the map border, deleting the land out from under legitimate shelf rings (118–153 **orphaned** shelf tiles with no land hex-neighbour, sitting 3–7 hexes out) and pinching off isolated deep pockets. The rings are therefore **skipped whenever real bathymetry is present** (`BathymetryContext::Present`, derived from the caller passing `Some(elevation)` — the *context*, never a config flag), and the tile falls through to the normal polar/anomaly/humidity **land** ladder. The preset-less fallback path passes `None` → `BathymetryContext::Absent` and keeps its historical behavior exactly. Invariant: **a band-`Land` tile can never end WATER-tagged.** Guards: `mapgen::tests::earthlike_band_land_never_ends_water_tagged`, `mapgen::tests::earthlike_shelf_is_never_orphaned`.
 
-**Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`.
+**Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`. Every family that stamps or forbids a **cold** biome (wetland picks `PeatHeath` vs `FreshwaterMarsh`; fertile skips cold tiles; the polar family paints Tundra/SeasonalSnowfield) gates on the tile's **temperature band** (`TileInfo.band`, resolved once from `Tile.temperature`), not its latitude — see "Temperature is the climate authority". The polar family carries a **climate veto**: it under-fills and logs rather than painting a cold biome in warm air (`docs/plan_climate_authority.md` §5.4).
 
   **The solver has NO water branch, and `terrain_tag_targets.Water` is INERT.** Water share is an
   elevation outcome: the mask is a pure threshold and the contour anchor already places

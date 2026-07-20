@@ -2095,9 +2095,15 @@ pub fn generate_hydrology(world: &mut World) {
             tile.terrain_tags = navigable_tags;
             navigable_tiles_applied += 1;
         } else if delta_set.contains(&idx) && tile.terrain != TerrainType::RiverDelta {
+            // A delta IS the hex — take the terrain's own tags wholesale, exactly as the
+            // navigable-river branch above does. OR-ing only WETLAND|FRESHWATER *kept the
+            // underlying biome's tags*, so a delta cut through Tundra rendered as `RiverDelta`
+            // while still carrying `POLAR` — and that leaked tag then fed `BiomePalette::remap`,
+            // `food.rs`'s module classifier and the tag census
+            // (`docs/plan_climate_authority.md` §7.2). `RiverDelta`'s own definition already
+            // carries COASTAL|WETLAND|FERTILE|FRESHWATER, so nothing is lost.
             tile.terrain = TerrainType::RiverDelta;
-            tile.terrain_tags |= TerrainTags::WETLAND;
-            tile.terrain_tags |= TerrainTags::FRESHWATER;
+            tile.terrain_tags = terrain_definition(TerrainType::RiverDelta).tags;
             delta_tiles_applied += 1;
         }
     }

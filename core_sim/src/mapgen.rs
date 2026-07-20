@@ -3147,6 +3147,10 @@ mod tests {
                     Some(bands.elevation.sample(position.x, position.y)),
                     bands.mountains.get(idx).map(|cell| (cell.ty, relief)),
                     &preset.terrain_classifier,
+                    // This fixture isolates the RELIEF branch: a cold band would divert tall
+                    // tiles to Glacier/SeasonalSnowfield before the alpine branch is reached,
+                    // which is a climate assertion, not the mask assertion under test here.
+                    crate::climate::ClimateBand::Temperate,
                 );
                 if terrain == TerrainType::AlpineMountain {
                     alpine_n += 1;

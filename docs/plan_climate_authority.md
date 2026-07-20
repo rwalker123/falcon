@@ -1,6 +1,7 @@
 # Climate Authority — temperature decides the biome, not latitude
 
-**Status:** design, not yet implemented.
+**Status:** implemented (sim + schema). Client half outstanding — see §8.3. Authoritative
+implementation notes live in `core_sim/CLAUDE.md` → "Temperature is the climate authority".
 **Branch:** `worktree-polar-boundary`.
 **Sibling arc:** `docs/plan_elevation_authority.md` — this is the same shape of fix one layer up.
 Elevation authority made the *land mask* a derived function of the heightfield; this makes the

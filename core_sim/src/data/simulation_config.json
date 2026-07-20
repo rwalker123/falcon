@@ -27,7 +27,10 @@
     "equator_temp": 30.0,
     "polar_temp": -5.0,
     "elevation_lapse_span": 12.0,
-    "element_jitter_scale": 0.25
+    "element_jitter_scale": 0.25,
+    "polar_max_temp": 0.0,
+    "boreal_max_temp": 3.0,
+    "temperate_max_temp": 18.0
   },
   "logistics_flow_gain": 0.1,
   "base_link_capacity": 0.8,

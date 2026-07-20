@@ -1,9 +1,15 @@
 use super::*;
+use crate::climate::{climate_band_for_temperature, ClimateBand};
 
 #[derive(Clone, Debug)]
 struct TilePrototype {
     position: UVec2,
     element: ElementKind,
+    /// The tile's climate temperature, computed in the prototype loop **before** its biome — the
+    /// biome is derived from it (`docs/plan_climate_authority.md` §4). Carried forward so the spawn
+    /// loop seeds `Tile::temperature` from the very value the biome gate read, rather than
+    /// recomputing it and risking drift.
+    temperature: Scalar,
     terrain: sim_runtime::TerrainType,
     tags: sim_runtime::TerrainTags,
     mountain: Option<MountainMetadata>,
@@ -170,6 +176,18 @@ pub fn spawn_initial_world(
         ));
     }
 
+    // Elevation field (with the active sea level attached) used to compute each tile's climate
+    // temperature. **Must exist before the prototype loop**, because since the climate-authority arc
+    // (`docs/plan_climate_authority.md` §5.1) temperature *decides the biome* — the classifier gates
+    // on the tile's climate band, so the band has to be known before terrain is assigned. This was
+    // purely an ordering problem, not a data dependency: both sources below are already available
+    // here (terrain classification itself consumes `bands.elevation`).
+    let climate_elevation = bands
+        .as_ref()
+        .map(|bands_res| bands_res.elevation.clone())
+        .unwrap_or_else(|| base_elevation_field.clone())
+        .with_sea_level(sea_level);
+
     let mut tags_grid: Vec<sim_runtime::TerrainTags> = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -177,6 +195,19 @@ pub fn spawn_initial_world(
             let element = ElementKind::from_grid(position);
             let mut mountain_meta: Option<MountainMetadata> = None;
             let idx = y * width + x;
+            // The tile's climate, computed BEFORE its biome so the biome can be derived from it.
+            // Deliberately the **jittered** temperature (§8.2): band boundaries must come out
+            // ragged, because the retired latitude gate drew clean horizontal edges that read as
+            // artificial on a real map.
+            let above_sea = climate_elevation.above_sea_normalized(position.x, position.y);
+            let temperature = climate_temperature(
+                y as u32,
+                config.grid_size.y,
+                above_sea,
+                element,
+                &config.climate,
+            );
+            let band = climate_band_for_temperature(temperature.to_f32(), &config.climate);
             let (terrain, terrain_tags) = if let Some(ref bands_res) = bands {
                 match bands_res.terrain[idx] {
                     TerrainBand::Land => {
@@ -195,6 +226,7 @@ pub fn spawn_initial_world(
                             Some(bands_res.elevation.sample(position.x, position.y)),
                             mountain_cell.map(|cell| (cell.ty, relief)),
                             classifier_cfg,
+                            band,
                         )
                     }
                     TerrainBand::ContinentalShelf => (
@@ -232,11 +264,12 @@ pub fn spawn_initial_world(
                         None,
                         None,
                         &default_classifier,
+                        band,
                     )
                 }
             };
             let (mut terrain, mut terrain_tags) = if let Some(preset) = preset_ref {
-                bias_terrain_for_preset(terrain, terrain_tags, preset, position, config.grid_size.y)
+                bias_terrain_for_preset(terrain, terrain_tags, preset, position, band)
             } else {
                 (terrain, terrain_tags)
             };
@@ -246,10 +279,7 @@ pub fn spawn_initial_world(
             // `is_polar` keeps the remap climate-safe (a polar wetland collapses to a
             // polar biome, not a temperate marsh).
             if let Some(ref palette) = biome_palette {
-                let lat_denom = config.grid_size.y.saturating_sub(1).max(1) as f32;
-                let dist_from_equator = (position.y as f32 / lat_denom - 0.5).abs();
-                let is_polar = dist_from_equator >= classifier_cfg.polar_latitude_cutoff;
-                let remapped = palette.remap(terrain, is_polar);
+                let remapped = palette.remap(terrain, band.admits_cold_biomes());
                 if remapped != terrain {
                     terrain = remapped;
                     terrain_tags = terrain_definition(remapped).tags;
@@ -270,6 +300,7 @@ pub fn spawn_initial_world(
             prototypes.push(TilePrototype {
                 position,
                 element,
+                temperature,
                 terrain,
                 tags: terrain_tags,
                 mountain,
@@ -305,15 +336,6 @@ pub fn spawn_initial_world(
     let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
         std::collections::BTreeMap::new();
 
-    // Elevation field (with the active sea level attached) used to compute each tile's climate
-    // temperature. Must exist before the tile loop so temperature is derived from real elevation —
-    // hence computed here, after both the bands' restamped field and the base field are available.
-    let climate_elevation = bands
-        .as_ref()
-        .map(|bands_res| bands_res.elevation.clone())
-        .unwrap_or_else(|| base_elevation_field.clone())
-        .with_sea_level(sea_level);
-
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
         let (generation, demand, efficiency) = proto.element.power_profile();
@@ -324,18 +346,13 @@ pub fn spawn_initial_world(
             .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
         let storage_level =
             (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
-        let above_sea = climate_elevation.above_sea_normalized(proto.position.x, proto.position.y);
         let tile_component = Tile {
             position: proto.position,
             element: proto.element,
             mass: base_mass,
-            temperature: climate_temperature(
-                proto.position.y,
-                config.grid_size.y,
-                above_sea,
-                proto.element,
-                &config.climate,
-            ),
+            // The very temperature the biome gate read in the prototype loop — one climate
+            // per tile, decided once (`docs/plan_climate_authority.md` §4).
+            temperature: proto.temperature,
             terrain: proto.terrain,
             terrain_tags: proto.tags,
             // Captured by `generate_hydrology` when it stamps a navigable channel over this biome.
@@ -909,19 +926,15 @@ fn bias_terrain_for_preset(
     tags: sim_runtime::TerrainTags,
     preset: &MapPreset,
     position: UVec2,
-    grid_height: u32,
+    band: ClimateBand,
 ) -> (sim_runtime::TerrainType, sim_runtime::TerrainTags) {
     let key = format!("{:?}", terrain);
     let biome_weight = preset.biome_weights.get(&key).copied().unwrap_or(1.0);
-    let climate_weight = climate_weight_for_tags(preset, tags, position, grid_height);
+    let climate_weight = climate_weight_for_tags(preset, tags, band);
     let effective_weight = (biome_weight * climate_weight).clamp(0.0, 2.0);
 
     let noise = (tile_hash(position) & 0xFFFF) as f32 / 65535.0;
-    let lat_denom = grid_height.saturating_sub(1).max(1) as f32;
-    let lat = position.y as f32 / lat_denom;
-    let dist_from_equator = (lat - 0.5).abs();
-    let polar_cutoff = preset.terrain_classifier.polar_latitude_cutoff;
-    let is_polar_lat = dist_from_equator >= polar_cutoff;
+    let is_cold = band.admits_cold_biomes();
     let mut result = (terrain, tags);
 
     if effective_weight < 1.0 {
@@ -941,11 +954,11 @@ fn bias_terrain_for_preset(
         }
     }
 
-    if is_polar_lat && result.0 == sim_runtime::TerrainType::FreshwaterMarsh {
+    if is_cold && result.0 == sim_runtime::TerrainType::FreshwaterMarsh {
         let fallback = sim_runtime::TerrainType::PeatHeath;
         let def = terrain_definition(fallback);
         result = (fallback, def.tags);
-    } else if is_polar_lat
+    } else if is_cold
         && result.1.contains(sim_runtime::TerrainTags::FERTILE)
         && !result.1.contains(sim_runtime::TerrainTags::POLAR)
         && !result.1.contains(sim_runtime::TerrainTags::HIGHLAND)
@@ -1000,13 +1013,11 @@ fn biome_upgrade(terrain: sim_runtime::TerrainType) -> Option<sim_runtime::Terra
 fn climate_weight_for_tags(
     preset: &MapPreset,
     tags: sim_runtime::TerrainTags,
-    position: UVec2,
-    grid_height: u32,
+    band: ClimateBand,
 ) -> f32 {
-    let band = climate_band_for_position(position, grid_height);
     let band_weight = preset
         .climate_band_weights
-        .get(band)
+        .get(band.as_str())
         .copied()
         .unwrap_or(1.0);
     if (band_weight - 1.0).abs() < f32::EPSILON {
@@ -1026,25 +1037,12 @@ fn climate_weight_for_tags(
     }
 }
 
-fn climate_band_for_position(position: UVec2, grid_height: u32) -> &'static str {
-    if grid_height <= 1 {
-        return "temperate";
-    }
-    let lat = position.y as f32 / (grid_height.saturating_sub(1) as f32);
-    let dist_from_equator = (lat - 0.5).abs();
-    if dist_from_equator >= POLAR_LATITUDE_THRESHOLD {
-        "polar"
-    } else if dist_from_equator >= 0.18 {
-        "temperate"
-    } else {
-        "tropical"
-    }
-}
-
-fn climate_alignment_factor(band: &str, tags: sim_runtime::TerrainTags) -> f32 {
+fn climate_alignment_factor(band: ClimateBand, tags: sim_runtime::TerrainTags) -> f32 {
     use sim_runtime::TerrainTags as Tag;
     match band {
-        "polar" => {
+        // Polar and boreal share an alignment shape: both admit the cold biome ladder, so a
+        // POLAR-tagged biome is fully at home in either and highland is a partial fit.
+        ClimateBand::Polar | ClimateBand::Boreal => {
             if tags.contains(Tag::POLAR) {
                 1.0
             } else if tags.contains(Tag::HIGHLAND) {
@@ -1053,7 +1051,7 @@ fn climate_alignment_factor(band: &str, tags: sim_runtime::TerrainTags) -> f32 {
                 0.0
             }
         }
-        "tropical" => {
+        ClimateBand::Tropical => {
             if tags.contains(Tag::WETLAND) {
                 1.0
             } else if tags.contains(Tag::FERTILE) && tags.contains(Tag::FRESHWATER) {
@@ -1062,14 +1060,7 @@ fn climate_alignment_factor(band: &str, tags: sim_runtime::TerrainTags) -> f32 {
                 0.0
             }
         }
-        "arid" => {
-            if tags.contains(Tag::ARID) {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        _ => {
+        ClimateBand::Temperate => {
             if tags.contains(Tag::FERTILE)
                 && !tags.contains(Tag::ARID)
                 && !tags.contains(Tag::POLAR)
@@ -1111,6 +1102,9 @@ pub fn apply_tag_budget_solver(
         position: UVec2,
         mountain_kind: Option<MountainType>,
         mountain_relief: f32,
+        /// The tile's climate band, resolved once from its temperature. Terrain is repainted by
+        /// this pass but temperature is not, so the band is stable for the whole solve.
+        band: ClimateBand,
     }
 
     const NEIGHBOR_OFFSETS_4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
@@ -1138,6 +1132,7 @@ pub fn apply_tag_budget_solver(
                 position: tile.position,
                 mountain_kind: tile.mountain.map(|m| m.kind),
                 mountain_relief: tile.mountain.map(|m| m.relief).unwrap_or(1.0),
+                band: climate_band_for_temperature(tile.temperature.to_f32(), &config.climate),
             });
         } else {
             tile_info.push(TileInfo {
@@ -1147,6 +1142,7 @@ pub fn apply_tag_budget_solver(
                 position: UVec2::ZERO,
                 mountain_kind: None,
                 mountain_relief: 1.0,
+                band: ClimateBand::Temperate,
             });
         }
     }
@@ -1350,10 +1346,7 @@ pub fn apply_tag_budget_solver(
                     if remaining == 0 {
                         break;
                     }
-                    let is_polar =
-                        climate_band_for_position(tile_info[idx].position, height as u32)
-                            == "polar";
-                    let replacement = if is_polar {
+                    let replacement = if tile_info[idx].band.admits_cold_biomes() {
                         sim_runtime::TerrainType::PeatHeath
                     } else {
                         sim_runtime::TerrainType::FreshwaterMarsh
@@ -1374,10 +1367,7 @@ pub fn apply_tag_budget_solver(
                         {
                             continue;
                         }
-                        let is_polar =
-                            climate_band_for_position(tile_info[idx].position, height as u32)
-                                == "polar";
-                        let replacement = if is_polar {
+                        let replacement = if tile_info[idx].band.admits_cold_biomes() {
                             sim_runtime::TerrainType::PeatHeath
                         } else {
                             sim_runtime::TerrainType::FreshwaterMarsh
@@ -1408,20 +1398,17 @@ pub fn apply_tag_budget_solver(
                             width,
                             height,
                         );
-                        let replacement =
-                            if climate_band_for_position(tile_info[idx].position, height as u32)
-                                == "polar"
-                            {
-                                if near_freshwater {
-                                    sim_runtime::TerrainType::PeriglacialSteppe
-                                } else {
-                                    sim_runtime::TerrainType::BorealTaiga
-                                }
-                            } else if near_freshwater {
-                                sim_runtime::TerrainType::PrairieSteppe
+                        let replacement = if tile_info[idx].band.admits_cold_biomes() {
+                            if near_freshwater {
+                                sim_runtime::TerrainType::PeriglacialSteppe
                             } else {
-                                sim_runtime::TerrainType::AlluvialPlain
-                            };
+                                sim_runtime::TerrainType::BorealTaiga
+                            }
+                        } else if near_freshwater {
+                            sim_runtime::TerrainType::PrairieSteppe
+                        } else {
+                            sim_runtime::TerrainType::AlluvialPlain
+                        };
                         if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
                             remaining -= 1;
                             changed += 1;
@@ -1467,7 +1454,7 @@ pub fn apply_tag_budget_solver(
                         {
                             return false;
                         }
-                        if climate_band_for_position(info.position, height as u32) == "polar" {
+                        if info.band.admits_cold_biomes() {
                             return false;
                         }
                         has_neighbor_any(
@@ -1526,7 +1513,7 @@ pub fn apply_tag_budget_solver(
                         {
                             continue;
                         }
-                        if climate_band_for_position(info.position, height as u32) == "polar" {
+                        if info.band.admits_cold_biomes() {
                             continue;
                         }
                         if apply_tile_change(
@@ -1794,9 +1781,6 @@ pub fn apply_tag_budget_solver(
     if lock_polar {
         // --- Polar ---
         let want_polar = get_target("Polar");
-        let polar_band = ((height as f32 * preset.mountains.polar_latitude_fraction)
-            .ceil()
-            .clamp(1.0, height as f32)) as usize;
         let mut polar_iterations = 0usize;
         loop {
             let delta = need_delta(
@@ -1821,8 +1805,11 @@ pub fn apply_tag_budget_solver(
                         {
                             return false;
                         }
-                        let y = info.position.y as usize;
-                        y < polar_band || y >= height - polar_band
+                        // THE CLIMATE VETO (`docs/plan_climate_authority.md` §5.4). A polar
+                        // biome may only be stamped on a tile whose temperature actually admits
+                        // one. This replaces a latitude band, and it is the reason the pass can
+                        // now under-fill (see below).
+                        info.band.admits_cold_biomes()
                     })
                     .collect();
                 candidates.sort_by_key(|idx| {
@@ -1858,6 +1845,12 @@ pub fn apply_tag_budget_solver(
                             || tile_info[idx]
                                 .tags
                                 .contains(sim_runtime::TerrainTags::WATER)
+                            // The veto binds here too. This fallback loop previously had NO
+                            // climate test of any kind, and painted `Tundra` at any latitude to
+                            // hit the target — 64% of the measured warm-polar tiles came from
+                            // exactly this loop. A target share is an input to generation, never
+                            // a reassignment applied afterward.
+                            || !tile_info[idx].band.admits_cold_biomes()
                         {
                             continue;
                         }
@@ -1901,6 +1894,20 @@ pub fn apply_tag_budget_solver(
                 }
             }
             if changed == 0 {
+                // UNDER-FILL AND REPORT, never repaint (`docs/plan_climate_authority.md` §5.4).
+                // The pass ran out of climate-eligible tiles before reaching the `Polar` target.
+                // That is the honest outcome: the map is not cold enough to carry that share of
+                // polar biomes, and the lever is the climate inputs, not the output.
+                if delta > 0 {
+                    tracing::info!(
+                        target: "shadow_scale::mapgen",
+                        tag = "Polar",
+                        shortfall = delta,
+                        target = want_polar,
+                        actual = tag_ratio(&tile_info, sim_runtime::TerrainTags::POLAR),
+                        "mapgen.tag_solver.under_filled_climate_gated"
+                    );
+                }
                 break;
             }
             polar_iterations += 1;
@@ -2167,27 +2174,22 @@ pub fn apply_tag_budget_solver(
 pub fn apply_biome_palette_clamp(
     palette: Option<Res<BiomePalette>>,
     config: Res<SimulationConfig>,
-    map_presets: Res<MapPresetsHandle>,
     registry: Res<TileRegistry>,
     mut tiles: Query<&mut Tile>,
 ) {
     let Some(palette) = palette else {
         return;
     };
-    let presets = map_presets.get();
-    let polar_cutoff = presets
-        .get(&config.map_preset_id)
-        .map(|preset| preset.terrain_classifier.polar_latitude_cutoff)
-        .unwrap_or(POLAR_LATITUDE_THRESHOLD);
-    let lat_denom = registry.height.saturating_sub(1).max(1) as f32;
     for &entity in registry.tiles.iter() {
         if let Ok(mut tile) = tiles.get_mut(entity) {
             if palette.contains(tile.terrain) {
                 continue;
             }
-            let dist_from_equator = (tile.position.y as f32 / lat_denom - 0.5).abs();
-            let is_polar = dist_from_equator >= polar_cutoff;
-            let remapped = palette.remap(tile.terrain, is_polar);
+            // Keyed on the tile's TEMPERATURE band, exactly like the prototype-loop remap. If this
+            // post-solver clamp kept deciding by latitude it would re-stamp temperate biomes onto
+            // cold tiles and silently undo the whole arc (`docs/plan_climate_authority.md` §5.1).
+            let band = climate_band_for_temperature(tile.temperature.to_f32(), &config.climate);
+            let remapped = palette.remap(tile.terrain, band.admits_cold_biomes());
             if remapped != tile.terrain {
                 tile.terrain = remapped;
                 tile.terrain_tags = terrain_definition(remapped).tags;
@@ -2821,6 +2823,9 @@ mod climate_model_tests {
             polar_temp: POLAR,
             elevation_lapse_span: span,
             element_jitter_scale: 0.25,
+            polar_max_temp: 0.0,
+            boreal_max_temp: 5.0,
+            temperate_max_temp: 18.0,
         };
         let sea = climate_temperature(H / 2, H, 0.0, ElementKind::Ferrite, &cfg);
         let peak = climate_temperature(H / 2, H, 1.0, ElementKind::Ferrite, &cfg);
@@ -3102,7 +3107,7 @@ mod terrain_tag_tests {
     }
 
     #[test]
-    fn fertile_lock_skips_polar_latitudes() {
+    fn fertile_lock_skips_the_cold_band() {
         let preset_json = r#"
         {
             "presets": [
@@ -3154,10 +3159,20 @@ mod terrain_tag_tests {
             for x in 0..2u32 {
                 let position = UVec2::new(x, y);
                 let element = ElementKind::Ferrite;
-                let terrain = if y == 0 || y == 5 {
+                let is_cold_row = y == 0 || y == 5;
+                let terrain = if is_cold_row {
                     sim_runtime::TerrainType::RockyReg
                 } else {
                     sim_runtime::TerrainType::SemiAridScrub
+                };
+                // The fertile pass is gated on the tile's CLIMATE BAND, so the fixture states a
+                // climate rather than relying on a row index. Every tile previously carried a
+                // placeholder 0.5°, which is inside the cold ladder — the pass would (correctly)
+                // skip the whole map.
+                let temperature = if is_cold_row {
+                    scalar_from_f32(-10.0)
+                } else {
+                    scalar_from_f32(15.0)
                 };
                 let def = terrain_definition(terrain);
                 let entity = world
@@ -3165,7 +3180,7 @@ mod terrain_tag_tests {
                         position,
                         element,
                         mass: scalar_from_f32(1.0),
-                        temperature: scalar_from_f32(0.5),
+                        temperature,
                         terrain,
                         terrain_tags: def.tags,
                         underlying_terrain: None,
@@ -3213,7 +3228,7 @@ mod terrain_tag_tests {
                 !tile
                     .terrain_tags
                     .contains(sim_runtime::TerrainTags::FERTILE),
-                "polar latitude tile should not be converted to fertile terrain"
+                "cold-band tile should not be converted to fertile terrain"
             );
         }
 
@@ -3261,7 +3276,6 @@ mod terrain_tag_tests {
             .clone();
 
         let mut query = world.query::<&Tile>();
-        let lat_denom = config.grid_size.y.saturating_sub(1).max(1) as f32;
 
         let mut polar_land = 0usize;
         let mut polar_alluvial = 0usize;
@@ -3272,9 +3286,11 @@ mod terrain_tag_tests {
             if tile.terrain_tags.contains(TerrainTags::WATER) {
                 continue;
             }
-            let lat = tile.position.y as f32 / lat_denom;
-            let dist_from_equator = (lat - 0.5).abs();
-            if dist_from_equator < POLAR_LATITUDE_THRESHOLD {
+            // Keyed on the tile's CLIMATE BAND, not its latitude — the invariant this arc
+            // strengthens is "a cold tile carries a cold biome", which latitude never expressed.
+            if !climate_band_for_temperature(tile.temperature.to_f32(), &config.climate)
+                .admits_cold_biomes()
+            {
                 continue;
             }
             polar_land += 1;
@@ -3287,16 +3303,16 @@ mod terrain_tag_tests {
 
         assert!(
             polar_land > 0,
-            "expected polar land tiles to evaluate latitude constraints"
+            "expected cold land tiles to evaluate climate constraints"
         );
         assert_eq!(
             polar_alluvial, 0,
-            "expected no alluvial plains in polar latitudes (found {} of {})",
+            "expected no alluvial plains in the cold band (found {} of {})",
             polar_alluvial, polar_land
         );
         assert_eq!(
             polar_freshwater_marsh, 0,
-            "expected no freshwater marsh in polar latitudes (found {} of {})",
+            "expected no freshwater marsh in the cold band (found {} of {})",
             polar_freshwater_marsh, polar_land
         );
     }

@@ -1425,6 +1425,19 @@ pub struct ElevationOverlayState {
     pub sea_level: f32,
 }
 
+/// The climate-band ladder cut points, published so the client renders the band it is told
+/// (`docs/plan_climate_authority.md` §8.3). A per-map constant; each is the inclusive upper
+/// temperature bound of a band. The client's retired `cool_min` equals `boreal_max_temp` (§5.2).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct ClimateBandsState {
+    #[serde(default)]
+    pub polar_max_temp: f32,
+    #[serde(default)]
+    pub boreal_max_temp: f32,
+    #[serde(default)]
+    pub temperate_max_temp: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub struct StartMarkerState {
     pub x: u32,
@@ -2390,6 +2403,9 @@ pub struct WorldSnapshot {
     pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
+    /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
+    #[serde(default)]
+    pub climate_bands: ClimateBandsState,
     pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
@@ -2447,6 +2463,10 @@ pub struct WorldDelta {
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
+    /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is
+    /// (re)generated. `None` means unchanged.
+    #[serde(default)]
+    pub climate_bands: Option<ClimateBandsState>,
     pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
@@ -2748,6 +2768,7 @@ fn serialize_map_section<'a>(
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
+    let climate_bands = create_climate_bands(builder, &snapshot.climate_bands);
     fb::MapSection::create(
         builder,
         &fb::MapSectionArgs {
@@ -2756,6 +2777,7 @@ fn serialize_map_section<'a>(
             elevationOverlay: Some(elevation_overlay),
             moistureRaster: Some(moisture_raster),
             removedTiles: None,
+            climateBands: Some(climate_bands),
         },
     )
 }
@@ -2966,6 +2988,10 @@ fn serialize_map_section_delta<'a>(
         .moisture_raster
         .as_ref()
         .map(|raster| create_float_raster(builder, raster));
+    let climate_bands = delta
+        .climate_bands
+        .as_ref()
+        .map(|bands| create_climate_bands(builder, bands));
     fb::MapSection::create(
         builder,
         &fb::MapSectionArgs {
@@ -2974,6 +3000,7 @@ fn serialize_map_section_delta<'a>(
             elevationOverlay: elevation_overlay,
             moistureRaster: moisture_raster,
             removedTiles: Some(removed_tiles),
+            climateBands: climate_bands,
         },
     )
 }
@@ -3258,6 +3285,20 @@ fn create_elevation_overlay<'a>(
             maxValue: overlay.max_value,
             samples: Some(samples_vec),
             seaLevel: overlay.sea_level,
+        },
+    )
+}
+
+fn create_climate_bands<'a>(
+    builder: &mut FbBuilder<'a>,
+    bands: &ClimateBandsState,
+) -> WIPOffset<fb::ClimateBands<'a>> {
+    fb::ClimateBands::create(
+        builder,
+        &fb::ClimateBandsArgs {
+            polarMaxTemp: bands.polar_max_temp,
+            borealMaxTemp: bands.boreal_max_temp,
+            temperateMaxTemp: bands.temperate_max_temp,
         },
     )
 }

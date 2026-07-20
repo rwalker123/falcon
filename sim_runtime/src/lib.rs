@@ -422,6 +422,7 @@ pub mod knowledge {
                 military_raster: ScalarRasterState::default(),
                 visibility_raster: ScalarRasterState::default(),
                 elevation_overlay: crate::ElevationOverlayState::default(),
+                climate_bands: crate::ClimateBandsState::default(),
                 start_marker: None,
                 axis_bias: AxisBiasState::default(),
                 sentiment: SentimentTelemetryState::default(),
