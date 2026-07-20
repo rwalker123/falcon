@@ -1237,3 +1237,15 @@ each PR is independently playtestable.
       same action-binding registration in `Main.gd` (`_ensure_action_binding`) rather
       than a hand-maintained second list that can drift. (Owner: TBD, Estimate: 0.5d;
       Deps: none.)
+
+- [ ] **The ui_preview harness is not byte-deterministic**, so pixel-diffing is unreliable
+      as a regression gate. Roughly 22 states (`band*`, `expedition*`, `forage_policy`,
+      `turn_orb_clear*`, `dock_fresh_profile_default`) flap between runs on *identical*
+      code. Nothing in CI consumes the PNGs, so this gates no automation — but it does
+      mean "the frames are byte-identical to baseline" is only a trustworthy claim for
+      the stable subset, and a reviewer comparing a flappy state will chase a phantom
+      diff. The `blend_probe` state was deliberately made bit-stable and is the precedent
+      to copy; a likely culprit class is hover/cursor artefacts (that probe disables
+      `_unhandled_input` for exactly this reason), but it has not been investigated.
+      Either stabilise the flappy states or mark them explicitly non-comparable so nobody
+      diffs them. (Owner: TBD, Estimate: 0.5d; Deps: none.)
