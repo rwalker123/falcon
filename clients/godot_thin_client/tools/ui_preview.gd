@@ -1611,10 +1611,11 @@ func _ready() -> void:
 
 	# G2 — PAINTED: the accumulating wall. The SAME entries, now retained as pages you can walk FORWARD
 	# through (a marks + position cue, no back control). Parked mid-way (page 3/6) so the retained
-	# earlier pages and the forward-only affordance read at once.
+	# earlier pages and the forward-only affordance read at once. `debug_jump_to` is the NON-animating
+	# park — these SETTLED end-state frames must not catch a page-turn tween mid-flight (that's what the
+	# `telling_turn_*_mid` states capture on purpose).
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_PAINTED, "medium_index": 1}])
-	_hud._telling.reveal_newest()
-	_hud._telling.leaf(-3)
+	_hud._telling.debug_jump_to(2)
 	await _settle()
 	await _save("telling_panel_painted")
 
@@ -1623,15 +1624,14 @@ func _ready() -> void:
 	# between the rungs (per-medium copy is a deliberate non-goal) — only the title, accent and
 	# CAPABILITIES age, which is the whole point.
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
-	_hud._telling.reveal_newest()
-	_hud._telling.leaf(-3)
+	_hud._telling.debug_jump_to(2)
 	await _settle()
 	await _save("telling_panel_written")
 
 	# G3b — UNREAD: the yields-to-reader rule. The reader is held on an OLD page (1/6) while newer pages
 	# exist; the page never turns on its own, so a subtle "a new telling waits" cue appears instead of
 	# yanking them forward. (Advancing the turn — reveal_newest() — is what catches them up.)
-	_hud._telling.leaf(-2)
+	_hud._telling.debug_jump_to(0)
 	await _settle()
 	await _save("telling_panel_unread")
 
@@ -1672,6 +1672,64 @@ func _ready() -> void:
 	# Restore the shipped default so any later state renders the real layout.
 	_hud.toggle_victory()
 	_close_legend()
+
+	# ---- Page-turn animation: motion matures with the medium (mid-transition capture) --------------
+	# The harness dumps single frames, so each state DRIVES a page turn, then FREEZES the tween at its
+	# midpoint (`debug_freeze_turn_at`) so the outgoing and incoming pages COEXIST in the captured PNG —
+	# proof the motion is real. Setup jumps (`debug_jump_to`) are non-animating so the measured turn
+	# starts from a clean resting page. The block ends with a clean static render, so the frozen overlay
+	# never leaks into a later frame.
+	_hud._telling.reset()
+	_hud.ingest_command_events(_telling_fixture_events())
+
+	# WRITTEN — a horizontal SLIDE, forward: the outgoing page exits left as the incoming enters from the
+	# right. Frozen mid-slide, both pages are onscreen offset horizontally, with the ‹ › book furniture.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	_hud._telling.debug_jump_to(1)
+	await _settle()
+	_hud._telling.leaf(1)
+	_hud._telling.debug_freeze_turn_at(0.5)
+	await _settle()
+	await _save("telling_turn_written_mid")
+
+	# PAINTED — the incoming page RISES from just below with a fade (new marks drifting onto the wall).
+	# Frozen partway up, the incoming page sits low + faint over the fading outgoing one.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_PAINTED, "medium_index": 1}])
+	_hud._telling.debug_jump_to(1)
+	await _settle()
+	_hud._telling.leaf(1)
+	_hud._telling.debug_freeze_turn_at(0.45)
+	await _settle()
+	await _save("telling_turn_painted_mid")
+
+	# ORAL — a CROSSFADE in place: a new recitation replacing the last (oral keeps no prior page). Frozen
+	# at the crossover, both pages read at partial alpha in the same spot, with NO furniture.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud._telling.debug_jump_to(3)
+	await _settle()
+	_hud._telling.reveal_newest()
+	_hud._telling.debug_freeze_turn_at(0.5)
+	await _settle()
+	await _save("telling_turn_oral_mid")
+
+	# INTERRUPTION — a rapid second turn must KILL the running tween and settle to the CORRECT final page,
+	# with no leftover overlay/offset. Turn 0→1, immediately 1→2, then force the settle a completed tween
+	# would reach, and assert the visible page is 2 with the overlay gone.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	_hud._telling.debug_jump_to(0)
+	await _settle()
+	_hud._telling.leaf(1)          # 0 → 1 (tween begins)
+	_hud._telling.leaf(1)          # 1 → 2 immediately (must kill + restart)
+	_hud._telling.debug_end_turn() # force the settle
+	await _settle()
+	_assert_hud("interrupted page-turn settles to the final page with no leftover overlay",
+		_hud._telling.debug_visible_index() == 2 and not _hud._telling.debug_overlay_visible())
+	await _save("telling_turn_interrupted")
+
+	# Clean static state (newest oral page, no frozen overlay) before the downstream frames.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
+	_hud._telling.reveal_newest()
+	await _settle()
 
 	# ---- Hunt/husbandry render-honesty pass (intensification ladder client UX) ----------------------
 	# Fix #1 + #5 — CURRENT ACTIONS rows: a summary row headlines the honest per-turn FOOD rate

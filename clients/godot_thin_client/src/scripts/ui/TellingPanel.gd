@@ -23,6 +23,19 @@ extends RefCounted
 ## The visible page NEVER moves on its own: new beats set the UNREAD mark, they do not turn the page
 ## (the page-turn twin of the feed's tail-scroll-yields-to-reader rule). The player turns via the leaf
 ## controls; `reveal_newest()` catches them up on turn-advance.
+##
+## THE PAGE-TURN ANIMATION. Motion MATURES with the medium, mirroring the furniture, and plays ONLY when
+## the player turns the page (leaf / reveal_newest catch-up / oral's utterance-replacement) — never on a
+## beat merely arriving to a retaining medium (that only marks unread, so animating it would fight the
+## yields rule). Each medium's motion is a short, snappy tween of a single 0→1 progress
+## (`PAGE_TURN_DURATION`), applied by `_apply_turn_frame` to an outgoing snapshot (`_outgoing`) and the
+## incoming page (`_scroll`), both clipped to the fixed `_page_frame`:
+##   • `oral`    — a CROSSFADE in place (one recitation dissolving into the next; oral keeps no prior page).
+##   • `painted` — the incoming page RISES from just below with a fade (new marks drifting onto the wall).
+##   • `written` — a horizontal SLIDE in the leaf direction (the real page turn; the earned book).
+## Interruption-safe by construction: every turn `_kill_tween()`s the running one and re-paints the final
+## page statically first, so a rapid second turn / medium change / collapse always settles to the correct
+## static state — never a half-slid page.
 
 const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
 
@@ -64,6 +77,16 @@ const EMPTY_TEXT := "[i]Nothing has been told yet.[/i]"
 const FORK_GLYPH := "?"
 const FORK_LINE_FORMAT := "[color=#%s]%s[/color]  %s"
 
+# ---- page-turn animation ---------------------------------------------------
+# Snappy: a page turn is a state change, not a transition to sit through. Named per the plan's 0.16–0.20s.
+const PAGE_TURN_DURATION := 0.18
+# The painted page rises from this fraction of the page height below its resting spot (a modest offset —
+# an accumulation cue, not a scroll).
+const PAGE_RISE_OFFSET_RATIO := 0.22
+const MOTION_CROSSFADE := 0   # oral: dissolve in place
+const MOTION_RISE := 1        # painted: lift from below with a fade
+const MOTION_SLIDE := 2       # written: horizontal slide in the leaf direction
+
 # ---- book furniture (RESTRAINT: the dark HUD stays dark) -------------------
 # The medium's capabilities are carried by line-art edges, a page-number/position label, the accent and
 # the leaf glyphs — NOT by a parchment background (which would read as a rendering bug). Leaf glyphs are
@@ -73,11 +96,11 @@ const FURNITURE_MARKS := 1       # painted: accumulation marks + position, no ba
 const FURNITURE_BOOK := 2        # written: page number + ‹ › leaf controls
 ## `mediumId` is FREE-FORM by design (a new medium needs no schema change), so this is a TABLE WITH AN
 ## `oral` FALLBACK, never a match assuming the shipped three are exhaustive — the same discipline as
-## `MEDIUM_STYLES`.
+## `MEDIUM_STYLES`. Each rung's `motion` matures with its furniture.
 const MODE_TABLE := {
-	"oral": {"furniture": FURNITURE_NONE, "leaf_back": false, "retain_pages": false},
-	"painted": {"furniture": FURNITURE_MARKS, "leaf_back": false, "retain_pages": true},
-	"written": {"furniture": FURNITURE_BOOK, "leaf_back": true, "retain_pages": true},
+	"oral": {"furniture": FURNITURE_NONE, "leaf_back": false, "retain_pages": false, "motion": MOTION_CROSSFADE},
+	"painted": {"furniture": FURNITURE_MARKS, "leaf_back": false, "retain_pages": true, "motion": MOTION_RISE},
+	"written": {"furniture": FURNITURE_BOOK, "leaf_back": true, "retain_pages": true, "motion": MOTION_SLIDE},
 }
 const FURNITURE_FONT_SIZE := 12
 const LEAF_FONT_SIZE := 16
@@ -118,6 +141,12 @@ var _leaf_prev: Button = null
 var _leaf_next: Button = null
 var _page_label: Label = null
 var _unread_label: Label = null
+# The clipped, fixed-height page frame the incoming page (`_scroll`) and the outgoing snapshot
+# (`_outgoing`) animate within. A plain Control, so it never re-lays out its children — the animation
+# owns their position/modulate.
+var _page_frame: Control = null
+var _outgoing: RichTextLabel = null
+var _tween: Tween = null
 
 # The full retention buffer: one dict `{tick, bbcode}` per beat, in ingest order. Pages derive from it.
 var _entries: Array = []
@@ -127,6 +156,15 @@ var _pages: Array = []
 var _page_index: int = 0
 var _medium_id: String = MEDIUM_ORAL
 var _collapsed: bool = false
+# The BBCode currently painted in `_label`, so a turn knows what to snapshot as the outgoing page and can
+# tell a real page change (animate) from an idempotent re-render (don't).
+var _shown_bbcode: String = ""
+# False until the first paint, so the initial population never animates.
+var _has_painted: bool = false
+# The active turn's parameters, read by `_apply_turn_frame` while the tween drives `progress` 0→1.
+var _turn_motion: int = MOTION_CROSSFADE
+var _turn_dir: int = 1
+var _turn_extent: Vector2 = Vector2.ZERO
 
 func _init(panel: PanelCard, scroll: ScrollContainer, label: RichTextLabel) -> void:
 	_panel = panel
@@ -192,21 +230,30 @@ static func accent_for(medium_id: String) -> Color:
 	var style: Dictionary = MEDIUM_STYLES.get(medium_id, MEDIUM_STYLES[MEDIUM_ORAL])
 	return style["accent"]
 
-## Turn the page by `delta`, clamped into range. The player's own leaf controls call this (‹ = -1,
-## › = +1); it never runs on its own (new beats only mark UNREAD).
+## Turn the page by `delta`, clamped into range, with the medium's page-turn animation. The player's own
+## leaf controls call this (‹ = -1, › = +1); it never runs on its own (new beats only mark UNREAD).
 func leaf(delta: int) -> void:
 	if _pages.is_empty():
 		return
-	_page_index = clampi(_page_index + delta, 0, _pages.size() - 1)
-	_render_page()
+	var target := clampi(_page_index + delta, 0, _pages.size() - 1)
+	if target == _page_index:
+		return
+	var direction := signi(target - _page_index)
+	_page_index = target
+	_paint_page(true, direction)
 
 ## Catch the reader up to the latest telling — the turn-advance path (`Hud._on_turn_orb_advance`). A
 ## player who moves on is shown the newest page; mid-turn beats only mark unread, advancing reveals.
 func reveal_newest() -> void:
 	if _pages.is_empty():
 		return
-	_page_index = _pages.size() - 1
-	_render_page()
+	var last := _pages.size() - 1
+	if _page_index == last:
+		_render_static()
+		return
+	# Catch-up reads as a forward turn, whatever medium.
+	_page_index = last
+	_paint_page(true, 1)
 
 # ---- collapsed-state preference --------------------------------------------
 
@@ -225,9 +272,10 @@ static func save_collapsed(collapsed: bool) -> void:
 
 # ---- chrome ----------------------------------------------------------------
 
-## Build the runtime rows the scene does not author: the medium accent rule, the book furniture row
-## (leaf controls + page-number/position + unread cue), and the collapse toggle. Order inside
-## CardContent: header(0) · accent(1) · furniture(2) · scroll(3) · collapse(4).
+## Build the runtime rows the scene does not author: the medium accent rule, the clipped page frame (with
+## the authored scroll reparented in + the outgoing snapshot overlay), the book furniture row (leaf
+## controls + page-number/position + unread cue), and the collapse toggle. Order inside CardContent:
+## header(0) · accent(1) · furniture(2) · page_frame(3) · collapse(4).
 func _build_chrome() -> void:
 	if _panel == null:
 		return
@@ -278,6 +326,33 @@ func _build_chrome() -> void:
 	content.add_child(_furniture_row)
 	content.move_child(_furniture_row, 2)
 
+	# The clipped, fixed-height page frame. The authored ScrollContainer moves inside it so a slide/rise
+	# can translate the page without disturbing the dock or the neighbours; the frame — a plain Control —
+	# owns the fixed height and never re-lays out its children.
+	_page_frame = Control.new()
+	_page_frame.name = "TellingPageFrame"
+	_page_frame.clip_contents = true
+	_page_frame.custom_minimum_size = Vector2(0.0, PAGE_HEIGHT)
+	_page_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(_page_frame)
+	content.move_child(_page_frame, 3)
+	if _scroll != null:
+		_scroll.reparent(_page_frame, false)
+		_scroll.position = Vector2.ZERO
+	_page_frame.resized.connect(_sync_page_geometry)
+
+	# The outgoing-page snapshot, layered over the frame; hidden except during a turn. Same prose styling
+	# as the live label so the two halves of a turn match.
+	_outgoing = RichTextLabel.new()
+	_outgoing.name = "TellingOutgoing"
+	_outgoing.bbcode_enabled = true
+	_outgoing.fit_content = true
+	_outgoing.scroll_active = false
+	_outgoing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_outgoing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_outgoing.visible = false
+	_page_frame.add_child(_outgoing)
+
 	_collapse_button = Button.new()
 	_collapse_button.name = "TellingCollapse"
 	_collapse_button.tooltip_text = COLLAPSE_TOOLTIP
@@ -308,10 +383,9 @@ func _apply_medium() -> void:
 		_page_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	if _unread_label != null:
 		_unread_label.add_theme_color_override("font_color", accent)
-	# Full render, not just a repaint: the medium change flips `retain_pages`, so the visible page must
-	# be reconciled (oral re-pins to the newest, a retaining medium re-clamps) — not left where the
-	# previous medium's rules put it.
-	render()
+	# A medium change is NOT a page turn — re-paint statically (the flip of `retain_pages` still needs the
+	# visible page reconciled: oral re-pins, a retaining medium re-clamps).
+	_render_static()
 
 # ---- entries + pages -------------------------------------------------------
 
@@ -351,15 +425,26 @@ func _rebuild_pages() -> void:
 
 # ---- rendering -------------------------------------------------------------
 
-## Rebuild the pages from the retention buffer, reconcile the visible page (never moving it on its own
-## for a retaining medium; pinning to the newest for `oral`), and paint it.
+## Beat-arrival / backfill / reset render. Rebuild the pages, reconcile the visible page (never moving it
+## on its own for a retaining medium; pinning to the newest for `oral`), and paint. Only `oral` animates
+## here — its beat arrival IS the utterance turn (it keeps no prior page); a retaining medium's page does
+## not move on arrival, so it re-paints statically (the yields rule).
 func render() -> void:
 	if _panel == null or _label == null:
 		return
 	_panel.visible = true
 	_rebuild_pages()
 	_reconcile_page_index()
-	_render_page()
+	_paint_page(_is_oral(), 0)
+
+## Rebuild + reconcile + paint with NO animation — a medium change / collapse / catch-up-already-newest.
+func _render_static() -> void:
+	if _panel == null or _label == null:
+		return
+	_panel.visible = true
+	_rebuild_pages()
+	_reconcile_page_index()
+	_paint_page(false, 0)
 
 ## Re-clamp the visible page against the (possibly grown) page list. `retain_pages = false` (oral) pins
 ## it to the newest — oral memory does not keep the previous telling. For a retaining medium the index
@@ -375,22 +460,120 @@ func _reconcile_page_index() -> void:
 	else:
 		_page_index = clampi(_page_index, 0, last)
 
-## The fixed-size page: one turn's beats, the book furniture for the current medium, and the collapse
-## toggle. The card height never depends on content — only the inner scroll absorbs a rare over-long
-## page.
-func _render_page() -> void:
+## Paint the current page, optionally animating the turn to it. A turn animates only when it is a REAL
+## page change on a card that has already painted once and is not collapsed; otherwise (initial paint,
+## empty↔content, an idempotent re-render, collapsed) it settles statically. Either way the primary label
+## ends showing the new page and the furniture/collapse update.
+func _paint_page(animate: bool, direction: int) -> void:
 	if _panel == null or _label == null or _scroll == null:
 		return
 	var mode: Dictionary = _mode()
-	if _pages.is_empty():
-		_label.text = EMPTY_TEXT
+	var new_text := EMPTY_TEXT if _pages.is_empty() else ENTRY_SEPARATION.join(_pages[_page_index]["beats"])
+	var can_animate := (
+		animate
+		and _has_painted
+		and not _collapsed
+		and _page_frame != null
+		and new_text != _shown_bbcode
+		# Never animate the initial population (empty → first telling) nor a reset (telling → empty).
+		and _shown_bbcode != EMPTY_TEXT
+		and new_text != EMPTY_TEXT
+	)
+	if can_animate:
+		_begin_turn(_shown_bbcode, new_text, int(mode["motion"]), direction)
 	else:
-		_label.text = ENTRY_SEPARATION.join(_pages[_page_index]["beats"])
-	_scroll.custom_minimum_size.y = PAGE_HEIGHT
-	_scroll.scroll_vertical = 0
-	_scroll.visible = not _collapsed
+		_kill_tween()
+		_end_turn_visuals()
+		_label.text = new_text
+	_shown_bbcode = new_text
+	_has_painted = true
+	if _scroll != null:
+		_scroll.scroll_vertical = 0
+	_sync_page_geometry()
+	if _page_frame != null:
+		_page_frame.visible = not _collapsed
 	_update_furniture(mode)
 	_refresh_collapse()
+
+## Start a page-turn tween: snapshot the outgoing page, seat the start frame, and drive `progress` 0→1
+## into `_apply_turn_frame`. Interruption-safe — kills any running tween first, and the caller has
+## already set `_label` to the FINAL page, so a kill settles correctly.
+func _begin_turn(old_text: String, new_text: String, motion: int, direction: int) -> void:
+	_kill_tween()
+	_sync_page_geometry()
+	_turn_motion = motion
+	_turn_dir = 1 if direction >= 0 else -1
+	_turn_extent = _page_frame.size
+	_outgoing.text = old_text
+	_outgoing.visible = true
+	_label.text = new_text
+	_apply_turn_frame(0.0)
+	_tween = _page_frame.create_tween()
+	_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_tween.tween_method(_set_turn_progress, 0.0, 1.0, PAGE_TURN_DURATION)
+	_tween.tween_callback(_end_turn)
+
+func _set_turn_progress(progress: float) -> void:
+	_apply_turn_frame(progress)
+
+## Position + fade the outgoing snapshot (`_outgoing`) and the incoming page (`_scroll`) for a turn at
+## `progress` ∈ [0,1], per the active medium's motion. The incoming page is the ScrollContainer (its
+## label is laid out by it), so it — not `_label` — is what moves.
+func _apply_turn_frame(progress: float) -> void:
+	if _scroll == null or _outgoing == null:
+		return
+	var width := _turn_extent.x
+	var rise := PAGE_HEIGHT * PAGE_RISE_OFFSET_RATIO
+	match _turn_motion:
+		MOTION_RISE:
+			_set_page_visual(_outgoing, Vector2.ZERO, 1.0 - progress)
+			_set_page_visual(_scroll, Vector2(0.0, rise * (1.0 - progress)), progress)
+		MOTION_SLIDE:
+			var sign_dir := float(_turn_dir)   # +1 forward (exit left, enter right); -1 the reverse
+			_set_page_visual(_outgoing, Vector2(-sign_dir * width * progress, 0.0), 1.0)
+			_set_page_visual(_scroll, Vector2(sign_dir * width * (1.0 - progress), 0.0), 1.0)
+		_:  # MOTION_CROSSFADE
+			_set_page_visual(_outgoing, Vector2.ZERO, 1.0 - progress)
+			_set_page_visual(_scroll, Vector2.ZERO, progress)
+
+func _set_page_visual(node: Control, pos: Vector2, alpha: float) -> void:
+	node.position = pos
+	node.modulate = Color(1.0, 1.0, 1.0, alpha)
+
+## Tween-finished callback: drop the outgoing snapshot and restore the resting transforms.
+func _end_turn() -> void:
+	_end_turn_visuals()
+	_tween = null
+
+## Settle the page visuals to their static resting state (incoming full + centred, outgoing hidden). The
+## end state after any interruption equals this, so a killed tween never leaves a half-slid page.
+func _end_turn_visuals() -> void:
+	if _outgoing != null:
+		_outgoing.visible = false
+		_set_page_visual(_outgoing, Vector2.ZERO, 1.0)
+	if _scroll != null:
+		_set_page_visual(_scroll, Vector2.ZERO, 1.0)
+
+func _kill_tween() -> void:
+	if _tween != null and _tween.is_valid():
+		_tween.kill()
+	_tween = null
+
+## Size the incoming page + the outgoing snapshot to the frame; reset their positions only when no turn
+## is running (a running tween owns them).
+func _sync_page_geometry() -> void:
+	if _page_frame == null:
+		return
+	var frame_size := _page_frame.size
+	if _scroll != null:
+		_scroll.size = frame_size
+	if _outgoing != null:
+		_outgoing.size = frame_size
+	if _tween == null:
+		if _scroll != null:
+			_scroll.position = Vector2.ZERO
+		if _outgoing != null:
+			_outgoing.position = Vector2.ZERO
 
 ## Show/hide and populate the furniture row for the current medium. Hidden entirely at `oral` (no page
 ## chrome) and while collapsed (the header + collapse control stay so the player can expand it back).
@@ -438,11 +621,13 @@ func _has_unread() -> bool:
 func _mode() -> Dictionary:
 	return MODE_TABLE.get(_medium_id, MODE_TABLE[MEDIUM_ORAL])
 
+func _is_oral() -> bool:
+	return not bool(_mode()["retain_pages"])
+
 ## No-op now that the card is a fixed size — a sibling's visibility flip no longer changes the telling's
-## height. Kept so `Hud._refit_right_dock`'s call stays valid; it only re-clamps the inner scroll.
+## height. Kept so `Hud._refit_right_dock`'s call stays valid; it only re-syncs the page geometry.
 func refit() -> void:
-	if _scroll != null:
-		_scroll.scroll_vertical = 0
+	_sync_page_geometry()
 
 func _refresh_collapse() -> void:
 	if _collapse_button == null:
@@ -458,4 +643,37 @@ func _on_leaf_next_pressed() -> void:
 func _on_collapse_pressed() -> void:
 	_collapsed = not _collapsed
 	save_collapsed(_collapsed)
-	_render_page()
+	_render_static()
+
+# ---- ui_preview hooks (dev harness only) -----------------------------------
+# The PNG harness renders single frames, so it needs to (a) park the book on a page without playing the
+# turn animation, and (b) FREEZE a turn mid-transition to prove the motion is real. These exist for that;
+# nothing in the live client calls them.
+
+## Jump straight to a page with no animation (test setup). Bypasses `_reconcile_page_index`, so it can
+## hold an older page even under `oral` (whose live reconcile pins to the newest).
+func debug_jump_to(index: int) -> void:
+	_rebuild_pages()
+	if _pages.is_empty():
+		return
+	_page_index = clampi(index, 0, _pages.size() - 1)
+	_paint_page(false, 0)
+
+## Kill the running turn tween and freeze the page at `fraction` of the transition, so the outgoing and
+## incoming pages coexist in the captured frame. No-op if no turn is in flight.
+func debug_freeze_turn_at(fraction: float) -> void:
+	_kill_tween()
+	if _outgoing == null or not _outgoing.visible:
+		return
+	_apply_turn_frame(clampf(fraction, 0.0, 1.0))
+
+## Force the active turn to settle (as a completed tween would) — used to assert the interrupted end state.
+func debug_end_turn() -> void:
+	_kill_tween()
+	_end_turn()
+
+func debug_visible_index() -> int:
+	return _page_index
+
+func debug_overlay_visible() -> bool:
+	return _outgoing != null and _outgoing.visible

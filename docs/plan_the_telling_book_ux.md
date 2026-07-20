@@ -114,6 +114,37 @@ Two ways the page turns:
 `_unread` surfaces as a subtle indicator (an accent pulse on the "next" affordance / a small "a new
 telling waits" cue) — restrained, `HudStyle`, no emoji.
 
+### The page-turn animation — motion matures with the medium
+
+**Motion mirrors the furniture.** The animation plays **only when the player TURNS the page** (a leaf
+control, or `reveal_newest()` catch-up, or — for `oral` — a new utterance replacing the last), **never on
+a beat merely arriving to a retaining medium**: that only marks `_unread`, so animating it would fight the
+yields-to-reader rule. Each medium's motion is a short, snappy tween (`PAGE_TURN_DURATION`, ~0.18s):
+
+- **`oral` → a CROSSFADE in place.** Oral has no leafing; its only "turn" is one recitation replacing the
+  last, so the outgoing page fades out and the incoming fades in at the same spot. No spatial motion. (Oral
+  pins to the newest on every beat arrival, so this fires on the utterance-replacement — that IS oral's turn,
+  and it has no held page for the yields rule to protect.)
+- **`painted` → the incoming page RISES** from `PAGE_RISE_OFFSET_RATIO · PAGE_HEIGHT` below with a fade (new
+  marks drifting up onto the wall — accumulation).
+- **`written` → a horizontal SLIDE**, direction = leaf direction: leaf **forward** → outgoing exits left /
+  incoming enters from the right; leaf **back** → the reverse. The real page turn, and the payoff that
+  `written` is the actual book.
+
+**Mechanism.** A clipped fixed-height page frame (`clip_contents`) holds the incoming page (the
+`ScrollContainer`) and an **outgoing snapshot** (a second `RichTextLabel` carrying the pre-swap BBCode). A
+tween drives a single `progress` 0→1 that `_apply_turn_frame` maps to the two nodes' position + alpha per the
+medium's motion; the primary label is already showing the FINAL page, so the outgoing snapshot animates OUT
+while the incoming animates IN.
+
+**Interruption-safe is mandatory.** Every turn kills the running tween and has already re-painted the final
+page statically, so a rapid second turn / a medium change / a collapse always settles to the correct static
+state — the end state after any interruption equals the plain static render, never a half-slid/half-faded
+page. The initial population (empty → first telling) and a reset (telling → empty) do **not** animate.
+
+**Restraint still governs.** The dark HUD stays dark — the motion is position + alpha only, no new chrome. No
+page-turn *curl*; a turn is a state change with a brief transition, not an effect to sit through.
+
 ### Collapse
 
 Keep the existing collapse toggle + its `telling_collapsed` pref (same `user://narrative.cfg`
@@ -167,14 +198,24 @@ Per the ui_preview harness (`ui-preview-harness` memory / `tools/ui_preview.tscn
 - `dock_default_layout` — the placement assertion (`telling_panel.get_parent() == right_stack`) still
   holds; the fixed page now takes a **stable** slice of the right dock rather than a computed one.
 
+The animation is verified in the same PNG harness by DRIVING a turn and FREEZING the tween mid-transition
+(`debug_freeze_turn_at`), so the outgoing and incoming pages coexist in one captured frame:
+
+- `telling_turn_written_mid` — the two pages offset **horizontally** (one sliding out left, one in from the
+  right), with the ‹ › book furniture.
+- `telling_turn_painted_mid` — the incoming page **risen partway + fading in** over the fading outgoing one.
+- `telling_turn_oral_mid` — both pages at **partial alpha in the same spot** (the crossfade), no furniture.
+- `telling_turn_interrupted` — a rapid second turn: an **assertion** that the visible page equals the
+  expected final page and no outgoing overlay survives (the interruption-safe settle).
+
+The settled `telling_panel_*` end-state frames use the non-animating `debug_jump_to` park, so they capture
+the static book, not a tween mid-flight.
+
 Every frame judged in a real window (the harness renders one); a green screenshot is not a passing
 test — the placement/behaviour assertions carry the guarantees.
 
 ## Deliberately out of scope (this slice)
 
-- **Animation** — no page-turn animation / curl. A page turn is a state change, not a transition.
-  (The proposal named the animation system as a later slice; this slice is "most of the payoff
-  without it".)
 - **Per-medium copy** — the same wardrobe line renders under every medium; medium is presentational
   only (a documented non-goal server-side — do not author per-medium strings).
 - **`archive`** — the concept's fourth medium is not shipped by the sim (`docs/plan_the_telling.md`
