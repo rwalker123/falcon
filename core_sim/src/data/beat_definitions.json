@@ -1,0 +1,319 @@
+[
+  {
+    "id": "opening.cold_open",
+    "tier": "beat",
+    "soul": {
+      "question": "The old ground is behind us and everything ahead is unnamed. Naming it is your work."
+    },
+    "when": { "all": [{ "signal": "turn.index", "eq": 0 }] },
+    "nouns": {
+      "ground": { "from": "biome.current_dominant" },
+      "count": { "from": "band.count" }
+    },
+    "wardrobe": [
+      {
+        "id": "cold_open.bone_ground",
+        "fit": {},
+        "voice": {
+          "mythic": "We are {count}. The ground behind us is bone, and we will not go back to it. Ahead lies a country with no names — not the hills, not the waters, not the years to come. Naming it is your work now. Walk well, and be remembered.",
+          "warm": "There are {count} of us, and the old ground has nothing left to give — we're not going back. Everything ahead is unnamed. Giving it all a name, that's your job now. Lead us well, and they'll remember you for it."
+        }
+      },
+      {
+        "id": "cold_open.walked_out",
+        "fit": {},
+        "voice": {
+          "mythic": "{count} of us walked out, and none looked back twice. What lies ahead has never been spoken of, because no one has lived to speak of it. Give it words. Give us a reason to have come.",
+          "warm": "{count} of us set out, and nobody looked back more than once. Nothing ahead of us has a name yet — nobody's been here to give it one. That's on you now. Make it worth the walk."
+        }
+      }
+    ],
+    "gloss": ["turn.index", "band.count"],
+    "once": true
+  },
+
+  {
+    "id": "discovery.site_found",
+    "tier": "ambient",
+    "soul": {
+      "question": "The land gives up one of its secrets, and it is ours before we know its worth."
+    },
+    "when": { "all": [{ "signal": "sites.discovered_this_turn", "gte": 1 }] },
+    "nouns": {
+      "place": { "from": "site.last_discovered" }
+    },
+    "wardrobe": [
+      {
+        "id": "site_found.beyond_ridge",
+        "fit": { "requires_noun": ["place"] },
+        "voice": {
+          "mythic": "Past the ridge, {place.name}. It has our name on it now — though not yet its worth.",
+          "warm": "There's {place.name} past the ridge. Ours now, for whatever that turns out to be worth."
+        }
+      },
+      {
+        "id": "site_found.scouts_returned",
+        "fit": { "requires_noun": ["place"] },
+        "voice": {
+          "mythic": "The scouts came back thinner and louder than they left. {place.name}, they said, over and over, until we all knew the word.",
+          "warm": "Scouts came back hungry and wouldn't shut up — {place.name}, {place.name}, until the rest of us had the word too."
+        }
+      },
+      {
+        "id": "site_found.quiet",
+        "fit": { "requires_noun": ["place"] },
+        "voice": {
+          "mythic": "{place.name}. We have added it to what we know. The knowing is small yet.",
+          "warm": "{place.name} — one more thing we know about this country. Not much yet, but it's more than yesterday."
+        }
+      }
+    ],
+    "gloss": ["sites.discovered_this_turn"],
+    "cooldown_turns": 3
+  },
+
+  {
+    "id": "knowledge.cultivation_learned",
+    "tier": "beat",
+    "soul": {
+      "question": "Someone tried a thing on purpose, and the world answered. That is new."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "discovery.progress.cultivation",
+          "crosses": "rising",
+          "threshold": 1.0
+        }
+      ]
+    },
+    "nouns": {
+      "ground": { "from": "biome.current_dominant" }
+    },
+    "wardrobe": [
+      {
+        "id": "cultivation.mud_answered",
+        "fit": {},
+        "voice": {
+          "mythic": "A woman pressed seed into the mud to see what it would do. The mud answered. We know a new thing.",
+          "warm": "One of the women pushed a seed into the mud just to see. The mud answered her. That's something we know now that we didn't."
+        }
+      },
+      {
+        "id": "cultivation.same_place_twice",
+        "fit": {},
+        "voice": {
+          "mythic": "We have learned that a thing put in the ground comes back to the same place. It sounds small. It is not small.",
+          "warm": "Turns out if you put something in the ground, it comes back — and it comes back where you left it. Sounds like nothing. It isn't nothing."
+        }
+      },
+      {
+        "id": "cultivation.on_purpose",
+        "fit": { "biome": ["alluvial", "grassland", "savanna"] },
+        "voice": {
+          "mythic": "The {ground.adjective} ground has always fed us by accident. This season we made it do so on purpose.",
+          "warm": "The {ground.adjective} ground's always fed us by luck. This year we made it do it on purpose."
+        }
+      }
+    ],
+    "gloss": ["discovery.progress.cultivation"],
+    "once": true
+  },
+
+  {
+    "id": "knowledge.herding_learned",
+    "tier": "beat",
+    "soul": {
+      "question": "A beast that does not run from us is a different kind of beast."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "discovery.progress.herding",
+          "crosses": "rising",
+          "threshold": 1.0
+        }
+      ]
+    },
+    "nouns": {
+      "beast": { "from": "fauna.most_domesticated", "fallback": "fauna.most_hunted" }
+    },
+    "wardrobe": [
+      {
+        "id": "herding.did_not_run",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "The {beast.plural} did not run this time. They watched us, and stayed, and we understood that something had changed in them — or in us.",
+          "warm": "The {beast.plural} didn't run this time. They just watched us and stayed put. Something's changed in them. Or in us."
+        }
+      },
+      {
+        "id": "herding.kept_not_caught",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "We have stopped catching {beast.plural} and started keeping them. It is a smaller feast and a longer one.",
+          "warm": "We've stopped catching {beast.plural} and started keeping them instead. Less meat today. More of it for longer."
+        }
+      }
+    ],
+    "gloss": ["discovery.progress.herding"],
+    "once": true
+  },
+
+  {
+    "id": "ecology.herd_collapsing",
+    "tier": "beat",
+    "soul": {
+      "question": "We took what was there, and now it is not there. Whether that was a choice is the question we avoid."
+    },
+    "when": {
+      "all": [
+        { "signal": "fauna.collapsing_group_count", "crosses": "rising", "threshold": 1 }
+      ]
+    },
+    "nouns": {
+      "beast": { "from": "fauna.most_collapsed" }
+    },
+    "wardrobe": [
+      {
+        "id": "collapse.thin_season",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "The {beast.plural} are thin on the ground this season, and thinner where we hunted hardest. The old ones have started counting aloud.",
+          "warm": "There aren't many {beast.plural} left out there, and fewest where we hunted hardest. The old ones have started counting them out loud, which is never a good sign."
+        }
+      },
+      {
+        "id": "collapse.no_young",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "We found no young {beast.plural} at all this year. Only the old, and not many of those.",
+          "warm": "Didn't see a single young {beast.name} this year. Just old ones, and not many of them either."
+        }
+      },
+      {
+        "id": "collapse.quiet_where_loud",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "Where the {beast.plural} were loud enough to wake us, it is quiet now. We did that. We are not saying it aloud.",
+          "warm": "The {beast.plural} used to wake us up out there. It's quiet now. That was us, and nobody's saying so."
+        }
+      }
+    ],
+    "gloss": ["fauna.collapsing_group_count"],
+    "cooldown_turns": 8
+  },
+
+  {
+    "id": "sedentarization.soft_drift",
+    "tier": "beat",
+    "soul": {
+      "question": "We have been in one place long enough that the young no longer ask when we leave."
+    },
+    "when": {
+      "all": [
+        { "signal": "sedentarization.score", "crosses": "rising", "threshold": 40 }
+      ]
+    },
+    "nouns": {
+      "ground": { "from": "biome.current_dominant" },
+      "beast": { "from": "fauna.most_hunted" }
+    },
+    "wardrobe": [
+      {
+        "id": "soft_drift.river_bend",
+        "fit": {},
+        "voice": {
+          "mythic": "The river-bend remembers us now. The young no longer ask when we leave.",
+          "warm": "We've been at the river-bend long enough that it knows us. The young ones have stopped asking when we move on."
+        }
+      },
+      {
+        "id": "soft_drift.paths_worn",
+        "fit": {},
+        "voice": {
+          "mythic": "There are paths here now, worn by our own feet, going to places only we go. That is how a country becomes a home, or a trap.",
+          "warm": "There are proper paths here now, worn in by us, running to places only we bother going. That's how somewhere turns into home. Or a trap."
+        }
+      },
+      {
+        "id": "soft_drift.buried_here",
+        "fit": {},
+        "voice": {
+          "mythic": "We have buried our dead in this ground. It is harder to walk away from ground that holds them.",
+          "warm": "We've buried people in this ground now. Makes it harder to just walk away from it."
+        }
+      }
+    ],
+    "gloss": ["sedentarization.score"],
+    "once": true
+  },
+
+  {
+    "id": "hunger.provisions_falling",
+    "tier": "ambient",
+    "soul": {
+      "question": "There is less than there was, and everyone has noticed."
+    },
+    "when": {
+      "all": [
+        { "signal": "provisions.total", "trend": "falling", "over_turns": 3 }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "hunger.ribs_counting",
+        "fit": {},
+        "voice": {
+          "mythic": "The children's ribs are counting themselves. No one says so at the fire.",
+          "warm": "You can count the children's ribs. Nobody mentions it at the fire."
+        }
+      },
+      {
+        "id": "hunger.portions_quiet",
+        "fit": {},
+        "voice": {
+          "mythic": "The portions grew smaller without anyone deciding it. That is how it always begins.",
+          "warm": "Portions have been getting smaller and nobody actually decided that. That's usually how it starts."
+        }
+      }
+    ],
+    "gloss": ["provisions.total"],
+    "cooldown_turns": 10
+  },
+
+  {
+    "id": "growth.band_swelling",
+    "tier": "ambient",
+    "soul": {
+      "question": "There are more of us than the old ground could have carried."
+    },
+    "when": {
+      "all": [
+        { "signal": "band.count", "trend": "rising", "over_turns": 5 }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "growth.more_than_left",
+        "fit": {},
+        "voice": {
+          "mythic": "We are more now than we were when we left. The old ground could not have carried this many. Say that to the ones who doubted the walking.",
+          "warm": "There are more of us now than when we set out. The old ground couldn't have fed this many — worth saying to the ones who didn't want to leave."
+        }
+      },
+      {
+        "id": "growth.names_to_learn",
+        "fit": {},
+        "voice": {
+          "mythic": "There are names in this camp that none of the old ones know. This is what surviving looks like from inside.",
+          "warm": "There are people in this camp the old ones can't name. That's what it looks like to be doing all right."
+        }
+      }
+    ],
+    "gloss": ["band.count"],
+    "cooldown_turns": 12
+  }
+]

@@ -4,6 +4,8 @@
   "species": {
     "mammoth": {
       "display_name": "Thunder Mammoths",
+      "plural": "mammoths",
+      "adjective": "mammoth",
       "size_class": "migratory",
       "migratory": true,
       "route_len": [6, 12],
@@ -18,6 +20,8 @@
     },
     "steppe_runner": {
       "display_name": "Steppe Runners",
+      "plural": "steppe runners",
+      "adjective": "steppe-runner",
       "size_class": "migratory",
       "migratory": true,
       "route_len": [6, 12],
@@ -32,6 +36,8 @@
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
+      "plural": "marsh grazers",
+      "adjective": "marsh-grazer",
       "size_class": "migratory",
       "migratory": true,
       "route_len": [6, 12],
@@ -46,6 +52,8 @@
     },
     "deer": {
       "display_name": "Red Deer",
+      "plural": "deer",
+      "adjective": "deer",
       "size_class": "big",
       "migratory": false,
       "route_len": [2, 3],
@@ -58,6 +66,8 @@
     },
     "boar": {
       "display_name": "Wild Boar",
+      "plural": "boar",
+      "adjective": "boar",
       "size_class": "big",
       "migratory": false,
       "route_len": [2, 3],
@@ -70,6 +80,8 @@
     },
     "rabbit": {
       "display_name": "Rabbit Warren",
+      "plural": "rabbits",
+      "adjective": "rabbit",
       "size_class": "small",
       "migratory": false,
       "route_len": [1, 1],
@@ -82,6 +94,8 @@
     },
     "fowl": {
       "display_name": "Wild Fowl",
+      "plural": "fowl",
+      "adjective": "fowl",
       "size_class": "small",
       "migratory": false,
       "route_len": [1, 1],
@@ -94,6 +108,8 @@
     },
     "aurochs": {
       "display_name": "Wild Aurochs",
+      "plural": "aurochs",
+      "adjective": "aurochs",
       "size_class": "big",
       "migratory": false,
       "route_len": [2, 3],
@@ -106,6 +122,8 @@
     },
     "crag_goat": {
       "display_name": "Crag Goats",
+      "plural": "goats",
+      "adjective": "goat",
       "size_class": "small",
       "migratory": false,
       "route_len": [1, 1],

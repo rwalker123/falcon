@@ -546,6 +546,71 @@ pub struct GrazeState {
     pub ecology: EcologyState,
 }
 
+/// Which ticks one narrative beat has fired on (`core_sim::telling::BeatLedger`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatFiredState {
+    #[serde(default)]
+    pub beat: String,
+    #[serde(default)]
+    pub ticks: Vec<u64>,
+}
+
+/// One `signal → value` pair in the beat ledger's edge state (or one `axis → value` pair of the
+/// stance vector — the same shape, keyed differently). `value` is **fixed-point raw**
+/// (`Scalar::SCALE` = 1.0), so a rollback restores bit-exact samples.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatSignalValueState {
+    #[serde(default)]
+    pub signal: String,
+    /// Fixed-point raw (`Scalar::SCALE` = 1.0).
+    #[serde(default)]
+    pub value: i64,
+}
+
+/// One signal's rolling sample history, oldest first, capped at `trend.max_history_turns`.
+/// Samples are **fixed-point raw** (`Scalar::SCALE` = 1.0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatSignalHistoryState {
+    #[serde(default)]
+    pub signal: String,
+    #[serde(default)]
+    pub samples: Vec<i64>,
+}
+
+/// When a wardrobe entry was last used (the novelty memory).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatWardrobeUsageState {
+    #[serde(default)]
+    pub wardrobe: String,
+    #[serde(default)]
+    pub last_used_tick: u64,
+}
+
+/// Authoritative mirror of The Telling's `BeatLedger` — the narrative memory (what fired, what the
+/// signals read last turn, which dressings are stale). Round-tripped through the rollback snapshot
+/// **including restore**, so a rollback past a beat lets that beat fire again instead of leaving it
+/// wrongly marked fired. Every map crosses as a sorted `Vec` so the record is stable.
+///
+/// Per-turn scratch (the tier budget counters) is deliberately absent — it is recomputed each
+/// turn, so a rehydrated ledger starts neutral. Sim-side only; not on the FlatBuffers client
+/// stream (beats reach the client as `CommandEvent`s). See `docs/plan_the_telling.md` §3.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeatLedgerState {
+    #[serde(default)]
+    pub fired: Vec<BeatFiredState>,
+    #[serde(default)]
+    pub edge_state: Vec<BeatSignalValueState>,
+    #[serde(default)]
+    pub history: Vec<BeatSignalHistoryState>,
+    #[serde(default)]
+    pub wardrobe_usage: Vec<BeatWardrobeUsageState>,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    /// The player-authored stance vector. Empty until PR-B's fork tier populates it.
+    #[serde(default)]
+    pub stance: Vec<BeatSignalValueState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,
@@ -745,6 +810,54 @@ impl TerrainType {
         TerrainType::AquiferCeiling,
         TerrainType::NavigableRiver,
     ];
+
+    /// Lowercase, human-readable adjective for the biome, reading naturally mid-sentence
+    /// ("the *alluvial* ground", "the *high grassland* ground"). Written out rather than derived
+    /// from the enum's debug name, which would produce copy like "AlluvialPlain ground".
+    ///
+    /// Consumed by The Telling's `biome.current_dominant` noun resolver (`core_sim/src/telling`).
+    pub const fn as_adjective(self) -> &'static str {
+        match self {
+            TerrainType::DeepOcean => "deep water",
+            TerrainType::ContinentalShelf => "shallow-sea",
+            TerrainType::InlandSea => "inland-sea",
+            TerrainType::CoralShelf => "coral",
+            TerrainType::HydrothermalVentField => "vent-field",
+            TerrainType::TidalFlat => "tidal",
+            TerrainType::RiverDelta => "delta",
+            TerrainType::MangroveSwamp => "mangrove",
+            TerrainType::FreshwaterMarsh => "marsh",
+            TerrainType::Floodplain => "floodplain",
+            TerrainType::AlluvialPlain => "alluvial",
+            TerrainType::PrairieSteppe => "grassland",
+            TerrainType::MixedWoodland => "woodland",
+            TerrainType::BorealTaiga => "taiga",
+            TerrainType::PeatHeath => "peat",
+            TerrainType::HotDesertErg => "desert",
+            TerrainType::RockyReg => "stony",
+            TerrainType::SemiAridScrub => "scrub",
+            TerrainType::SaltFlat => "salt-flat",
+            TerrainType::OasisBasin => "oasis",
+            TerrainType::Tundra => "tundra",
+            TerrainType::PeriglacialSteppe => "cold-steppe",
+            TerrainType::Glacier => "glacier",
+            TerrainType::SeasonalSnowfield => "snowfield",
+            TerrainType::RollingHills => "hill",
+            TerrainType::HighPlateau => "high grassland",
+            TerrainType::AlpineMountain => "mountain",
+            TerrainType::KarstHighland => "karst",
+            TerrainType::CanyonBadlands => "badland",
+            TerrainType::ActiveVolcanoSlope => "volcano-slope",
+            TerrainType::BasalticLavaField => "lava-field",
+            TerrainType::AshPlain => "ash",
+            TerrainType::FumaroleBasin => "fumarole",
+            TerrainType::ImpactCraterField => "crater",
+            TerrainType::KarstCavernMouth => "cavern",
+            TerrainType::SinkholeField => "sinkhole",
+            TerrainType::AquiferCeiling => "aquifer",
+            TerrainType::NavigableRiver => "river",
+        }
+    }
 }
 
 /// The class of river running along **one side of a hex** (an odd-r hex *edge*).
@@ -2218,6 +2331,11 @@ pub struct WorldSnapshot {
     /// per-tile `TileState.graze_*` fields. Restore reads it via `GrazeRegistry::update_from_states`.
     #[serde(default)]
     pub graze_registry: Vec<GrazeState>,
+    /// The Telling's narrative memory (`BeatLedger`), round-tripped for rollback correctness.
+    /// Like the registries above this is the *sim* record and is not on the FlatBuffers client
+    /// stream; restore reads it via `BeatLedger::from_state`.
+    #[serde(default)]
+    pub beat_ledger: BeatLedgerState,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]

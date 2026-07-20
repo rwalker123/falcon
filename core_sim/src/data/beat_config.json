@@ -1,0 +1,29 @@
+{
+  "budget": {
+    "max_per_turn": { "ambient": 2, "beat": 1, "fork": 1 },
+    "global_cooldown_turns": { "ambient": 0, "beat": 2, "fork": 10 }
+  },
+  "selection": {
+    "novelty_window_turns": 40,
+    "novelty_floor": 0.05,
+    "fit_soft_tag_weight": 0.25,
+    "stance_affinity_weight": 0.5,
+    "min_selection_weight": 0.001
+  },
+  "trend": {
+    "max_history_turns": 16,
+    "min_delta": 0.01
+  },
+  "voice": {
+    "default_register": "mythic",
+    "registers": ["mythic", "warm"]
+  },
+  "stance": {
+    "axes": [
+      { "id": "roam_settle", "signal": "sedentarization.score", "range": [0.0, 100.0] },
+      { "id": "appetite_restraint", "signal": "culture.axis.ascetic_indulgent", "range": [-1.0, 1.0] },
+      { "id": "open_closed", "signal": "culture.axis.open_closed", "range": [-1.0, 1.0] },
+      { "id": "sacred_secular", "signal": "culture.axis.secular_devout", "range": [-1.0, 1.0] }
+    ]
+  }
+}

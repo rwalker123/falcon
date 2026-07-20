@@ -405,6 +405,7 @@ pub mod knowledge {
                 herd_registry: Vec::new(),
                 forage_registry: Vec::new(),
                 graze_registry: Vec::new(),
+                beat_ledger: Default::default(),
                 food_modules: Vec::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),

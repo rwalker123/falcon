@@ -32,6 +32,9 @@ pub struct SnapshotContext<'w> {
     /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
     /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
     pub graze_registry: Res<'w, GrazeRegistry>,
+    /// The Telling's narrative memory, captured into the rollback snapshot (`beat_ledger`) so a
+    /// rollback past a beat lets that beat fire again — see `core_sim/src/telling/mod.rs`.
+    pub beat_ledger: Res<'w, BeatLedger>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
@@ -1224,6 +1227,7 @@ pub fn capture_snapshot(
         herd_registry,
         forage_registry,
         graze_registry,
+        beat_ledger,
         fog_reveals,
         elevation,
         moisture,
@@ -1649,6 +1653,9 @@ pub fn capture_snapshot(
     let mut graze_registry_states: Vec<GrazeState> =
         graze_registry.patches.values().map(graze_state).collect();
     graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
+    // The Telling's narrative memory. Already deterministically ordered (BTree-backed), so it
+    // needs no sort of its own.
+    let beat_ledger_state = beat_ledger.to_state();
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1684,6 +1691,7 @@ pub fn capture_snapshot(
         herd_registry: herd_registry_states,
         forage_registry: forage_registry_states,
         graze_registry: graze_registry_states,
+        beat_ledger: beat_ledger_state,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2110,6 +2118,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     } else {
         world.insert_resource(GrazeRegistry::from_states(&snapshot.graze_registry));
     }
+
+    // Rebuild The Telling's narrative memory. **Restore, not just capture**: without this a
+    // rollback past a beat leaves it marked fired and it could never fire again.
+    world.insert_resource(BeatLedger::from_state(&snapshot.beat_ledger));
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
         handle.get()

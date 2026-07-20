@@ -247,7 +247,13 @@ order*. Adding a beat to the catalog cannot perturb an unrelated beat's roll.
 
 Every PR playtestable on its own.
 
-### PR-A — engine + ambient (no new client code)
+### PR-A — engine + ambient (no new client code) — **SHIPPED**
+
+> **See Also:** the authoritative implementation spec now lives in `core_sim/CLAUDE.md`
+> → "The Telling — the narrative beat engine" (module layout, `TurnStage::Telling`
+> placement, config levers + invariants, the signal/noun registries as the extension
+> points, and the determinism recipe). This document keeps the *design rationale*.
+
 
 Beat registry, ledger, signal + noun resolver registries, predicate grammar,
 catalog loader, seeded selection, and the ambient/beat tiers surfaced through

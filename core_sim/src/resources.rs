@@ -1112,6 +1112,9 @@ pub enum CommandEventKind {
     ExpeditionArrived,
     ExpeditionRecalled,
     ExpeditionReturned,
+    /// A narrative beat from The Telling (`core_sim::telling`). The wire field is already a
+    /// string, so the feed renders new kinds generically — no schema or client change.
+    NarrativeBeat,
 }
 
 impl CommandEventKind {
@@ -1135,6 +1138,7 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionArrived => "expedition_arrived",
             CommandEventKind::ExpeditionRecalled => "expedition_recalled",
             CommandEventKind::ExpeditionReturned => "expedition_returned",
+            CommandEventKind::NarrativeBeat => "narrative_beat",
         }
     }
 }
