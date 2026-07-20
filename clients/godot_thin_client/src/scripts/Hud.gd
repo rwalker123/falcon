@@ -1293,9 +1293,10 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    # The telling lives in the RIGHT dock, so its scroll-fit ceiling is the right dock's scroll
-    # container — passing the left one would compute height against a dock it is not in.
-    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, right_dock_scroll)
+    # The telling is a FIXED-SIZE book now (docs/plan_the_telling_book_ux.md), so it no longer needs a
+    # dock-scroll ceiling to fit against — its height is `PAGE_HEIGHT`, and the right dock's own scroll
+    # stacks it above Victory + Terrain Types with no bespoke height math.
+    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
@@ -2489,6 +2490,10 @@ func _on_turn_orb_focus(x: int, y: int) -> void:
     emit_signal("alert_focus_requested", x, y)
 
 func _on_turn_orb_advance() -> void:
+    # Advancing the turn is "catch me up": reveal the newest telling so a player who moves on isn't left
+    # parked on an old page (mid-turn beats only mark the book unread — see TellingPanel.reveal_newest).
+    if _telling != null:
+        _telling.reveal_newest()
     emit_signal("next_turn_requested", 1)
 
 # ---- Early-Game Labor allocation (slice 3b) --------------------------------
@@ -6856,8 +6861,9 @@ func _apply_victory_visibility() -> void:
         victory_panel.visible = should_show
     _refit_right_dock()
 
-## The Telling panel sits ABOVE the two toggleable cards and grows to fill the dock, so showing or
-## hiding one of them changes how much room it may take. Nothing else in the right dock resizes.
+## The Telling panel is a FIXED-SIZE book now, so a sibling's visibility flip no longer changes its
+## height — `refit()` is a harmless no-op (it only re-clamps the inner scroll). Kept so this call stays
+## valid and the right dock reflows the toggleable cards below it.
 func _refit_right_dock() -> void:
     if _telling != null:
         _telling.refit()

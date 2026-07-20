@@ -66,6 +66,7 @@ const FORK_REGISTER_WARM := "warm"
 # The Telling panel's medium rungs. Named here only so the states read; the client keys its styling
 # off a table with an `oral` fallback, never off these three being exhaustive.
 const TELLING_MEDIUM_ORAL := "oral"
+const TELLING_MEDIUM_PAINTED := "painted"
 const TELLING_MEDIUM_WRITTEN := "written"
 # The pen-keeping band's entity id — its own, so the force-expanded Food breakdown override
 # (`_breakdown_expanded` is keyed `food:<entity>`) doesn't collide with the reference band's.
@@ -1599,28 +1600,50 @@ func _ready() -> void:
 	_hud.reset_command_feed()
 	_hud._telling.reset()
 
-	# G1 — the panel under the FIRST medium, on real authored copy (incl. the longest line in the
-	# catalog, so wrapping is genuinely exercised).
+	# G1 — ORAL: the current utterance only. No page furniture, no leaf controls, no page number — oral
+	# memory does not keep the previous telling, so the visible page is pinned to the NEWEST beat (the
+	# fork at tick 22). Ingest the real authored copy (incl. the catalog's longest line, so a page's
+	# wrap is genuinely exercised).
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
 	_hud.ingest_command_events(_telling_fixture_events())
 	await _settle()
 	await _save("telling_panel_oral")
 
-	# G2 — the SAME entries under the LAST medium. Nothing about the copy changes (per-medium copy
-	# is a deliberate non-goal); only the title and the accent age, which is the whole point.
+	# G2 — PAINTED: the accumulating wall. The SAME entries, now retained as pages you can walk FORWARD
+	# through (a marks + position cue, no back control). Parked mid-way (page 3/6) so the retained
+	# earlier pages and the forward-only affordance read at once.
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_PAINTED, "medium_index": 1}])
+	_hud._telling.reveal_newest()
+	_hud._telling.leaf(-3)
+	await _settle()
+	await _save("telling_panel_painted")
+
+	# G3 — WRITTEN: the full book. Page number + ‹ › leaf controls, parked on a NON-LAST page (3/6) so
+	# backward leafing is visibly available (both ‹ and › active). Nothing about the copy changes
+	# between the rungs (per-medium copy is a deliberate non-goal) — only the title, accent and
+	# CAPABILITIES age, which is the whole point.
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	_hud._telling.reveal_newest()
+	_hud._telling.leaf(-3)
 	await _settle()
 	await _save("telling_panel_written")
 
-	# G3 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel is still holding its six
-	# beats while the command feed carries ordinary receipts: before PR-C, two beats filled the
-	# feed card outright and pushed every receipt off screen. The receipts must be READABLE here.
+	# G3b — UNREAD: the yields-to-reader rule. The reader is held on an OLD page (1/6) while newer pages
+	# exist; the page never turns on its own, so a subtle "a new telling waits" cue appears instead of
+	# yanking them forward. (Advancing the turn — reveal_newest() — is what catches them up.)
+	_hud._telling.leaf(-2)
+	await _settle()
+	await _save("telling_panel_unread")
+
+	# G4 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel holds its fixed page while the
+	# command feed carries ordinary receipts: before the split, two beats filled the feed card outright
+	# and pushed every receipt off screen. The receipts must be READABLE here. (Oral restored.)
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
 	_hud.ingest_command_events(_telling_command_receipts())
 	await _settle()
 	await _save("telling_and_feed")
 
-	# G4 — THE DEFAULT DOCK LAYOUT. The right dock holds the Telling panel ALONE: Victory and
+	# G5 — THE DEFAULT DOCK LAYOUT. The right dock holds the Telling panel ALONE: Victory and
 	# Terrain Types both ship suppressed, so the narrative surface gets the full right-dock height
 	# instead of the squeezed share it had while it lived under the left dock's selection cards.
 	# The command feed stays on the left, which is the layout this frame exists to show.
@@ -1634,7 +1657,7 @@ func _ready() -> void:
 	_assert_hud("default layout: Telling panel lives in the right dock stack",
 		_hud.telling_panel.get_parent() == _hud.right_stack)
 
-	# G5 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
+	# G6 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
 	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the
 	# Telling panel is seen to yield height rather than overlap.
 	# Victory goes through the REAL `toggle_victory` (the `V` path, prefs write included — the harness
