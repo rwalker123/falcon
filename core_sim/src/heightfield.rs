@@ -286,7 +286,8 @@ fn continent_centers(
     centers
 }
 
-/// Signed x-separation, taking the short way around when the map wraps horizontally.
+/// Shortest **absolute** x-separation, taking the short way around when the map wraps horizontally.
+/// The result is a magnitude, never a signed offset — callers only ever square it.
 #[inline]
 fn torus_delta(a: f32, b: f32, span: f32, wrap: bool) -> f32 {
     let d = (a - b).abs();
