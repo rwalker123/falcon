@@ -188,6 +188,20 @@ func _ready() -> void:
 		await _settle()   # extra frame: let the deferred fit_content re-pack + reservation settle
 		await _save(state["name"])
 
+	# PER-SOURCE MAX-USEFUL CAP on the Current-actions rows. Push a band with idle workers to spare and
+	# three staffed sources: a Forage row staffed AT its patch's max-useful (3), a Forage row BELOW its
+	# patch's max-useful (1 of 5), and a Hunt row staffed AT its herd's max-useful (2). With idle still
+	# available the two AT-cap rows' `+` must be DISABLED (capped per source), the below-cap row's `+`
+	# ENABLED, and Scout's `+` still tracks idle. The forecast fields ride the pushed herds/patches.
+	_hud.show_tile_selection({})
+	_hud._pending_labor.clear()
+	_hud.update_herds(_cap_demo_herd_fixtures())
+	_hud.update_forage_patches(_cap_demo_patch_fixtures())
+	_hud.update_band_alerts([_cap_demo_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_source_cap")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -226,6 +240,41 @@ func _herd_fixtures() -> Array:
 		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
 		{"id": "game_deer_79", "species": "Roe Deer", "x": 64, "y": 11, "population": 90, "ecology_phase": "thriving"},
 	]
+
+## Herds for the per-source-cap verify state: game_deer_07 carries the BARE pre-commit forecast fields
+## (per_worker_yield / ceiling_sustain) the Current-actions Hunt row reads via `_find_world_herd` +
+## `_forecast_inputs`. max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
+func _cap_demo_herd_fixtures() -> Array:
+	return [
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120,
+			"ecology_phase": "thriving", "per_worker_yield": 0.10, "ceiling_sustain": 0.20},
+	]
+
+## Forage patches for the per-source-cap verify state (shape `update_forage_patches` consumes — the RAW
+## wire dict with BARE forecast keys). (71,18): max-useful = ceil(0.30 / 0.10) = 3. (60,20): max-useful
+## = ceil(0.50 / 0.10) = 5.
+func _cap_demo_patch_fixtures() -> Array:
+	return [
+		{"x": 71, "y": 18, "per_worker_yield": 0.10, "ceiling_sustain": 0.30},
+		{"x": 60, "y": 20, "per_worker_yield": 0.10, "ceiling_sustain": 0.50},
+	]
+
+## The per-source-cap verify band: idle workers to spare (4), one Forage row AT its patch max-useful
+## (3 at (71,18)), one Forage row BELOW its patch max-useful (1 of 5 at (60,20)), one Hunt row AT its
+## herd max-useful (2 on game_deer_07), plus a Scout role. The two AT-cap `+`s must go dead with idle
+## still available; the below-cap Forage `+` and the band-wide Scout `+` must stay enabled.
+func _cap_demo_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 910
+	band["id"] = "Band 8"
+	band["idle_workers"] = 4
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.30, "sustainable_yield": 0.30},
+		{"kind": "forage", "workers": 1, "policy": "sustain", "target_x": 60, "target_y": 20, "actual_yield": 0.10, "sustainable_yield": 0.10},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 68, "target_y": 15, "actual_yield": 0.20, "sustainable_yield": 0.20},
+		{"kind": "scout", "workers": 1},
+	]
+	return band
 
 ## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
 ## working-age labor with idle workers + a couple of active assignments + the settlement stage

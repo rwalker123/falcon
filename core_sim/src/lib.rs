@@ -36,6 +36,7 @@ pub mod hashing;
 mod heightfield;
 mod hydrology;
 mod influencers;
+mod intensification;
 mod knowledge_ledger;
 mod labor_config;
 pub mod log_stream;
@@ -121,9 +122,11 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, forecast_expected_take, herd_capacity,
-    herd_ecology, hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
-    repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
+    herd_ecology, herd_herders_needed, herded_fraction, herders_needed, hunt_credit_ceiling,
+    hunt_policy_rate, hunt_provisions, hunt_source_yield_preview, pen_upkeep, quantise_animal_take,
+    repopulate_fauna, spawn_initial_herds, AnimalTake, EcologyPhase, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
@@ -134,8 +137,9 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
-    spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview, rung_site_refusal,
+    spawn_initial_forage, tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry,
+    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -152,6 +156,12 @@ pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
+pub use intensification::{
+    knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
+    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
+    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
+    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, SITE_ACCEPTED,
+};
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
     KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
@@ -159,7 +169,7 @@ pub use knowledge_ledger::{
 };
 pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
-    BUILTIN_LABOR_CONFIG,
+    BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use sedentarization::{
@@ -371,6 +381,8 @@ pub fn build_headless_app() -> App {
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
+    let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
+    let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
     let (sedentarization_config, sedentarization_metadata) =
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
@@ -445,6 +457,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(fauna_metadata)
         .insert_resource(labor_handle)
         .insert_resource(labor_metadata)
+        .insert_resource(ladder_handle)
+        .insert_resource(ladder_metadata)
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())

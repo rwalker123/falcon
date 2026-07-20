@@ -51,12 +51,16 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-        SourceYieldForecast, HERDING_DISCOVERY_ID, PEN_FULLY_FED,
+        herd_herders_needed, hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap,
+        HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
-    forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
+    forage::{
+        field_provisions, forage_forecast, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
+        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+    },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
@@ -69,6 +73,7 @@ use crate::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
     },
+    intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
     knowledge_ledger::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
@@ -145,11 +150,6 @@ const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 /// snapshot exports the un-scaled forecast and the client multiplies by the acting band's own.
 const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-/// Seasonal gather weight assumed for a forage patch whose tile carries no `FoodModuleTag` (not
-/// reachable today — patches are seeded from those tiles — so it forecasts nothing rather than
-/// inventing a weight).
-const NO_SEASONAL_WEIGHT: f32 = 0.0;
-
 fn diff_new<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<T>
 where
     K: Eq + Hash,
@@ -177,8 +177,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
+    /// what a take pays, so the quantum is deliberately small enough never to bind.
+    const SNAPSHOT_BODY_MASS: f32 = 1.0;
+
     use super::*;
     use crate::{
+        intensification::RUNG_COMPLETE,
         labor_config::LaborConfig,
         orders::FactionId,
         power::PowerIncidentSeverity as GridIncidentSeverity,
@@ -206,6 +211,10 @@ mod tests {
             step_index: 2,
             current_pos: (5, 6),
             dwell_remaining: 3,
+            body_mass: 800.0,
+            // Slice 8b: the kill-credit accumulator round-trips (a rollback rewinds progress toward
+            // the next kill rather than resetting the wait).
+            hunt_credit: 123.0,
             roam: HerdRoamState {
                 mode: "loiter".to_string(),
                 loiter_turns_left: 9,
@@ -226,6 +235,9 @@ mod tests {
             regrowth_rate: 0.04,
             // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
             husbandry_ceiling: "wild".to_string(),
+            // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
+            // rollback restores it rather than re-flickering for a turn.
+            herders_needed: 3,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -597,6 +609,7 @@ mod tests {
             hunt_per_worker_carry: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
+            band_move_tiles_per_turn: 0,
         };
         population_state(
             Entity::from_raw(1),
@@ -648,12 +661,16 @@ mod tests {
                 SourceYield {
                     actual: 2.5,
                     sustainable: 2.5,
+                    wasted: 0.0,
                     workers_needed: 1,
+                    overdraws: false,
                 },
                 SourceYield {
                     actual: 0.5,
                     sustainable: 0.25,
+                    wasted: 0.0,
                     workers_needed: 5,
+                    overdraws: true,
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -737,14 +754,7 @@ mod tests {
             policy: FollowPolicy::Market,
         };
         let assignment = LaborAssignment { target, workers: 6 };
-        let state = labor_assignment_to_state(
-            &assignment,
-            SourceYield {
-                actual: 0.0,
-                sustainable: 0.0,
-                workers_needed: 0,
-            },
-        );
+        let state = labor_assignment_to_state(&assignment, SourceYield::ZERO);
         assert_eq!(state.policy, "market", "policy serialized");
 
         let restored = labor_allocation_from_state(std::slice::from_ref(&state));
@@ -1379,7 +1389,13 @@ mod tests {
         registry.patches.insert(tended.tile, tended);
 
         let labor = LaborConfig::builtin();
-        let patches = snapshot_forage_patches(&registry, &labor.forage, &HashMap::new());
+        let patches = snapshot_forage_patches(
+            &registry,
+            &labor.forage,
+            &LadderConfig::builtin(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
         assert_eq!((patches[0].x, patches[0].y), (1, 0));
@@ -1426,8 +1442,12 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
-        penned.corral_at(UVec2::new(4, 4));
+        assert!(
+            penned.corral_at(UVec2::new(4, 4)),
+            "the fixture species must be pennable"
+        );
         registry.herds.push(penned);
         // A second, un-penned herd stays mobile (corralled = false).
         registry.herds.push(Herd::new(
@@ -1439,6 +1459,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1451,6 +1472,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1487,6 +1509,7 @@ mod tests {
             163.0,
             0.10,
             0.35,
+            2.0,
         ));
         registry.herds.push(Herd::new(
             "herd_big".to_string(),
@@ -1497,6 +1520,7 @@ mod tests {
             1352.0,
             0.05,
             0.10,
+            60.0,
         ));
         registry.herds.push(Herd::new(
             "herd_migratory".to_string(),
@@ -1507,6 +1531,7 @@ mod tests {
             9000.0,
             0.011,
             0.04,
+            800.0,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1516,6 +1541,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1578,8 +1604,12 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
-        penned.corral_at(UVec2::new(4, 4));
+        assert!(
+            penned.corral_at(UVec2::new(4, 4)),
+            "the fixture species must be pennable"
+        );
         // The keeper could only pay half the feed last turn → the herd is starving.
         penned.pen_fed_fraction = HALF_FED;
         registry.herds.push(penned);
@@ -1592,6 +1622,7 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         ));
 
         let telemetry = HerdTelemetry {
@@ -1604,6 +1635,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),
@@ -1656,8 +1688,9 @@ mod tests {
             CAP,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
-        mobile.claim_domestication(FactionId(0));
+        mobile.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         registry.herds.push(mobile);
         // The same herd, penned — its upkeep must read the same at the same biomass.
         let mut penned = Herd::new(
@@ -1669,9 +1702,13 @@ mod tests {
             CAP,
             0.0,
             0.05,
+            SNAPSHOT_BODY_MASS,
         );
-        penned.claim_domestication(FactionId(0));
-        penned.corral_at(UVec2::new(3, 3));
+        penned.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        assert!(
+            penned.corral_at(UVec2::new(3, 3)),
+            "the fixture species must be pennable"
+        );
         registry.herds.push(penned);
 
         let telemetry = HerdTelemetry {
@@ -1684,6 +1721,7 @@ mod tests {
             &telemetry,
             &registry,
             &fauna,
+            &LadderConfig::builtin(),
             &labor,
             &expedition,
             bevy::math::UVec2::new(64, 64),

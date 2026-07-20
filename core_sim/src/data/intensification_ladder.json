@@ -1,0 +1,155 @@
+{
+  "_comment": "THE INTENSIFICATION LADDER (docs/plan_intensification_ladder.md §5). Both food webs climb the same ladder: rung 1 = the wild source, rung 2 = you manage it in place, rung 3 = you control its reproduction. A rung is a RECORD; the ladder is a LIST; adding a rung is appending a record. THIS FILE DESCRIBES WHAT THE SIM DOES TODAY, not the target model — later slices change behaviour by EDITING it (that is the whole thesis). A rung whose `verb` is null is not driven by a policy today and the build engine skips it.",
+  "_comment_branches": "`plant` = the human food web (forage patches, forage.rs). `animal` = the animal food web (herds, fauna.rs). The two learn separately (§4.2) and never share a rung.",
+  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs — there is nothing to build about a wild source).",
+  "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam | drift_to_owner (the proximity spine far -> near -> fixed; a drifting herd biases each roam step toward its owner's nearest band, composing with — never replacing — the graze-aware roam's barren-avoidance and fertility preference). `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all — NO SHIPPED RUNG IS PASSIVE since slice 3b retired passive-free pastoral). **`movement` IS READ** by fauna::advance_herds (slice 3b — the first primitive the engine applies); `feeding`/`harvest` are parsed and validated only.",
+  "_comment_knowledge": "THE PACE OF THE LADDER (§4, slice 4). `progress_per_turn` is the faction knowledge earned per turn a crew works a source under a STEWARDSHIP policy at a rung that teaches (Sustain + the investment verbs; Surplus/Market/Eradicate teach nothing — §4.2); `completion_threshold` is the ledger bar at which the faction KNOWS it and may pick the verb it gates. 0.05 / 1.0 -> ~20 turns per lesson. MOVED here VERBATIM from the two identical per-web copies (labor_config's `forage.cultivation` and fauna_config's `husbandry`) once the earn path became one rung-driven seam: the number paces BOTH webs, so it belongs to the ladder, exactly like the build dials. PLAYTEST DIALS — this is the lever that sets how long the whole wild->pen climb takes.",
+  "knowledge": {
+    "progress_per_turn": 0.05,
+    "completion_threshold": 1.0
+  },
+  "rungs": [
+    {
+      "id": "wild",
+      "branch": "plant",
+      "order": 1,
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "LIVE (slice 4): working a Thriving WILD patch under a stewardship policy teaches the faction Cultivation (CULTIVATION_DISCOVERY_ID 2003). The earn path now reads THIS FIELD — `RungDef::knowledge_earned`, driven off the rung the patch stands on — instead of the hard-coded Sustain branch that used to sit in systems/labor.rs. Rung-1 behaviour is unchanged (a Sustain forage on a Thriving patch still earns Cultivation at the same rate); it is simply data now.",
+      "earns_knowledge": "cultivation",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_take"
+      }
+    },
+    {
+      "id": "tended",
+      "branch": "plant",
+      "order": 2,
+      "verb": "cultivate",
+      "unlock_knowledge": "cultivation",
+      "_comment_earns_knowledge": "SLICE 4, and IT IS A CONFIG EDIT exactly as promised. Working a TENDED patch under a stewardship policy teaches Seed Selection (2005) — §4: you learn to select seed by FARMING, not by gathering wild stands. Note the rule is about the RUNG, not the verb: a Sustain harvest of a tended patch teaches it too (the patch is tended; tending it IS the practice). Its consumer — the `Field`/`Sow` rung this gates — is slice 5: earned now, spent later.",
+      "earns_knowledge": "seed_selection",
+      "requires_rung": "wild",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns; yield_fraction_while_building 0.25 = the old `cultivating_yield_fraction`).",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.25
+      },
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_tend"
+      }
+    },
+    {
+      "id": "field",
+      "branch": "plant",
+      "order": 3,
+      "_comment_verb": "SLICE 5 — the plant twin of `corral`: `sow` PLACES a food source where you want it. Gated on Seed Selection, which the tended rung has been teaching since slice 4 (earned then, spent now — the pacing model working as designed). `Sow` is only legal on NATURALLY FOOD-BEARING ground (non-zero forage.capacity_by_biome): the floodplain, the river garden, the fat grassland. It CANNOT farm rock/ice/desert — making unwilling ground farmable is rung 4 (Worked Land), a future arc. So rung 3 pulls you toward good country, which IS the sedentarization pull.",
+      "verb": "sow",
+      "unlock_knowledge": "seed_selection",
+      "_comment_earns_knowledge": "Null: practising the field would teach `irrigation`/`rotation` (rung 4 — Worked Land, §2a), a parked follow-on. Exactly where the animal ladder's `pen` rung stands with `selective_breeding`. The engine already reads this field, so adding that rung is a config edit plus one id.",
+      "earns_knowledge": null,
+      "_comment_requires_rung": "`requires_rung` states WHERE THIS RUNG SITS ON THE LADDER (directly above `tended`) — it is not a per-source precondition, and no code reads it as one (see RungDef::requires_rung). The per-source rule is each verb's own gate, and it is exactly where the two webs legitimately differ (§2): `corral` demands a herd you already tamed, while `sow` demands NO prior patch — seed travels, so a hospitable tile with no spawned forage site can be sown into a genuinely new source.",
+      "requires_rung": "tended",
+      "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so there is no species ceiling here; the LAND is what this rung is choosy about, and that is `site_requirement` below — the plant twin of the same idea.",
+      "ceiling_required": null,
+      "_comment_site_requirement": "THE SCARCITY DIAL, and the reason rung 3 is a decision rather than 'tended but 2x'. Rung 3 is: I know how to take seed from a plant and put it somewhere else — but I do NOT know fertilization, so the land must ALREADY be very fertile, and near fresh water. `min_forage_capacity` 195 is a floor on the tile's own `forage.capacity_by_biome`: it admits exactly the river-deposit class (RiverDelta 210, Floodplain 205, AlluvialPlain 195) and stops just above ordinary MixedWoodland (190) — the naturally rich, watered ground of every real first agriculture. `requires_fresh_water` demands a river along one of the hex's sides, fresh-water ground, or a lake/channel/marsh next door (a SALT coast does not count — you do not plant a field in the sea spray). MEASURED on earthlike 80x52 seed 119304647: 2328 tiles bear food at all, 337 clear the fertility floor, and only 46 clear BOTH — ~1.1% of the map, in the river valleys and deltas. The conjunction is doing the work: the floor alone would leave 337, so the water rule cuts 86% of it. BOTH ARE PLAYTEST DIALS — raise the floor or drop the water rule to make farmland commoner. RUNG 4 (Worked Land: plows, irrigation, terracing) IS A LOOSER COPY OF THIS RECORD and nothing else — a lower floor and `requires_fresh_water: false`.",
+      "site_requirement": {
+        "min_forage_capacity": 195.0,
+        "requires_fresh_water": true
+      },
+      "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.25 = the same investment dip a Cultivate pays). Note what the dip means on BARE ground: there is no standing crop to take a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it is the familiar 0.25 x MSY bite.",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.25
+      },
+      "_comment_behavior": "A field is a place that photosynthesises and is harvested by its tenders without being drawn down — the same primitives the tended patch recombines. Rung 3 of the plant ladder changes WHERE the source is, not how it behaves; `movement: fixed` is exactly the point (`Sow` fixes the source at a tile of YOUR choosing rather than the one the wild put it on).",
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "photosynthesis",
+        "harvest": "worker_tend"
+      }
+    },
+    {
+      "id": "wild",
+      "branch": "animal",
+      "order": 1,
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "LIVE (slice 4), the animal mirror: working a Thriving WILD herd under a stewardship policy teaches the faction Herding (HERDING_DISCOVERY_ID 2004) — §4's \"you learn herding by managing wild herds\". Read through `RungDef::knowledge_earned` off the rung the herd stands on, retiring the hard-coded Sustain branch in systems/labor.rs. Rung-1 behaviour is unchanged.",
+      "earns_knowledge": "herding",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": null,
+      "behavior": {
+        "movement": "roam",
+        "feeding": "forage",
+        "harvest": "worker_take"
+      }
+    },
+    {
+      "id": "pastoral",
+      "branch": "animal",
+      "order": 2,
+      "_comment_verb": "The `tame` verb — the animal twin of `cultivate`. Taming is an EXPLICIT, gated investment, no longer a hidden side effect of a Sustain hunt (the §4.1 conflation, fixed): Sustain now only TEACHES the faction Herding, and `tame` is what fills this herd's meter. The `domesticate` early-claim is gone (it existed to skip the investment — the same reason the plant side removed its own).",
+      "verb": "tame",
+      "_comment_unlock_knowledge": "§4.3, COMPLETE as of slice 4: Herding gates rung 2 (`tame`) and NOTHING ELSE — the `animal:pen` rung moved onto its own `penning` knowledge, so there is now exactly ONE knowledge per transition.",
+      "unlock_knowledge": "herding",
+      "_comment_earns_knowledge": "SLICE 4, a config edit: working a PASTORAL (tamed) herd under a stewardship policy teaches Penning (2006) — §4's \"...penning by managing tamed ones\", which is the heart of the arc. Again the rule keys off the RUNG, not the verb: a Sustain hunt of a tamed herd teaches Penning, while the same Sustain hunt of a wild one teaches Herding. PACING CONSEQUENCE (intended): a pen now needs Sustain-hunt-wild -> Herding -> Tame -> work the pastoral herd -> Penning -> Corral, materially longer than the old \"Herding unlocks Corral\". Each rung is paced by practising the one below.",
+      "earns_knowledge": "penning",
+      "requires_rung": "wild",
+      "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_domesticate).",
+      "ceiling_required": "pastoral",
+      "site_requirement": null,
+      "_comment_build": "progress_per_turn 0.04 (-> 25 turns to tame) and decay_per_turn 0.01 (an abandoned herd goes feral over ~100 turns) are today's shipped values, MOVED here verbatim from fauna_config.json `husbandry`. yield_fraction_while_building 0.50 is NEW — taming now costs yield, like every other rung; 0.50 mirrors the animal-side `corral` dip precedent. A PLAYTEST DIAL.",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.01,
+        "yield_fraction_while_building": 0.5
+      },
+      "_comment_behavior": "Slice 3b, the thesis in action — THE BEHAVIOUR CHANGE IS THIS DIFF. `harvest` was `passive` (a tamed herd paid its owner with no workers at all); §3 retires that: EVERY rung is worker-driven, so a pastoral herd is now `worker_take` like a wild one — it yields only through a normal Hunt assignment. The payoff is not zero workers, it is YIELD PER WORKER: `herd_ecology` already gives a tamed herd the pastoral r (wild x `pastoral_gain` 1.5), so the same workers take ~1.5x the sustainable food. `movement` was `roam`; it is now `drift_to_owner` — the proximity spine's middle rung (wild roams its full range, tamed drifts to the camp, penned is fixed at the fence), which is also less chasing and so more effective yield.",
+      "behavior": {
+        "movement": "drift_to_owner",
+        "feeding": "forage",
+        "harvest": "worker_take"
+      }
+    },
+    {
+      "id": "pen",
+      "branch": "animal",
+      "order": 3,
+      "verb": "corral",
+      "_comment_unlock_knowledge": "THE §4.3 RESHUFFLE (slice 4): `herding` -> `penning`. Rung 3 is gated on the knowledge rung 2 TEACHES, so you cannot pen a herd until you have kept tamed ones. Herding now gates `tame` alone. The `extend_pen` command rides this same rung record, so a fence ring is gated on Penning too — a ring is the same fencing labor at the same price, and it must never drift from the initial build.",
+      "unlock_knowledge": "penning",
+      "_comment_earns_knowledge": "Still null: practising the pen would teach `selective_breeding` (rung 4, §6) — a parked follow-on. The engine already reads this field, so adding that rung is a config edit plus one id.",
+      "earns_knowledge": null,
+      "requires_rung": "pastoral",
+      "_comment_ceiling_required": "Grazing 2d-delta: only a `pen`-ceiling species may be fenced (Herd::can_pen).",
+      "ceiling_required": "pen",
+      "site_requirement": null,
+      "_comment_build": "Today's shipped values, moved here verbatim from fauna_config.json `husbandry` (progress_per_turn 0.04 = the old `corral_build_progress_per_turn` -> 25 turns per pen / per extension ring; decay_per_turn 0.0 because pen construction does NOT bleed today — an untended pen escapes outright, zeroing corral_progress in advance_husbandry, rather than decaying; yield_fraction_while_building 0.50 = the old `corralling_yield_fraction`, the dip the keeper pays while building AND while extending the fence).",
+      "build": {
+        "progress_per_turn": 0.04,
+        "decay_per_turn": 0.0,
+        "yield_fraction_while_building": 0.5
+      },
+      "behavior": {
+        "movement": "fixed",
+        "feeding": "self_graze",
+        "harvest": "worker_tend"
+      }
+    }
+  ]
+}
