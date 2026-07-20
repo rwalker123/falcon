@@ -14,15 +14,11 @@ class_name MapInspectorPanel
 ## clients/godot_thin_client/CLAUDE.md).
 
 const Typography = preload("res://src/scripts/Typography.gd")
+const MapSizes = preload("res://src/scripts/MapSizes.gd")
 
-const MAP_SIZE_OPTIONS := [
-	{"key": "tiny", "label": "Tiny", "width": 56, "height": 36},
-	{"key": "small", "label": "Small", "width": 66, "height": 42},
-	{"key": "standard", "label": "Standard", "width": 80, "height": 52},
-	{"key": "large", "label": "Large", "width": 104, "height": 64},
-	{"key": "huge", "label": "Huge", "width": 128, "height": 80}
-]
-const MAP_SIZE_DEFAULT_KEY := "standard"
+# Canonical map-size list lives in MapSizes (shared DRY with the New Game setup pane); this panel
+# only adds its own runtime "Custom (WxH)" entry for a server-reported off-list dimension.
+const MAP_SIZE_DEFAULT_KEY := MapSizes.DEFAULT_KEY
 const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 
 @onready var map_size_label: Label = $MapVBox/MapSizeSection/MapSizeLabel
@@ -400,7 +396,7 @@ func _custom_map_size_label(dimensions: Vector2i) -> String:
 func _active_map_label() -> String:
 	if _map_size_key == "" or _map_size_key == "custom":
 		return "Custom"
-	for option in MAP_SIZE_OPTIONS:
+	for option in MapSizes.OPTIONS:
 		if String(option.get("key", "")) == _map_size_key:
 			return String(option.get("label", _map_size_key.capitalize()))
 	return _map_size_key.capitalize()
@@ -412,7 +408,7 @@ func _populate_map_size_dropdown() -> void:
 	_suppress_map_size_signal = true
 	map_size_dropdown.clear()
 	var index := 0
-	for option in MAP_SIZE_OPTIONS:
+	for option in MapSizes.OPTIONS:
 		var label: String = "%s (%dx%d)" % [
 			String(option.get("label", "")),
 			int(option.get("width", 0)),
@@ -440,7 +436,7 @@ func _set_map_size_selection_from_dimensions(width: int, height: int) -> void:
 		return
 	_map_dimensions = Vector2i(width, height)
 	var matched_key := ""
-	for option in MAP_SIZE_OPTIONS:
+	for option in MapSizes.OPTIONS:
 		if int(option.get("width", 0)) == width and int(option.get("height", 0)) == height:
 			matched_key = String(option.get("key", ""))
 			break

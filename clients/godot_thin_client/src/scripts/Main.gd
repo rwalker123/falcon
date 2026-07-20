@@ -5,21 +5,28 @@ const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
 const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 const ServerPortsFile = preload("res://src/scripts/ServerPortsFile.gd")
+const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
 @onready var band_city_panel: CanvasLayer = $BandCityPanel
+@onready var pause_layer: CanvasLayer = $PauseLayer
+@onready var pause_menu: MenuShell = $PauseLayer/MenuShell
 
 var snapshot_loader: SnapshotLoader
-var playback_timer: Timer
 var streaming_mode: bool = false
-var stream_connection_timer: float = 0.0
 var command_client: CommandClient
-var _warned_stream_fallback: bool = false
 var _warned_missing_map_view_method: bool = false
 var _camera_initialized: bool = false
+# Loading gate: hold the loading overlay until the NEW world's first FULL snapshot arrives. On a
+# reconnect the snapshot server replays its last cached frame (the OLD world), so we ignore any
+# frame whose world_epoch is <= the baseline captured at _ready and reveal only on the rebuild's
+# higher epoch. See _process's streaming block.
+var _world_revealed: bool = false
+var _reveal_baseline_epoch: int = 0
+var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
@@ -29,23 +36,41 @@ var _victory_analytics_signature: String = ""
 # lower-priority reservers on its edge. The map/HUD inset still uses the per-edge SUM (owned by
 # MapView/Hud), which is unchanged — this registry only drives the Band panel's leading offset.
 var _reservations: Dictionary = {}
+# Pending world-generation command (built from GameLaunch or the dev default) and a sent-once
+# latch. Held so it can be retried in _process if the command socket wasn't ready at _ready.
+var _new_game_command: Dictionary = {}
+var _new_game_sent: bool = false
+var _new_game_retry_accum: float = 0.0
+var _new_game_elapsed: float = 0.0
 
-const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
-const TURN_INTERVAL_SECONDS = 1.5
-# Stream from the live server by DEFAULT. This used to be false, which meant any launch that
-# did not explicitly set STREAM_ENABLED=true rendered `mock_snapshots.json` instead of the
-# simulation — scripts/run_stack.sh sets it, so dev never noticed, but the packaged playtest
-# build does not, so every package shipped in demo mode. Falling back to mock data is still the
-# behaviour when the connection FAILS (see _ready), so a client launched with no server running
-# degrades exactly as before; it just no longer ignores a server that IS there.
-const STREAM_DEFAULT_ENABLED = true
+# Dev-default world when Main.tscn is launched directly (no landing screen handoff): so a bare
+# `godot res://src/Main.tscn` still generates a playable map now that the server boots idle.
+const DEV_DEFAULT_NEW_GAME := {
+    "preset_id": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 0,
+    "profile_id": "late_forager_tribe",
+}
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
-const STREAM_CONNECTION_TIMEOUT = 5.0
 const CAMERA_PAN_SPEED = 220.0
+# Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
+# map/HUD until the new world reveals.
+const LOADING_OVERLAY_LAYER = 150
+const LOADING_OVERLAY_TEXT = "Generating world…"
+const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
 const PLAYER_FACTION_ID = 0
+# Startup map zoom applied on each world reveal ("zoom level 2" = MapView zoom_factor 2.0, on the
+# continuous 1.0=cover-fit … 4.0 scale). Named so it stays tunable.
+const STARTUP_ZOOM_FACTOR := 2.0
+# new_game retry: the command bridge connects synchronously, so the _ready send almost always
+# lands; these bound the belt-and-suspenders retry so a permanent rejection (e.g. a sim_runtime
+# that doesn't yet parse the verb) can't spam the command log every frame.
+const NEW_GAME_RETRY_INTERVAL = 0.5
+const NEW_GAME_RETRY_DEADLINE = 5.0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -66,27 +91,44 @@ func _ready() -> void:
     if inspector != null:
         inspector.layer = 102
 
+    # Startup view defaults that must be seated BEFORE the first world renders (the rest — zoom +
+    # centre-on-band — need the loaded world and are applied at reveal, see _apply_startup_view):
+    #   1. Inspector hidden by default (the player re-opens it with `I`). Done here once so it is
+    #      never shown even under the loading overlay, and re-hides on a Main reload (restart).
+    if inspector != null and inspector.has_method("set_panel_visible"):
+        inspector.call("set_panel_visible", false)
+    #   2. Fog of War ON by default — set the flag (its initial value) and push it to MapView here so
+    #      it is active before the first snapshot; `F` still flips both in sync from this on state.
+    if map_view != null and map_view.has_method("set_fow_enabled"):
+        map_view.call("set_fow_enabled", _fow_active)
+
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
     snapshot_loader = SnapshotLoader.new()
-    snapshot_loader.load_mock_data(MOCK_DATA_PATH)
     localization_store = LocalizationStore.new()
     localization_store.load_default()
-    var stream_enabled: bool = _determine_stream_enabled()
+    # Loading gate: capture the last-revealed world epoch (persisted across Main.tscn reloads by the
+    # GameLaunch autoload) as the reveal baseline, show the loading overlay, and hold the blank
+    # map/HUD behind it until a FULL snapshot with a higher epoch (the freshly generated world)
+    # arrives. The client ALWAYS streams — there is no mock playback fallback.
+    var launch_node: Node = get_node_or_null("/root/GameLaunch")
+    if launch_node != null:
+        _reveal_baseline_epoch = int(launch_node.get("last_world_epoch"))
+    _world_revealed = false
+    _show_loading_overlay()
     var stream_host: String = _determine_stream_host()
     var stream_port: int = _determine_stream_port()
-    print("[Endpoints] stream=%s:%d (enabled=%s)" % [stream_host, stream_port, stream_enabled])
-    if stream_enabled:
-        var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
-        if err == OK:
-            streaming_mode = true
-            _warned_stream_fallback = false
-        else:
-            push_warning("Godot client: unable to connect to snapshot stream (error %d). Using mock data." % err)
+    print("[Endpoints] stream=%s:%d" % [stream_host, stream_port])
+    var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
+    if err != OK:
+        # Stay in the loading state — there is no mock fallback. The map reveals only once a live
+        # snapshot for the new world arrives (the stream retries via poll/status in _process).
+        push_warning("Godot client: unable to connect to snapshot stream (error %d); holding loading screen." % err)
+    # The client ALWAYS streams; even on a failed initial connect we hold the loading overlay
+    # rather than degrade to a demo playback.
+    streaming_mode = true
     set_process(true)
-    if not streaming_mode:
-        _ensure_timer()
     var command_host: String = _determine_command_host()
     var command_port: int = _determine_command_port()
     var command_proto_port: int = _determine_command_proto_port()
@@ -102,6 +144,10 @@ func _ready() -> void:
         inspector.call("set_command_client", command_client, command_err == OK)
     if inspector != null and inspector.has_method("set_hud_layer"):
         inspector.call("set_hud_layer", hud)
+    # The server now boots idle and only generates a world on `new_game`; build that command from
+    # the landing-screen handoff (or a dev default) and fire it (retried in _process if not yet sent).
+    _build_new_game_command()
+    _try_send_new_game()
     script_host_manager = ScriptHostManager.new()
     add_child(script_host_manager)
     script_host_manager.setup(command_client)
@@ -113,12 +159,8 @@ func _ready() -> void:
     if map_view != null and map_view.has_method("set_hud_reference") and hud != null:
         map_view.call("set_hud_reference", hud)
 
-    var initial: Dictionary = {}
-    if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
-        initial = snapshot_loader.last_stream_snapshot
-    else:
-        initial = snapshot_loader.current()
-    _apply_snapshot(initial)
+    # Deliberately apply NO initial snapshot: the map/HUD stay blank behind the loading overlay
+    # until the new world's first full snapshot arrives (see the _process reveal gate).
     if hud != null:
         if hud.has_signal("cancel_order_requested") and not hud.is_connected("cancel_order_requested", Callable(self, "_on_hud_cancel_order")):
             hud.connect("cancel_order_requested", Callable(self, "_on_hud_cancel_order"))
@@ -207,20 +249,108 @@ func _ready() -> void:
     if inspector != null and inspector.has_method("reserved_width"):
         _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
     _connect_band_city_panel()
+    _connect_pause_menu()
 
-func _ensure_timer() -> void:
-    if is_instance_valid(playback_timer):
+## The ESC pause overlay ($PauseLayer): hidden until ESC opens it. Resume hides it, Abandon
+## returns to the landing screen, Exit quits. New Game is deliberately absent in pause mode —
+## Abandon routes back to the landing screen, which owns the New Game flow.
+func _connect_pause_menu() -> void:
+    if pause_layer != null:
+        pause_layer.visible = false
+    if pause_menu == null:
         return
-    playback_timer = Timer.new()
-    playback_timer.wait_time = TURN_INTERVAL_SECONDS
-    playback_timer.one_shot = false
-    playback_timer.autostart = true
-    add_child(playback_timer)
-    playback_timer.timeout.connect(_on_tick)
+    pause_menu.mode = MenuShell.PAUSE
+    if not pause_menu.resume_requested.is_connected(_hide_pause_menu):
+        pause_menu.resume_requested.connect(_hide_pause_menu)
+    if not pause_menu.abandon_requested.is_connected(_on_pause_abandon):
+        pause_menu.abandon_requested.connect(_on_pause_abandon)
+    if not pause_menu.exit_requested.is_connected(_on_pause_exit):
+        pause_menu.exit_requested.connect(_on_pause_exit)
 
-func _on_tick() -> void:
-    var snapshot: Dictionary = snapshot_loader.advance()
-    _apply_snapshot(snapshot)
+func _show_pause_menu() -> void:
+    if pause_layer != null:
+        pause_layer.visible = true
+
+func _hide_pause_menu() -> void:
+    if pause_layer != null:
+        pause_layer.visible = false
+
+func _on_pause_abandon() -> void:
+    get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
+
+func _on_pause_exit() -> void:
+    get_tree().quit()
+
+## Build the `new_game <preset> <w> <h> <seed> <profile>` command from the GameLaunch handoff, or
+## the dev default when launched directly. Clears the handoff so a later scene reload starts fresh.
+func _build_new_game_command() -> void:
+    var params: Dictionary = DEV_DEFAULT_NEW_GAME
+    var launch: Node = get_node_or_null("/root/GameLaunch")
+    if launch != null and launch.get("pending_new_game") is Dictionary:
+        params = launch.get("pending_new_game")
+        launch.set("pending_new_game", null)
+    var preset := String(params.get("preset_id", DEV_DEFAULT_NEW_GAME["preset_id"]))
+    var width := int(params.get("width", DEV_DEFAULT_NEW_GAME["width"]))
+    var height := int(params.get("height", DEV_DEFAULT_NEW_GAME["height"]))
+    var seed_value := int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"]))
+    var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
+    _new_game_command = {
+        "line": "new_game %s %d %d %d %s" % [preset, width, height, seed_value, profile],
+        "message": "New game: %s (%dx%d) seed %d." % [preset, width, height, seed_value],
+    }
+
+## Send the pending new_game command through the SAME transport MapPanel uses for map_size
+## (inspector.send_runtime_command → command socket). Retried from _process until it lands, so a
+## command socket still connecting at _ready doesn't drop the world-generation request.
+func _try_send_new_game() -> void:
+    if _new_game_sent or _new_game_command.is_empty():
+        return
+    if inspector == null or not inspector.has_method("send_runtime_command"):
+        return
+    var result: Variant = inspector.call("send_runtime_command", _new_game_command["line"], _new_game_command["message"])
+    if result is bool and result:
+        _new_game_sent = true
+
+## Bounded retry for the new_game send (see NEW_GAME_RETRY_* constants): retries at an interval
+## until it lands, then gives up after the deadline so a permanent rejection doesn't log per-frame.
+func _tick_new_game_retry(delta: float) -> void:
+    if _new_game_sent or _new_game_command.is_empty():
+        return
+    _new_game_elapsed += delta
+    _new_game_retry_accum += delta
+    if _new_game_retry_accum < NEW_GAME_RETRY_INTERVAL:
+        return
+    _new_game_retry_accum = 0.0
+    _try_send_new_game()
+    if not _new_game_sent and _new_game_elapsed >= NEW_GAME_RETRY_DEADLINE:
+        _new_game_sent = true  # stop retrying; likely a permanent rejection
+
+## Build the fullscreen loading overlay (a CanvasLayer above HUD/Inspector) shown from _ready and
+## hidden on world reveal. Dark ground + a centered "Generating world…" label, styled on-brand with
+## the dark HUD console look (HudStyle palette). Held until the new world's first full snapshot.
+func _show_loading_overlay() -> void:
+    if loading_overlay != null:
+        loading_overlay.visible = true
+        return
+    loading_overlay = CanvasLayer.new()
+    loading_overlay.layer = LOADING_OVERLAY_LAYER
+    var ground := ColorRect.new()
+    ground.color = HudStyle.GROUND
+    ground.set_anchors_preset(Control.PRESET_FULL_RECT)
+    loading_overlay.add_child(ground)
+    var label := Label.new()
+    label.text = LOADING_OVERLAY_TEXT
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.set_anchors_preset(Control.PRESET_FULL_RECT)
+    label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    label.add_theme_font_size_override("font_size", LOADING_OVERLAY_FONT_SIZE)
+    loading_overlay.add_child(label)
+    add_child(loading_overlay)
+
+func _hide_loading_overlay() -> void:
+    if loading_overlay != null:
+        loading_overlay.visible = false
 
 func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
@@ -523,21 +653,18 @@ func _send_runtime_command(line: String, message: String) -> void:
     else:
         push_warning("Inspector unavailable; cannot send command: %s" % line)
 
-func skip_to_next_turn() -> void:
-    if streaming_mode:
-        return
-    _apply_snapshot(snapshot_loader.advance())
-
-func skip_to_previous_turn() -> void:
-    if streaming_mode:
-        return
-    _apply_snapshot(snapshot_loader.rewind())
-
 func _unhandled_input(event: InputEvent) -> void:
-    if event.is_action_pressed("ui_right"):
-        skip_to_next_turn()
-    elif event.is_action_pressed("ui_left"):
-        skip_to_previous_turn()
+    if event.is_action_pressed("ui_cancel"):
+        # ESC precedence: (1) an open pause menu resumes; (2) active targeting keeps ESC for
+        # MapView's targeting-cancel path (do NOT consume); (3) otherwise open the pause menu.
+        if pause_layer != null and pause_layer.visible:
+            _hide_pause_menu()
+            get_viewport().set_input_as_handled()
+        elif hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")):
+            return
+        else:
+            _show_pause_menu()
+            get_viewport().set_input_as_handled()
 
 func _toggle_inspector_visibility() -> void:
     if inspector == null:
@@ -626,7 +753,9 @@ func _toggle_victory_visibility() -> void:
     if hud.has_method("toggle_victory"):
         _hud_invoke("toggle_victory")
 
-var _fow_active: bool = false
+# Fog of War is ON by default at startup (seated in _ready before the first world renders); the `F`
+# key flips this and MapView's state together, so the toggle still works from the on state.
+var _fow_active: bool = true
 
 func _toggle_fow_overlay() -> void:
     if map_view == null:
@@ -686,31 +815,63 @@ func _process(delta: float) -> void:
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()
+    _tick_new_game_retry(delta)
     if streaming_mode:
         var streamed: Dictionary = snapshot_loader.poll_stream(delta)
         if not streamed.is_empty():
             if inspector != null and inspector.has_method("set_streaming_active"):
                 inspector.call("set_streaming_active", true)
-            _apply_snapshot(streamed)
-            stream_connection_timer = 0.0
-            _warned_stream_fallback = false
-        else:
-            var status: int = snapshot_loader.stream_status()
-            match status:
-                StreamPeerTCP.STATUS_CONNECTED, StreamPeerTCP.STATUS_CONNECTING:
-                    stream_connection_timer = 0.0
-                _:
-                    stream_connection_timer += delta
-                    if stream_connection_timer > STREAM_CONNECTION_TIMEOUT:
-                        if not _warned_stream_fallback:
-                            push_warning("Godot client: snapshot stream unavailable; falling back to mock playback.")
-                            _warned_stream_fallback = true
-                        streaming_mode = false
-                        snapshot_loader.disable_stream()
-                        _ensure_timer()
-                        stream_connection_timer = 0.0
-                        if inspector != null and inspector.has_method("set_streaming_active"):
-                            inspector.call("set_streaming_active", false)
+            if _world_revealed:
+                _apply_snapshot(streamed)
+            else:
+                _try_reveal_world(streamed)
+
+## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
+## freshly generated world (reveal + apply) or the server's replayed pre-rebuild frame (ignore).
+##
+## The snapshot server replays its last cached frame to every reconnecting client, so on a restart
+## the OLD world (epoch == baseline) arrives first and must NOT be shown. We reveal only on a FULL
+## snapshot whose world_epoch EXCEEDS the baseline captured at _ready:
+##   - fresh boot: baseline 0 → reveal on epoch 1;
+##   - restart:    baseline N (persisted) → ignore the replayed epoch-N frame → reveal on N+1.
+## A delta arriving before that full snapshot is ignored (it has no complete world to reveal).
+## Defensive: a snapshot with no world_epoch key (pre-change server) reveals on the first full
+## snapshot, so the client can never get stuck on a black loading screen.
+func _try_reveal_world(streamed: Dictionary) -> void:
+    var is_delta := _snapshot_is_delta(streamed)
+    if is_delta:
+        return
+    var has_epoch := streamed.has("world_epoch")
+    var epoch := int(streamed.get("world_epoch", 0))
+    if has_epoch and epoch <= _reveal_baseline_epoch:
+        # Stale replayed frame from the previous world — hold the loading overlay.
+        return
+    _world_revealed = true
+    _hide_loading_overlay()
+    var launch_node: Node = get_node_or_null("/root/GameLaunch")
+    if launch_node != null:
+        launch_node.set("last_world_epoch", epoch)
+    _apply_snapshot(streamed)
+    _apply_startup_view()
+
+## Per-world-reveal view defaults that need the LOADED world: seat the startup zoom and centre on the
+## player's starting band. Called from _try_reveal_world AFTER the reveal snapshot is applied (so the
+## band's tile is populated via Hud.update_band_alerts) and the overlay is hidden — so every new world
+## (fresh boot or Abandon→New Game restart) opens at zoom 2 centred on the band. Inspector-hidden +
+## FoW-on are seated once in _ready (they don't need the world). This fires ONCE per world (deltas
+## don't re-reveal), so a player's later zoom/pan/inspector changes persist.
+func _apply_startup_view() -> void:
+    if map_view == null:
+        return
+    # ORDER: set the zoom FIRST (so the hex radius is at the target), THEN centre — focus_on_tile
+    # centres at the current zoom.
+    if map_view.has_method("set_zoom_factor"):
+        map_view.call("set_zoom_factor", STARTUP_ZOOM_FACTOR)
+    var band_tile := Vector2i(-1, -1)
+    if hud != null and hud.has_method("get_player_band_tile"):
+        band_tile = hud.call("get_player_band_tile")
+    if band_tile.x >= 0 and band_tile.y >= 0 and map_view.has_method("focus_on_tile"):
+        map_view.call("focus_on_tile", band_tile.x, band_tile.y)
 
 func _on_overlay_legend_changed(legend: Dictionary) -> void:
     if hud != null and hud.has_method("update_overlay_legend"):
@@ -742,12 +903,6 @@ func _hud_invoke(method: String, args: Array = []) -> Variant:
         # print("[HUD->Main]", method, args)  # Commented out to reduce log spam
         result = hud.callv(method, args)
     return result
-
-func _determine_stream_enabled() -> bool:
-    var env_flag: String = OS.get_environment("STREAM_ENABLED")
-    if env_flag != "":
-        return env_flag.to_lower() == "true"
-    return STREAM_DEFAULT_ENABLED
 
 # Endpoint resolution order is uniform across stream/command/log:
 #   explicit env var -> ports file published by the server -> hardcoded default.

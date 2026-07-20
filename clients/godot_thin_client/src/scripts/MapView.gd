@@ -4461,6 +4461,16 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 func zoom_step(direction: int) -> void:
 	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP, _viewport_center_pivot())
 
+## Absolute zoom setter — jump straight to a target `zoom_factor` (clamped to
+## [MIN,MAX]), pivoting on the map centre. Reuses the single `_apply_zoom` path by
+## expressing the target as a relative delta, so the hex-radius recompute, pan-clamp,
+## cache invalidation, redraw and the `zoom_changed` HUD-readout emit all happen
+## exactly as they do for a wheel/rail zoom. Used to seat the startup zoom on a new
+## world reveal; a no-op when already at the target (the delta early-returns).
+func set_zoom_factor(target: float) -> void:
+	var clamped: float = clamp(target, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR)
+	_apply_zoom(clamped - zoom_factor, _viewport_center_pivot())
+
 func _viewport_center_pivot() -> Vector2:
 	# Local coords (matches _apply_zoom's pivot space); respects the inspector inset.
 	return _get_adjusted_viewport_size() * 0.5

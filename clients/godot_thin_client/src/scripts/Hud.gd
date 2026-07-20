@@ -1415,6 +1415,12 @@ func _refresh_targeting() -> void:
         _targeting_banner_label.text = _targeting_banner_bbcode(info)
     emit_signal("targeting_changed", info)
 
+## True while any command-targeting flow is armed (move-band / send-expedition /
+## send-hunt-expedition). The ESC pause menu (Main._unhandled_input) checks this so it
+## yields ESC to MapView's targeting-cancel path instead of stealing it to open the menu.
+func is_targeting_active() -> bool:
+    return not _current_targeting_info().is_empty()
+
 ## The active targeting descriptor, or {} when nothing is targeting. A pending
 ## harvest/hunt needs a band; a pending scout needs a tile.
 ## The active targeting descriptor, or {} when nothing is targeting. Move-band is the
@@ -2629,6 +2635,15 @@ func _band_tile(band: Dictionary) -> Vector2i:
     if pos_variant is Array and (pos_variant as Array).size() == 2:
         return Vector2i(int((pos_variant as Array)[0]), int((pos_variant as Array)[1]))
     return Vector2i(-1, -1)
+
+## The player's starting band tile (col,row) — the first player-faction band captured this snapshot
+## into `_player_band` (via update_band_alerts). Returns (-1,-1) when there is no player band, so a
+## caller (Main's startup-view centering) can defensively skip the focus. Reads the same `current_x/y`
+## cohort fields `_band_tile` does.
+func get_player_band_tile() -> Vector2i:
+    if _player_band.is_empty():
+        return Vector2i(-1, -1)
+    return _band_tile(_player_band)
 
 ## Shortest signed column delta from→to honoring horizontal wrap (mirrors MapView._wrapped_col_delta),
 ## so a herd across the seam measures by its short wrapped distance, not the long way across the map.

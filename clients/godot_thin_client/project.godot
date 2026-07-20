@@ -12,14 +12,17 @@ config_version=5
 
 config/name="ShadowScale Godot Thin Client"
 config/description="Spike client rendering tactical map overlays for Shadow-Scale"
-run/main_scene="res://src/Main.tscn"
+run/main_scene="res://src/ui/LandingScreen.tscn"
 config/features=PackedStringArray("4.7")
 config/icon="res://assets/icon.svg"
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0.043, 0.067, 0.078, 1)
 
 [autoload]
 
 TerrainTextureManager="*res://assets/terrain/TerrainTextureManager.gd"
 UiScaler="*res://src/scripts/ui_scaler.gd"
+GameLaunch="*res://src/scripts/GameLaunch.gd"
 
 [display]
 
@@ -136,3 +139,4 @@ toggle_legend={
 
 quality/driver/driver_name="opengl3"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.043, 0.067, 0.078, 1)
