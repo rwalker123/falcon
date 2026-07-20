@@ -107,6 +107,21 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 		_draw_expedition_body(unit, center, token_radius, _band_faction_color(unit))
 		return
 	var stage_icon := String(unit.get("settlement_stage_icon", ""))
+	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
+	# Bundled stage sprite FIRST — the emoji path draws through `ThemeDB.fallback_font`, so the OS
+	# emoji font would otherwise decide what a camp/village looks like (the same platform-inconsistency
+	# the fauna/site sprites already fixed). Keyed on the server's stable `settlement_stage_id`.
+	# This attempt MUST precede the empty-glyph placeholder below: that branch returns early, so a
+	# sprite-mapped stage whose glyph happened to be empty would wrongly draw a square.
+	var stage_sprite := StageSprites.for_stage(String(unit.get("settlement_stage_id", "")))
+	if stage_sprite != null:
+		# Undimmed = plain white modulate (unchanged art); a behind card recedes by the same
+		# `BAND_STACK_BEHIND_TINT` the glyph path multiplies its colour by.
+		var sprite_modulate := Color.WHITE
+		if dim:
+			sprite_modulate *= _view.BAND_STACK_BEHIND_TINT
+		_view._draw_marker_sprite(center, stage_sprite, glyph_size, sprite_modulate)
+		return
 	if stage_icon == "":
 		# Fallback: pre-stage / missing snapshot — a small neutral, NON-circular placeholder
 		# square (never a faction disc). Ownership is still carried by the banner below.
@@ -124,7 +139,6 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 	var glyph_color := _view.BAND_STAGE_GLYPH_COLOR
 	if dim:
 		glyph_color *= _view.BAND_STACK_BEHIND_TINT
-	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
 	_view._draw_marker_glyph(center, stage_icon, glyph_size, glyph_color)
 
 ## Faction color lookup for a band token, with a neutral fallback for unknown factions.
