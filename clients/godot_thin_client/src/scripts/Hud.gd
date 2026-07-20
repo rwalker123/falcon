@@ -5737,14 +5737,14 @@ func _on_legend_sort_pressed(field: String) -> void:
 func toggle_legend() -> void:
     _legend.toggle_suppressed()
     _refit_right_dock()
-    _save_hud_panel_prefs()
+    _save_panel_pref(CONFIG_KEY_LEGEND_SUPPRESSED, _legend.legend_suppressed)
 
 ## Victory's counterpart to `toggle_legend` (bound to `V` in Main). Hides/shows the card through the
 ## dock so the stack reflows with no gap, and remembers the choice for next session.
 func toggle_victory() -> void:
     _victory_suppressed = not _victory_suppressed
     _apply_victory_visibility()
-    _save_hud_panel_prefs()
+    _save_panel_pref(CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
 
 func _apply_victory_visibility() -> void:
     if victory_panel == null:
@@ -5766,7 +5766,7 @@ func _refit_right_dock() -> void:
 
 func _load_hud_panel_prefs() -> void:
     var cfg := ConfigFile.new()
-    if cfg.load(NarrativeForkPanel.CONFIG_PATH) == OK:
+    if cfg.load(NarrativeForkPanel.config_path()) == OK:
         if _legend != null:
             _legend.set_suppressed(bool(cfg.get_value(
                 HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
@@ -5777,13 +5777,19 @@ func _load_hud_panel_prefs() -> void:
         _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
     _apply_victory_visibility()
 
-func _save_hud_panel_prefs() -> void:
+## Persist ONE panel's preference — never the whole section.
+##
+## Writing both keys on either toggle is how a transient state becomes a stored preference: pressing
+## `V` used to also write whatever the legend happened to be showing at that instant. That is fine
+## while both values are genuine user choices, but it makes the file a snapshot of live UI state
+## rather than of decisions, and anything that sets visibility WITHOUT intending to persist it (a
+## preview harness, a future "peek" affordance) silently corrupts the other panel's preference. A
+## toggle owns its own key and nothing else.
+func _save_panel_pref(key: String, suppressed: bool) -> void:
     var cfg := ConfigFile.new()
-    cfg.load(NarrativeForkPanel.CONFIG_PATH)   # preserve the narrative section; ignore load errors
-    if _legend != null:
-        cfg.set_value(HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, _legend.legend_suppressed)
-    cfg.set_value(HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
-    cfg.save(NarrativeForkPanel.CONFIG_PATH)
+    cfg.load(NarrativeForkPanel.config_path())   # preserve every other section/key; ignore load errors
+    cfg.set_value(HUD_PANELS_CONFIG_SECTION, key, suppressed)
+    cfg.save(NarrativeForkPanel.config_path())
 func _setup_tooltip() -> void:
     tooltip_panel = PanelContainer.new()
     tooltip_panel.visible = false

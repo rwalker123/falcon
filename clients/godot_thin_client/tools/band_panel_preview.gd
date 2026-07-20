@@ -13,6 +13,8 @@ extends Node
 ## then read ui_preview_out/band_panel_*.png.
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
+## Scratch prefs file — never the player's `user://narrative.cfg`.
+const PREVIEW_PREFS_PATH := "user://band_panel_preview_prefs.cfg"
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
 # A left inspector strip width to prove co-edge stacking (bug 1).
@@ -32,6 +34,12 @@ func _ready() -> void:
 	bg.color = Color(0.10, 0.15, 0.16)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg_layer.add_child(bg)
+
+	# Isolate the narrative/HUD-panel preferences from the player's real profile before the HUD
+	# reads them — otherwise a developer who has pressed `L` renders different frames than one who
+	# has not. Same rule as ui_preview; see its prefs-isolation block.
+	NarrativeForkPanel.config_path_override = PREVIEW_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_PREFS_PATH))
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)

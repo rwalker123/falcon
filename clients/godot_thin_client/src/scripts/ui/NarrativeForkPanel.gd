@@ -36,6 +36,16 @@ const CONFIG_PATH := "user://narrative.cfg"
 const CONFIG_SECTION := "narrative"
 const CONFIG_KEY_VOICE_REGISTER := "voice_register"
 
+## The prefs file every narrative/HUD-panel preference reads and writes. Indirected through a
+## function so the DEV HARNESSES can redirect it to a scratch file: a preview run must never mutate
+## the preferences of the person running it. It once did — `tools/ui_preview.gd` toggled a panel,
+## the toggle persisted, and the developer's next real game came up with the wrong panel visible.
+## Production never sets the override, so it is always `CONFIG_PATH` in a real session.
+static var config_path_override: String = ""
+
+static func config_path() -> String:
+	return config_path_override if config_path_override != "" else CONFIG_PATH
+
 # ---- geometry / typography (named constants; no magic literals) ------------
 # A dim scrim over the rest of the HUD. A fork is modal in intent — the panel must read as the
 # only thing on screen — and the card's own stylebox is translucent, so without this the tile card
@@ -170,7 +180,7 @@ func current_beat_id() -> String:
 ## Fails silently: a missing or malformed pref file must never surface to the player.
 static func load_voice_register() -> String:
 	var cfg := ConfigFile.new()
-	if cfg.load(CONFIG_PATH) != OK:
+	if cfg.load(config_path()) != OK:
 		return ""
 	return String(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_VOICE_REGISTER, ""))
 
@@ -178,9 +188,9 @@ static func save_voice_register(register: String) -> void:
 	if register == "":
 		return
 	var cfg := ConfigFile.new()
-	cfg.load(CONFIG_PATH)   # preserve any other sections; ignore load errors
+	cfg.load(config_path())   # preserve any other sections; ignore load errors
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_VOICE_REGISTER, register)
-	cfg.save(CONFIG_PATH)
+	cfg.save(config_path())
 
 ## The registers a `[VoiceLine]` array actually carries, in catalog order, de-duplicated.
 static func registers_in(lines_variant: Variant) -> Array:

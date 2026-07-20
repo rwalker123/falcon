@@ -12,6 +12,9 @@ extends Node
 ## then read ui_preview_out/*.png.
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
+## Scratch prefs file for this harness — NEVER the player's `user://narrative.cfg`. See the
+## prefs-isolation block in `_ready()` for the incident that made this non-negotiable.
+const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
 # Force-compile MapView here so the harness also acts as a full-context compile
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
@@ -112,16 +115,18 @@ func _ready() -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg_layer.add_child(bg)
 
-	# The Telling panel restores its collapsed state from `user://narrative.cfg` in its constructor,
-	# so a previous interactive run could otherwise render every telling state folded shut. Pin it
-	# expanded BEFORE the HUD instantiates, the same way the fork states pin the voice register.
+	# ---- prefs isolation — FIRST, before anything can read OR write a preference ----------------
+	# THE HARNESS MUST NEVER TOUCH THE PLAYER'S PROFILE. It once did, and it cost a real debugging
+	# session: a state called the persisting `toggle_victory()` while the legend was open for a
+	# frame, `_save_hud_panel_prefs` wrote BOTH keys, and `legend_suppressed=false` landed in the
+	# developer's `user://narrative.cfg` — so their next real game came up with the Terrain Types
+	# panel visible and the shipped default looked broken. Redirect every read/write to a scratch
+	# file and DELETE it, which is both the isolation and a genuine fresh profile.
+	NarrativeForkPanel.config_path_override = PREVIEW_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_PREFS_PATH))
+	# The Telling panel restores its collapsed state in its constructor, so pin it expanded BEFORE
+	# the HUD instantiates (into the scratch file, now that the override is set).
 	TellingPanel.save_collapsed(false)
-	# Same hazard for the Victory / Terrain-Types dock cards: Hud restores their suppressed state
-	# from the same prefs file on ready, so a previous interactive run (someone pressing V or L)
-	# could otherwise change every frame. Clear the section outright rather than writing the
-	# defaults into it: that reproduces a FRESH PROFILE, which is the path the shipped default
-	# actually travels, and the one a pinned `true` would paper over.
-	_clear_hud_panel_prefs()
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
@@ -1338,18 +1343,6 @@ func _open_legend() -> void:
 
 func _close_legend() -> void:
 	_hud._legend.set_suppressed(true)
-
-## Erase the `[hud_panels]` section so the HUD comes up as it does for a FRESH PLAYER: no stored
-## value, defaults apply. Deliberately an erase and not a write of `true` — a written `true` would
-## exercise the "stored value" branch and hide any bug in the default branch, which is exactly the
-## class of bug this harness exists to catch. The narrative section (voice register, telling
-## collapsed) is preserved: the file is loaded first and only this section is removed.
-func _clear_hud_panel_prefs() -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(NarrativeForkPanel.CONFIG_PATH)   # ignore load errors: no file is itself a fresh profile
-	if cfg.has_section(HudLayer.HUD_PANELS_CONFIG_SECTION):
-		cfg.erase_section(HudLayer.HUD_PANELS_CONFIG_SECTION)
-	cfg.save(NarrativeForkPanel.CONFIG_PATH)
 
 ## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
 ## `core_sim/src/data/beat_definitions.json` with their nouns filled in as the sim would fill them.

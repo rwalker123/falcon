@@ -169,15 +169,15 @@ static func accent_for(medium_id: String) -> Color:
 ## Fails silently: a missing or malformed prefs file must never surface to the player.
 static func load_collapsed() -> bool:
 	var cfg := ConfigFile.new()
-	if cfg.load(NarrativeForkPanel.CONFIG_PATH) != OK:
+	if cfg.load(NarrativeForkPanel.config_path()) != OK:
 		return false
 	return bool(cfg.get_value(NarrativeForkPanel.CONFIG_SECTION, CONFIG_KEY_COLLAPSED, false))
 
 static func save_collapsed(collapsed: bool) -> void:
 	var cfg := ConfigFile.new()
-	cfg.load(NarrativeForkPanel.CONFIG_PATH)   # preserve the voice register; ignore load errors
+	cfg.load(NarrativeForkPanel.config_path())   # preserve the voice register; ignore load errors
 	cfg.set_value(NarrativeForkPanel.CONFIG_SECTION, CONFIG_KEY_COLLAPSED, collapsed)
-	cfg.save(NarrativeForkPanel.CONFIG_PATH)
+	cfg.save(NarrativeForkPanel.config_path())
 
 # ---- chrome ----------------------------------------------------------------
 
