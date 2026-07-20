@@ -38,7 +38,7 @@ func compute_slots() -> void:
 			continue
 		if _view._visibility_state_at(wx, wy) == "unexplored":
 			continue
-		if String((wsite as Dictionary).get("glyph", "")) == "":
+		if not _wonder_renders(wsite as Dictionary):
 			continue
 		_append_secondary(per_tile, Vector2i(wx, wy), _wonder_key(wsite))
 	for site in _view.food_sites:
@@ -64,6 +64,18 @@ func _append_secondary(per_tile: Dictionary, tile: Vector2i, key: String) -> voi
 	var list: Array = per_tile.get(tile, [])
 	list.append(key)
 	per_tile[tile] = list
+
+## Whether a discovered site will render ANYTHING: bundled PNG art for its `site_id`, or the
+## server's emoji glyph. `compute_slots` (slot eligibility) and `draw_discovered_site` (the draw
+## guard) MUST agree on this — a site denied a slot can never draw, whatever art it has — so both
+## ask HERE rather than repeating the condition and drifting. Testing glyph alone (as slot
+## eligibility once did) silently dropped sprite-only sites: they were skipped before the draw
+## path's sprite check could ever run. The `WonderSprites` lookup is a cached dictionary hit
+## (`IconSprites`), not a load, so calling it from the per-frame slot pass is cheap.
+static func _wonder_renders(wsite: Dictionary) -> bool:
+	if WonderSprites.for_site_id(String(wsite.get("site_id", ""))) != null:
+		return true
+	return String(wsite.get("glyph", "")) != ""
 
 func _wonder_key(wsite: Dictionary) -> String:
 	var fallback := "%d,%d" % [int(wsite.get("x", -1)), int(wsite.get("y", -1))]
@@ -202,14 +214,14 @@ func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> v
 	var slot: int = _secondary_slot_lookup.get(_wonder_key(site), -1)
 	if slot < 0:
 		return
-	# Bundled PNG art where we have it (identical on every OS), the server's emoji otherwise —
-	# WonderSprites returns null for a site_id with no art and we fall through unchanged. Resolved
-	# BEFORE the empty-glyph guard on purpose: a site we have art for must still draw even if the
-	# server sent no glyph, while the guard keeps governing the emoji path exactly as before.
+	# Same renders-anything test compute_slots used to allot the slot (see _wonder_renders): a site
+	# we have art for must still draw even if the server sent no glyph, so this cannot be a bare
+	# empty-glyph guard. Bundled PNG art where we have it (identical on every OS), the server's
+	# emoji otherwise — WonderSprites returns null for a site_id with no art and we fall through.
+	if not _wonder_renders(site):
+		return
 	var site_sprite := WonderSprites.for_site_id(String(site.get("site_id", "")))
 	var glyph := String(site.get("glyph", ""))
-	if site_sprite == null and glyph == "":
-		return
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	if site_sprite != null:

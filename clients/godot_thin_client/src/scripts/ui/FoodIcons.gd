@@ -166,8 +166,9 @@ const SITE_KEY_DEFAULT := "default"
 ## The stable ART KEY for a food site. This is the ONE site-resolution implementation: `for_site`
 ## maps the key to an emoji and `SiteSprites.for_site` maps the same key to a bundled PNG, exactly
 ## as `species_key_for` is shared by the herd pair. A hunted site is `hunt`; a riverine_delta site
-## on dry floodplain LAND is `reeds`; any known food module is its own key; anything else (unknown
-## module, or riverine_delta with an unknown terrain) is `default`.
+## on dry floodplain LAND is `reeds`; any known food module is its own key (riverine_delta with an
+## unknown terrain therefore lands here, keyed as itself — the open-river 🐟 reading, not `reeds`);
+## only an unknown module is `default`.
 static func site_key_for(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
 	if is_hunt:
 		return SITE_KEY_HUNT
