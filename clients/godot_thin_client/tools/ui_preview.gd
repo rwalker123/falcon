@@ -115,13 +115,20 @@ func _ready() -> void:
 	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
 
-	# Top-bar Wondrous-Sites discoveries readout (faction 0): a landmark + a settle-site, so
-	# the count reads `◈ Discoveries 2  ⛰ ⛲` and the distinct glyphs show.
+	# Top-bar Wondrous-Sites discoveries readout (faction 0). The strip keys on `site_id`, so this
+	# fixture is built to prove the two cases the glyph could not distinguish:
+	#   • GLYPH COLLISION — `great_peak` and `sky_arch` both ship ⛰, and must stay TWO entries:
+	#     great_peak's bundled sprite, then sky_arch's ⛰ emoji (it has no art).
+	#   • REPEAT INSTANCE — the second `great_peak` is a different tile, so it lifts the count to 4
+	#     while adding no strip entry: the number counts instances, the strip counts kinds.
+	# `verdant_basin` is the other bundled sprite. Reads `◈ Discoveries 4` + 3 marks.
 	_hud.update_discoveries([{
 		"faction": 0,
 		"sites": [
 			{"x": 12, "y": 8, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
 			{"x": 20, "y": 14, "site_id": "verdant_basin", "category": "settle_site", "display_name": "Verdant Basin", "glyph": "⛲"},
+			{"x": 26, "y": 9, "site_id": "sky_arch", "category": "landmark", "display_name": "Sky Arch", "glyph": "⛰"},
+			{"x": 31, "y": 17, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
 		],
 	}])
 

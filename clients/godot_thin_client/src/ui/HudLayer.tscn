@@ -165,10 +165,16 @@ unique_name_in_owner = true
 theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
 visible = false
 
-[node name="DiscoveriesLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
+[node name="DiscoveriesRow" type="HBoxContainer" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
+unique_name_in_owner = true
+visible = false
+
+[node name="DiscoveriesLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock/DiscoveriesRow"]
 unique_name_in_owner = true
 theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
-visible = false
+
+[node name="DiscoveriesStrip" type="HBoxContainer" parent="LayoutRoot/RootColumn/TopBar/TurnBlock/DiscoveriesRow"]
+unique_name_in_owner = true
 
 [node name="IntensificationLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
 unique_name_in_owner = true
