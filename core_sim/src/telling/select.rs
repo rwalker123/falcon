@@ -20,14 +20,11 @@ use super::{
     catalog::{BeatDefinition, WardrobeEntry},
     config::SelectionConfig,
     nouns::{terrain_has_biome_tag, Noun},
+    stance,
 };
 
 /// Salt distinguishing narrative selection from every other seeded stream in the sim.
 pub const TELLING_SEED_SALT: u64 = 0x7E11_1146_BEA7_5A17;
-
-/// The stance term is **1.0 in PR-A** — the stance vector isn't populated until PR-B. The
-/// multiplication is wired so PR-B only has to fill this in.
-const PR_A_STANCE_AFFINITY: f32 = 1.0;
 
 /// A wardrobe entry that survived fit + novelty, with the weight it draws at.
 #[derive(Debug, Clone)]
@@ -87,6 +84,7 @@ pub fn weigh_wardrobe<'a>(
     terrain: Option<TerrainType>,
     wardrobe_usage: &BTreeMap<String, u64>,
     tick: u64,
+    effective_stance: &BTreeMap<String, f32>,
     cfg: &SelectionConfig,
 ) -> Vec<WeightedEntry<'a>> {
     beat.wardrobe
@@ -97,7 +95,7 @@ pub fn weigh_wardrobe<'a>(
                 return None;
             }
             let novelty = novelty_weight(wardrobe_usage.get(&entry.id).copied(), tick, cfg);
-            let weight = fit * novelty * PR_A_STANCE_AFFINITY;
+            let weight = fit * novelty * stance::affinity_term(entry, effective_stance, cfg);
             (weight >= cfg.min_selection_weight).then_some(WeightedEntry { entry, weight })
         })
         .collect()
@@ -281,6 +279,7 @@ mod tests {
             None,
             &BTreeMap::new(),
             0,
+            &BTreeMap::new(),
             &config.selection,
         );
         assert!(
@@ -288,6 +287,56 @@ mod tests {
             "every entry requires an unresolved noun, so nothing may be selectable"
         );
         assert!(select_wardrobe(&candidates, 1, 0, &beat.id).is_none());
+    }
+
+    /// **The design claim of concept §6, made explicit**: the *same* beat, on the *same* trigger,
+    /// reads with opposite valence depending on who the player has become. A roam-leaning stance
+    /// must weigh "the chase thins" above "less reason to follow", and a settle-leaning one must
+    /// weigh them the other way round.
+    #[test]
+    fn a_collapsing_herd_is_re_coloured_by_the_players_stance() {
+        let config = BeatConfig::builtin();
+        let catalog = BeatCatalog::builtin();
+        let beat = catalog
+            .find("ecology.herd_collapsing")
+            .expect("beat present");
+        let resolved = BTreeMap::from([(
+            "beast".to_string(),
+            Noun::named("Red Deer", "Red Deer", "deer"),
+        )]);
+
+        let weight_of = |stance_value: f32, entry_id: &str| {
+            let stance = BTreeMap::from([("roam_settle".to_string(), stance_value)]);
+            weigh_wardrobe(
+                beat,
+                &resolved,
+                None,
+                &BTreeMap::new(),
+                0,
+                &stance,
+                &config.selection,
+            )
+            .into_iter()
+            .find(|candidate| candidate.entry.id == entry_id)
+            .map(|candidate| candidate.weight)
+            .unwrap_or_else(|| panic!("{entry_id} should survive weighing"))
+        };
+
+        // Roam-leaning: the herd was the road, and the road is going quiet.
+        assert!(
+            weight_of(-1.0, "collapse.the_chase_thins")
+                > weight_of(-1.0, "collapse.less_reason_to_follow")
+        );
+        // Settle-leaning: the same collapse is barely worth looking up for.
+        assert!(
+            weight_of(1.0, "collapse.less_reason_to_follow")
+                > weight_of(1.0, "collapse.the_chase_thins")
+        );
+        // Uncoloured dressings of the same beat are untouched by stance.
+        assert_eq!(
+            weight_of(-1.0, "collapse.thin_season"),
+            weight_of(1.0, "collapse.thin_season")
+        );
     }
 
     #[test]

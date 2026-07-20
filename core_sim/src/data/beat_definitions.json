@@ -198,6 +198,24 @@
           "mythic": "Where the {beast.plural} were loud enough to wake us, it is quiet now. We did that. We are not saying it aloud.",
           "warm": "The {beast.plural} used to wake us up out there. It's quiet now. That was us, and nobody's saying so."
         }
+      },
+      {
+        "id": "collapse.the_chase_thins",
+        "fit": { "requires_noun": ["beast"] },
+        "stance_affinity": { "roam_settle": -1.0 },
+        "voice": {
+          "mythic": "The chase is longer every season and ends in less. The {beast.plural} were the road we walked; the road is going quiet under us.",
+          "warm": "Every season the chase runs longer and comes back with less. The {beast.plural} were how we got anywhere. That road's going quiet."
+        }
+      },
+      {
+        "id": "collapse.less_reason_to_follow",
+        "fit": { "requires_noun": ["beast"] },
+        "stance_affinity": { "roam_settle": 1.0 },
+        "voice": {
+          "mythic": "The {beast.plural} thin out past the fields, and fewer of us look up when they pass. There is less reason to follow anything now.",
+          "warm": "The {beast.plural} are thinning out past the fields, and fewer of us bother watching them go. Less reason to follow anything these days."
+        }
       }
     ],
     "gloss": ["fauna.collapsing_group_count"],
@@ -206,9 +224,10 @@
 
   {
     "id": "sedentarization.soft_drift",
-    "tier": "beat",
+    "tier": "fork",
     "soul": {
-      "question": "We have been in one place long enough that the young no longer ask when we leave."
+      "question": "We have been in one place long enough that the young no longer ask when we leave. Is that who we are?",
+      "fork": "roam_settle"
     },
     "when": {
       "all": [
@@ -243,9 +262,56 @@
           "mythic": "We have buried our dead in this ground. It is harder to walk away from ground that holds them.",
           "warm": "We've buried people in this ground now. Makes it harder to just walk away from it."
         }
+      },
+      {
+        "id": "soft_drift.long_chase",
+        "fit": { "requires_noun": ["beast"] },
+        "voice": {
+          "mythic": "Three seasons, and each one we chased the {beast.plural} and left the seed-ground unturned. The children do not remember a walled night. At the fires, they have begun to call us the People of the Long Chase. Is that who we are?",
+          "warm": "Three seasons now, all of them spent following the {beast.plural}, and nobody's turned the seed-ground once. The children have never slept behind a wall. People have started calling us the People of the Long Chase. Is that us?"
+        }
       }
     ],
-    "gloss": ["sedentarization.score"],
+    "choices": [
+      {
+        "id": "yes_trail",
+        "label": {
+          "mythic": "We are the trail",
+          "warm": "Yes — we're trail people"
+        },
+        "writes": { "stance": { "roam_settle": -0.4 } },
+        "echo": {
+          "mythic": "So it is said, and so we are: the People of the Long Chase.",
+          "warm": "So that's us, then. People of the Long Chase."
+        }
+      },
+      {
+        "id": "no_root",
+        "label": {
+          "mythic": "We were meant to root",
+          "warm": "No — we were meant to settle"
+        },
+        "writes": { "stance": { "roam_settle": 0.4 } },
+        "echo": {
+          "mythic": "Let them call us what they like. We were meant to root, and here is the ground.",
+          "warm": "Let them call us whatever. We were meant to settle, and this is the ground for it."
+        }
+      },
+      {
+        "id": "defer",
+        "label": {
+          "mythic": "Say nothing",
+          "warm": "Let it lie for now"
+        },
+        "writes": {},
+        "rearm_after_turns": 15,
+        "echo": {
+          "mythic": "The question was not answered. The fires keep it.",
+          "warm": "Nobody answered. The fires keep the question."
+        }
+      }
+    ],
+    "gloss": ["sedentarization.score", "stance.roam_settle"],
     "once": true
   },
 

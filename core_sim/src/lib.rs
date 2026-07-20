@@ -253,8 +253,9 @@ pub use systems::{
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
-    BeatCatalogHandle, BeatCatalogMetadata, BeatConfig, BeatConfigHandle, BeatConfigMetadata,
-    BeatDefinition, BeatLedger, BeatTier, CompareOp, EdgeDir, Noun, NounField, Predicate,
+    BeatCatalogHandle, BeatCatalogMetadata, BeatChoice, BeatConfig, BeatConfigHandle,
+    BeatConfigMetadata, BeatDefinition, BeatLedger, BeatTier, ChoiceWrites, CompareOp, EdgeDir,
+    ForkAnswerError, ForkResolution, Noun, NounField, PendingFork, Predicate, RenderedChoice,
     SignalSample, WardrobeEntry, TELLING_SEED_SALT,
 };
 pub use terrain::{

@@ -879,6 +879,51 @@ impl CultureManager {
         self.global.as_ref()
     }
 
+    /// **The faction-level culture rollup**: a population-weighted average of `bands`' local
+    /// layers, per trait axis.
+    ///
+    /// Local layers key off a band's `Entity`, so a faction's culture is only ever the aggregate
+    /// of the bands that carry it — weight belongs on population, because a 200-person band should
+    /// speak louder than a 12-person one. Callers pass **resident** bands only (an expedition is
+    /// detached and doesn't vote).
+    ///
+    /// Falls back to the global layer for any faction with no local layers (or no people), which
+    /// is the reading `The Telling`'s `culture.axis.*` signals used before this existed.
+    pub fn faction_trait_average(
+        &self,
+        bands: &[(CultureOwner, u32)],
+    ) -> [f32; CULTURE_TRAIT_AXES] {
+        let mut totals = [0.0f32; CULTURE_TRAIT_AXES];
+        let mut weight_total = 0.0f32;
+        for (owner, people) in bands {
+            let (Some(layer), weight) = (self.local_layer_by_owner(*owner), *people as f32) else {
+                continue;
+            };
+            if weight <= 0.0 {
+                continue;
+            }
+            for (index, value) in layer.traits.values().iter().enumerate() {
+                totals[index] += value.to_f32() * weight;
+            }
+            weight_total += weight;
+        }
+        if weight_total > 0.0 {
+            for total in totals.iter_mut() {
+                *total /= weight_total;
+            }
+            return totals;
+        }
+        self.global_layer()
+            .map(|layer| {
+                let mut values = [0.0f32; CULTURE_TRAIT_AXES];
+                for (index, value) in layer.traits.values().iter().enumerate() {
+                    values[index] = value.to_f32();
+                }
+                values
+            })
+            .unwrap_or(totals)
+    }
+
     pub fn global_layer_mut(&mut self) -> Option<&mut CultureLayer> {
         self.global.as_mut()
     }

@@ -56,6 +56,11 @@ impl Default for TierScalars {
 pub struct BudgetConfig {
     pub max_per_turn: TierScalars,
     pub global_cooldown_turns: TierScalars,
+    /// **The safety valve.** A pending fork older than this auto-resolves to its defer choice.
+    /// Forks post for *every* faction, including AI and unattended ones, and the server never
+    /// blocks a turn on an answer — without this, a fork posted to a faction with no client would
+    /// sit in `pending` forever and accumulate.
+    pub fork_expire_turns: u32,
 }
 
 impl Default for BudgetConfig {
@@ -67,9 +72,15 @@ impl Default for BudgetConfig {
                 beat: 2,
                 fork: 10,
             },
+            fork_expire_turns: DEFAULT_FORK_EXPIRE_TURNS,
         }
     }
 }
+
+/// Three fork cooldowns' worth of patience (`global_cooldown_turns.fork` = 10). Generous enough
+/// that a fork never expires under a player who is simply taking their time, short enough that an
+/// unattended faction's `pending` list cannot grow without bound.
+const DEFAULT_FORK_EXPIRE_TURNS: u32 = 30;
 
 /// Wardrobe selection weighting (`weight = fit × novelty × stance_affinity`).
 #[derive(Debug, Clone, Deserialize)]
@@ -81,9 +92,12 @@ pub struct SelectionConfig {
     pub novelty_floor: f32,
     /// Weight added per matched *soft* tag on a fitting wardrobe entry.
     pub fit_soft_tag_weight: f32,
-    /// How hard a stance affinity pulls selection. **Unused in PR-A** (the stance vector is not
-    /// populated until PR-B); the multiplication is wired so PR-B only has to fill the term.
+    /// How hard a stance affinity pulls selection (`telling::stance::affinity_term`).
     pub stance_affinity_weight: f32,
+    /// Floor under the stance-affinity term. It **scales** a wrong-stance dressing rather than
+    /// eliminating it: the wardrobe pool is small, and hard exclusion risks a beat with nothing
+    /// left to dress it in.
+    pub stance_affinity_floor: f32,
     /// Entries weighing less than this are dropped from the draw.
     pub min_selection_weight: f32,
 }
@@ -95,6 +109,7 @@ impl Default for SelectionConfig {
             novelty_floor: 0.05,
             fit_soft_tag_weight: 0.25,
             stance_affinity_weight: 0.5,
+            stance_affinity_floor: 0.1,
             min_selection_weight: 0.001,
         }
     }
@@ -217,6 +232,7 @@ impl BeatConfig {
                 "selection.stance_affinity_weight",
                 sel.stance_affinity_weight,
             ),
+            ("selection.stance_affinity_floor", sel.stance_affinity_floor),
             ("selection.min_selection_weight", sel.min_selection_weight),
             ("trend.min_delta", self.trend.min_delta),
         ] {
@@ -225,6 +241,18 @@ impl BeatConfig {
                     "{name} must be finite and >= 0 (got {weight})"
                 )));
             }
+        }
+        if sel.stance_affinity_floor <= 0.0 {
+            return Err(BeatConfigError::invalid(
+                "selection.stance_affinity_floor must be > 0 — the stance term scales a \
+                 wrong-stance dressing down, it must never eliminate it",
+            ));
+        }
+        if self.budget.fork_expire_turns == 0 {
+            return Err(BeatConfigError::invalid(
+                "budget.fork_expire_turns must be > 0 (a zero expiry auto-defers every fork on \
+                 the turn it posts, so the player never sees it)",
+            ));
         }
         if self.trend.max_history_turns == 0 {
             return Err(BeatConfigError::invalid(
@@ -242,7 +270,17 @@ impl BeatConfig {
                 self.voice.default_register
             )));
         }
+        let mut seen_axes: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         for axis in &self.stance.axes {
+            if !seen_axes.insert(axis.id.as_str()) {
+                return Err(BeatConfigError::invalid(format!(
+                    "duplicate stance axis id {:?} — a fork's `writes.stance` keys by id, so two \
+                     axes sharing one would be indistinguishable",
+                    axis.id
+                )));
+            }
+            // Deliberately the **base** registry, not the stance family: an axis backed by a
+            // `stance.*` signal would define its own accreted value in terms of itself.
             if !super::signals::is_registered_signal(&axis.signal) {
                 return Err(BeatConfigError::invalid(format!(
                     "stance axis {:?} names unknown signal {:?}",

@@ -1,13 +1,15 @@
 {
   "budget": {
     "max_per_turn": { "ambient": 2, "beat": 1, "fork": 1 },
-    "global_cooldown_turns": { "ambient": 0, "beat": 2, "fork": 10 }
+    "global_cooldown_turns": { "ambient": 0, "beat": 2, "fork": 10 },
+    "fork_expire_turns": 30
   },
   "selection": {
     "novelty_window_turns": 40,
     "novelty_floor": 0.05,
     "fit_soft_tag_weight": 0.25,
     "stance_affinity_weight": 0.5,
+    "stance_affinity_floor": 0.1,
     "min_selection_weight": 0.001
   },
   "trend": {

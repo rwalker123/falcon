@@ -10,9 +10,11 @@
 
 use std::collections::BTreeMap;
 
+use bevy::prelude::Entity;
+
 use crate::{
     components::{LaborAllocation, PopulationCohort, FOOD},
-    culture::{CultureManager, CultureTraitAxis},
+    culture::{CultureManager, CultureOwner, CultureTraitAxis},
     fauna::{EcologyPhase, HerdRegistry, HERDING_DISCOVERY_ID},
     forage::CULTIVATION_DISCOVERY_ID,
     orders::FactionId,
@@ -112,14 +114,14 @@ impl SignalSample {
         self.values.iter()
     }
 
-    fn set(&mut self, signal: &str, value: f64) {
+    pub(crate) fn set(&mut self, signal: &str, value: f64) {
         self.values.insert(signal.to_string(), value);
     }
 
-    /// Build a sample directly from `(signal, value)` pairs. Test-only construction seam so the
-    /// predicate/selection units can be exercised without standing up the whole world.
-    #[cfg(test)]
-    pub(crate) fn from_pairs<I: IntoIterator<Item = (SignalId, f64)>>(pairs: I) -> Self {
+    /// Build a sample directly from `(signal, value)` pairs — the construction seam that lets the
+    /// predicate/selection/stance machinery be exercised (and re-evaluated) without standing up a
+    /// whole world.
+    pub fn from_pairs<I: IntoIterator<Item = (SignalId, f64)>>(pairs: I) -> Self {
         Self {
             values: pairs.into_iter().collect(),
         }
@@ -144,6 +146,9 @@ pub struct SignalSources<'a> {
 
 /// One resident band, as the signal sampler and the noun resolvers see it.
 pub struct BandView<'a> {
+    /// The band entity — the key its local culture layer is filed under
+    /// (`CultureOwner::from_entity`), for the faction culture rollup.
+    pub entity: Entity,
     pub cohort: &'a PopulationCohort,
     pub labor: Option<&'a LaborAllocation>,
 }
@@ -195,13 +200,16 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64) {
         .count();
     sample.set("fauna.collapsing_group_count", collapsing as f64);
 
-    // Culture reads the **global** layer: there is no per-faction culture rollup today (local
-    // layers key off a band's `Entity`). A proper faction-level rollup is a PR-B question.
-    let global_traits = sources.culture.global_layer().map(|layer| &layer.traits);
+    // Culture reads the **faction rollup**: a population-weighted average of this faction's
+    // resident bands' local layers, falling back to the global layer when it has none.
+    let band_weights: Vec<(CultureOwner, u32)> = sources
+        .bands
+        .iter()
+        .map(|band| (CultureOwner::from_entity(band.entity), band.cohort.size))
+        .collect();
+    let faction_traits = sources.culture.faction_trait_average(&band_weights);
     for axis in CultureTraitAxis::ALL {
-        let value = global_traits
-            .map(|traits| traits.values()[axis.index()].to_f32() as f64)
-            .unwrap_or(0.0);
+        let value = faction_traits[axis.index()] as f64;
         sample.set(
             &format!("{CULTURE_AXIS_PREFIX}{}", culture_axis_key(axis)),
             value,

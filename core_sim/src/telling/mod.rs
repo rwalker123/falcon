@@ -29,6 +29,7 @@ pub mod nouns;
 pub mod predicate;
 pub mod select;
 pub mod signals;
+pub mod stance;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -53,8 +54,8 @@ use crate::{
 };
 
 pub use catalog::{
-    load_beat_catalog_from_env, BeatCatalog, BeatCatalogHandle, BeatCatalogMetadata,
-    BeatDefinition, BeatTier, Fit, NounBinding, Soul, WardrobeEntry,
+    load_beat_catalog_from_env, BeatCatalog, BeatCatalogHandle, BeatCatalogMetadata, BeatChoice,
+    BeatDefinition, BeatTier, ChoiceWrites, Fit, NounBinding, Soul, WardrobeEntry,
 };
 pub use config::{
     load_beat_config_from_env, BeatConfig, BeatConfigHandle, BeatConfigMetadata, BudgetConfig,
@@ -78,7 +79,7 @@ use signals::{
 ///
 /// Per-turn scratch (the tier budget counters) is **not** here — it is recomputed each turn, so
 /// a rehydrated ledger starts the turn neutral (the `fauna.rs` convention).
-#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct BeatLedger {
     /// Beat id → the ticks it fired on. Backs `once`, cooldowns, and `fired within`.
     fired: BTreeMap<String, Vec<u64>>,
@@ -89,10 +90,138 @@ pub struct BeatLedger {
     history: BTreeMap<String, VecDeque<Scalar>>,
     /// Wardrobe entry id → the tick it was last used. Backs novelty.
     wardrobe_usage: BTreeMap<String, u64>,
-    /// Consequence flags written by beats. Empty in PR-A (nothing writes one yet).
+    /// Consequence flags written by answered fork choices (`writes.flags`), readable by the
+    /// `{ "flag": F }` predicate.
     flags: BTreeSet<String>,
-    /// The player-authored stance vector. **Empty in PR-A** — populated by PR-B's fork tier.
+    /// The **declared stance offsets** — and *only* the offsets. The accreted half is read from
+    /// each axis's backing signal, so the effective stance is recomputed every turn
+    /// (`telling::stance`). Storing a single number instead would make *resist* unrepresentable.
     stance: BTreeMap<String, Scalar>,
+    /// Forks posted and not yet answered. **The server never blocks a turn on one** — the turn
+    /// gate is client-side, and `budget.fork_expire_turns` is what keeps this list bounded.
+    pending: Vec<PendingFork>,
+    /// Beat id → the choice the player took. The concept's memory ledger in its smallest useful
+    /// form: later beats can call back to what was decided.
+    answers: BTreeMap<String, String>,
+    /// Beat id → the tick its `once` guard lifts, from a choice's `rearm_after_turns`.
+    rearm_at: BTreeMap<String, u64>,
+    /// Faction → axis → **effective** stance, recomputed every turn from the signals plus the
+    /// declared offsets. **Derived scratch**: not persisted (it is a pure function of state that
+    /// *is*) and excluded from equality, the `LaborAllocation::last_yields` convention. Exists so
+    /// the snapshot can export what the player's identity currently reads as without re-sampling.
+    last_effective_stance: BTreeMap<u32, BTreeMap<String, f32>>,
+}
+
+/// Equality ignores `last_effective_stance` — it is derived per turn, so letting it participate
+/// would make two ledgers with identical *state* compare unequal.
+impl PartialEq for BeatLedger {
+    fn eq(&self, other: &Self) -> bool {
+        self.fired == other.fired
+            && self.edge_state == other.edge_state
+            && self.history == other.history
+            && self.wardrobe_usage == other.wardrobe_usage
+            && self.flags == other.flags
+            && self.stance == other.stance
+            && self.pending == other.pending
+            && self.answers == other.answers
+            && self.rearm_at == other.rearm_at
+    }
+}
+
+impl Eq for BeatLedger {}
+
+/// One register's rendering of a player-visible string.
+pub type VoiceLines = BTreeMap<String, String>;
+
+/// An answer offered by a [`PendingFork`], rendered at post time in every register.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedChoice {
+    pub id: String,
+    /// Computed here, not re-derived downstream: a consumer must not have to know that an empty
+    /// `writes` is what makes a choice a defer.
+    pub is_defer: bool,
+    pub label: VoiceLines,
+    /// The feed line this choice pushes when taken. Rendered now so its nouns stay pinned to the
+    /// moment the fork fired.
+    pub echo: VoiceLines,
+}
+
+/// A fork posted to a faction and awaiting an answer.
+///
+/// **Every register is rendered at post time.** The register is a live user toggle, so storing one
+/// rendered string would freeze the fork in whichever voice happened to be active when it fired.
+/// Rendering all of them also pins noun resolution to that moment, which is correct — the herd you
+/// were chasing *then* is what the question is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingFork {
+    pub beat_id: String,
+    pub wardrobe_id: String,
+    pub faction: FactionId,
+    pub posted_tick: u64,
+    pub rendered: VoiceLines,
+    pub choices: Vec<RenderedChoice>,
+    /// Signal id → the sampled value behind the question. `Scalar`, like everything persisted.
+    pub gloss: Vec<(String, Scalar)>,
+}
+
+impl PendingFork {
+    /// The rendering for `register`, falling back to the default register so a fork can never
+    /// render as an empty string.
+    pub fn narration(&self, register: &str, default_register: &str) -> Option<&str> {
+        self.rendered
+            .get(register)
+            .or_else(|| self.rendered.get(default_register))
+            .map(String::as_str)
+    }
+}
+
+/// Why an `answer_fork` was refused. Each maps to a distinct player-facing message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkAnswerError {
+    /// No such beat in the catalog.
+    UnknownBeat,
+    /// The beat exists, but this faction has no fork of it pending.
+    NoPendingFork,
+    /// The beat exists and is pending, but declares no such choice.
+    UnknownChoice,
+}
+
+/// What a resolved fork leaves for the caller to announce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkResolution {
+    pub beat_id: String,
+    pub choice_id: String,
+    pub wardrobe_id: String,
+    /// The echo, per register, rendered when the fork was posted.
+    pub echo: VoiceLines,
+    /// Set when the choice re-armed the beat, for the analytics/detail line.
+    pub rearmed_at_tick: Option<u64>,
+}
+
+impl ForkResolution {
+    /// The feed line for this resolution, in the default register.
+    pub fn echo_line(&self, default_register: &str) -> String {
+        self.echo
+            .get(default_register)
+            .or_else(|| self.echo.values().next())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The command-event detail line — the record of what was decided and what it wrote.
+    pub fn detail(&self) -> String {
+        let mut detail = format!(
+            "beat={} choice={} wardrobe={} tier={}",
+            self.beat_id,
+            self.choice_id,
+            self.wardrobe_id,
+            BeatTier::Fork.as_str()
+        );
+        if let Some(tick) = self.rearmed_at_tick {
+            detail.push_str(&format!(" rearms_at={tick}"));
+        }
+        detail
+    }
 }
 
 impl BeatLedger {
@@ -120,8 +249,162 @@ impl BeatLedger {
         &self.flags
     }
 
+    /// The **declared offsets** only — see the field docs and `telling::stance`.
     pub fn stance(&self) -> &BTreeMap<String, Scalar> {
         &self.stance
+    }
+
+    /// Every fork awaiting an answer, in post order.
+    pub fn pending_forks(&self) -> &[PendingFork] {
+        &self.pending
+    }
+
+    /// The forks awaiting `faction`'s answer.
+    pub fn pending_forks_for(&self, faction: FactionId) -> impl Iterator<Item = &PendingFork> {
+        self.pending
+            .iter()
+            .filter(move |fork| fork.faction == faction)
+    }
+
+    /// The **effective** stance the last turn computed for `faction` (signal + declared offset).
+    /// Empty before the first `telling_tick` of a session — it is derived, not persisted.
+    pub fn effective_stance_for(&self, faction: FactionId) -> Option<&BTreeMap<String, f32>> {
+        self.last_effective_stance.get(&faction.0)
+    }
+
+    /// Every faction's effective stance, in faction order.
+    pub fn effective_stance_by_faction(
+        &self,
+    ) -> impl Iterator<Item = (FactionId, &BTreeMap<String, f32>)> {
+        self.last_effective_stance
+            .iter()
+            .map(|(faction, axes)| (FactionId(*faction), axes))
+    }
+
+    /// The choice a beat was answered with, if it has been.
+    pub fn answer(&self, beat: &str) -> Option<&str> {
+        self.answers.get(beat).map(String::as_str)
+    }
+
+    /// Is `beat`'s `once` guard currently down? A `once` fork that was deferred re-arms after the
+    /// choice's `rearm_after_turns`, which is what makes "ask me later" mean *the question returns*.
+    fn once_guard_holds(&self, beat: &BeatDefinition, tick: u64) -> bool {
+        if !beat.once || !self.has_fired(&beat.id) {
+            return false;
+        }
+        self.rearm_at
+            .get(&beat.id)
+            .is_none_or(|rearm| tick < *rearm)
+    }
+
+    fn has_pending_fork(&self, beat: &str, faction: FactionId) -> bool {
+        self.pending
+            .iter()
+            .any(|fork| fork.beat_id == beat && fork.faction == faction)
+    }
+
+    fn push_pending_fork(&mut self, fork: PendingFork) {
+        self.pending.push(fork);
+    }
+
+    /// Take a choice on a pending fork: apply its writes, mark the beat fired **now** (a fork is
+    /// fired when *answered*, not when posted — so one that expires unanswered can legitimately
+    /// re-post), record the answer, re-arm if asked, and drop the fork from `pending`.
+    ///
+    /// Also the expiry valve's mechanism: expiring a fork resolves it to its defer choice through
+    /// exactly this path, so an auto-defer and a player defer are indistinguishable afterwards.
+    pub fn answer_fork(
+        &mut self,
+        catalog: &BeatCatalog,
+        faction: FactionId,
+        beat_id: &str,
+        choice_id: &str,
+        tick: u64,
+    ) -> Result<ForkResolution, ForkAnswerError> {
+        let beat = catalog.find(beat_id).ok_or(ForkAnswerError::UnknownBeat)?;
+        let index = self
+            .pending
+            .iter()
+            .position(|fork| fork.beat_id == beat_id && fork.faction == faction)
+            .ok_or(ForkAnswerError::NoPendingFork)?;
+        let choice = beat
+            .choice(choice_id)
+            .ok_or(ForkAnswerError::UnknownChoice)?;
+        // The echo comes off the *pending* fork, not the catalog: it was rendered when the fork
+        // fired, so its nouns describe the world that asked the question.
+        let rendered = self
+            .pending
+            .get(index)
+            .and_then(|fork| fork.choices.iter().find(|c| c.id == choice_id))
+            .ok_or(ForkAnswerError::UnknownChoice)?;
+        let echo = rendered.echo.clone();
+
+        // 1. Declared stance offsets. Clamped so an offset **alone** can never leave the axis,
+        //    independently of whatever the backing signal is doing.
+        for (axis, delta) in &choice.writes.stance {
+            let entry = self.stance.entry(axis.clone()).or_default();
+            let value = (entry.to_f32() + delta).clamp(stance::STANCE_MIN, stance::STANCE_MAX);
+            *entry = Scalar::from_f32(value);
+        }
+        // 2. Consequence flags.
+        for flag in &choice.writes.flags {
+            self.flags.insert(flag.clone());
+        }
+        // 3/4. Fired now, remembered, and re-armed if the choice asks for it.
+        self.mark_fired(beat_id, tick);
+        self.answers
+            .insert(beat_id.to_string(), choice_id.to_string());
+        self.rearm_at.remove(beat_id);
+        let rearmed_at_tick = choice.rearm_after_turns.map(|turns| {
+            let at = tick.saturating_add(turns as u64);
+            self.rearm_at.insert(beat_id.to_string(), at);
+            at
+        });
+        // 5. Off the pending list.
+        let fork = self.pending.remove(index);
+
+        Ok(ForkResolution {
+            beat_id: beat_id.to_string(),
+            choice_id: choice_id.to_string(),
+            wardrobe_id: fork.wardrobe_id,
+            echo,
+            rearmed_at_tick,
+        })
+    }
+
+    /// **The safety valve.** Auto-resolve every fork older than `fork_expire_turns` to its defer
+    /// choice, exactly as though the player had chosen it.
+    ///
+    /// Forks post for *every* faction, including AI and unattended ones, and the server never
+    /// refuses to resolve a turn because one is pending. Without this, a fork posted to a faction
+    /// with no client would sit in `pending` forever and accumulate.
+    fn expire_pending_forks(
+        &mut self,
+        catalog: &BeatCatalog,
+        tick: u64,
+        expire_turns: u32,
+    ) -> Vec<(FactionId, ForkResolution)> {
+        let expired: Vec<(FactionId, String, String)> = self
+            .pending
+            .iter()
+            .filter(|fork| tick.saturating_sub(fork.posted_tick) >= expire_turns as u64)
+            .filter_map(|fork| {
+                // Validation guarantees exactly one defer on every loaded fork; a catalog swapped
+                // under a live ledger is the only way this is `None`, and dropping the fork on the
+                // floor would be worse than leaving it pending.
+                let defer = catalog.find(&fork.beat_id)?.defer_choice()?;
+                Some((fork.faction, fork.beat_id.clone(), defer.id.clone()))
+            })
+            .collect();
+
+        expired
+            .into_iter()
+            .filter_map(|(faction, beat_id, choice_id)| {
+                self.answer_fork(catalog, faction, &beat_id, &choice_id, tick)
+                    .ok()
+                    .map(|resolution| (faction, resolution))
+            })
+            .collect()
     }
 
     fn mark_fired(&mut self, beat: &str, tick: u64) {
@@ -203,6 +486,23 @@ impl BeatLedger {
                     value: value.raw(),
                 })
                 .collect(),
+            pending_forks: self.pending.iter().map(pending_fork_to_state).collect(),
+            answers: self
+                .answers
+                .iter()
+                .map(|(beat, choice)| sim_schema::BeatAnswerState {
+                    beat: beat.clone(),
+                    choice: choice.clone(),
+                })
+                .collect(),
+            rearm: self
+                .rearm_at
+                .iter()
+                .map(|(beat, tick)| sim_schema::BeatRearmState {
+                    beat: beat.clone(),
+                    tick: *tick,
+                })
+                .collect(),
         }
     }
 
@@ -247,7 +547,94 @@ impl BeatLedger {
                 .iter()
                 .map(|entry| (entry.signal.clone(), Scalar::from_raw(entry.value)))
                 .collect(),
+            pending: state
+                .pending_forks
+                .iter()
+                .map(pending_fork_from_state)
+                .collect(),
+            answers: state
+                .answers
+                .iter()
+                .map(|entry| (entry.beat.clone(), entry.choice.clone()))
+                .collect(),
+            rearm_at: state
+                .rearm
+                .iter()
+                .map(|entry| (entry.beat.clone(), entry.tick))
+                .collect(),
+            // Derived, not persisted: recomputed by the next `telling_tick`.
+            last_effective_stance: BTreeMap::new(),
         }
+    }
+}
+
+fn voice_lines_to_state(lines: &VoiceLines) -> Vec<sim_schema::BeatVoiceLineState> {
+    lines
+        .iter()
+        .map(|(register, text)| sim_schema::BeatVoiceLineState {
+            register: register.clone(),
+            text: text.clone(),
+        })
+        .collect()
+}
+
+fn voice_lines_from_state(lines: &[sim_schema::BeatVoiceLineState]) -> VoiceLines {
+    lines
+        .iter()
+        .map(|line| (line.register.clone(), line.text.clone()))
+        .collect()
+}
+
+fn pending_fork_to_state(fork: &PendingFork) -> sim_schema::BeatPendingForkState {
+    sim_schema::BeatPendingForkState {
+        beat_id: fork.beat_id.clone(),
+        wardrobe_id: fork.wardrobe_id.clone(),
+        faction: fork.faction.0,
+        posted_tick: fork.posted_tick,
+        narration: voice_lines_to_state(&fork.rendered),
+        choices: fork
+            .choices
+            .iter()
+            .map(|choice| sim_schema::BeatForkChoiceState {
+                choice_id: choice.id.clone(),
+                is_defer: choice.is_defer,
+                label: voice_lines_to_state(&choice.label),
+                echo: voice_lines_to_state(&choice.echo),
+            })
+            .collect(),
+        gloss: fork
+            .gloss
+            .iter()
+            .map(|(signal, value)| sim_schema::BeatSignalValueState {
+                signal: signal.clone(),
+                value: value.raw(),
+            })
+            .collect(),
+    }
+}
+
+fn pending_fork_from_state(state: &sim_schema::BeatPendingForkState) -> PendingFork {
+    PendingFork {
+        beat_id: state.beat_id.clone(),
+        wardrobe_id: state.wardrobe_id.clone(),
+        faction: FactionId(state.faction),
+        posted_tick: state.posted_tick,
+        rendered: voice_lines_from_state(&state.narration),
+        choices: state
+            .choices
+            .iter()
+            .map(|choice| RenderedChoice {
+                id: choice.choice_id.clone(),
+                is_defer: choice.is_defer,
+                label: voice_lines_from_state(&choice.label),
+                echo: voice_lines_from_state(&choice.echo),
+            })
+            .collect(),
+        gloss: state
+            .gloss
+            .iter()
+            .map(|entry| (entry.signal.clone(), Scalar::from_raw(entry.value)))
+            .collect(),
     }
 }
 
@@ -270,10 +657,36 @@ pub struct TellingSources<'w, 's> {
     pub cohorts: Query<
         'w,
         's,
-        (&'static PopulationCohort, Option<&'static LaborAllocation>),
+        (
+            Entity,
+            &'static PopulationCohort,
+            Option<&'static LaborAllocation>,
+        ),
         With<ResidentBand>,
     >,
     pub tiles: Query<'w, 's, &'static Tile>,
+}
+
+/// Render one register-keyed copy block for **every** configured register, falling back to
+/// `fallback` for a register the content omits (validated present for the default register; a
+/// missing one is a hole in player copy, never braces).
+fn render_registers(
+    templates: &VoiceLines,
+    fallback: &str,
+    resolved: &BTreeMap<String, Noun>,
+    cfg: &BeatConfig,
+) -> VoiceLines {
+    cfg.voice
+        .registers
+        .iter()
+        .map(|register| {
+            let template = templates
+                .get(register)
+                .map(String::as_str)
+                .unwrap_or(fallback);
+            (register.clone(), nouns::render(template, resolved))
+        })
+        .collect()
 }
 
 /// Per-turn tier budget scratch. Recomputed every turn, never persisted.
@@ -319,8 +732,12 @@ pub fn telling_tick(
     let bands: Vec<BandView<'_>> = sources
         .cohorts
         .iter()
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .map(|(cohort, labor)| BandView { cohort, labor })
+        .filter(|(_, cohort, _)| cohort.faction == faction)
+        .map(|(entity, cohort, labor)| BandView {
+            entity,
+            cohort,
+            labor,
+        })
         .collect();
 
     // 1. Sample every signal once, into a consistent snapshot.
@@ -336,7 +753,45 @@ pub fn telling_tick(
         bands: &bands,
         previous_discovered_total,
     });
+
+    // The stance axes are readable signals too (`stance.<axis>`), so they must be in the sample
+    // *before* anything evaluates or glosses against them. They are computed rather than sampled:
+    // the accreted half comes from each axis's backing signal (already in `sample`), the declared
+    // half from the ledger's offsets.
+    let effective_stance = stance::effective_stance(&cfg, &sample, ledger.stance());
+    let mut sample = sample;
+    for (axis, value) in &effective_stance {
+        sample.set(&stance::stance_signal_id(axis), *value as f64);
+    }
+    let sample = sample;
+
+    ledger
+        .last_effective_stance
+        .insert(faction.0, effective_stance.clone());
     ledger.push_history(&sample, cfg.trend.max_history_turns);
+
+    // **The safety valve, before anything else this turn.** A fork nobody answered auto-resolves
+    // to its defer choice. This is the *only* thing bounding `pending`, because a fork posts to
+    // every faction — AI and unattended ones included — and the server never blocks a turn on an
+    // answer (the turn gate is client-side; do not add one here).
+    for (fork_faction, resolution) in
+        ledger.expire_pending_forks(&catalog, tick, cfg.budget.fork_expire_turns)
+    {
+        info!(
+            target: "shadow_scale::analytics",
+            event = "telling_fork_expired",
+            faction = fork_faction.0,
+            beat = %resolution.beat_id,
+            choice = %resolution.choice_id,
+        );
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::NarrativeFork,
+            fork_faction,
+            resolution.echo_line(&cfg.voice.default_register),
+            Some(format!("{} resolved=expired", resolution.detail())),
+        ));
+    }
 
     // The ground the band is standing on, for `biome.current_dominant` and biome fit gating.
     let current_terrain = nouns::primary_band(&bands)
@@ -363,13 +818,18 @@ pub fn telling_tick(
         .unwrap_or(sources.config.map_seed);
 
     let mut budget = TierBudget::default();
-    // Emissions are staged so the ledger stays immutably borrowed during evaluation.
+    // Emissions and fork posts are staged so the ledger stays immutably borrowed during evaluation.
     let mut emissions: Vec<(String, String, BeatTier, String, String)> = Vec::new();
+    let mut posts: Vec<PendingFork> = Vec::new();
 
     // 2/3/4/5. Candidate filter → noun resolution → weighing → seeded selection, in catalog
     // (authored) order so evaluation is stable.
     for beat in catalog.beats() {
-        if beat.once && ledger.has_fired(&beat.id) {
+        if ledger.once_guard_holds(beat, tick) {
+            continue;
+        }
+        // A fork already on the table is not re-asked every turn until it is answered.
+        if beat.tier == BeatTier::Fork && ledger.has_pending_fork(&beat.id, faction) {
             continue;
         }
         if let (Some(cooldown), Some(last)) = (beat.cooldown_turns, ledger.last_fired(&beat.id)) {
@@ -428,6 +888,7 @@ pub fn telling_tick(
             current_terrain,
             &ledger.wardrobe_usage,
             tick,
+            &effective_stance,
             &cfg.selection,
         );
         // Every dressing excluded → the beat silently does not emit, and is **not** marked fired,
@@ -435,6 +896,37 @@ pub fn telling_tick(
         let Some(entry) = select::select_wardrobe(&candidates, world_seed, tick, &beat.id) else {
             continue;
         };
+
+        // A **fork** does not push a line to the feed: it posts a decision the player answers.
+        // It is deliberately **not** marked fired here — a fork is fired when *answered*, so one
+        // that expires unanswered can legitimately re-post.
+        if beat.tier == BeatTier::Fork {
+            posts.push(PendingFork {
+                beat_id: beat.id.clone(),
+                wardrobe_id: entry.id.clone(),
+                faction,
+                posted_tick: tick,
+                // Every register, rendered now — the register is a live user toggle.
+                rendered: render_registers(&entry.voice, &beat.soul.question, &resolved, &cfg),
+                choices: beat
+                    .choices
+                    .iter()
+                    .map(|choice| RenderedChoice {
+                        id: choice.id.clone(),
+                        is_defer: choice.is_defer(),
+                        label: render_registers(&choice.label, &choice.id, &resolved, &cfg),
+                        echo: render_registers(&choice.echo, &choice.id, &resolved, &cfg),
+                    })
+                    .collect(),
+                gloss: beat
+                    .gloss
+                    .iter()
+                    .map(|signal| (signal.clone(), Scalar::from_f32(sample.get(signal) as f32)))
+                    .collect(),
+            });
+            budget.spend(beat.tier);
+            continue;
+        }
 
         let template = entry
             .voice
@@ -483,6 +975,21 @@ pub fn telling_tick(
         );
     }
 
+    // Fork posts: onto the pending list, not the feed. The dressing counts as *used* (the player
+    // is looking at it right now), but the beat stays unfired until it is answered.
+    for fork in posts {
+        info!(
+            target: "shadow_scale::analytics",
+            event = "telling_fork_posted",
+            faction = fork.faction.0,
+            beat = %fork.beat_id,
+            wardrobe = %fork.wardrobe_id,
+            tier = BeatTier::Fork.as_str(),
+        );
+        ledger.mark_wardrobe_used(&fork.wardrobe_id, tick);
+        ledger.push_pending_fork(fork);
+    }
+
     // Store this turn's samples as next turn's `prev` — **after** evaluation, so `crosses`
     // always compares against the previous turn.
     ledger.commit_edge_state(&sample, discovered_total);
@@ -510,6 +1017,35 @@ mod tests {
         ledger.push_history(&sample, 16);
         ledger.commit_edge_state(&sample, 2.0);
 
+        // The fork tier's half: what is on the table, what was decided, and what re-arms.
+        ledger.push_pending_fork(PendingFork {
+            beat_id: "sedentarization.soft_drift".to_string(),
+            wardrobe_id: "soft_drift.river_bend".to_string(),
+            faction: FactionId(0),
+            posted_tick: 12,
+            rendered: BTreeMap::from([
+                (
+                    "mythic".to_string(),
+                    "The river-bend remembers us.".to_string(),
+                ),
+                (
+                    "warm".to_string(),
+                    "The river-bend knows us now.".to_string(),
+                ),
+            ]),
+            choices: vec![RenderedChoice {
+                id: "defer".to_string(),
+                is_defer: true,
+                label: BTreeMap::from([("mythic".to_string(), "Say nothing".to_string())]),
+                echo: BTreeMap::from([("mythic".to_string(), "The fires keep it.".to_string())]),
+            }],
+            gloss: vec![("sedentarization.score".to_string(), Scalar::from_f32(41.5))],
+        });
+        ledger
+            .answers
+            .insert("some.prior_fork".to_string(), "yes_trail".to_string());
+        ledger.rearm_at.insert("some.prior_fork".to_string(), 27);
+
         let restored = BeatLedger::from_state(&ledger.to_state());
         assert_eq!(
             restored, ledger,
@@ -520,6 +1056,8 @@ mod tests {
             restored.wardrobe_last_used("cold_open.bone_ground"),
             Some(0)
         );
+        assert_eq!(restored.pending_forks().len(), 1);
+        assert_eq!(restored.answer("some.prior_fork"), Some("yes_trail"));
     }
 
     #[test]

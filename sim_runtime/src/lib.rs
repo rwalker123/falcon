@@ -401,6 +401,8 @@ pub mod knowledge {
                 capability_flags: 0,
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
+                pending_forks: Vec::new(),
+                stance_axes: Vec::new(),
                 herds: Vec::new(),
                 herd_registry: Vec::new(),
                 forage_registry: Vec::new(),

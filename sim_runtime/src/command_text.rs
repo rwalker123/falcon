@@ -176,6 +176,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "extend_pen <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "answer_fork",
+        aliases: &[],
+        summary: "Answer a pending narrative fork (The Telling) with one of its choices; every fork offers an explicit defer.",
+        usage: "answer_fork <faction_id> <beat_id> <choice_id>",
+    },
+    CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
         summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
@@ -737,6 +743,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 },
             })
         }
+        "answer_fork" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let beat_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("beat_id"))?;
+            let choice_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("choice_id"))?;
+            Ok(CommandPayload::AnswerFork {
+                faction_id: parse_u32(faction_str, "answer_fork faction")?,
+                beat_id: beat_id.to_string(),
+                choice_id: choice_id.to_string(),
+            })
+        }
         "domesticate" => {
             let faction_str = parts
                 .next()
@@ -1141,6 +1163,22 @@ mod tests {
                 band_entity_bits: Some(904),
             }
         );
+    }
+
+    #[test]
+    fn parse_answer_fork_command() {
+        assert_eq!(
+            parse_command_line("answer_fork 0 sedentarization.soft_drift yes_trail").unwrap(),
+            CommandPayload::AnswerFork {
+                faction_id: 0,
+                beat_id: "sedentarization.soft_drift".to_string(),
+                choice_id: "yes_trail".to_string(),
+            }
+        );
+        assert!(matches!(
+            parse_command_line("answer_fork 0 sedentarization.soft_drift"),
+            Err(CommandParseError::MissingArgument("choice_id"))
+        ));
     }
 
     #[test]

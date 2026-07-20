@@ -159,6 +159,12 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// The Telling: answer a pending narrative fork with one of its authored choices.
+    AnswerFork {
+        faction_id: u32,
+        beat_id: String,
+        choice_id: String,
+    },
     CancelOrder {
         faction_id: u32,
         band_entity_bits: Option<u64>,
@@ -537,6 +543,15 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::AnswerFork {
+                faction_id,
+                beat_id,
+                choice_id,
+            } => pb::command_envelope::Command::AnswerFork(pb::AnswerForkCommand {
+                faction_id: *faction_id,
+                beat_id: beat_id.clone(),
+                choice_id: choice_id.clone(),
+            }),
             CommandPayload::CancelOrder {
                 faction_id,
                 band_entity_bits,
@@ -835,6 +850,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
+                faction_id: cmd.faction_id,
+                beat_id: cmd.beat_id,
+                choice_id: cmd.choice_id,
             },
             pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
                 faction_id: cmd.faction_id,

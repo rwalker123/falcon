@@ -41,8 +41,8 @@ cargo run -p core_sim --bin server
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 1.5 / `pen_gain` 3.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 0.75, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
-| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit`), `gloss`, `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
-| `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, `min_selection_weight`), `trend` (`max_history_turns`, `min_delta`), `voice` (`default_register`, `registers`), `stance.axes` (id → backing signal + range; parsed in PR-A, populated in PR-B). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
+| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
+| `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns`, `min_delta`), `voice` (`default_register`, `registers`), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -1817,8 +1817,8 @@ world, and pushes them through the existing `CommandEventLog`. The feed stops sa
 "Sedentarization available" and starts saying *"The river-bend remembers us now."* Authoritative
 design: `docs/plan_the_telling.md` (§2 schema, §3 runtime); concept `docs/Emergent Narrative.md`.
 
-**Shipped: PR-A — the ambient/beat tiers.** The `fork` tier parses but is **inert** (no decision
-surface, no stance write-back); the stance vector is empty and its selection term is pinned at 1.0.
+**Shipped: PR-A (the ambient/beat tiers) + PR-B (the fork tier, stance, and re-colouring).** All
+three tiers are live; see "The fork tier" and "Stance" below.
 
 ### Three layers, and the mod surface is content
 
@@ -1839,6 +1839,7 @@ surface, no stance write-back); the stance vector is empty and its selection ter
 | `signals.rs` | **the signal registry** — extension point |
 | `nouns.rs` | **the noun resolver registry** + template rendering — extension point |
 | `select.rs` | weighted wardrobe selection + the determinism recipe |
+| `stance.rs` | **stance** — signal normalization, declared offsets, the effective value, the re-colouring term |
 
 ### Turn-pipeline placement
 
@@ -1867,7 +1868,8 @@ once. Sampled for the **player faction** = `FactionRegistry`'s first entry in `F
 | `sites.discovered_this_turn` | `DiscoveredSites`' per-faction record count diffed against last turn's, retained in the ledger under the reserved key `internal.sites.discovered_total` (**not** a registered signal — content sees only the diff) |
 | `discovery.progress.cultivation` / `.herding` | `DiscoveryProgressLedger::get_progress` on `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004), 0..1 |
 | `fauna.collapsing_group_count` | `HerdRegistry::entries()` in `EcologyPhase::Collapsing` |
-| `culture.axis.<snake_axis>` | one per `CultureTraitAxis`, off the **global** `CultureLayer`'s trait vector (`0.0` with no global layer). There is no per-faction culture rollup — local layers key off a band's `Entity` — so a faction-level rollup is a **PR-B question**. None of PR-A's content uses one; they exist because `beat_config.json`'s stance axes reference them and validation checks they resolve |
+| `culture.axis.<snake_axis>` | one per `CultureTraitAxis`, off the **faction culture rollup** — `CultureManager::faction_trait_average`, a **population-weighted average of the faction's resident bands' local layers** (`CultureOwner::from_entity`, weighted by `PopulationCohort.size` over `With<ResidentBand>`; expeditions are detached and don't vote), falling back to the global layer when a faction has no local layers. PR-A read the global layer directly because no rollup existed |
+| `stance.<axis>` | one per configured `stance.axes[]` — the axis's **effective** value, `clamp(normalize(signal) + declared_offset, -1, 1)`. **Config-driven, so it resolves through `BeatConfig`, not the static registry** (`stance::is_stance_signal`); a stance axis may *not* be backed by a `stance.*` signal, which would define its accreted value in terms of itself |
 
 **Noun resolvers** (`nouns.rs`) — each returns `Option<Noun>` (`Named { name, plural, adjective }`
 or `Scalar`). `None` is normal early-game. Ties on every scan break by **species name ascending**,
@@ -1926,8 +1928,12 @@ seeded draw → render → emit.
   a **load-time** failure.
 - **novelty** — `1.0` if never used; else ramping linearly from `novelty_floor` back to `1.0` over
   `novelty_window_turns` since last use.
-- **stance_affinity** — **pinned at `1.0` in PR-A**; the multiplication is wired so PR-B only fills
-  the term.
+- **stance_affinity** — the **re-colouring** term (`stance::affinity_term`):
+  `1.0 + stance_affinity_weight × Σ_axis (affinity[axis] × effective_stance[axis])`, floored at
+  `selection.stance_affinity_floor` (0.1). The floor is deliberate: a wrong-stance dressing should
+  become *unlikely*, not impossible — the wardrobe pool is small and hard exclusion risks a beat
+  with nothing left to dress it in. An entry with **no** `stance_affinity` gets exactly `1.0`, so
+  uncoloured beats are bit-identical to PR-A.
 
 Entries below `min_selection_weight` are dropped. **If every entry is excluded the beat emits
 nothing and is NOT marked fired** — it can still land later, once the world can dress it.
@@ -1942,7 +1948,8 @@ nothing and is NOT marked fired** — it can still land later, once the world ca
 own `cooldown_turns` / `once`. Per-turn budget counters are **scratch** — recomputed each turn,
 never persisted, so a rehydrated ledger starts neutral (the `fauna.rs` convention).
 
-**Command feed.** One new `CommandEventKind::NarrativeBeat` (`"narrative_beat"`). The wire field is
+**Command feed.** `CommandEventKind::NarrativeBeat` (`"narrative_beat"`) for the ambient/beat tiers,
+and `CommandEventKind::NarrativeFork` (`"narrative_fork"`) for a resolved fork's echo line. The wire field is
 already a string, so there is **no schema change and no client change** — an unknown kind renders
 generically. `label` = the rendered line; `detail` = the **gloss**: each `gloss` signal id and its
 **real sampled value**, plus `tier=…`. That is the concept doc's *"the voice never lies"* proof, so
@@ -1973,11 +1980,118 @@ Config invariants: `novelty_window_turns > 0`; `0 ≤ novelty_floor ≤ 1`; ever
 `BeatTier` round-trips by string key (`as_str`/`from_key`) with an **unknown key erroring at load**,
 per the persisted-enum convention.
 
+### Stance — accreted signal + declared offset
+
+The concept's flow is *accrete → name → ratify or resist → steer*, so an axis has **two** halves and
+the engine keeps them apart:
+
+```text
+effective_stance(axis) = clamp(normalize(signal) + declared_offset(axis), -1.0, 1.0)
+```
+
+- the **accreted value** — what the player's behaviour actually says, read from the axis's backing
+  signal (`beat_config.json` `stance.axes[].signal`) and normalized from that axis's `range` to
+  `[-1, 1]`;
+- the **declared offset** — what the player *said* when they answered a fork, accumulated from each
+  choice's `writes.stance` (each write clamped so an offset **alone** can never leave the axis).
+
+> **`BeatLedger.stance` stores ONLY the declared offsets** — the part that is not derivable — and
+> the effective value is recomputed every turn in `telling_tick`. **This is what makes *resist*
+> representable.** A player whose sedentarization is climbing but who answered "we are the trail"
+> carries a negative offset pulling against their own behaviour, and that tension survives; it
+> would not if stance were a single stored number, or a bare signal reading. Do not "simplify" the
+> two halves into one field.
+
+Each axis is also a readable `stance.<axis>` signal (injected into the sample immediately after the
+base signals, *before* any predicate or gloss evaluates), so content can gloss it — the shipped fork
+glosses `stance.roam_settle` — and future beats can gate on it. The effective values are also kept
+on the ledger as **derived scratch** (`last_effective_stance`, not persisted, excluded from
+equality — the `LaborAllocation::last_yields` convention) purely so the snapshot can export them
+without re-sampling.
+
+### The fork tier — the decision surface
+
+A `fork`-tier beat carries a **`choices` array**. It does *not* push a line to the feed; it posts a
+`PendingFork` onto `BeatLedger.pending` for the faction, which the client renders and answers.
+
+**Posting.** Same candidate filter, noun resolution, weighing and seeded selection as any other
+beat, and it spends the fork tier's `max_per_turn` / `global_cooldown_turns` budget identically.
+Then:
+- **Every configured register is rendered at post time** — narration, each choice's `label`, and
+  each choice's `echo`. The register is a **live user toggle**, so storing one rendered string would
+  freeze the fork in whichever voice happened to be active when it fired. Rendering all of them also
+  pins noun resolution to the moment the fork fired, which is correct: the herd you were chasing
+  *then* is what the question is about (and it is why the `echo` is read off the pending fork at
+  answer time, not off the catalog).
+- The dressing is marked **used** (novelty), because the player is looking at it.
+- **The beat is deliberately NOT marked fired.** A fork is fired when **answered** — so one that
+  expires unanswered can legitimately re-post. A fork already on the table is not re-asked each turn.
+
+**Answering** — `answer_fork <faction> <beat_id> <choice_id>` (full proto/runtime/text/server
+plumbing; `AnswerForkCommand` proto field **40**; `handle_answer_fork`). On a valid answer
+(`BeatLedger::answer_fork`, the single path both the command and the expiry valve take):
+1. apply `writes.stance` into the ledger's declared offsets (clamped to `[-1, 1]`);
+2. apply `writes.flags` into `BeatLedger.flags` (the `{ "flag": F }` predicate's first real writer);
+3. **mark the beat fired at the current tick** and record the choice in `BeatLedger.answers`
+   (beat id → choice id) — the concept's memory ledger in its smallest useful form, so later beats
+   can call back to what was decided;
+4. if the choice carries `rearm_after_turns`, record a re-arm tick that lifts the `once` guard after
+   that many turns — the defer branch's "it returns, sharper";
+5. drop the fork from `pending`;
+6. push the choice's **echo** to the feed under `CommandEventKind::NarrativeFork`, so the answer is
+   part of the story record and not a silent state change.
+
+Rejections are distinct and legible: unknown beat id, no pending fork of that beat for that faction,
+unknown choice id.
+
+**Expiry — the safety valve.** At the top of `telling_tick`, a pending fork older than
+`beat_config.budget.fork_expire_turns` (**30** — three fork cooldowns' patience: generous under a
+player taking their time, short enough that an unattended list cannot grow) **auto-resolves to its
+defer choice**, through exactly the same `answer_fork` path, with the same echo and the same re-arm
+(detail `resolved=expired`). Forks post for **every** faction, AI and unattended ones included, so
+without this a fork with no client would sit in `pending` forever and accumulate.
+
+> **The server NEVER blocks turn resolution on a pending fork.** The turn gate is **client-side**;
+> the expiry valve is the server's whole answer. There is no gating in the turn queue or `run_turn`,
+> and none should be added — a fork posted to a faction with no client would deadlock the game.
+
+**Validation** (at catalog load, so a broken fork never ships): a `fork` beat needs **≥2 choices**
+and a non-fork beat **none**; choice ids unique within a beat; `label`/`echo` carry the
+`default_register` and their placeholders resolve to declared noun slots; every `writes.stance` axis
+and any `soul.fork` names a configured stance axis; and **exactly one choice per fork must be a
+defer** (an empty `writes`). That last one is load-bearing: it is the explicit out the client's turn
+gate depends on, and a fork without it would trap the player in an unanswerable-without-committing
+decision.
+
+### The fork tier on the wire
+
+Unlike `BeatLedger` (sim-only serde), the fork tier **is** client-consumed, so it follows the
+per-faction `SedentarizationState` / `DiscoveredSitesState` pattern on **both** `WorldSnapshot` and
+`WorldDelta` (append-only, in `CampaignSection`):
+
+```
+pendingForks:[PendingForksState{ faction:uint, forks:[PendingForkState{
+  beatId, wardrobeId, postedTick,
+  narration:[VoiceLine{ register:string, text:string }],
+  choices:[ForkChoiceState{ choiceId, label:[VoiceLine], isDefer:bool }],
+  gloss:[GlossEntry{ signal:string, value:double }] }] }]
+stanceAxes:[StanceState{ faction:uint, axes:[StanceAxisState{ axis:string, value:float }] }]
+```
+
+`register` and `axis` are **strings** (the `species` / `policy` convention), so adding a voice
+register or a stance axis needs no schema change. **`isDefer` is computed server-side** (the choice
+writes nothing) rather than re-derived client-side — the client must not have to know what makes a
+choice a defer, and its turn gate depends on the answer. `stanceAxes` carries the **effective**
+value, so the client shows what the player's identity currently reads as, drift and declaration
+together.
+
 ### Ledger + rollback
 
 `BeatLedger` (resource) holds `fired` (beat → ticks), `edge_state` (signal → last turn's sample),
 `history` (signal → rolling, capped at `trend.max_history_turns`), `wardrobe_usage` (novelty),
-`flags`, and `stance` (empty in PR-A). `BTreeMap`/`BTreeSet` throughout for deterministic iteration
+`flags`, `stance` (the **declared offsets only**), `pending` (posted, unanswered forks — every
+register already rendered), `answers` (beat → chosen choice) and `rearm_at` (beat → the tick its
+`once` guard lifts). `BTreeMap`/`BTreeSet` throughout for deterministic iteration
 and stable snapshot ordering, and **`Scalar`, not `f32`**, for everything persisted — sampled as
 `f64`, stored fixed-point, the same rollback-bit-exactness argument the rest of the codebase makes.
 
@@ -1989,8 +2103,11 @@ FlatBuffers client stream (beats reach the client as `CommandEvent`s).
 > `BeatLedger::from_state`. This is deliberately **not** the `SedentarizationScore` shape, which is
 > captured but never restored (`capture.rs` has no rebuild for it — a latent bug; do not copy it).
 > A ledger that was only captured would leave a beat marked fired after a rollback past it, so it
-> could never fire again, and its stale `edge_state` would make `crosses` misfire. Guarded by
-> `integration_tests/tests/telling_rollback.rs`.
+> could never fire again, and its stale `edge_state` would make `crosses` misfire. The fork tier
+> rides the same round-trip: a fork **answered after the rollback point is un-answered by the
+> rollback** — the declared stance offset, the fired mark, the recorded answer and the pending list
+> all rewind together, so a player never carries a stance they did not declare in the timeline they
+> rolled back into. Guarded by `integration_tests/tests/telling_rollback.rs` (both halves).
 
 See Also: `docs/plan_the_telling.md` (design + PR slicing), `docs/Emergent Narrative.md` (concept),
 "Sedentarization" (the rising-edge pattern `crosses` generalises).

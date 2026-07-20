@@ -24,10 +24,10 @@ use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer}
 use core_sim::port_base_override;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
-    output_multiplier, resolve_active_profile, ActiveStartProfile, BandTravel, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag,
-    LaborAllocation, LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
-    WellbeingConfigHandle,
+    output_multiplier, resolve_active_profile, ActiveStartProfile, BandTravel, BeatCatalogHandle,
+    BeatConfigHandle, BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FoodModuleTag, ForkAnswerError, LaborAllocation,
+    LaborTarget, LocalStore, ResidentBand, StartProfileOverrides, WellbeingConfigHandle,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -627,6 +627,13 @@ fn main() {
             Command::Domesticate { faction, herd_id } => {
                 handle_domesticate(&mut app, faction, herd_id);
             }
+            Command::AnswerFork {
+                faction,
+                beat_id,
+                choice_id,
+            } => {
+                handle_answer_fork(&mut app, faction, beat_id, choice_id);
+            }
             Command::Cultivate {
                 faction,
                 target_x,
@@ -782,6 +789,12 @@ enum Command {
     Domesticate {
         faction: FactionId,
         herd_id: String,
+    },
+    /// The Telling: answer a pending narrative fork with one of its authored choices.
+    AnswerFork {
+        faction: FactionId,
+        beat_id: String,
+        choice_id: String,
     },
     Cultivate {
         faction: FactionId,
@@ -2592,6 +2605,79 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
     }
 }
 
+/// **Answer a pending narrative fork** (The Telling's fork tier).
+///
+/// The choice's writes land in the `BeatLedger` — declared stance offsets and consequence flags —
+/// the beat is marked fired *now* (a fork is fired when answered, not when posted), the answer is
+/// remembered, a deferring choice re-arms the beat, and the choice's echo joins the command feed
+/// under `NarrativeFork` so the decision is part of the story record rather than a silent state
+/// change.
+///
+/// **This is a pure ledger mutation — nothing here gates a turn.** The turn gate for an unanswered
+/// fork is client-side; the server's counterpart is the expiry valve in `telling_tick`, which
+/// auto-resolves a stale fork to its defer choice. Do not add a block to the turn queue or
+/// `run_turn`: forks post for AI and unattended factions too.
+fn handle_answer_fork(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    beat_id: String,
+    choice_id: String,
+) {
+    let catalog = app.world.resource::<BeatCatalogHandle>().get();
+    let default_register = app
+        .world
+        .resource::<BeatConfigHandle>()
+        .get()
+        .voice
+        .default_register
+        .clone();
+    let tick = app.world.resource::<SimulationTick>().0;
+
+    let outcome = {
+        let mut ledger = app.world.resource_mut::<BeatLedger>();
+        ledger.answer_fork(&catalog, faction, &beat_id, &choice_id, tick)
+    };
+
+    match outcome {
+        Err(ForkAnswerError::UnknownBeat) => emit_command_failure(
+            app,
+            CommandEventKind::NarrativeFork,
+            faction,
+            format!("There is no beat '{beat_id}'."),
+        ),
+        Err(ForkAnswerError::NoPendingFork) => emit_command_failure(
+            app,
+            CommandEventKind::NarrativeFork,
+            faction,
+            format!("'{beat_id}' has no question waiting on you."),
+        ),
+        Err(ForkAnswerError::UnknownChoice) => emit_command_failure(
+            app,
+            CommandEventKind::NarrativeFork,
+            faction,
+            format!("'{beat_id}' offers no answer called '{choice_id}'."),
+        ),
+        Ok(resolution) => {
+            info!(
+                target: "shadow_scale::analytics",
+                event = "telling_fork_answered",
+                faction = faction.0,
+                beat = %resolution.beat_id,
+                choice = %resolution.choice_id,
+                wardrobe = %resolution.wardrobe_id,
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::NarrativeFork,
+                faction,
+                resolution.echo_line(&default_register),
+                Some(format!("{} resolved=answered", resolution.detail())),
+            );
+        }
+    }
+}
+
 /// **Set the Cultivate policy** on the forage patch at `tile` for the band(s) already working it
 /// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
 /// the client's policy picker does; it does **not** claim or complete anything.
@@ -3658,6 +3744,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             );
             None
         }
+        ProtoCommandPayload::AnswerFork {
+            faction_id,
+            beat_id,
+            choice_id,
+        } => Some(Command::AnswerFork {
+            faction: FactionId(faction_id),
+            beat_id,
+            choice_id,
+        }),
         ProtoCommandPayload::Domesticate {
             faction_id,
             herd_id,
@@ -4027,6 +4122,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
         CommandEventKind::NarrativeBeat => "The Telling",
+        CommandEventKind::NarrativeFork => "The Telling",
         CommandEventKind::ExpeditionSent => "Expedition sent",
         CommandEventKind::ExpeditionArrived => "Expedition arrived",
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",

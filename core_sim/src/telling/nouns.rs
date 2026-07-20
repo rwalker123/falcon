@@ -36,7 +36,7 @@ pub enum Noun {
 }
 
 impl Noun {
-    fn named(
+    pub(crate) fn named(
         name: impl Into<String>,
         plural: impl Into<String>,
         adjective: impl Into<String>,
