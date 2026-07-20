@@ -487,6 +487,15 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_herd_starving")
 
+	# State J-sprites — the FAUNA SPRITE ROSTER: one herd per bundled-art species, each on its own
+	# hex, so every `FaunaSprites` PNG is judged at true marker size in one frame (right species, no
+	# clipping, no key fringe). Every HERD_SPECIES key now has art, so this frame is the coverage
+	# check that used to be spread across whichever fixtures happened to name a species.
+	_map.display_snapshot(_snapshot_fauna_sprites())
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_fauna_sprites")
+
 	# State K — split-state guard: the selected band (selected_unit_id) stands on a DIFFERENT hex than
 	# selected_tile, simulating a band that migrated off the clicked hex on turn-advance. The outline
 	# stays on selected_tile; NO active-ring may draw on the band's actual hex (group_tile !=
@@ -1230,6 +1239,43 @@ func _snapshot_pens() -> Dictionary:
 		"corralled": true, "pen_fed_fraction": 0.3,
 	}
 	return _base_snapshot(_band([], 2, 2), [fed, starving, starving_sprite])
+
+## Every species in `FoodIcons.HERD_SPECIES`, one herd per ALIAS GROUP, laid out on its own hex so
+## each `FaunaSprites` marker can be judged at TRUE marker size. This is the roster frame: it is the
+## only place the whole bundled-art set is visible at once, so a swapped/clipped/fringed sprite shows
+## up here and nowhere else. One entry per group is enough — aliases resolve to the same PNG.
+const FAUNA_SPRITE_ROSTER := [
+	["game_rabbit_01", "Rabbit Warren"],
+	["game_deer_01", "Red Deer"],
+	["game_boar_01", "Wild Boar"],
+	["game_mammoth_01", "Thunder Mammoth"],
+	["game_aurochs_01", "Aurochs"],
+	["game_cattle_01", "Cattle"],
+	["game_goat_01", "Wild Goat"],
+	["game_horse_01", "Wild Horse"],
+	["game_sheep_01", "Sheep"],
+	["game_fowl_01", "Jungle Fowl"],
+]
+## The roster is laid out as ONE row: MapView is cover-fit, so on this wide preview window only a
+## few middle rows are on screen and a second roster row is cropped away unseen.
+const FAUNA_ROSTER_COLUMNS := 10
+## A middle row (well inside the cover-fit crop) and a leading margin off the map border.
+const FAUNA_ROSTER_ORIGIN := Vector2i(3, 5)
+## Hexes between roster entries — one apart, so ten fit across GRID_W without markers colliding.
+const FAUNA_ROSTER_SPACING := 1
+
+func _snapshot_fauna_sprites() -> Dictionary:
+	var herds: Array = []
+	for i in FAUNA_SPRITE_ROSTER.size():
+		var entry: Array = FAUNA_SPRITE_ROSTER[i]
+		var col := FAUNA_ROSTER_ORIGIN.x + (i % FAUNA_ROSTER_COLUMNS) * FAUNA_ROSTER_SPACING
+		var row := FAUNA_ROSTER_ORIGIN.y + (i / FAUNA_ROSTER_COLUMNS) * FAUNA_ROSTER_SPACING
+		herds.append({
+			"id": entry[0],
+			"label": "%s (%s)" % [entry[1], entry[0]],
+			"x": col, "y": row, "biomass": 400.0, "huntable": true,
+		})
+	return _base_snapshot(_band([], 2, 2), herds)
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==

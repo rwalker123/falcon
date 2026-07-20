@@ -8,10 +8,12 @@ class_name FaunaSprites
 ## both go blobby at marker size (10–41 px; `MapView.SECONDARY_ICON_SIZE_FACTOR` × hex radius,
 ## floored at `SECONDARY_ICON_MIN_SIZE`). A bundled silhouette is ours and identical everywhere.
 ##
-## Coverage is PARTIAL and that is fine: only the species listed in SPRITE_PATHS have art, and
-## every other `FoodIcons.HERD_SPECIES` key (aurochs/bison/buffalo/cattle/oxen/horse/goat/ibex/
-## sheep/fowl) falls through to the emoji renderer untouched. Dropping a new PNG in
-## `assets/icons/fauna/` and adding its key here is the whole migration step for a species.
+## Coverage is now COMPLETE: every `FoodIcons.HERD_SPECIES` key maps to bundled art, so no herd
+## species in the game draws an OS emoji today. The `null` fallback below is still load-bearing —
+## it catches a herd label naming a species the client does not know (`species_key_for` returns
+## "") and the `HERD_DEFAULT` case, both of which still render the emoji renderer's glyph.
+## Dropping a new PNG in `assets/icons/fauna/` and adding its key here is the whole migration
+## step for a species.
 ##
 ## Static-only by design (same reasoning as `ServerPortsFile.gd`): a pure lookup with no node
 ## state, called from the map draw loop.
@@ -28,6 +30,16 @@ const SPRITE_PATHS := {
 	"elk": SPRITE_DIR + "deer.png",
 	"boar": SPRITE_DIR + "boar.png",
 	"mammoth": SPRITE_DIR + "mammoth.png",
+	"aurochs": SPRITE_DIR + "aurochs.png",
+	"bison": SPRITE_DIR + "aurochs.png",
+	"buffalo": SPRITE_DIR + "aurochs.png",
+	"cattle": SPRITE_DIR + "cattle.png",
+	"oxen": SPRITE_DIR + "cattle.png",
+	"goat": SPRITE_DIR + "goat.png",
+	"ibex": SPRITE_DIR + "goat.png",
+	"horse": SPRITE_DIR + "horse.png",
+	"sheep": SPRITE_DIR + "sheep.png",
+	"fowl": SPRITE_DIR + "fowl.png",
 }
 
 # Path → Texture2D, lazily populated on first use of each species. A missing/failed path caches
