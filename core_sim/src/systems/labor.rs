@@ -611,13 +611,17 @@ pub fn advance_labor_allocation(
                             sustainable: tended,
                             wasted: hunt_provisions(take.wasted, &fauna, mult_f),
                             // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
-                            // mind the heads *and* to haul the meat.
+                            // mind the heads *and* to haul the meat. The haul side is the **steady
+                            // peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off the pen's
+                            // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
+                            // breeding pen (the aurochs pulses) drops 0 animals on a wait turn, which
+                            // would collapse the crew to the herder count and contradict `wasted`.
                             workers_needed: managed_crew_needed(
                                 herders_needed,
-                                workers_needed_for_take(
-                                    take.carried,
+                                fauna::hunt_haul_workers(
+                                    production,
+                                    herd.body_mass,
                                     labor.hunt.per_worker_biomass_capacity,
-                                    workers,
                                 ),
                             ),
                             overdraws: false,
@@ -780,13 +784,30 @@ pub fn advance_labor_allocation(
                     //
                     // **A MANAGED herd reports its whole CREW** ([`managed_crew_needed`]) — the
                     // herders who mind it are the ones who take from it, and the crew must be big
-                    // enough for both jobs. A **wild** herd is untouched: `herders_needed` is `0`
-                    // (it isn't yours to maintain), so the `max` collapses to the take-side count and
-                    // this is verbatim the shipped wild behaviour.
-                    let take_workers = workers_needed_for_take(
-                        take.carried,
+                    // enough for both jobs. A **wild** herd is untouched by the herder term:
+                    // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
+                    // the haul-side count.
+                    //
+                    // The haul side is the **steady peak-drop carry crew** ([`fauna::hunt_haul_workers`])
+                    // off the policy's steady per-turn rate — the SAME `hunt_policy_rate` the take path
+                    // banked — NOT this turn's lumpy `take.carried`. A slow breeder whose MSY <
+                    // `body_mass` carries `0` on a wait turn, which would collapse `workers_needed` and
+                    // contradict `wasted_yield`; the steady crew equals the client's max-useful count, so
+                    // the overstaff note is stable across wait/kill turns. The rate reads the herd's own
+                    // ecology/capacity + pre-regrowth biomass, unchanged by the take above, so it matches
+                    // what `hunt_take` used.
+                    let rate = fauna::hunt_policy_rate(
+                        *policy,
+                        herd.biomass_before_regrowth,
+                        herd_capacity(herd, &fauna),
+                        &herd_ecology(herd, &fauna),
+                        &fauna,
+                        &ladder,
+                    );
+                    let take_workers = fauna::hunt_haul_workers(
+                        rate,
+                        herd.body_mass,
                         labor.hunt.per_worker_biomass_capacity,
-                        workers,
                     );
                     let workers_needed = managed_crew_needed(herders_needed, take_workers);
                     yields[idx] = SourceYield {
@@ -1108,7 +1129,7 @@ mod labor_yield_tests {
     use super::advance_labor_allocation;
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
-        PopulationCohort, Tile,
+        PopulationCohort, SourceYield, Tile,
     };
     use crate::fauna::hunt_provisions;
     use crate::fauna::{
@@ -1774,6 +1795,194 @@ mod labor_yield_tests {
             herders.max(haulers),
             "the pen reports ONE crew sized by whichever job binds — minding {herders} head vs hauling \
              the take ({haulers}): {corral:?}"
+        );
+    }
+
+    /// Reseat the harness herd as a **Wild-Aurochs-shaped slow breeder**: a `body_mass` heavier than one
+    /// turn's MSY (`r·K/4 = 0.05·100/4 = 1.25 ≪ 80`), so it **pulses** — it drops zero animals on most
+    /// turns while its kill-credit banks, then a whole one when the bank clears a body. `credit` seeds
+    /// that bank so a test can force a **kill** turn (`credit = body`) or a **wait** turn (`credit = 0`).
+    fn reseat_slow_breeder(world: &mut World, biomass: f32, credit: f32) {
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        let herd = &mut registry.herds[0];
+        herd.body_mass = SLOW_BREEDER_BODY;
+        herd.carrying_capacity = SLOW_BREEDER_CAP;
+        herd.biomass = biomass;
+        // These fixtures set biomass directly (no `regrow_biomass`), and the take rate reads
+        // `biomass_before_regrowth` (slice 8b) — keep it in sync.
+        herd.biomass_before_regrowth = biomass;
+        herd.hunt_credit = credit;
+        herd.refresh_ecology_phase(&fauna);
+    }
+
+    /// One aurochs-shaped body — heavier than one turn's MSY, and heavier than one hauler carries.
+    const SLOW_BREEDER_BODY: f32 = 80.0;
+    /// The slow breeder's capacity: `MSY = r·K/4 = 1.25`, far below `SLOW_BREEDER_BODY`.
+    const SLOW_BREEDER_CAP: f32 = 100.0;
+    /// Above the escapement point (`K/2`), so the herd has whole animals to spare once the bank clears.
+    const SLOW_BREEDER_BIOMASS: f32 = 90.0;
+
+    /// A single Sustain-hunt turn on the slow breeder with `credit` banked and `workers` assigned;
+    /// returns the captured yield row.
+    fn slow_breeder_hunt(credit: f32, workers: u32) -> SourceYield {
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, credit);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0]
+    }
+
+    /// **A hunt's `workers_needed` is its STEADY carry crew — the same on a wait turn and a kill turn.**
+    /// The bug: sizing the crew off *this turn's* `take.carried` reads `0` on a slow breeder's wait turn
+    /// (MSY < `body_mass`, so nothing drops while the bank fills), collapsing `workers_needed` beside a
+    /// `wasted_yield` that says the crew is understaffed — *drop workers* and *add workers* on one row.
+    /// The steady peak-drop crew (`ceil(body_mass / per_worker)` here) does not flicker with the pulse,
+    /// so the band-panel overstaff note is stable.
+    #[test]
+    fn a_slow_breeder_hunt_reports_its_steady_carry_crew_on_wait_and_kill_turns() {
+        let steady_crew = {
+            let per_worker = LaborConfigHandle::default()
+                .get()
+                .hunt
+                .per_worker_biomass_capacity;
+            (SLOW_BREEDER_BODY / per_worker).ceil() as u32 // ceil(80 / 40) = 2.
+        };
+        assert!(
+            steady_crew >= 2,
+            "the fixture must need more than one hauler, or the wait-turn collapse is invisible"
+        );
+
+        // Wait turn (empty bank): the herd spares nothing, but the crew is still the steady carry crew,
+        // NOT the old `0`.
+        let wait = slow_breeder_hunt(0.0, steady_crew);
+        assert_eq!(
+            wait.actual, 0.0,
+            "a slow breeder waits on an empty bank: {wait:?}"
+        );
+        assert_eq!(
+            wait.workers_needed, steady_crew,
+            "the wait-turn crew is the steady carry crew, not the lumpy 0: {wait:?}"
+        );
+
+        // Kill turn (one body banked): a whole animal lands, and the crew is UNCHANGED.
+        let kill = slow_breeder_hunt(SLOW_BREEDER_BODY, steady_crew);
+        assert!(
+            kill.actual > 0.0,
+            "the banked body lands this turn: {kill:?}"
+        );
+        assert_eq!(
+            kill.workers_needed, steady_crew,
+            "the kill-turn crew equals the wait-turn crew — no flicker: {kill:?}"
+        );
+
+        // Overstaffed beyond the steady crew: the count is rate-derived (not clamped up to assigned), so
+        // an extra hand is still flagged.
+        let over = slow_breeder_hunt(SLOW_BREEDER_BODY, steady_crew + 1);
+        assert_eq!(
+            over.workers_needed, steady_crew,
+            "the crew is the steady need, independent of overstaffing: {over:?}"
+        );
+        assert!(
+            steady_crew + 1 > over.workers_needed,
+            "a herd overstaffed beyond its steady crew still flags the idle hand: {over:?}"
+        );
+    }
+
+    /// **A domesticated slow breeder reports `max(herders_needed, steady_haul)`, and it equals the
+    /// client's `_max_useful_workers`.** The managed rung staffs one crew big enough for both jobs; the
+    /// haul side is the steady carry crew (stable across the pulse), so the band panel's overstaff note
+    /// and the compose panel's stepper cap read the same number — which is the whole point of the fix.
+    #[test]
+    fn a_domesticated_slow_breeder_reports_max_of_herders_and_steady_crew_matching_the_client() {
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, SLOW_BREEDER_BODY);
+        // Tame it outright so it owes a standing herder cost (owner = the band's faction).
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.accrue_domestication(FactionId(0), 1.0);
+            assert!(herd.is_domesticated(), "the fixture herd must be tamed");
+        }
+        let assigned = 3;
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: assigned,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let yielded = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+
+        // The sim's expectation: one crew, `max(herders, steady_haul)`.
+        let (herders, steady_haul, client_max_useful) = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let ladder = LadderConfig::builtin();
+            let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
+            let herders = crate::fauna::herd_herders_needed(herd, &fauna);
+            let rate = crate::fauna::hunt_policy_rate(
+                FollowPolicy::Sustain,
+                herd.biomass_before_regrowth,
+                crate::fauna::herd_capacity(herd, &fauna),
+                &crate::fauna::herd_ecology(herd, &fauna),
+                &fauna,
+                &ladder,
+            );
+            let steady_haul = crate::fauna::hunt_haul_workers(
+                rate,
+                herd.body_mass,
+                labor.hunt.per_worker_biomass_capacity,
+            );
+            // The client's `_max_useful_workers`, in food-space off the same forecast the compose panel
+            // reads: ceil((floor(ceiling / foodPerAnimal) + 1) × foodPerAnimal / perWorkerYield).
+            let forecast = crate::fauna::hunt_forecast(
+                herd,
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                1.0,
+            );
+            let ceiling = forecast.ceiling_for(FollowPolicy::Sustain);
+            let food_per_animal = forecast.body_mass_yield;
+            let per_worker_yield = forecast.per_worker_yield;
+            let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
+                / per_worker_yield)
+                .ceil()) as u32;
+            (herders, steady_haul, client)
+        };
+
+        assert!(
+            herders >= 1,
+            "a tamed herd owes at least one keeper, or this asserts nothing"
+        );
+        assert_eq!(
+            yielded.workers_needed,
+            herders.max(steady_haul),
+            "a managed herd reports one crew = max(herders, steady haul): {yielded:?}"
+        );
+        assert_eq!(
+            steady_haul, client_max_useful,
+            "the sim's steady haul crew equals the client's max-useful count by construction"
+        );
+        assert!(
+            assigned > yielded.workers_needed,
+            "the 3-worker fixture is overstaffed past the steady crew: {yielded:?}"
         );
     }
 

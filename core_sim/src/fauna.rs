@@ -2833,7 +2833,22 @@ pub(crate) fn forecast_source_yield(
         actual,
         sustainable: if managed { actual } else { sustainable },
         wasted: (production - actual).max(0.0),
-        workers_needed: workers_needed_for_take(actual, forecast.per_worker_yield, workers),
+        // **A whole-animal (hunt) source reports its STEADY carry crew, not this-turn's carried.**
+        // `actual` is the lumpy quantised take — `0` on a wait turn for a slow breeder whose MSY <
+        // `body_mass` — so inverting it collapses `workers_needed` and contradicts `wasted`. The steady
+        // peak-drop crew ([`hunt_haul_workers`], off the policy's steady ceiling) equals the client's
+        // `_max_useful_workers`, so the compose cap and the band-panel overstaff note agree. A
+        // **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is un-lumpy, so it
+        // keeps the ordinary overstaffing inversion.
+        workers_needed: if forecast.body_mass_yield > 0.0 {
+            hunt_haul_workers(
+                forecast.ceiling_for(policy),
+                forecast.body_mass_yield,
+                forecast.per_worker_yield,
+            )
+        } else {
+            workers_needed_for_take(actual, forecast.per_worker_yield, workers)
+        },
         overdraws: !managed && policy.overdraws(),
     }
 }
@@ -3089,6 +3104,51 @@ pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32
         carried,
         wasted: (killed_biomass - carried).max(0.0),
     }
+}
+
+/// **The STEADY carry crew for a whole-animal (hunt) source** — the number of haulers a hunt needs to
+/// carry home its *peak per-turn animal drop* without waste, and the biomass-space mirror of the
+/// client's compose-panel `_max_useful_workers`. This is `SourceYield.workers_needed`'s haul component
+/// for every whole-animal source (wild hunt, pastoral herd, pen), and it is deliberately **not** the
+/// lumpy [`AnimalTake::carried`] of any single turn.
+///
+/// # Why not the this-turn take
+///
+/// A slow breeder whose MSY < `body_mass` (a Wild Aurochs, `r ≈ 0.09`, body 80) drops **0** animals on
+/// a wait turn while its kill-credit accumulates — so inverting `carried` collapses `workers_needed` to
+/// `0` (and, for a managed herd, to the bare herder count via [`crate::systems::managed_crew_needed`]).
+/// That contradicts the *same row's* `wasted_yield`, which correctly reports the waste an understaffed
+/// crew leaves standing: the panel then says `workersNeeded: 1` beside a 50%-`wastedYield` at 1 worker
+/// — *drop workers* and *add workers* on one row. Sizing the crew off the **steady rate** instead makes
+/// the two agree, and makes the band panel's overstaff note equal the compose panel's stepper cap.
+///
+/// # The peak drop
+///
+/// The most whole animals a turn's `rate` can drop is `floor(rate / body) + 1`: the herd banks `rate`
+/// biomass/turn and clears one more body than the whole animals the rate already covers, on the turn
+/// its accumulated fraction tips over (the `+1` — the same `floor(ceiling/body)+1` the client counts).
+/// Carrying that peak needs `ceil(peak_biomass / per_worker)` haulers:
+///
+/// ```text
+/// peak_animals = floor(rate / body) + 1
+/// peak_biomass = peak_animals × body
+/// crew         = ceil(peak_biomass / per_worker)
+/// ```
+///
+/// `rate` is the policy's **steady** per-turn take rate ([`hunt_policy_rate`], NOT the credit-inclusive
+/// [`hunt_credit_ceiling`] burst), so the crew is stable turn to turn and equals the compose panel's cap
+/// by construction. Units are free — pass all three in biomass, or all three in provisions (the ratios
+/// are scale-invariant, so the provisions-space call in [`forecast_source_yield`] and the biomass-space
+/// calls in the labor arm agree). Naturally `>= 1` for any finite-positive `body`/`per_worker` (since
+/// `peak_animals >= 1`); a degenerate `body`/`per_worker` (≤ 0 — unreachable, `FaunaConfig::validate`
+/// pins `body_mass` positive and the per-worker levers are positive config) yields `0`.
+pub fn hunt_haul_workers(rate: f32, body: f32, per_worker: f32) -> u32 {
+    if !body.is_finite() || body <= 0.0 || !per_worker.is_finite() || per_worker <= 0.0 {
+        return 0;
+    }
+    let peak_animals = (rate.max(0.0) / body).floor() + 1.0;
+    let peak_biomass = peak_animals * body;
+    (peak_biomass / per_worker).ceil() as u32
 }
 
 /// The single biomass→provisions conversion for a hunt take: `take × hunt.provisions_per_biomass ×

@@ -813,15 +813,30 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   (`systems::labor::managed_crew_needed`) — but that team must be big enough for **both** jobs, which
 >   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
 >   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
->   `workersNeeded = max(herders_needed, workers_needed_for_take)` — `+` would be two teams; `max` is
+>   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
 >   one crew covering its busiest job. **Neither term dominates across the roster** (measured, settled
 >   radius-1 pens): small-bodied species are **herder-bound** (Wild Fowl 9 herders vs 5 haulers; Rabbit
 >   5 vs 4), big-bodied ones are **haul-bound** (Crag Goats 2 vs 7; Boar 1 vs 3; Aurochs 2 vs 3). Do not
 >   "simplify" the `max()` away.
 >
->   Reporting the herder count *alone* made the UI contradict itself — `workersNeeded: 1` beside
->   `wastedYield: 0.80`, *drop workers* and *add workers* on the same row, with half an aurochs rotting.
->   At `max()` staffing **waste measures 0.00 for every species**.
+> - **The haul term is the STEADY carry crew, not this turn's `carried`** (`fauna::hunt_haul_workers`).
+>   `workers_needed`'s hauling component is the crew that carries home the **peak per-turn animal drop**
+>   — `ceil((floor(rate/body) + 1)·body / per_worker)`, off the policy's **steady** `hunt_policy_rate`
+>   (not the credit-inclusive `hunt_credit_ceiling` burst) — the **same** count the client's compose
+>   panel `_max_useful_workers` caps at. It is deliberately **not** `workers_needed_for_take(take.carried,
+>   …)`: a slow breeder whose MSY < `body_mass` (a Wild Aurochs) drops **zero** animals on a wait turn
+>   while its kill-credit banks, so inverting `carried` collapses `workers_needed` to `0` — and, for a
+>   managed herd, to the bare herder count via `max()`. That made the panel contradict itself:
+>   `workersNeeded: 1` beside a 50%-`wastedYield` at one worker — *drop workers* and *add workers* on the
+>   same row, with half an aurochs rotting. Sizing the crew off the steady rate makes it **stable across
+>   wait and kill turns** (it can't flicker with the pulse) and **equal to `wasted_yield`'s answer**:
+>   `workers > workers_needed` ⇒ overstaffed, `wasted_yield > 0` ⇒ understaffed, and the two never
+>   disagree. Both hunt sites (wild/pastoral and pen) and the assign-time forecast seed
+>   (`fauna::forecast_source_yield`, off `SourceYieldForecast::ceiling_for`) read this one helper. **Wild
+>   hunting** gets the same steady haul crew (`herders_needed == 0`, so `max()` collapses to it) — so a
+>   wild herd's `workers_needed` is the client max-useful too. **Forage is untouched** — a gather is
+>   continuous (`body_mass_yield == 0`, no lumpiness), so it keeps the ordinary `workers_needed_for_take`
+>   overstaffing inversion.
 > - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
 >   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
 >   maintain + take.**
@@ -2350,8 +2365,11 @@ client's compose-time "Expected yield" row promises. Shape:
 - The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
   compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
   `sustainable` = the same MSY value the resolution path records (a *managed* source — **rung 3 only**
-  — reads `sustainable == actual`, no ⚠), `workers_needed` = the same overstaffing inversion, and
-  `wasted` = the understaffing mirror. No new formula, no new config lever.
+  — reads `sustainable == actual`, no ⚠), `workers_needed` = the same overstaffing signal the resolution
+  path writes (the continuous inversion for a forage patch; the **steady peak-drop carry crew**
+  `hunt_haul_workers` off `SourceYieldForecast::ceiling_for` for a whole-animal source, so the seed
+  matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
+  config lever.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
@@ -2847,12 +2865,22 @@ is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actua
 evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
 A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
 overdraw ⚠). Scout/Warrior push `{0,0,0}`. **`workers_needed`** is the parallel **overstaffing**
-signal: the *minimum* assigned workers that would have produced the same take — `ceil(take_biomass /
-per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else `0`, computed in both
-the Forage arm (capacity = `forage.per_worker_biomass_capacity × seasonal_weight`, matching
-`forage_take`'s worker cap so a low-season labor-bound patch isn't falsely flagged) and the Hunt arm
-(capacity = `hunt.per_worker_biomass_capacity`, no seasonal) via the shared `workers_needed_for_take`
-helper. **Every rung derives it** (slice 7 — a managed source used to be fixed at `1`, which asserted that one
+signal — and it has **two shapes, because the two webs' products differ**:
+- **Forage (continuous)** — the *minimum* assigned workers that would have produced the same take:
+  `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else
+  `0`, via the shared `workers_needed_for_take` helper (capacity = `forage.per_worker_biomass_capacity ×
+  seasonal_weight`, matching `forage_take`'s worker cap so a low-season labor-bound patch isn't falsely
+  flagged).
+- **Hunt (whole animals)** — the **STEADY carry crew for the peak per-turn animal drop**
+  (`fauna::hunt_haul_workers`, `ceil((floor(rate/body)+1)·body / hunt.per_worker_biomass_capacity)`, off
+  the policy's steady `hunt_policy_rate`), **NOT** the lumpy `workers_needed_for_take(take.carried, …)`.
+  A slow breeder whose MSY < `body_mass` drops **0** animals on a wait turn, so inverting `carried` would
+  collapse `workers_needed` (to `0`, or the herder count for a managed herd) and **contradict the same
+  row's `wasted_yield`** on that turn. The steady crew is stable across wait/kill turns and equals the
+  client compose panel's `_max_useful_workers` cap by construction. A managed herd wraps it in
+  `max(herders_needed, hunt_haul_workers)`; a wild herd (`herders_needed == 0`) reports it directly. See
+  "Herding is standing labor" for the full note.
+**Every rung derives it** (slice 7 — a managed source used to be fixed at `1`, which asserted that one
 worker could carry home whatever the land offered). When the binding constraint on a source's take is **not** labor
 (policy ceiling / biomass / regrowth), `workers_needed < assigned` → the source is overstaffed and the
 extra workers were idle. The snapshot surfaces all of this: each `LaborAssignment` row
