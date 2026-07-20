@@ -624,6 +624,13 @@ pub struct HerdState {
     /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).
     #[serde(default)]
     pub husbandry_ceiling: String,
+    /// **The hysteresis-stabilized herder requirement** (`Herd::herders_needed`) — the remembered,
+    /// deadband-stabilized `herders_needed` for a managed herd (`0` = wild, or a managed herd not yet
+    /// stabilized). Persisted (sim-side rollback only, not on the client wire) so a rollback restores
+    /// the remembered count rather than re-flickering ±1 for a turn as the herd breathes across an
+    /// `animals_per_herder` head-count boundary.
+    #[serde(default)]
+    pub herders_needed: u32,
     #[serde(default)]
     pub ecology: EcologyState,
 }

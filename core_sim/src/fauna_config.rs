@@ -585,6 +585,15 @@ pub struct HusbandryConfig {
     /// this. `2` → up to a 19-tile footprint (`hex_range_tiles` disk `1, 7, 19`). Validated `>= 1`
     /// (a `0` cap would forbid every extension).
     pub pen_radius_max: u32,
+    /// **The herder-requirement hysteresis deadband, as a fraction of `animals_per_herder`.** The raw
+    /// `herders_needed = ceil(animals / animals_per_herder)` flickers ±1 when a Sustain-hunted herd's
+    /// biomass breathes across an `animals_per_herder` multiple (the lumpy whole-animal kill), trapping
+    /// the player in a "staff all 1 / staff all 2" churn. [`crate::fauna::Herd::stabilize_herders_needed`]
+    /// uses `animals_per_herder × this` as the down-step deadband, so a bumped-up requirement holds
+    /// until the herd falls *well* below the lower rung's ceiling — enough to absorb the ±1-animal
+    /// oscillation. `0.25` ≈ a quarter of a herder's flock. Validated finite & `>= 0` (`0` disables the
+    /// deadband, restoring the raw stateless flicker). A **playtest dial**.
+    pub herders_hysteresis_fraction: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -596,6 +605,7 @@ impl Default for HusbandryConfig {
             pen_gain: DEFAULT_PEN_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
+            herders_hysteresis_fraction: DEFAULT_HERDERS_HYSTERESIS_FRACTION,
         }
     }
 }
@@ -670,6 +680,11 @@ const DEFAULT_HUSBANDRY_REGROWTH_CAP: f32 = 0.75;
 /// footprint; each ring is a 25-turn `ExtendPen` labor investment. A **playtest lever** (higher = pens
 /// can grow into larger self-feeding operations at more keeper-turns of cost).
 const DEFAULT_PEN_RADIUS_MAX: u32 = 2;
+
+/// **The herder-requirement hysteresis deadband** as a fraction of `animals_per_herder` (see
+/// [`HusbandryConfig::herders_hysteresis_fraction`]). `0.25` absorbs the ±1-animal Sustain oscillation
+/// so a staffed herd holds its keeper count instead of flickering ±1. A **playtest dial**.
+const DEFAULT_HERDERS_HYSTERESIS_FRACTION: f32 = 0.25;
 
 /// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
@@ -1039,6 +1054,12 @@ impl FaunaConfig {
                 value: self.husbandry.pen_radius_max.to_string(),
             });
         }
+        // The herder-hysteresis deadband is a fraction of `animals_per_herder` — finite & non-negative
+        // (`0` disables the deadband, restoring the raw stateless flicker; negative is nonsense).
+        require_non_negative_finite(
+            "husbandry.herders_hysteresis_fraction",
+            self.husbandry.herders_hysteresis_fraction,
+        )?;
 
         // --- The pen's feed. A shrink rate above 1 would drive an underfed herd's biomass *negative* in
         // one turn; below 0 it would *grow* a starving herd.

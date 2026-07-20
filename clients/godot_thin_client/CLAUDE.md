@@ -2033,6 +2033,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
     max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
     explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
+    **The LOCAL-hunt cap's usefulness ceiling is `max(take/prepare max-useful, herders_needed)`** —
+    a managed (corralling/pastoral) herd needs `herders_needed` hands EVERY turn to hold its tameness,
+    but the take/prepare side alone ignores that (a Corral rung's prep forecast reports "1 worker
+    suffices to prepare"), which pinned the player at 1 even when a growing herd needed 2 herders — an
+    unwinnable trap where the corral slips and is lost. `_forecast_worker_cap(forecast, assignable,
+    useful_floor)` folds `herd.herders_needed` in as a floor on the usefulness ceiling (a RAISE, never a
+    new cap; an UNBOUNDED forecast stays unbounded), so the maintenance crew is always staffable and the
+    "max N useful here" note reads the corrected N. Auto-max on policy-select fills to it. A wild herd
+    reports `herders_needed 0`, so `max(useful, 0)` is a no-op there. **Local hunt ONLY** — the
+    expedition party has no herding crew, so `_expedition_useful_cap` is left alone. The Herders drawer
+    row (`N / N — under-herded`) and the tameness-slipping consequence line read the SAME
+    `herders_needed`, so the cap, the row and the consequence never contradict.
     **When the *labor* cap binds instead** (idle workers run out *below* the usefulness ceiling), the
     silent-disable case is filled by a companion note — `LABOR_BOUND_NOTE_FORMAT` = `"N of M useful —
     free up idle workers to send more"` (M = the usefulness ceiling, so it tracks the selected policy;

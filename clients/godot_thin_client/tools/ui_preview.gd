@@ -813,6 +813,21 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral")
 
+	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
+	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
+	# stepper's cap must be max(1, herders_needed 2) = 2, so the `+` reaches 2 and the maintenance crew is
+	# staffable (an under-herded corral is otherwise an unwinnable trap). The drawer's Herders row reads
+	# "1 / 2 — under-herded" and the tameness-slipping line names 2 — the SAME herders_needed the cap uses.
+	# Auto-max (a policy click sets `_hunt_assign_autofill`) fills the crew to the corrected cap of 2.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_under_herded_corral_fixture())
+	_hud._hunt_assign_policy = "corral"
+	_hud._hunt_assign_count = 1
+	_hud._hunt_assign_autofill = true
+	_hud._build_herd_assign_controls(_under_herded_corral_fixture())
+	await _settle()
+	await _save("herd_corral_under_herded")
+
 	# State 3d-corral-depleted — the SAME rung on a herd BELOW the pen's escapement point (K/2). The
 	# managed harvest takes only the biomass standing above that point, so the payoff is honestly
 	# +0.00 /turn while the feed is still 0.14 — a pure loss. The row must SHOW both zeros and turn
@@ -2831,6 +2846,19 @@ func _corral_ready_herd_fixture() -> Dictionary:
 		"food_module": "",
 		"food_module_label": "None",
 	}
+	return fixture
+
+## A composing-Corral herd that needs MORE than one keeper (Grazing 2d-δ herder deficit): the take/prepare
+## max-useful for the Corral rung is 1 ("one worker suffices to prepare"), but this growing herd needs 2
+## herders EVERY turn to hold its tameness — and it is currently UNDER-herded (`herded_fraction` 0.5 → the
+## Herders row reads "1 / 2 — under-herded" and the tameness-slipping consequence line names 2). The compose
+## stepper's cap must be max(take-useful 1, herders_needed 2) = 2, so the `+` reaches 2 and the player can
+## staff the maintenance crew — otherwise the corral is lost, an unwinnable trap. A wild herd carries
+## `herders_needed 0`, so this floor is a no-op there.
+func _under_herded_corral_fixture() -> Dictionary:
+	var fixture := _corral_ready_herd_fixture()
+	fixture["herders_needed"] = 2
+	fixture["herded_fraction"] = 0.5
 	return fixture
 
 func _domesticated_herd_fixture() -> Dictionary:

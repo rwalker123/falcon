@@ -802,6 +802,22 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 > repairing fences.* Before this a pen of 2 and a pen of 200 needed the same single keeper; only the
 > feed scaled.
 >
+> - **Downward hysteresis — staff it once and it holds.** The bare `ceil` is stateless, so a
+>   Sustain-hunted slow herd sitting near an `animals_per_herder` multiple (a Wild Aurochs near 12
+>   head) **flickers 1↔2 every turn** as the lumpy whole-animal kill breathes its biomass ±1 animal
+>   across the boundary — and because the `herded_fraction` decay lags a turn, the player is told
+>   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
+>   now a **persisted, deadband-stabilized `Herd::herders_needed`** (round-tripped through `HerdState`
+>   like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
+>   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
+>   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a
+>   playtest dial; `0` restores the raw flicker). A herd bumped to 2 stays at 2 through a one-animal dip
+>   and drops only on a genuine multi-band fall — wild = 0 unchanged (a wild herd isn't yours to
+>   maintain). `herd_herders_needed` reads this stabilized field (falling back to the raw ceil only for
+>   a not-yet-stabilized managed herd — the turn it is tamed, or a test fixture), so **every** consumer
+>   (`herded_fraction` decay, `managed_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
+>   wire field is unchanged, just no longer churning.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
 >   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
 >   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —

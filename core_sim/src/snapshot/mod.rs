@@ -235,6 +235,9 @@ mod tests {
             regrowth_rate: 0.04,
             // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
             husbandry_ceiling: "wild".to_string(),
+            // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
+            // rollback restores it rather than re-flickering for a turn.
+            herders_needed: 3,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,

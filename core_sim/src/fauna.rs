@@ -374,6 +374,24 @@ pub struct Herd {
     /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false` ("untended"), so a
     /// rollback can only *delay* a decay turn by one, never invent progress.
     pub tamed_this_turn: bool,
+    /// **The hysteresis-stabilized herder requirement** — the remembered `herders_needed` for a
+    /// *managed* herd (`0` for a wild one). The raw `ceil(animals / animals_per_herder)` flickers ±1
+    /// every turn when a Sustain-hunted herd's biomass breathes across an `animals_per_herder`
+    /// multiple (the lumpy whole-animal kill), trapping the player in a "staff all 1 / staff all 2"
+    /// churn that costs them their tameness. This field breaks the flicker with an **asymmetric
+    /// deadband** ([`Herd::stabilize_herders_needed`], run every turn in [`advance_husbandry`]):
+    /// **up immediately** (under-herding is harmful), **down only once the herd has clearly shrunk**
+    /// below the lower rung's ceiling by more than `animals_per_herder ×
+    /// husbandry.herders_hysteresis_fraction`. So a herd bumped to 2 holds at 2 across a one-animal
+    /// dip and drops only on a genuine multi-band fall.
+    ///
+    /// It is **the source every consumer reads** ([`herd_herders_needed`] → the `herded_fraction`
+    /// decay, `managed_crew_needed`, the `herdersNeeded` snapshot field). **Snapshot-persisted**
+    /// (authoritative sim state, like `corral_progress`), so a rollback restores the remembered
+    /// requirement rather than re-flickering for a turn. `0` also means "not yet stabilized" — a
+    /// freshly-tamed or rehydrated-uninitialized managed herd, for which [`herd_herders_needed`]
+    /// falls back to the raw ceil until the next `advance_husbandry` seeds this.
+    pub herders_needed: u32,
 }
 
 impl Herd {
@@ -440,6 +458,9 @@ impl Herd {
             herded_fraction: FULLY_HERDED,
             pen_starving: false,
             tamed_this_turn: false,
+            // A fresh herd is wild (no owner, no pen), so it needs no keepers; `stabilize_herders_needed`
+            // seeds the real requirement the first turn it becomes managed. `0` = "not yet stabilized".
+            herders_needed: 0,
         }
     }
 
@@ -625,6 +646,48 @@ impl Herd {
             return true;
         }
         false
+    }
+
+    /// **Update the hysteresis-stabilized [`herders_needed`] for this herd** and return it — run once
+    /// per turn for every herd in [`advance_husbandry`]. `band` is the deadband in **animals**
+    /// (`animals_per_herder × husbandry.herders_hysteresis_fraction`).
+    ///
+    /// A **wild** herd isn't yours to maintain, so it stays `0` (the `herd_herders_needed` wild gate).
+    /// A **managed** herd's requirement moves **asymmetrically**:
+    /// - **up immediately** when the raw need rises — under-herding is harmful, respond at once;
+    /// - **down only when the herd has clearly shrunk** — drop below `current` only once
+    ///   `animals ≤ (current − 1) × animals_per_herder − band`, i.e. genuinely past the lower rung's
+    ///   ceiling by more than the deadband, so a ±1-animal oscillation across a head-count multiple
+    ///   can't churn the requirement;
+    /// - a not-yet-stabilized managed herd (`herders_needed == 0`, e.g. the turn it was tamed) seeds
+    ///   straight to the raw ceil so it is correct from its first stabilized turn.
+    ///
+    /// Never below `1` for a managed herd that still has animals (the raw `ceil` floor); an emptied
+    /// managed herd reads `0`.
+    pub fn stabilize_herders_needed(&mut self, animals_per_herder: f32, band: f32) -> u32 {
+        if !(self.is_corralled() || self.owner.is_some()) {
+            self.herders_needed = 0;
+            return 0;
+        }
+        let raw = herders_needed(self.biomass, self.body_mass, animals_per_herder);
+        let current = self.herders_needed;
+        let animals = if self.body_mass > 0.0 {
+            self.biomass / self.body_mass
+        } else {
+            0.0
+        };
+        let next = if current == 0 || raw > current {
+            // First stabilized turn, or a rise: respond at once.
+            raw
+        } else if animals <= (current - 1) as f32 * animals_per_herder - band {
+            // A genuine fall well below the lower rung's ceiling — step down to the raw need.
+            raw
+        } else {
+            // Breathing across the boundary: hold.
+            current
+        };
+        self.herders_needed = next;
+        next
     }
 
     /// The **grazing range radius** (hex distance from `current_pos`) the herd eats each turn
@@ -942,6 +1005,15 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
     if !(herd.is_corralled() || herd.owner.is_some()) {
         return 0;
     }
+    // **The hysteresis-stabilized requirement is the source of truth** (`Herd::herders_needed`,
+    // seeded every turn by `stabilize_herders_needed` in `advance_husbandry`). A `> 0` value is a
+    // real, deadband-stabilized count — return it so the requirement doesn't flicker ±1 as the herd
+    // breathes across an `animals_per_herder` multiple.
+    if herd.herders_needed > 0 {
+        return herd.herders_needed;
+    }
+    // `0` = not yet stabilized: a herd the turn it becomes managed (before the next `advance_husbandry`
+    // seeds it) or a test-built managed herd. Fall back to the raw ceil so it is never wrong for a turn.
     herders_needed(
         herd.biomass,
         herd.body_mass,
@@ -1108,6 +1180,9 @@ fn herd_from_state(state: &HerdState) -> Herd {
         herded_fraction: FULLY_HERDED,
         pen_starving: false,
         tamed_this_turn: false,
+        // Persisted authoritative sim state (like `corral_progress`): a rollback restores the
+        // hysteresis-remembered requirement rather than re-flickering for a turn.
+        herders_needed: state.herders_needed,
     }
 }
 
@@ -2363,6 +2438,16 @@ pub fn advance_husbandry(
     // slow to forget (a Steppe Runner bleeds its partial taming 5× slower than a rabbit).
     let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
     for herd in registry.herds.iter_mut() {
+        // **Stabilize the herder requirement** (slice: herder hysteresis) — once per turn, before the
+        // labor arm (Population, next stage) reads it via `herd_herders_needed`. A wild herd stays `0`;
+        // a managed one moves up immediately but down only past a deadband, so a Sustain-hunted herd
+        // breathing ±1 animal across an `animals_per_herder` multiple doesn't flicker the requirement
+        // (and with it the `herded_fraction` / tameness). See `Herd::stabilize_herders_needed`.
+        let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
+        herd.stabilize_herders_needed(
+            animals_per_herder,
+            animals_per_herder * fauna.husbandry.herders_hysteresis_fraction,
+        );
         // One-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
         // cleared for every herd so it can never go stale.
         let tamed_last_turn = herd.tamed_this_turn;
@@ -3644,6 +3729,97 @@ mod tests {
         for size in [SizeClass::Small, SizeClass::Big, SizeClass::Migratory] {
             assert_eq!(SizeClass::from_key(size.as_str()), size);
         }
+    }
+
+    // ---- Herder-requirement hysteresis -----------------------------------------------------
+
+    /// A managed herd fixture with `body_mass == 1` (so `biomass == head count`) and an owner, so
+    /// `stabilize_herders_needed` treats it as managed.
+    fn managed_herd_with_heads(heads: f32) -> Herd {
+        let mut herd = Herd::new(
+            "aurochs_test".to_string(),
+            "Wild Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            heads,
+            10_000.0,
+            0.05,
+            0.09,
+            1.0, // body_mass: one animal per unit biomass
+        );
+        herd.owner = Some(FactionId(1));
+        herd
+    }
+
+    /// The core anti-flicker property: a managed herd whose head count breathes ±1 across an
+    /// `animals_per_herder` boundary reports a STABLE `herders_needed` once bumped up — it does not
+    /// drop back on a one-animal dip. A Wild Aurochs (`animals_per_herder = 12`) near 12 head.
+    #[test]
+    fn herder_requirement_is_stable_across_a_one_animal_oscillation() {
+        const APH: f32 = 12.0;
+        const BAND: f32 = APH * 0.25; // the shipped default deadband, in animals
+        let mut herd = managed_herd_with_heads(13.0);
+        // First stabilized turn seeds the raw ceil: ceil(13 / 12) = 2.
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2);
+        // Now oscillate 13 → 11 → 12 → 13 (the lumpy Sustain kill): it must HOLD at 2 the whole way,
+        // never flickering back to 1.
+        for heads in [11.0_f32, 12.0, 13.0, 11.0, 13.0] {
+            herd.biomass = heads;
+            assert_eq!(
+                herd.stabilize_herders_needed(APH, BAND),
+                2,
+                "held at 2 through the ±1 oscillation at {heads} head",
+            );
+        }
+    }
+
+    /// A herd that genuinely GROWS past the boundary bumps the requirement up **immediately** —
+    /// under-herding is harmful, so it responds at once.
+    #[test]
+    fn herder_requirement_rises_immediately_on_real_growth() {
+        const APH: f32 = 12.0;
+        const BAND: f32 = APH * 0.25;
+        let mut herd = managed_herd_with_heads(12.0);
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 1); // ceil(12/12) = 1
+        herd.biomass = 25.0; // clearly a third herder's worth (ceil(25/12) = 3)
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 3);
+    }
+
+    /// The requirement drops only after a CLEAR fall — past the lower rung's ceiling by more than the
+    /// deadband — not on a one-animal dip.
+    #[test]
+    fn herder_requirement_drops_only_after_a_clear_fall() {
+        const APH: f32 = 12.0;
+        const BAND: f32 = APH * 0.25; // 3 animals
+        let mut herd = managed_herd_with_heads(20.0);
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2); // ceil(20/12) = 2
+                                                                 // Just below the 1-herder ceiling (12) but within the deadband: 10 > 12 − 3 = 9 → HOLD at 2.
+        herd.biomass = 10.0;
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2);
+        // Below the deadband floor (≤ 9): a genuine drop → step down to ceil(8/12) = 1.
+        herd.biomass = 8.0;
+        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 1);
+    }
+
+    /// A wild herd isn't yours to maintain — it stays `0`, and `herd_herders_needed` reads `0`.
+    #[test]
+    fn a_wild_herd_needs_no_herders() {
+        const APH: f32 = 12.0;
+        let mut herd = managed_herd_with_heads(50.0);
+        herd.owner = None; // wild again
+        assert_eq!(herd.stabilize_herders_needed(APH, APH * 0.25), 0);
+        assert_eq!(herd.herders_needed, 0);
+    }
+
+    /// A zero deadband restores the raw stateless behaviour (the flicker) — the lever genuinely
+    /// controls the hysteresis.
+    #[test]
+    fn a_zero_deadband_restores_the_raw_flicker() {
+        const APH: f32 = 12.0;
+        let mut herd = managed_herd_with_heads(13.0);
+        assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 2);
+        herd.biomass = 12.0; // 12 ≤ (2−1)·12 − 0 = 12 → drops immediately with no band
+        assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 1);
     }
 
     // ---- Grazing Phase 2b-i ----------------------------------------------------------------

@@ -3042,8 +3042,15 @@ func _expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> fl
 ## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
 ## max-useful). Returns `{cap, note}` — `note` is set ONLY when max-useful is the binding cap, so a
 ## dead `+` button is always explained rather than mysterious (the idle-worker cap explains itself).
-func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
+func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: int = 0) -> Dictionary:
     var useful := _max_useful_workers(forecast)
+    # A managed herd's maintenance crew raises the usefulness ceiling above what the take/prepare side
+    # reports: a Corral rung's prep forecast says "1 worker suffices to prepare", but a growing pen needs
+    # `herders_needed` hands EVERY turn to hold its tameness. Fold that floor in (callers pass it via
+    # `useful_floor`) so the player can always staff the herders the herd requires. An UNBOUNDED forecast
+    # stays unbounded — the floor is a RAISE, never a new cap — and a wild herd passes 0, so it's a no-op.
+    if useful != MAX_USEFUL_UNBOUNDED:
+        useful = maxi(useful, useful_floor)
     if useful == MAX_USEFUL_UNBOUNDED or useful >= assignable:
         # Labor-bound below the usefulness ceiling: the `+` capped at idle workers, not at
         # usefulness — name the reason so the cap doesn't read as a silent bug. Exactly staffed
@@ -3656,8 +3663,15 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
     # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
     # hunter gap this pass closes). The local branch caps at the source's max-useful ceiling.
+    # A managed (corralling/pastoral) herd needs `herders_needed` hands every turn to hold its tameness,
+    # but the take/prepare max-useful ignores that — a Corral rung's prep says "1 worker useful", pinning
+    # the player at 1 even when a growing herd needs 2 herders (an unwinnable trap: the corral slips and is
+    # lost). Fold the herding crew into the LOCAL-hunt cap's usefulness ceiling so the maintenance crew is
+    # always staffable. `herders_needed == 0` on a wild herd, so max(take-useful, 0) is a no-op there. The
+    # expedition party has no herding crew, so `_expedition_useful_cap` is left alone.
+    var herd_floor := int(herd.get("herders_needed", 0))
     var capped := _expedition_useful_cap(band, herd, _hunt_assign_policy, assignable) if is_expedition \
-        else _forecast_worker_cap(forecast, assignable)
+        else _forecast_worker_cap(forecast, assignable, herd_floor)
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
     # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy
