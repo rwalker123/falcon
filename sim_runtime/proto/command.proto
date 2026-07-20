@@ -374,9 +374,8 @@ message CommandEnvelope {
     ExtendPenCommand extend_pen = 39;
     TameCommand tame = 40;
     SowCommand sow = 41;
-    // Renumbered 40 → 42 on the merge from main: main shipped `tame`/`sow` at 40/41
-    // first, and a shipped field number is immovable. Nothing had consumed 40 from
-    // this branch, so ours is the one that moves.
+    // Field numbers are immutable once released — 40 and 41 are held by `tame` and
+    // `sow`, so `answer_fork` takes 42. Never renumber a field that has shipped.
     AnswerForkCommand answer_fork = 42;
   }
 }

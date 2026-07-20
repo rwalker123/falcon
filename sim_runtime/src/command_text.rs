@@ -765,7 +765,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 choice_id: choice_id.to_string(),
             })
         }
-        // `domesticate` was renamed `tame` on main; this branch never touched that verb.
         "tame" => {
             let faction_str = parts
                 .next()
