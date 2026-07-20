@@ -105,6 +105,7 @@ var _server_build: String = "?"
 @onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
+@onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
 @onready var turn_orb: TurnOrb = $LayoutRoot/RootColumn/BottomBar/TurnCluster
 @onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/MinimapContainer
 
@@ -267,6 +268,15 @@ const ACTIVITY_GLYPHS := {
 const STORE_ITEM_PROVISIONS := "provisions"
 const FOOD_UNLIMITED_GLYPH := "∞"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
+# Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
+# register into — one prefs file, its own section; the path/section constants are borrowed.
+const HUD_PANELS_CONFIG_SECTION := "hud_panels"
+const CONFIG_KEY_LEGEND_SUPPRESSED := "legend_suppressed"
+const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
+# Both reference cards start HIDDEN: the right dock is the narrative surface's home, and Victory /
+# Terrain Types are look-it-up readouts the player opens on demand (V / L) rather than standing
+# furniture competing with the telling for dock height.
+const PANEL_SUPPRESSED_BY_DEFAULT := true
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
 # The legend card (rows + sort header + suppress state) is owned by _legend; the
@@ -274,6 +284,9 @@ const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
 var _legend: LegendController = null
 var _command_feed: CommandFeedController = null
 var _telling: TellingPanel = null
+# Victory's counterpart to the legend's `legend_suppressed` — the player-hidden state of a dock
+# card, distinct from "no victory data to show".
+var _victory_suppressed: bool = PANEL_SUPPRESSED_BY_DEFAULT
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
@@ -1002,7 +1015,9 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, left_dock_scroll)
+    # The telling lives in the RIGHT dock, so its scroll-fit ceiling is the right dock's scroll
+    # container — passing the left one would compute height against a dock it is not in.
+    _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label, right_dock_scroll)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _connect_turn_orb()
@@ -1020,11 +1035,13 @@ func _ready() -> void:
     left_dock.add(occupants_panel, 12)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
-    # Below the command feed: the receipts are the transient thing you glance at, the telling is
-    # what you scroll back through, so the log sits above the story.
-    left_dock.add(telling_panel, 40)
-    right_dock.add(victory_panel, 10)
-    right_dock.add(terrain_legend_panel, 20)
+    # The right dock is the narrative surface's home: the telling owns the top of it and, with both
+    # reference cards hidden by default, effectively the whole column. Sharing the left dock left it
+    # cramped under the selection cards + command feed.
+    right_dock.add(telling_panel, 10)
+    right_dock.add(victory_panel, 20)
+    right_dock.add(terrain_legend_panel, 30)
+    _load_hud_panel_prefs()
     if stockpile_panel != null:
         stockpile_panel.visible = false
     if stockpile_title != null:
@@ -5643,6 +5660,8 @@ func _band_display_name(_entry: Dictionary, index: int) -> String:
 func _note_command_feed(label: String, detail: String) -> void:
     _command_feed.note(label, detail)
 func _refresh_victory_status() -> void:
+    # A data refresh never un-hides a card the player suppressed.
+    _apply_victory_visibility()
     if victory_status_label == null:
         return
     if victory_state.is_empty():
@@ -5717,6 +5736,54 @@ func _on_legend_sort_pressed(field: String) -> void:
 
 func toggle_legend() -> void:
     _legend.toggle_suppressed()
+    _refit_right_dock()
+    _save_hud_panel_prefs()
+
+## Victory's counterpart to `toggle_legend` (bound to `V` in Main). Hides/shows the card through the
+## dock so the stack reflows with no gap, and remembers the choice for next session.
+func toggle_victory() -> void:
+    _victory_suppressed = not _victory_suppressed
+    _apply_victory_visibility()
+    _save_hud_panel_prefs()
+
+func _apply_victory_visibility() -> void:
+    if victory_panel == null:
+        return
+    var should_show := not _victory_suppressed
+    if right_dock != null:
+        right_dock.set_relevant(victory_panel, should_show)
+    else:
+        victory_panel.visible = should_show
+    _refit_right_dock()
+
+## The Telling panel sits ABOVE the two toggleable cards and grows to fill the dock, so showing or
+## hiding one of them changes how much room it may take. Nothing else in the right dock resizes.
+func _refit_right_dock() -> void:
+    if _telling != null:
+        _telling.refit()
+
+# ---- dock-card visibility persistence --------------------------------------
+
+func _load_hud_panel_prefs() -> void:
+    var cfg := ConfigFile.new()
+    if cfg.load(NarrativeForkPanel.CONFIG_PATH) == OK:
+        if _legend != null:
+            _legend.set_suppressed(bool(cfg.get_value(
+                HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
+        _victory_suppressed = bool(cfg.get_value(
+            HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT))
+    elif _legend != null:
+        # No prefs file yet (or unreadable): fall back to the hidden-by-default layout.
+        _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
+    _apply_victory_visibility()
+
+func _save_hud_panel_prefs() -> void:
+    var cfg := ConfigFile.new()
+    cfg.load(NarrativeForkPanel.CONFIG_PATH)   # preserve the narrative section; ignore load errors
+    if _legend != null:
+        cfg.set_value(HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, _legend.legend_suppressed)
+    cfg.set_value(HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
+    cfg.save(NarrativeForkPanel.CONFIG_PATH)
 func _setup_tooltip() -> void:
     tooltip_panel = PanelContainer.new()
     tooltip_panel.visible = false

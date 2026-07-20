@@ -200,6 +200,7 @@ func _ready() -> void:
         inspector.call("set_streaming_active", streaming_mode)
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
+    _ensure_action_binding("toggle_victory", Key.KEY_V)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
@@ -607,6 +608,12 @@ func _toggle_legend_visibility() -> void:
     if hud.has_method("toggle_legend"):
         _hud_invoke("toggle_legend")
 
+func _toggle_victory_visibility() -> void:
+    if hud == null:
+        return
+    if hud.has_method("toggle_victory"):
+        _hud_invoke("toggle_victory")
+
 var _fow_active: bool = false
 
 func _toggle_fow_overlay() -> void:
@@ -660,6 +667,8 @@ func _process(delta: float) -> void:
         _toggle_inspector_visibility()
     if Input.is_action_just_pressed("toggle_legend"):
         _toggle_legend_visibility()
+    if Input.is_action_just_pressed("toggle_victory"):
+        _toggle_victory_visibility()
     if Input.is_action_just_pressed("toggle_fow"):
         _toggle_fow_overlay()
     if command_client != null:

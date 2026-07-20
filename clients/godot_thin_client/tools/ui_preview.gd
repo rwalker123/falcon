@@ -116,6 +116,10 @@ func _ready() -> void:
 	# so a previous interactive run could otherwise render every telling state folded shut. Pin it
 	# expanded BEFORE the HUD instantiates, the same way the fork states pin the voice register.
 	TellingPanel.save_collapsed(false)
+	# Same hazard for the Victory / Terrain-Types dock cards: Hud restores their suppressed state
+	# from the same prefs file on ready, so a previous interactive run (someone pressing V or L)
+	# could otherwise change every frame. Pin BOTH to the shipped default — hidden.
+	_pin_hud_panel_prefs()
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
@@ -421,6 +425,10 @@ func _ready() -> void:
 	# MapView._build_pasture_legend; see map_preview's "pasture" state for the map itself). The barren
 	# tones sit OFF the straw→grass ramp: dead ground and water are their own rows, so "no pasture at
 	# all" can never be read as "poor pasture".
+	# The legend card ships SUPPRESSED (the player opens it with `L`), so every legend state has to
+	# open it first. Set directly rather than via `toggle_legend`, which would persist the choice to
+	# the prefs file this harness deliberately pins.
+	_hud._legend.set_suppressed(false)
 	_hud.update_overlay_legend(_pasture_legend_fixture())
 	await _settle()
 	await _save("pasture_legend")
@@ -1156,6 +1164,9 @@ func _ready() -> void:
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("terrain_legend_persist")
+	# Back to the shipped default before the narrative states: the Telling panel owns the right dock,
+	# and a legend left open there would misrepresent the layout those frames are judged on.
+	_hud._legend.set_suppressed(true)
 
 	# ---- The Telling (docs/plan_the_telling.md) -----------------------------------------------
 	# The narrative fork decision surface + the client-side end-turn gate. The fixture is the REAL
@@ -1239,6 +1250,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("telling_and_feed")
 
+	# G4 — THE DEFAULT DOCK LAYOUT. The right dock holds the Telling panel ALONE: Victory and
+	# Terrain Types both ship suppressed, so the narrative surface gets the full right-dock height
+	# instead of the squeezed share it had while it lived under the left dock's selection cards.
+	# The command feed stays on the left, which is the layout this frame exists to show.
+	_hud.update_victory_state(_victory_state_fixture())
+	await _settle()
+	await _save("dock_default_layout")
+
+	# G5 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
+	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the
+	# Telling panel is seen to yield height rather than overlap.
+	_hud.toggle_victory()
+	_hud._legend.set_suppressed(false)
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	await _settle()
+	await _save("dock_panels_revealed")
+	# Restore the shipped default so any later state renders the real layout.
+	_hud.toggle_victory()
+	_hud._legend.set_suppressed(true)
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()
@@ -1254,6 +1285,31 @@ func _ready() -> void:
 	await _save("food_icons")
 
 	get_tree().quit()
+
+## Victory progress shaped as `Hud._refresh_victory_status` consumes it: no winner declared yet and
+## a few modes at differing progress, so the card has real height when it is toggled on and the
+## progress sort (highest first) is visible.
+func _victory_state_fixture() -> Dictionary:
+	return {
+		"winner": {},
+		"modes": [
+			{"id": "cultural_ascendancy", "progress_pct": 0.42, "achieved": false},
+			{"id": "great_works", "progress_pct": 0.18, "achieved": false},
+			{"id": "hegemony", "progress_pct": 0.06, "achieved": false},
+		],
+	}
+
+## Pin the Victory / Terrain-Types dock cards to the shipped hidden default, so the harness renders
+## the default layout regardless of what an interactive session last toggled. Writes the same file +
+## section Hud reads (loaded first, so the narrative section survives) via Hud's own key constants.
+func _pin_hud_panel_prefs() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(NarrativeForkPanel.CONFIG_PATH)   # preserve the narrative section; ignore load errors
+	cfg.set_value(HudLayer.HUD_PANELS_CONFIG_SECTION, HudLayer.CONFIG_KEY_LEGEND_SUPPRESSED,
+		HudLayer.PANEL_SUPPRESSED_BY_DEFAULT)
+	cfg.set_value(HudLayer.HUD_PANELS_CONFIG_SECTION, HudLayer.CONFIG_KEY_VICTORY_SUPPRESSED,
+		HudLayer.PANEL_SUPPRESSED_BY_DEFAULT)
+	cfg.save(NarrativeForkPanel.CONFIG_PATH)
 
 ## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
 ## `core_sim/src/data/beat_definitions.json` with their nouns filled in as the sim would fill them.

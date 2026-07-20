@@ -259,6 +259,12 @@ func render() -> void:
 	# tail position) are accurate.
 	call_deferred("_resize")
 
+## Re-run the dock fit without re-rendering the entries. The cap depends on what the cards BELOW
+## this one in the dock need (see DockScrollFit), so a sibling being shown or hidden changes this
+## panel's height even though its own content did not move.
+func refit() -> void:
+	call_deferred("_resize")
+
 func _refresh_collapse() -> void:
 	if _collapse_button == null:
 		return

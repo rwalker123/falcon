@@ -962,3 +962,18 @@ each PR is independently playtestable.
       effort at volume.
 - [ ] A faction-level culture rollup consumer beyond the stance signals, if stance
       axes beyond `roam_settle` ever get forks of their own.
+
+---
+
+## HUD Discoverability
+
+- [ ] **In-game hotkey list.** There is no on-screen key reference — the bindings live
+      only in `clients/godot_thin_client/CLAUDE.md`. This became load-bearing when the
+      Victory and Terrain Types panels moved to hidden-by-default (The Telling arc):
+      both are now reachable *only* by an unlabelled key (`L`, and the newly added
+      Victory toggle), so a player who doesn't already know the keys will reasonably
+      conclude the panels were removed. Any future hidden-by-default panel makes this
+      worse. Wants a toggleable overlay listing the live bindings, sourced from the
+      same action-binding registration in `Main.gd` (`_ensure_action_binding`) rather
+      than a hand-maintained second list that can drift. (Owner: TBD, Estimate: 0.5d;
+      Deps: none.)
