@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist for the OUTER ShadowScale.app — the single bundle a macOS playtester
+  double-clicks. Its executable is the Rust launcher (crate `launcher`), which
+  starts the server and the Godot client that live in Contents/Helpers/.
+
+  Nesting the Godot .app inside Contents/Helpers/ is the standard pattern for a
+  bundle that ships a helper app (Chrome does the same). The launcher execs the
+  inner binary directly rather than going through `open`, so it keeps the child
+  PID and can reap the process tree on exit.
+
+  CFBundleIdentifier must differ from the inner client's
+  (com.rwalker123.shadowscale.client, set in clients/godot_thin_client/export_presets.cfg)
+  — two bundles sharing one identifier confuses Launch Services.
+
+  LSUIElement is deliberately NOT set: the launcher never touches the window
+  server, so it gets no Dock tile of its own, and the one tile the player sees is
+  the client's.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>ShadowScale</string>
+	<key>CFBundleDisplayName</key>
+	<string>ShadowScale</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.rwalker123.shadowscale</string>
+	<key>CFBundleExecutable</key>
+	<string>shadowscale_launcher</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
