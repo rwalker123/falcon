@@ -3197,9 +3197,13 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // horizon, and under Sustain no party size fills at any size). The sim therefore
         // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
         // table lookup keyed
-        // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}`:
-        //   turns_to_fill == 0  → does not fill within the forecast horizon ("won't fill", not an ETA)
-        //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
+        // `"<policy>:<party_workers>"` →
+        // `{turns_to_fill, delivers_food, animals_taken, delivered_food, wasted_food}`:
+        //   turns_to_fill == 0   → the raid ran the whole horizon still delivering (a long raid)
+        //   delivers_food false  → eradicate, a denial mission ("no food delivered", never an ETA)
+        //   delivered_food == 0  → herd at/below the policy floor, no surplus to raid (too lean); NOT
+        //                          animals_taken == 0, which is ≥ 1 whenever there's surplus (a small
+        //                          party kills one animal and wastes the meat it can't carry)
         // Empty for a non-huntable herd (the HUD then shows no forecast).
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
@@ -3208,6 +3212,17 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
                     let mut entry = VarDictionary::new();
                     let _ = entry.insert("turns_to_fill", i64::from(estimate.turnsToFill()));
                     let _ = entry.insert("delivers_food", estimate.deliversFood());
+                    // The whole animals the raid delivers — the payload the client headlines
+                    // ("delivers ≈N animals over M turns") and the plateau it caps the party stepper
+                    // at. Dropped from this dict on four prior appended fields; this is the newest.
+                    let _ = entry.insert("animals_taken", i64::from(estimate.animalsTaken()));
+                    // The PRIMARY payload: food the party actually LANDS over the raid (a partial
+                    // for a small party) + the food killed-but-not-carried it wastes. The client
+                    // headlines `delivered_food` (NOT animals × food_per_animal, which overstates a
+                    // partial) and shows the waste fraction `wasted / (delivered + wasted)` beside
+                    // it; `delivered_food == 0` (not `animals_taken == 0`) is now "too lean to raid".
+                    let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
+                    let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
                     let key = format!("{}:{}", policy, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }
@@ -3278,6 +3293,31 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
+        // Body mass = the biomass of ONE animal of this species (intensification ladder slice 8b). A
+        // real appended wire field (was being dropped — decoder audit), surfaced for completeness /
+        // future "N animals" readouts. NOTE: it is BIOMASS, so it CANNOT drive the kill-rhythm — that
+        // divides a FOOD rate (`sustainable_yield`, provisions), and food ÷ biomass is a unit error
+        // (~50× too long at provisions_per_biomass 0.02). `food_per_animal` below is the food-unit twin.
+        let _ = dict.insert("body_mass", herd.bodyMass());
+        // Food per animal = one animal's worth of YIELD in provisions (= body_mass ×
+        // provisions_per_biomass, the sim's `SourceYieldForecast::body_mass_yield`). This is what the
+        // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
+        // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
+        let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
+        // Staffing of a MANAGED herd (intensification ladder). A domesticated herd needs
+        // `herders_needed` herders every turn to HOLD its tameness; `herded_fraction` = min(1,
+        // assigned / needed) is how well that demand is met. Understaffed (< 1) means the herd's
+        // domestication is DECAYING — it slips back to wild and stops earning Penning — so the herd
+        // drawer surfaces the deficit. `herders_needed` is 0 for a wild/unmanaged herd (never show a
+        // herder readout then); `herded_fraction` defaults to 1.0 for any unmanaged/vanished herd.
+        let _ = dict.insert("herders_needed", i64::from(herd.herdersNeeded()));
+        let _ = dict.insert("herded_fraction", herd.herdedFraction());
+        // The Tame rung's PAYOFF — the pastoral twin of `corral_yield`: food/turn a Sustain hunt pays
+        // ONCE this herd is tamed (the pastoral MSY). While Tame's DURING-BUILDING dip rides the
+        // `hunt_policy_ceilings` list, this is the "then +Y" the client shows so Tame reads as
+        // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
+        // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
+        let _ = dict.insert("pastoral_yield", herd.pastoralYield());
         array.push(&dict.to_variant());
     }
     array
@@ -3314,6 +3354,30 @@ fn forage_patches_to_array(
         // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
         let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
         let _ = dict.insert("tended_yield", patch.tendedYield());
+        // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
+        // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
+        // source and both ship: `cultivation_progress`/`is_cultivated` (rung 2, above) and these.
+        // They are independent — `Sow` needs no prior patch, so a Field may stand on ground that was
+        // never tended. Read `is_field` (the BOOL) for the completed rung; never infer a rung from
+        // the float. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as the
+        // Cultivate pair above.
+        let _ = dict.insert("field_progress", patch.fieldProgress());
+        let _ = dict.insert("is_field", patch.isField());
+        // Sow's "preparing X → then Y" pre-commit pair, mirroring `ceiling_cultivate`/`tended_yield`.
+        // `ceiling_sow` is the dip WHILE the ground is being sown (honestly ~0 on bare ground — there
+        // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
+        // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
+        let _ = dict.insert("ceiling_sow", patch.ceilingSow());
+        let _ = dict.insert("field_yield", patch.fieldYield());
+        // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
+        // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
+        // seam the `sow` command gates on. Shipped as an ANSWER rather than a bool because only ~1% of
+        // tiles are sowable (46 of 4160 on the standard map): the client has neither the per-biome
+        // capacity table nor the hydrology, so it CANNOT re-derive this. Same free-form-string
+        // convention as `species` / `husbandry_ceiling`; absent ⇒ treated as sowable by the client.
+        if let Some(sow_site_refusal) = patch.sowSiteRefusal() {
+            let _ = dict.insert("sow_site_refusal", sow_site_refusal);
+        }
         array.push(&dict.to_variant());
     }
     array
@@ -3326,8 +3390,19 @@ fn intensification_knowledge_to_array(
     for state in states {
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
+        // The FACTION-WIDE half of the two-meter split (docs/plan_intensification_ladder.md §4.1):
+        // "can my PEOPLE do this verb at all?", earned once by cumulative practice and permanent —
+        // as opposed to the per-source build meters (`domestication`/`corral_progress` on a herd,
+        // `cultivation_progress`/`field_progress` on a patch), which are local to ONE food source and
+        // decay if abandoned. One field per rung-transition, so these read as the ladder itself:
+        //   plant:  wild --cultivation--> tended --seed_selection--> field
+        //   animal: wild --herding------> pastoral --penning-------> pen
         let _ = dict.insert("cultivation", state.cultivation());
         let _ = dict.insert("herding", state.herding());
+        // Appended by slice 4 (discovery ids 2005/2006). The §4.3 gate reshuffle: `herding` now gates
+        // `tame` ALONE, and `penning` — not `herding` — gates `corral` + `extend_pen`.
+        let _ = dict.insert("seed_selection", state.seedSelection());
+        let _ = dict.insert("penning", state.penning());
         array.push(&dict.to_variant());
     }
     array
@@ -4014,6 +4089,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The allocation row surfaces that as the "only N of M working" overstaffing note.
             // 0 on a rehydrated save ⇒ the note degrades to hidden, never wrong.
             let _ = entry.insert("workers_needed", assignment.workersNeeded() as i64);
+            // Provisions this source OFFERED that the crew could not collect (production − actual):
+            // the UNDERSTAFFING signal, the exact mirror of workers_needed. > 0 ⇒ the party is
+            // under-crewed for the kill (an animal too big to fully carry, or an over-abundant pulse)
+            // and food is being left standing — the allocation row surfaces it as a muted "· N.N
+            // wasted". 0 on a rehydrated save ⇒ hidden, never wrong.
+            let _ = entry.insert("wasted_yield", assignment.wastedYield() as f64);
+            // THE overhunting ⚠, answered by the sim (`!managed && policy.overdraws()`): does this
+            // take draw the stock below what it sustains? False for Sustain (and investment/managed
+            // sources). Confirmed rows/map labels flag on this wire bool rather than the client-derived
+            // `actual > sustainable`, which false-positives on a hunt's kill turn (banked animal spikes
+            // actual above the steady sustainable even under Sustain).
+            let _ = entry.insert("overdraws", assignment.overdraws());
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }
@@ -4109,6 +4196,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_per_worker_carry",
         f64::from(cohort.expeditionPerWorkerCarry()),
+    );
+    // Band move speed (tiles/turn, LaborConfig scalar echoed per-cohort). The hunt-expedition
+    // forecast's round-trip TRAVEL turns are `ceil(2 × hex_distance(band, herd) / this)` — without
+    // it the travel breakdown reads 0 and degrades to hunting-turns-only. 0/absent = no travel line.
+    let _ = dict.insert(
+        "band_move_tiles_per_turn",
+        f64::from(cohort.bandMoveTilesPerTurn()),
     );
 
     if let Some(access) = cohort.accessibleStockpile() {

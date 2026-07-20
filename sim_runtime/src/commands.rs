@@ -140,11 +140,16 @@ pub enum CommandPayload {
         herd_id: String,
         band_entity_bits: Option<u64>,
     },
-    Domesticate {
+    Tame {
         faction_id: u32,
         herd_id: String,
     },
     Cultivate {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
+    Sow {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
@@ -503,10 +508,10 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 band_entity_bits: *band_entity_bits,
             }),
-            CommandPayload::Domesticate {
+            CommandPayload::Tame {
                 faction_id,
                 herd_id,
-            } => pb::command_envelope::Command::Domesticate(pb::DomesticateCommand {
+            } => pb::command_envelope::Command::Tame(pb::TameCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
             }),
@@ -515,6 +520,15 @@ impl CommandEnvelope {
                 target_x,
                 target_y,
             } => pb::command_envelope::Command::Cultivate(pb::CultivateCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
+            CommandPayload::Sow {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Sow(pb::SowCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
@@ -817,11 +831,16 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
                 band_entity_bits: cmd.band_entity_bits,
             },
-            pb::command_envelope::Command::Domesticate(cmd) => CommandPayload::Domesticate {
+            pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
             },
             pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Sow(cmd) => CommandPayload::Sow {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,

@@ -23,9 +23,10 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CultureManager, DiscoveryProgressLedger,
     FactionInventory, FaunaConfigHandle, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick,
-    SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    HerdRegistry, HerdTelemetry, LadderConfigHandle, MapPresets, MapPresetsHandle,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it, per §9). Only used to stand up a
@@ -81,6 +82,7 @@ fn base_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
     app
@@ -97,13 +99,14 @@ fn run_turn(app: &mut App) {
 
 /// The richest pasture tile on the map (a prairie-class patch), used as the single controlled range.
 /// Returns `(tile, capacity)`.
+///
+/// Delegates to `GrazeRegistry::richest_patch`, whose **deterministic tie-break** this test depends on:
+/// every tile of the richest biome shares the maximum capacity, so picking the winner off raw `HashMap`
+/// order would sample a different neighbourhood (and a different pen footprint) each process.
 fn richest_pasture(app: &App) -> (UVec2, f32) {
     app.world
         .resource::<GrazeRegistry>()
-        .patches
-        .iter()
-        .map(|(tile, patch)| (*tile, patch.carrying_capacity))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .richest_patch()
         .expect("the earthlike map seeds graze patches")
 }
 
@@ -113,6 +116,13 @@ fn set_graze(app: &mut App, tile: UVec2, fraction: f32) {
     let patch = graze.patch_mut(tile).expect("tile has a graze patch");
     patch.biomass = (fraction * patch.carrying_capacity).clamp(0.0, patch.carrying_capacity);
 }
+
+/// The fixture's per-animal body mass. **Irrelevant to this proof by construction, and that is worth
+/// stating**: nothing here hunts. These tests couple the herd's *ecology* to the graze layer's — grow,
+/// eat, regrow — and the whole-animal quantiser (slice 8) lives on the **take** path, which this file
+/// never touches. So the convergence proof is unchanged by quantisation, rather than being tuned to
+/// survive it.
+const CONVERGENCE_BODY_MASS: f32 = 1.0;
 
 /// Replace the live herds with `count` identical **Small** (stationary, range-0) herds parked on
 /// `tile`, each with the given metabolic `fodder` and wild `regrowth_rate` and starting `biomass`.
@@ -131,6 +141,7 @@ fn seat_herds(app: &mut App, tile: UVec2, count: usize, fodder: f32, r: f32, bio
             biomass, // spawn K; overwritten by the ecological recompute on turn 1
             fodder,
             r,
+            CONVERGENCE_BODY_MASS,
         ));
     }
 }

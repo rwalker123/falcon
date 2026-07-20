@@ -1223,14 +1223,17 @@ func _snapshot_pens() -> Dictionary:
 	return _base_snapshot(_band([], 2, 2), [fed, starving])
 
 func _snapshot_work() -> Dictionary:
-	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==
-	# sustainable, no ⚠); the hunt OVERDRAWS (0.46 > 0.20) so its herd label shows the amber ⚠ flag.
+	# Per-source yields annotate the worked tiles/herd on the map. The ⚠ overhunt flag is now the
+	# sim-answered `overdraws` bool (policy-driven, false for Sustain), NOT `actual > sustainable`.
+	# The DECOUPLING this proves: the SUSTAIN hunt has `actual 0.46 > sustainable 0.20` (a banked
+	# whole animal cashed on this kill turn) yet `overdraws=false` → NO ⚠ (label reads +0.20, clean),
+	# while the MARKET forage genuinely overdraws → `overdraws=true` → ⚠.
 	var assignments := [
 		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
 		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
-		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20},
+		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
@@ -1396,8 +1399,8 @@ func _snapshot_far_work() -> Dictionary:
 	var cx := YIELD_FAR_GRID_W / 2
 	var cy := YIELD_FAR_GRID_H / 2
 	var assignments := [
-		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20},
+		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 	]
 	var band := _with_stage({
 		"entity": BAND_ENTITY, "faction": 0, "current_x": cx, "current_y": cy, "size": 30,

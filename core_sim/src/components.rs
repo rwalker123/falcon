@@ -759,16 +759,45 @@ pub struct LaborAssignment {
 /// overhunting signal — a *leading* flow indicator, distinct from the stock-based `ecology_phase`.
 ///
 /// `workers_needed` = the **minimum** assigned workers that would have produced the same take — the
-/// **overstaffing** signal. A source's take is `min(policy_ceiling, workers × per_worker_capacity,
-/// biomass, …)`; when the binding constraint is NOT labor, the extra workers were idle. It is
-/// `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken,
-/// else `0`; a *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is defined
-/// as `1`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
+/// **overstaffing** signal. A source's take is `min(production, workers × per_worker_capacity)`; when
+/// the binding constraint is NOT labor, the extra workers were idle. It is
+/// `ceil(actual / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else
+/// `0`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
+/// **Derived at every rung** since slice 7 — the hardcoded `1` a managed source used to report
+/// (`TENDED_SOURCE_WORKERS_NEEDED`) claimed one worker could carry home whatever the land offered, so
+/// "max N useful here" read `1` on a Field paying ten workers' worth.
+///
+/// `wasted` = **the understaffing signal, the exact mirror of `workers_needed`'s overstaffing one**:
+/// `production − actual`, the food this source offered that the crew could not collect (`0` when
+/// collection was not the binding constraint). *Production* is what the source hands over this turn —
+/// the policy ceiling at rungs 1–2, the managed rate at rung 3 — and *collection* is
+/// `workers × per_worker_capacity`, so the two signals answer the two halves of "is this source
+/// correctly staffed?": `workers_needed < workers` ⇒ drop some, `wasted > 0` ⇒ add some. Derived
+/// per-turn; on rung 3 (a Field) it is genuinely food left standing, on the drawn-down plant rungs it
+/// stays in the stock and regrows, and **on any animal rung it is meat left to rot** — a hunt kills
+/// *whole animals* (slice 8), so a party that cannot haul a whole one still takes it and wastes the
+/// rest. On an animal source *production* is therefore the biomass of the animals **killed**, not the
+/// escapement the herd could have spared: an animal you didn't kill was never produced, it is still
+/// alive (`fauna::forecast_production_and_take`).
+///
+/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠, answered by the sim
+/// rather than derived by the client from `actual > sustainable`. That comparison stopped working when
+/// the hunt began taking whole animals (slice 8): a Sustain hunt is **escapement to `K/2`**, so it
+/// lands the herd exactly on its most-productive biomass and is *sustainable by construction* — but it
+/// pays in **lumps** (nothing for 6 turns, then a whole mammoth), so `actual > sustainable` fires on
+/// every kill turn. A ⚠ on the turn you correctly harvest a mammoth trains the player to ignore the
+/// one signal that matters. So `sustainable` keeps reporting the honest **long-run MSY rate** ("this
+/// herd sustains ~0.78/turn on average"), `actual` swings — that swing is *true*, and it is the
+/// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
+/// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
+/// true for Surplus/Market/Eradicate, which genuinely draw down toward the collapse threshold.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
+    pub wasted: f32,
     pub workers_needed: u32,
+    pub overdraws: bool,
 }
 
 impl SourceYield {
@@ -779,7 +808,10 @@ impl SourceYield {
     pub const ZERO: Self = Self {
         actual: 0.0,
         sustainable: 0.0,
+        wasted: 0.0,
         workers_needed: 0,
+        // Nothing was taken, so nothing was overdrawn.
+        overdraws: false,
     };
 }
 
@@ -955,18 +987,20 @@ pub struct BandTravel {
 /// (source stable), Surplus > regrowth (slow decline), Market = large commercial share (fast decline
 /// → collapse, boosted trade goods), Eradicate = max (drives the source toward local extinction).
 ///
-/// **The two investment rungs** (Intensification — "Cultivate & Corral as explicit policies") are
-/// *not* extractive: they spend the crew's turns **preparing the ground / building the pen** instead
-/// of gathering. While preparing, the source's take ceiling is only
-/// `cultivating_yield_fraction` / `corralling_yield_fraction` × its **Sustain (MSY)** ceiling — a
-/// deliberate **yield dip**, drawn sustainably so the source stays healthy — and it accrues
-/// `ForagePatch::cultivation_progress` / `Herd::corral_progress` at `progress_per_turn`. At progress
-/// `1.0` the source becomes a **tended patch / corralled herd** and pays the full managed yield.
-/// This makes intensifying an *investment with a real up-front cost*, gated on the player's time
-/// horizon, instead of a free by-product of Sustain.
+/// **The three investment rungs** (the intensification ladder's rung-transition verbs) are *not*
+/// extractive: they spend the crew's turns **preparing the ground / taming the herd / building the
+/// pen** instead of gathering. While preparing, the source's take ceiling is only the rung's
+/// `yield_fraction_while_building` × its **Sustain (MSY)** ceiling — a deliberate **yield dip**,
+/// drawn sustainably so the source stays healthy — and it accrues the source's build meter
+/// (`ForagePatch::cultivation_progress` / `Herd::domestication_progress` / `Herd::corral_progress`)
+/// at the rung's `progress_per_turn`. At progress `1.0` the source becomes a **tended patch /
+/// pastoral herd / corralled herd** and pays the full managed yield. This makes intensifying an
+/// *investment with a real up-front cost*, gated on the player's time horizon, instead of a free
+/// by-product of Sustain.
 ///
-/// The two are **kind-specific** (validated at `assign_labor`): `Cultivate` is Forage-only,
-/// `Corral` is Hunt-only. See [`FollowPolicy::valid_for_forage`] / [`FollowPolicy::valid_for_hunt`].
+/// All four are **kind-specific** (validated at `assign_labor`): `Cultivate` and `Sow` are
+/// Forage-only, `Tame` and `Corral` are Hunt-only. See [`FollowPolicy::valid_for_forage`] /
+/// [`FollowPolicy::valid_for_hunt`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowPolicy {
     #[default]
@@ -976,6 +1010,27 @@ pub enum FollowPolicy {
     Eradicate,
     /// **Forage-only.** Prepare the patch into a tended crop (see the enum docs).
     Cultivate,
+    /// **Forage-only.** Sow a **Field** — the plant rung-3 verb, the twin of `Corral`
+    /// (`docs/plan_intensification_ladder.md` §2). It **places** a food source: it builds a Field
+    /// *even where no patch existed*, because seed travels — the one asymmetry with the animal
+    /// branch, where `Corral` needs a herd you already tamed.
+    ///
+    /// **But only on ground the land itself will farm, and that is SCARCE.** Rung 3 knows how to move
+    /// seed, not how to *fertilize*, so the ground must already do the fertilizing: the
+    /// `plant:field` rung's **`site_requirement`** demands **very fertile** ground (`min_forage_capacity`
+    /// 195 — the river-deposit class: delta / floodplain / alluvial plain) that is **near fresh water**
+    /// (`requires_fresh_water` — a river along one of its sides, fresh-water ground, or a lake/channel
+    /// next door; a salt coast does **not** count). Measured on the standard map: **46 sowable tiles of
+    /// 4160**. Merely bearing *some* food is nowhere near enough (2328 tiles do). Making thin or dry
+    /// ground farmable is rung 4 (Worked Land), a later arc — which will be a **looser copy of that
+    /// same record**.
+    ///
+    /// The rule lives on the rung, never here: `forage::rung_site_refusal` is the one seam the `sow`
+    /// command, the labor arm and the wire all resolve through.
+    Sow,
+    /// **Hunt-only.** Tame a wild herd into pastoral livestock (see the enum docs) — the animal
+    /// rung-2 verb. Sustain no longer tames anything: it only *teaches* the faction Herding.
+    Tame,
     /// **Hunt-only.** Build the pen for a domesticated herd (see the enum docs).
     Corral,
 }
@@ -985,7 +1040,7 @@ impl FollowPolicy {
     /// *expedition's whole axis*: a detached party can only take, never invest (the two investment
     /// policies are place-bound work a resident band does — `send_hunt_expedition` rejects them), so
     /// the snapshot's per-herd `hunt_trip_estimates` export walks exactly this list. Emitting a trip
-    /// estimate for `Cultivate`/`Corral` would be a number for a trip that cannot be launched.
+    /// estimate for `Cultivate`/`Tame`/`Corral` would be a number for a trip that cannot be launched.
     pub const EXTRACTIVE: [FollowPolicy; 4] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
@@ -993,18 +1048,117 @@ impl FollowPolicy {
         FollowPolicy::Eradicate,
     ];
 
-    /// Every policy a **Hunt** assignment accepts — the four extractive rungs **plus `Corral`** (the
-    /// animal investment rung; `Cultivate` is Forage-only). The single source for "iterate a herd's
-    /// policies": the snapshot's per-herd `hunt_policy_ceilings` (the BAND / local-hunt yield preview)
-    /// export walks this, so a player sees Corral's deliberately dipped yield *before* committing to
-    /// the pen. Keep in sync with [`FollowPolicy::valid_for_hunt`].
-    pub const HUNT_POLICIES: [FollowPolicy; 5] = [
+    /// Every policy a **Hunt** assignment accepts — the four extractive rungs **plus the two animal
+    /// investment rungs `Tame` (rung 2) and `Corral` (rung 3)**; `Cultivate` is Forage-only. The
+    /// single source for "iterate a herd's policies": the snapshot's per-herd `hunt_policy_ceilings`
+    /// (the BAND / local-hunt yield preview) export walks this, so a player sees each investment's
+    /// deliberately dipped yield *before* committing to it. Keep in sync with
+    /// [`FollowPolicy::valid_for_hunt`].
+    pub const HUNT_POLICIES: [FollowPolicy; 6] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
         FollowPolicy::Market,
         FollowPolicy::Eradicate,
+        FollowPolicy::Tame,
         FollowPolicy::Corral,
     ];
+
+    /// **Is this an INVESTMENT rung — a rung-transition verb rather than a way of taking?**
+    ///
+    /// **THE definition, and the one place any site may ask.** "Investment" is defined as *the
+    /// complement of [`FollowPolicy::EXTRACTIVE`]* — the enum docs already say so ("they are exactly
+    /// the policies **not** in `EXTRACTIVE`"), so deriving it here rather than re-listing the verbs is
+    /// the *statement*, not a shortcut.
+    ///
+    /// **It exists because hand-written lists of these verbs rot.** Two had already rotted before this
+    /// was factored out: `send_hunt_expedition`'s launch gate silently accepted `tame`, and
+    /// `hunt_expedition_ceiling`'s `matches!` was missing it too — so a Tame expedition sailed past the
+    /// `debug_assert!` meant to catch it and quietly computed a *plausible* pastoral-dip ceiling, which
+    /// is precisely the "fallback hiding the hole" the assert exists to prevent. Every predicate site
+    /// now routes through here; a **new investment verb needs no edit at any of them**.
+    ///
+    /// Note the complement of a *const list* is deliberate here where
+    /// [`FollowPolicy::teaches_knowledge`] is deliberately an exhaustive `match`: teaching is a
+    /// *judgement* about a new verb that someone must make (so it should fail to compile), whereas
+    /// "is it an investment" is a *fact* about which grouping it is in — and
+    /// `follow_policy_teaching_matches_the_extractive_grouping` pins the two together, so they cannot
+    /// disagree.
+    pub fn is_investment(self) -> bool {
+        !Self::EXTRACTIVE.contains(&self)
+    }
+
+    /// **Does a take under this policy draw the stock below what it sustains?** — THE ⚠ predicate
+    /// ([`SourceYield::overdraws`]), and the exact inverse of "is this policy stewardship" (see
+    /// [`FollowPolicy::teaches_knowledge`], which turns on the same restraint/overdraw split — the two
+    /// are pinned against each other by `follow_policy_overdrawing_is_the_inverse_of_stewardship`).
+    ///
+    /// Since slice 8 every hunt policy is **escapement to a floor** (`fauna::hunt_policy_floor`), so
+    /// this is simply *"is that floor below the source's sustainable operating point?"*:
+    /// - **`Sustain`** — floor `K/2`, the MSY point itself. It cannot overdraw: the take lands the
+    ///   herd **exactly** on its most-productive biomass and never below. Sustainable *by
+    ///   construction*, so a ⚠ there would be meaningless — which is the whole reason this predicate
+    ///   exists rather than the client comparing `actual > sustainable` (a lumpy whole-animal take
+    ///   exceeds the long-run MSY rate on every kill turn while being perfectly sustainable).
+    /// - **`Tame` / `Corral`** — the investment rungs sit on Sustain's floor and take a *fraction* of
+    ///   it. Strictly gentler than Sustain; they cannot overdraw either.
+    /// - **`Surplus` / `Market`** — floor at the collapse (Allee) threshold: a real draw-down.
+    /// - **`Eradicate`** — no floor at all.
+    /// - **`Cultivate` / `Sow`** — the plant investment rungs, dips on the patch's MSY. Plants stay
+    ///   flow-based (they don't quantise), but the answer is the same: a fraction of a sustainable
+    ///   draw does not overdraw.
+    ///
+    /// Exhaustive for `teaches_knowledge`'s reason: a new `FollowPolicy` must **fail to compile** here
+    /// rather than inherit a plausible answer from a catch-all.
+    pub fn overdraws(self) -> bool {
+        match self {
+            // Escapement to K/2 — the MSY point. Sustainable by construction.
+            FollowPolicy::Sustain => false,
+            // Fractions of that same sustainable escapement — gentler still.
+            FollowPolicy::Tame
+            | FollowPolicy::Corral
+            | FollowPolicy::Cultivate
+            | FollowPolicy::Sow => false,
+            // Drawn down toward the collapse threshold, or past it.
+            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => true,
+        }
+    }
+
+    /// **Does working a source under this policy teach the faction anything?**
+    /// (`docs/plan_intensification_ladder.md` §4.2 — *"only stewardship policies teach"*.) THE single
+    /// source of that rule: [`crate::intensification::RungDef::knowledge_earned`] is its only reader,
+    /// so the ladder's whole earn path turns on this one predicate.
+    ///
+    /// **Stewardship = restraint.** You learn husbandry by *managing* a source, not by slaughtering
+    /// it — the same "restraint is the path" principle the corral arc established:
+    /// - **`Sustain`** teaches. It is [`FollowPolicy::EXTRACTIVE`]'s gentlest rung — it takes only the
+    ///   MSY, i.e. exactly what the source regrew — so it is the one *extractive* policy that is also
+    ///   stewardship. This is what keeps rung 1 teaching (Sustain-hunt a wild herd → Herding), the
+    ///   shipped behaviour §0 built.
+    /// - **`Surplus` / `Market` / `Eradicate`** teach nothing. They all **overdraw** — the rest of
+    ///   `EXTRACTIVE` — and running a source down is not practice.
+    /// - **`Cultivate` / `Sow` / `Tame` / `Corral`** teach. The investment rungs are stewardship by
+    ///   construction (they *are* the managing), and they are exactly the policies **not** in
+    ///   `EXTRACTIVE`. (Whether a rung teaches *anything* is the **rung's** call — its
+    ///   `earns_knowledge`, `null` on `plant:field` until rung 4 exists — so `Sow` joining this list
+    ///   is a statement about the *policy*, not a promise of a lesson.)
+    ///
+    /// Deliberately an exhaustive `match` rather than a second const list beside `EXTRACTIVE`: a
+    /// parallel list can silently drift, whereas this makes a new `FollowPolicy` **fail to compile**
+    /// until someone decides whether it is stewardship. `follow_policy_teaching_matches_the_extractive_grouping`
+    /// pins it against `EXTRACTIVE` so the two groupings can never disagree.
+    pub fn teaches_knowledge(self) -> bool {
+        match self {
+            // The restrained extractive rung: takes the regrowth, leaves the stock.
+            FollowPolicy::Sustain => true,
+            // The overdrawing extractive rungs.
+            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => false,
+            // The investment rungs — managing IS the practice.
+            FollowPolicy::Cultivate
+            | FollowPolicy::Sow
+            | FollowPolicy::Tame
+            | FollowPolicy::Corral => true,
+        }
+    }
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -1013,6 +1167,8 @@ impl FollowPolicy {
             FollowPolicy::Market => "market",
             FollowPolicy::Eradicate => "eradicate",
             FollowPolicy::Cultivate => "cultivate",
+            FollowPolicy::Sow => "sow",
+            FollowPolicy::Tame => "tame",
             FollowPolicy::Corral => "corral",
         }
     }
@@ -1023,26 +1179,30 @@ impl FollowPolicy {
     /// source of that rule, so a "turns to fill" number can never be quoted for a mission that
     /// delivers nothing.
     ///
-    /// The two **investment** rungs DO deliver food: while the improvement is prepared the source is
-    /// still worked, at a reduced but sustainable `*_yield_fraction × its MSY ceiling` (the yield dip
-    /// that buys the pen / the tended patch). Only denial withholds food.
+    /// The four **investment** rungs DO deliver food: while the improvement is prepared the source
+    /// is still worked, at a reduced but sustainable `yield_fraction_while_building × its MSY
+    /// ceiling` (the yield dip that buys the tended patch / the field / the tamed herd / the pen).
+    /// Only denial withholds food. (A `Sow` on **bare** ground has no standing crop to dip, so that
+    /// fraction of nothing is honestly ~0 — a pure investment, not a withheld one.)
     pub fn delivers_food(self) -> bool {
         !matches!(self, FollowPolicy::Eradicate)
     }
 
-    /// Policies a **Forage** assignment accepts: the four extractive rungs plus `Cultivate`.
-    /// `Corral` is an animal-only investment — a forage assignment carrying it is rejected at
-    /// `assign_labor` (and defensively yields nothing in `forage_policy_ceiling`).
+    /// Policies a **Forage** assignment accepts: the four extractive rungs plus the plant branch's
+    /// two investment rungs, `Cultivate` (rung 2) and `Sow` (rung 3). `Tame`/`Corral` are animal-only
+    /// investments — a forage assignment carrying one is rejected at `assign_labor` (and defensively
+    /// yields nothing in `forage_policy_ceiling`).
     pub fn valid_for_forage(self) -> bool {
-        !matches!(self, FollowPolicy::Corral)
+        !matches!(self, FollowPolicy::Tame | FollowPolicy::Corral)
     }
 
-    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus `Corral`
-    /// ([`FollowPolicy::HUNT_POLICIES`]). `Cultivate` is a plant-only investment — see
-    /// [`FollowPolicy::valid_for_forage`]. Note this is the **band's** axis: an *expedition* accepts
-    /// only [`FollowPolicy::EXTRACTIVE`] (penning is place-bound work).
+    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus the animal branch's two
+    /// investment rungs, `Tame` and `Corral` ([`FollowPolicy::HUNT_POLICIES`]). `Cultivate`/`Sow` are
+    /// plant-only investments — see [`FollowPolicy::valid_for_forage`]. Note this is the **band's**
+    /// axis: an *expedition* accepts only [`FollowPolicy::EXTRACTIVE`] (every rung-transition is
+    /// place-bound work).
     pub fn valid_for_hunt(self) -> bool {
-        !matches!(self, FollowPolicy::Cultivate)
+        !matches!(self, FollowPolicy::Cultivate | FollowPolicy::Sow)
     }
 }
 
@@ -1055,6 +1215,8 @@ impl FromStr for FollowPolicy {
             "market" => Ok(FollowPolicy::Market),
             "eradicate" => Ok(FollowPolicy::Eradicate),
             "cultivate" => Ok(FollowPolicy::Cultivate),
+            "sow" => Ok(FollowPolicy::Sow),
+            "tame" => Ok(FollowPolicy::Tame),
             "corral" => Ok(FollowPolicy::Corral),
             "sustain" | "" => Ok(FollowPolicy::Sustain),
             _ => Err(()),
@@ -1188,6 +1350,64 @@ impl Default for Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The stewardship rule, pinned against the `EXTRACTIVE` grouping it is defined in terms of**
+    /// (`docs/plan_intensification_ladder.md` §4.2). `teaches_knowledge` is an exhaustive match — so
+    /// a new policy cannot *forget* to decide — but a match can still silently disagree with the
+    /// const list beside it. This asserts the two groupings say the same thing:
+    /// - **Sustain** is the one extractive rung that teaches (it takes only the regrowth).
+    /// - Every **other** extractive rung overdraws, so it teaches nothing.
+    /// - Every **non**-extractive policy is an investment rung — managing IS the practice — so it
+    ///   teaches.
+    #[test]
+    fn follow_policy_teaching_matches_the_extractive_grouping() {
+        for policy in FollowPolicy::EXTRACTIVE {
+            let expected = matches!(policy, FollowPolicy::Sustain);
+            assert_eq!(
+                policy.teaches_knowledge(),
+                expected,
+                "{policy:?}: within EXTRACTIVE, Sustain alone is stewardship — the rest overdraw"
+            );
+        }
+        // Every extractive rung is, by definition, NOT an investment — `is_investment` and
+        // `EXTRACTIVE` are the same statement and must stay so.
+        for policy in FollowPolicy::EXTRACTIVE {
+            assert!(
+                !policy.is_investment(),
+                "{policy:?} is in EXTRACTIVE — it cannot also be an investment rung"
+            );
+        }
+        // The investment rungs: everything HUNT_POLICIES/forage offer that isn't extractive.
+        for policy in [
+            FollowPolicy::Cultivate,
+            FollowPolicy::Sow,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+        ] {
+            assert!(
+                !FollowPolicy::EXTRACTIVE.contains(&policy),
+                "{policy:?} is an investment rung — it must not be in EXTRACTIVE"
+            );
+            assert!(
+                policy.is_investment(),
+                "{policy:?} is a rung-transition verb — `is_investment` is what every launch gate and \
+                 unreachable-arm asks, so it must say so"
+            );
+            // **Kind-exclusivity, pinned.** Every investment rung is place-bound work on ONE food web
+            // (`Cultivate`/`Sow` prepare ground; `Tame`/`Corral` work a herd) — never both. The two
+            // `valid_for_*` predicates are hand-written `!matches!` complements, so a NEW investment
+            // verb would default to legal on *both* kinds; this is what catches that.
+            assert_ne!(
+                policy.valid_for_forage(),
+                policy.valid_for_hunt(),
+                "{policy:?} is an investment rung — it must be legal on exactly ONE kind"
+            );
+            assert!(
+                policy.teaches_knowledge(),
+                "{policy:?} is stewardship by construction — it must teach"
+            );
+        }
+    }
 
     #[test]
     fn workers_on_counts_scout_headcount() {
