@@ -118,8 +118,10 @@ func _ready() -> void:
 	TellingPanel.save_collapsed(false)
 	# Same hazard for the Victory / Terrain-Types dock cards: Hud restores their suppressed state
 	# from the same prefs file on ready, so a previous interactive run (someone pressing V or L)
-	# could otherwise change every frame. Pin BOTH to the shipped default — hidden.
-	_pin_hud_panel_prefs()
+	# could otherwise change every frame. Clear the section outright rather than writing the
+	# defaults into it: that reproduces a FRESH PROFILE, which is the path the shipped default
+	# actually travels, and the one a pinned `true` would paper over.
+	_clear_hud_panel_prefs()
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
@@ -159,6 +161,22 @@ func _ready() -> void:
 	_hud.update_food_modules([
 		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
 	])
+
+	# State 0-fresh-profile — THE SHIPPED DEFAULT DOCK LAYOUT, rendered on the path a real player
+	# travels and nothing else: prefs section erased above, HUD freshly instantiated, and the first
+	# real terrain legend arriving from MapView exactly as `Main._on_overlay_legend_changed` pushes
+	# it. NOTHING may call `set_suppressed` / `toggle_legend` / `toggle_victory` before this point —
+	# that is the whole value of the state. The right dock must be EMPTY of both reference cards:
+	# no Terrain Types, no Victory. This state is FIRST on purpose, so no later state can leak into
+	# it, and it is the regression guard for "the legend is visible by default in the real game".
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	_hud.update_victory_state(_victory_state_fixture())
+	await _settle()
+	await _save("dock_fresh_profile_default")
+	_assert_hud("fresh profile: Terrain Types legend is hidden",
+		not _hud.terrain_legend_panel.visible)
+	_assert_hud("fresh profile: Victory panel is hidden",
+		not _hud.victory_panel.visible)
 
 	# State 1 — a single band selected (GOOD state): the Occupants roster + the labor allocation panel.
 	# Food + Morale are healthy, so BOTH summary rows read collapsed with a ▸ disclosure caret
@@ -425,13 +443,13 @@ func _ready() -> void:
 	# MapView._build_pasture_legend; see map_preview's "pasture" state for the map itself). The barren
 	# tones sit OFF the straw→grass ramp: dead ground and water are their own rows, so "no pasture at
 	# all" can never be read as "poor pasture".
-	# The legend card ships SUPPRESSED (the player opens it with `L`), so every legend state has to
-	# open it first. Set directly rather than via `toggle_legend`, which would persist the choice to
-	# the prefs file this harness deliberately pins.
-	_hud._legend.set_suppressed(false)
+	# The legend card ships SUPPRESSED (the player opens it with `L`), so every legend state opens it
+	# and CLOSES IT AGAIN around its own frames — see `_open_legend` / `_close_legend`.
+	_open_legend()
 	_hud.update_overlay_legend(_pasture_legend_fixture())
 	await _settle()
 	await _save("pasture_legend")
+	_close_legend()
 	_hud.clear_selection()
 
 	# State 2-forage-legend — the map legend for the `forage` overlay channel (rows produced by
@@ -439,9 +457,11 @@ func _ready() -> void:
 	# pasture legend, but honest about the OPPOSITE meaning of absence: NO water row (shelves carry
 	# forage and ride the ramp), a single "No forage" barren row (deep ocean/glacier/lava only), and a
 	# "Gathering sites: N" sub-count so the ramp reads as POTENTIAL without calling the rest dead.
+	_open_legend()
 	_hud.update_overlay_legend(_forage_legend_fixture())
 	await _settle()
 	await _save("forage_legend")
+	_close_legend()
 	_hud.clear_selection()
 
 	# ---- Hex-edge rivers on the Tile card (ui/RiverEdges.gd, the shared text formatter) -----------
@@ -1139,6 +1159,8 @@ func _ready() -> void:
 	# biomes of varying tile counts so the default count-desc order + the Name/Count
 	# sort toggles + sort persistence across a regen push are all visible. Rendered
 	# before the full-screen icon probe below so the right-dock legend isn't covered.
+	# Opened here and closed at the end of THIS block (not hundreds of lines later).
+	_open_legend()
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("terrain_legend_count_desc")  # default: Count, high→low
@@ -1164,9 +1186,7 @@ func _ready() -> void:
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("terrain_legend_persist")
-	# Back to the shipped default before the narrative states: the Telling panel owns the right dock,
-	# and a legend left open there would misrepresent the layout those frames are judged on.
-	_hud._legend.set_suppressed(true)
+	_close_legend()
 
 	# ---- The Telling (docs/plan_the_telling.md) -----------------------------------------------
 	# The narrative fork decision surface + the client-side end-turn gate. The fixture is the REAL
@@ -1261,14 +1281,18 @@ func _ready() -> void:
 	# G5 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
 	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the
 	# Telling panel is seen to yield height rather than overlap.
+	# Victory goes through the REAL `toggle_victory` (the `V` path, prefs write included — the harness
+	# cleared the section at startup, and this toggles back below); the legend uses the harness helper.
 	_hud.toggle_victory()
-	_hud._legend.set_suppressed(false)
+	_open_legend()
 	_hud.update_overlay_legend(_terrain_legend_fixture())
 	await _settle()
 	await _save("dock_panels_revealed")
+	_assert_hud("toggled on: Terrain Types legend is visible", _hud.terrain_legend_panel.visible)
+	_assert_hud("toggled on: Victory panel is visible", _hud.victory_panel.visible)
 	# Restore the shipped default so any later state renders the real layout.
 	_hud.toggle_victory()
-	_hud._legend.set_suppressed(true)
+	_close_legend()
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -1299,16 +1323,32 @@ func _victory_state_fixture() -> Dictionary:
 		],
 	}
 
-## Pin the Victory / Terrain-Types dock cards to the shipped hidden default, so the harness renders
-## the default layout regardless of what an interactive session last toggled. Writes the same file +
-## section Hud reads (loaded first, so the narrative section survives) via Hud's own key constants.
-func _pin_hud_panel_prefs() -> void:
+## Open / close the Terrain Types legend around a block of legend states.
+##
+## The card ships SUPPRESSED, so a legend state must open it — and every legend state MUST close it
+## again at the end of its own block. An earlier cut opened it once and restored it ~700 lines later,
+## which meant a dozen intervening states silently rendered with a non-default right dock and NO
+## state anywhere exercised the shipped default. That is precisely how a default-visibility bug
+## hides, so scope stays tight and local.
+##
+## Set through the controller rather than `Hud.toggle_legend`, which would PERSIST the choice to the
+## prefs file this harness clears at startup — a harness must not write the preference it is testing.
+func _open_legend() -> void:
+	_hud._legend.set_suppressed(false)
+
+func _close_legend() -> void:
+	_hud._legend.set_suppressed(true)
+
+## Erase the `[hud_panels]` section so the HUD comes up as it does for a FRESH PLAYER: no stored
+## value, defaults apply. Deliberately an erase and not a write of `true` — a written `true` would
+## exercise the "stored value" branch and hide any bug in the default branch, which is exactly the
+## class of bug this harness exists to catch. The narrative section (voice register, telling
+## collapsed) is preserved: the file is loaded first and only this section is removed.
+func _clear_hud_panel_prefs() -> void:
 	var cfg := ConfigFile.new()
-	cfg.load(NarrativeForkPanel.CONFIG_PATH)   # preserve the narrative section; ignore load errors
-	cfg.set_value(HudLayer.HUD_PANELS_CONFIG_SECTION, HudLayer.CONFIG_KEY_LEGEND_SUPPRESSED,
-		HudLayer.PANEL_SUPPRESSED_BY_DEFAULT)
-	cfg.set_value(HudLayer.HUD_PANELS_CONFIG_SECTION, HudLayer.CONFIG_KEY_VICTORY_SUPPRESSED,
-		HudLayer.PANEL_SUPPRESSED_BY_DEFAULT)
+	cfg.load(NarrativeForkPanel.CONFIG_PATH)   # ignore load errors: no file is itself a fresh profile
+	if cfg.has_section(HudLayer.HUD_PANELS_CONFIG_SECTION):
+		cfg.erase_section(HudLayer.HUD_PANELS_CONFIG_SECTION)
 	cfg.save(NarrativeForkPanel.CONFIG_PATH)
 
 ## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
@@ -1428,6 +1468,15 @@ func _pending_forks_fixture() -> Array:
 
 func _stance_axes_fixture() -> Array:
 	return [{"faction": 0, "axes": [{"axis": "roam_settle", "value": -0.18}]}]
+
+## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
+## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
+## for someone to notice a card that should not be there.
+func _assert_hud(label: String, ok: bool) -> void:
+	if ok:
+		print("ui_preview: PASS hud — ", label)
+	else:
+		push_error("ui_preview: FAIL hud — %s" % label)
 
 func _assert_turn_orb(label: String, ok: bool) -> void:
 	if ok:
