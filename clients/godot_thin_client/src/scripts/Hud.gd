@@ -60,7 +60,7 @@ signal roster_occupant_selected(kind: String, id: Variant)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-20.1"
+const CLIENT_BUILD := "2026-07-20.2"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -1858,20 +1858,23 @@ func cancel_active_targeting() -> void:
     _cancel_pending_send_expedition()
     _cancel_pending_send_hunt_expedition()
 
-## Lower-left version overlay showing the client build and the streamed server build,
-## so the running builds can be confirmed at a glance. Mouse-transparent so it never
-## intercepts map clicks.
+## Bottom-CENTRE version overlay showing the client build and the streamed server build,
+## so the running builds can be confirmed at a glance. It lives centre-bottom rather than
+## lower-left because the minimap + zoom rail own the lower-left corner and hid it. Spans the
+## full width with centred text (so it can never collide with the corner clusters) and is
+## mouse-transparent so it never intercepts map clicks.
 func _setup_build_overlay() -> void:
     _build_label = Label.new()
     _build_label.name = "BuildOverlay"
     _build_label.anchor_left = 0.0
-    _build_label.anchor_right = 0.0
+    _build_label.anchor_right = 1.0
     _build_label.anchor_top = 1.0
     _build_label.anchor_bottom = 1.0
-    _build_label.offset_left = 8.0
+    _build_label.offset_left = 0.0
     _build_label.offset_top = -26.0
-    _build_label.offset_right = 480.0
+    _build_label.offset_right = 0.0
     _build_label.offset_bottom = -6.0
+    _build_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     _build_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     _build_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0, 0.65))
     add_child(_build_label)
