@@ -135,18 +135,42 @@ const ICONS := {
 static func for_module(module_key: String) -> String:
 	return String(ICONS.get(module_key.strip_edges(), DEFAULT))
 
+# Site ART KEYS that are not themselves food-module keys. Deliberately disjoint from `ICONS`'
+# keys so `site_key_for`'s return value is unambiguous: no food module is named "hunt", "reeds"
+# or "default", and none may be added with those names.
+const SITE_KEY_HUNT := "hunt"
+const SITE_KEY_REEDS := "reeds"
+const SITE_KEY_DEFAULT := "default"
+
+## The stable ART KEY for a food site. This is the ONE site-resolution implementation: `for_site`
+## maps the key to an emoji and `SiteSprites.for_site` maps the same key to a bundled PNG, exactly
+## as `species_key_for` is shared by the herd pair. A hunted site is `hunt`; a riverine_delta site
+## on dry floodplain LAND is `reeds`; any known food module is its own key; anything else (unknown
+## module, or riverine_delta with an unknown terrain) is `default`.
+static func site_key_for(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
+	if is_hunt:
+		return SITE_KEY_HUNT
+	var key := module_key.strip_edges()
+	if key == RIVERINE_DELTA_MODULE and terrain_id >= 0:
+		if RIVERINE_REED_TERRAINS.has(_terrain_name(terrain_id)):
+			return SITE_KEY_REEDS
+	if ICONS.has(key):
+		return key
+	return SITE_KEY_DEFAULT
+
 ## Icon for a food site, using the game-trail (hunt) icon when the site is hunted
 ## rather than gathered. `terrain_id` (>=0) splits the riverine_delta module's glyph
 ## by tile terrain — dry floodplain LAND reads as reeds (🎋), open river keeps 🐟;
 ## terrain_id < 0 (unknown) or any other module falls through to the plain module glyph.
 static func for_site(module_key: String, is_hunt: bool, terrain_id: int = -1) -> String:
-	if is_hunt:
+	var key := site_key_for(module_key, is_hunt, terrain_id)
+	if key == SITE_KEY_HUNT:
 		return HUNT
-	var key := module_key.strip_edges()
-	if key == RIVERINE_DELTA_MODULE and terrain_id >= 0:
-		if RIVERINE_REED_TERRAINS.has(_terrain_name(terrain_id)):
-			return RIVERINE_REED_ICON
-	return for_module(key)
+	if key == SITE_KEY_REEDS:
+		return RIVERINE_REED_ICON
+	# SITE_KEY_DEFAULT is not an ICONS key, so it lands on DEFAULT — the same sprig `for_module`
+	# would have returned for an unknown module.
+	return String(ICONS.get(key, DEFAULT))
 
 # Terrain id → config `name`, memoized. Uses `get_names_dict()` (not the `get_name(id)` static): a
 # script resource's built-in 0-arg `get_name` shadows that static when called via the global class, so

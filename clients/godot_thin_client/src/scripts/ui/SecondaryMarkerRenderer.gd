@@ -176,10 +176,18 @@ func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var is_hunt := kind == "game_trail"
-	var icon := FoodIcons.for_site(module_key, is_hunt, int(site.get("terrain_id", -1)))
+	var terrain_id := int(site.get("terrain_id", -1))
+	# Bundled PNG art where we have it (identical on every OS), OS emoji otherwise — SiteSprites
+	# returns null for an unmapped art key and we fall through unchanged. Both resolve the same
+	# module/hunt/terrain triple through `FoodIcons.site_key_for`, so they cannot disagree.
+	var site_sprite := SiteSprites.for_site(module_key, is_hunt, terrain_id)
+	var icon := FoodIcons.for_site(module_key, is_hunt, terrain_id)
 	if _view._food_harvest_active(x, y):
 		_view.draw_arc(icon_center, radius * _view.FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), _view.FOOD_HARVEST_RING_WIDTH)
-	_view._draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
+	if site_sprite != null:
+		_view._draw_marker_sprite(icon_center, site_sprite, _secondary_icon_size(radius))
+	else:
+		_view._draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))

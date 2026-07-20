@@ -452,6 +452,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_riverine_split")
 
+	# State "site sprites" — the FOOD-SITE SPRITE ROSTER: every bundled site icon in one frame,
+	# including the hunted-site deer and the unknown-module sprig. Judge swapped/clipped art here.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_site_sprites())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_site_sprites")
+
 	# State I — far-zoom level-of-detail: a large grid makes fitted hexes tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS), so secondary edge icons + count/overflow chips are suppressed — only
 	# the primary band tokens draw. Regression guard that far zoom stays legible, not a glyph soup.
@@ -1393,6 +1404,39 @@ func _snapshot_riverine_split() -> Dictionary:
 			{"x": RIVERINE_FISH_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
 			{"x": RIVERINE_REED_X, "y": RIVERINE_SITE_Y, "module": "riverine_delta", "kind": "forage"},
 		],
+	}
+
+## The FOOD-SITE SPRITE ROSTER — one site per bundled-art key on its own hex, so the whole art set is
+## judged at once for swapped/clipped/fringed sprites (the food twin of `map_fauna_sprites`). One row
+## per band of keys because MapView is cover-fit and rows past the fit are cropped away unseen.
+## Includes the two NON-module art keys — a hunted site (`kind = game_trail` → the fauna deer) and an
+## unknown module (→ the `default` sprig) — since neither is reachable from `FoodIcons.ICONS`.
+const SITE_ROSTER_MODULES := [
+	"coastal_littoral", "savanna_grassland", "temperate_forest", "boreal_arctic",
+	"montane_highland", "wetland_swamp", "semi_arid_scrub", "coastal_upwelling",
+	"mixed_woodland",
+]
+const SITE_ROSTER_Y := 4                  # shared row so every sprite sits at the same height
+const SITE_ROSTER_X0 := 2                 # first column of the roster row
+const SITE_ROSTER_STEP := 1               # one hex between sites — no tile shares a slot
+const SITE_ROSTER_HUNT_MODULE := "savanna_grassland"   # a hunted site; `kind` is what picks the deer
+const SITE_ROSTER_UNKNOWN_MODULE := "berry_patch"      # not in ICONS → the `default` sprig
+
+func _snapshot_site_sprites() -> Dictionary:
+	var sites: Array = []
+	var x := SITE_ROSTER_X0
+	for module in SITE_ROSTER_MODULES:
+		sites.append({"x": x, "y": SITE_ROSTER_Y, "module": module, "kind": "forage"})
+		x += SITE_ROSTER_STEP
+	sites.append({"x": x, "y": SITE_ROSTER_Y, "module": SITE_ROSTER_HUNT_MODULE, "kind": "game_trail"})
+	x += SITE_ROSTER_STEP
+	sites.append({"x": x, "y": SITE_ROSTER_Y, "module": SITE_ROSTER_UNKNOWN_MODULE, "kind": "forage"})
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": [],
+		"herds": [],
+		"food_modules": sites,
 	}
 
 ## One band sharing (BAND_X, BAND_Y) with 1 herd + 1 food site + 3 wonders → 3 edge slots + `+2` chip.

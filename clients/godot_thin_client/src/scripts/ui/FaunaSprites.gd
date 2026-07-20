@@ -42,24 +42,11 @@ const SPRITE_PATHS := {
 	"fowl": SPRITE_DIR + "fowl.png",
 }
 
-# Path → Texture2D, lazily populated on first use of each species. A missing/failed path caches
-# `null` so the load is attempted (and warned about) exactly once, not once per marker per frame.
-static var _textures: Dictionary = {}
-
 ## Bundled sprite for a migratory herd, or `null` when this species has no art yet (the caller
-## then falls back to `FoodIcons.for_herd`'s emoji). Uses `load()` rather than `preload()` so a
-## missing file degrades to the emoji path instead of breaking scene load.
+## then falls back to `FoodIcons.for_herd`'s emoji). The load-and-cache behaviour lives in
+## `IconSprites` — shared with `SiteSprites` — so this stays a pure key→path table.
 static func for_herd(label: String) -> Texture2D:
 	var key := FoodIcons.species_key_for(label)
 	if key == "" or not SPRITE_PATHS.has(key):
 		return null
-	var path := String(SPRITE_PATHS[key])
-	if _textures.has(path):
-		return _textures[path]
-	var tex: Texture2D = null
-	if ResourceLoader.exists(path):
-		tex = load(path) as Texture2D
-	if tex == null:
-		push_warning("FaunaSprites: no texture at %s; falling back to the emoji herd marker." % path)
-	_textures[path] = tex
-	return tex
+	return IconSprites.texture_for(String(SPRITE_PATHS[key]))
