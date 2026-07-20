@@ -213,6 +213,47 @@ A regression test asserting, across several seeds and every preset:
 The first two are tautological once the mask is derived — which is the point.
 They are cheap insurance against a future stage reintroducing a mask edit.
 
+## Postscript — drainage, and what this arc did *not* break
+
+Making the mask honest removed an accidental supercontinent, and with it the only reason
+navigable rivers ever formed. Measured across 4 configs × 5 seeds plus a pre-arc baseline:
+
+| config | largest landmass | basins | max accum | coherence ratio |
+|---|---|---|---|---|
+| shipped (w0.5 r0.35 rough0.05) | 513–1311 | 60–127 | 82–126 | 0.076–0.164 |
+| roughness 0.0 | 512–1276 | 67–148 | 66–111 | 0.070–0.150 |
+| weight 0, roughness 0 | 431–1318 | 52–211 | 42–81 | 0.042–0.099 |
+| **pre-arc (BFS)** | 387–1847 | 48–170 | 43–84 | **0.045–0.111** |
+
+The coherence ratio is **unchanged pre- and post-arc**. Two hypotheses were tested and
+both refuted by direct measurement: `coastline_roughness` (removing it changes nothing)
+and the continental bias term (removing it changes nothing). Max basin tops out at ~5% of
+landmass in *every* era.
+
+Pre-arc navigable rivers were a **lottery**: 0, 1, 1, 6, 5, 1 segments across six seeds,
+with a single 41.7%-basin outlier (against a 2–8% norm) carrying most of them. The old
+BFS's ~1,580-tile supercontinent supplied the raw area; correctly-sized ~400-tile
+continents do not, and 5% of 400 is 20 against a discharge threshold of 25.
+
+**So this is not a regression.** The arc removed a bug that was masking a pre-existing
+drainage deficiency. Zero navigable rivers on a small landmass is honest emergent
+behaviour. The real defect — the surface being 95% fragmented into micro-basins that drain
+straight to the coast — predates this work and is tracked in `TASKS.md` → "Capture: the
+divides, not the valleys."
+
+**A trap this arc walked into, recorded so the next one doesn't:** `continental_weight` /
+`continental_radius` apply a *radial* falloff — a dome. `TASKS.md` had already identified
+noise-dome continents as the thing that sheds radially and prevents trunk rivers. The bias
+term makes `continents` a real lever (it does, measurably) but is dome-shaped by
+construction and so cannot produce trunk rivers. Replacing it with tilted / warped relief
+is the follow-on arc.
+
+**Rejected approach, recorded so it is not re-proposed:** making navigability a percentile
+of the accumulation distribution ("top N% of drainage is navigable"). That guarantees a
+fixed river share on any terrain — a quota applied to the output, which is exactly the
+pattern this arc exists to delete. Rivers must emerge from the field. If more rivers are
+wanted, the input to change is basin coherence or landmass size.
+
 ## Consequences
 
 - **Every seed changes.** Map fixtures and any test asserting on specific hexes
