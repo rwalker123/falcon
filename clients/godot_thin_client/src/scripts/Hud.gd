@@ -27,7 +27,10 @@ signal move_band_requested(payload: Dictionary)
 signal send_expedition_requested(payload: Dictionary)
 ## Hunting expedition (docs/plan_exploration_and_sites.md §2b). Sent after the player outfits a party
 ## on a resident band and clicks a target herd. Payload keys: { faction, band, party_workers,
-## fauna_id }. Main formats the `send_hunt_expedition …` command.
+## fauna_id, fauna_label }. `fauna_id` is the DATABASE KEY the command line addresses the herd with;
+## `fauna_label` is its player-facing species name (via `_herd_display_name`), which is what the
+## command-feed note must read — a feed line naming `game_deer_07` is a key leaking into the game UI.
+## Main formats the `send_hunt_expedition …` command.
 signal send_hunt_expedition_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
@@ -184,8 +187,26 @@ const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
 const ATTENTION_TILE_FORMAT := "(%d, %d)"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
-# Separator between the Cultivation / Herding tracks in the top-bar intensification readout.
+# Separator between the four knowledge tracks in the top-bar intensification readout.
 const INTENSIFICATION_SEGMENT_SEP := "  ·  "
+# Leads the top-bar knowledge strip. This strip is the FACTION half of the two-meter split (§4.1) —
+# what your PEOPLE have learned, permanently, from cumulative practice — as opposed to the per-source
+# build meters in a herd's/patch's own drawer. The prefix exists precisely so the strip cannot be read
+# as a stat of whatever happens to be selected; ⚒ (a hammer-and-pick — craft/skill) is bold line art,
+# legible at top-bar size (the 🪙/💰 lesson), and used nowhere else in the HUD.
+const KNOWLEDGE_STRIP_PREFIX := "⚒ Your people know:  "
+# Block-glyph meter widths. `METER_BAR_CELLS` is the standard (Sedentarization). The knowledge strip
+# runs NARROWER because it carries four tracks on one top-bar line — at the standard width the line
+# overflowed and clipped its last track off-screen (caught in the preview, not in review).
+const METER_BAR_CELLS := 10
+const KNOWLEDGE_METER_CELLS := 5
+# Tracks per row in the "⚒ Your people know" strip. Four tracks on ONE line overflowed the top bar and
+# clipped the last one off-screen (the Penning playtest report); grouping into rows of two keeps every
+# line short enough to fit common window widths — a top-bar strip is fine on two rows, and no track is
+# ever lost off the edge, regardless of how many rungs the ladder grows.
+const KNOWLEDGE_STRIP_TRACKS_PER_LINE := 2
+# A fully-learned track. Bare, because `KNOWLEDGE_STRIP_PREFIX` already supplies the verb.
+const KNOWLEDGE_KNOWN_BADGE := "✔"
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -337,20 +358,27 @@ const LABOR_KIND_WARRIOR := "warrior"
 # EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
 # by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
-# The Sustain rung by name: the default compose policy AND the one policy that TEACHES — every
-# intensification track (cultivation / herding knowledge, herd domestication) accrues only while a
-# band works a Thriving source under Sustain, so the gate reasons below point back at it.
+# The Sustain rung by name: the default compose policy. It is also the rung the ladder's KNOWLEDGE
+# is learned from — but only knowledge: since slice 3a **Sustain no longer tames anything**. Working
+# a source under a stewardship policy teaches the faction the knowledge that unlocks the NEXT rung's
+# verb (§4), and the per-source build meter is then filled by that verb itself.
 const LABOR_POLICY_SUSTAIN := "sustain"
 const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
-# INVESTMENT rungs (Intensification): an up-front cost — the source pays only its `ceiling_cultivate`
-# / `ceiling_corral` dip yield while the workers prepare it, then flips to the much higher tended /
-# corral yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate is forage-only,
-# Corral is hunt-only.
+# INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
+# cost — the source pays only its dip ceiling (`ceiling_cultivate` / `ceiling_sow` / `ceiling_tame`'s
+# equivalent / `ceiling_corral`) while the workers prepare it, then flips to the much higher managed
+# yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
+# + Corral are hunt-only. Each ladder now runs its verb TWICE — one verb per rung-transition:
+#   plants:  wild --cultivate--> Tended Patch --sow--> Field
+#   animals: wild --tame------> Pastoral herd --corral--> Pen
 const LABOR_POLICY_CULTIVATE := "cultivate"
+const LABOR_POLICY_SOW := "sow"
+const LABOR_POLICY_TAME := "tame"
 const LABOR_POLICY_CORRAL := "corral"
-# The full picker option sets per source kind (extractive rungs + that kind's one investment rung).
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate"]
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "corral"]
+# The full picker option sets per source kind (the four extractive rungs + that kind's TWO investment
+# rungs, in ladder order so the picker reads bottom-of-the-ladder → top).
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
 # Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
 # (gathering a plant patch's regrowth, not culling a herd).
 const FORAGE_POLICY_HINTS := {
@@ -359,6 +387,12 @@ const FORAGE_POLICY_HINTS := {
     "market": "Market — gather for trade goods; faster decline.",
     "eradicate": "Eradicate — strip the patch bare.",
     "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
+    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
+    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
+    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
+    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
+    # neglected Field reverts to WILD, not to a free tended patch.
+    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
 }
 # GATES on the investment rungs. The option stays VISIBLE but disabled with its reasons, so the player
 # learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
@@ -366,19 +400,70 @@ const FORAGE_POLICY_HINTS := {
 #
 # Each reason states WHAT'S MISSING + HOW FAR ALONG IT IS + THE ACTION THAT CLOSES IT — naming the
 # prerequisite alone ("Herd must be domesticated") tells the player a door is locked without saying
-# where the key is. All three tracks are taught by the SAME action: Sustain-work a THRIVING source
-# (`core_sim/src/systems.rs` — cultivation/herding knowledge and per-herd domestication accrue only
-# under Sustain on a Thriving patch/herd). The remedy therefore names the Sustain glyph, pulled from
-# the shared `FoodIcons.POLICY_ICONS` map so it is literally the icon on the button beside it.
-# Format args: %d = the live progress percent off the snapshot, %s = that Sustain glyph.
-const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Cultivation knowledge %d%% — %s Sustain-forage a Thriving patch to learn it"
-const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Herding knowledge %d%% — %s Sustain-hunt a Thriving herd to learn it"
-const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hunt this Thriving herd to finish taming it"
+# where the key is.
+#
+# THIS IS WHERE THE TWO-METER SPLIT IS TAUGHT (docs/plan_intensification_ladder.md §4.1). A gated
+# verb has at most two kinds of reason, and they are DIFFERENT KINDS OF THING:
+#   • a KNOWLEDGE reason — "your PEOPLE haven't learned this craft yet". Faction-wide, permanent,
+#     earned by cumulative practice on the rung BELOW. Its meter lives in the top-bar knowledge
+#     strip, never in this source's drawer, and the remedy names the PRACTICE that fills it.
+#   • a SOURCE reason — "you haven't done it to THIS herd/patch yet". Local, decays if abandoned.
+#     Its meter is the source's own drawer row, and the remedy names the VERB that fills it.
+# One line teaches the whole ladder: practise this rung → fill that knowledge meter → unlock that
+# verb. The remedies therefore name a glyph pulled from the shared `FoodIcons.POLICY_ICONS` map, so
+# each is literally the icon on a button beside it.
+#
+# The KNOWLEDGE reasons. Practice teaches the NEXT rung up (§4), and the rule keys off the rung the
+# source STANDS on, not the verb — so the same Sustain hunt teaches Herding on a wild herd and
+# Penning on a tamed one. Format args: %d = the live faction progress percent, %s = the Sustain glyph.
+const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Your people know Cultivation %d%% — %s Sustain-forage a wild patch to learn it"
+const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Your people know Herding %d%% — %s Sustain-hunt a wild herd to learn it"
+# The two knowledges slice 4 added. The §4.3 reshuffle put ONE knowledge on each transition, so these
+# gate the rung-3 verbs and their remedies point at working the rung-2 source — the ladder's
+# "practise this rung to unlock the next" rule, stated in the place the player is blocked.
+const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Selection %d%% — %s Sustain-forage a Tended Patch to learn it"
+const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s Sustain-hunt a tamed herd to learn it"
+# The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
+# `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
+# nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
+# is the exact hidden rule the arc exists to kill.
+const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 # The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
 # a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
 # patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# A COMPLETED investment rung is a dead-end no-op — the build is DONE, so re-running the verb only pays
+# the low prep dip forever. The rung is greyed (like Sow is greyed when gated) and the reason points the
+# player at the ♻ Sustain that now HARVESTS the finished ground, where the real payoff lives. Mirrors the
+# SOURCE-reason voice ("This herd is 40% tamed — ◎ Tame it to finish") for a state that is already there.
+const GATE_REASON_ALREADY_TENDED_FORMAT := "Already a Tended Patch — %s Sustain-forage it to harvest"
+const GATE_REASON_ALREADY_FIELD_FORMAT := "Already a Field — %s Sustain-forage it to harvest"
+# THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
+# the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
+# client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so
+# the sim ships the VERDICT as a stable key and these turn it into the manual's voice. Never show a
+# Sow button that just fails, and never answer with a bare "you can't": each line names the fault AND
+# points at the rung that lifts it (Worked Land — irrigation and the plough — is a future arc, so the
+# promise is deliberately "not yet", not a date).
+#
+# Rung 3 moves seed but cannot FERTILIZE, so the land itself must do it: the ground has to be rich
+# already and near fresh water. Salt coast does not count.
+const SOW_REFUSAL_TOO_POOR := "too_poor"
+const SOW_REFUSAL_TOO_DRY := "too_dry"
+const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
+const SOW_REFUSAL_REASONS := {
+    "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
+    "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",
+    "too_poor_and_too_dry": "This ground is both too thin and too dry to take a crop — your people can carry seed, but neither feed the soil nor water it yet. The river valleys will take it; this ground will not, until they learn to work the land.",
+}
+# An unrecognized refusal key still refuses (fail CLOSED — the sim gates the command regardless, so a
+# button offered here would simply fail), and says the one thing we do know.
+const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people cannot yet work land like this."
+# Taming pauses (it does not fail, and it does not lose progress) while the herd is not Thriving. The
+# verb is deliberately NOT gated on that — a herd's phase swings as you hunt it — so this line is the
+# only thing standing between the player and a hidden rule. %s = the herd's live `ecology_phase`.
+const TAME_STALLED_HINT_FORMAT := "⚠ Taming is paused — the herd is %s, and it only gentles while Thriving. Progress is not lost: ease your hunters off and it resumes as the herd recovers."
 # A patch with no streamed phase (redacted remembered tile) still fails the Thriving
 # test; it reads as unknown rather than asserting a phase we don't have.
 const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
@@ -390,6 +475,10 @@ const GATE_REASON_HEADER_FORMAT := "%s needs:"
 const GATE_REASON_BULLET_FORMAT := "   · %s"
 # The disabled button's tooltip carries every reason, one per line.
 const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
+# Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
+# +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its
+# gate reasons below (one per line), so a hover names the rung AND explains any lock.
+const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # 0..1 progress tracks (knowledge, domestication) render as whole percents.
 const PROGRESS_PERCENT_SCALE := 100.0
 # A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
@@ -399,7 +488,18 @@ const DOMESTICATION_COMPLETE := 1.0
 # the penned badge — the herd twin of the tile card's "Cultivation N%" → "🌾 Tended Patch" row.
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const CORRAL_BUILDING_LABEL := "Building"
+# The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
+const CULTIVATION_PREPARING_LABEL := "Preparing"
 const CORRAL_GLYPH := "🐄"
+# Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
+# "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
+# may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's
+# "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
+# and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
+const FIELD_ROW := "Field"
+const FIELD_PROGRESS_COMPLETE := 1.0
+const FIELD_SOWING_LABEL := "Sowing"
+const FIELD_BADGE_LABEL := "Field"
 # The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
 # graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
 # share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
@@ -443,6 +543,20 @@ const HUSBANDRY_CEILING_PEN := "pen"
 # `_format_detail_bbcode` renders them as dim informational sentences (the `kv.is_empty()` path).
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
+# Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
+# needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction < 1`)
+# it DECAYS out of the pastoral rung, slips back to wild, and stops earning Penning — the silent stall
+# a playtest hit ("🐄 Domesticated" with no signal that Penning had stopped). The row makes the deficit
+# visible; the under-herded value is WARN-tinted via `_herders_value_hex`, and the slipping consequence
+# is spelled out below it so the player knows WHY Penning stalled and how to fix it.
+# `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also unmanaged/vanished
+# herds) — treated as "no problem". The staffed label reads "N / N" (calm); under-herded "A / N —
+# under-herded" (amber).
+const FULLY_HERDED := 1.0
+const HERDERS_ROW := "Herders"
+const HERDERS_STAFFED_FORMAT := "%d / %d"
+const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
+const HERDERS_SLIPPING_FORMAT := "Tameness slipping — teaching Herding, not Penning. Staff all %d herders to hold it."
 # Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
 # range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
@@ -456,19 +570,42 @@ const OVERGRAZE_EPSILON := 0.05
 const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
-# The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
-# each gating one investment rung.
+# The FOUR intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
+# the FACTION-WIDE half of the two-meter split (§4.1). One per rung-transition, so the list IS the
+# ladder, and §4.3 pins "no two rungs share an unlock gate":
+#   plant:  wild --cultivation--> tended --seed_selection--> field
+#   animal: wild --herding------> pastoral --penning-------> pen
+# `seed_selection`/`penning` were appended by slice 4 (discovery ids 2005/2006).
 const KNOWLEDGE_TRACK_CULTIVATION := "cultivation"
 const KNOWLEDGE_TRACK_HERDING := "herding"
+const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
+const KNOWLEDGE_TRACK_PENNING := "penning"
+# The player-facing name of each track, from the manual's vocabulary (§2a is authoritative). Also the
+# order the top-bar knowledge strip renders them in: each web's own ladder, bottom rung first, so the
+# strip reads as two ladders climbing rather than four unrelated numbers.
+const KNOWLEDGE_TRACK_LABELS := {
+    "cultivation": "Cultivation",
+    "seed_selection": "Seed Selection",
+    "herding": "Herding",
+    "penning": "Penning",
+}
 # Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
-# has never seen, so learning the discovery has to say what it bought.
+# has never seen, so learning the discovery has to say what it bought — and, since the verb is only
+# HALF the story, what the verb then asks of them (a per-source meter to fill).
 const KNOWLEDGE_UNLOCK_LABELS := {
     "cultivation": "Cultivation learned",
+    "seed_selection": "Seed Selection learned",
     "herding": "Herding learned",
+    "penning": "Penning learned",
 }
+# NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
+# halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
+# that gates Corral (rung 3).
 const KNOWLEDGE_UNLOCK_NOTES := {
-    "cultivation": "The Cultivate policy is now available on Thriving patches.",
-    "herding": "The Corral policy is now available on domesticated herds.",
+    "cultivation": "The Cultivate policy is now available on Thriving wild patches.",
+    "seed_selection": "The Sow policy is now available — but only on rich, well-watered ground.",
+    "herding": "The Tame policy is now available on wild herds that can be domesticated.",
+    "penning": "The Corral policy is now available on herds you have tamed.",
 }
 # The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
 # carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
@@ -485,10 +622,20 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 # the sim rejects a Corral expedition outright). This is also the local set `_policy_hint` spells out
 # on a worked Hunt row's tooltip — those rows are always a resident band's.
 const LOCAL_HUNT_POLICY_HINTS := {
-    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever; on a thriving herd the hunt also tames it, building husbandry toward livestock that pays food every turn without being hunted down.",
+    # Sustain USED to claim it tamed the herd ("on a thriving herd the hunt also tames it… livestock
+    # that pays food every turn without being hunted down"). BOTH halves of that are now false and
+    # the sentence is the reason this whole arc exists: slice 3a split the conflated branch, so
+    # Sustain TEACHES the faction Herding but tames nothing (the `tame` verb fills the herd's own
+    # meter), and slice 3b retired passive-free pastoral, so a tamed herd pays only through workers.
+    # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
+    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
-    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no husbandry, no trade — denial only.",
+    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no craft learned, no trade — denial only.",
+    # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
+    # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
+    # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
+    "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
     # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
     # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
     # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
@@ -504,6 +651,21 @@ const BAND_PICKER_LABEL := "Band:"
 const WORKER_STEPPER_BUTTON_WIDTH := 28.0
 const WORKER_STEPPER_VALUE_WIDTH := 32.0
 const WORKER_STEPPER_SEPARATION := 6
+# Policy-picker layout: the compacted glyph+metric buttons wrap 3 per row so the six-rung
+# forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A picker
+# with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker) stays
+# a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
+const POLICY_PICKER_COLUMNS := 3
+const POLICY_PICKER_MAX_SINGLE_ROW := 4
+# Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
+# rows): the title + stepper ride line 1, the yield/policy/status/notes drop to an indented, smaller
+# secondary line 2 so the row reads narrow. `STATUS_LINE_INDENT` ≈ the leading resource-icon width, so
+# line 2 sits under the title TEXT rather than under the icon; the flow separation is the gap between
+# the status parts (which wrap to the next line rather than widening the panel); the two-line gap is
+# the vertical space between line 1 and line 2.
+const STATUS_LINE_INDENT := 18.0
+const STATUS_LINE_SEPARATION := 6
+const TWO_LINE_STEPPER_SEPARATION := 2
 # Allocation-panel section headers + role hints (make the panel read as a "current actions"
 # report and make the standing Scout/Warrior roles discoverable — the −/+ steppers ARE how
 # you staff a scout mission now; there is no targeted map action).
@@ -548,6 +710,39 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
+# UNDERSTAFFING (`LaborAssignment.wastedYield`): provisions the source OFFERED that the crew could not
+# collect — the party is under-crewed for the kill (an animal too big to fully carry, or an
+# over-abundant pulse) and food is left standing. Muted (INK_FAINT), the low-key mirror of the
+# WARN-amber overstaff note. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
+const WASTED_NOTE_FORMAT := " · %s wasted"
+const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party couldn't carry home. Add workers to collect it."
+# A MANAGED hunt source's crew are HERDERS, not a hunt party (`workersNeeded` = max(herders, haulers),
+# scaling with herd size). The local stepper labels them so a pen needing several keepers doesn't read
+# as a hunt-party bug. See `_is_managed_hunt_source`.
+const HUNT_CREW_LABEL := "Hunters"
+const HERD_CREW_LABEL := "Herders"
+# A policy button carries its per-policy metric TWICE: a bare COMPACT string on the one-line button face
+# (glyph + metric, no name — so all six rungs fit one docked row) and the VERBOSE full string in the
+# tooltip (led by the policy name). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
+#
+# EXTRACTIVE (Sustain/Surplus/Market/Eradicate) on the LOCAL-hunt AND forage pickers: the source's CAP
+# for that policy (worker-independent), NOT the crew's carry-aware delivered take (that's the preview
+# line). The compact face is the bare signed rate (`+0.90`); the full tooltip frames it as "up to X/turn"
+# so it reads as the ceiling it is, distinct from the honest per-crew line below, and so the four
+# extractive rungs read as ASCENDING (Sustain < Surplus < Market < Eradicate). FOOD units (the
+# cross-source comparison axis), so it keeps `_format_signed`, exactly as the expedition metric does.
+# The compact form is just `_format_signed(rate)`; only the verbose tooltip form needs a format string.
+const POLICY_CAP_FORMAT := "up to %s/turn"
+# The INVESTMENT rungs (Cultivate/Sow, Tame/Corral) wear a metric too, but it is not an immediate take
+# like the extractive rate — it is the PAYOFF the preparation builds TOWARD (the tended/field/pastoral/
+# corral yield). A leading arrow marks it on the compact face (`→+1.20`, distinct from an extractive
+# rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward X/turn".
+const POLICY_PAYOFF_COMPACT := "→%s"
+const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
+# The EXPEDITION picker wears the SAME "up to X/turn" cap metric as the local hunt + forage pickers
+# (`POLICY_CAP_FORMAT` via `_extractive_take`): each policy's MAX obtainable food/turn, computed in
+# `_expedition_policy_takes` as the max over party sizes of delivered_food / trip_turns. No bespoke
+# raid-animals face any more — the three pickers read identically.
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
 # forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
@@ -569,13 +764,36 @@ const FORECAST_CEILING_KEYS := {
     # so the same expected(workers, policy) math shows the cost of the investment while composing.
     "cultivate": "ceiling_cultivate",
     "corral": "ceiling_corral",
+    # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
+    # are independently tunable, and folding them onto one number would pass every forecast==actual
+    # test by coincidence and lie the moment either rung is retuned.
+    "sow": "ceiling_sow",
+    # NOTE — `tame` is deliberately ABSENT. There is no flat `ceilingTame` scalar on the wire; the
+    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so `_forecast_inputs` reads it via
+    # `_hunt_policy_ceiling` (its payoff, `pastoral_yield`, is a real scalar in FORECAST_PAYOFF_KEYS).
+    # Adding a key here would silently fall back to Sustain's ceiling and quote the wrong dip.
 }
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
+#
+# `tame` → `pastoral_yield`: the sim now exports the Tame rung's payoff (the pastoral MSY once the herd
+# is tamed), the pastoral twin of `corral_yield`, so Tame renders the same dip→payoff pair as its three
+# siblings. Tame's DURING-BUILDING dip has no scalar ceiling field (there is no `ceilingTame`); it rides
+# the `hunt_policy_ceilings` LIST, so `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
+# rather than a `FORECAST_CEILING_KEYS` scalar (adding a key there would silently quote Sustain's ceiling).
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
+    "sow": "field_yield",
+    "tame": "pastoral_yield",
 }
+# The INVESTMENT rungs by name — "does this rung trade a dip now for a better source later?". This is
+# the test for *which yield row a rung gets*, and it is deliberately NOT `policy in
+# FORECAST_PAYOFF_KEYS`: `tame` is an investment rung that has no quotable payoff (above), so the
+# payoff map cannot answer this question. An investment rung must never render the extractive
+# "renewable / ⚠ overdraws the herd" preview — it is drawn sustainably by construction, and the
+# verdict would argue with the dip row.
+const INVESTMENT_POLICIES := ["cultivate", "sow", "tame", "corral"]
 # The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
 # GROSS take with that feed NOT deducted — so advertising the payoff bare would promise a number the
@@ -584,6 +802,8 @@ const FORECAST_FEED_KEYS := {
     "corral": "pen_upkeep",
 }
 # The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
+# Tame renders through it too (dip from `hunt_policy_ceilings["tame"]`, payoff = `pastoral_yield`), with
+# no feed term (Tame has no running cost).
 const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
 # The same deal for a rung that also carries a running feed cost:
 #   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
@@ -610,18 +830,36 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
+# The RAW wire forage-patch dict (as decoded in native `forage_patches_to_array` and stored in
+# `_forage_patch_lookup`) carries the forecast fields BARE — the `patch_` prefix above is only the
+# cross-ref MapView stamps onto `tile_info`. The Current-actions Forage row reads the raw dict, so it
+# forecasts with the bare prefix.
+const WIRE_FORAGE_PATCH_PREFIX := ""
 # Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
 # Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
 const FORECAST_MIN_PER_WORKER := 0.0001
 # Sentinel for "no forecast data" → the stepper is not forecast-capped.
 const MAX_USEFUL_UNBOUNDED := -1
-const FORECAST_LABEL_FORMAT := "Expected yield: %s"
+# A whole-animal hunt's kill-credit bank accumulates the smoothed take, then discharges a WHOLE animal
+# when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
+# so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
+const HUNT_PEAK_DROP_BANK_BONUS := 1
 # A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
 # "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
 const MAX_USEFUL_NOUN_ONE := "worker"
 const MAX_USEFUL_NOUN_MANY := "workers"
+# A Current-actions row's `+` disabled because the SOURCE is fully staffed (not because idle ran out):
+# spelled out in the row tooltip rather than as a visible note, to keep the compact row uncluttered.
+const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
+# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
+# not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
+# so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
+const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
+# The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
+# (idle >= max party), so the advice is wrong — say we're at the party limit instead.
+const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
 # Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -765,24 +1003,38 @@ const HUNT_ESTIMATE_KEY_SEPARATOR := ":"
 # IS legitimate arithmetic — `min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier`
 # over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
 # pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
-const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
-# The HAUL a filled pack delivers, appended to the turns line so the party-size tradeoff reads BOTH
-# ways: a bigger party climbs the turns AND the food it brings home. The haul = party_workers ×
-# expedition_per_worker_carry (blessed party×lever arithmetic, NOT the ecology lookup turns comes
-# from). Shown ONLY when the pack fills (viable OR too-slow); a won't-fill / denial trip never reaches
-# the cap, so quoting a haul there would be a lie. Absent/0 per-worker-carry → no suffix (live guard).
-const HUNT_FORECAST_HAUL_FORMAT := " · ~%d food"
-# Above the config's viability threshold the trip still launches (this is information, not a block) —
-# but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
-const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
-# The sim's forward simulation never filled this party's packs within its `forecast_horizon_turns`
-# (`turns_to_fill == 0`) — a "won't fill" verdict, NOT "the herd is dead". A perfectly HEALTHY herd
-# lands here whenever its yield is simply too slow for the packs this party carries: a thriving Rabbit
-# Warren under Sustain fills NO party size at all. The party would still be out there at the horizon.
-const HUNT_FORECAST_NEVER_FILLS_FORMAT := "%s can't fill a party this size — the packs would never fill"
-# An Eradicate expedition is a DENIAL mission, not a failed hunt: it delivers no food BY DESIGN. Kept
-# distinct from the won't-fill line above (red = the packs don't fill within the sim's horizon; amber =
-# you are choosing to bring nothing home).
+# A hunting expedition is a GREEDY RAID: it grabs the herd's standing surplus above the policy's floor
+# in a burst and comes home. So the headline is the PAYLOAD — the whole animals the raid delivers over
+# the turns it takes: "delivers ≈5 Wild Boar over ≈7 turns". `animals` is `HuntTripEstimate.animalsTaken`
+# (the sim's forward-simulated answer), `turns` is `turnsToFill` — now "turns until the raid comes home",
+# NOT "turns to fill the pack" (a big party leaves a partial pack once it strips the surplus).
+const HUNT_FORECAST_DELIVERS_FORMAT := "delivers ≈%d %s over ≈%d turns"
+# `turnsToFill == 0` no longer means "won't fill" — under the raid model it means the raid ran the whole
+# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The
+# client has no horizon lever, so it words this "over many turns" rather than a bare number.
+const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
+# The FOOD the delivered animals are worth (`animals × HerdTelemetryState.foodPerAnimal`), appended so
+# the party-size tradeoff reads BOTH ways: a bigger party takes more animals AND more food. Omitted when
+# the herd carries no `food_per_animal` (older snapshot) — a live guard, no fake zero.
+const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
+# A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
+# real tradeoff (told, then trusted), so the line stays WARN-amber and the button stays enabled.
+const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
+# Travel is NOT in `turnsToFill` — that now counts HUNTING turns only (once the party is in reach). The
+# round trip out to the herd and back is band-relative (the per-herd estimate table is band-agnostic, so
+# it cannot carry it), so the client adds it: ceil(2 × wrap-aware hex_distance(band, herd) /
+# band_move_tiles_per_turn), the SAME formula the server's launch feed uses. When travel > 0 the headline
+# turns is the TOTAL and this breakdown spells the split out; when 0 the headline is just the hunting turns.
+const HUNT_FORECAST_TRAVEL_BREAKDOWN := " (%d hunting + %d travel)"
+# The long-raid line has no bounded hunting-turn count ("over many turns"), so travel rides as a trailing
+# "(+T travel)" rather than a two-part split.
+const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
+# The ONE non-viable case under the raid model: `animalsTaken == 0` — the herd is at/below the policy's
+# floor, so there is no standing surplus to raid and the party would return empty. NOT a "won't fill"
+# verdict (the raid always completes); the herd simply has nothing to give this policy right now.
+const HUNT_FORECAST_NO_SURPLUS_FORMAT := "%s is too lean to raid — its surplus is spent"
+# An Eradicate expedition is a DENIAL mission, not a failed raid: it delivers no food BY DESIGN (the sim
+# says so via `delivers_food`, the client never infers it from the policy string).
 const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, delivers no food"
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
@@ -796,31 +1048,15 @@ const HUNT_RATE_UNAVAILABLE := -1.0
 # When the trip is a trap, the button itself names the cost (amber "armed"); it is NEVER disabled and
 # never gated behind a confirm — the player can always send. This is information, not a gate.
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
-# A trip that CANNOT FILL is the one case that is blocked rather than warned. The distinction is the
-# whole point: a SLOW trip (finite ETA past the warn threshold) is a real tradeoff and the player is
-# told and then TRUSTED — `Send Anyway (≈54 turns)` stays enabled. A trip that cannot succeed has no
-# upside at all, so offering the button would be offering a mistake. The button states the reason, and
-# the reason SCANS THE SIM'S TABLE rather than dispensing generic advice (see `_hunt_impossible_reason`).
-const SEND_HUNT_IMPOSSIBLE_BUTTON := "Can't fill this party's packs"
-# BLOCKED, but the policy's row of the estimate table holds a party size that fills AND is VIABLE: name it
-# (the LARGEST such — the most food per trip among the trips this UI considers worth making) and its ETA.
-# Generic "send a smaller party" advice was often a lie: on Red Deer + Surplus, 1–5 workers fill in 5 turns
-# while 8 never fills, so "smaller" and "bigger" are both wrong answers in general and only the row knows.
-const SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON := "%s can't fill packs for a party of %d. A party of %d fills in %d turns."
-# BLOCKED, and NOTHING on the row is viable — some size fills, but only past `viability_warn_turns` (Rabbit
-# Warren + Surplus: a lone hunter, 23 turns). Name the best there is (the FASTEST — with no viable option
-# left, time dominates haul), but word it as the marginal trip it is: recommending it in the same breath as
-# a real fix would have the UI cheerfully suggesting a trip it flags "too slow to be worth sending".
-const SEND_HUNT_IMPOSSIBLE_SLOW_REASON := "%s can't fill packs for a party of %d. A party of %d fills, but takes %d turns."
-# BLOCKED with the WHOLE ROW zeroed — NO party size fills this herd under this policy (a Rabbit Warren on
-# Sustain: its sustainable trickle never fills anyone's packs). Telling the player to try another size here
-# would send them fruitlessly up and down the stepper, so say so plainly and point them somewhere real.
-const SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON := "%s can't fill packs at any party size — hunt it locally instead."
-# The party stepper is a REAL decision, not "more is better": a bigger party carries bigger packs, so
-# stepping UP can turn a working trip impossible (Red Deer + Surplus fills at 5, never at 8). Surfaced as
-# the stepper row's tooltip when the very next size up is impossible — zero added clutter on a panel that
-# is otherwise fine, and it lands exactly where the trap is.
-const SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP := "A party of %d could not fill its packs on %s — bigger parties carry bigger packs than this herd can fill."
+# A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
+# but the button names it a long haul rather than quoting a turn count the client can't bound.
+const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
+# The ONE blocked case: `animalsTaken == 0`, the herd has no surplus above the policy's floor. A raid
+# that returns empty is a mistake with no upside (unlike a slow-but-delivering one), so the button is
+# DISABLED and says why + the way out. Party size can't fix it — surplus is a property of the HERD, not
+# the party — so the reason names no alternative size (the old row-scan is meaningless under the raid).
+const SEND_HUNT_NO_SURPLUS_BUTTON := "Herd too lean to raid"
+const SEND_HUNT_NO_SURPLUS_REASON := "%s has no surplus above this policy's floor — the raid would return empty. Wait for the herd to rebuild, ease the policy, or hunt it locally."
 # Eradicate's button states the deal rather than implying failure — the mission IS the point.
 const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
 # Live per-turn yield preview for the LOCAL hunt branch. A resident hunt has no carry cap, so
@@ -832,8 +1068,33 @@ const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
 # exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
 const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
-# with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
+# with the same ⚠ / WARN amber. This is the COMPOSE preview, which derives the flag from the steady
+# forecast via `_is_overdraw` (there is no assignment yet, so no wire `overdraws` field); the CONFIRMED
+# allocation rows instead read the sim-answered `overdraws` bool off the assignment.
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+# The FORAGE twin of the hunt overdraw suffix: a take above the patch's Sustain ceiling draws its
+# biomass down. Forage is smooth food (no whole-animal rhythm), so the preview shows a bare rate + this.
+const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
+# CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
+# unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
+# itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
+# ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered_and_waste`).
+const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
+# When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
+# A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
+const HUNT_WASTE_SUFFIX_FORMAT := " · ⚠ %d%% wasted"
+# The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
+# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer (always shown on an
+# extractive hunt rung) naming the averaging span, computed from the SELECTED policy's ceiling by
+# `_hunt_avg_window_turns` so it never blinks out as workers change (a faster policy averages over a
+# different span, so the line reflects the composed action, not a Sustain-wide claim).
+const HUNT_AVG_WINDOW_FORMAT := "This estimate is a long-run average over ~%d turns — you take whole animals, so per-turn delivery varies."
+# The averaging window's upper clamp: near-integer animals/turn rates make the "extra animal" cycle span
+# read absurdly long, so cap it at a plausible span.
+const HUNT_WINDOW_MAX_TURNS := 12
+# Animals-per-turn rate formatting: up to 2 decimals, trailing zeros/dot stripped (1.90→"1.9", 1.00→"1",
+# 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
+const HUNT_ANIMAL_RATE_DECIMALS := 2
 # Tile-card PASTURE rows (the graze layer). The twin of `Forage biomass`, and the pair is the point:
 # forage is what HUMANS can eat here (seeds, nuts, tubers — food-module tiles only), pasture is what
 # ANIMALS can eat here (grass and browse — cellulose humans cannot digest, on nearly every land tile).
@@ -968,10 +1229,18 @@ var _send_hunt_policy: String = DEFAULT_HUNT_POLICY
 # the selected source changes.
 var _forage_assign_key: String = ""
 var _forage_assign_count: int = 0
+# One-shot: set when the player CLICKS a forage policy so the next rebuild auto-fills the worker count
+# to the policy's max-useful cap ("give me everything this patch sustains"). The forage twin of
+# `_hunt_assign_autofill` — cleared as soon as consumed, never set by a −/+ tick.
+var _forage_assign_autofill := false
 var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
+# One-shot: set when the player CLICKS a policy so the next rebuild auto-fills the worker count to the
+# policy's max-useful cap ("give me everything this herd sustains" — zero waste + full rate). Cleared as
+# soon as it's consumed; never set by a −/+ stepper tick, so manual counts are preserved.
+var _hunt_assign_autofill := false
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding},
 # each 0..1. Gates the Cultivate/Corral picker options (a rung needs its track fully learned) and
 # backs the top-bar meters; the previous value is what makes the one-shot unlock nudge possible.
@@ -1240,39 +1509,60 @@ func _hunt_forecast_bbcode() -> String:
 func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
     if not bool(forecast.get("available", false)):
         return ""
-    # Two different "no food comes home" stories, and they must not be confused: an Eradicate party
-    # brings nothing home BY DESIGN (denial, amber), while any other policy the sim says won't fill
-    # within its `forecast_horizon_turns` means the packs stay empty for the whole trip (red). The red
-    # case is a "can't fill" verdict, NOT a collapsed herd — a thriving herd whose yield is simply too
-    # slow for this party's packs (a full Rabbit Warren on Sustain) lands here too.
+    # A denial mission (Eradicate) brings nothing home BY DESIGN — say what it does, amber, no payload.
     if bool(forecast.get("denial", false)):
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
         ]
-    if not bool(forecast.get("fills", false)):
+    # No surplus above the policy's floor → the raid returns empty. The ONE non-viable case (red).
+    if bool(forecast.get("empty", false)):
         return "[color=#%s]%s%s[/color]" % [
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
-            HUNT_FORECAST_NEVER_FILLS_FORMAT % herd_name,
+            HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
         ]
+    # A real raid: headline the delivered PAYLOAD (the animal count over turns + the food it LANDS), then
+    # the waste. `food` is the sim's `delivered_food` (always set on a delivering forecast).
+    var animals := int(forecast.get("animals", 0))
+    var food: String = HUNT_FORECAST_FOOD_FORMAT % int(forecast["food"]) if forecast.has("food") else ""
+    # The waste % rides BELOW the food as its own WARN-amber segment (even on a cyan line — a high-waste
+    # partial is informative, not a block). Empty when the raid carried its full kill home.
+    var waste := ""
+    var waste_pct := float(forecast.get("waste_pct", 0.0))
+    if waste_pct > 0.0:
+        waste = "[color=#%s]%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
+    if bool(forecast.get("long_raid", false)):
+        # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
+        var long_text: String = HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name]
+        var long_travel := int(forecast.get("travel", 0))
+        if long_travel > 0:
+            long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
+        return "[color=#%s]%s%s%s[/color]%s" % [
+            HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
+        ]
+    # `turns` is the TOTAL (hunting + round-trip travel); the breakdown spells the split out when there's
+    # travel to show — a band-relative addition the band-agnostic estimate table can't carry.
     var turns := int(forecast.get("turns", 0))
-    var text: String = HUNT_FORECAST_TURNS_FORMAT % [herd_name, turns]
-    # The pack fills here (viable OR too-slow), so the haul is a real delivery, not a lie — append it.
-    # No `haul` key = the snapshot didn't carry the per-worker-carry lever → render turns only.
-    var haul: String = HUNT_FORECAST_HAUL_FORMAT % int(forecast["haul"]) if forecast.has("haul") else ""
-    if bool(forecast.get("viable", true)):
-        return "[color=#%s]%s%s[/color]" % [HudStyle.SIGNAL_HEX, text, haul]
-    return "[color=#%s]%s%s%s%s[/color]" % [
-        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, haul, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
-    ]
+    var text: String = HUNT_FORECAST_DELIVERS_FORMAT % [animals, herd_name, turns]
+    var travel := int(forecast.get("travel", 0))
+    if travel > 0:
+        text += HUNT_FORECAST_TRAVEL_BREAKDOWN % [int(forecast.get("hunt_turns", 0)), travel]
+    # Slow raid (past the band's warn threshold) — still a real delivery, just a long one: amber, told
+    # then trusted. A brisk raid reads income-cyan.
+    if bool(forecast.get("slow", false)):
+        return "[color=#%s]%s%s%s%s[/color]%s" % [
+            HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
+        ]
+    return "[color=#%s]%s%s[/color]%s" % [HudStyle.SIGNAL_HEX, text, food, waste]
 
-## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. A PURE TABLE
-## LOOKUP into the sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO
-## arithmetic, and NEVER a `carryCap / rate` division: the sim moves the herd's state under the party
-## and bounds the trip by its `forecast_horizon_turns`, so only the sim's own number is honest (pinned
-## by core_sim/tests/expedition_hunt.rs). The ecology/MSY model is never reproduced here. (The LOCAL
-## band hunt preview DOES compute — see `_hunt_take_rate` over the band ceiling `hunt_policy_ceilings`.)
-## Returns {available, fills, turns, viable, denial}: `available` false when the snapshot carries no
-## estimate for this (policy, party size) — older server → the caller shows no forecast at all.
+## The raid `workers` from `band` deliver hunting `herd` under `policy`. A PURE TABLE LOOKUP into the
+## sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO arithmetic: the sim
+## grabs the herd's standing surplus above the policy floor in a burst and reports the whole animals it
+## lands (`animals_taken`) and the turns until the party comes home (`turns_to_fill`, NOT "turns to fill
+## the pack"). The ecology/MSY model is never reproduced here. (The LOCAL band hunt preview DOES compute
+## — see `_hunt_take_rate` over the band ceiling `hunt_policy_ceilings`.) Returns {available, denial,
+## empty, animals, turns, food, long_raid, slow}: `available` false = the snapshot carries no estimate
+## for this (policy, party size) (older server → the caller shows no forecast at all).
 func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if workers <= 0 or not (estimates_variant is Dictionary):
@@ -1282,32 +1572,61 @@ func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, wor
     if not estimates.has(key):
         return {"available": false}
     var estimate: Dictionary = estimates[key]
-    # A denial mission (eradicate) delivers no food BY DESIGN — never an ETA, never a failure, and NOT
-    # "impossible": it does exactly what it says. This carve-out MUST come first, or gating on
-    # "doesn't fill" would ban Eradicate outright (it never fills, by definition).
+    # A denial mission (eradicate) delivers no food BY DESIGN — never a payload, never a failure. This
+    # carve-out MUST come first: it takes animals (down to the 0 floor) but banks none as food.
     if not bool(estimate.get("delivers_food", false)):
-        return {"available": true, "fills": false, "denial": true, "impossible": false}
-    # 0 turns = the sim's forward simulation never fills the party within its forecast horizon. A trip
-    # that CANNOT SUCCEED is not a tradeoff, it's a mistake with no upside — so unlike a merely SLOW
-    # trip (finite ETA past the warn threshold, which the player is told about and then trusted with),
-    # this one is BLOCKED. Keyed off the sim's per-(policy, party-size) verdict, never off a species /
-    # size_class / biomass proxy: a 1-worker pack may well fill off a herd that can't fill a 4-worker
-    # pack, and an overhunted big-game herd near its collapse floor can't fill either.
-    var turns := int(estimate.get("turns_to_fill", 0))
-    if turns <= 0:
-        return {"available": true, "fills": false, "denial": false, "impossible": true}
-    # A warn threshold of 0 means the server sent none — report the turns, judge nothing.
+        return {"available": true, "denial": true, "empty": false}
+    # delivered_food == 0 = the herd is at/below the policy's floor: no standing surplus to raid, the
+    # party returns empty. The ONE non-viable case (the raid always completes; the herd has nothing).
+    # NOT `animals_taken == 0`: a party too small to carry a whole animal now KILLS one and hauls the
+    # fraction its pack holds (mirroring the local hunt), so `animals_taken >= 1` whenever there's any
+    # surplus — the delivered PAYLOAD (with waste) is the honest bind, not the whole-animal kill count.
+    var delivered_food := float(estimate.get("delivered_food", 0.0))
+    if delivered_food <= 0.0:
+        return {"available": true, "denial": false, "empty": true}
+    var animals := int(estimate.get("animals_taken", 0))
+    # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
+    # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
+    # counts HUNTING turns only; the band-relative round trip is added on top so the headline is honest.
+    var hunt_turns := int(estimate.get("turns_to_fill", 0))
+    var long_raid: bool = hunt_turns <= 0
+    var travel := _round_trip_travel_turns(band, herd)
+    var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
-    var viable: bool = warn_turns <= 0 or turns <= warn_turns
-    var result := {"available": true, "fills": true, "turns": turns, "viable": viable}
-    # The haul a filled pack delivers: party_workers × the per-worker carry lever — blessed party×lever
-    # arithmetic (the same kind as the band ceiling), NOT the ecology/turns-to-fill lookup. Only set
-    # when the lever is present (> 0), so the renderer can guard on the key's absence rather than a fake
-    # zero. Withheld from the denial / won't-fill branches above: those packs never reach the cap.
-    var per_worker_carry := float(band.get("expedition_per_worker_carry", 0.0))
-    if per_worker_carry > 0.0:
-        result["haul"] = int(round(float(workers) * per_worker_carry))
-    return result
+    var slow: bool = not long_raid and warn_turns > 0 and total > warn_turns
+    # Waste fraction: killed-but-not-carried food over total killed. A small party on big game raids one
+    # animal and hauls only the pack's worth, wasting the rest — a high % here is informative, not a block.
+    var wasted_food := float(estimate.get("wasted_food", 0.0))
+    var killed := delivered_food + wasted_food
+    var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
+    return {
+        "available": true, "denial": false, "empty": false,
+        "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
+        "long_raid": long_raid, "slow": slow,
+        # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
+        # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
+        # whole kill and overstates a partial). Guaranteed > 0 here (empty returned above otherwise).
+        "food": int(round(delivered_food)), "waste_pct": waste_pct,
+    }
+
+## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
+## remainder of the trip length the band-agnostic `hunt_trip_estimates` table cannot carry (one row
+## serves every band). Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
+## / band_move_tiles_per_turn), from the SELECTED band's tile + the exported move rate.
+## Returns 0 — so the forecast degrades to hunting turns only, never a fabricated travel — when the move
+## rate isn't on the band dict or a position is unknown. `band_move_tiles_per_turn` (a LaborConfig scalar
+## echoed per-cohort) is now decoded in `native/src/lib.rs` and flowed onto the band marker, so this
+## lights up on the live wire; it degrades gracefully if a future snapshot omits it.
+func _round_trip_travel_turns(band: Dictionary, herd: Dictionary) -> int:
+    var move_rate := float(band.get("band_move_tiles_per_turn", 0.0))
+    if move_rate <= 0.0:
+        return 0
+    var band_tile := _band_tile(band)
+    var one_way := _hex_distance_wrapped(
+        band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
+    if one_way < 0:
+        return 0
+    return int(ceil(float(2 * one_way) / move_rate))
 
 ## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
 ## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
@@ -1329,26 +1648,198 @@ func _hunt_policy_ceiling(herd: Dictionary, policy: String) -> float:
         return HUNT_RATE_UNAVAILABLE
     return float((ceilings_variant as Dictionary)[policy])
 
+## The averaging WINDOW (turns) for the whole-animal disclaimer — a STABLE, worker-independent property
+## derived from the SELECTED policy's raw flow ceiling (NOT the crew's current delivered rate, which
+## moves as workers change and made the old line blink out). Keyed on `policy` because a faster policy
+## (Surplus/Market) delivers lumpy whole animals over a different span. `g` = animals/turn the policy's
+## flow buys: slow/big game (`g < 1`) lands one animal every ~`1/g` turns; fast game (`g >= 1`) delivers
+## the "extra" fractional animal every ~`1/frac` turns. Returns 0 when `food_per_animal` / the ceiling is
+## unknown (caller then skips the line). NEVER scaled by `output_multiplier` — it's a pure herd property.
+func _hunt_avg_window_turns(herd: Dictionary, policy: String) -> int:
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var ceiling := _hunt_policy_ceiling(herd, policy)
+    if fpa <= 0.0 or ceiling <= 0.0:
+        return 0
+    var g: float = ceiling / fpa
+    var x: int
+    if g < 1.0:
+        x = int(ceil(1.0 / g))
+    else:
+        var frac: float = g - floor(g)
+        x = 1 if frac < 0.01 else int(ceil(1.0 / frac))
+    return clampi(x, 1, HUNT_WINDOW_MAX_TURNS)
+
+## The HONEST carry-aware delivery model for a local hunt: what a crew of `workers` from `band` actually
+## lands off `herd` under `policy` per turn, and how much of the kill they can't carry (which rots). A
+## hunt takes WHOLE animals via a kill-credit bank, so the crew's raw food throughput is quantized to the
+## whole bodies it can haul — fractional carry capacity is idle (NOT waste), but a crew too small to carry
+## even one whole animal loses the surplus meat. Returns `{available, delivered, waste, waste_pct}` (all
+## food/turn; `waste_pct` 0..1) or `{available=false}` when a lever/ceiling is absent (caller degrades to
+## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
+## are sim exports.
+func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var per_worker := float(band.get("hunt_per_worker_provisions", 0.0))
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var ceiling := _hunt_policy_ceiling(herd, policy)
+    if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
+        return {"available": false}
+    ceiling *= output
+    var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
+    var carryable := floorf(collection / fpa)                # whole animals /turn the crew can carry
+    var delivered := 0.0
+    var waste := 0.0
+    if carryable >= 1.0:
+        # Carry quantized to whole bodies; the flow ceiling still caps it. Leftover carry capacity is
+        # idle, NOT waste (no animal was killed and dropped).
+        delivered = minf(ceiling, carryable * fpa)
+        waste = 0.0
+    else:
+        # Can't carry even one whole animal → the meat that can't be hauled rots.
+        var kills_per_turn := minf(1.0, ceiling / fpa)
+        delivered = collection * kills_per_turn
+        waste = (fpa - collection) * kills_per_turn
+    var killed_food := delivered + waste
+    var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
+    return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct}
+
+## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
+## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
+## strip the tail ourselves (rstrip stops at the first non-matching char, so integer zeros survive).
+func _format_animal_rate(value: float) -> String:
+    var text := ("%." + str(HUNT_ANIMAL_RATE_DECIMALS) + "f") % value
+    if "." in text:
+        text = text.rstrip("0")
+        if text.ends_with("."):
+            text = text.rstrip(".")
+    return text
+
+## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
+## fully tamed (pastoral), or being penned under the composed Corral policy. `workersNeeded` on such a
+## source scales with the HERD (max herders, haulers), so the crew label must read as herders.
+func _is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
+    return bool(herd.get("corralled", false)) \
+        or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
+        or policy == LABOR_POLICY_CORRAL
+
+## Each hunt policy's button metric, keyed policy → a `{compact, full}` pair (compact for the one-line
+## button face, full for the tooltip). The plant twin of this is `_forage_policy_takes`; both wear the
+## same shape, only the metric differs:
+##   EXTRACTIVE (Sustain/Surplus/Market/Eradicate) → the herd's worker-independent CAP for the policy
+##       (`hunt_policy_ceilings`): a bare signed rate on the face, framed "up to X/turn" in the tooltip
+##       — the ceiling it is, distinct from the crew's carry-aware delivered line below the picker. Read
+##       straight off the sim; never re-derived.
+##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward (`pastoral_yield` / `corral_yield`),
+##       `→+Y` on the face / "builds toward Y/turn" in the tooltip. NOT the during-building dip: that dip
+##       reads BELOW Sustain and is identical
+##       for both rungs, so quoting it made taming/penning look strictly worse than hunting. Shown even
+##       when the rung is gated/greyed — informative — with the gate-reason line explaining the lock; a
+##       0/absent payoff leaves the button bare.
+## Empty when the herd carries no ceilings (older snapshot / non-huntable).
+func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
+    var takes := {}
+    var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
+    if not (ceilings_variant is Dictionary):
+        return takes
+    for policy in (ceilings_variant as Dictionary):
+        # The INVESTMENT rungs are skipped here — their during-build dip rides this list too, but they
+        # wear the PAYOFF (the second loop), not the dip. Mirrors `_forage_policy_takes`.
+        if String(policy) in INVESTMENT_POLICIES:
+            continue
+        var rate := float((ceilings_variant as Dictionary)[policy])
+        if rate < 0.0:
+            continue
+        takes[String(policy)] = _extractive_take(rate)
+    for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
+        var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, policy)
+        if not bool(forecast["known"]) or not bool(forecast["investment"]):
+            continue
+        var payoff := float(forecast["payoff"])
+        if payoff > 0.0:
+            takes[policy] = _payoff_take(payoff)
+    return takes
+
+## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the bare signed rate on the
+## button face, the "up to X/turn" wording in the tooltip. Shared by the hunt + forage takes helpers.
+func _extractive_take(rate: float) -> Dictionary:
+    var signed := _format_signed(rate)
+    return {"compact": signed, "full": POLICY_CAP_FORMAT % signed}
+
+## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led rate on the button
+## face (`→+1.20`), the "builds toward X/turn" wording in the tooltip. Shared by hunt + forage.
+func _payoff_take(payoff: float) -> Dictionary:
+    var signed := _format_signed(payoff)
+    return {"compact": POLICY_PAYOFF_COMPACT % signed, "full": POLICY_PAYOFF_FULL_FORMAT % signed}
+
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
 ## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its
 ## `output_multiplier` (morale/discontent productivity) at payout, so the preview is the take rate
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
 func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    # The BAND ceiling (the herd's flow) — a resident hunt is capped by it, and the Sustain entry IS
-    # the herd's sustainable yield. The expedition's stock-headroom ceilings never enter here.
-    var rate := _hunt_take_rate(band, herd, policy, workers)
     var sustain_ceiling := _hunt_policy_ceiling(herd, DEFAULT_HUNT_POLICY)
-    if rate < 0.0 or sustain_ceiling < 0.0:
+    if sustain_ceiling < 0.0:
         return ""
     var output := float(band.get("output_multiplier", OUTPUT_FULL))
-    var actual := rate * output
     var sustainable := sustain_ceiling * output
-    var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
+    var dw := _hunt_delivered_and_waste(band, herd, policy, workers)
+    if not bool(dw.get("available", false)):
+        # Graceful degrade — `food_per_animal` (or a lever) is unknown, so fall back to the old smoothed
+        # food/turn line unchanged rather than regress the readout.
+        var rate := _hunt_take_rate(band, herd, policy, workers)
+        if rate < 0.0:
+            return ""
+        var actual := rate * output
+        var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
+        if _is_overdraw(actual, sustainable):
+            return "[color=#%s]%s %s%s[/color]" % [
+                HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_HUNT_OVERDRAW_SUFFIX]
+        return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
+    # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
+    # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
+    # throughput the crew can't haul home.
+    var fpa := float(herd.get("food_per_animal", 0.0))
+    var delivered := float(dw["delivered"])
+    var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
+    var primary := HUNT_DELIVERED_FORMAT % [_format_animal_rate(animal_rate), _herd_display_name(herd)]
+    # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
+    # exceeds the herd's Sustain ceiling (Surplus/Market draw it down); waste = a kill the crew couldn't
+    # carry. The Sustain reading stays green + "· renewable".
+    var body := ""
+    if _is_overdraw(delivered, sustainable):
+        body = "[color=#%s]%s %s%s[/color]" % [
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, primary, LOCAL_HUNT_OVERDRAW_SUFFIX]
+    else:
+        body = "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, primary, YIELD_TOOLTIP_RENEWABLE]
+    var waste_pct := float(dw["waste_pct"])
+    if waste_pct > 0.0:
+        # Waste is its OWN concern — always WARN-tinted, even when the main line is green.
+        body += "[color=#%s]%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
+    return body
+
+## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
+## Forage is SMOOTH food (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
+## per-turn take + a sustainability verdict: income-green `+2.74 /turn · renewable` when the take is
+## within the patch's Sustain ceiling, WARN-amber `⚠ … — overdraws the patch` when a Surplus/Market/
+## Eradicate policy draws it down. Both scaled by the acting band's output multiplier, like the hunt
+## line. "" (no line) when the forecast levers are unknown, so the panel degrades gracefully.
+func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
+    # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
+    # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
+    var sustain := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
+    if not bool(sustain["known"]):
+        return ""
+    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+    if not bool(forecast["known"]):
+        return ""
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var sustainable := float(sustain["ceiling"]) * output
+    var actual := _expected_yield(forecast, workers, band)
+    var text := _format_yield(actual)
     if _is_overdraw(actual, sustainable):
         return "[color=#%s]%s %s%s[/color]" % [
-            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_HUNT_OVERDRAW_SUFFIX,
-        ]
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_FORAGE_OVERDRAW_SUFFIX]
     return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
@@ -1494,29 +1985,59 @@ func update_discoveries(discovered_variant: Variant) -> void:
     discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
     discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
 
-## Show the player faction's intensification-ladder knowledge (Cultivation / Herding) as a
-## compact top-bar block-glyph meter, mirroring the Sedentarization readout. Each track is
-## hidden until the faction begins learning it (the snapshot row is sparse); a completed
-## track reads "✔ known" (SIGNAL) instead of the bar.
+## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
+## faction's intensification-ladder knowledge as a compact top-bar block-glyph strip, mirroring the
+## Sedentarization readout.
+##
+## This strip is deliberately the ONLY place a knowledge meter appears. The split it enforces:
+##   • KNOWLEDGE — "what my PEOPLE can do at all". Faction-wide, permanent, earned by cumulative
+##     practice. It lives HERE, in the top bar, prefixed and labelled as your people's craft.
+##   • PER-SOURCE PROGRESS — "have I done it to THIS herd/patch yet". Local, decays if abandoned. It
+##     lives in that source's own drawer row (Husbandry / Corral / Cultivation / Field).
+## They are different KINDS of thing, so they never share a surface: no knowledge percentage is ever
+## rendered into a herd's or a patch's stat grid, where it would read as one more number about that
+## animal. The two are related in exactly one place — a gated verb's reason line under the policy
+## picker (`_hunt_policy_gates` / `_forage_policy_gates`), which names the knowledge, its live
+## percent, and the practice that fills it. That line is what teaches the ladder.
+##
+## All FOUR tracks render (slice 4 added Seed Selection + Penning), in `KNOWLEDGE_TRACK_LABELS` order
+## — each web's ladder bottom-rung-first — so the strip reads as two ladders climbing rather than
+## four unrelated numbers. A track is hidden until the faction begins learning it (the snapshot row is
+## sparse, and an unstarted rung is noise); a completed track reads "✔ known" (SIGNAL) not a full bar.
 func update_intensification(intensification_variant: Variant) -> void:
     _ingest_intensification(intensification_variant)
     if intensification_label == null:
         return
-    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
-    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     var segments: Array[String] = []
     var all_known := true
-    if cultivation > 0.0:
-        segments.append("Cultivation %s" % _knowledge_meter_text(cultivation))
-        all_known = all_known and cultivation >= 1.0
-    if herding > 0.0:
-        segments.append("Herding %s" % _knowledge_meter_text(herding))
-        all_known = all_known and herding >= 1.0
+    for track in KNOWLEDGE_TRACK_LABELS:
+        var progress := _faction_knowledge(PLAYER_FACTION_ID, String(track))
+        if progress <= 0.0:
+            continue
+        segments.append("%s %s" % [
+            String(KNOWLEDGE_TRACK_LABELS[track]), _knowledge_meter_text(progress)])
+        all_known = all_known and progress >= KNOWLEDGE_COMPLETE
     if segments.is_empty():
         intensification_label.visible = false
         return
     intensification_label.visible = true
-    intensification_label.text = INTENSIFICATION_SEGMENT_SEP.join(segments)
+    # The prefix is what makes this strip read as YOUR PEOPLE'S SKILL rather than as a stat of
+    # whatever is currently selected — the one line of copy carrying the §4.1 distinction in the HUD.
+    # Break the tracks into rows of KNOWLEDGE_STRIP_TRACKS_PER_LINE so a fourth (or future fifth) track
+    # can NEVER run off the right edge: the strip lives in a content-sized top-bar block, so a single
+    # long line just widens the block until it clips (the Penning playtest report) — autowrap can't
+    # engage without a bounded width. Explicit rows bound each line regardless of window width. The
+    # prefix rides the first row.
+    var rows: Array[String] = []
+    var line_segs: Array[String] = []
+    for seg in segments:
+        line_segs.append(seg)
+        if line_segs.size() >= KNOWLEDGE_STRIP_TRACKS_PER_LINE:
+            rows.append(INTENSIFICATION_SEGMENT_SEP.join(line_segs))
+            line_segs = []
+    if not line_segs.is_empty():
+        rows.append(INTENSIFICATION_SEGMENT_SEP.join(line_segs))
+    intensification_label.text = "%s%s" % [KNOWLEDGE_STRIP_PREFIX, "\n".join(rows)]
     # Cyan once every learned track is fully known; neutral while any is still in progress.
     intensification_label.add_theme_color_override(
         "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
@@ -1538,10 +2059,11 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
         if faction < 0:
             continue
         var previous: Dictionary = _intensification_knowledge.get(faction, {})
-        var current := {
-            KNOWLEDGE_TRACK_CULTIVATION: float(row.get(KNOWLEDGE_TRACK_CULTIVATION, 0.0)),
-            KNOWLEDGE_TRACK_HERDING: float(row.get(KNOWLEDGE_TRACK_HERDING, 0.0)),
-        }
+        # Every track the ladder defines, off the one list — so adding a rung's knowledge is a
+        # KNOWLEDGE_TRACK_LABELS entry plus a decoder field, never an edit here.
+        var current := {}
+        for track in KNOWLEDGE_TRACK_LABELS:
+            current[track] = float(row.get(track, 0.0))
         for track in KNOWLEDGE_UNLOCK_NOTES:
             if not previous.has(track):
                 continue
@@ -1570,12 +2092,24 @@ func _faction_knowledge(faction: int, track: String) -> float:
     var tracks: Dictionary = _intensification_knowledge.get(faction, {})
     return float(tracks.get(track, 0.0))
 
-## One knowledge track's readout: the block-glyph bar + "learning" while in progress,
-## a "✔ known" badge once complete. `progress` is 0..1.
+## One knowledge track's readout: a compact block-glyph bar + the live percent while in progress, a
+## "✔ known" badge once complete. `progress` is 0..1.
+##
+## Deliberately TIGHTER than the Sedentarization meter beside it (which keeps the shared 10-cell
+## `_meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
+## "learning" per track the line overflowed the top bar and clipped its last track off-screen —
+## verified in the first cut of `two_meter_split.png`. The percent replaces the word rather than
+## joining it: it is strictly more informative, and it is the SAME number the gate reason under a
+## locked verb quotes, so the strip and the reason line visibly agree.
 func _knowledge_meter_text(progress: float) -> String:
-    if progress >= 1.0:
-        return "✔ known"
-    return "%s learning" % _meter_bar(progress * 100.0)
+    # A bare ✔ rather than "✔ known": the strip's own prefix already reads "Your people know:", so the
+    # word was saying it twice — and the two it cost per known track were enough to push the fourth
+    # track's percent onto the frame edge.
+    if progress >= KNOWLEDGE_COMPLETE:
+        return KNOWLEDGE_KNOWN_BADGE
+    return "%s %d%%" % [
+        _meter_bar(progress * PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
+        _progress_percent(progress)]
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
@@ -1586,10 +2120,12 @@ func _dependency_color(working: int, dependency: int) -> Color:
         return HudStyle.SIGNAL
     return HudStyle.INK_DIM
 
-## A 10-cell block-glyph bar for a 0–100 score.
-func _meter_bar(score: float) -> String:
-    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * 10.0))
-    return "▰".repeat(filled) + "▱".repeat(10 - filled)
+## A block-glyph bar for a 0–100 score. `cells` defaults to the standard width, so the
+## Sedentarization meter and every existing caller are unchanged; the knowledge strip passes a
+## narrower one because it now carries FOUR tracks on one top-bar line.
+func _meter_bar(score: float, cells: int = METER_BAR_CELLS) -> String:
+    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
+    return "▰".repeat(filled) + "▱".repeat(cells - filled)
 
 func _sedentarization_color(stage: String) -> Color:
     match stage:
@@ -1978,6 +2514,28 @@ func update_food_modules(modules_variant: Variant) -> void:
         if sx >= 0 and sy >= 0:
             _food_module_by_tile[Vector2i(sx, sy)] = site
 
+## The world's forage patches captured each snapshot (Main forwards the snapshot `forage_patches`
+## array — the same dicts in `MapView.forage_patch_lookup`), keyed by tile. A Current-actions Forage
+## row reads the patch here to forecast its max-useful worker cap (the compose control gets the same
+## forecast off `tile_info`'s `patch_`-prefixed cross-ref; the RAW wire dict here carries the fields
+## BARE — see `WIRE_FORAGE_PATCH_PREFIX`).
+var _forage_patch_lookup: Dictionary = {}
+
+## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
+## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest.
+func update_forage_patches(patches_variant: Variant) -> void:
+    if not (patches_variant is Array):
+        return
+    _forage_patch_lookup.clear()
+    for entry in patches_variant:
+        if not (entry is Dictionary):
+            continue
+        var patch: Dictionary = entry
+        var px := int(patch.get("x", -1))
+        var py := int(patch.get("y", -1))
+        if px >= 0 and py >= 0:
+            _forage_patch_lookup[Vector2i(px, py)] = patch
+
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.
 func _source_icon_prefix(icon: String) -> String:
@@ -2260,6 +2818,8 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "has_yield": a.has("actual_yield"),
             # Min workers that produced this turn's take — drives the overstaffing note.
             "workers_needed": int(a.get("workers_needed", 0)),
+            # Provisions offered but not collected (under-crewed) — drives the muted "· N wasted" note.
+            "wasted_yield": float(a.get("wasted_yield", 0.0)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -2373,59 +2933,139 @@ func _policy_hint(kind: String, policy: String) -> String:
 ## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
 ## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
 ## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "") -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+## `status_line` (default "") is the OPT-IN to the two-line form used ONLY by the Forage/Hunt
+## Current-actions rows: when non-empty the title (icon + action + location) + the −/+ stepper ride
+## line 1, and the yield/policy text (`status_line`) + the status glyph + the ⚠/overstaff/wasted notes
+## drop to an indented, smaller secondary line 2 that WRAPS rather than widening the panel. When "",
+## every existing caller (Scout/Warrior, the compose steppers) renders the unchanged single-line HBox.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "") -> Control:
     # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
     var status_key := FoodIcons.STATUS_PENDING if pending else status
     var row_tooltip := _append_status_tooltip(tooltip, status_key)
+    # Pending tints the row's IDENTITY amber (the title — it ties to the amber pending hex on the map);
+    # a settled row reads plain INK.
+    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
+    if status_line != "":
+        return _build_two_line_stepper(
+            label_text, count, plus_enabled, on_change, warn, row_tooltip, note,
+            on_focus_source, status_key, muted_note, status_line, row_ink)
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     if row_tooltip != "":
         row.tooltip_text = row_tooltip
     var row_text := label_text + _row_glyph_suffix(FoodIcons.for_status(status_key))
-    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
-    var name_label: Control
-    if on_focus_source.is_valid():
-        var link := Button.new()
-        link.text = row_text
-        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
-        HudStyle.apply_link_button(link, row_ink)
-        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
-        link.pressed.connect(func() -> void: on_focus_source.call())
-        name_label = link
-    else:
-        var plain := Label.new()
-        plain.text = row_text
-        plain.add_theme_color_override("font_color", row_ink)
-        if row_tooltip != "":
-            plain.tooltip_text = row_tooltip
-        name_label = plain
-    row.add_child(name_label)
+    row.add_child(_build_row_name_label(row_text, row_ink, row_tooltip, on_focus_source))
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
     # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
     if warn:
-        var warn_label := Label.new()
-        warn_label.text = OVERHUNT_FLAG
-        warn_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if row_tooltip != "":
-            warn_label.tooltip_text = row_tooltip
-        row.add_child(warn_label)
+        row.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, row_tooltip))
     # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
     # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
     # means "overdrawing" (ecological); this means "extra workers idle here" (see
     # `_source_yield_readout`). The tooltip carries the full explanation.
     if note != "":
-        var note_label := Label.new()
-        note_label.text = note
-        note_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if row_tooltip != "":
-            note_label.tooltip_text = row_tooltip
-        row.add_child(note_label)
+        row.add_child(_build_row_note_label(note, HudStyle.WARN, row_tooltip))
+    # Understaffing note ("· 1.7 wasted"): MUTED (INK_FAINT), the low-key mirror of the WARN overstaff
+    # note — it says "the source offered more than the crew carried home" (add workers), a softer nudge
+    # than the ecological ⚠. Fed by `wasted_yield`; tooltip carries the full explanation.
+    if muted_note != "":
+        row.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, row_tooltip))
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(spacer)
+    _add_stepper_controls(row, count, plus_enabled, on_change)
+    return row
+
+## The two-line form of a worker-stepper row (see `_build_worker_stepper`'s `status_line`): line 1 =
+## the clickable title + spacer + −/+ stepper; line 2 = an indented, smaller secondary status carrying
+## the yield/policy text, the status glyph, then the ⚠/overstaff/wasted notes — the SAME per-part
+## colors the single-line path uses, just relocated below. Pending tints the TITLE amber (row 1's
+## identity) and shows the ◌ glyph on row 2.
+func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color) -> VBoxContainer:
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", TWO_LINE_STEPPER_SEPARATION)
+    # Line 1: title + spacer + stepper. The status glyph is NOT appended to the title here (it lives on
+    # line 2); the title keeps its click-to-jump link (or a plain Label for band-wide roles).
+    var title_row := HBoxContainer.new()
+    title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title_row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    title_row.add_child(_build_row_name_label(label_text, row_ink, row_tooltip, on_focus_source))
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title_row.add_child(spacer)
+    _add_stepper_controls(title_row, count, plus_enabled, on_change)
+    col.add_child(title_row)
+    # Line 2: indented, smaller, wrapping status. A MarginContainer insets it past the icon; an
+    # HFlowContainer wraps the parts to the next line rather than widening the panel (its min width is
+    # the widest single part, small by construction).
+    var status_margin := MarginContainer.new()
+    status_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    status_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
+    var status_flow := HFlowContainer.new()
+    status_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    status_flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
+    if row_tooltip != "":
+        status_flow.tooltip_text = row_tooltip
+    # The yield + policy glyph the caller composed (INK), then the status glyph (row_ink — WARN with the
+    # ◌ when pending, tying it to the amber title), then ⚠ (WARN), the overstaff note (WARN), and the
+    # wasted note (INK_FAINT).
+    status_flow.add_child(_build_status_part(status_line, HudStyle.INK))
+    var status_glyph := FoodIcons.for_status(status_key)
+    if status_glyph != "":
+        status_flow.add_child(_build_status_part(status_glyph, row_ink))
+    if warn:
+        status_flow.add_child(_build_status_part(OVERHUNT_FLAG, HudStyle.WARN))
+    if note != "":
+        status_flow.add_child(_build_status_part(note, HudStyle.WARN))
+    if muted_note != "":
+        status_flow.add_child(_build_status_part(muted_note, HudStyle.INK_FAINT))
+    status_margin.add_child(status_flow)
+    col.add_child(status_margin)
+    return col
+
+## The clickable title (or plain Label) shared by both stepper forms. `on_focus_source` (when valid)
+## makes it an inline link that jumps the map to the source; a band-wide role passes nothing.
+func _build_row_name_label(text: String, ink: Color, row_tooltip: String, on_focus_source: Callable) -> Control:
+    if on_focus_source.is_valid():
+        var link := Button.new()
+        link.text = text
+        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
+        HudStyle.apply_link_button(link, ink)
+        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
+        link.pressed.connect(func() -> void: on_focus_source.call())
+        return link
+    var plain := Label.new()
+    plain.text = text
+    plain.add_theme_color_override("font_color", ink)
+    if row_tooltip != "":
+        plain.tooltip_text = row_tooltip
+    return plain
+
+## A single-line note Label (⚠ / overstaff / wasted) for the one-line stepper form.
+func _build_row_note_label(text: String, color: Color, row_tooltip: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", color)
+    if row_tooltip != "":
+        label.tooltip_text = row_tooltip
+    return label
+
+## A secondary status part (line 2 of the two-line form): rendered a touch smaller
+## (`ALLOC_SECTION_FONT_SIZE`) than the title.
+func _build_status_part(text: String, color: Color) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", color)
+    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
+    return label
+
+## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
+## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
+func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable) -> void:
     var minus := Button.new()
     minus.text = "−"
     minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
@@ -2446,7 +3086,6 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
     plus.disabled = not plus_enabled
     plus.pressed.connect(func() -> void: on_change.call(count + WORKER_STEP))
     row.add_child(plus)
-    return row
 
 ## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
 ## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
@@ -2497,15 +3136,17 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var label_suffix := ""
     var warn := false
     var tooltip := ""
+    # The honest per-turn rate the row headlines (and the caller derives the kill-rhythm from).
+    var rate := 0.0
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
-        # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
-        # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
-        # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
-        # above sustainable → the ⚠ flag. ONE definition of the test (`_is_overdraw`), shared with the
-        # local-hunt yield preview so the row and the preview can never disagree.
-        warn = _is_overdraw(actual, sustainable)
+        # A source overdraws when its take draws the stock below what it sustains. This is the
+        # sim-answered `overdraws` flag (policy-driven: `!managed && policy.overdraws()`), NOT the
+        # client-derived `actual > sustainable` — which false-positives on a hunt's kill turn (cashing a
+        # banked whole animal spikes `actual` above the steady `sustainable` even under Sustain). Forage
+        # on Sustain reads clean; a Surplus/Market/Eradicate patch or an over-hunted herd trips ⚠.
+        warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % _format_yield(actual)
         if renewable:
@@ -2514,7 +3155,13 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % _format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        label_suffix = " %s" % _format_yield(actual)
+        # HEADLINE the row with the honest per-turn RATE, never the pulse. A HUNT source's
+        # `actual_yield` is the kill-credit PULSE (0 on wait turns, a spike on kill turns), so its
+        # smoothed rate is `sustainable_yield` (the herd's per-turn throughput); the pulse's overdraw
+        # is still carried by the ⚠ flag + tooltip. Forage has no pulse (actual == sustainable), so it
+        # keeps `actual`. The caller pairs a hunt headline with the kill-rhythm from `body_mass`.
+        rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        label_suffix = " %s" % _format_yield(rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -2524,7 +3171,19 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
-    return {"label_suffix": label_suffix, "warn": warn, "note": note, "tooltip": tooltip}
+    # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the
+    # party is under-crewed for the kill. A muted note (the low-key mirror of the overstaff note); the
+    # tooltip spells it out. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
+    var muted_note := ""
+    var wasted := float(m.get("wasted_yield", 0.0))
+    if wasted >= FOOD_FLOW_MIN:
+        muted_note = WASTED_NOTE_FORMAT % _format_magnitude(wasted)
+        var wasted_tip := WASTED_TOOLTIP % _format_yield(wasted)
+        tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
+    return {
+        "label_suffix": label_suffix, "warn": warn, "note": note,
+        "muted_note": muted_note, "tooltip": tooltip, "rate": rate,
+    }
 
 ## PRE-COMMIT FORECAST (the compose-time counterpart to `_source_yield_readout`'s post-hoc note).
 ## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
@@ -2535,19 +3194,38 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
 func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
-    var policy_key: String = policy if policy in FORECAST_CEILING_KEYS else DEFAULT_HUNT_POLICY
-    var ceiling := float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy_key]), 0.0))
-    var investment: bool = policy_key in FORECAST_PAYOFF_KEYS
+    # The DIP ceiling paid while the source is prepared. Every rung reads a scalar ceiling field EXCEPT
+    # `tame`, whose dip has no scalar on the wire (there is no `ceilingTame`) — it rides the
+    # `hunt_policy_ceilings` LIST, so resolve it through `_hunt_policy_ceiling` (< 0 unavailable → 0).
+    var ceiling := 0.0
+    if policy in FORECAST_CEILING_KEYS:
+        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy]), 0.0))
+    elif policy == LABOR_POLICY_TAME:
+        ceiling = maxf(_hunt_policy_ceiling(src, LABOR_POLICY_TAME), 0.0)
+    else:
+        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[DEFAULT_HUNT_POLICY]), 0.0))
+    # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —
+    # is still recognized as the investment rung it is. For every other rung `policy` IS its ceiling key,
+    # so this is identical to the old `policy_key in …` test.
+    var investment: bool = policy in FORECAST_PAYOFF_KEYS
     var payoff := 0.0
     if investment:
-        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy_key]), 0.0))
+        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy]), 0.0))
     # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
     # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
     # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
-    var feed_rung: bool = policy_key in FORECAST_FEED_KEYS
+    var feed_rung: bool = policy in FORECAST_FEED_KEYS
     var feed := 0.0
     if feed_rung:
-        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy_key]), 0.0))
+        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy]), 0.0))
+    # WHOLE-ANIMAL HUNT: a take of whole animals via a kill-credit bank (`food_per_animal` = one animal's
+    # yield in food; 0/absent for a forage patch). The peak-turn carry need is quantized to whole bodies
+    # (see `_max_useful_workers`), so it must fire ONLY for an extractive hunt of a live herd — never a
+    # forage patch (no food_per_animal), an investment rung (Tame/Corral collapse to 1), or a corralled
+    # herd (managed `worker_tend` harvest, whose forecast already collapses every ceiling to per_worker).
+    var food_per_animal := float(src.get(prefix + "food_per_animal", 0.0))
+    var whole_animal: bool = food_per_animal > 0.0 and not investment \
+        and not bool(src.get("corralled", false))
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
@@ -2555,6 +3233,8 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
         "investment": investment,
         "feed_rung": feed_rung,
         "feed": feed,
+        "food_per_animal": food_per_animal,
+        "whole_animal": whole_animal,
         "known": per_worker >= FORECAST_MIN_PER_WORKER,
     }
 
@@ -2564,7 +3244,19 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
 func _max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
-    return int(ceilf(float(forecast["ceiling"]) / float(forecast["per_worker"])))
+    var per_worker := float(forecast["per_worker"])
+    var ceiling := float(forecast["ceiling"])
+    # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
+    # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
+    # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
+    # bank holds just under one body when the turn's rate lands, so floor(ceiling / food_per_animal) + 1
+    # whole animals drop, each worth food_per_animal — carry that peak, not the average flow.
+    var food_per_animal := float(forecast.get("food_per_animal", 0.0))
+    if bool(forecast.get("whole_animal", false)) and food_per_animal > 0.0:
+        var animals := floori(ceiling / food_per_animal) + HUNT_PEAK_DROP_BANK_BONUS
+        var peak_drop_food := float(animals) * food_per_animal
+        return ceili(peak_drop_food / per_worker)
+    return int(ceilf(ceiling / per_worker))
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
 ## acting band's output multiplier (the sim exports the forecast at 1.0).
@@ -2576,18 +3268,32 @@ func _expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> fl
 ## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
 ## max-useful). Returns `{cap, note}` — `note` is set ONLY when max-useful is the binding cap, so a
 ## dead `+` button is always explained rather than mysterious (the idle-worker cap explains itself).
-func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
+func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: int = 0) -> Dictionary:
     var useful := _max_useful_workers(forecast)
+    # A managed herd's maintenance crew raises the usefulness ceiling above what the take/prepare side
+    # reports: a Corral rung's prep forecast says "1 worker suffices to prepare", but a growing pen needs
+    # `herders_needed` hands EVERY turn to hold its tameness. Fold that floor in (callers pass it via
+    # `useful_floor`) so the player can always staff the herders the herd requires. An UNBOUNDED forecast
+    # stays unbounded — the floor is a RAISE, never a new cap — and a wild herd passes 0, so it's a no-op.
+    if useful != MAX_USEFUL_UNBOUNDED:
+        useful = maxi(useful, useful_floor)
     if useful == MAX_USEFUL_UNBOUNDED or useful >= assignable:
-        return {"cap": assignable, "note": ""}
+        # Labor-bound below the usefulness ceiling: the `+` capped at idle workers, not at
+        # usefulness — name the reason so the cap doesn't read as a silent bug. Exactly staffed
+        # (useful == assignable) and no-forecast (UNBOUNDED) stay noteless.
+        var labor_note := ""
+        if useful != MAX_USEFUL_UNBOUNDED and useful > assignable:
+            labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
+        return {"cap": assignable, "note": labor_note}
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## The live "Expected yield: +0.48 /turn" row on the assign controls. Food income → HEALTHY green,
-## matching the map's per-source yield annotations and the Food line's income tint. Under an
-## INVESTMENT policy (Cultivate/Corral) it states the deal instead — "Preparing: +0.09 /turn → then
-## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
-## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
+## The live INVESTMENT-rung forecast row on the assign controls — it states the DEAL: "Preparing:
+## +0.09 /turn → then +1.20 /turn", so the up-front dip AND the payoff are visible BEFORE the player
+## commits. Both halves scaled by the acting band's output multiplier. This row is INVESTMENT-only now:
+## every extractive rung (hunt AND forage) renders its own bare-rate + verdict preview
+## (`_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode`) instead, so the old non-investment
+## "Expected yield:" branch was unreachable and was removed. Callers gate on the investment rung.
 ##
 ## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its row
 ## never shows the payoff bare — it subtracts the herd's own exported `pen_upkeep` (which the sim now
@@ -2598,23 +3304,20 @@ func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
     var hex := HudStyle.HEALTHY
-    if bool(forecast.get("investment", false)):
-        var output := float(band.get("output_multiplier", OUTPUT_FULL))
-        var payoff := float(forecast.get("payoff", 0.0)) * output
-        var feed := float(forecast.get("feed", 0.0)) * output
-        var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
-        if has_feed:
-            row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
-                expected, _format_yield(payoff), _format_magnitude(feed)]
-        else:
-            row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
-        # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
-        # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
-        if has_feed and payoff < FOOD_FLOW_MIN:
-            row.text += "\n%s" % INVESTMENT_FORECAST_DEPLETED_NOTE
-            hex = HudStyle.WARN
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var payoff := float(forecast.get("payoff", 0.0)) * output
+    var feed := float(forecast.get("feed", 0.0)) * output
+    var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
+    if has_feed:
+        row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
+            expected, _format_yield(payoff), _format_magnitude(feed)]
     else:
-        row.text = FORECAST_LABEL_FORMAT % expected
+        row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
+    # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
+    # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
+    if has_feed and payoff < FOOD_FLOW_MIN:
+        row.text += "\n%s" % INVESTMENT_FORECAST_DEPLETED_NOTE
+        hex = HudStyle.WARN
     row.add_theme_color_override("font_color", hex)
     return row
 
@@ -2758,6 +3461,26 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     for block in _build_allocation_sections(band, rebuild):
         container.add_child(block)
 
+## Per-SOURCE `+`-gate for a Current-actions Forage/Hunt row: the compose controls cap the stepper at
+## max-useful (`_forecast_worker_cap`), and a confirmed row must cap the same way — a source's `+` may
+## add a worker only while the band has an idle worker AND this source is below its own max-useful
+## ceiling, so a single source can't absorb workers past the point they help. An unknown forecast
+## (MAX_USEFUL_UNBOUNDED — no wire data) falls back to the plain `idle > 0` gate. Returns
+## `{can_add, note}`; `note` is set ONLY when max-useful (not idle) is what stopped the `+`, so the
+## row tooltip explains a dead button rather than leaving it mysterious (the idle-exhausted gate
+## explains itself). Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate.
+func _source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
+    var useful := _max_useful_workers(forecast)
+    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
+        return {"can_add": idle > 0, "note": ""}
+    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
+    # when idle workers remain (else the idle-exhausted gate already reads for itself).
+    var note := ""
+    if idle > 0:
+        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
+    return {"can_add": false, "note": note}
+
 ## Build the band's labor allocation as an ordered list of discrete **section blocks** (Workers /
 ## Current actions / Band roles / Orders / Send expedition), returned for the caller to host — the
 ## Band/City panel arranges them into a tall stack or a wide column-flow; the legacy flat host just
@@ -2822,16 +3545,27 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
             # truth), so a source reads identically in the panel and on the map. Unknown module → "".
             var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
+            # Two-line row: the title (icon + Forage + tile) stays on the stepper line; the yield + the
+            # policy glyph drop to the indented secondary line 2 (leading separator stripped so it reads
+            # "+0.61 /turn  ♻").
+            var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
+            # Cap the `+` at this patch's max-useful (the compose control's cap, applied to the confirmed
+            # row) so a single source can't absorb workers past the point they help. The raw wire patch
+            # dict carries the forecast fields BARE (WIRE_FORAGE_PATCH_PREFIX), unlike the `patch_`-prefixed
+            # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
+            var forage_forecast := _forecast_inputs(
+                _forage_patch_lookup.get(Vector2i(fx, fy), {}), WIRE_FORAGE_PATCH_PREFIX, forage_emit_policy)
+            var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
-                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, yld.label_suffix, forage_policy_glyph],
-                workers, can_add,
+                "%sForage (%d, %d)" % [forage_icon, fx, fy],
+                workers, bool(forage_cap["can_add"]),
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
                 pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy)]), yld.note,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy), String(forage_cap["note"])]), yld.note,
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING))
+                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -2844,19 +3578,28 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # label/species) — the panel row and the map marker read as the same animal.
             var herd_label := _herd_label_for_id(herd_id)
             var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
+            # A summary row headlines the honest per-turn FOOD rate (yld.rate = sustainable, not the pulse);
+            # the animals-per-turn cadence lives on the compose-preview line, not here. Two-line row: the
+            # title (icon + Hunt + species) stays on the stepper line; the yield + policy glyph drop to
+            # the indented secondary line 2 (leading separator stripped so it reads "+1.19 /turn  ♻").
+            var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
+            # Cap the `+` at this herd's max-useful (the compose control's cap, applied to the confirmed
+            # row) so a single source can't absorb workers past the point they help. Herds carry the
+            # forecast fields BARE (HERD_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
+            # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
+            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), HERD_FORECAST_PREFIX, policy)
+            var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
-                "%sHunt %s%s%s" % [
-                    hunt_icon, herd_label, yld.label_suffix,
-                    _row_glyph_suffix(FoodIcons.for_policy(policy))],
-                workers, can_add,
+                "%sHunt %s" % [hunt_icon, herd_label],
+                workers, bool(hunt_cap["can_add"]),
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
                 pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy)]), yld.note,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy), String(hunt_cap["note"])]), yld.note,
                 # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),
                 # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING))
+                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -3070,7 +3813,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     var current := _effective_hunt_workers(band, herd_id)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
     var title := Label.new()
-    title.text = "Assign hunters" + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
+    # A MANAGED (corralled/pastoral) herd's crew are keepers, not a hunt party (fix #6) — so the title
+    # reads "Assign herders" to match the stepper's crew label below.
+    var title_noun := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
+        else HUNT_CREW_LABEL
+    title.text = "Assign %s" % title_noun.to_lower() \
+        + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     herd_assign_controls.add_child(title)
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
@@ -3094,12 +3842,23 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
     # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
     var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
-    # Grazing 2d-δ: the Corral rung is a PEN-ceiling affordance — a wild/pastoral species can never be
-    # penned, so hide Corral outright for them (NOT a "locked, learn Herding" gate — it is impossible for
-    # this species, and offering it greyed would imply a reachable prerequisite). `.filter` copies, so the
-    # HUNT_POLICY_OPTIONS const is untouched.
-    if not is_expedition and _husbandry_ceiling(herd) != HUSBANDRY_CEILING_PEN:
-        hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_CORRAL)
+    # Grazing 2d-δ + the ladder's rung-2 verb: BOTH husbandry rungs are husbandry-ceiling affordances,
+    # and the ceiling says how far up the ladder THIS SPECIES can climb ("wild" hunt-only / "pastoral"
+    # tameable-but-never-pennable / "pen" the full ladder). An out-of-ceiling rung is HIDDEN OUTRIGHT,
+    # never greyed: greying it would imply a reachable prerequisite, and no amount of knowledge or
+    # work will ever let you pen an aurochs whose ceiling is "pastoral". Knowledge = "I know how";
+    # ceiling = "this animal allows it" — decoupled (§4.2), so the gates above are orthogonal to this.
+    #   • Corral needs a "pen" ceiling.
+    #   • Tame needs anything ABOVE "wild" — and is pointless once the herd is fully tamed, so it
+    #     retires from the picker at that point (its per-source meter is full; Corral is what's next).
+    # `.filter` copies, so the HUNT_POLICY_OPTIONS const is untouched.
+    if not is_expedition:
+        var ceiling := _husbandry_ceiling(herd)
+        if ceiling != HUSBANDRY_CEILING_PEN:
+            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_CORRAL)
+        if ceiling == HUSBANDRY_CEILING_WILD \
+                or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE:
+            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != LABOR_POLICY_TAME)
     var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
@@ -3126,26 +3885,50 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # "Expected yield" sitting directly above a WARN-amber "⚠ overdraws the herd" for the same number.
     var forecast_active := not is_expedition and bool(forecast["known"]) \
         and bool(forecast["investment"])
-    var capped := {"cap": assignable, "note": ""} if is_expedition \
-        else _forecast_worker_cap(forecast, assignable)
+    # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
+    # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
+    # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
+    # hunter gap this pass closes). The local branch caps at the source's max-useful ceiling.
+    # A managed (corralling/pastoral) herd needs `herders_needed` hands every turn to hold its tameness,
+    # but the take/prepare max-useful ignores that — a Corral rung's prep says "1 worker useful", pinning
+    # the player at 1 even when a growing herd needs 2 herders (an unwinnable trap: the corral slips and is
+    # lost). Fold the herding crew into the LOCAL-hunt cap's usefulness ceiling so the maintenance crew is
+    # always staffable. `herders_needed == 0` on a wild herd, so max(take-useful, 0) is a no-op there. The
+    # expedition party has no herding crew, so `_expedition_useful_cap` is left alone.
+    var herd_floor := int(herd.get("herders_needed", 0))
+    var capped := _expedition_useful_cap(band, herd, _hunt_assign_policy, assignable) if is_expedition \
+        else _forecast_worker_cap(forecast, assignable, herd_floor)
     var cap := int(capped["cap"])
+    # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
+    # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy
+    # click (both branches), never by a −/+ tick, so manual counts survive the rebuild.
+    if _hunt_assign_autofill:
+        _hunt_assign_count = cap
+        _hunt_assign_autofill = false
     _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
-    # On an expedition the party stepper is a real decision (a bigger party carries bigger packs, so
-    # stepping UP can turn a working trip impossible) — warn on the row itself when the next size up is.
-    var stepper_tooltip := _hunt_step_up_tooltip(band, herd, _hunt_assign_policy, _hunt_assign_count) \
-        if is_expedition else ""
+    # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
+    # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
+    var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
+        else HUNT_CREW_LABEL
     herd_assign_controls.add_child(_build_worker_stepper(
-        "Party" if is_expedition else "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
+        "Party" if is_expedition else crew_label, _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
-            _build_herd_assign_controls(herd),
-        false, false, stepper_tooltip))
+            _build_herd_assign_controls(herd)))
     var cap_note := String(capped["note"])
     if cap_note != "":
         herd_assign_controls.add_child(_alloc_hint_label(cap_note))
+    # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
+    # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
+    # Market < Eradicate). Worker-independent on both branches (the expedition's is the max over party
+    # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
+    var policy_takes := _expedition_policy_takes(band, herd) if is_expedition \
+        else _hunt_policy_takes(herd)
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
-        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates))
+        # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
+        _hunt_assign_autofill = true
+        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
     # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
@@ -3170,28 +3953,45 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
             herd_assign_controls.add_child(_forecast_label(forecast_line))
-        # The row-scanned refusal — computed ONCE and used for both the button tooltip and the reason
+        # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
-        var impossible := _hunt_trip_impossible(trip)
-        var reason := _hunt_impossible_reason(
-            band, herd, _hunt_assign_policy, _hunt_assign_count) if impossible else ""
+        var no_surplus := _hunt_trip_no_surplus(trip)
+        var reason := _hunt_no_surplus_reason(herd) if no_surplus else ""
         _style_send_hunt_button(assign_btn, trip, reason)
-        # The reason is spelled out beside the button too — a disabled control's tooltip is easy to
-        # miss, and the named alternative (a party size that DOES fill) is the actionable half.
-        if impossible:
+        # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
+        if no_surplus:
             herd_assign_controls.add_child(_alloc_hint_label(reason))
     else:
         # What this policy DOES for a resident band (the forecast line below carries the number; this
-        # carries the consequence — above all Sustain's husbandry-toward-livestock payoff, which is
-        # otherwise invisible). Deliberately NOT the expedition hints: a party earns neither.
+        # carries the consequence — above all what Sustain actually teaches, which is otherwise
+        # invisible). Deliberately NOT the expedition hints: a party earns neither.
         herd_assign_controls.add_child(_alloc_hint_label(
             String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
+        # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
+        # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
+        # an extractive rung (an investment rung shows a dip→payoff, not an animal cadence, so it's
+        # skipped), as a STABLE herd-level statement: the span is keyed off the selected policy's flow
+        # ceiling (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never
+        # blinks out. Skipped only when the window is unknown (missing food_per_animal / ceiling).
+        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
+            var window_turns := _hunt_avg_window_turns(herd, _hunt_assign_policy)
+            if window_turns > 0:
+                herd_assign_controls.add_child(_alloc_hint_label(
+                    HUNT_AVG_WINDOW_FORMAT % window_turns))
+        # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
+        # than left to be guessed. See `_tame_stalled_hint`.
+        var stalled := _tame_stalled_hint(herd)
+        if stalled != "":
+            var stalled_label := _alloc_hint_label(stalled)
+            stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
+            herd_assign_controls.add_child(stalled_label)
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
         # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
-        # EXTRACTIVE rungs ONLY — the investment rung (Corral) is answered by the dip→payoff row above
-        # (`forecast_active`), and rendering both put two rows with the same number on the panel. See
-        # the ONE-yield-row-per-rung note there.
-        if not bool(forecast["investment"]):
+        # EXTRACTIVE rungs ONLY — an INVESTMENT rung is answered by the dip→payoff row above
+        # (`forecast_active`) or by Tame's row, and rendering both put two rows with the same number
+        # on the panel. See the ONE-yield-row-per-rung note there. Tested against the named rung set,
+        # NOT `forecast["investment"]` (which is really "has a payoff key" and so misses Tame).
+        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
             var yield_line := _local_hunt_preview_bbcode(
                 band, herd, _hunt_assign_policy, _hunt_assign_count)
             if yield_line != "":
@@ -3200,11 +4000,11 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
-        # `_style_send_hunt_button` already disabled it when the trip is impossible; a positive party
-        # is the other precondition. (`or` — never clear a disable the style step set.)
+        # `_style_send_hunt_button` already disabled it when the raid returns empty (no surplus); a
+        # positive party is the other precondition. (`or` — never clear a disable the style step set.)
         assign_btn.disabled = assign_btn.disabled or _hunt_assign_count <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _hunt_assign_count <= 0 or _hunt_trip_impossible(
+            if _hunt_assign_count <= 0 or _hunt_trip_no_surplus(
                     _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)):
                 return
             emit_signal("send_hunt_expedition_requested", {
@@ -3212,6 +4012,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 "band": int(band.get("entity", -1)),
                 "party_workers": _hunt_assign_count,
                 "fauna_id": herd_id,
+                "fauna_label": _herd_display_name(herd),
                 "policy": _hunt_assign_policy if _hunt_assign_policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
             }))
     else:
@@ -3222,129 +4023,170 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
 
 ## Style the hunt-expedition send button from the live forecast. Two treatments, and the line between
 ## them is the point:
-##   SLOW (finite ETA past the warn threshold) — a real tradeoff. "armed" amber + a label that NAMES
-##     the cost (`Send Anyway (≈54 turns)`), but ENABLED: the player is told, then trusted. Likewise
-##     a denial mission (`Send (delivers no food)`) — it does exactly what it says.
-##   IMPOSSIBLE (cannot fill within the horizon) — not a tradeoff, a mistake with no upside. DISABLED,
-##     with the reason and the way out. Offering this button would be offering the player a mistake.
+##   DELIVERING (viable / slow / long / denial) — the raid lands something (animals, or the denial it
+##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
+##     turns)` / `Send Anyway (long raid)`) or a denial (`Send (delivers no food)`) — ENABLED either
+##     way: the player is told, then trusted.
+##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
+##     with the reason and the way out (party size can't fix it, so the reason names no alternative).
 ## No confirm dialogs either way.
 func _style_send_hunt_button(button: Button, forecast: Dictionary, reason: String) -> void:
-    var fills := bool(forecast.get("fills", false))
-    # IMPOSSIBLE — the one blocked case. Disabled, and it says WHY plus what to do instead (the button
-    # is the last thing the player looks at before clicking, so the reason belongs on it). The reason is
-    # the caller's row-scanned sentence, so button tooltip and panel line are the SAME words.
-    if _hunt_trip_impossible(forecast):
-        button.text = SEND_HUNT_IMPOSSIBLE_BUTTON
+    # NO SURPLUS — the one blocked case. Disabled, and it says WHY plus what to do instead (the button is
+    # the last thing the player looks at before clicking, so the reason belongs on it). Same words as the
+    # panel line and the targeting refusal, from the one helper.
+    if _hunt_trip_no_surplus(forecast):
+        button.text = SEND_HUNT_NO_SURPLUS_BUTTON
         button.disabled = true
         button.tooltip_text = reason
         HudStyle.apply_button(button, "ghost")
         return
-    var warned := bool(forecast.get("available", false)) \
-        and (not fills or not bool(forecast.get("viable", true)))
-    if not warned:
-        button.text = SEND_HUNTING_EXPEDITION_BUTTON
-        HudStyle.apply_button(button, "primary")
-        return
     if bool(forecast.get("denial", false)):
         # Eradicate: no food comes home, but that IS the mission — state the deal, don't cry failure.
-        # Explicitly NOT blocked: it never fills by design, and blocking it would ban denial outright.
         button.text = SEND_HUNT_DENIAL_BUTTON
-    else:
-        # The only warned non-denial case left is a trip that fills, just slowly. A warned trip
-        # that does NOT fill is the impossible case, and that already returned disabled above.
+        HudStyle.apply_button(button, "armed")
+        return
+    if bool(forecast.get("long_raid", false)):
+        button.text = SEND_HUNT_LONG_RAID_BUTTON
+        HudStyle.apply_button(button, "armed")
+        return
+    if bool(forecast.get("slow", false)):
         button.text = SEND_HUNT_ANYWAY_TURNS_FORMAT % int(forecast.get("turns", 0))
-    HudStyle.apply_button(button, "armed")
+        HudStyle.apply_button(button, "armed")
+        return
+    # A brisk, delivering raid (or no forecast at all — older server): the plain primary send.
+    button.text = SEND_HUNTING_EXPEDITION_BUTTON
+    HudStyle.apply_button(button, "primary")
 
-## The trip provably cannot fill the party's packs: the sim's estimate for THIS (policy, party size)
-## says it delivers food but never fills within the forecast horizon. The single definition of the
-## blocked case — both entry points (panel button + targeting click) gate on it.
-func _hunt_trip_impossible(forecast: Dictionary) -> bool:
-    return bool(forecast.get("available", false)) and bool(forecast.get("impossible", false))
+## The raid returns empty: the sim's estimate for THIS (policy, party size) says the herd has no surplus
+## above the policy's floor (`animals_taken == 0`). The single definition of the blocked case — both
+## entry points (panel button + targeting click) gate on it.
+func _hunt_trip_no_surplus(forecast: Dictionary) -> bool:
+    return bool(forecast.get("available", false)) and bool(forecast.get("empty", false))
 
 ## The `hunt_trip_estimates` key the sim exports a (policy, party size) estimate under. One definition —
-## the lookup and the row scan must agree on the key format or the scan silently finds nothing.
+## the lookup and the plateau scan must agree on the key format or the scan silently finds nothing.
 func _hunt_estimate_key(policy: String, workers: int) -> String:
     return "%s%s%d" % [policy, HUNT_ESTIMATE_KEY_SEPARATOR, workers]
 
-## Scan the CURRENT policy's ROW of the sim's per-(policy, party-size) estimate table and pick the party
-## size to RECOMMEND when the dialed-in one can't fill. Returns `{workers, turns, viable}` — or `{}` when
-## the whole row is zeros (NO size fills at all). A table SCAN, not arithmetic: the client's zero-math
-## property for expeditions is preserved exactly (see `_hunt_trip_forecast`).
-##
-## The objective is the LARGEST party that fills AND IS VIABLE (`turns <= expedition_viability_warn_turns`,
-## the band's own exported lever). Largest-that-*fills* alone is WRONG — on Red Deer + Surplus it names 7
-## (49 turns), a trip this very UI flags "too slow to be worth sending" the moment you dial it: we'd be
-## recommending an option we elsewhere warn against. The party of 5 fills the same packs in 5 turns. Among
-## trips the UI considers worth making, the biggest party hauls the most food — that is the only coherent
-## recommendation. It is NOT "one smaller" either: the row is not monotonic (Surplus fills at 1–5 in 5
-## turns, 6 in 23, 7 in 49, never at 8), so only the row itself knows the answer.
-##
-## Fallback when NOTHING on the row is viable (Rabbit + Surplus: only a lone hunter fills, in 23 turns):
-## still name the best available, but pick the FASTEST-filling size, not the largest — with no viable
-## option left, time dominates haul — and the caller words it as the marginal trip it is (`viable: false`).
-##
-## Capped at what this band could actually field (`_expedition_party_cap`): naming a party of 7 to a band
-## with 4 idle workers would be advice it cannot take.
-## Denial rows (`delivers_food == false` — Eradicate) never "fill" BY DESIGN and are skipped: an Eradicate
-## trip is not impossible, so this scan must never speak for it.
-func _recommended_party(band: Dictionary, herd: Dictionary, policy: String) -> Dictionary:
+## The ONE sentence spoken about a no-surplus raid — shared verbatim by the herd panel (reason line +
+## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
+## never disagree. Under the raid model party size cannot fix it (surplus is a property of the HERD, not
+## the party), so — unlike the retired row scan — there is no alternative size to name.
+func _hunt_no_surplus_reason(herd: Dictionary) -> String:
+    return SEND_HUNT_NO_SURPLUS_REASON % _herd_display_name(herd)
+
+## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
+## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the current
+## policy's row for the smallest size at which delivered food stops rising and cap there — the raid twin of
+## `_forecast_worker_cap`, and it mirrors its `{cap, note}` shape + "max N useful" note so the expedition
+## and local pickers explain a dead `+` the same way. Scans DELIVERED FOOD (not the whole-animal
+## `animals_taken`, which sits at 1 across every small-party size on big game — its leading-zeros plateau
+## fooled the old scan into capping at 1; with partials delivered food rises smoothly, so the cap tracks
+## the true bind). A table SCAN, zero client arithmetic. Returns the full `assignable` (no note) when the
+## row carries no data or never plateaus within the band's reach.
+func _expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: String, assignable: int) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if not (estimates_variant is Dictionary):
-        return {}
-    var cap := _expedition_party_cap(band)
-    # A warn threshold of 0 means the server sent none — judge nothing, so every filling size counts as
-    # viable (mirrors `_hunt_trip_forecast`, which reports the turns and withholds the verdict).
-    var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
-    var best_viable := {}
-    var fastest := {}
-    for workers in range(1, cap + 1):
-        var entry_variant: Variant = (estimates_variant as Dictionary).get(
-            _hunt_estimate_key(policy, workers), null)
-        if not (entry_variant is Dictionary):
+        return {"cap": assignable, "note": ""}
+    var estimates := estimates_variant as Dictionary
+    # Scan the herd's FULL exported absorption range — every party size the estimate table carries for
+    # this policy, NOT the idle/party-limited cap — so `plateau` is the herd's true max-useful party
+    # even when it exceeds what we can field right now. The returned cap still clamps to `assignable`
+    # below, so this widens ONLY the explanatory note (it lets a labor-bound stepper name the ceiling
+    # it's working toward, "N of M useful"), never the cap: within reach the loop breaks exactly as before.
+    var scan_cap := 1
+    for key in estimates:
+        var parts := String(key).split(":")
+        if parts.size() == 2 and String(parts[0]) == policy:
+            scan_cap = maxi(scan_cap, int(parts[1]))
+    var prev_delivered := -1.0
+    var plateau := 0
+    for workers in range(1, scan_cap + 1):
+        var cell_variant: Variant = estimates.get(_hunt_estimate_key(policy, workers), null)
+        if not (cell_variant is Dictionary):
             continue
-        var entry := entry_variant as Dictionary
-        if not bool(entry.get("delivers_food", false)):
-            continue
-        var turns := int(entry.get("turns_to_fill", 0))
-        if turns <= 0:
-            continue
-        if warn_turns <= 0 or turns <= warn_turns:
-            # Keep scanning: we want the LARGEST viable size, so the last one that qualifies wins.
-            best_viable = {"workers": workers, "turns": turns, "viable": true}
-        # Strictly faster only, so a tie keeps the SMALLEST fast size... but a tie on turns means the
-        # bigger party hauls more in the same time, so prefer the larger: `<=`.
-        if fastest.is_empty() or turns <= int(fastest.get("turns", 0)):
-            fastest = {"workers": workers, "turns": turns, "viable": false}
-    return best_viable if not best_viable.is_empty() else fastest
+        var delivered := float((cell_variant as Dictionary).get("delivered_food", 0.0))
+        if delivered > prev_delivered:
+            prev_delivered = delivered
+            plateau = workers   # the payload is still rising — this size is useful
+        else:
+            break               # the payload stopped rising — the previous size is the plateau
+    if plateau <= 0:
+        return {"cap": assignable, "note": ""}
+    var useful: int = mini(plateau, assignable)
+    if useful >= assignable:
+        # Labor-bound below the plateau: the party capped at what you can field, not at usefulness.
+        # `assignable = min(idle, max_party_size)`, so distinguish which constraint binds — freeing
+        # idle workers only helps when idle is the binder; if the party-size cap binds, say so.
+        var labor_note := ""
+        if plateau > assignable:
+            var idle := int(band.get("idle_workers", 0))
+            var max_party := int(band.get("max_expedition_party_size", 0))
+            if max_party > 0 and idle >= max_party:
+                labor_note = PARTY_SIZE_BOUND_NOTE_FORMAT % [assignable, plateau]
+            else:
+                labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
+        return {"cap": assignable, "note": labor_note}
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## The ONE sentence spoken about a blocked trip — shared verbatim by the herd panel (reason line +
-## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
-## never disagree. Says something TRUE and SPECIFIC by scanning the policy's row (above) instead of
-## dispensing generic "try a smaller party" advice, which is wrong whenever the row is all zeros.
-func _hunt_impossible_reason(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    var herd_name := _herd_display_name(herd)
-    var alternative := _recommended_party(band, herd, policy)
-    if alternative.is_empty():
-        return SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON % herd_name
-    var alt_workers := int(alternative.get("workers", 0))
-    var alt_turns := int(alternative.get("turns", 0))
-    # Nothing on the row is viable: name the best there is, but don't dress a trip the UI would flag
-    # "too slow to be worth sending" up as a fix.
-    if not bool(alternative.get("viable", false)):
-        return SEND_HUNT_IMPOSSIBLE_SLOW_REASON % [herd_name, workers, alt_workers, alt_turns]
-    return SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON % [herd_name, workers, alt_workers, alt_turns]
+## Each extractive policy's MAX obtainable food/turn — the raid twin of the local hunt's per-policy cap,
+## so all three pickers (forage / local hunt / expedition) wear the same "up to X/turn" button metric and
+## the four read ASCENDING (Sustain < Surplus < Market < Eradicate; deeper floors free more surplus). The
+## metric is WORKER-INDEPENDENT: the max over every party size of `delivered_food / trip_turns`, where
+## `trip_turns = turns_to_fill + round-trip travel` (a far herd's best rate is correctly lower). A bigger
+## party delivers more food in fewer turns, so the rate rises then plateaus — the max is the honest cap.
+## Eradicate is a DENIAL rung (`delivers_food == false`, `delivered_food == 0`): it never qualifies, so it
+## carries no rate and falls back to its name + skull glyph — its existing denial treatment. A table SCAN,
+## zero client arithmetic. Empty when the herd carries no estimates (older snapshot / non-huntable).
+func _expedition_policy_takes(band: Dictionary, herd: Dictionary) -> Dictionary:
+    var takes := {}
+    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
+    if not (estimates_variant is Dictionary):
+        return takes
+    var estimates := estimates_variant as Dictionary
+    var travel := _round_trip_travel_turns(band, herd)
+    for policy in LABOR_HUNT_POLICIES:
+        var best_rate := -1.0
+        for key in estimates:
+            var parts := String(key).split(HUNT_ESTIMATE_KEY_SEPARATOR)
+            if parts.size() != 2 or String(parts[0]) != String(policy):
+                continue
+            var cell: Dictionary = estimates[key]
+            if not bool(cell.get("delivers_food", false)):
+                continue
+            var delivered := float(cell.get("delivered_food", 0.0))
+            var trip_turns := int(cell.get("turns_to_fill", 0)) + travel
+            if delivered <= 0.0 or trip_turns <= 0:
+                continue
+            best_rate = maxf(best_rate, delivered / float(trip_turns))
+        if best_rate >= 0.0:
+            takes[String(policy)] = _extractive_take(best_rate)
+    return takes
 
-## Tooltip for the hunt-expedition PARTY stepper when the very next size up is impossible — the stepper is
-## a real decision (a bigger party can break a working trip), and this is where that bites. "" when
-## stepping up is fine (or impossible to do), so the tooltip only exists when it has something to say.
-func _hunt_step_up_tooltip(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    var next_workers := workers + WORKER_STEP
-    if workers <= 0 or next_workers > _expedition_party_cap(band):
-        return ""
-    var next_forecast := _hunt_trip_forecast(band, herd, policy, next_workers)
-    if not _hunt_trip_impossible(next_forecast):
-        return ""
-    return SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP % [next_workers, _herd_display_name(herd)]
+## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared
+## `_forecast_inputs` (food/turn at output 1.0, like the hunt band ceiling), for the FORAGE picker's
+## ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three pickers wear the
+## same "+X /turn" button metric. Empty entries (dead-season patch / older snapshot) are skipped.
+func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
+    var takes := {}
+    for policy in LABOR_HUNT_POLICIES:
+        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
+        if not bool(forecast["known"]):
+            continue
+        takes[String(policy)] = _extractive_take(float(forecast["ceiling"]))
+    # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
+    # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
+    # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
+    # the picker already explains the lock. Absent/zero payoff → no entry, so the button stays bare.
+    for policy in [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]:
+        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+        if not bool(forecast["known"]) or not bool(forecast["investment"]):
+            continue
+        var payoff := float(forecast["payoff"])
+        if payoff > 0.0:
+            takes[policy] = _payoff_take(payoff)
+    return takes
 
 ## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
 ## Sized like the hint lines it sits among, but BBCode-capable so the forecast keeps its state colors.
@@ -3365,42 +4207,117 @@ func _forecast_label(bbcode: String) -> RichTextLabel:
 func _progress_percent(progress: float) -> int:
     return int(round(clampf(progress, 0.0, 1.0) * PROGRESS_PERCENT_SCALE))
 
-## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → Array[String] of
-## reasons (each already carrying its own remedy). Empty when every rung is available. Mirrors the
-## sim's `assign_labor` validation: the faction must have fully learned Cultivation, and only a
-## Thriving patch can be prepared.
+## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed
+## policy → Array[String] of reasons (each already carrying its own remedy). Empty when every rung is
+## available. Mirrors the sim's `assign_labor` validation.
+##
+## The two rungs gate on DIFFERENT things, which is the ladder made legible:
+##   • Cultivate — Cultivation knowledge + a Thriving patch (you improve what is already there).
+##   • Sow — Seed Selection knowledge + ground that will take seed. It needs NO prior patch and no
+##     Thriving gate (seed travels, and sown ground starts at the reseed floor — i.e. Collapsing — so
+##     a health gate would forbid the very case the rung exists for). What it needs instead is the
+##     LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
+##     reason on either web that the player answers by MOVING rather than by working.
 func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
-    var reasons: Array[String] = []
+    var gates := {}
+    var cultivate_reasons: Array[String] = []
     var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
     if cultivation < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
+        cultivate_reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
             _progress_percent(cultivation), sustain_icon])
     var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
     if phase != ECOLOGY_PHASE_THRIVING:
         var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
-        reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
-    if reasons.is_empty():
-        return {}
-    return {LABOR_POLICY_CULTIVATE: reasons}
+        cultivate_reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
+    # A finished patch retires Cultivate outright: the build is DONE (Sustain harvests it, and Sow is the
+    # next rung if unlocked). This SUPERSEDES the prep prerequisites — a tended patch's Thriving/knowledge
+    # gates are moot — so it replaces the reason list rather than piling on.
+    if bool(tile_info.get("is_cultivated", false)):
+        cultivate_reasons.clear()
+        cultivate_reasons.append(GATE_REASON_ALREADY_TENDED_FORMAT % sustain_icon)
+    if not cultivate_reasons.is_empty():
+        gates[LABOR_POLICY_CULTIVATE] = cultivate_reasons
+    var sow_reasons: Array[String] = []
+    var seed_selection := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_SEED_SELECTION)
+    if seed_selection < KNOWLEDGE_COMPLETE:
+        sow_reasons.append(GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
+            _progress_percent(seed_selection), sustain_icon])
+    var refusal := _sow_site_refusal_reason(tile_info)
+    if refusal != "":
+        sow_reasons.append(refusal)
+    # A finished Field retires Sow, same as a finished patch retires Cultivate.
+    if bool(tile_info.get("patch_is_field", false)):
+        sow_reasons.clear()
+        sow_reasons.append(GATE_REASON_ALREADY_FIELD_FORMAT % sustain_icon)
+    if not sow_reasons.is_empty():
+        gates[LABOR_POLICY_SOW] = sow_reasons
+    return gates
 
-## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → Array[String] of reasons.
-## The herd twin of `_forage_policy_gates`: the faction must have fully learned Herding, and the herd
-## must be fully domesticated before a pen can be built for it.
+## WHY this ground will not take seed, in the manual's voice — "" when it will. Reads the sim's
+## `patch_sow_site_refusal` verdict; the client never re-derives it (it has neither the per-biome
+## capacity table nor the hydrology). An unknown key still refuses: the sim gates the command on the
+## same seam, so offering the button anyway would only produce a failure the player cannot read.
+func _sow_site_refusal_reason(tile_info: Dictionary) -> String:
+    var key := String(tile_info.get("patch_sow_site_refusal", "")).strip_edges()
+    if key == "":
+        return ""
+    return String(SOW_REFUSAL_REASONS.get(key, SOW_REFUSAL_FALLBACK))
+
+## Unmet prerequisites for the HUNT investment rungs (Tame = rung 2, Corral = rung 3), keyed policy →
+## Array[String] of reasons. The herd twin of `_forage_policy_gates`.
+##
+## The §4.3 GATE RESHUFFLE is what this function encodes: ONE knowledge per transition. **Herding
+## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
+## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
+##
+## Deliberately NOT gated: the herd being Thriving. Taming a herd whose phase swings under hunting
+## would be un-actionable, so the sim just PAUSES the meter instead — see `_tame_stalled_hint`, which
+## is how the player is told rather than left to guess.
+##
+## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
+## ANOTHER faction reads as available here while the sim rejects the assign.
 func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
     var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
-    var reasons: Array[String] = []
+    var gates := {}
+    var domestication := float(herd.get("domestication", 0.0))
+    var tame_reasons: Array[String] = []
     var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     if herding < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
+        tame_reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
             _progress_percent(herding), sustain_icon])
-    var domestication := float(herd.get("domestication", 0.0))
+    if not tame_reasons.is_empty():
+        gates[LABOR_POLICY_TAME] = tame_reasons
+    var corral_reasons: Array[String] = []
+    var penning := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_PENNING)
+    if penning < KNOWLEDGE_COMPLETE:
+        corral_reasons.append(GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
+            _progress_percent(penning), sustain_icon])
     if domestication < DOMESTICATION_COMPLETE:
-        reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-            _progress_percent(domestication), sustain_icon])
-    if reasons.is_empty():
-        return {}
-    return {LABOR_POLICY_CORRAL: reasons}
+        corral_reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
+            _progress_percent(domestication), FoodIcons.for_policy(LABOR_POLICY_TAME)])
+    if not corral_reasons.is_empty():
+        gates[LABOR_POLICY_CORRAL] = corral_reasons
+    return gates
+
+## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
+## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`_hunt_policy_gates`): a
+## herd's phase swings as it is hunted, so refusing the verb would be un-actionable churn. The sim
+## instead just PAUSES the meter — progress is neither lost nor switched — and resumes when the herd
+## recovers.
+##
+## Saying nothing here would recreate the exact failure this whole arc exists to kill: a hidden rule
+## the player can only learn by being told. So whenever Tame is the composed policy on a herd that
+## is not Thriving, state the pause, name the cause (its live phase), and name the remedy — which is
+## the opposite of "work harder" (ease off and let it recover), the same shape as the patch-ecology
+## gate's advice. Returns "" when Tame is not selected or the herd is Thriving (nothing to explain).
+func _tame_stalled_hint(herd: Dictionary) -> String:
+    if _hunt_assign_policy != LABOR_POLICY_TAME:
+        return ""
+    var phase := String(herd.get("ecology_phase", "")).strip_edges().to_lower()
+    if phase == "" or phase == ECOLOGY_PHASE_THRIVING:
+        return ""
+    return TAME_STALLED_HINT_FORMAT % phase.capitalize()
 
 ## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
 ## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
@@ -3418,28 +4335,52 @@ func _build_policy_picker(
     on_pick: Callable,
     selected: String = "",
     options: Array = LABOR_HUNT_POLICIES,
-    gates: Dictionary = {}) -> VBoxContainer:
+    gates: Dictionary = {},
+    takes: Dictionary = {}) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
+    # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
+    # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
+    var grid := GridContainer.new()
+    grid.columns = maxi(1, options.size()) if options.size() <= POLICY_PICKER_MAX_SINGLE_ROW else POLICY_PICKER_COLUMNS
+    grid.add_theme_constant_override("h_separation", WORKER_STEPPER_SEPARATION)
+    grid.add_theme_constant_override("v_separation", WORKER_STEPPER_SEPARATION)
     for policy in options:
         var policy_key := String(policy)
         var icon := FoodIcons.for_policy(policy_key)
         var reasons := _gate_reasons(gates, policy_key)
         var btn := Button.new()
-        # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
-        # append, so a policy reads identically on the picker and on the worked tile/herd.
-        btn.text = "%s%s" % [_source_icon_prefix(icon), policy_key.capitalize()]
+        # ONE-LINE FACE: the FoodIcons policy glyph (the same icon the map's yield labels append, so a
+        # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
+        # metric, NO name — so the rungs stay compact enough to wrap 3-per-row (see the grid above)
+        # without overflow. The name + full metric live in the
+        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Market < Eradicate). A rung
+        # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
+        # is never a lone glyph.
+        var take: Variant = takes.get(policy_key, null)
+        var compact := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
+        var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
+        var face := compact if compact != "" else policy_key.capitalize()
+        btn.text = "%s%s" % [_source_icon_prefix(icon), face]
+        # EXPAND_FILL so the buttons sharing a grid row are equal width and fill the panel content width.
+        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
+        # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
+        # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
+        # it is locked.
+        var name_line := POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
+            if full != "" else policy_key.capitalize()
+        var tooltip_lines: Array[String] = [name_line]
         btn.disabled = not reasons.is_empty()
         if btn.disabled:
-            btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(reasons)
+            tooltip_lines.append_array(reasons)
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
-        row.add_child(btn)
-    block.add_child(row)
+        btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
+        grid.add_child(btn)
+    block.add_child(grid)
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
     for policy in options:
         var policy_key := String(policy)
@@ -3520,9 +4461,15 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
             or not _gate_reasons(forage_gates, _forage_assign_policy).is_empty():
         _forage_assign_policy = DEFAULT_HUNT_POLICY
+    # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
+    # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
+    # like Corral — their dip→payoff is stated by the forecast row below).
+    var forage_takes := _forage_policy_takes(tile_info)
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
-        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates))
+        # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
+        _forage_assign_autofill = true
+        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
@@ -3532,6 +4479,11 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
+    # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
+    # the policy (clamped to available below). Only ever set by a policy click, never by a −/+ tick.
+    if _forage_assign_autofill:
+        _forage_assign_count = cap
+        _forage_assign_autofill = false
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
         "Foragers", _forage_assign_count, _forage_assign_count < cap,
@@ -3541,9 +4493,20 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var cap_note := String(capped["note"])
     if cap_note != "":
         forage_assign_controls.add_child(_alloc_hint_label(cap_note))
-    if bool(forecast["known"]):
-        forage_assign_controls.add_child(
-            _forecast_yield_row(forecast, _forage_assign_count, band))
+    # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
+    # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
+    # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
+    # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
+    # warning an Eradicate/Market forage used to render silently.
+    if _forage_assign_policy in INVESTMENT_POLICIES:
+        if bool(forecast["known"]):
+            forage_assign_controls.add_child(
+                _forecast_yield_row(forecast, _forage_assign_count, band))
+    else:
+        var yield_line := _local_forage_preview_bbcode(
+            band, tile_info, _forage_assign_policy, _forage_assign_count)
+        if yield_line != "":
+            forage_assign_controls.add_child(_forecast_label(yield_line))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
@@ -3662,20 +4625,19 @@ func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
     var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
     var workers := int(_pending_send_hunt_expedition.get("party_workers", 0))
     var policy := String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY))
-    # The SAME block as the panel button, at the other entry point: a trip that provably can't fill is
-    # not dispatchable here either. Stay in targeting and SAY WHY (never swallow the click silently),
-    # exactly like the "no huntable herd here" nudge above — the player can pick another herd or cancel.
-    # The refusal is the SAME row-scanned sentence the panel shows, from the one helper — the two entry
-    # points cannot drift into contradicting each other about which party sizes work.
-    if _hunt_trip_impossible(_hunt_trip_forecast(band, herd, policy, workers)):
-        _note_command_feed("Hunt expedition",
-            _hunt_impossible_reason(band, herd, policy, workers))
+    # The SAME block as the panel button, at the other entry point: a raid that would return empty (no
+    # surplus above the policy's floor) is not dispatchable here either. Stay in targeting and SAY WHY
+    # (never swallow the click silently), exactly like the "no huntable herd here" nudge above — the
+    # player can pick another herd or cancel. Same sentence the panel shows, from the one helper.
+    if _hunt_trip_no_surplus(_hunt_trip_forecast(band, herd, policy, workers)):
+        _note_command_feed("Hunt expedition", _hunt_no_surplus_reason(herd))
         return
     emit_signal("send_hunt_expedition_requested", {
         "faction": int(band.get("faction", PLAYER_FACTION_ID)),
         "band": int(band.get("entity", -1)),
         "party_workers": int(_pending_send_hunt_expedition.get("party_workers", 0)),
         "fauna_id": fauna_id,
+        "fauna_label": _herd_display_name(herd),
         "policy": String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY)),
     })
     _pending_send_hunt_expedition = {}
@@ -4144,6 +5106,18 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         var cultivation_progress := float(tile_info["cultivation_progress"])
         if cultivation_progress > 0.0:
             lines.append("Cultivation: %s" % _cultivation_label(cultivation_progress, false))
+    # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
+    # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
+    # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
+    # half of the two-meter split (§4.1) — the FACTION's Seed Selection knowledge is NOT shown here;
+    # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
+    # ground. Both rows are the source's own, and both decay if the patch is abandoned.
+    if bool(tile_info.get("patch_is_field", false)):
+        lines.append("%s: %s" % [FIELD_ROW, _field_label(1.0, true)])
+    elif tile_info.has("patch_field_progress"):
+        var field_progress := float(tile_info["patch_field_progress"])
+        if field_progress > 0.0:
+            lines.append("%s: %s" % [FIELD_ROW, _field_label(field_progress, false)])
     return lines
 
 # ---- Occupants roster ------------------------------------------------------
@@ -4216,12 +5190,10 @@ func _build_herd_row(herd: Dictionary) -> Button:
     var glyph := FoodIcons.for_herd(label)
     var name_text := String(herd.get("species", label))
     row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
-    # The fauna id as a DIM meta suffix (the roster's existing muted-ink convention, same label the
-    # size class uses). It appears nowhere else in the UI and it is the handle the command feed
-    # names, so it must survive the `Herd: Red Deer (game_deer_07)` row's removal — as secondary
-    # text beside the name, not as a detail row restating it.
-    if herd_id != "":
-        row.add_child(_roster_meta_label(herd_id))
+    # The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
+    # code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
+    # `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
+    # shows the two things a player can act on — the species and its size class.
     var size_class := String(herd.get("size_class", "")).strip_edges()
     if size_class != "":
         row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))
@@ -5171,6 +6143,21 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:
             lines.append("Husbandry: %s" % _husbandry_label(domestication))
+        # Staffing deficit — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
+        # A managed herd needs `herders_needed` herders every turn to hold its tameness; understaffed,
+        # its domestication decays, the herd slips back to WILD and stops earning Penning. Surface it
+        # so the player has a signal to staff more herders. Shown only for a managed herd
+        # (`herders_needed > 0`); `herded_fraction` defaults to FULLY_HERDED, so an unmanaged herd never
+        # trips it. Fully staffed reads a calm "N / N"; under-herded an amber "A / N — under-herded".
+        var herders_needed := int(herd_data.get("herders_needed", 0))
+        if herders_needed > 0:
+            var herded_fraction := float(herd_data.get("herded_fraction", FULLY_HERDED))
+            var herders_assigned := int(round(herded_fraction * herders_needed))
+            lines.append("%s: %s" % [HERDERS_ROW, _herders_label(herders_assigned, herders_needed, herded_fraction)])
+            # Make the CONSEQUENCE explicit when the herd is slipping AND has real tameness to lose:
+            # a muted one-liner naming why Penning has stalled and the single lever that fixes it.
+            if herded_fraction < FULLY_HERDED and domestication > 0.0:
+                lines.append(HERDERS_SLIPPING_FORMAT % herders_needed)
         # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
         # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
         # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
@@ -5269,18 +6256,53 @@ func _husbandry_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
+## The "Herders" row value: a calm "N / N" when fully staffed, an amber "A / N — under-herded" when
+## the herd is decaying for lack of herders. Fully staffed uses [needed, needed] (assigned == needed
+## at frac 1.0); under-herded uses the rounded assigned count. Tinted via `_herders_value_hex`.
+func _herders_label(assigned: int, needed: int, herded_fraction: float) -> String:
+    if herded_fraction >= FULLY_HERDED:
+        return HERDERS_STAFFED_FORMAT % [needed, needed]
+    return HERDERS_UNDER_FORMAT % [assigned, needed]
+
+## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded and its tameness is
+## slipping, normal ink when fully staffed. Matched on the label from `_herders_label`, mirroring
+## `_corral_value_hex` / the overgrazing warning's shared WARN tint.
+func _herders_value_hex(value: String) -> String:
+    if value.to_lower().contains("under-herded"):
+        return HudStyle.WARN_HEX
+    return HudStyle.INK_HEX
+
 ## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop
 ## glyph; an in-progress patch shows the percentage. Mirrors `_husbandry_label`;
 ## `_format_detail_bbcode` tints a Tended value via `_cultivation_value_hex`.
 func _cultivation_label(progress: float, cultivated: bool) -> String:
     if cultivated or progress >= 1.0:
         return "🌾 Tended Patch"
-    return "%d%%" % int(round(progress * 100.0))
+    # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
+    # percentage buried in the tile card was easy to miss and broke parity with the animal side.
+    return "%s %d%%" % [CULTIVATION_PREPARING_LABEL, int(round(progress * 100.0))]
 
 ## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink
 ## while it's still being cultivated. Matched on the label from `_cultivation_label`.
 func _cultivation_value_hex(value: String) -> String:
     if value.to_lower().contains("tended"):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing label for the plant RUNG-3 meter — the patch twin of `_corral_label` and the rung
+## above `_cultivation_label`. While the crop is going in it reads as a BUILD ("Sowing 40%"), using
+## the same building-verb convention as the pen's "Building 40%" / the fence's "Fencing 60%"; once
+## complete it is a **Field**, badged with its own glyph so it reads as a DIFFERENT THING from a
+## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
+func _field_label(progress: float, is_field: bool) -> String:
+    if is_field or progress >= FIELD_PROGRESS_COMPLETE:
+        return "%s %s" % [FoodIcons.for_policy(LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
+    return "%s %d%%" % [FIELD_SOWING_LABEL, _progress_percent(progress)]
+
+## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
+## is still going in. Matched on the label from `_field_label`, mirroring `_cultivation_value_hex`.
+func _field_value_hex(value: String) -> String:
+    if value.to_lower().contains(FIELD_BADGE_LABEL.to_lower()):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
@@ -5405,8 +6427,16 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
+            elif String(kv[0]) == HERDERS_ROW:
+                # A managed herd's staffing: amber when under-herded (tameness slipping), ink when full.
+                value_hex = _herders_value_hex(String(kv[1]))
             elif String(kv[0]) == "Cultivation":
                 value_hex = _cultivation_value_hex(String(kv[1]))
+            elif String(kv[0]) == FIELD_ROW:
+                # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal
+                # once complete). Same shape as Cultivation's; kept its own case because a Field is a
+                # different rung with its own badge word, not a Tended Patch at a higher percentage.
+                value_hex = _field_value_hex(String(kv[1]))
             elif String(kv[0]) == "Corral":
                 value_hex = _corral_value_hex(String(kv[1]))
             elif String(kv[0]) == PEN_FEED_ROW:

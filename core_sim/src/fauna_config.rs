@@ -18,6 +18,7 @@ use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng};
 use serde::Deserialize;
 use sim_runtime::TerrainType;
+
 use thiserror::Error;
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
@@ -58,7 +59,7 @@ impl SizeClass {
 /// §4a). The ladder is a *sequence* (wild → pastoral → pen), so a species' reach is a single ceiling,
 /// not two independent flags — which makes the incoherent "pennable but not tameable" state
 /// unrepresentable (no `validate()` combination guard needed). `Wild` is hunt-only (domestication never
-/// accrues, `domesticate`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
+/// accrues, `tame`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
 /// (`corral`/`extend_pen` reject); `Pen` is the full ladder. **Default `Pen`** preserves the pre-δ
 /// universal-full-ladder behaviour for any untagged/future species.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -118,6 +119,25 @@ pub struct SpeciesDef {
     pub route_len: [u32; 2],
     /// Inclusive `[min, max]` group biomass.
     pub biomass: [f32; 2],
+    /// **Biomass of ONE animal** — the quantum a hunt take is rounded down to (intensification
+    /// ladder slice 8). A herd's animal count is `biomass / body_mass`, **derived, never stored**:
+    /// biomass stays the authoritative stock and the count is a reading of it.
+    ///
+    /// **This is what makes a herd a herd and not a fluid.** Every hunt take is
+    /// [`crate::fauna::quantise_animal_take`]: you kill `floor(escapement / body_mass)` whole
+    /// animals, and a party that cannot carry a whole one still takes it and **wastes** the rest.
+    /// Two consequences fall straight out of the ratio against the herd's MSY (`r × K / 4`):
+    /// - **Rhythm** — `body_mass / MSY` turns per animal at the operating point. Small game
+    ///   (fowl 1 / rabbit 2) is a near-continuous trickle; a mammoth is one kill every ~7 turns and
+    ///   then you eat for a week. When the herd cannot yet spare a whole animal the hunt **pauses**
+    ///   and the herd regrows — the discretised form of constant escapement.
+    /// - **Party size = how much of the kill you keep** — `hunt.per_worker_biomass_capacity` (40)
+    ///   against this: one hunter keeps 80% of a boar, 33% of a steppe runner, 5% of a mammoth.
+    ///   ~20 hunters are needed to bring a whole mammoth home.
+    ///
+    /// **Playtest dials.** Validated finite & `> 0` — at `0` a herd would hold infinitely many
+    /// animals and `floor(x / 0)` would take the whole stock in one turn.
+    pub body_mass: f32,
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
@@ -153,12 +173,78 @@ pub struct SpeciesDef {
     /// when present.
     #[serde(default)]
     pub regrowth_rate: Option<f32>,
+    /// **How fast this species tames, as a multiple of the `animal:pastoral` rung's own pace**
+    /// (intensification ladder slice 3c). The rung owns the *mechanic*; the species scales it —
+    /// exactly the split [`SpeciesDef::regrowth_rate`] already uses against `pastoral_gain`/`pen_gain`.
+    /// A single dial on the rung would tame a rabbit and a Steppe Runner in the same 25 turns; taming
+    /// a small, quick, forgiving animal should be fast, and binding a large migratory herd should be
+    /// generational. Roster: rabbit/fowl/crag_goat `1.0` (25 turns) · boar `0.8` (~31) · aurochs `0.5`
+    /// (50) · steppe_runner/marsh_grazer `0.2` (125); a `wild`-ceiling species (deer, mammoth) never
+    /// tames, so it carries none.
+    ///
+    /// **It is a TIMESCALE — it scales the rung's `decay_per_turn` as well as its `progress_per_turn`**
+    /// (`RungDef::build_accrual` / `build_decay`, the one seam that honors it). Scaling the speed alone
+    /// would put a Steppe Runner's `0.04 × 0.2 = 0.008`/turn *below* the rung's `0.01`/turn decay —
+    /// literally untameable, and a violation of the ladder's "taming must out-run its decay" bound.
+    /// Scaling both keeps the ratio: **slow to tame, slow to forget**.
+    ///
+    /// Defaults to `1.0` (the rung's own pace) when omitted, so an untagged or future species keeps
+    /// today's behaviour. **Playtest dial.** Validated finite & `> 0` (at `0`/negative the species
+    /// would silently never tame, or un-tame while worked).
+    #[serde(default = "default_taming_rate")]
+    pub taming_rate: f32,
+    /// **How many ANIMALS one herder can mind** — the standing maintenance a managed (pastoral or
+    /// penned) herd demands every turn: `herders_needed = ceil((biomass / body_mass) /
+    /// animals_per_herder)` ([`crate::fauna::herders_needed`]). *Just because you aren't killing an
+    /// animal doesn't mean you aren't tending them, making sure they don't run off, repairing fences.*
+    /// Before this a pen of 2 and a pen of 200 needed the same single keeper; only the **feed** scaled.
+    ///
+    /// # Herding is HEADS, not tonnes — the denominator is load-bearing
+    ///
+    /// A shepherd minds ~300 sheep; a cowherd ~80 cattle. You watch **individuals** — chase strays,
+    /// check each animal — and a heavier beast is not proportionally more work. An earlier cut of this
+    /// dial was `biomass_per_herder` (one global "biomass one herder minds"), which is the same claim
+    /// as *one herder per 100 fowl but one herder per 2 boar*. It also invented a **45-herder steppe
+    /// megaherd** that was a pure artifact of the unit: 4,560 biomass of Steppe Runner is only **38
+    /// animals**, i.e. ~3 herders. Per-species, per-**animal**, is the only unit that reads true.
+    ///
+    /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_rate`] /
+    /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Roster:
+    /// fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12. Deer and
+    /// mammoth omit it — a `wild` [`HusbandryCeiling`] is never herded at all.
+    ///
+    /// Resolved **live** by display name ([`FaunaConfig::animals_per_herder_for`]), never cached on the
+    /// `Herd` — the `taming_rate` path, so retuning reaches herds already on the map (and it needs no
+    /// snapshot field). Defaults to [`DEFAULT_ANIMALS_PER_HERDER`] when omitted. **Playtest dial.**
+    /// Validated finite & `> 0` (at `0` any herd would need infinitely many herders and could never be
+    /// fully staffed).
+    #[serde(default = "default_animals_per_herder")]
+    pub animals_per_herder: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ) — `wild` | `pastoral` |
     /// `pen`. Cached onto `Herd` at spawn (mirroring `fodder_per_biomass` / `regrowth_rate`) and gates
-    /// domestication accrual + the `domesticate` / `corral` / `extend_pen` paths. Defaults to `pen`
+    /// domestication accrual + the `tame` / `corral` / `extend_pen` paths. Defaults to `pen`
     /// (the full ladder) when omitted. See [`HusbandryCeiling`].
     #[serde(default)]
     pub husbandry_ceiling: HusbandryCeiling,
+    /// **The K (carrying-capacity) multiplier at the mobile-tamed (pastoral) rung** — domestication
+    /// makes the *land* hold more animals, non-linearly by species. Distinct from the global r-gains
+    /// (`husbandry.pastoral_gain` / `pen_gain`), which scale a herd's *breeding rate*: this scales its
+    /// *ceiling*. Without it a species on marginal range (a goat at `K≈24`) stays tiny even tamed while
+    /// a fast wild breeder out-yields it, because taming touched only `r`. Folded into the herd's `K` at
+    /// the one seam that writes it (`fauna::ecological_carrying_capacity`, via [`fauna::herd_density_gain`]),
+    /// so a wild herd's `×1.0` leaves its `K` byte-identical. Resolved **live** by display name
+    /// ([`FaunaConfig::pastoral_density_for`]), never cached on the `Herd` — the `taming_rate` path, so a
+    /// retune reaches herds already on the map. Defaults to [`DEFAULT_HUSBANDRY_DENSITY`] (1.0, neutral).
+    /// **Playtest dial.** Validated finite & `>= 1.0` (a gain below 1 would make domestication *reduce*
+    /// capacity).
+    #[serde(default = "default_husbandry_density")]
+    pub pastoral_density: f32,
+    /// **The K (carrying-capacity) multiplier at the penned rung** — the top of the density ladder, big
+    /// for the prime domesticates (goat/aurochs `5.0`). The pen twin of [`SpeciesDef::pastoral_density`];
+    /// see it for the full rationale. Resolved live ([`FaunaConfig::pen_density_for`]), defaults to
+    /// [`DEFAULT_HUSBANDRY_DENSITY`], validated finite & `>= 1.0`.
+    #[serde(default = "default_husbandry_density")]
+    pub pen_density: f32,
     /// **Plural form** of the species, lowercase, reading naturally mid-sentence ("the *deer* did
     /// not run"). Consumed by The Telling's fauna noun resolvers (`core_sim/src/telling/nouns.rs`).
     ///
@@ -181,6 +267,35 @@ fn default_dwell_turns() -> u32 {
 /// Default migratory loiter window (turns) at an anchor before the next migration leg.
 fn default_loiter_turns() -> [u32; 2] {
     [12, 24]
+}
+
+/// **A species that tames at the `animal:pastoral` rung's own pace** — the neutral timescale, so an
+/// untagged (or future) species behaves exactly as it did before the dial existed. Also what an
+/// unresolvable species name reads as (`FaunaConfig::taming_rate_for`).
+pub const DEFAULT_TAMING_RATE: f32 = 1.0;
+
+fn default_taming_rate() -> f32 {
+    DEFAULT_TAMING_RATE
+}
+
+/// **Animals one herder minds for a species that does not declare a rate** — mid-roster (between the
+/// aurochs' 12 and the fowl's 50), so an untagged or future species lands on a plausible crew size
+/// rather than a free or an impossible one. Also what an unresolvable species name reads as
+/// ([`FaunaConfig::animals_per_herder_for`]).
+pub const DEFAULT_ANIMALS_PER_HERDER: f32 = 25.0;
+
+fn default_animals_per_herder() -> f32 {
+    DEFAULT_ANIMALS_PER_HERDER
+}
+
+/// **A species whose husbandry does not raise its carrying capacity** — the neutral density gain
+/// ([`SpeciesDef::pastoral_density`] / [`SpeciesDef::pen_density`]), so an untagged (or wild) species'
+/// `K` is unchanged (`×1.0`). Also what an unresolvable species name reads as
+/// ([`FaunaConfig::pastoral_density_for`] / [`FaunaConfig::pen_density_for`]).
+pub const DEFAULT_HUSBANDRY_DENSITY: f32 = 1.0;
+
+fn default_husbandry_density() -> f32 {
+    DEFAULT_HUSBANDRY_DENSITY
 }
 
 /// Default migratory loiter wander radius (hexes) around an anchor. Also the fallback grazing-range
@@ -263,15 +378,40 @@ impl AbundanceConfig {
     }
 }
 
-/// One-shot hunt tuning: how much biomass a hunt takes, how it converts to
-/// resources, and the pursuit geometry (band closes to `pursuit_radius` tiles).
+/// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
+/// geometry (band closes to `pursuit_radius` tiles).
+///
+/// **The hunt policies are four ASCENDING MULTIPLES OF MSY** (slice 8b, `crate::fauna::hunt_policy_ceiling`):
+/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Market `market_multiplier ×`
+/// it, Eradicate everything. Ordering — and therefore *"each option takes more than the last"* — is
+/// guaranteed because all three are multiples of the same MSY base, validated
+/// `1 ≤ surplus_multiplier < market_multiplier`. Constant catch above MSY has no equilibrium, so
+/// Surplus declines a herd and Market drives it extinct — the depletion mechanic, on-map.
+///
+/// **`take_fraction` / `min_take` / `take_from` stay RETIRED** — Eradicate takes the whole standing
+/// stock (clamped by carry + quantise), which is what "eradicate" means and needs no dial.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HuntConfig {
-    pub take_fraction: f32,
-    pub min_take: f32,
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
+    /// **Surplus's take, as a multiple of MSY** — *"take extra to sell; the herd slowly declines."*
+    /// `> 1` (else it is not an overdraw) and `< market_multiplier` (else Surplus is not the gentler
+    /// policy); `FaunaConfig::validate` enforces both, because that ordering IS the panel-monotonicity
+    /// the whole slice-8b revert exists to give. **Playtest dial** (ships 1.5).
+    pub surplus_multiplier: f32,
+    /// **Market's take, as a multiple of MSY** — the commercial cull, `> surplus_multiplier`, which
+    /// drives a herd to extinction (constant catch this far above MSY never lets it refill). Ships 2.5.
+    pub market_multiplier: f32,
+    /// **The Surplus *expedition* raid's escapement floor, as a fraction of `K`.** A greedy hunting
+    /// party (`systems::expeditions::hunt_expedition_floor`) grabs the herd's standing surplus down to
+    /// a per-policy floor and comes home; the floors descend so a deeper policy leaves a leaner herd —
+    /// Sustain `MSY_BIOMASS_FRACTION·K` (0.50), then Surplus `surplus_escapement_fraction·K` (0.30),
+    /// then Market `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
+    /// free dial, and `FaunaConfig::validate` pins it strictly between Market's and Sustain's.
+    /// **Expedition path ONLY** — a *resident band's* Surplus take is still the `surplus_multiplier ×
+    /// MSY` rate above, untouched. Ships 0.30. **Playtest dial.**
+    pub surplus_escapement_fraction: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
@@ -280,10 +420,11 @@ pub struct HuntConfig {
 impl Default for HuntConfig {
     fn default() -> Self {
         Self {
-            take_fraction: 0.30,
-            min_take: 40.0,
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
+            surplus_multiplier: DEFAULT_SURPLUS_MULTIPLIER,
+            market_multiplier: DEFAULT_MARKET_MULTIPLIER,
+            surplus_escapement_fraction: DEFAULT_SURPLUS_ESCAPEMENT_FRACTION,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
@@ -291,16 +432,13 @@ impl Default for HuntConfig {
     }
 }
 
-impl HuntConfig {
-    /// Biomass taken from a group of `biomass`, clamped to `[min_take, biomass]`.
-    pub fn take_from(&self, biomass: f32) -> f32 {
-        if biomass <= 0.0 {
-            return 0.0;
-        }
-        let fraction_take = (biomass * self.take_fraction).max(self.min_take);
-        fraction_take.min(biomass)
-    }
-}
+/// Surplus takes 1.5× MSY — a gentle overdraw the herd cannot quite refill.
+const DEFAULT_SURPLUS_MULTIPLIER: f32 = 1.5;
+/// Market takes 2.5× MSY — the commercial cull that drives a herd extinct.
+const DEFAULT_MARKET_MULTIPLIER: f32 = 2.5;
+/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Market's
+/// Allee floor (`ecology.collapse_fraction`). Expedition-only; see `HuntConfig::surplus_escapement_fraction`.
+const DEFAULT_SURPLUS_ESCAPEMENT_FRACTION: f32 = 0.30;
 
 /// Ecology tuning: per-turn **critical-depensation** biomass dynamics toward each
 /// species' carrying cap. Above the Allee threshold (`collapse_fraction * cap`) the
@@ -315,7 +453,10 @@ impl HuntConfig {
 pub struct EcologyConfig {
     pub regrowth_rate: f32,
     /// Allee threshold as a fraction of carrying capacity. Below `collapse_fraction *
-    /// cap` the group collapses instead of regrowing.
+    /// cap` the group collapses (depensation) instead of regrowing — the overhunting point of no
+    /// return that turns Surplus/Market's steady overdraw into an irreversible crash. (It **used** to
+    /// double as Market's escapement floor; slice 8b made the hunt policies multiples of MSY, so this
+    /// is once again only the depensation threshold.)
     pub collapse_fraction: f32,
     /// Per-turn fractional decline of a collapsing (sub-threshold) group.
     pub collapse_rate: f32,
@@ -358,13 +499,15 @@ impl Default for ImmigrationConfig {
     }
 }
 
-/// Follow tuning: policy draw-rates (Sustain = regrowth, Surplus = regrowth ×
-/// `surplus_multiplier`, Eradicate reuses the one-shot hunt take) plus the small
-/// per-turn non-food tracking benefit (fog reveal pulse + morale).
+/// Follow tuning: the small per-turn non-food tracking benefit (fog reveal pulse + morale).
+///
+/// Follow tuning: the small per-turn non-food benefit a tracking band gets (fog-reveal pulse +
+/// morale). Surplus's take multiple lives on [`HuntConfig`] (`surplus_multiplier`), not here — a
+/// `follow.surplus_multiplier` field is **retired** (it was briefly a `1.6 × MSY` *flow*, which a
+/// whole-animal take cannot survive: a constant-in-`B` ceiling never accumulates one body).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FollowConfig {
-    pub surplus_multiplier: f32,
     pub reveal_radius: u32,
     pub reveal_duration_turns: u64,
     pub morale_gain: f32,
@@ -373,7 +516,6 @@ pub struct FollowConfig {
 impl Default for FollowConfig {
     fn default() -> Self {
         Self {
-            surplus_multiplier: 1.6,
             reveal_radius: 2,
             reveal_duration_turns: 3,
             morale_gain: 0.01,
@@ -381,10 +523,13 @@ impl Default for FollowConfig {
     }
 }
 
-/// Husbandry / domestication tuning: a sustained Sustain-follow on a Thriving herd
-/// accrues `progress_per_turn` toward taming (1.0 = domesticated); progress that isn't
-/// being actively sustained decays by `decay_per_turn`. The explicit `domesticate`
-/// command may claim a herd early once progress reaches `claim_threshold`.
+/// Husbandry tuning — **the animal web's own economy**. Taming's own dials are *not* here: the
+/// **`Tame` policy**'s build meter (`progress_per_turn` / `decay_per_turn` /
+/// `yield_fraction_while_building`) lives on `intensification_ladder.json`'s `animal:pastoral` rung,
+/// alongside the pen's on `animal:pen`, so both food webs climb on the same numbers
+/// (`crate::intensification`). The retired `claim_threshold` — the `domesticate` command's
+/// early-claim — is **gone with the command**: it existed to skip the taming investment, which is
+/// the entire decision.
 ///
 /// **The husbandry yield ladder is FLOW-BASED — every rung pays MSY**
 /// (`docs/plan_corral_managed_population.md`). Management does not buy a licence to eat the standing
@@ -419,36 +564,31 @@ impl Default for FollowConfig {
 /// printed food forever (~48× the Sustain baseline).
 ///
 /// **Corral (Rung 1c) levers.** Corralling is an **explicit `Corral` policy with an investment
-/// cost**, the animal twin of Cultivate: while the pen is being built (`Herd::corral_progress` < 1.0)
-/// the crew takes only `corralling_yield_fraction × the herd's Sustain (MSY) ceiling` — a sustainable
-/// draw, so the herd stays healthy — accruing `corral_build_progress_per_turn` each turn; at `1.0` the
-/// herd is penned (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass`
-/// per unit of biomass in feed. `knowledge_progress_per_turn` /
-/// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
-/// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
-/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `Corral` policy
-/// checks. Note the asymmetry vs. cultivation — mobile *domestication* stays ungated; only corralling
-/// needs Herding. `claim_threshold` remains the **`domesticate`** command's early-claim gate on
-/// *mobile* taming (unrelated to corralling, which has no early claim).
+/// cost**, the animal twin of Cultivate. Its **build dials moved to the shared ladder**,
+/// `data/intensification_ladder.json` → the `animal:pen` rung's `build` block
+/// (`crate::intensification`), so both food webs climb on the same numbers: while the pen is being
+/// built (`Herd::corral_progress` < 1.0) the crew takes only that rung's
+/// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` — a sustainable draw, so the
+/// herd stays healthy — accruing its `progress_per_turn` each turn; at `1.0` the herd is penned
+/// (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass` per unit
+/// of biomass in feed. What stays here is the animal web's own economy.
+///
+/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn` /
+/// `knowledge_completion_threshold` moved to `intensification_ladder.json`'s ladder-level `knowledge`
+/// block, which `labor_config` had duplicated verbatim — once the earn path became one rung-driven
+/// seam (`RungDef::knowledge_earned`), a number that paces *both* food webs belonged to the ladder,
+/// exactly like the build dials. **And the gate they pace reshuffled with them:** Herding gates `Tame`
+/// (rung 2) and **only** `Tame`; `Corral` (rung 3) is gated on **Penning**, which is earned by working
+/// an already-tamed herd — one knowledge per rung-transition. **The cultivation asymmetry is gone:**
+/// taming is no longer ungated, and a Sustain hunt no longer tames anything — it only *teaches*,
+/// exactly as a Sustain forage only teaches Cultivation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HusbandryConfig {
-    pub progress_per_turn: f32,
-    pub decay_per_turn: f32,
-    pub claim_threshold: f32,
     /// The **mobile domesticated** (pastoral) rung: the ecology a tamed, roaming herd lives under.
     pub pastoral: PastoralConfig,
     /// The **penned** rung: the ecology a corralled herd lives under, plus what the pen costs to run.
     pub pen: PenConfig,
-    /// **The investment cost of corralling** (the animal twin of `cultivating_yield_fraction`): while
-    /// the pen is being built, the Hunt take ceiling is this fraction of the herd's **Sustain (MSY)**
-    /// ceiling — the crew is building, not hunting. A fraction of MSY is a sustainable draw, so the
-    /// herd stays Thriving (which the accrual gate wants). Validated `0 < f < 1`.
-    pub corralling_yield_fraction: f32,
-    /// Pen construction accrued per turn a band works a domesticated herd it owns under the **Corral**
-    /// policy (`Herd::corral_progress`, `1.0` = penned). At `0.04` a pen takes 25 turns to build,
-    /// matching the plant side's `cultivation.progress_per_turn`.
-    pub corral_build_progress_per_turn: f32,
     /// **Per-species husbandry growth (Grazing 2d §3).** The mobile-domesticated (pastoral) rung grows
     /// at `min(husbandry_regrowth_cap, wild_r × pastoral_gain)` — a MULTIPLE of the herd's own wild
     /// breeding rate, not a flat rate, so a tamed rabbit and a tamed mammoth are different economies.
@@ -467,31 +607,27 @@ pub struct HusbandryConfig {
     /// this. `2` → up to a 19-tile footprint (`hex_range_tiles` disk `1, 7, 19`). Validated `>= 1`
     /// (a `0` cap would forbid every extension).
     pub pen_radius_max: u32,
-    /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
-    /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
-    /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
-    pub knowledge_progress_per_turn: f32,
-    /// Ledger progress (`0..=1`) at which the faction **knows** Herding and may `corral`. `1.0` = the
-    /// ledger's completion value (`DiscoveryProgressLedger` clamps accrual to `1.0`).
-    pub knowledge_completion_threshold: f32,
+    /// **The herder-requirement hysteresis deadband, as a fraction of `animals_per_herder`.** The raw
+    /// `herders_needed = ceil(animals / animals_per_herder)` flickers ±1 when a Sustain-hunted herd's
+    /// biomass breathes across an `animals_per_herder` multiple (the lumpy whole-animal kill), trapping
+    /// the player in a "staff all 1 / staff all 2" churn. [`crate::fauna::Herd::stabilize_herders_needed`]
+    /// uses `animals_per_herder × this` as the down-step deadband, so a bumped-up requirement holds
+    /// until the herd falls *well* below the lower rung's ceiling — enough to absorb the ±1-animal
+    /// oscillation. `0.25` ≈ a quarter of a herder's flock. Validated finite & `>= 0` (`0` disables the
+    /// deadband, restoring the raw stateless flicker). A **playtest dial**.
+    pub herders_hysteresis_fraction: f32,
 }
 
 impl Default for HusbandryConfig {
     fn default() -> Self {
         Self {
-            progress_per_turn: 0.04,
-            decay_per_turn: 0.01,
-            claim_threshold: 0.6,
             pastoral: PastoralConfig::default(),
             pen: PenConfig::default(),
-            corralling_yield_fraction: DEFAULT_CORRALLING_YIELD_FRACTION,
-            corral_build_progress_per_turn: DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN,
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
             pen_gain: DEFAULT_PEN_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
-            knowledge_progress_per_turn: 0.05,
-            knowledge_completion_threshold: 1.0,
+            herders_hysteresis_fraction: DEFAULT_HERDERS_HYSTERESIS_FRACTION,
         }
     }
 }
@@ -567,6 +703,11 @@ const DEFAULT_HUSBANDRY_REGROWTH_CAP: f32 = 0.75;
 /// can grow into larger self-feeding operations at more keeper-turns of cost).
 const DEFAULT_PEN_RADIUS_MAX: u32 = 2;
 
+/// **The herder-requirement hysteresis deadband** as a fraction of `animals_per_herder` (see
+/// [`HusbandryConfig::herders_hysteresis_fraction`]). `0.25` absorbs the ±1-animal Sustain oscillation
+/// so a staffed herd holds its keeper count instead of flickering ±1. A **playtest dial**.
+const DEFAULT_HERDERS_HYSTERESIS_FRACTION: f32 = 0.25;
+
 /// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
 /// **Grazing 2d inverts the old "every pen is net-positive" guarantee (§2.4).** With per-species pen
@@ -590,36 +731,26 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// a remnant.
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 
-/// **The investment cost of corralling**: while the pen is being built, a Corral hunt takes only this
-/// fraction of the herd's Sustain (MSY) ceiling — and, because the passive pastoral rung is skipped for
-/// a herd a band is working (`Herd::worked_this_turn`), that dip is the builder's *whole* income from
-/// the animal. At `0.50` a Red Deer build pays **0.75/turn against the 1.50** of walking away — ~19
-/// provisions forgone over the 25 turns, recouped ~9 turns after the pen opens.
+/// Market-hunting tuning: the commercial Follow policy sells its take, yielding
+/// `trade_goods_multiplier`× the normal trade-goods rate. The heavy take drives the group past the
+/// Allee threshold into the depensation collapse (no separate depletion state — pure ecology reuse).
 ///
-/// **Retuned from 0.25** (the plant side's `labor_config::DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION`):
-/// measured, that dip forced the band to fund the build out of a *famine* and crashed its population
-/// ~50% before the pen completed. The cost must be paid from a **surplus**, not a starvation.
-const DEFAULT_CORRALLING_YIELD_FRACTION: f32 = 0.50;
-/// Pen construction per turn under the Corral policy → 25 turns to build, matching the plant side's
-/// `cultivation.progress_per_turn`. A dedicated lever (not the taming `progress_per_turn`) so pen
-/// speed and tame speed can be tuned independently.
-const DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN: f32 = 0.04;
-
-/// Market-hunting tuning: the commercial Follow policy over-harvests a large fixed share
-/// of biomass each turn (`take_fraction`) and sells it, yielding `trade_goods_multiplier`×
-/// the normal trade-goods rate. The heavy take drives the group past the Allee threshold
-/// into the depensation collapse (no separate depletion state — pure ecology reuse).
+/// Market-hunting tuning: the commercial Follow policy sells its take at `trade_goods_multiplier`×
+/// the normal trade-goods rate.
+///
+/// **`take_fraction` stays RETIRED.** Market's *take* is `hunt.market_multiplier × MSY` (2.5× — the
+/// commercial cull that drives a herd extinct; see [`HuntConfig`] / [`crate::fauna::hunt_policy_ceiling`]).
+/// What distinguishes Market from Surplus is *how hard it takes*; what this block still owns is what
+/// Market does with the meat — `trade_goods_multiplier`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MarketConfig {
-    pub take_fraction: f32,
     pub trade_goods_multiplier: f32,
 }
 
 impl Default for MarketConfig {
     fn default() -> Self {
         Self {
-            take_fraction: 0.20,
             trade_goods_multiplier: 4.0,
         }
     }
@@ -811,7 +942,54 @@ impl FaunaConfig {
             "hunt.provisions_per_biomass",
             self.hunt.provisions_per_biomass,
         )?;
-        require_positive_finite("hunt.take_fraction", self.hunt.take_fraction)?;
+
+        // --- **THE HUNT POLICY ORDERING INVARIANT** (slice 8b, `crate::fauna::hunt_policy_ceiling`).
+        //
+        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Market <
+        // Eradicate (everything). Ordering — *"each option takes more than the last"* — is guaranteed
+        // because Surplus/Market are multiples of the SAME base, so the only two dials that can break
+        // it are `surplus_multiplier` and `market_multiplier`. Each has a rejection test.
+        //   - `surplus_multiplier ≥ 1`: Surplus must out-take Sustain (whose ceiling is capped at MSY).
+        //   - `surplus_multiplier < market_multiplier`: Surplus must be the *gentler* extraction.
+        require_greater_than(
+            "hunt.surplus_multiplier",
+            self.hunt.surplus_multiplier,
+            "1.0 (Surplus must take at least one MSY — as much as Sustain)",
+            MAX_FRACTION,
+        )?;
+        require_greater_than(
+            "hunt.market_multiplier",
+            self.hunt.market_multiplier,
+            "hunt.surplus_multiplier (Market must out-take Surplus)",
+            self.hunt.surplus_multiplier,
+        )?;
+
+        // --- **THE EXPEDITION RAID FLOOR ORDERING** (the greedy hunting raid,
+        // `systems::expeditions::hunt_expedition_floor`). A hunting party grabs the herd's standing
+        // surplus down to a per-policy floor: Sustain `MSY_BIOMASS_FRACTION·K` > Surplus
+        // `surplus_escapement_fraction·K` > Market `collapse_fraction·K` > Eradicate `0`. Only Surplus's
+        // floor is tunable, and it must sit STRICTLY between Market's and Sustain's — otherwise a deeper
+        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Market
+        // raid deeper"). Each bound has a rejection test.
+        require_greater_than(
+            "hunt.surplus_escapement_fraction",
+            self.hunt.surplus_escapement_fraction,
+            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Market)",
+            self.ecology.collapse_fraction,
+        )?;
+        if !self.hunt.surplus_escapement_fraction.is_finite()
+            || self.hunt.surplus_escapement_fraction >= crate::fauna::MSY_BIOMASS_FRACTION
+        {
+            return Err(FaunaConfigError::Invalid {
+                field: "hunt.surplus_escapement_fraction",
+                constraint: format!(
+                    "be finite and less than fauna::MSY_BIOMASS_FRACTION (= {}) — a Surplus raid must \
+                     leave a leaner herd than Sustain",
+                    crate::fauna::MSY_BIOMASS_FRACTION
+                ),
+                value: self.hunt.surplus_escapement_fraction.to_string(),
+            });
+        }
 
         // --- The three ecologies. `regrowth_rate` at `0` is a dead resource (no MSY, no regrowth);
         // the phase fractions must be ordered `extinction_floor < collapse < stressed < 1` or the
@@ -843,6 +1021,29 @@ impl FaunaConfig {
             if let Some(regrowth_rate) = def.regrowth_rate {
                 require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
             }
+            // The taming timescale (slice 3c). **Positive is the whole bound**: the multiplier dilates
+            // the `animal:pastoral` rung's `progress_per_turn` AND its `decay_per_turn` together, so the
+            // ladder's own "taming must out-run its decay" check (`LadderConfig::validate`) already
+            // covers every species — the ratio is invariant under a positive scale. At `0` the species
+            // would silently never tame while reading as tameable; negative would *un*-tame a herd the
+            // crew is working, and (via the same decay) push its progress up while it is abandoned.
+            require_positive_finite(species_field("taming_rate"), def.taming_rate)?;
+            // At `0`/negative a managed herd of this species would demand infinitely many herders — it
+            // could never be fully staffed, so every pastoral/penned herd would decay forever with no
+            // way for the player to stop it. The dial's *upper* end is a tuning question (how much
+            // waste the collection cap creates), not an invariant — measured, not rejected.
+            require_positive_finite(species_field("animals_per_herder"), def.animals_per_herder)?;
+            // **The animal quantum** (slice 8). Positive is the whole bound, and it is not
+            // cosmetic: `quantise_animal_take` divides by this. At `0` a herd would hold infinitely
+            // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
+            // turn; negative would invert the floor and hand back a negative kill count.
+            require_positive_finite(species_field("body_mass"), def.body_mass)?;
+            // **The husbandry density gains** — the per-rung K multiplier (`>= 1.0`). A gain **below 1**
+            // would mean domestication *reduces* the land's carrying capacity, inverting the whole point
+            // of the dial; `1.0` is neutral (a wild/untagged species). Both `#[serde(default)]` to 1.0,
+            // so an older config that omits them stays valid.
+            require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
+            require_at_least_one(species_field("pen_density"), def.pen_density)?;
         }
 
         // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the
@@ -875,6 +1076,12 @@ impl FaunaConfig {
                 value: self.husbandry.pen_radius_max.to_string(),
             });
         }
+        // The herder-hysteresis deadband is a fraction of `animals_per_herder` — finite & non-negative
+        // (`0` disables the deadband, restoring the raw stateless flicker; negative is nonsense).
+        require_non_negative_finite(
+            "husbandry.herders_hysteresis_fraction",
+            self.husbandry.herders_hysteresis_fraction,
+        )?;
 
         // --- The pen's feed. A shrink rate above 1 would drive an underfed herd's biomass *negative* in
         // one turn; below 0 it would *grow* a starving herd.
@@ -912,46 +1119,15 @@ impl FaunaConfig {
             });
         }
 
-        // --- Corral / husbandry accrual. A `0` build rate never finishes a pen; a `0` (or `1`)
-        // yield fraction makes the "investment dip" either total or free.
-        require_open_unit_fraction(
-            "husbandry.corralling_yield_fraction",
-            self.husbandry.corralling_yield_fraction,
-        )?;
-        require_positive_finite(
-            "husbandry.corral_build_progress_per_turn",
-            self.husbandry.corral_build_progress_per_turn,
-        )?;
-        require_positive_finite(
-            "husbandry.knowledge_progress_per_turn",
-            self.husbandry.knowledge_progress_per_turn,
-        )?;
-        // `0` would mean Herding is known before it is learned; `> 1` is unreachable (the ledger
-        // clamps accrual to 1.0), so the gate could never open.
-        require_fraction(
-            "husbandry.knowledge_completion_threshold",
-            self.husbandry.knowledge_completion_threshold,
-        )?;
-        // Taming must out-run its own decay, or no herd can ever be domesticated by sustained work.
-        require_greater_than(
-            "husbandry.progress_per_turn",
-            self.husbandry.progress_per_turn,
-            "husbandry.decay_per_turn",
-            self.husbandry.decay_per_turn,
-        )?;
-        require_non_negative_finite("husbandry.decay_per_turn", self.husbandry.decay_per_turn)?;
-        // The `domesticate` command's early-claim gate: at `0` every herd is claimable instantly, at
-        // `>= 1` the "early" claim is never early.
-        require_open_unit_fraction("husbandry.claim_threshold", self.husbandry.claim_threshold)?;
+        // --- (Husbandry's *build* dials — the pen's rate and its investment dip — are bounded by
+        // `LadderConfig::validate`, which owns the `animal:pen` rung's `build` block; so are the
+        // **earned-knowledge** dials as of slice 4, which moved to the ladder's `knowledge` block
+        // when the earn path became one rung-driven seam. Both bounds now hold for BOTH webs from a
+        // single statement, instead of each web restating its own copy.)
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
-        require_greater_than(
-            "follow.surplus_multiplier",
-            self.follow.surplus_multiplier,
-            "the Sustain baseline",
-            MAX_FRACTION,
-        )?;
-        require_open_unit_fraction("market.take_fraction", self.market.take_fraction)?;
+        // --- Market's trade rate (its take is an escapement floor now — see the ecology block).
+
         require_greater_than(
             "market.trade_goods_multiplier",
             self.market.trade_goods_multiplier,
@@ -999,6 +1175,43 @@ impl FaunaConfig {
         self.species
             .values()
             .find(|def| def.display_name == display)
+    }
+
+    /// **The species' taming timescale** ([`SpeciesDef::taming_rate`]), resolved by the display name a
+    /// `Herd` carries — the same live-resolution path the movement cadence levers take
+    /// (`fauna::advance_herds` → [`FaunaConfig::species_by_display`]), so retuning the dial takes
+    /// effect on herds already on the map instead of freezing at spawn. A species the table cannot
+    /// resolve (an isolated test fixture) reads [`DEFAULT_TAMING_RATE`] — the rung's own pace, i.e.
+    /// exactly the pre-dial behaviour.
+    pub fn taming_rate_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_TAMING_RATE, |def| def.taming_rate)
+    }
+
+    /// **The animals one herder of this species minds** ([`SpeciesDef::animals_per_herder`]), resolved
+    /// by the display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning
+    /// the dial reaches herds already on the map instead of freezing at spawn. A species the table
+    /// cannot resolve (an isolated test fixture) reads [`DEFAULT_ANIMALS_PER_HERDER`].
+    pub fn animals_per_herder_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
+    }
+
+    /// **The species' pastoral density gain** ([`SpeciesDef::pastoral_density`]), resolved by the
+    /// display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning the dial
+    /// reaches herds already on the map instead of freezing at spawn. A species the table cannot resolve
+    /// (an isolated test fixture) reads [`DEFAULT_HUSBANDRY_DENSITY`] (neutral, `×1.0`).
+    pub fn pastoral_density_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_HUSBANDRY_DENSITY, |def| def.pastoral_density)
+    }
+
+    /// **The species' pen density gain** ([`SpeciesDef::pen_density`]), resolved by display name — the
+    /// [`FaunaConfig::pastoral_density_for`] path. An unresolvable species reads
+    /// [`DEFAULT_HUSBANDRY_DENSITY`].
+    pub fn pen_density_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(DEFAULT_HUSBANDRY_DENSITY, |def| def.pen_density)
     }
 
     /// `(key, def)` pairs for every non-migratory (short-range) game species that
@@ -1176,25 +1389,27 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
     Ok(())
 }
 
-/// `(0, 1]` — a fraction that must do *something* but may be whole.
-fn require_fraction(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
-    if !value.is_finite() || value <= 0.0 || value > MAX_FRACTION {
-        return Err(FaunaConfigError::Invalid {
-            field,
-            constraint: format!("be finite and in (0, {MAX_FRACTION}]"),
-            value: value.to_string(),
-        });
-    }
-    Ok(())
-}
+// NB: `require_fraction` — the `(0, 1]` bound — went with the earned-knowledge dials it was this
+// config's only caller of (slice 4). It lives on as `intensification::validate_knowledge`'s
+// `completion_threshold` check, which now states the bound once for both food webs.
 
-/// `(0, 1)` — a strict fraction: neither end is coherent (`0` = the lever does nothing, `1` = it does
-/// everything, and in both cases the mechanic it gates disappears).
-fn require_open_unit_fraction(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
-    if !value.is_finite() || value <= 0.0 || value >= MAX_FRACTION {
+// NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
+// dials it was the only caller of. The hunt axis is four **ordered multiples of MSY** now
+// (`hunt.surplus_multiplier` / `market_multiplier`, both `> 1`, so *out* of the unit range), and an
+// ordering is a stronger statement than a range: `require_greater_than` chains them so a multiplier
+// cannot be individually "in range" yet out of order. See `fauna::hunt_policy_ceiling`.
+
+/// A **gain that must not shrink** the quantity it scales: finite and `>= 1.0`. A husbandry density
+/// below 1 would make domestication *reduce* a herd's carrying capacity — the exact inversion the dial
+/// exists to prevent (see [`SpeciesDef::pastoral_density`]). `1.0` is the neutral (wild) value.
+fn require_at_least_one(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
+    if !value.is_finite() || value < MAX_FRACTION {
         return Err(FaunaConfigError::Invalid {
             field,
-            constraint: format!("be finite and in (0, {MAX_FRACTION})"),
+            constraint: format!(
+                "be finite and at least {MAX_FRACTION} (a density gain below 1 would make \
+                 domestication reduce carrying capacity)"
+            ),
             value: value.to_string(),
         });
     }
@@ -1339,6 +1554,7 @@ pub fn load_fauna_config_from_env() -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intensification::{LadderConfig, RungKey, RUNG_COMPLETE};
 
     #[test]
     fn builtin_config_parses() {
@@ -1377,10 +1593,130 @@ mod tests {
             );
         }
         // An omitted field defaults to `pen` (the full ladder), preserving pre-δ behaviour.
-        let def: SpeciesDef =
-            serde_json::from_str(r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1]}"#)
-                .unwrap();
+        // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
+        // fail to parse rather than default to something.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
+    }
+
+    /// Slice 3c: the shipped taming timescales, and the `1.0` default for an omitted one. The
+    /// **turns-to-tame** each implies is what the roster is really claiming, so assert that — a dial
+    /// read back as a number nobody can interpret is not a guard.
+    #[test]
+    fn builtin_taming_rates_match_the_roster() {
+        let config = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let progress_per_turn = ladder
+            .rung(RungKey::AnimalPastoral)
+            .build
+            .as_ref()
+            .expect("the pastoral rung builds")
+            .progress_per_turn;
+
+        for (key, rate, turns_to_tame) in [
+            ("rabbit", 1.0_f32, 25.0_f32),
+            ("fowl", 1.0, 25.0),
+            ("crag_goat", 1.0, 25.0),
+            ("boar", 0.8, 31.25),
+            ("aurochs", 0.5, 50.0),
+            ("steppe_runner", 0.2, 125.0),
+            ("marsh_grazer", 0.2, 125.0),
+        ] {
+            let def = &config.species[key];
+            assert_eq!(def.taming_rate, rate, "{key} taming_rate");
+            assert!(
+                (RUNG_COMPLETE / (progress_per_turn * def.taming_rate) - turns_to_tame).abs()
+                    < 0.01,
+                "{key} should tame in ~{turns_to_tame} turns"
+            );
+        }
+        // A `wild`-ceiling species never tames at all, so it states no rate (and reads the default).
+        for key in ["deer", "mammoth"] {
+            assert_eq!(
+                config.species[key].husbandry_ceiling,
+                HusbandryCeiling::Wild
+            );
+            assert_eq!(config.species[key].taming_rate, DEFAULT_TAMING_RATE);
+        }
+        // An omitted field taming at the rung's own pace is what keeps an untagged/future species on
+        // today's 25 turns.
+        // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
+        // fail to parse rather than default to something.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
+        assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
+        // And an unresolvable species reads the same, so a fixture herd can never tame at `0`/turn.
+        assert_eq!(config.taming_rate_for("No Such Beast"), DEFAULT_TAMING_RATE);
+    }
+
+    /// A `taming_rate` of `0` reads as "tameable" everywhere (the ceiling still says `pastoral`) while
+    /// the meter never moves — the silent-disable failure mode config validation exists to catch. A
+    /// negative one would *un*-tame a herd its crew is working.
+    #[test]
+    fn validate_rejects_a_non_positive_taming_rate() {
+        for bad in [0.0, -0.2] {
+            let err = reject(|json| json["species"]["rabbit"]["taming_rate"] = (bad).into());
+            assert_rejects_field(err, "species.rabbit.taming_rate");
+        }
+    }
+
+    /// **A husbandry density below 1 makes domestication REDUCE the land's carrying capacity** — the
+    /// exact inversion the dial exists to prevent (a tamed goat's range would hold *fewer* goats than a
+    /// wild one). One rejection per bound; the neutral `1.0` and the shipped gains stay valid.
+    #[test]
+    fn validate_rejects_a_pastoral_density_below_one() {
+        for bad in [0.99, 0.0, -1.0] {
+            let err =
+                reject(|json| json["species"]["crag_goat"]["pastoral_density"] = (bad).into());
+            assert_rejects_field(err, "species.crag_goat.pastoral_density");
+        }
+        assert!(FaunaConfig::builtin().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_pen_density_below_one() {
+        for bad in [0.99, 0.0, -1.0] {
+            let err = reject(|json| json["species"]["crag_goat"]["pen_density"] = (bad).into());
+            assert_rejects_field(err, "species.crag_goat.pen_density");
+        }
+    }
+
+    /// The density gains default to the neutral `1.0` (a wild/untagged species is unchanged) and
+    /// resolve live by display name — the `taming_rate_for` path, so a retune reaches herds on the map.
+    #[test]
+    fn husbandry_density_defaults_to_neutral_and_resolves_live() {
+        let config = FaunaConfig::builtin();
+        // A row that omits both dials reads the neutral gain.
+        let def: SpeciesDef = serde_json::from_str(
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+        )
+        .unwrap();
+        assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);
+        assert_eq!(def.pen_density, DEFAULT_HUSBANDRY_DENSITY);
+        // The prime grazer domesticate carries the big pen bump; an unresolvable species is neutral.
+        assert_eq!(config.pastoral_density_for("Crag Goats"), 2.0);
+        assert_eq!(config.pen_density_for("Crag Goats"), 5.0);
+        assert_eq!(
+            config.pen_density_for("No Such Beast"),
+            DEFAULT_HUSBANDRY_DENSITY
+        );
+    }
+
+    /// **A `body_mass` of `0` is a herd of infinitely many animals** — `floor(escapement / 0)` is
+    /// `inf`, so the first hunter would strip the whole stock in one turn while every readout still
+    /// looked sane. A negative one inverts the floor and hands back a negative kill count. Neither is
+    /// a tuning choice; both are the silent-catastrophe failure mode validation exists to catch.
+    #[test]
+    fn validate_rejects_a_non_positive_body_mass() {
+        for bad in [0.0, -50.0] {
+            let err = reject(|json| json["species"]["rabbit"]["body_mass"] = (bad).into());
+            assert_rejects_field(err, "species.rabbit.body_mass");
+        }
     }
 
     #[test]
@@ -1404,19 +1740,96 @@ mod tests {
     }
 
     /// The levers `validate()` deliberately does NOT bound (they have coherent meanings at their
-    /// extremes) plus the `take_from` clamp — everything else moved into the validator, which every
-    /// load path now runs (`builtin()` would panic below if the shipped config broke one).
+    /// extremes) — everything else moved into the validator, which every load path now runs
+    /// (`builtin()` would panic below if the shipped config broke one).
+    ///
+    /// **The `take_from` clamp assertions are gone with the function**: Eradicate takes the whole
+    /// standing stock now, no dial. See `fauna::hunt_policy_ceiling`.
     #[test]
     fn hunt_and_ecology_present() {
         let config = FaunaConfig::builtin();
         assert_eq!(config.hunt.pursuit_radius, 1);
         assert!(config.immigration.max_attempts >= 1);
         assert!(config.follow.reveal_radius >= 1);
-        // take clamps to [min_take, biomass].
-        assert_eq!(config.hunt.take_from(0.0), 0.0);
-        assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group
-        let big = config.hunt.take_from(10_000.0);
-        assert!(big >= config.hunt.min_take && big <= 10_000.0);
+    }
+
+    /// **THE HUNT AXIS'S ORDERING INVARIANT, on the shipped multipliers** — *"each option takes more
+    /// than the last."* Asserted as the multiplier ordering, where the guarantee lives: ascending
+    /// multiples of the same MSY base ⇒ ascending takes at every biomass, for every species. (The
+    /// full take sweep across biomass × species is `fauna_market::hunt_policy_takes_are_strictly_
+    /// ordered_at_every_biomass`.)
+    #[test]
+    fn the_shipped_hunt_multipliers_are_ordered() {
+        let hunt = &FaunaConfig::builtin().hunt;
+        assert!(
+            hunt.surplus_multiplier > 1.0,
+            "Surplus must out-take Sustain (which caps at 1× MSY): {}",
+            hunt.surplus_multiplier
+        );
+        assert!(
+            hunt.surplus_multiplier < hunt.market_multiplier,
+            "Market must out-take Surplus: {} vs {}",
+            hunt.surplus_multiplier,
+            hunt.market_multiplier
+        );
+    }
+
+    /// **Each ordering bound is REJECTED, not merely documented** — one rejection per bound, because
+    /// the ordering *is* the mechanic (`fauna::hunt_policy_ceiling`) and a config edit is the only way
+    /// to break it.
+    #[test]
+    fn validate_rejects_a_surplus_multiplier_at_or_below_one() {
+        // Surplus at 1× MSY would not out-take Sustain (whose ceiling caps at MSY) — no overdraw.
+        let err = reject(|json| json["hunt"]["surplus_multiplier"] = (1.0).into());
+        assert_rejects_field(err, "hunt.surplus_multiplier");
+    }
+
+    #[test]
+    fn validate_rejects_a_market_multiplier_at_or_below_surplus() {
+        // Market must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
+        let err = reject(|json| json["hunt"]["market_multiplier"] = (1.5).into());
+        assert_rejects_field(err, "hunt.market_multiplier");
+    }
+
+    /// **The expedition raid floor ordering is REJECTED at both bounds** — the greedy raid
+    /// (`systems::expeditions`) leaves a leaner herd for a deeper policy only if
+    /// `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`.
+    #[test]
+    fn validate_rejects_a_surplus_escapement_at_or_below_the_market_floor() {
+        // At/below Market's collapse floor, a Surplus raid would leave the *same or leaner* herd as
+        // Market — the ordering inverts.
+        let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.15).into());
+        assert_rejects_field(err, "hunt.surplus_escapement_fraction");
+    }
+
+    #[test]
+    fn validate_rejects_a_surplus_escapement_at_or_above_the_sustain_floor() {
+        // At/above Sustain's K/2 floor, a Surplus raid would leave a *fatter* herd than Sustain.
+        let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.5).into());
+        assert_rejects_field(err, "hunt.surplus_escapement_fraction");
+    }
+
+    /// **Every species declares a positive body mass** — the quantum a hunt take is floored to
+    /// (slice 8). A missing/zero row would mean a herd of infinitely many animals; `validate()`
+    /// rejects it, and `builtin()` would panic here if the shipped table ever lost one.
+    #[test]
+    fn every_species_declares_a_body_mass() {
+        let config = FaunaConfig::builtin();
+        for (key, def) in &config.species {
+            assert!(
+                def.body_mass.is_finite() && def.body_mass > 0.0,
+                "species {key} must declare a positive body_mass, got {}",
+                def.body_mass
+            );
+            // A body cannot outweigh the whole herd's capacity, or the species could never be hunted
+            // at all (`floor(escapement / body_mass)` would be 0 even at full capacity).
+            assert!(
+                def.body_mass < def.carrying_capacity(),
+                "species {key}'s body_mass {} must be below its carrying capacity {}",
+                def.body_mass,
+                def.carrying_capacity()
+            );
+        }
     }
 
     /// The shipped ladder is monotone (management buys a growth rate) and the pen nets positive at its
@@ -1465,9 +1878,9 @@ mod tests {
     /// player pays a 25-turn build + a permanent keeper to make their food situation strictly worse.
     #[test]
     fn validate_rejects_a_pen_that_eats_more_than_it_yields() {
-        // Best-case floor (Grazing 2d §2.4): r_pen(fastest) = min(0.75, 0.35 × 3.0) = 0.75, so the
-        // bound is 0.75 × 0.02 / 2.75 ≈ 0.0055; at or above it EVEN THE BEST pen is a net loss.
-        let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.0065).into());
+        // Best-case floor (Grazing 2d §2.4): r_pen(fastest) = min(1.0, 0.35 × 4.0) = 1.0, so the
+        // bound is 1.0 × 0.02 / 3.0 ≈ 0.0067; at or above it EVEN THE BEST pen is a net loss.
+        let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.007).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");
         let err = reject(|json| json["husbandry"]["pen"]["upkeep_per_biomass"] = (0.008).into());
         assert_rejects_field(err, "husbandry.pen.upkeep_per_biomass");
@@ -1514,27 +1927,20 @@ mod tests {
         assert_rejects_field(err, "husbandry.pen.starve_shrink_rate");
     }
 
-    #[test]
-    fn validate_rejects_a_broken_corral_investment() {
-        let err = reject(|json| json["husbandry"]["corralling_yield_fraction"] = (1.0).into());
-        assert_rejects_field(err, "husbandry.corralling_yield_fraction");
-        let err = reject(|json| json["husbandry"]["corral_build_progress_per_turn"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.corral_build_progress_per_turn");
-    }
+    // The pen's *build* dials moved to the ladder — their rejection tests moved with them, to
+    // `crate::intensification`'s `rejects_a_free_investment` / `rejects_a_starving_investment` /
+    // `rejects_a_non_building_progress_rate`.
 
-    #[test]
-    fn validate_rejects_an_unlearnable_or_pre_learned_herding_gate() {
-        let err = reject(|json| json["husbandry"]["knowledge_progress_per_turn"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.knowledge_progress_per_turn");
-        let err = reject(|json| json["husbandry"]["knowledge_completion_threshold"] = (0.0).into());
-        assert_rejects_field(err, "husbandry.knowledge_completion_threshold");
-    }
+    // NB: the earned-knowledge dials moved to the ladder in slice 4 (both webs' copies were
+    // identical once the earn path became one rung-driven seam), and so did this rejection test —
+    // `intensification::tests::rejects_a_ladder_nobody_could_ever_learn` /
+    // `rejects_a_knowledge_gate_that_is_open_or_shut_from_the_start` now assert the bound **once**,
+    // for both food webs, instead of each web guarding its own copy.
 
-    #[test]
-    fn validate_rejects_taming_that_cannot_outrun_its_decay() {
-        let err = reject(|json| json["husbandry"]["decay_per_turn"] = (0.04).into());
-        assert_rejects_field(err, "husbandry.progress_per_turn");
-    }
+    // NB: "taming must out-run its own decay" is still guarded — it moved to
+    // `intensification::tests::rejects_taming_that_cannot_outrun_its_decay` along with the dials
+    // themselves (the `animal:pastoral` rung's `build` block), where `LadderConfig::validate` now
+    // owns the bound for *every* rung of *both* food webs rather than each web re-asserting it.
 
     #[test]
     fn validate_rejects_a_zero_provisions_rate() {

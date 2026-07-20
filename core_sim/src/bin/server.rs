@@ -24,10 +24,11 @@ use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer}
 use core_sim::port_base_override;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
-    output_multiplier, resolve_active_profile, ActiveStartProfile, BandTravel, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FoodModuleTag, ForkAnswerError, LaborAllocation,
-    LaborTarget, LocalStore, ResidentBand, StartProfileOverrides, WellbeingConfigHandle,
+    knows, output_multiplier, resolve_active_profile, rung_site_refusal, tile_is_fresh_watered,
+    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag,
+    ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand,
+    RungKey, SiteRefusal, StartProfileOverrides, WellbeingConfigHandle, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -47,8 +48,7 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
     StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
     SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, CULTIVATION_DISCOVERY_ID,
-    FOOD, HERDING_DISCOVERY_ID,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -624,8 +624,8 @@ fn main() {
             } => {
                 handle_found_settlement(&mut app, faction, target_x, target_y);
             }
-            Command::Domesticate { faction, herd_id } => {
-                handle_domesticate(&mut app, faction, herd_id);
+            Command::Tame { faction, herd_id } => {
+                handle_tame(&mut app, faction, herd_id);
             }
             Command::AnswerFork {
                 faction,
@@ -640,6 +640,13 @@ fn main() {
                 target_y,
             } => {
                 handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
+            }
+            Command::Sow {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_sow(&mut app, faction, UVec2::new(target_x, target_y));
             }
             Command::Corral {
                 faction,
@@ -786,7 +793,7 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
-    Domesticate {
+    Tame {
         faction: FactionId,
         herd_id: String,
     },
@@ -797,6 +804,11 @@ enum Command {
         choice_id: String,
     },
     Cultivate {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    Sow {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
@@ -1598,16 +1610,23 @@ fn seed_source_yield(
             else {
                 return;
             };
-            let Some(module) = app.world.get::<FoodModuleTag>(tile_entity) else {
-                return; // no food module on the tile → the turn pays 0.
-            };
-            let seasonal = module.seasonal_weight.max(0.0);
+            // No food module → no wild **gather** season (`NO_FORAGE_SEASON`), exactly as the labor
+            // arm reads it. Not an early return: since slice 5 a sown Field may stand on a
+            // module-less tile, and its managed harvest is biomass-based and seasonless — returning
+            // here would seed that Field a `0` row and reintroduce the `+0.00`-then-jump bug the seed
+            // exists to kill.
+            let seasonal = app
+                .world
+                .get::<FoodModuleTag>(tile_entity)
+                .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
             let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
-                return; // unseeded patch → the turn pays 0.
+                return; // unseeded patch → the turn pays 0 (a bare-ground sow's honest opening row).
             };
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             forage_source_yield_preview(
                 patch,
                 &labor.forage,
+                &ladder,
                 seasonal,
                 output_mult,
                 workers,
@@ -1625,9 +1644,11 @@ fn seed_source_yield(
                 return;
             }
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             hunt_source_yield_preview(
                 herd,
                 &fauna,
+                &ladder,
                 labor.hunt.per_worker_biomass_capacity,
                 output_mult,
                 workers,
@@ -1642,13 +1663,15 @@ fn seed_source_yield(
 /// Validate a labor target's **policy** against the source it names, returning a player-facing
 /// rejection reason (`Err`) or `Ok`. Two independent checks:
 ///
-/// 1. **Kind.** The two *investment* policies are kind-exclusive: `Cultivate` is Forage-only,
-///    `Corral` is Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid combo
-///    is rejected outright rather than silently coerced.
-/// 2. **Gates.** Cultivate requires the faction to **know Cultivation** and the patch to be
-///    **Thriving** (and not already tended, and not someone else's). Corral requires the faction to
-///    **know Herding** and to own the **domesticated** herd (and it not already be penned). These are
-///    the same gates the retired early-claim commands enforced — they now guard the *policy* instead.
+/// 1. **Kind.** The *investment* policies are kind-exclusive: `Cultivate`/`Sow` are Forage-only,
+///    `Tame`/`Corral` are Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid
+///    combo is rejected outright rather than silently coerced.
+/// 2. **Gates — one knowledge per rung-transition** (§4.3). Each investment verb resolves its gate off
+///    its OWN rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving**
+///    patch (not already tended, not someone else's); **`Sow`** needs **Seed Selection** + ground the
+///    `plant:field` rung's `site_requirement` accepts (see `validate_sow`); `Tame` needs **Herding**
+///    (see `validate_tame`); and `Corral` needs **Penning** — *not* Herding, which gates `tame` alone —
+///    plus an owned, **domesticated**, not-yet-penned herd of a `pen`-ceiling species.
 ///
 /// The extractive policies (Sustain/Surplus/Market/Eradicate) are always valid on either kind.
 fn validate_labor_policy(
@@ -1664,21 +1687,29 @@ fn validate_labor_policy(
                     policy.as_str()
                 ));
             }
+            if matches!(policy, FollowPolicy::Sow) {
+                return validate_sow(app, faction, *tile);
+            }
             if !matches!(policy, FollowPolicy::Cultivate) {
                 return Ok(());
             }
-            let cultivation = app
-                .world
-                .resource::<LaborConfigHandle>()
-                .get()
-                .forage
-                .cultivation
-                .clone();
-            let knows_cultivation = app
-                .world
-                .resource::<DiscoveryProgressLedger>()
-                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
-                >= scalar_from_f32(cultivation.knowledge_completion_threshold);
+            // The rung's own gate, resolved off the ladder — the `validate_tame` pattern: the record
+            // says which knowledge opens `cultivate`, and the ladder says when a knowledge is known.
+            let (knowledge_threshold, tended_unlock) = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                (
+                    ladder.knowledge.completion_threshold,
+                    ladder.rung(RungKey::PlantTended).unlock_discovery_id(),
+                )
+            };
+            let knows_cultivation = tended_unlock.is_none_or(|knowledge| {
+                knows(
+                    app.world.resource::<DiscoveryProgressLedger>(),
+                    faction,
+                    knowledge,
+                    knowledge_threshold,
+                )
+            });
             if !knows_cultivation {
                 return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
             }
@@ -1712,22 +1743,36 @@ fn validate_labor_policy(
                     policy.as_str()
                 ));
             }
+            if matches!(policy, FollowPolicy::Tame) {
+                return validate_tame(app, faction, fauna_id);
+            }
             if !matches!(policy, FollowPolicy::Corral) {
                 return Ok(());
             }
-            let knowledge_threshold = app
-                .world
-                .resource::<FaunaConfigHandle>()
-                .get()
-                .husbandry
-                .knowledge_completion_threshold;
-            let knows_herding = app
-                .world
-                .resource::<DiscoveryProgressLedger>()
-                .get_progress(faction, HERDING_DISCOVERY_ID)
-                >= scalar_from_f32(knowledge_threshold);
-            if !knows_herding {
-                return Err("Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it.".to_string());
+            // **The §4.3 gate reshuffle**: rung 3 is gated on **Penning**, the knowledge rung 2
+            // teaches — not on Herding, which now gates `tame` alone. Read off the rung record (the
+            // `validate_tame` pattern) rather than a hard-coded id, so the gate cannot drift from the
+            // ladder the labor arm accrues against.
+            let (knowledge_threshold, pen_unlock) = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                (
+                    ladder.knowledge.completion_threshold,
+                    ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+                )
+            };
+            let knows_penning = pen_unlock.is_none_or(|knowledge| {
+                knows(
+                    app.world.resource::<DiscoveryProgressLedger>(),
+                    faction,
+                    knowledge,
+                    knowledge_threshold,
+                )
+            });
+            if !knows_penning {
+                return Err(
+                    "Your people have not learned Penning yet. Tame and keep herds to learn it."
+                        .to_string(),
+                );
             }
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return Err(format!("No herd '{}' to corral.", fauna_id));
@@ -1741,7 +1786,7 @@ fn validate_labor_policy(
             }
             if !herd.is_domesticated() {
                 return Err(format!(
-                    "{} is not domesticated. Sustain-hunt it to tame it before building a pen.",
+                    "{} is not domesticated. Tame it before building a pen.",
                     fauna_id
                 ));
             }
@@ -1752,6 +1797,181 @@ fn validate_labor_policy(
         }
         LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
     }
+}
+
+/// The **`Sow`** policy's gates — the plant **rung-3** verb (`docs/plan_intensification_ladder.md`
+/// §2), split out for `validate_tame`'s reason: the Forage arm now validates two investment rungs.
+///
+/// Each rejection is distinct, and the order is deliberate:
+/// 1. **The tile exists.** A coordinate off the map names no ground at all.
+/// 2. **The LAND will take seed** — the rung's own `site_requirement` (`RungSiteRequirement`), read
+///    off the ladder record and judged by the *rung*, not restated here: the ground must already be
+///    **very fertile** *and* **near fresh water**. This is the rung's defining limit and the whole of
+///    its scarcity: rung 3 knows how to move seed but not how to *fertilize*, so it can only place a
+///    Field where the land does the fertilizing itself. The two failures are **distinct** and phrased
+///    distinctly — **too poor** and **too dry** are different problems with different answers — and
+///    each points at **rung 4, Worked Land** (plows and irrigation, a later arc) rather than reading
+///    as an arbitrary refusal. Checked *before* knowledge, because it is a property of the *place*,
+///    not of the player (the `validate_tame` rule: the animal's own nature outranks who is hunting it).
+/// 3. **Seed Selection** — the rung's own `unlock_knowledge`, read off the ladder rather than
+///    hard-coded, naming both the knowledge and how it is learned.
+/// 4. **Not already a Field** — this rung is already climbed; work it, don't re-sow it.
+/// 5. **Not another faction's ground** — mirrors the Cultivate arm's "another people are cultivating
+///    it".
+///
+/// **There is deliberately no "the tile already has a patch" requirement, and no health gate.** Both
+/// are the point of the rung: seed travels, so qualifying ground with *no* forage site is a legal —
+/// indeed the interesting — target (§2, "where the two webs legitimately differ": `Corral` needs a
+/// herd you already tamed, `Sow` needs nothing), and freshly sown ground starts at the reseed floor,
+/// i.e. Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
+fn validate_sow(app: &bevy::prelude::App, faction: FactionId, tile: UVec2) -> Result<(), String> {
+    let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y) else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let Some(ground) = app.world.get::<Tile>(tile_entity) else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let (grid_width, grid_height) = {
+        let registry = app.world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fresh_water =
+        tile_is_fresh_watered(ground, grid_width, grid_height, wrap_horizontal, |coord| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|neighbor| neighbor.terrain_tags)
+        });
+    let (knowledge_threshold, field_unlock, site_refusal) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let field = ladder.rung(RungKey::PlantField);
+        (
+            ladder.knowledge.completion_threshold,
+            field.unlock_discovery_id(),
+            rung_site_refusal(field, ground, &labor.forage, fresh_water),
+        )
+    };
+    // The land's own answer, phrased. Rung 4 (Worked Land) is what will change it — say so, so the
+    // refusal reads as a rung the player has yet to climb rather than an arbitrary "no".
+    if let Some(refusal) = site_refusal {
+        let fault = match refusal {
+            SiteRefusal::TooPoor => "that ground is too thin to take a crop",
+            SiteRefusal::TooDry => "that ground is too dry to take a crop",
+            SiteRefusal::TooPoorAndTooDry => "that ground is too thin and too dry to take a crop",
+        };
+        return Err(format!(
+            "Nothing will grow at ({}, {}) — {}. Your people can carry seed, but not yet water or \
+             feed the land: sow the rich, well-watered ground along the rivers until they learn to \
+             work the land itself.",
+            tile.x, tile.y, fault
+        ));
+    }
+    let knows_seed_selection = field_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_seed_selection {
+        return Err(
+            "Your people have not learned Seed Selection yet. Work tended patches to learn \
+                    it."
+            .to_string(),
+        );
+    }
+    // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
+    // patch can be in a state that refuses the seed.
+    if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
+        if patch.is_field() {
+            return Err(format!(
+                "The field at ({}, {}) is already sown — forage it to work it.",
+                tile.x, tile.y
+            ));
+        }
+        if patch.owner.is_some_and(|owner| owner != faction) {
+            return Err(format!(
+                "Another people are working the ground at ({}, {}).",
+                tile.x, tile.y
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The **`Tame`** policy's gates — the animal rung-2 twin of the `Cultivate` arm above, in the same
+/// order and with the same shape. Split out because the Hunt arm now validates two investment rungs
+/// and one inline `if` chain for both would read as a maze.
+///
+/// Each rejection is distinct, and the order is deliberate:
+/// 1. **Herding** — the rung's own `unlock_knowledge`, read off the ladder rather than hard-coded, so
+///    a config edit to the gate can't leave a stale check here. (§4.3 will move rung 3 to `penning`;
+///    this arm keeps naming its own rung's knowledge whatever that becomes.)
+/// 2. **The herd exists.**
+/// 3. **The species' `husbandry_ceiling` allows domestication** (Grazing 2d-δ) — checked *before*
+///    ownership, because it is a property of the *animal*, not of who is hunting it (the rule the
+///    retired `domesticate` handler established).
+/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb.
+/// 5. **Not another faction's** — mirrors the plant side's "another people are cultivating it".
+///
+/// Deliberately **not** gated on the herd being Thriving, unlike the patch: a herd's phase swings as
+/// it is hunted, and the labor arm already handles a lapsed phase gracefully (accrual pauses, the
+/// meter holds, work resumes on recovery). Rejecting the *policy* for a transient dip would be a
+/// worse experience than letting the player commit and wait.
+fn validate_tame(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    fauna_id: &str,
+) -> Result<(), String> {
+    let (knowledge_threshold, pastoral_unlock) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.rung(RungKey::AnimalPastoral).unlock_discovery_id(),
+        )
+    };
+    let knows_unlock = pastoral_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_unlock {
+        return Err(
+            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
+                .to_string(),
+        );
+    }
+    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+        return Err(format!("No herd '{}' to tame.", fauna_id));
+    };
+    // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed — a property of the animal.
+    if !herd.can_domesticate() {
+        return Err(format!(
+            "{} is wild game — hunt-only, it cannot be tamed.",
+            herd.species
+        ));
+    }
+    if herd.is_domesticated() {
+        return Err(format!(
+            "{} is already domesticated — corral it to pen it.",
+            fauna_id
+        ));
+    }
+    if herd.owner.is_some_and(|owner| owner != faction) {
+        return Err(format!("Another people are taming {}.", fauna_id));
+    }
+    Ok(())
 }
 
 /// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
@@ -2106,13 +2326,18 @@ fn handle_send_hunt_expedition(
     // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
-        // The two **investment** policies are place-bound improvements a *resident* band builds and
-        // then tends — a detached expedition can't pen a herd and walk home, so they are rejected here
-        // alongside an unparseable token (the four extractive rungs are the expedition's whole axis).
+        // **Every** investment policy is place-bound work a *resident* band does — a detached party
+        // cannot tame a herd, pen it, or sow a field and walk home — so they are rejected here
+        // alongside an unparseable token.
+        //
+        // **Derived from the grouping, never re-listed** (`FollowPolicy::is_investment` — the one
+        // home for that question). `EXTRACTIVE` *is* the expedition's whole axis (its own docs say so,
+        // and the snapshot's trip-estimate export already walks exactly it), so this cannot drift. The
+        // hand-written `matches!(Cultivate | Corral)` it replaced had already drifted — it silently
+        // **accepted `tame`**, which then sailed past `hunt_expedition_ceiling`'s `debug_assert!` and
+        // took a plausible-looking pastoral-dip ceiling.
         Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) if !matches!(parsed, FollowPolicy::Cultivate | FollowPolicy::Corral) => {
-                parsed
-            }
+            Ok(parsed) if !parsed.is_investment() => parsed,
             _ => {
                 emit_command_failure(
                     app,
@@ -2204,44 +2429,94 @@ fn handle_send_hunt_expedition(
             .find(&fauna_id)
             .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
     };
+    // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
+    // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
+    // the launching band's tile is known. (The per-herd `huntTripEstimates` snapshot table is
+    // band-agnostic — one row serves every band — so the CLIENT adds this same travel to the pre-launch
+    // readout from the SELECTED band's tile + the exported `bandMoveTilesPerTurn`.)
+    let travel_turns: u32 = {
+        let grid_width = app.world.resource::<TileRegistry>().width;
+        let wrap_horizontal = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let move_rate = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .band_move_tiles_per_turn
+            .max(1);
+        app.world
+            .get::<PopulationCohort>(band.entity)
+            .map(|c| c.current_tile)
+            .and_then(|t| app.world.get::<Tile>(t))
+            .map(|tile| {
+                let one_way =
+                    hex_distance_wrapped(tile.position, herd_pos, grid_width, wrap_horizontal);
+                (2 * one_way).div_ceil(move_rate)
+            })
+            .unwrap_or(0)
+    };
+    // The raid always completes in bounded turns (grab the surplus, come home), so the only genuine
+    // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
+    // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
     let (viability_note, viability_detail) = match &forecast {
-        // A denial mission (Eradicate) brings nothing home, so a "turns to fill" number would be
-        // meaningless — say what it actually does instead of quoting a fillable-looking ETA.
+        // A denial mission (Eradicate) brings nothing home — say what it does, no ETA.
         Some(f) if !f.delivers_food => (
             " — denial mission: the party delivers NO food; it hunts the herd toward extinction"
                 .to_string(),
             " eta_turns=none viability=denial".to_string(),
         ),
-        Some(f) => match f.turns_to_fill {
-            Some(turns) if turns <= cfg.hunt.viability_warn_turns => (
-                format!(" — est. ~{} turns to fill", turns),
-                format!(" eta_turns={}", turns),
+        // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
+        // now means the raid lands NO food at all (a small party on a big animal still delivers a
+        // partial with waste, so the signal is `delivered_food == 0`, not "the party is too small").
+        Some(f) if f.delivered_food <= 0.0 => (
+            format!(
+                " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
+                 return empty",
+                fauna_id,
+                policy.as_str()
             ),
-            Some(turns) => (
-                format!(
-                    " — est. ~{} turns to fill; NOT VIABLE at this herd's yield",
-                    turns
+            " eta_turns=none viability=no_surplus".to_string(),
+        ),
+        // A completed raid: headline the food landed, with the kill count + waste below. A pack too
+        // small to seat a whole animal delivers a partial and wastes the rest, so food (not the animal
+        // count) is the payload. `turns_to_fill == None` means it ran the whole horizon still delivering
+        // (a slow breeder a big party can neither fill nor exhaust).
+        Some(f) => {
+            let animals = f.animals_taken;
+            let food = f.delivered_food;
+            let wasted = f.wasted_food;
+            match f.turns_to_fill {
+                Some(hunt_turns) => {
+                    let total = hunt_turns + travel_turns;
+                    (
+                        format!(
+                            " — est. ~{:.1} food ({} animals, {:.1} wasted) over ~{} turns ({} hunting \
+                             + {} travel)",
+                            food, animals, wasted, total, hunt_turns, travel_turns
+                        ),
+                        format!(
+                            " eta_turns={} hunt_turns={} travel_turns={} animals={} food={:.2} \
+                             wasted={:.2}",
+                            total, hunt_turns, travel_turns, animals, food, wasted
+                        ),
+                    )
+                }
+                None => (
+                    format!(
+                        " — a long raid: ~{:.1} food ({} animals, {:.1} wasted) over {}+ hunting turns \
+                         (+{} travel)",
+                        food, animals, wasted, cfg.hunt.forecast_horizon_turns, travel_turns
+                    ),
+                    format!(
+                        " eta_turns=none travel_turns={} animals={} food={:.2} wasted={:.2}",
+                        travel_turns, animals, food, wasted
+                    ),
                 ),
-                format!(" eta_turns={} viability=marginal", turns),
-            ),
-            // The herd yields nothing at all under this policy (sub-Allee / collapsing).
-            None if f.first_turn_provisions <= 0.0 => (
-                " — this herd is below its collapse threshold and yields no sustainable take; the \
-                 party will return empty"
-                    .to_string(),
-                " eta_turns=none viability=impossible".to_string(),
-            ),
-            // It yields *something*, but not enough to fill a pack inside the forecast horizon —
-            // the exact turn count past there carries no information a player can act on.
-            None => (
-                format!(
-                    " — the party will NOT fill its pack within {} turns at this herd's yield; NOT \
-                     VIABLE",
-                    cfg.hunt.forecast_horizon_turns
-                ),
-                " eta_turns=none viability=marginal".to_string(),
-            ),
-        },
+            }
+        }
         None => (String::new(), String::new()),
     };
 
@@ -2489,120 +2764,75 @@ fn handle_cancel_order(
     );
 }
 
-/// Claim a herd as domesticated livestock. Requires the faction to have built husbandry
-/// progress by Sustain-following it (so it owns the herd) and for that progress to have
-/// reached `husbandry.claim_threshold`; otherwise the command is rejected. On success the
-/// herd is finalized to domesticated (`claim_domestication`), after which it yields steady
-/// provisions and is collapse-immune.
-fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
-    enum Outcome {
-        UnknownHerd,
-        AlreadyDomesticated,
-        /// Grazing 2d-δ: a `Wild`-ceiling species is hunt-only — carries the species display name.
-        WildGame(String),
-        NotOwner,
-        NotTame(f32),
-        Claimed,
+/// **Set the `Tame` policy** on the herd `herd_id` for the band(s) already hunting it — the animal
+/// rung-2 verb, and the exact twin of `handle_cultivate`. This is the command form of what the
+/// client's policy picker does; it **tames nothing outright**.
+///
+/// It **replaces the retired `domesticate` early-claim**, which snapped `domestication_progress` to
+/// `1.0` once past a `claim_threshold`. That claim existed to *skip the investment*, which is the
+/// entire decision — the same reason the plant side removed its own claim first. Taming now costs a
+/// real yield dip (the `animal:pastoral` rung's `yield_fraction_while_building × the herd's Sustain
+/// (MSY) ceiling`) and takes `1 / progress_per_turn` turns of sustained work.
+///
+/// Targets a **herd id** (as `domesticate` did) rather than a tile: taming is the verb you reach for
+/// on a *roaming* wild herd, which is identified by who is following it, not by where it stands this
+/// turn. (`corral`, by contrast, keys off a tile — a pen is a place.)
+///
+/// Gates (via the shared `validate_labor_policy`): the faction must know **Herding**, the species'
+/// `husbandry_ceiling` must allow domestication, and the herd must not already be domesticated or
+/// another faction's — plus the rejection when **no band is hunting it**.
+fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    let target = LaborTarget::Hunt {
+        fauna_id: herd_id.clone(),
+        policy: FollowPolicy::Tame,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "tame",
+            faction = %faction.0,
+            herd = %herd_id,
+            reason = %reason,
+            "command.tame.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Tame, faction, reason);
+        return;
     }
 
-    let claim_threshold = app
-        .world
-        .resource::<FaunaConfigHandle>()
-        .get()
-        .husbandry
-        .claim_threshold;
-
-    // Decide (and, on success, mutate the herd) inside a scope so the registry borrow ends
-    // before we emit command events through `app`.
-    let outcome = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        match registry.herds.iter_mut().find(|herd| herd.id == herd_id) {
-            None => Outcome::UnknownHerd,
-            Some(herd) if herd.is_domesticated() => Outcome::AlreadyDomesticated,
-            // Grazing 2d-δ: a `Wild`-ceiling species can never be tamed (checked before ownership —
-            // it is a property of the animal, not of who is hunting it).
-            Some(herd) if !herd.can_domesticate() => Outcome::WildGame(herd.species.clone()),
-            // Only the tending faction may claim; report ownership and tameness distinctly.
-            Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
-            Some(herd) if herd.domestication_progress < claim_threshold => {
-                Outcome::NotTame(herd.domestication_progress)
-            }
-            Some(herd) => {
-                herd.claim_domestication(faction);
-                Outcome::Claimed
-            }
-        }
-    };
-
-    match outcome {
-        Outcome::UnknownHerd => {
-            warn!(
-                target: "shadow_scale::command",
-                command = "domesticate",
-                faction = %faction.0,
-                herd = %herd_id,
-                "command.domesticate.rejected=unknown_herd"
-            );
-            emit_command_failure(
-                app,
-                CommandEventKind::Domesticate,
-                faction,
-                format!("Herd '{}' no longer exists.", herd_id),
-            );
-        }
-        Outcome::AlreadyDomesticated => emit_command_failure(
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
             app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!("{} is already domesticated.", herd_id),
-        ),
-        Outcome::WildGame(species) => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!("{species} is wild game — hunt-only, it cannot be domesticated."),
-        ),
-        Outcome::NotOwner => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
+            CommandEventKind::Tame,
             faction,
             format!(
-                "You are not tending {}. Sustain-hunt it to build husbandry before claiming it.",
+                "No band is hunting {} — assign herders to it first, then tame it.",
                 herd_id
             ),
-        ),
-        Outcome::NotTame(progress) => emit_command_failure(
-            app,
-            CommandEventKind::Domesticate,
-            faction,
-            format!(
-                "{} is not tame enough to domesticate ({}%). Keep Sustain-hunting it to build husbandry.",
-                herd_id,
-                (progress * 100.0).round() as i64
-            ),
-        ),
-        Outcome::Claimed => {
-            let tick = app.world.resource::<SimulationTick>().0;
-            info!(
-                target: "shadow_scale::command",
-                command = "domesticate",
-                faction = %faction.0,
-                herd = %herd_id,
-                "command.domesticate.claimed"
-            );
-            push_command_event(
-                app,
-                tick,
-                CommandEventKind::Domesticate,
-                faction,
-                format!("Domesticated {}", herd_id),
-                Some(format!(
-                    "status=complete action=domesticate herd={}",
-                    herd_id
-                )),
-            );
-        }
+        );
+        return;
     }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "tame",
+        faction = %faction.0,
+        herd = %herd_id,
+        bands = switched,
+        "command.tame.taming"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Tame,
+        faction,
+        format!("Taming {}", herd_id),
+        Some(format!(
+            "status=taming action=tame herd={} bands={}",
+            herd_id, switched
+        )),
+    );
 }
 
 /// **Answer a pending narrative fork** (The Telling's fork tier).
@@ -2749,6 +2979,82 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
     );
 }
 
+/// **Set the `Sow` policy** on the tile at `tile` for the band(s) already foraging it — the plant
+/// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
+/// what the client's policy picker does; it **sows nothing outright**.
+///
+/// What makes it the interesting verb: `Sow` **places** a food source — *including on ground that
+/// carries no forage site at all* — so a crew can put a Field on the floodplain they chose rather than
+/// the stand the wild chose for them. That is the one place the two food webs legitimately differ
+/// (`Corral` needs a herd you already tamed; seed travels). The seed itself goes into the ground in
+/// the labor arm, on the first turn a crew actually works the tile under this policy — so
+/// `assign_labor … sow` and this command place a Field on exactly the same terms.
+///
+/// **And the ground is scarce, which is the point**: rung 3 carries seed but not water or fertilizer,
+/// so the `plant:field` rung's `site_requirement` demands land that is *already* very fertile and near
+/// fresh water — **46 of 4160 tiles** on the standard map. *Which* tile a band can farm is therefore a
+/// real decision, and a band may have to **move** to farm at all: that is the sedentarization pull.
+///
+/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the **land** must take seed —
+/// too thin and/or too dry ground waits for **rung 4, Worked Land** — the faction must know **Seed
+/// Selection**, and the tile must not already be a Field or another people's — plus the rejection when
+/// **no band is foraging** it.
+fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    let target = LaborTarget::Forage {
+        tile,
+        policy: FollowPolicy::Sow,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "sow",
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.sow.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Sow, faction, reason);
+        return;
+    }
+
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Sow,
+            faction,
+            format!(
+                "No band is foraging ({}, {}). Assign foragers to the ground first, then sow it.",
+                tile.x, tile.y
+            ),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "sow",
+        faction = %faction.0,
+        x = tile.x,
+        y = tile.y,
+        bands = switched,
+        "command.sow.sowing"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Sow,
+        faction,
+        format!("Sowing a field at ({}, {})", tile.x, tile.y),
+        Some(format!(
+            "status=sowing action=sow x={} y={} bands={}",
+            tile.x, tile.y, switched
+        )),
+    );
+}
+
 /// **Set the Corral policy** on the domesticated herd standing at `tile` for the band(s) already
 /// hunting it — the animal mirror of `handle_cultivate`, and the command form of the client's policy
 /// picker. While the pen is built the keeper takes only
@@ -2848,7 +3154,8 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
 /// The pen's whole life rides `CommandEventKind::Corral`, so the extend feed lines reuse it.
 ///
 /// Validates: a herd penned **exactly at `tile`** (`corralled_at`, the fixed pen anchor — not the
-/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Herding**,
+/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Penning** (a ring
+/// rides the same `animal:pen` rung as the initial build, so it takes that rung's gate — not Herding),
 /// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
 /// keeping it (or the ring never accrues, and an untended pen escapes anyway).
 fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
@@ -2877,14 +3184,32 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         return;
     };
 
-    let (owns, knows_herding, can_pen, species, at_max, already_extending, pen_radius_max) = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let pen_radius_max = fauna.husbandry.pen_radius_max;
-        let knows = app
+    let (owns, knows_penning, can_pen, species, at_max, already_extending, pen_radius_max) = {
+        let pen_radius_max = app
             .world
-            .resource::<DiscoveryProgressLedger>()
-            .get_progress(faction, HERDING_DISCOVERY_ID)
-            >= scalar_from_f32(fauna.husbandry.knowledge_completion_threshold);
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .husbandry
+            .pen_radius_max;
+        // A fence ring rides the **same `animal:pen` rung** as the initial build (2d-β: same labor,
+        // same dip, same dials), so it takes that rung's gate too — **Penning** since the §4.3
+        // reshuffle. Read off the rung, so a ring can never be gated differently from the pen it
+        // extends.
+        let (knowledge_threshold, pen_unlock) = {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            (
+                ladder.knowledge.completion_threshold,
+                ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+            )
+        };
+        let knows_penning = pen_unlock.is_none_or(|knowledge| {
+            knows(
+                app.world.resource::<DiscoveryProgressLedger>(),
+                faction,
+                knowledge,
+                knowledge_threshold,
+            )
+        });
         let herd = app
             .world
             .resource::<HerdRegistry>()
@@ -2892,7 +3217,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
             .expect("herd resolved above");
         (
             herd.owner == Some(faction),
-            knows,
+            knows_penning,
             herd.can_pen(),
             herd.species.clone(),
             herd.pen_radius >= pen_radius_max,
@@ -2904,9 +3229,9 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         // Grazing 2d-δ: belt-and-braces — a non-`Pen` species can never be penned, so this is
         // unreachable via the gated corral path, but the extend command states the rule explicitly.
         Some(format!("{species} cannot be penned."))
-    } else if !knows_herding {
+    } else if !knows_penning {
         Some(
-            "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it."
+            "Your people have not learned Penning yet. Tame and keep herds to learn it."
                 .to_string(),
         )
     } else if !owns {
@@ -3753,10 +4078,10 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             beat_id,
             choice_id,
         }),
-        ProtoCommandPayload::Domesticate {
+        ProtoCommandPayload::Tame {
             faction_id,
             herd_id,
-        } => Some(Command::Domesticate {
+        } => Some(Command::Tame {
             faction: FactionId(faction_id),
             herd_id,
         }),
@@ -3765,6 +4090,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         } => Some(Command::Cultivate {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::Sow {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Sow {
             faction: FactionId(faction_id),
             target_x,
             target_y,
@@ -4115,8 +4449,9 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CampaignVictory => "Campaign victory",
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
-        CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::Tame => "Tame",
         CommandEventKind::Cultivate => "Cultivate",
+        CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
@@ -4954,7 +5289,12 @@ fn handle_rollback(
 mod tests {
     use super::*;
     use bevy::math::UVec2;
-    use core_sim::{build_headless_app, ForagePatch};
+    // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
+    // off the rung record (`unlock_discovery_id`), never a hard-coded id.
+    use core_sim::{
+        build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
+    };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
     /// more; progress must be earned under the Cultivate policy).
@@ -5151,6 +5491,503 @@ mod tests {
         ));
     }
 
+    // --- `sow` (the plant rung-3 verb, slice 5). The rejections are the contract: each one names a
+    // different thing the player must fix, and the barren-ground one has to point at *why*.
+
+    fn grant_seed_selection(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, SEED_SELECTION_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn sow_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Sow)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// The map every `sow` test stands on. The shipped `map_seed` is **0 = entropy**, so a test that
+    /// wants a reproducible map must pin one — otherwise "is there hospitable ground here?" is a
+    /// coin flip per run.
+    const SOW_TEST_MAP_SEED: u64 = 119304647;
+
+    /// A **real world** — `build_headless_app` builds the app, `update` runs the Startup chain, so
+    /// the map, its `Tile`s and its seeded forage patches all exist. `sow` needs them: its defining
+    /// gate is a property of the *ground*.
+    fn build_world_app() -> bevy::prelude::App {
+        let mut app = build_headless_app();
+        app.world.resource_mut::<SimulationConfig>().map_seed = SOW_TEST_MAP_SEED;
+        app.update();
+        app
+    }
+
+    /// **The land's own verdict on every tile**, resolved through the *real* seam the sim uses
+    /// (`rung_site_refusal` + `tile_is_fresh_watered` against the `plant:field` rung's own
+    /// `site_requirement`) — never a restatement of the rule. `None` = the ground will take seed.
+    fn site_verdict(app: &bevy::prelude::App, coord: UVec2) -> Option<Option<SiteRefusal>> {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)?;
+        let ground = app.world.get::<Tile>(entity)?;
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        let wrap = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let fresh_water = tile_is_fresh_watered(ground, width, height, wrap, |neighbor| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(neighbor.x, neighbor.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|tile| tile.terrain_tags)
+        });
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Some(rung_site_refusal(
+            ladder.rung(RungKey::PlantField),
+            ground,
+            &labor.forage,
+            fresh_water,
+        ))
+    }
+
+    /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
+    /// iteration order, so no seed/hash flake (the lesson of `7c09c7e`).
+    fn find_tile(
+        app: &bevy::prelude::App,
+        accept: impl Fn(Option<SiteRefusal>, Option<&ForagePatch>) -> bool,
+    ) -> Option<UVec2> {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                let Some(verdict) = site_verdict(app, coord) else {
+                    continue;
+                };
+                if accept(verdict, app.world.resource::<ForageRegistry>().patch(coord)) {
+                    return Some(coord);
+                }
+            }
+        }
+        None
+    }
+
+    /// **Ground the ladder will take seed on** — rich *and* watered. On the pinned map this is the
+    /// river-valley set (~46 tiles of 4160), which is the scarcity the rung is made of.
+    fn find_sowable_tile(app: &bevy::prelude::App) -> UVec2 {
+        find_tile(app, |verdict, _| verdict.is_none())
+            .expect("the pinned map must carry sowable river-valley ground")
+    }
+
+    /// Ground the land refuses, in the *specific* way named — the two failures are different problems
+    /// and the messages must say which.
+    fn find_refused_tile(app: &bevy::prelude::App, refusal: SiteRefusal) -> UVec2 {
+        find_tile(app, |verdict, _| verdict == Some(refusal))
+            .unwrap_or_else(|| panic!("the pinned map must carry ground that is {refusal:?}"))
+    }
+
+    /// **The gate the slice-4 knowledge finally spends.** Without Seed Selection there is no `sow`,
+    /// and the refusal must *name* the knowledge and say how it is learned — a gate the player cannot
+    /// see is indistinguishable from a bug.
+    #[test]
+    fn sow_rejected_when_seed_selection_unknown() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "Seed Selection"),
+            "the refusal must name the knowledge that gates sowing"
+        );
+        assert!(
+            sow_failure_detail_contains(&app, "tended patches"),
+            "...and say how it is learned"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sustain,
+            "a rejected sow must not touch the band's policy"
+        );
+    }
+
+    /// **Sow places, it does not conjure — and rung 3 cannot fertilize.** Ground too **thin** to take
+    /// a crop is refused *even when it is watered*, and the refusal names the fault and points at rung
+    /// 4 (Worked Land). Checked with the knowledge in hand: it is a property of the place, not the
+    /// player.
+    #[test]
+    fn sow_rejected_on_ground_that_is_too_poor() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::TooPoor);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "too thin to take a crop"),
+            "thin ground must be refused, and the message must name the fault"
+        );
+        assert!(
+            !sow_failure_detail_contains(&app, "too dry"),
+            "...and must NOT blame the water on watered ground"
+        );
+        assert!(
+            sow_failure_detail_contains(&app, "work the land itself"),
+            "...pointing at rung 4, so the refusal reads as a rung not yet climbed"
+        );
+    }
+
+    /// **The water rule, and it is not redundant.** Ground rich enough to farm but **dry** is refused:
+    /// rung 3 can carry seed, not water. This is what pulls the first fields into the river valleys.
+    #[test]
+    fn sow_rejected_on_ground_that_is_too_dry() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::TooDry);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "too dry to take a crop"),
+            "dry ground must be refused, and the message must name the fault"
+        );
+        assert!(
+            !sow_failure_detail_contains(&app, "too thin"),
+            "...and must NOT blame the soil on rich ground"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none()
+                || !app
+                    .world
+                    .resource::<ForageRegistry>()
+                    .patch(coord)
+                    .unwrap()
+                    .is_field(),
+            "a refused sow must not build a field"
+        );
+    }
+
+    /// A tile that fails **both** says so in one line, rather than making the player fix one problem
+    /// only to discover the other.
+    #[test]
+    fn sow_rejected_naming_both_faults_on_poor_dry_ground() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_refused_tile(&app, SiteRefusal::TooPoorAndTooDry);
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(
+            &app,
+            "too thin and too dry to take a crop"
+        ));
+    }
+
+    #[test]
+    fn sow_rejected_on_a_tile_off_the_map() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        grant_seed_selection(&mut app, faction);
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+
+        handle_sow(&mut app, faction, UVec2::new(width + 5, height + 5));
+
+        assert!(sow_failure_detail_contains(&app, "There is no tile at"));
+    }
+
+    /// A Field is already sown — there is nothing left to build, so re-sowing it is refused (the
+    /// twin of "the patch is already cultivated").
+    #[test]
+    fn sow_rejected_on_a_patch_that_is_already_a_field() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        {
+            // Set the meter straight (the accrual is `pub(crate)`): this test is about the command's
+            // gate, not about how a Field gets built.
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.field_progress = RUNG_COMPLETE;
+            patch.owner = Some(faction);
+        }
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "already sown"));
+    }
+
+    /// The ownership gate, mirroring Cultivate's: you cannot sow ground another people are working.
+    #[test]
+    fn sow_rejected_on_another_factions_ground() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_progress = 0.5;
+            patch.owner = Some(FactionId(1));
+        }
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "Another people"));
+    }
+
+    /// With nobody foraging the ground there is no assignment to re-point: `sow` is rejected and
+    /// tells the player to staff it first (the `cultivate` rule — the command sets a policy, it does
+    /// not conjure labor).
+    #[test]
+    fn sow_rejected_when_no_band_is_foraging_the_tile() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        grant_seed_selection(&mut app, faction);
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "No band is foraging"));
+    }
+
+    /// **The happy path.** On ground the land accepts — rich *and* watered, the river-valley set —
+    /// `sow` is accepted: it sets the policy and claims nothing, exactly like `cultivate`. The seed
+    /// itself goes in when the crew works the ground.
+    ///
+    /// (`Sow`'s *create-from-nothing* half — hospitable ground carrying no forage site at all — cannot
+    /// be reached on a generated map, since worldgen seeds a patch on every food-bearing tile; it is
+    /// exercised against constructed bare ground in `forage_field.rs`.)
+    #[test]
+    fn sow_sets_the_sow_policy_on_qualifying_ground() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        grant_seed_selection(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sow,
+            "sow switches the working band onto the investment policy"
+        );
+        assert!(
+            !app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_some_and(|patch| patch.is_field()),
+            "the command claims nothing — the field must still be worked off"
+        );
+    }
+
+    /// **THE WIRE CANNOT DISAGREE WITH THE GATE.** `ForagePatchState.sowSiteRefusal` is the answer to
+    /// *"why can't I sow here?"* — the question players will actually ask, since only ~1% of tiles are
+    /// sowable — so it has to be the **same** verdict `handle_sow` acts on. Both resolve through
+    /// `RungSiteRequirement::refusal`; this asserts they agree on a qualifying tile, a too-poor tile
+    /// and a too-dry tile, by driving the *real* command and reading the *real* capture.
+    #[test]
+    fn the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on() {
+        for (expected_wire, expected_command_fault) in [
+            (SITE_ACCEPTED, None),
+            (
+                SiteRefusal::TooPoor.as_str(),
+                Some("too thin to take a crop"),
+            ),
+            (SiteRefusal::TooDry.as_str(), Some("too dry to take a crop")),
+        ] {
+            let mut app = build_world_app();
+            let faction = FactionId(0);
+            let coord = match expected_command_fault {
+                None => find_sowable_tile(&app),
+                Some(_) if expected_wire == SiteRefusal::TooPoor.as_str() => {
+                    find_refused_tile(&app, SiteRefusal::TooPoor)
+                }
+                Some(_) => find_refused_tile(&app, SiteRefusal::TooDry),
+            };
+            grant_seed_selection(&mut app, faction);
+            spawn_working_band(
+                &mut app,
+                faction,
+                LaborTarget::Forage {
+                    tile: coord,
+                    policy: FollowPolicy::Sustain,
+                },
+            );
+
+            // What the WIRE says about this ground.
+            recapture_snapshot_in_place(&mut app.world);
+            let snapshot = app
+                .world
+                .resource::<SnapshotHistory>()
+                .last_snapshot
+                .clone()
+                .expect("a snapshot was captured");
+            let patch = snapshot
+                .forage_patches
+                .iter()
+                .find(|patch| patch.x == coord.x && patch.y == coord.y)
+                .expect(
+                    "every food-bearing tile carries a patch, so the wire must describe this one",
+                );
+            assert_eq!(
+                patch.sow_site_refusal, expected_wire,
+                "the wire's verdict at {coord:?}"
+            );
+
+            // What the COMMAND does about this ground.
+            handle_sow(&mut app, faction, coord);
+            match expected_command_fault {
+                None => {
+                    assert!(
+                        !sow_failure_detail_contains(&app, "Nothing will grow"),
+                        "the wire says this ground takes seed ({expected_wire:?}) — the command must \
+                         not refuse it"
+                    );
+                }
+                Some(fault) => {
+                    assert!(
+                        sow_failure_detail_contains(&app, fault),
+                        "the wire says {expected_wire:?} — the command must refuse it for the SAME \
+                         reason"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The rung-3 meters and the Sow forecast pair reach the wire, and read as the rung the patch
+    /// actually stands on. `fieldYield` is the payoff the client shows against `ceilingSow`'s dip.
+    #[test]
+    fn the_wire_carries_both_plant_meters_and_the_sow_forecast_pair() {
+        let mut app = build_world_app();
+        let coord = find_sowable_tile(&app);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry
+                .patch_mut(coord)
+                .expect("sowable ground has a patch");
+            patch.biomass = patch.carrying_capacity * 0.5;
+            patch.cultivation_progress = 1.0;
+            patch.field_progress = 0.4;
+            patch.owner = Some(FactionId(0));
+        }
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot
+            .clone()
+            .expect("a snapshot was captured");
+        let patch = snapshot
+            .forage_patches
+            .iter()
+            .find(|patch| patch.x == coord.x && patch.y == coord.y)
+            .expect("the patch is on the wire");
+
+        // BOTH plant meters ship, independently — the two-meter split the client needs.
+        assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
+        assert!(patch.is_cultivated);
+        assert!((patch.field_progress - 0.4).abs() < 1e-6);
+        assert!(!patch.is_field, "0.4 is a half-sown field, not a Field");
+
+        // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
+        // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
+        assert!(patch.tended_yield > 0.0);
+        assert!(
+            patch.ceiling_sow > 0.0 && patch.ceiling_sow < patch.tended_yield,
+            "sowing a tended patch pays a fraction of what it would otherwise hand you: {} vs {}",
+            patch.ceiling_sow,
+            patch.tended_yield
+        );
+        assert!(
+            patch.field_yield > patch.tended_yield,
+            "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
+            patch.field_yield,
+            patch.tended_yield
+        );
+    }
+
     fn grant_cultivation(app: &mut bevy::prelude::App, faction: FactionId) {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
@@ -5168,6 +6005,11 @@ mod tests {
     }
 
     /// Seed a herd standing on `coord`, optionally domesticated + owned by `owner`. Returns its id.
+    /// One test deer (slice 8). These are **command-validation** tests — they assert which verbs a
+    /// herd accepts and which rejections it names, never what a take pays — so the quantum is kept
+    /// small enough that it can never be the reason a fixture herd yields nothing.
+    const CORRAL_TEST_BODY_MASS: f32 = 1.0;
+
     fn seed_herd(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) -> String {
         use core_sim::{Herd, SizeClass};
         let mut herd = Herd::new(
@@ -5179,19 +6021,30 @@ mod tests {
             100.0,
             0.0,
             0.05,
+            CORRAL_TEST_BODY_MASS,
         );
         if let Some(faction) = owner {
-            herd.claim_domestication(faction);
+            herd.accrue_domestication(faction, RUNG_COMPLETE);
         }
         let id = herd.id.clone();
         app.world.resource_mut::<HerdRegistry>().herds.push(herd);
         id
     }
 
+    /// Rung 2's gate — what `tame` needs. Since the §4.3 reshuffle that is **all** Herding opens:
+    /// corralling needs [`grant_penning`].
     fn grant_herding(app: &mut bevy::prelude::App, faction: FactionId) {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
             .add_progress(faction, HERDING_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    /// Rung 3's gate — what `corral` and `extend_pen` need. Deliberately grants **only** Penning, so
+    /// these tests also prove the gates read the right knowledge rather than any ladder progress.
+    fn grant_penning(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, PENNING_DISCOVERY_ID, scalar_from_f32(1.0));
     }
 
     fn herd_is_corralled(app: &bevy::prelude::App, id: &str) -> bool {
@@ -5211,20 +6064,26 @@ mod tests {
         })
     }
 
-    /// Rung 1c gate: `corral` is rejected when the faction has not learned Herding, even on a
-    /// domesticated herd it owns, and the herd stays mobile.
+    /// **The §4.3 gate reshuffle, asserted where it bites:** rung 3 is gated on **Penning**, and
+    /// **Herding is no longer enough**. The faction owns a domesticated herd and knows Herding — the
+    /// exact state that used to permit corralling — and `corral` is still refused, naming Penning.
+    /// The herd stays mobile.
+    ///
+    /// Granting Herding is the load-bearing half: a test that granted *nothing* would pass just as
+    /// happily against the old Herding gate, and so would not pin the reshuffle at all.
     #[test]
-    fn corral_rejected_when_herding_unknown() {
+    fn corral_rejected_when_penning_unknown_even_knowing_herding() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
         assert!(
-            corral_failure_detail_contains(&app, "learned Herding"),
-            "corral must emit a NotKnown failure when Herding is unknown"
+            corral_failure_detail_contains(&app, "learned Penning"),
+            "corral must emit a NotKnown failure naming PENNING — Herding gates `tame` only now"
         );
         assert!(
             !herd_is_corralled(&app, &id),
@@ -5240,7 +6099,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, None);
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
@@ -5259,7 +6118,7 @@ mod tests {
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(owner));
-        grant_herding(&mut app, intruder);
+        grant_penning(&mut app, intruder);
 
         handle_corral(&mut app, intruder, coord);
 
@@ -5270,7 +6129,7 @@ mod tests {
         assert!(!herd_is_corralled(&app, &id));
     }
 
-    /// The repurposed `corral`: a faction that knows Herding and owns the domesticated herd on the
+    /// The repurposed `corral`: a faction that knows Penning and owns the domesticated herd on the
     /// tile **sets the Corral policy** on the band already hunting it. The pen is not built yet — that
     /// costs `1 / corral_build_progress_per_turn` turns of the reduced Corral take.
     #[test]
@@ -5279,7 +6138,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         let band = spawn_working_band(
             &mut app,
             faction,
@@ -5309,11 +6168,161 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_corral(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    // --- Tame (the intensification ladder's animal rung-2 verb) ----------------------------------
+
+    /// Rung-2 gate (§4.3): `tame` is refused until the faction has learned **Herding**. Taming used
+    /// to be ungated (a free side effect of Sustain); it is now paced by practice.
+    #[test]
+    fn tame_rejected_when_herding_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        // Owner `None` — a wild, untamed herd, which is what `tame` targets.
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(
+            &app,
+            "have not learned Herding"
+        ));
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sustain,
+            "a refused tame must not switch the band's policy"
+        );
+    }
+
+    /// The happy path: with Herding known and herders already on the herd, `tame` **sets the Tame
+    /// policy** on them. It tames nothing outright — the investment must still be worked off (this is
+    /// exactly what the retired `domesticate` early-claim let the player skip).
+    #[test]
+    fn tame_sets_the_tame_policy_on_the_working_band() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        grant_herding(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Tame,
+            "tame switches the working band onto the investment policy"
+        );
+        assert!(
+            !app.world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .unwrap()
+                .is_domesticated(),
+            "tame claims nothing — there is no early claim any more"
+        );
+    }
+
+    /// An already-domesticated herd has climbed this rung — `corral` is the next verb, not `tame`.
+    #[test]
+    fn tame_rejected_when_already_domesticated() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(&app, "already domesticated"));
+    }
+
+    /// You cannot tame a herd another people are already taming.
+    #[test]
+    fn tame_rejected_for_another_factions_herd() {
+        let mut app = build_headless_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        // Part-tamed by faction 0 — enough to own it, not enough to be domesticated.
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .find(|h| h.id == id)
+            .unwrap()
+            .accrue_domestication(owner, 0.2);
+        grant_herding(&mut app, intruder);
+        spawn_working_band(
+            &mut app,
+            intruder,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_tame(&mut app, intruder, id.clone());
+
+        assert!(tame_failure_detail_contains(
+            &app,
+            "Another people are taming"
+        ));
+    }
+
+    /// `tame` is a policy switch, so it needs someone to switch: staff the herd first.
+    #[test]
+    fn tame_rejected_when_no_band_is_hunting_the_herd() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let id = seed_herd(&mut app, UVec2::new(1, 1), None);
+        grant_herding(&mut app, faction);
+
+        handle_tame(&mut app, faction, id.clone());
+
+        assert!(tame_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    /// An unknown herd id is rejected by name.
+    #[test]
+    fn tame_rejected_for_an_unknown_herd() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        grant_herding(&mut app, faction);
+
+        handle_tame(&mut app, faction, "game_nonexistent".to_string());
+
+        assert!(tame_failure_detail_contains(&app, "No herd"));
     }
 
     // --- ExtendPen (Grazing 2d-β) — the command form of growing a built pen's fenced footprint. ------
@@ -5327,7 +6336,10 @@ mod tests {
         let id = seed_herd(app, coord, owner);
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.corral_at(coord);
+        assert!(
+            herd.corral_at(coord),
+            "the fixture species must be pennable"
+        );
         id
     }
 
@@ -5336,17 +6348,19 @@ mod tests {
         (herd.pen_radius, herd.pen_extending)
     }
 
-    /// `extend_pen` is rejected before the faction has learned Herding.
+    /// `extend_pen` rides the same `animal:pen` rung as the initial build, so it takes the same
+    /// gate: **Penning**, not Herding (which is granted here to prove it is not sufficient).
     #[test]
-    fn extend_pen_rejected_when_herding_unknown() {
+    fn extend_pen_rejected_when_penning_unknown_even_knowing_herding() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
-        assert!(corral_failure_detail_contains(&app, "learned Herding"));
+        assert!(corral_failure_detail_contains(&app, "learned Penning"));
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
     }
 
@@ -5358,7 +6372,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         // A domesticated but NOT-penned herd standing on the tile.
         let id = seed_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
@@ -5374,7 +6388,7 @@ mod tests {
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(owner));
-        grant_herding(&mut app, intruder);
+        grant_penning(&mut app, intruder);
 
         handle_extend_pen(&mut app, intruder, coord);
 
@@ -5402,7 +6416,7 @@ mod tests {
             .find(|h| h.id == id)
             .unwrap()
             .pen_radius = radius_max;
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -5425,7 +6439,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
 
         handle_extend_pen(&mut app, faction, coord);
 
@@ -5433,14 +6447,14 @@ mod tests {
         assert_eq!(herd_pen_state(&app, &id), (0, false));
     }
 
-    /// The happy path: an owned, kept, Herding-known pen below the max enters the extending state.
+    /// The happy path: an owned, kept, Penning-known pen below the max enters the extending state.
     #[test]
     fn extend_pen_sets_the_extending_state() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -5473,19 +6487,32 @@ mod tests {
             .husbandry_ceiling = ceiling;
     }
 
-    /// A `wild` species is hunt-only — the `domesticate` claim rejects it. (A wild herd never even
-    /// accrues husbandry, so this is the realistic path: an untamed wild herd the player tries to claim.)
+    /// A `wild`-ceiling species (deer, mammoth) is hunt-only — **`tame` rejects it**, and it is
+    /// refused for being the wrong *animal*, not for anything about the hunter: the faction here
+    /// knows Herding and has herders on the herd, so the ceiling is the only thing left to fail.
+    ///
+    /// Retargeted from the retired `domesticate_rejects_a_wild_species`: the guarantee ("a wild
+    /// species can never be tamed") is unchanged — only the verb that must enforce it moved.
     #[test]
-    fn domesticate_rejects_a_wild_species() {
+    fn tame_rejects_a_wild_species() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         // Owner `None` so `seed_herd` doesn't auto-domesticate it (the ceiling check is what matters).
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
         set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Wild);
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
 
-        handle_domesticate(&mut app, faction, id.clone());
+        handle_tame(&mut app, faction, id.clone());
 
-        assert!(domesticate_failure_detail_contains(&app, "wild game"));
+        assert!(tame_failure_detail_contains(&app, "wild game"));
         assert!(
             !app.world
                 .resource::<HerdRegistry>()
@@ -5496,9 +6523,9 @@ mod tests {
         );
     }
 
-    fn domesticate_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+    fn tame_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
         app.world.resource::<CommandEventLog>().iter().any(|entry| {
-            matches!(entry.kind, CommandEventKind::Domesticate)
+            matches!(entry.kind, CommandEventKind::Tame)
                 && entry
                     .detail
                     .as_deref()
@@ -5518,7 +6545,7 @@ mod tests {
             let coord = UVec2::new(1, 1);
             let id = seed_herd(&mut app, coord, Some(faction));
             set_ceiling(&mut app, &id, ceiling);
-            grant_herding(&mut app, faction);
+            grant_penning(&mut app, faction);
             spawn_working_band(
                 &mut app,
                 faction,
@@ -5547,7 +6574,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
         set_ceiling(&mut app, &id, core_sim::HusbandryCeiling::Pastoral);
-        grant_herding(&mut app, faction);
+        grant_penning(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -5571,7 +6598,25 @@ mod tests {
     /// party may be spawned, and the failure must name the four policies that ARE valid.
     #[test]
     fn send_hunt_expedition_rejects_the_investment_policies() {
-        for token in ["corral", "cultivate"] {
+        // **Every** investment verb, derived from the grouping rather than re-listed here — the same
+        // discipline the code under test now uses. `tame` and `sow` are the ones a hand-written
+        // `matches!(Cultivate | Corral)` had silently let through.
+        let investment: Vec<&str> = [
+            FollowPolicy::Cultivate,
+            FollowPolicy::Sow,
+            FollowPolicy::Tame,
+            FollowPolicy::Corral,
+        ]
+        .iter()
+        .inspect(|policy| {
+            assert!(
+                !FollowPolicy::EXTRACTIVE.contains(policy),
+                "{policy:?} is an investment rung — the launch gate is EXTRACTIVE membership"
+            );
+        })
+        .map(|policy| policy.as_str())
+        .collect();
+        for token in investment {
             let mut app = build_headless_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
@@ -5821,9 +6866,11 @@ mod tests {
         );
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let expected = forage_source_yield_preview(
             patch,
             &labor.forage,
+            &ladder,
             1.0,
             1.0,
             BAND_WORKERS,
@@ -5859,7 +6906,10 @@ mod tests {
         );
     }
 
-    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side.
+    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side. The seed is the herd's
+    /// **steady** sustainable rate (`hunt_forecast` drops the transient `hunt_credit` term), so it is
+    /// exactly `hunt_source_yield_preview` — the two are the same forecast object, and this pins that
+    /// the command-path seed matches it.
     #[test]
     fn assigning_hunt_workers_seeds_the_expected_yield_before_the_turn() {
         let mut app = build_headless_app();
@@ -5879,9 +6929,11 @@ mod tests {
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let expected = hunt_source_yield_preview(
             herd,
             &fauna,
+            &ladder,
             labor.hunt.per_worker_biomass_capacity,
             1.0,
             BAND_WORKERS,
@@ -5894,7 +6946,15 @@ mod tests {
         );
     }
 
-    /// **Hunt, no jump.** The resolved take equals the seed.
+    /// **Hunt, no jump — on a fresh (empty-bank) herd.** The resolved take equals the seed.
+    ///
+    /// The seed is now the herd's **steady** sustainable rate (`hunt_forecast` no longer folds in the
+    /// banked `hunt_credit`). On a **fresh** herd (`hunt_credit == 0`) the take path's
+    /// `min(0 + rate, biomass)` IS that steady rate, so the first resolved turn pays exactly the seed —
+    /// no jump. A herd already carrying banked credit would cash it and take *more* this one turn than
+    /// the steady display promised; that is the lumpy TAKE, not a forecast error, so this no-jump
+    /// invariant is asserted on the empty-bank herd `seed_herd` produces (the precondition below is
+    /// load-bearing).
     #[test]
     fn resolved_hunt_yield_equals_the_seeded_yield() {
         let mut app = build_headless_app();
@@ -5903,6 +6963,12 @@ mod tests {
         let tile = seed_tile_grid(&mut app, coord);
         let id = seed_herd(&mut app, coord, None);
         let band = spawn_idle_band(&mut app, faction, tile);
+        assert_eq!(
+            app.world.resource::<HerdRegistry>().find(&id).unwrap().hunt_credit,
+            0.0,
+            "no-jump is the empty-bank invariant: the steady seed equals the take only when no banked \
+             credit is waiting to be cashed"
+        );
 
         assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
         let seeded = source_actual(&app, band);

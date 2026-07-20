@@ -55,6 +55,11 @@ pub struct SnapshotContext<'w> {
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
+    /// The intensification ladder. Read at capture because both food webs' **pre-commit yield
+    /// forecasts** quote the investment rungs' dipped ceiling (`Cultivate` / `Corral`) off the
+    /// rung's `yield_fraction_while_building` — the same seam the take pays with, so forecast ==
+    /// actual (see `core_sim/CLAUDE.md` → The Intensification Ladder).
+    pub ladder: Res<'w, crate::intensification::LadderConfigHandle>,
     /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture for each herd's
     /// **pre-commit yield forecast** (`fauna::hunt_forecast` — the client's live "Expected yield" +
     /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`), the per-cohort hunt
@@ -1289,6 +1294,7 @@ pub fn capture_snapshot(
         demographics,
         wellbeing,
         labor,
+        ladder,
         fauna,
         expedition,
         settlement_stage,
@@ -1312,6 +1318,7 @@ pub fn capture_snapshot(
     // Forage potential (per-tile) is read from the biome table here, so the labor config is resolved
     // ahead of the tile loop (it is reused for the labor/expedition readouts further down).
     let labor_config = labor.get();
+    let ladder_config = ladder.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     let start_position = start_location.position();
@@ -1323,6 +1330,11 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
+    // Per-tile terrain tags, keyed by coord — what the fresh-water half of the `plant:field` rung's
+    // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
+    // pass so the refusal sweep below is one more read of the same query rather than a second walk of
+    // the world.
+    let mut tile_tags: HashMap<UVec2, sim_runtime::TerrainTags> = HashMap::new();
     for (entity, tile, food_module) in tiles.iter() {
         tile_states.push(tile_state(
             entity,
@@ -1331,10 +1343,36 @@ pub fn capture_snapshot(
             graze_registry.patch(tile.position),
             &labor_config.forage,
         ));
+        tile_tags.insert(tile.position, tile.terrain_tags);
         if let Some(module) = food_module {
             seasonal_weights.insert(tile.position, module.seasonal_weight);
         }
     }
+    // **Why the ground under each patch will not take seed** — the `plant:field` rung's own
+    // `site_requirement`, resolved through the SAME `RungSiteRequirement::refusal` seam the `sow`
+    // command (`validate_sow`) and the labor arm's placement gate use, so the wire, the rejection and
+    // the sim can never disagree about which ground is farmable. Only refusals are stored: a coord
+    // absent from the map is ground that takes seed (the `seasonal_weights` convention).
+    //
+    // Patches only — the client asks "why can't I sow *here*?" of a tile it is looking at, and a
+    // patch is on every food-bearing tile there is (see core_sim/CLAUDE.md → the Field).
+    let sow_site_refusals: HashMap<UVec2, SiteRefusal> = {
+        let field_rung = ladder_config.rung(RungKey::PlantField);
+        let grid = config.grid_size;
+        let wrap_horizontal = config.map_topology.wrap_horizontal;
+        tiles
+            .iter()
+            .filter(|(_, tile, _)| forage_registry.patch(tile.position).is_some())
+            .filter_map(|(_, tile, _)| {
+                let fresh_water =
+                    tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
+                        tile_tags.get(&coord).copied()
+                    });
+                rung_site_refusal(field_rung, tile, &labor_config.forage, fresh_water)
+                    .map(|refusal| (tile.position, refusal))
+            })
+            .collect()
+    };
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
             x: site.position.x,
@@ -1384,6 +1422,7 @@ pub fn capture_snapshot(
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
+        band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
     };
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
@@ -1675,6 +1714,7 @@ pub fn capture_snapshot(
         &herds,
         &herd_registry,
         &fauna_config,
+        &ladder_config,
         &labor_config,
         &expedition_cfg,
         config.grid_size,
@@ -1702,8 +1742,13 @@ pub fn capture_snapshot(
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
-    let forage_patches_state =
-        snapshot_forage_patches(&forage_registry, &labor_config.forage, &seasonal_weights);
+    let forage_patches_state = snapshot_forage_patches(
+        &forage_registry,
+        &labor_config.forage,
+        &ladder_config,
+        &seasonal_weights,
+        &sow_site_refusals,
+    );
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).

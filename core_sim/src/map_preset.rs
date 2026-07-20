@@ -640,7 +640,83 @@ pub struct MacroLandConfig {
     pub continents: u32,
     pub min_area: u32,
     pub target_land_pct: f32,
-    pub jitter: f32,
+    /// How hard the low-frequency **continental bias** pushes the heightfield around, on the
+    /// normalized 0..1 elevation scale, before erosion and before the coastline contour is anchored
+    /// to sea level (`heightfield::apply_continental_bias`). Thresholding raw fractal noise yields
+    /// one dominant supercontinent, so `continents` is honored by *shaping the field* rather than by
+    /// growing boolean blobs — this is the amplitude of that shaping. `0.0` disables it and
+    /// reproduces the pure-fractal field.
+    pub continental_weight: f32,
+    /// A continent's radius of influence, as a fraction of the **smaller** grid dimension. Beyond it
+    /// the bias saturates at its minimum (`-1`), which is what actively sinks the inter-continental
+    /// gaps instead of merely making them less high.
+    pub continental_radius: f32,
+    /// Shape of the continental falloff: `bias = 1 - 2 * t^exponent` for `t = dist / radius`.
+    /// `1.0` is a linear cone; above it the interior stays high longer and the drop to ocean is
+    /// steeper (a shelf-and-plateau profile); below it the continent domes.
+    pub continental_falloff_exponent: f32,
+    /// **Domain warp amplitude** — how far the continental envelope's sample coordinates are
+    /// displaced by low-frequency noise before the envelope is evaluated, as a fraction of the
+    /// **smaller** grid dimension. This is what makes a continent irregular and lobed instead of
+    /// circular. `0.0` disables the warp and restores a perfectly radial envelope.
+    #[serde(default = "default_continental_warp_amplitude")]
+    pub continental_warp_amplitude: f32,
+    /// Cycles of domain-warp noise across the map. Low by design: the warp reshapes *landmasses*,
+    /// not coastlines (that is `coastline_roughness`), so raising this frays the continent instead of
+    /// lobing it.
+    #[serde(default = "default_continental_warp_frequency")]
+    pub continental_warp_frequency: f32,
+    /// **Per-continent tilt strength** — the directional gradient laid across each centre, in the
+    /// envelope's own `[-1, 1]` units, measured at one `continental_radius` from the centre. The
+    /// direction is hashed per centre from the world seed.
+    ///
+    /// A radial falloff is a dome, and a dome sheds water in every direction, so its drainage
+    /// fragments into many short basins; a *tilted* surface drains one way and concentrates flow into
+    /// a long trunk. `0.0` disables the term.
+    ///
+    /// **Both shipped presets set this to `0.0`, and the machinery below it is deliberately kept.**
+    /// At `2.0` it does buy drainage — one extra seed in six grows a navigable river — but it also
+    /// **bridges continents together**: on `polar_contrast` it fused five multi-plate landmasses into
+    /// two (85% of all land in a single body), which starved the plate-boundary network that fold
+    /// belts form on and cut that preset's fold count by **85%**. That is the same land-bridging
+    /// failure [`heightfield::CONTINENT_TILT_WINDOW_EXPONENT`] exists to prevent; the window mitigates
+    /// it but does not eliminate it on every preset. See `core_sim/CLAUDE.md` → `macro_land`, and
+    /// `mapgen::tests::polar_contrast_fold_investigation` for the measurement.
+    #[serde(default = "default_continental_tilt_strength")]
+    pub continental_tilt_strength: f32,
+    /// **Ridged-spine amplitude** — a ridged-noise term added on top of the envelope and gated to the
+    /// continent interiors, so a landmass carries an internal divide (two drainage sides) rather than
+    /// a single summit. In the envelope's own units. `0.0` disables the spine.
+    #[serde(default = "default_continental_spine_amplitude")]
+    pub continental_spine_amplitude: f32,
+    /// Cycles of ridged-spine noise across the map — i.e. roughly how many mountain-range-scale
+    /// divides a continent can carry.
+    #[serde(default = "default_continental_spine_frequency")]
+    pub continental_spine_frequency: f32,
+    /// Amplitude of the high-frequency noise that gives the coastline its raggedness, applied to the
+    /// field **before** `land_contour`. This replaces the retired land-mask `jitter`, which
+    /// perturbed the mask's *ranking* rather than the field — reordering the very surface the
+    /// contour anchor had just aligned to sea level. Applied here it is harmless: the anchor runs on
+    /// the field that is actually thresholded.
+    pub coastline_roughness: f32,
+}
+
+/// Shipped defaults for the three relief terms that give a continent its divides. Named rather than
+/// inlined so the `Default` impl and serde's per-field fallback cannot drift apart.
+fn default_continental_warp_amplitude() -> f32 {
+    0.18
+}
+fn default_continental_warp_frequency() -> f32 {
+    1.6
+}
+fn default_continental_tilt_strength() -> f32 {
+    2.0
+}
+fn default_continental_spine_amplitude() -> f32 {
+    0.35
+}
+fn default_continental_spine_frequency() -> f32 {
+    2.2
 }
 
 impl Default for MacroLandConfig {
@@ -649,7 +725,15 @@ impl Default for MacroLandConfig {
             continents: 3,
             min_area: 128,
             target_land_pct: 0.35,
-            jitter: 0.15,
+            continental_weight: 0.5,
+            continental_radius: 0.35,
+            continental_falloff_exponent: 1.5,
+            continental_warp_amplitude: default_continental_warp_amplitude(),
+            continental_warp_frequency: default_continental_warp_frequency(),
+            continental_tilt_strength: default_continental_tilt_strength(),
+            continental_spine_amplitude: default_continental_spine_amplitude(),
+            continental_spine_frequency: default_continental_spine_frequency(),
+            coastline_roughness: 0.05,
         }
     }
 }
@@ -721,6 +805,11 @@ pub struct IslandConfig {
     pub oceanic_density: f32,
     pub fringing_shelf_width: u32,
     pub min_distance_from_continent: u32,
+    /// How far above `sea_level` an island's **peak** is raised, on the normalized 0..1 elevation
+    /// scale. `place_islands` no longer paints the land mask — it raises a radial elevation blob and
+    /// the mask is re-derived, so this margin is what makes the blob *become* land at all. It also
+    /// sets how tall the island reads on the client's relative-height overlay.
+    pub island_peak_margin: f32,
 }
 
 impl Default for IslandConfig {
@@ -730,6 +819,7 @@ impl Default for IslandConfig {
             oceanic_density: 0.001,
             fringing_shelf_width: 2,
             min_distance_from_continent: 12,
+            island_peak_margin: 0.06,
         }
     }
 }
@@ -739,6 +829,12 @@ impl Default for IslandConfig {
 pub struct InlandSeaConfig {
     pub min_area: u32,
     pub merge_strait_width: u32,
+    /// How far **below** `sea_level` a strait corridor is cut, on the normalized 0..1 elevation
+    /// scale. `connect_inland_seas_via_straits` lowers the corridor's elevation and the mask is
+    /// re-derived, rather than flipping `land`/`is_ocean` behind the field's back. Large enough that
+    /// the corridor is unambiguously water; small enough that it reads as a shallow channel and not
+    /// a trench.
+    pub strait_depth_margin: f32,
 }
 
 impl Default for InlandSeaConfig {
@@ -746,6 +842,7 @@ impl Default for InlandSeaConfig {
         Self {
             min_area: 24,
             merge_strait_width: 2,
+            strait_depth_margin: 0.02,
         }
     }
 }
@@ -805,6 +902,19 @@ pub struct TerrainClassifierConfig {
     /// Relief scale (from the mountain mask) at/above which a Fold belt tile becomes an
     /// AlpineMountain. `MountainsConfig::relief_belt_gain` and `elevation_base` defaults
     /// are tuned relative to this, so belt cores clear it and edges taper to plateaus/hills.
+    ///
+    /// **This is the alpine range's WIDTH lever.** A fold belt's relief ramps linearly with belt
+    /// strength (`1 + relief_belt_gain * strength / (belt_width + 1)`, `strength = belt_width + 1 -
+    /// dist`), so this threshold picks an integer distance-from-plate-boundary cutoff `D`, and the
+    /// boundary is stamped on *both* plates — the alpine ribbon is therefore `2D + 1` tiles wide.
+    /// At earthlike's `belt_width = 4` / `relief_belt_gain = 1.2` the cutoff bands are
+    /// `<= 1.60` ⇒ `D = 3` (a 7-tile slab), `(1.60, 1.72]` ⇒ `D = 2` (5 tiles),
+    /// `(1.72, 1.96]` ⇒ `D = 1` (**3 tiles, shipped**), `> 1.96` ⇒ single-tile peaks.
+    /// The shipped 1.85 sits mid-band so a small retune of `relief_belt_gain` or `mountain_scale`
+    /// cannot silently step the ribbon a whole tile wider. Raising this narrows the alpine **core**
+    /// while leaving the belt's relief profile — and so its peak heights — untouched, which is why
+    /// it is preferred over `relief_belt_gain` (which would flatten the peaks) or `belt_width_tiles`
+    /// (which would shrink the foothill skirt too). Measured in `core_sim/tests/relief_sweep.rs`.
     pub alpine_relief_threshold: f32,
     /// Elevation (normalized 0..1) above which a dry non-mountain tile becomes
     /// CanyonBadlands. Sits near the top of the compressed lowland band (just under
@@ -837,7 +947,7 @@ impl TerrainClassifierConfig {
             coastal_inland_edge: 0.12,
             polar_latitude_cutoff: 0.35,
             high_latitude_threshold: 0.15,
-            alpine_relief_threshold: 1.45,
+            alpine_relief_threshold: 1.85,
             high_dry_elevation: 0.68,
             high_wet_elevation: 0.66,
             high_dry_moisture: 0.28,

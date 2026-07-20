@@ -259,6 +259,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
+    if snapshot.has("forage_patches"):
+        # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
+        # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
+        # array MapView ingests into `forage_patch_lookup`.
+        _hud_invoke("update_forage_patches", [snapshot["forage_patches"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
@@ -451,7 +456,14 @@ func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     var line := "send_hunt_expedition %d %d %d %s" % [faction, band_bits, party_workers, fauna_id]
     if policy != "":
         line += " %s" % policy
-    _send_runtime_command(line, "Send hunting expedition (%d, %s) after %s." % [party_workers, policy if policy != "" else "sustain", fauna_id])
+    # The COMMAND addresses the herd by its id; the FEED NOTE names the species. `game_deer_07` is a
+    # database key — meaningless to a player — so it must never reach the feed. Hud sends the display
+    # name alongside the key; fall back to the key only if it somehow didn't (better than an empty
+    # subject, and it is never the normal path).
+    var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
+    if fauna_label == "":
+        fauna_label = fauna_id
+    _send_runtime_command(line, "Send hunting expedition (%d, %s) after %s." % [party_workers, policy if policy != "" else "sustain", fauna_label])
 
 ## Extend a built pen by one fenced ring (Grazing 2d-γ). `extend_pen <faction> <x> <y>` targets the
 ## pen's anchor tile; the server works the ring off over ~25 turns (rejecting at max radius / unowned /

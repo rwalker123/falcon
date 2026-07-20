@@ -14,5 +14,11 @@
   },
   "herding": {
     "discovery_id": 2004
+  },
+  "seed_selection": {
+    "discovery_id": 2005
+  },
+  "penning": {
+    "discovery_id": 2006
   }
 }

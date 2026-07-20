@@ -88,11 +88,22 @@ pub fn spawn_initial_world(
 
     let preset_handle = map_presets.get();
     let preset_ref = preset_handle.get(&config.map_preset_id);
+    if preset_ref.is_none() {
+        // A silent `None` here is far worse than it looks: the preset-less path skips erosion AND
+        // the contour anchor entirely (`heightfield::build_elevation_field`), so the land mask no
+        // longer sits on the `target_land_pct` contour — on top of falling back to the default sea
+        // level. It must never happen quietly.
+        tracing::warn!(
+            target: "shadow_scale::worldgen",
+            map_preset_id = %config.map_preset_id,
+            "worldgen.map_preset.unresolved"
+        );
+    }
     let default_classifier = TerrainClassifierConfig::default();
     let classifier_cfg = preset_ref
         .map(|preset| &preset.terrain_classifier)
         .unwrap_or(&default_classifier);
-    let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
+    let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(DEFAULT_SEA_LEVEL);
     let preset_seed = preset_ref.and_then(|preset| preset.map_seed);
     let mut world_seed = preset_seed.unwrap_or(config.map_seed);
 
@@ -1187,7 +1198,6 @@ pub fn apply_tag_budget_solver(
         .iter()
         .map(String::as_str)
         .collect();
-    let lock_water = locked.contains("Water");
     let lock_wetland = locked.contains("Wetland");
     let lock_fertile = locked.contains("Fertile");
     let lock_coastal = locked.contains("Coastal");
@@ -1283,95 +1293,12 @@ pub fn apply_tag_budget_solver(
     let targets = &preset.terrain_tag_targets;
     let get_target = |name: &str| targets.get(name).copied().unwrap_or(0.0);
 
-    if lock_water {
-        // --- Water ---
-        let want_water = get_target("Water");
-        let mut water_iterations = 0usize;
-        loop {
-            let delta = need_delta(
-                tag_ratio(&tile_info, sim_runtime::TerrainTags::WATER),
-                want_water,
-                total_tiles,
-            );
-            if delta == 0 {
-                break;
-            }
-            if water_iterations > max_iterations {
-                break;
-            }
-            let mut changed = 0usize;
-            if delta > 0 {
-                let mut remaining = delta as usize;
-                let mut candidates: Vec<usize> = (0..tile_info.len())
-                    .filter(|&idx| {
-                        !tile_info[idx]
-                            .tags
-                            .contains(sim_runtime::TerrainTags::WATER)
-                            // Don't drown hydrology-placed river deltas.
-                            && tile_info[idx].terrain
-                                != sim_runtime::TerrainType::RiverDelta
-                    })
-                    .collect();
-                candidates.sort_by_key(|idx| {
-                    let info = &tile_info[*idx];
-                    let priority = if info.tags.contains(sim_runtime::TerrainTags::COASTAL) {
-                        0
-                    } else if info.tags.contains(sim_runtime::TerrainTags::WETLAND) {
-                        1
-                    } else {
-                        2
-                    };
-                    (priority, info.position.y, info.position.x)
-                });
-                for idx in candidates {
-                    if remaining == 0 {
-                        break;
-                    }
-                    if apply_tile_change(
-                        &mut tiles,
-                        &mut tile_info,
-                        idx,
-                        sim_runtime::TerrainType::DeepOcean,
-                        None,
-                    ) {
-                        remaining -= 1;
-                        changed += 1;
-                    }
-                }
-            } else {
-                let mut remaining = (-delta) as usize;
-                for idx in 0..tile_info.len() {
-                    if remaining == 0 {
-                        break;
-                    }
-                    if tile_info[idx]
-                        .tags
-                        .contains(sim_runtime::TerrainTags::WATER)
-                        // Preserve hydrology-placed navigable rivers: draining one back into land
-                        // would cut a real waterway in half (same protection RiverDelta gets).
-                        && tile_info[idx].terrain != sim_runtime::TerrainType::NavigableRiver
-                    {
-                        let is_polar =
-                            climate_band_for_position(tile_info[idx].position, height as u32)
-                                == "polar";
-                        let replacement = if is_polar {
-                            sim_runtime::TerrainType::SeasonalSnowfield
-                        } else {
-                            sim_runtime::TerrainType::AlluvialPlain
-                        };
-                        if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
-                            remaining -= 1;
-                            changed += 1;
-                        }
-                    }
-                }
-            }
-            if changed == 0 {
-                break;
-            }
-            water_iterations += 1;
-        }
-    }
+    // The tag solver has NO water branch. Water share is an ELEVATION outcome: the land mask is a
+    // pure threshold of the heightfield, and the contour anchor already puts the `target_land_pct`
+    // quantile exactly on sea level. The retired branch converted arbitrary land tiles to `DeepOcean`
+    // (and ocean back to `Tundra`/`AlluvialPlain`) with no elevation term at all, which is precisely
+    // how a "water" tile ended up above sea level. A `Water` entry in `locked_terrain_tags` is now
+    // inert rather than authoritative.
     if lock_wetland {
         // --- Wetland ---
         let want_wetland = get_target("Wetland");

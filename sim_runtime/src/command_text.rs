@@ -152,10 +152,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "hunt_fauna <faction_id> <herd_id> [band_entity_bits]",
     },
     CommandVerbHelp {
-        verb: "domesticate",
+        verb: "tame",
         aliases: &[],
-        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain hunt).",
-        usage: "domesticate <faction_id> <herd_id>",
+        summary: "Set the Tame policy on the bands hunting a wild herd: an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
+        usage: "tame <faction_id> <herd_id>",
     },
     CommandVerbHelp {
         verb: "cultivate",
@@ -164,15 +164,21 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "sow",
+        aliases: &[],
+        summary: "Set the Sow policy on the bands foraging a tile: an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
+        usage: "sow <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
         verb: "corral",
         aliases: &[],
-        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Herding knowledge, earned by Sustain hunting).",
+        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
         usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
-        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (needs Herding, an owned penned herd, and room below the pen-radius max).",
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (a ring rides the same rung as the pen, so it needs Penning too — plus an owned penned herd and room below the pen-radius max).",
         usage: "extend_pen <faction_id> <x> <y>",
     },
     CommandVerbHelp {
@@ -759,15 +765,16 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 choice_id: choice_id.to_string(),
             })
         }
-        "domesticate" => {
+        // `domesticate` was renamed `tame` on main; this branch never touched that verb.
+        "tame" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            Ok(CommandPayload::Domesticate {
-                faction_id: parse_u32(faction_str, "domesticate faction")?,
+            Ok(CommandPayload::Tame {
+                faction_id: parse_u32(faction_str, "tame faction")?,
                 herd_id: herd_id.to_string(),
             })
         }
@@ -785,6 +792,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "cultivate faction")?,
                 target_x: parse_u32(x_str, "cultivate target_x")?,
                 target_y: parse_u32(y_str, "cultivate target_y")?,
+            })
+        }
+        "sow" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::Sow {
+                faction_id: parse_u32(faction_str, "sow faction")?,
+                target_x: parse_u32(x_str, "sow target_x")?,
+                target_y: parse_u32(y_str, "sow target_y")?,
             })
         }
         "corral" => {
@@ -1182,19 +1205,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_domesticate_command() {
+    fn parse_tame_command() {
         assert_eq!(
-            parse_command_line("domesticate 0 game_deer_07").unwrap(),
-            CommandPayload::Domesticate {
+            parse_command_line("tame 0 game_deer_07").unwrap(),
+            CommandPayload::Tame {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
             }
         );
         // herd_id is required.
         assert!(matches!(
-            parse_command_line("domesticate 0"),
+            parse_command_line("tame 0"),
             Err(CommandParseError::MissingArgument("herd_id"))
         ));
+    }
+
+    /// `tame` **replaced** the `domesticate` early-claim — it is not an alias for it. The claim
+    /// existed to skip the taming investment, which is the whole decision, so the verb is gone: a
+    /// script still sending it must fail loudly rather than silently doing something adjacent.
+    #[test]
+    fn the_domesticate_early_claim_verb_no_longer_exists() {
+        assert!(matches!(
+            parse_command_line("domesticate 0 game_deer_07"),
+            Err(CommandParseError::UnknownCommand(verb)) if verb == "domesticate"
+        ));
+        assert!(
+            !COMMAND_VERBS
+                .iter()
+                .any(|help| help.verb == "domesticate" || help.aliases.contains(&"domesticate")),
+            "the retired early-claim must not linger in the help listing"
+        );
     }
 
     #[test]
@@ -1210,6 +1250,25 @@ mod tests {
         // Both coordinates are required.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    /// The plant rung-3 verb: same `<faction> <x> <y>` shape as `cultivate`, because a Field — like a
+    /// tended patch and unlike a herd — **is a place**.
+    #[test]
+    fn parse_sow_command() {
+        assert_eq!(
+            parse_command_line("sow 0 7 3").unwrap(),
+            CommandPayload::Sow {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        // Both coordinates are required.
+        assert!(matches!(
+            parse_command_line("sow 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
     }

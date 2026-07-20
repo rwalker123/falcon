@@ -18,7 +18,7 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SitesConfigHandle, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
 };
 
 /// Pinned so selection (seeded from `map_seed`) is reproducible run to run.
@@ -123,10 +123,23 @@ pub fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
     }
 }
 
+/// Tame `count` herds by running the **real** accrual to completion.
+///
+/// `claim_domestication` was retired on main: it snapped progress to `1.0` unconditionally and so
+/// could fabricate a domesticated `wild`-ceiling species. `accrue_domestication` self-guards on
+/// `can_domesticate()`, so the herds must be **filtered** first — taking the first `count`
+/// blindly would silently skip every deer/mammoth and leave the fixture short, which here would
+/// quietly under-drive the sedentarization score the fork beat rides on. Mirrors the same helper
+/// in `core_sim/tests/sedentarization.rs`.
 pub fn domesticate(app: &mut App, faction: FactionId, count: usize) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
-    for herd in registry.herds.iter_mut().take(count) {
-        herd.claim_domestication(faction);
+    let tameable = registry
+        .herds
+        .iter_mut()
+        .filter(|herd| herd.can_domesticate())
+        .take(count);
+    for herd in tameable {
+        herd.accrue_domestication(faction, RUNG_COMPLETE);
     }
 }
 

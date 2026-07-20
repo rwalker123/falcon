@@ -170,17 +170,38 @@ pub struct HuntTripEstimateState {
     pub policy: String,
     /// Party size, `1 ..= expedition_config.max_party_size`.
     pub party_workers: u32,
-    /// Turns of hunting to fill the party's carry cap. **`0` = it does not fill** within
-    /// `expedition_config.hunt.forecast_horizon_turns` — render "won't fill", not a number.
+    /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
+    /// standing surplus is spent (the herd is at the policy's floor) OR the herd is lost. **Not** "turns
+    /// to fill the pack": a big party on a full herd strips the surplus and leaves with a *partial*
+    /// pack, a successful short trip. **`0` = never completed** within `forecast_horizon_turns`.
     pub turns_to_fill: u32,
     /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
     /// delivered", never an ETA.
     pub delivers_food: bool,
+    /// **Whole animals the raid KILLS** (append-only) — the kill count. A party too small to seat a
+    /// whole animal now kills one and wastes the rest (mirroring the resident band), so this is a kill
+    /// count, not a delivered count. Bounded by the standing surplus, so it plateaus with `party_workers`
+    /// once the surplus (not the pack) binds. `0` = the herd is at/below the policy's floor with no
+    /// surplus to raid. The delivered payload is `delivered_food`, not `animals_taken × food_per_animal`.
+    pub animals_taken: u32,
+    /// **Food the party actually LANDS in its larder over the raid** (append-only) — the PRIMARY
+    /// readout. A small party on a big animal brings home a partial (with waste), so "too lean to raid"
+    /// is `delivered_food == 0` (no surplus at any party size), not "party too small to carry an animal".
+    pub delivered_food: f32,
+    /// **Food killed but not hauled home over the raid** (append-only). `wasted_food / (delivered_food +
+    /// wasted_food)` is the waste fraction the client shows beside the delivered total.
+    pub wasted_food: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
 /// (or older-snapshot) herd never reads as starving.
 fn pen_fully_fed() -> f32 {
+    1.0
+}
+
+/// A fully-staffed herd — the neutral value of [`HerdTelemetryState::herded_fraction`], so an
+/// unmanaged (or older-snapshot) herd never reads as under-herded.
+fn fully_herded() -> f32 {
     1.0
 }
 
@@ -304,6 +325,42 @@ pub struct HerdTelemetryState {
     /// ladder). Appended last (append-only).
     #[serde(default)]
     pub husbandry_ceiling: String,
+    /// **Biomass of one animal of this species** (`Herd::body_mass`, slice 8b). The client turns a
+    /// per-turn biomass/food **rate** into a kill-**rhythm** with it: a hunt take is whole animals, so
+    /// a herd whose MSY is lighter than one body pays a kill every `body_mass / rate` turns. Render
+    /// "~1 animal / N turns" from `sustainable_yield` (or a `hunt_policy_ceilings` row) ÷ this — **not**
+    /// the raw per-turn `actual_yield`, which is `0` on the wait turns of the pulse. Appended last
+    /// (append-only). `0` if unknown.
+    #[serde(default)]
+    pub body_mass: f32,
+    /// **One whole animal's worth of yield, in provisions** (`SourceYieldForecast::body_mass_yield` =
+    /// `body_mass × provisions_per_biomass`, the same conversion every other yield field uses). The
+    /// client's kill-rhythm is `food_per_animal / sustainable_yield` — both provisions, dimensionally
+    /// clean — and it doubles as a "a mammoth is ~16 food" display. Appended last (append-only). `0` if
+    /// unknown.
+    #[serde(default)]
+    pub food_per_animal: f32,
+    /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
+    /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
+    /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
+    /// honest "herders 1 / 6" readout the labor assignment's blended `workers_needed`
+    /// (`max(herders_needed, haulers)`) cannot give. Appended last (append-only). `0` if unknown.
+    #[serde(default)]
+    pub herders_needed: u32,
+    /// **How well the herd is staffed** — `min(1, assigned / herders_needed)` (`Herd::herded_fraction`).
+    /// `1.0` = fully staffed (and the value for a herd that needs nobody); `< 1` = under-herded, so
+    /// `domestication` bleeds proportionally and the herd risks reclassifying as wild. Appended last
+    /// (append-only).
+    #[serde(default = "fully_herded")]
+    pub herded_fraction: f32,
+    /// **The Tame rung's payoff** — food/turn a Sustain hunt pays once this herd is tamed (the
+    /// pastoral MSY at the herd's current biomass), the pastoral twin of [`Self::corral_yield`]. Its
+    /// `ceilingTame` sibling (in [`Self::hunt_policy_ceilings`]) is Tame's *during-building* dip; this
+    /// is what the herd pays *after* taming, so the client renders Tame as `→ +Y` (like
+    /// Cultivate/Sow/Corral) instead of only the dip. `0` on a herd that never offers Tame (already
+    /// penned, or a `wild`-ceiling species). Appended last (append-only).
+    #[serde(default)]
+    pub pastoral_yield: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -342,6 +399,11 @@ impl Default for HerdTelemetryState {
             pen_pasture_fraction: 0.0,
             pen_extend_progress: 0.0,
             husbandry_ceiling: String::new(),
+            body_mass: 0.0,
+            food_per_animal: 0.0,
+            herders_needed: 0,
+            herded_fraction: fully_herded(),
+            pastoral_yield: 0.0,
         }
     }
 }
@@ -397,19 +459,57 @@ pub struct ForagePatchState {
     /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
     #[serde(default)]
     pub tended_yield: f32,
+    /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
+    /// `corral_progress`. Independent of `cultivation_progress`: `Sow` needs no prior patch, so a
+    /// Field may stand on ground that was never tended, and the client shows **two** meters.
+    #[serde(default)]
+    pub field_progress: f32,
+    /// The completed rung 3 — a sown **Field**. Read this rather than inferring a rung from
+    /// `field_progress`.
+    #[serde(default)]
+    pub is_field: bool,
+    /// Food/turn under the **Sow** policy — what the ground pays *while it is being sown* (the
+    /// `plant:field` rung's `yield_fraction_while_building ×` whatever it would otherwise pay). Its
+    /// own field, not `ceiling_cultivate`'s: the two plant investment rungs are independently tunable.
+    #[serde(default)]
+    pub ceiling_sow: f32,
+    /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
+    /// 2× `tended_yield` on the shipped dials). With `ceiling_sow`, Sow's "preparing X → then Y" pair.
+    #[serde(default)]
+    pub field_yield: f32,
+    /// **Why this ground will not take seed** ([`SiteRefusal::as_str`]: `"too_poor"` / `"too_dry"` /
+    /// `"too_poor_and_too_dry"`), or **`""`** when it will. Resolved through the same
+    /// `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so the wire
+    /// cannot disagree with the gate. Shipped as an *answer* because the client can re-derive
+    /// nothing: it holds neither the per-biome capacity table nor the hydrology.
+    #[serde(default)]
+    pub sow_site_refusal: String,
 }
 
-/// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
-/// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
-/// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
-/// learning/known meters.
+/// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
+/// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
+/// renders learning/known meters.
+///
+/// One field per rung-transition — *"practice rung N unlocks rung N+1"*
+/// (`docs/plan_intensification_ladder.md` §4) — so the struct reads as the ladder itself:
+/// `wild --cultivation--> tended --seed_selection--> field` and
+/// `wild --herding--> pastoral --penning--> pen`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct IntensificationKnowledgeState {
     pub faction: u32,
+    /// Gates `cultivate`. Earned by working a **wild** patch under a stewardship policy.
     #[serde(default)]
     pub cultivation: f32,
+    /// Gates `tame` — and `tame` **only**, since the §4.3 reshuffle. Earned by working a **wild** herd.
     #[serde(default)]
     pub herding: f32,
+    /// Gates `sow` (slice 5 — earned now, spent later). Earned by working a **tended** patch.
+    #[serde(default)]
+    pub seed_selection: f32,
+    /// Gates `corral` + `extend_pen` (the §4.3 reshuffle took this off `herding`). Earned by working
+    /// a **pastoral** herd.
+    #[serde(default)]
+    pub penning: f32,
 }
 
 /// Shared depletable-ecology record round-tripped through the rollback snapshot. Mirrors the
@@ -507,19 +607,38 @@ pub struct HerdState {
     /// herd's breeding rate rather than leaving a rehydrated herd growing at the wrong `r`.
     #[serde(default)]
     pub regrowth_rate: f32,
+    /// **Biomass of one animal** (intensification ladder slice 8), cached on the live `Herd` at spawn
+    /// from its `SpeciesDef`. Round-tripped here (sim-side rollback only, not on the client wire) so a
+    /// rollback restores the herd's take quantum — a rehydrated herd reading `0` would be a herd with
+    /// infinitely many animals, and `floor(escapement / 0)` would strip it whole in one turn.
+    #[serde(default)]
+    pub body_mass: f32,
+    /// **Kill-credit accumulator** (intensification ladder slice 8b) — biomass a hunt has earned toward
+    /// its next whole animal but not yet spent (`Herd::hunt_credit`). Round-tripped here (sim-side
+    /// rollback only, not on the client wire) so a rollback rewinds a herd's progress toward its next
+    /// kill; a rehydrated herd reading `0` just restarts the wait, never a burst.
+    #[serde(default)]
+    pub hunt_credit: f32,
     /// How far up the husbandry ladder the herd's species climbs (Grazing 2d-δ): `wild` | `pastoral` |
     /// `pen` (`HusbandryCeiling::as_str`/`from_key`). Cached on the live `Herd` at spawn; round-tripped
     /// so a rollback restores a wild herd as hunt-only. Empty/unknown → `pen` (the full ladder).
     #[serde(default)]
     pub husbandry_ceiling: String,
+    /// **The hysteresis-stabilized herder requirement** (`Herd::herders_needed`) — the remembered,
+    /// deadband-stabilized `herders_needed` for a managed herd (`0` = wild, or a managed herd not yet
+    /// stabilized). Persisted (sim-side rollback only, not on the client wire) so a rollback restores
+    /// the remembered count rather than re-flickering ±1 for a turn as the herd breathes across an
+    /// `animals_per_herder` head-count boundary.
+    #[serde(default)]
+    pub herders_needed: u32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
 
 /// Authoritative mirror of a live depletable forage patch (`ForageRegistry`), round-tripped through
 /// the rollback snapshot so a rollback rewinds patch biomass / phase — the forage counterpart of
-/// `HerdState`. Reuses the shared `EcologyState` (biomass / carrying_capacity / phase); `progress`
-/// and `owner` stay `0.0` / `None` in Phase 0 (cultivation is a later intensification slice). The
+/// `HerdState`. Reuses the shared `EcologyState` (biomass / carrying_capacity / phase), whose
+/// `progress` / `owner` carry the patch's **cultivation** meter (rung 2) and its tending faction. The
 /// `(x, y)` tile key is the patch's location.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ForageState {
@@ -527,6 +646,13 @@ pub struct ForageState {
     pub x: u32,
     #[serde(default)]
     pub y: u32,
+    /// **Field**-build progress `0..1` accrued under the `Sow` policy (`1.0` = a sown Field, the
+    /// plant ladder's rung 3). Its own field rather than a second `EcologyState.progress`, exactly as
+    /// `HerdState.corral_progress` sits beside the herd's `ecology.progress` (domestication): a source
+    /// on a two-investment branch carries **two** meters, one per rung. Persisted so a rollback
+    /// rewinds a half-sown field rather than losing the investment.
+    #[serde(default)]
+    pub field_progress: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -1786,10 +1912,32 @@ pub struct LaborAssignmentState {
     pub sustainable_yield: f32,
     /// Minimum workers that would have produced this turn's take — the **overstaffing** signal.
     /// `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
-    /// idle. `0` when the source produced nothing; a tended patch / corralled herd (maintenance
-    /// labor) reports `1`. Derived per-turn at capture. Appended (append-only).
+    /// idle. `0` when the source produced nothing. **Derived at every rung** since the intensification
+    /// ladder's slice 7 — a tended patch / Field / corralled herd used to report a hardcoded `1`,
+    /// which claimed one worker could carry home whatever the land offered. Derived per-turn at
+    /// capture. Appended (append-only).
     #[serde(default)]
     pub workers_needed: u32,
+    /// Provisions this source **offered that the crew could not collect** — the **understaffing**
+    /// signal, and the exact mirror of [`Self::workers_needed`]'s overstaffing one:
+    /// `production − actual_yield`, where *production* is what the source hands over this turn (the
+    /// policy ceiling on a wild/tended source, the managed rate on a Field/pen) and *collection* is
+    /// `workers × per-worker throughput`. Together the pair answers both halves of "is this source
+    /// correctly staffed?": `workers > workers_needed` ⇒ drop some, `wasted_yield > 0` ⇒ add some.
+    /// On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it stays in the
+    /// stock and regrows. Derived per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub wasted_yield: f32,
+    /// **THE overhunting ⚠, answered by the sim** — `SourceYield::overdraws` (`!managed &&
+    /// policy.overdraws()`): does this take draw the stock below what it sustains? It replaces the
+    /// client-derived `actual_yield > sustainable_yield` test, which mis-fires on a hunt's lumpy
+    /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
+    /// sustainable rate even under Sustain). False for Sustain and the investment rungs
+    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/Eradicate.
+    /// A row with no yield (Scout/Warrior, or a rehydrated [`SourceYield::ZERO`]) is `false`. Derived
+    /// per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub overdraws: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2027,6 +2175,12 @@ pub struct PopulationCohortState {
     /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
     #[serde(default)]
     pub expedition_per_worker_carry: f32,
+    /// A band's move speed (`labor_config.band_move_tiles_per_turn`). Global config echoed per-cohort
+    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the
+    /// band-agnostic pre-launch `hunt_trip_estimates` as
+    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
+    #[serde(default)]
+    pub band_move_tiles_per_turn: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -3892,6 +4046,9 @@ fn create_herds<'a>(
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
+                            animalsTaken: estimate.animals_taken,
+                            deliveredFood: estimate.delivered_food,
+                            wastedFood: estimate.wasted_food,
                         },
                     )
                 })
@@ -3938,6 +4095,15 @@ fn create_herds<'a>(
                 penExtendProgress: herd.pen_extend_progress,
                 // Husbandry ceiling (Grazing 2d-δ) — appended last.
                 husbandryCeiling: Some(husbandry_ceiling),
+                // Body mass (slice 8b) — appended last (append-only wire).
+                bodyMass: herd.body_mass,
+                // Food per animal (slice 8b) — appended last (append-only wire).
+                foodPerAnimal: herd.food_per_animal,
+                // Herd staffing — appended last (append-only wire).
+                herdersNeeded: herd.herders_needed,
+                herdedFraction: herd.herded_fraction,
+                // The Tame rung's payoff — appended last (append-only wire).
+                pastoralYield: herd.pastoral_yield,
             },
         );
         entries.push(entry);
@@ -3952,6 +4118,7 @@ fn create_forage_patches<'a>(
     let mut entries = Vec::with_capacity(patches.len());
     for patch in patches {
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
+        let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -3971,6 +4138,11 @@ fn create_forage_patches<'a>(
                 ceilingEradicate: patch.ceiling_eradicate,
                 ceilingCultivate: patch.ceiling_cultivate,
                 tendedYield: patch.tended_yield,
+                fieldProgress: patch.field_progress,
+                isField: patch.is_field,
+                ceilingSow: patch.ceiling_sow,
+                fieldYield: patch.field_yield,
+                sowSiteRefusal: Some(sow_site_refusal),
             },
         );
         entries.push(entry);
@@ -3990,6 +4162,8 @@ fn create_intensification_knowledge<'a>(
                 faction: state.faction,
                 cultivation: state.cultivation,
                 herding: state.herding,
+                seedSelection: state.seed_selection,
+                penning: state.penning,
             },
         );
         entries.push(entry);
@@ -4326,6 +4500,8 @@ fn create_populations<'a>(
                                 actualYield: assignment.actual_yield,
                                 sustainableYield: assignment.sustainable_yield,
                                 workersNeeded: assignment.workers_needed,
+                                wastedYield: assignment.wasted_yield,
+                                overdraws: assignment.overdraws,
                             },
                         )
                     })
@@ -4443,6 +4619,7 @@ fn create_populations<'a>(
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
+                    bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
                 },
             )
         })

@@ -39,8 +39,9 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 1.5 / `pen_gain` 3.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 0.75, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a `cultivation` block** — the plant ladder's **two rung payoffs, in two different currencies (slice 7)**: **`tended_regrowth_gain` (1.5, rung 2 — the plant twin of `husbandry.pastoral_gain`, at its value: a tended patch is STILL A WILD STAND on a boosted curve, gathered under the full policy axis and drawn down)** and **`field_provisions_per_biomass` (0.02, rung 3 — a managed rate on the standing crop, no drawdown, policy axis collapsed, because at rung 3 the source is YOURS)**; both PLAYTEST DIALS, and each rung must beat the one below it or climbing buys nothing (**now `validate()`-enforced, scale-free in `K`**). The retired `tended_provisions_per_biomass` (0.01) made rung 2 a *managed* rate a full rung earlier than the animal side's, so a tended patch could not be over-farmed and every policy paid the identical number (**the plant rung-2 BUILD dials — the old `progress_per_turn`/`decay_per_turn`/`cultivating_yield_fraction` — moved to `intensification_ladder.json`'s `plant:tended` rung**, and in slice 4 **the earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` moved to that file's ladder-level `knowledge` block** too, so both food webs climb *and learn* on the same numbers) (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only the `plant:tended` rung's `yield_fraction_while_building × its Sustain/MSY ceiling` (the investment cost) and accrues that rung's `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: working a **wild** patch under a stewardship policy earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**; the accrual is the ladder's, driven off the rung — see "The knowledge pattern"); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0** — the pace of EVERY rung's `earns_knowledge` and the bar at which a faction may act on one, ~20 turns per lesson; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_earned`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands no prior patch at all), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. every rung but `plant:field`. **Rung 4 (Worked Land) will be a looser copy of this record and nothing else**), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**, `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/`0.25`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/`0.25`, `fixed`, site `{ min_forage_capacity 195, requires_fresh_water true }` → **49 sowable tiles of 4160** on the standard map)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`, + **`fodder_per_biomass`** (Grazing 2b-i — graze the herd eats per unit biomass/turn; cached on `Herd` at spawn) + **`regrowth_rate`** (Grazing 2b-ii — per-species WILD breeding rate, `Option`, cached on `Herd`; rabbit/fowl 0.35, deer/boar 0.10, migratory 0.04 — replaces the single global `ecology.regrowth_rate` for wild herds; see "Phase 2b-ii") + **`taming_rate`** (intensification ladder slice 3c — a **per-species multiplier on the `animal:pastoral` rung's BUILD**, default **1.0**; the rung owns the taming mechanic, the species scales it (the `regrowth_rate`/`pastoral_gain` split again). It scales **`progress_per_turn` AND `decay_per_turn`** — a whole **timescale**, so the rung's 4:1 ratio is invariant: *slow to tame, slow to forget*. Roster: rabbit/fowl/crag_goat 1.0 (25 turns), boar 0.8 (~31), aurochs 0.5 (50), steppe_runner/marsh_grazer 0.2 (125); deer/mammoth omit it (`wild` ceiling — never tame). **Playtest dials.** Validated finite & `> 0`; resolved live by display name (`FaunaConfig::taming_rate_for`), *not* cached on `Herd`, so a retune reaches herds already on the map. See "The `Tame` verb") + **`husbandry_ceiling`** (Grazing 2d-δ — `wild`|`pastoral`|`pen`, default `pen`; how far up the ladder the species climbs — mammoth/deer `wild`, steppe_runner/marsh_grazer `pastoral`, boar/rabbit/fowl `pen`; cached on `Herd`, gates domestication + corral/extend; see "Phase 2d") + **`pastoral_density` / `pen_density`** (the per-species husbandry DENSITY (K) multiplier per rung, default **1.0** = neutral; domestication makes the LAND hold more animals, non-linearly by species — DISTINCT from the global r-gains, which scale the breeding rate not the ceiling. Roster: crag_goat/aurochs 2.0/5.0, boar 1.5/4.0, rabbit/fowl 1.1/1.5, steppe_runner/marsh_grazer 1.5/1.0 (pastoral only — pen inert), deer/mammoth omit both (wild → ×1). Applied at the one K seam `ecological_carrying_capacity` via `fauna::herd_density_gain`, resolved live by display name (`FaunaConfig::pen_density_for`/`pastoral_density_for`), *not* cached on `Herd`. **Playtest dials.** Validated finite & `>= 1.0` (a gain below 1 would make domestication reduce capacity). See "The husbandry yield ladder")) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (**the flow-based yield ladder**: **per-species managed `r`** (Grazing 2d — `pastoral_gain` 2.0 / `pen_gain` 4.0 scale each species' own wild `r`, capped at `husbandry_regrowth_cap` 1.0, retiring the flat `pastoral.ecology.r` 0.25 / `pen.ecology.r` 0.90 which now carry phase bands only) and `pen` (**`upkeep_per_biomass`** — the pen's feed, now footprint-offset — / `starve_shrink_rate`; `capacity_fraction` is **deleted** — a penned herd's `K` is its fenced-footprint graze flow), the **`Corral` policy**'s investment levers having **moved to `intensification_ladder.json`'s `animal:pen` rung** (the old `corralling_yield_fraction` → `yield_fraction_while_building` 0.50, `corral_build_progress_per_turn` → `progress_per_turn` 0.04); every rung pays MSY against its own ecology, see "The husbandry yield ladder" / "Phase 2d") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** per-biome table (one row per `TerrainType`), `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02, **`overgraze_escapement_fraction` 0.25** (Grazing 2b-ii — grazing can't draw a patch below this, the constant-escapement floor that keeps the herd↔graze loop convergent); see "The Graze (Pasture) Layer" / "Phase 2b-ii"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, **`remembers`** (slot → memory-thread kind — see "Memory threads"), `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
 | `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns` **16** — must exceed every authored `trend` window, validated at catalog load, `min_delta`), `voice` (`default_register`, `registers`, **`mediums`** — the ordered oral→painted→written ladder, see "The maturing voice"), **`memory.max_threads_per_kind`** (8), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
@@ -48,7 +49,7 @@ cargo run -p core_sim --bin server
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — the launch forecast flags a trip NOT VIABLE past this many estimated turns-to-fill; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the trip before reporting "won't fill"; past ~3× `viability_warn_turns` the exact number carries no actionable information, and the bound caps the per-snapshot cost of the exported `huntTripEstimates` table). The retired `sustain_floor_fraction` is **gone**: a Sustain expedition takes the shared MSY *flow* ceiling (`fauna::hunt_policy_ceiling`), not a stock target. The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the policy's floor (Sustain `K/2`, Surplus `hunt.surplus_escapement_fraction·K`, Market `ecology.collapse_fraction·K`, Eradicate 0), *not* the resident band's throttled kill-credit rate. See "Scouting & Hunting Expeditions". The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -109,8 +110,26 @@ use.**
 
 Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, climate bands, resources, and wildlife spawners. Player-facing framing: manual §3a World Bootstrapping, §3b Terrain Palette.
 
+> ### Elevation is the sole authority
+>
+> **The land mask is a pure derived function of the heightfield — `land[i] = elevation[i] > sea_level`
+> — and is never stored and edited. Any stage that wants to move a coastline writes elevation and
+> re-derives.** Guarded by `core_sim/tests/elevation_authority.rs`.
+>
+> This is not style, it is the fix for a real defect: the mask used to be grown as a boolean blob and
+> then repainted by later stages, so the published bathymetry and the published terrain disagreed —
+> 543 water tiles sat *above* sea level and 218 land tiles *below* it on a sampled map. A water tile
+> above sea level is now **unrepresentable** rather than merely rare, because no stage has a way to
+> express one. `target_land_pct` is met by *shaping the field* (`anchor_contour_to_sea_level`), and
+> `continents` by the continental bias term — never by repainting tiles.
+>
+> Consequences a new stage must respect: `place_islands` raises a seamount above sea level;
+> `connect_inland_seas_via_straits` lowers a corridor below it; both then re-derive. There is no
+> `rebalance_land_ratio` and no tag-solver water branch — both were deleted because they corrected a
+> quota by repainting the output. Design: `docs/plan_elevation_authority.md`.
+
 ### Pipeline Stages
-1. **Macro landmask** - Continent seeds via weighted BFS to reach `target_land_pct`
+1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
 2. **Tectonics** - Drift vectors, collision belts, fault seams, volcanic arcs, dome plateaus → mountain mask
 3. **Polar microplates** - Subdivide polar tiles, converging vectors raise fold strength
 4. **Heightfield** - Multi-octave height raster with erosion smoothing → `elevation_m`
@@ -460,14 +479,58 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   off the corner network, which the segmentation fix does not touch). Per-seed spread is large and
   *should* be — see the verdict below.
 
+  > **These figures are PRE-`elevation-authority` and no longer describe an 80×52 map.** Post-arc,
+  > that size yields **zero navigable rivers on every seed**, and land-corner accumulation maxes at
+  > **10–20**, not 587. This is **not a regression** — measured, the largest basin is ~5% of its
+  > landmass both before and after the arc (the drainage surface is ~95% divided into small
+  > independent basins either way). What changed is *landmass size*: the old BFS grew an accidental
+  > ~1,580-tile supercontinent at 80×52 while the preset asked for 4 continents, and that surplus area
+  > was the only thing clearing the navigable discharge threshold of 25.0. It cleared it as a
+  > **lottery** — pre-arc counts across six seeds were `0, 1, 1, 6, 5, 1`, with one 41.7%-basin
+  > outlier seed carrying most of them. The arc removed the bug that was masking a pre-existing
+  > drainage deficiency.
+  >
+  > **Update (the divides arc).** The dome has been replaced by a warped / tilted / ridged envelope
+  > (see `macro_land` below). At 80×52 navigable rivers now appear on **3 of 6 seeds** rather than 1,
+  > and the standard map carries **49 sowable tiles** — but the **coherence ratio is unchanged**, and
+  > the measured reason is geometric, not tuning: with a mean depth-to-coast of ~2.9 tiles the largest
+  > landmass has roughly one ocean-touching (⇒ sink) corner per two interior corners, so a basin
+  > cannot grow long enough to clear a discharge of 25 except by luck. **Landmass area remains the
+  > binding constraint at this grid size.**
+  >
+  > **A related correction:** the claim that the arc took sowable tiles "46 → 0" was a **test-harness
+  > defect, not a worldgen result**. `core_sim/tests/forage_field.rs` never ran `generate_hydrology`,
+  > so its map had no rivers, no `RiverDelta`, and no `river_edges` — and `plant:field`'s site rule
+  > requires fresh water, which on that map nothing could satisfy. The harness now runs hydrology and
+  > pins its own grid; see the test split below.
+  >
+  > Consequently the navigable structural invariants run against a **river-capable fixture** at
+  > `NAVIGABLE_FIXTURE_GRID` = **128×96** (shipped presets, `continents: 4`, only the grid differs) —
+  > the smallest grid producing navigable rivers on every seed (5–9 each). A sweep over
+  > 80×52 / 128×96 / 192×128 / 256×192 × `continents` 4 / 2 / 1 showed `continents` barely moves the
+  > result, confirming **landmass area** is the binding constraint. See `hydrology_earthlike.rs`.
+  >
+  > **Do not "fix" a dry map by lowering `river_class_navigable_min_discharge`** or any hydrology
+  > threshold. Rivers are emergent; forcing a fixed river share onto whatever terrain exists is the
+  > repaint-to-hit-a-quota pattern `elevation-authority` deleted. The input to change is basin
+  > coherence or landmass size — `TASKS.md` → "Capture: the divides, not the valleys".
+
 ### Fluvial erosion — the heightfield the drainage runs on
 The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
 **sponges** (48–64% of a continent's tiles touched water, because the coastline is an iso-contour of
 fractal noise) and they **shed radially** with no trunk valleys to capture drainage across a divide.
 `heightfield::apply_fluvial_erosion` attacks the landscape directly, at the end of
 `build_elevation_field` — **before** `mapgen::generate_land_mask`, which is the whole point: the mask
-ranks tiles by elevation, so the coastline *is* a level set of this field, and reshaping the field
+is a pure threshold of this field, so the coastline **is** a level set of it, and reshaping the field
 reshapes the coast.
+
+> Since `elevation-authority` this is *literally* true rather than approximately so. The passage
+> above used to read "the mask **ranks** tiles by elevation" — it ranked them by
+> `elevation + macro_land.jitter × noise`, which is a **reordering**, so the coastline was a rank
+> contour over a jittered score and not a level set of anything. The conclusion held only by luck.
+> `jitter` is retired; its coastline raggedness now lives in the field itself as
+> `macro_land.coastline_roughness`, applied *before* `land_contour`, where it perturbs the shoreline
+> without decoupling the mask from the surface.
 
 - **The model** is the classic landscape-evolution equation minus uplift: `∂z/∂t = D∇²z − K·A^m·S^n`,
   iterated on the **square raster** (D8 — the hex/corner graph is hydrology's and stays there). Per
@@ -483,18 +546,28 @@ reshapes the coast.
 
 > #### Two things the pass had to learn the hard way — do not "simplify" them away
 >
-> **1. Base level is the land-mask's rank contour, NOT `sea_level`.** On the earthlike preset only
-> **24–37%** of cells sit above `sea_level = 0.62`, while `macro_land.target_land_pct` claims **38%**
-> of them for land — so the coastline actually falls at elevation **0.55–0.61, *below* sea level**.
-> A pass that freezes everything under `sea_level` freezes the entire coastal band it exists to
-> reshape, and measures as a **no-op** (it did: coastal 59.2% → 58.8%). `heightfield::land_contour`
-> computes the real thing.
+> **1. Base level is `land_contour`, which the anchor then makes equal to `sea_level`.**
+> `apply_fluvial_erosion` still takes its base level from `heightfield::land_contour` (the
+> `1 − target_land_pct` quantile) rather than from `sea_level`, and **that ordering still matters**:
+> erosion runs *before* `anchor_contour_to_sea_level`, so at the moment it runs the two are not yet
+> the same number.
 >
-> **2. A valley incised *to* base level DROWNS.** The mask ranks by elevation, so a trunk cut to the
-> contour ranks below it and becomes a sea inlet — taking its basin with it (measured: seed 4's
-> biggest basin collapsed **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0**
-> because measurement said the drowned stretches read as *estuaries* and leave the coast **smoother**
-> — but the lever is there, and the failure mode is real.
+> *Historical note — do not restore the old reasoning.* This note used to say base level is the
+> "land-mask's **rank** contour, NOT `sea_level`", justified by only **24–37%** of cells sitting above
+> `sea_level = 0.62` while the mask claimed **38%** for land, putting the coastline at **0.55–0.61,
+> *below* sea level**. That gap was a symptom of the jittered-rank mask, and it is **gone**: realized
+> land is now **37.7–37.8%** against a 0.38 target, and after the anchor the contour and `sea_level`
+> are identical by construction. The warning the note was protecting is still live — a pass that
+> freezes everything under a *wrong* base level freezes the coastal band it exists to reshape and
+> measures as a no-op (it did: coastal 59.2% → 58.8%) — but the specific 24–37%-vs-38% discrepancy no
+> longer describes this pipeline.
+>
+> **2. A valley incised *to* base level DROWNS.** Now direct rather than indirect: the mask is
+> `elevation > sea_level`, so a trunk cut below the contour simply **is** water on the next derive —
+> a sea inlet that takes its basin with it (measured pre-arc: seed 4's biggest basin collapsed
+> **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0** because measurement said
+> the drowned stretches read as *estuaries* and leave the coast **smoother** — but the lever is there,
+> and the failure mode is real.
 >
 > **3. `anchor_contour_to_sea_level` is what lets the carving reach hydrology at all.**
 > `restamp_elevation`'s lowland branch is only order-preserving *above* sea level; below it,
@@ -504,6 +577,13 @@ reshapes the coast.
 > monotone, piecewise-linear rescale that puts the coastline exactly on `sea_level`, making the
 > pipeline's "land ⟺ above sea level" assumption *true*. Monotone ⇒ it cannot reorder the field, so
 > the land mask still picks the same tiles.
+>
+> Since `elevation-authority` the anchor is **load-bearing rather than merely helpful**: it is the
+> only thing that makes `target_land_pct` come out right, because nothing downstream repaints the
+> mask to hit the target any more. It is also the reason the invariant is exact — the mask thresholds
+> the very surface the anchor just aligned. Its own justification finally holds too: monotonicity
+> guarantees the mask is unchanged *only* if the mask ranks on elevation, which before this arc it
+> did not.
 
 **Config** — the `erosion` block of each preset in `map_presets.json` (`ErosionConfig`):
 
@@ -522,7 +602,9 @@ reshapes the coast.
 | `anchor_contour_to_sea_level` | true | See note 3. |
 
 **Measured A/B** (`hydrology_earthlike::drainage_census`, `#[ignore]`d, 6 seeds, 80×52, shipped
-river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
+river thresholds held at 3.0/12.0/25.0 so the comparison is clean). **Measured PRE-`elevation-authority`**
+— the erosion-OFF-vs-ON comparison is still valid (both arms moved together), but the absolute
+navigable counts belong to the pre-arc landmass and are ~0 at this size today; see the note above:
 
 | metric | erosion OFF | erosion ON |
 |---|---|---|
@@ -537,7 +619,17 @@ river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
 > 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
 > single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
 > has; it does not move its divides.** The divides come from the continent-scale fbm, so the next
-> lever is the *noise*, not the erosion — see `TASKS.md`.
+> lever is the *noise*, not the erosion — see `TASKS.md` → "Capture: the divides, not the valleys".
+>
+> **`elevation-authority` added `continental_weight` / `continental_radius`, and they do NOT fix
+> capture.** They make `continents` a real lever for the first time (the old BFS grew a single
+> accidental supercontinent at 80×52 while the preset asked for 4), but the bias is a **radial
+> falloff — dome-shaped by construction**, so it moves landmasses apart without giving any one of them
+> an internal divide structure. A dome sheds radially; that is exactly the "sheds radially with no
+> trunk valleys" failure this section opens with, just at continent scale. Measured after the arc: the
+> largest basin still tops out at **~5% of its landmass**, statistically unchanged pre/post. Capture
+> needs a term that shapes *divides* — anisotropic/warped noise, tectonic uplift fields — not a
+> smoother continent outline. Design context: `docs/plan_elevation_authority.md`.
 >
 > `apply_coastal_smoothing` was **measured, not assumed** (the suspicion was that its 3×3 blur would
 > soften the incised valleys right where they matter). It does not blunt the result: the sponge metric
@@ -572,7 +664,84 @@ pole = −5° at sea level (mountains up to 12° colder).
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
 
-The active preset's `sea_level` is carried on the `ElevationField` resource (`heightfield.rs`, via `with_sea_level`; falls back to `DEFAULT_SEA_LEVEL` = 0.6) and exported in the snapshot as `ElevationOverlay.seaLevel` — **pre-normalized to the overlay's [minValue, maxValue] sample scale** (`snapshot.rs` `elevation_overlay_from_field`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+**`macro_land` — landmass shape** (`MacroLandConfig`, `map_preset.rs`). Since `elevation-authority`
+every one of these is honored by *shaping the heightfield*, never by editing the mask:
+
+| Key | earthlike | Meaning |
+|---|---|---|
+| `target_land_pct` | 0.38 | Land fraction. Delivered by `anchor_contour_to_sea_level` putting this quantile exactly on `sea_level`; realized **37.7–37.8%** pre-island with nothing correcting it downstream. |
+| `continents` | 4 | Number of continental bias centres, chosen deterministically from the world seed with Poisson-ish spacing (wrap-aware in x). Realized landmasses ≥`min_area`: 3–5. |
+| `min_area` | 256 | The landmass size that counts as a continent when auditing the above. |
+| `continental_weight` | 0.5 | Amplitude of the low-frequency continental bias added before erosion. `0.0` reproduces the pure fractal field — which thresholds into **one dominant supercontinent**, which is why the term exists. |
+| `continental_radius` | 0.35 | A continent's radius of influence, as a fraction of the **smaller** grid dimension. Beyond it the bias saturates at its minimum, which is what actively sinks inter-continental gaps rather than merely making them less high. |
+| `continental_falloff_exponent` | 1.5 | Shape of the falloff, `bias = 1 − 2·t^exponent` over `t = dist/radius`, taken as a **max over centres, not a sum** (summing fuses adjacent centres into a land bridge). |
+| `continental_warp_amplitude` | 0.18 | **Domain warp** — how far the envelope's sample coordinates are displaced by low-frequency noise before the envelope is evaluated, as a fraction of the **smaller** grid dimension. Makes a continent lobed rather than circular. `0.0` restores a perfectly radial envelope. |
+| `continental_warp_frequency` | 1.6 | Cycles of warp noise across the map. Low by design: the warp reshapes *landmasses*; fraying the *coastline* is `coastline_roughness`'s job. |
+| `continental_tilt_strength` | **0.0 (off)** | **Per-continent tilt** — a directional gradient across each centre, its heading hashed per centre from the world seed, windowed by `1 − t^4` so it vanishes at the rim. A dome sheds water in every direction; a *tilted* surface drains one way. Ships as a **tilted trough**, not a tilted plane: `heightfield::CONTINENT_TROUGH_GAIN` (0.5) lifts the ground away from the drainage axis, because a bare tilt gives **parallel** flow (many short rivers) rather than convergence onto a trunk. **Both presets ship it at `0.0`**: at `2.0` it buys one extra seed-with-a-river in six but fuses continents into a supercontinent, collapsing `polar_contrast`'s fold belts by 85% (see the note below). The machinery is retained, live and inert at zero — raising it is how you get the drainage back, at that cost. |
+| `continental_spine_amplitude` | 0.35 | **Ridged spine** — ridged noise gated to the continent interiors (`clamp(bias, 0, 1)`), so a landmass carries an internal **divide** with two drainage sides instead of one summit. Also the term that keeps mountain ranges narrow (see below). |
+| `continental_spine_frequency` | 2.2 | Cycles of spine noise across the map — roughly how many range-scale divides a continent can carry. |
+| `coastline_roughness` | 0.05 | High-frequency shoreline raggedness, applied to the field **before** `land_contour`. Replaces the retired `macro_land.jitter`, which perturbed the mask's *ranking* instead of the field and thereby decoupled the two. |
+
+> `macro_land.jitter` **no longer exists** and must not be reintroduced — it is the specific lever
+> that broke "land ⟺ above sea level". Its intent lives on as `coastline_roughness`.
+>
+> **The bias is no longer purely radial.** `continental_weight`/`continental_radius`/
+> `continental_falloff_exponent` are now only the *base envelope*; the warp, tilt and spine terms above
+> shape divides and drainage direction on top of it. **The tilt ships at `0.0`** — the lever is live
+> and fully wired, but both shipped presets set it to zero; see the two findings below.
+>
+> Measured over 6 seeds at 80×52 (`core_sim/tests/relief_sweep.rs`, `-- --ignored --nocapture`),
+> dome → warp+spine (**the shipped configuration**): **sowable ground on the standard map 35 → 49
+> tiles**, navigable rivers present on **1/6 → 2/6 seeds** (3 segments total), max drainage
+> accumulation mean **25.4 → 28.4**, land fraction unchanged (0.387–0.400 → 0.386–0.397), landmasses
+> ≥ `min_area` 2.8 → 2.2 per map. Adding the tilt on top buys one further seed with a river
+> (3/6, 4 segments) and costs what the second finding below describes.
+>
+> **What it did NOT fix, and the trade-off it carries — read before retuning:**
+> - **Basin coherence is still ~0.02–0.08** (max accumulation ÷ largest landmass), statistically where
+>   the dome left it. Measured root cause: a corner is a sink iff any of its 3 hexes is ocean, and the
+>   largest landmass has a **mean depth-to-coast of only ~2.9 tiles** with ~360 coastal (⇒ sink) corners
+>   against ~800 land corners. Flow terminates within ~3 steps whatever the relief looks like, so at
+>   80×52 with `continents: 4` a discharge of 25 is *geometrically marginal* — not a tuning failure.
+>   Ruled out by direct measurement: `river_flat_jitter` (5e-4 → 1e-6 moves nothing) and
+>   `continental_weight` (0.5 → 2.0 improves compactness but *lowers* max accumulation).
+> - **NONE of these terms controls mountain-range WIDTH — the earlier claim that the tilt widens
+>   ranges was a metric error.** It rested on mean alpine connected-component **area**, which does not
+>   measure width (a long thin cordillera and a fat blob can share an area) and whose per-seed value
+>   swings up to **27×** on one configuration — noise, read as signal off a single seed. Measuring
+>   thickness directly (every alpine tile's hex distance to the nearest non-alpine tile,
+>   `relief_sweep::alpine_thickness`, 6 seeds at 384×288) gives **mean 2.22 / 2.32 / 2.26 / 2.28 /
+>   2.43 and p95 4.3–5.0 for dome / warp-only / spine-only / tilt-on / warp+spine** — flat. If ranges
+>   read as too wide, the lever is downstream in the mountain mask (`derive_mountain_mask`'s
+>   `belt_width_tiles` dilation, `apply_belt_relief`, `terrain_classifier.alpine_relief_threshold`),
+>   **not** in the continental envelope. Do not re-derive a width claim from component area.
+> - **The tilt FUSES CONTINENTS, and that is why it ships at `0.0`.** On `polar_contrast` it collapsed
+>   the five multi-plate land components into **two**, the largest going 9,053 → **18,313 tiles — 85%
+>   of all land in one body**. Fold belts form only between plates *within* a component and plate
+>   count is area-bucketed with a **cap of 4**, so fusing the map into one supercontinent starves the
+>   plate-boundary network: `polar_contrast` fold count fell **3556 → 544 (−85%)**. With the tilt off
+>   it recovers to **3004**. This is the same land-bridging failure `CONTINENT_TILT_WINDOW_EXPONENT`
+>   was introduced to prevent — the window mitigates it but does not eliminate it on this preset.
+>   Measurement: `mapgen::tests::polar_contrast_fold_investigation`.
+
+**Coastline-editing levers** — the two stages permitted to move a coastline, both of which write
+elevation and re-derive:
+
+| Key | Block | Default | Meaning |
+|---|---|---|---|
+| `island_peak_margin` | `islands` | 0.06 | How far above `sea_level` an island's peak is raised. `place_islands` raises a radial dome and the mask is re-derived; this margin is what makes the dome *become* land. Placement (`continental_density`, `oceanic_density`, `min_distance_from_continent`) is unchanged. |
+| `strait_depth_margin` | `inland_sea` | 0.02 | How far **below** `sea_level` a strait corridor is cut by `connect_inland_seas_via_straits`. Deep enough to read as water on the re-derive, shallow enough to read as a channel and not a trench. |
+
+The active preset's `sea_level` is carried on the `ElevationField` resource, attached at the field's origin in `build_elevation_field` and propagated through `restamp_elevation` (`heightfield.rs` / `mapgen.rs`; falls back to `DEFAULT_SEA_LEVEL` = 0.6 only when no preset resolves — which also logs a `warn`, because a preset-less field skips erosion and the contour anchor entirely). It is exported in the snapshot as `ElevationOverlay.seaLevel` — **normalized to the overlay's [minValue, maxValue] sample scale AND quantized onto the same u16 lattice as the samples** (`snapshot/map.rs` `elevation_overlay_from_field`, `ELEVATION_SAMPLE_SCALE`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+
+> **Samples and the published `sea_level` must share one quantization lattice.** The client decodes
+> `sample / 65535` and compares against `seaLevel`; publishing the threshold *unquantized* made every
+> tile sitting exactly at sea level decode to `0.6200046 > 0.62` and read as land-height water — 42 of
+> them in a live export, all with the identical raw sample `40632 = round(0.62 × 65535)`. Do not
+> reintroduce a second `65535.0` literal. Guarded by
+> `elevation_authority::the_published_sea_level_lies_on_the_sample_quantization_lattice`, which
+> asserts on the **encoded overlay** rather than the in-process `ElevationField` — the earlier test
+> read the f32 field, reported 0 violations, and missed all 42.
 
 **Continental shelf width** (`classify_bands` + `effective_shelf_width`, `mapgen.rs`; `ShelfConfig`, `map_preset.rs`): `ContinentalShelf` is the ocean band within a computed distance of the coast (slope collapses to `DeepOcean` downstream, so only the shelf boundary affects ocean composition). The model mirrors real margins — a **continuous ≥1-tile shelf off gentle (passive-margin) coasts, and deep water right at steep/cliff (active-margin) coasts** — via two knobs on top of the width scaling:
 - `min_width_tiles` (default **1.0**) — floors the computed width so a qualifying coast gets a *continuous* ≥1-tile ring instead of a sub-tile sparse fringe. Applied after the `width_frac`/`width_exp` (or `width_tiles`) computation, so a preset that bumps `width_frac` still scales the shelf wider than the floor on big maps.
@@ -583,13 +752,43 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
   **Final reconciliation pass — the shelf is hex-exact on the *final* map, not just at band time.** `classify_bands` decides the shelf early (stage 6), but later Startup stages repaint terrain near the coast *after* the shelf exists: `generate_hydrology` stamps `RiverDelta`/`Floodplain`/`FreshwaterMarsh` at river mouths, and `apply_tag_budget_solver` paints polar `Tundra` over near-shore ocean — each creating fresh gentle-land-vs-`DeepOcean` adjacencies with no shelf between them (band-level zero-gap ≠ final-map zero-gap). `reconcile_coastal_shelf` (`systems.rs`) is a deterministic post-pass registered in the Startup `.chain()` **right after `apply_biome_palette_clamp`** (so after hydrology + tag solver + palette clamp — the last word on ocean tiles): every `DeepOcean` tile odd-r hex-adjacent (`grid_utils::hex_neighbors_wrapped`, wrap-aware, honoring the active `map_topology.wrap_horizontal`) to a **gentle** land tile — non-`WATER` tags, rise `elevation.sample − sea_level < coast_height_threshold` (the SAME gate + hex convention as `classify_bands`) — is reclassified to `ContinentalShelf` (a `must_have` palette biome, so no palette conflict). So downstream-created coasts (deltas, marshes, solver tundra) all get a shelf seaward, while **steep** coasts (every land hex-neighbour rises `≥` threshold) still keep deep water right at the edge. Guarantees on the final map: **no `DeepOcean` tile touches gentle land.** Guarded by `integration_tests/tests/shelf_ratio.rs::earthlike_no_deep_ocean_touches_gentle_land_on_final_map` (0 gaps across sizes/seeds, + a steep-coast-keeps-deep-water assertion) and `earthlike_delta_and_marsh_coasts_have_shelf_not_deep_water`.
 - `width_tiles` (default 2) — legacy absolute band width, used only when `width_frac` is unset (e.g. `polar_contrast`). `width_frac` + `width_exp` (earthlike) scale the pre-floor width with map size as `width_frac * min(w, h)^width_exp`.
 
-  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs ~29-33% of ocean at 80×52 down to ~14% at 256×192 (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
+  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs **~15-19% of ocean at 80×52 down to ~8.5% at 256×192** (re-measured after `elevation-authority`; the pre-arc figures were ~29-33% down to ~14%, and the drop is a *consequence* of the derived mask producing fewer, smoother landmasses — less coastline per unit of ocean, with the zero-gap invariant still holding) (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
 
   The gate keys off the *immediately-adjacent* (hex-neighbour) coast land, which fully covers the 1-tile default (every shelf tile touches land). Deferred: a preset that widens the shelf past `d==1` leaves outer-ring tiles ungated (they touch no land, so they pass) and those outer rings still ride the square-connected `ocean_distance` — carrying the nearest-coast rise through a hex distance-transform is the follow-up for wide shelves. Also still deferred: a true *depth-based* shelf would need real offshore bathymetry (today ocean elevation is fractal noise with no coast-relative deepening); and if the narrower shelf's reduced `CoastalUpwelling` forage frontage matters for gameplay, lock the `Coastal` tag to stamp compensating `TidalFlat` (the tag solver's coastal pass). Neither shipped preset locks `Coastal` today.
 
 **Elevation ↔ biome coupling** (`restamp_elevation`, `mapgen.rs`): mountain biomes come from the tectonic mountain mask + relief, so the elevation field is tied to that same signal to keep them consistent (mountains genuinely tall — see the `mountain_tiles_out_top_lowland_tiles` regression test). Every mountain-mask tile is floored into `[elevation_base, 1.0]`, ordered by relief and scaled by per-type prominence; non-mountain land is compressed into `[sea_level, elevation_base]`. Tunables live in each preset's `mountains` block: `elevation_base`, `fold_prominence`, `fault_prominence`, `volcanic_prominence`, `dome_prominence`, `belt_texture` (small spine-vs-edge elevation texture added on top of the relief floor; bounded so it never reorders relief bands). The non-mountain `elev ≥ high_dry_elevation → CanyonBadlands` / `elev ≥ high_wet_elevation → RollingHills` cutoffs (`terrain.rs`) live in `terrain_classifier` and default to the top of the compressed lowland band.
 
-**Highland biomes are mask-driven, never noise-driven.** `classify_terrain` (the base climate classifier) does NOT pick AlpineMountain/HighPlateau/CanyonBadlands/etc. — it has no real elevation, so it used to invent them from a tile hash and scatter flat "mountains." Mountain biomes now come only from the tectonic mask (`select_mountain_terrain`) + the real-elevation `terrain.rs` branches. `apply_belt_relief` (`mapgen.rs`) scales belt-tile relief by belt strength (`mountains.relief_belt_gain`, default 1.2) so belt cores clear the AlpineMountain relief threshold (`terrain_classifier.alpine_relief_threshold`, default 1.45) and taper to plateaus/hills — genuine Alpine spines that are also tall. Polar rows are skipped (they keep their low-relief-basin tuning). Regression guards: `mountain_tiles_out_top_lowland_tiles`, `alpine_biome_tiles_are_tall`.
+**Highland biomes are mask-driven, never noise-driven.** `classify_terrain` (the base climate classifier) does NOT pick AlpineMountain/HighPlateau/CanyonBadlands/etc. — it has no real elevation, so it used to invent them from a tile hash and scatter flat "mountains." Mountain biomes now come only from the tectonic mask (`select_mountain_terrain`) + the real-elevation `terrain.rs` branches. `apply_belt_relief` (`mapgen.rs`) scales belt-tile relief by belt strength (`mountains.relief_belt_gain`, default 1.2) so belt cores clear the AlpineMountain relief threshold (`terrain_classifier.alpine_relief_threshold`, **1.85**) and taper to plateaus/hills — genuine Alpine spines that are also tall. Polar rows are skipped (they keep their low-relief-basin tuning). Regression guards: `mountain_tiles_out_top_lowland_tiles`, `alpine_biome_tiles_are_tall`.
+
+> **`alpine_relief_threshold` is the alpine range's WIDTH lever — and it is the only one that
+> narrows the range without also flattening or shrinking it.** Belt relief ramps linearly with belt
+> strength (`1 + relief_belt_gain × strength / (belt_width + 1)`, `strength = belt_width + 1 −
+> dist`), so the threshold picks an integer distance-from-plate-boundary cutoff `D`; the boundary is
+> stamped on **both** plates, so the alpine ribbon is **`2D + 1` tiles wide** and two boundaries
+> within `2D + 1` merge into a slab. At earthlike's `belt_width = 4` / `relief_belt_gain = 1.2` the
+> bands are `≤ 1.60` ⇒ `D = 3` (a **7-tile slab**), `(1.60, 1.72]` ⇒ 5 tiles, `(1.72, 1.96]` ⇒
+> **3 tiles (shipped, 1.85 — mid-band, so a small retune of `relief_belt_gain`/`mountain_scale`
+> cannot silently step the ribbon a whole tile wider)**, `> 1.96` ⇒ single-tile peaks.
+>
+> **Measured** (`core_sim/tests/relief_sweep.rs::belt_sweep`, `--ignored --nocapture`, 6 seeds), the
+> shipped `1.45 → 1.85` move at 384×288: alpine **thickness mean 2.43 → 1.57, p95 5.0 → 3.0**;
+> alpine **6.1% → 3.0% of land**; connected **components 27.0 → 28.0** — the count *rises* as slabs
+> break into distinct ranges, which is the wanted direction. At the shipped 80×52: thickness
+> **1.80 → 1.36**, p95 **3.83 → 2.33**, alpine **15.9% → 7.0%** of land. Sowable ground at seed
+> 119304647 is **unchanged at 49** and land fraction is unchanged (0.391).
+>
+> **The other two belt levers were measured and rejected**, both of which reach at best the same
+> integer cutoff while costing something else: `mountains.belt_width_tiles` 3 → 2 only reaches
+> `D = 2` and shrinks the whole belt — the **foothill skirt** goes with it (it also perturbs
+> downstream terrain: sowable 49 → 51); `mountains.relief_belt_gain` 1.2 → 0.70 reaches `D = 1` but
+> **lowers the belt core's relief 2.2 → 1.7**, i.e. it makes the mountains *shorter*, when the
+> complaint was width. Raising the threshold leaves the relief profile — and so every peak height
+> and the `restamp_elevation` relief ordering — **byte-identical**, and merely reclassifies the
+> belt's shoulders to HighPlateau/RollingHills/CanyonBadlands. That is what makes a range read as a
+> **range with foothills** instead of a slab. **Do not "simplify" this back into `belt_width_tiles`.**
+>
+> The continental-envelope terms (warp/tilt/spine) **cannot** do this — measured flat at 2.22–2.43
+> thickness across every combination; see the `macro_land` note above.
 
 **Number of ranges** is emergent tectonics: land connected-components → plates (area buckets, ≤4/continent) → fold belts form only where two plates' drift *converges* (`dot <= mountains.belt_convergence`, `derive_mountain_mask`). Drift is radial-outward so most boundaries diverge; raising `belt_convergence` toward 0 (earthlike default **0.25**; polar_contrast keeps the tighter **−0.1** to preserve its low-relief-basin contrast) lets more boundaries become ranges. Range count also scales strongly with **map size** — a full 256×192 map has 30+ ranges, an 80×52 "Standard" ~4–13, a 56×36 "Tiny" ~2–6.
 
@@ -597,7 +796,20 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
 
 **Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`.
 
-  **`terrain_tag_targets.Water` MUST track `1 − macro_land.target_land_pct`.** The landmask decides land vs. water; a locked `Water` target only tells the solver what that same map should *already* look like. Disagreement makes the solver invent bathymetry the pipeline never modeled: too high and its **add-water** branch scatters `DeepOcean` over `COASTAL`-tagged land (earthlike's old `Water = 0.65` vs `target_land_pct = 0.38` ⇒ 62% water would have drowned ~125 coastal tiles — the border-ring bug was accidentally supplying that missing 3%); too low and its **remove-water** branch mass-converts ocean into `Tundra`/`AlluvialPlain`. earthlike now sets `Water = 0.62` (`= 1 − 0.38`) and the water pass is **inert** (0 conversions in either direction on all sampled seeds). Any preset that changes `target_land_pct` must move `Water` with it (see the `_comment_water_target` note in `map_presets.json`).
+  **The solver has NO water branch, and `terrain_tag_targets.Water` is INERT.** Water share is an
+  elevation outcome: the mask is a pure threshold and the contour anchor already places
+  `target_land_pct` exactly. `elevation-authority` deleted the branch outright — it converted arbitrary
+  land tiles to `DeepOcean` (and ocean back to `Tundra`/`AlluvialPlain`) **with no elevation term at
+  all**, which is precisely how a "water" tile ended up above sea level. Listing `Water` in
+  `locked_terrain_tags` no longer does anything.
+
+  The target is kept only so the tag census has a reference figure, and should still track
+  `1 − macro_land.target_land_pct` for that reading to be meaningful (earthlike `0.62`;
+  polar_contrast was corrected `0.64 → 0.58` against its `target_land_pct = 0.42` during the arc —
+  the map had been right and the target stale). *Historical:* when the branch existed, a mismatched
+  target made the solver invent bathymetry the pipeline never modeled — earthlike's old `Water = 0.65`
+  vs `target_land_pct = 0.38` would have drowned ~125 `COASTAL` tiles. That failure mode is now
+  structurally impossible rather than avoided by convention.
 
 **Per-Map Biome Palette** (`biome_palette.rs`, design `docs/plan_biome_palette.md`): a curated,
 seed-driven, map-size-scaled subset of the 37 biomes chosen at world-gen time — small maps read
@@ -714,6 +926,30 @@ step ≤1 hex) — split by `size_class`:
   1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
   where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route.
 
+**Herd movement is a rung primitive** (intensification ladder slice 3b — the **first** behavior
+primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::herd_rung`: penned →
+`animal:pen`, tamed → `animal:pastoral`, else `animal:wild`) and dispatches on its
+`behavior.movement`, so §3's proximity spine **far → near → fixed** is *config*, not a branch on
+`is_domesticated()`:
+- **`roam`** (wild) — the graze-wander / loiter-migrate machine below, over its own full range.
+- **`drift_to_owner`** (pastoral) — each turn the herd first tries **one step toward the nearest band
+  of its owning faction** (`ResidentBand` only — a camp, not a passing expedition party). It
+  **composes with, never replaces, the 2b-i graze-aware roam**: the candidates are exactly the roam's
+  own acceptable steps (`acceptable_steps` — land, and not barren), ordered by **(hex distance to the
+  nearest camp ASC, graze capacity DESC, y ASC, x ASC)** — a *preference ordering*, so there is **no
+  drift-strength lever** to tune. Only a step that genuinely closes the distance counts as a drift;
+  once the herd is at the camp or hemmed in, the turn **falls through to the normal roam**, so a tamed
+  herd grazes *around* its people instead of freezing on their tile. The species' own `dwell_turns`
+  cadence still applies (taming makes an animal *near*, not fast), and the herd never crosses barren
+  ground to reach its owner. An unowned herd, or an owner with **no bands**, roams normally. The last
+  two sort keys are load-bearing: two candidates can tie on distance *and* capacity, and a tie broken
+  by anything incidental is the ~20% flake `GrazeRegistry::richest_patch` already cost us.
+  - *Emergent tension, deliberately unsolved (playtest):* a herd that prefers proximity will settle for
+    adequate-but-poorer pasture near camp, which lowers its range-derived `K` and shrinks it — real
+    pastoral overgrazing. It cannot **strip** the range: 2b-ii's `overgraze_escapement_fraction` floor
+    still binds, so the pasture recovers and the herd stabilizes smaller.
+- **`fixed`** (pen) — pinned at `corralled_at`, no roam, no heading arrow.
+
 Movement is **deterministic under rollback** — a per-herd/​per-turn `SmallRng` seeded from `map_seed ^
 tick ^ HERD_MOVEMENT_SEED_SALT ^ fnv(herd.id)` (mirrors `repopulate_fauna`). Cadence levers are
 per-species on `SpeciesDef` (`fauna_config.json`): `dwell_turns` (~1), `loiter_turns [min,max]`
@@ -744,19 +980,152 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 [band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
 (`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
-**auto-hunts each turn per policy** instead of removing the component — a commercial
-spectrum: Sustain takes the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at
-the most-productive biomass K/2, so a group *at carrying capacity* still yields a positive skim and
-a collapsing group yields nothing; Sustain draws the group toward K/2 and holds it there), Surplus
-takes that × `follow.surplus_multiplier`
-(slow decline), **Market** takes `market.take_fraction × biomass` (a large commercial share →
-fast decline into the Phase D collapse) and sells it at `market.trade_goods_multiplier`× the
-normal trade-goods rate, Eradicate takes `hunt.take_from` (drives extinction). The policy is a
-free string parsed via `FollowPolicy::from_str`, so Market needs no schema/proto change. Each
+**auto-hunts each turn per policy** instead of removing the component. The policy is a
+free string parsed via `FollowPolicy::from_str`, so a new policy needs no schema/proto change. Each
 turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pulse
-(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. Config lives in the
-`follow` and `market` blocks of `fauna_config.json`. The old one-shot teleport follow (and its
-`apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. The old one-shot teleport
+follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+
+> #### The hunt policy axis: FOUR ASCENDING MULTIPLES OF MSY + a kill-credit bank (slice 8b)
+>
+> `fauna::hunt_policy_rate` (the per-turn take **rate**) + `hunt_credit_ceiling` (what the herd's banked
+> credit can afford this turn) are the one source. Each policy earns a multiple of the sustainable yield
+> (`MSY = r·K/4`, `peak_regrowth`), banked into `Herd::hunt_credit`, and a whole animal is killed only
+> once the bank clears one `body_mass`:
+>
+> | policy | rate | herd |
+> |---|---|---|
+> | **Sustain** | `sustainable_yield` = `min(MSY, regen(B))` | stable, settles at `K/2` |
+> | **Surplus** | `hunt.surplus_multiplier × MSY` (**1.5**) | slowly declines (reversible) |
+> | **Market** | `hunt.market_multiplier × MSY` (**2.5**) | declines to **extinction** |
+> | **Eradicate** | the whole standing stock (bypasses the bank) | gone |
+> | **Tame / Corral** | Sustain's rate × the rung's `yield_fraction_while_building` | a dip on a sustainable draw |
+>
+> **Monotone in take BY CONSTRUCTION.** Surplus/Market are multiples of the *same* MSY base, so
+> `Sustain ≤ 1× < 1.5× < 2.5× ≤ B` at every biomass and every species — *"each option takes more than
+> the previous."* `FaunaConfig::validate` pins `1 < surplus_multiplier < market_multiplier` (one
+> rejection test per bound: `validate_rejects_a_{surplus_multiplier_at_or_below_one,
+> market_multiplier_at_or_below_surplus}`), and
+> `fauna_market::hunt_policy_takes_are_strictly_ordered_at_every_biomass` sweeps the ordering across
+> B × {fast, slow}. **The regression guard against reintroducing a skim** — do not weaken it.
+>
+> **The kill-credit bank is what makes multiples-of-MSY produce whole lumpy animals.** For 7 of 9
+> species MSY < `body_mass`, so a *per-turn ceiling* of that rate would `floor` to **zero forever** (the
+> flow trap that made those species unhuntable under the old `r·K/4` Sustain and `1.6 × MSY` Surplus).
+> Banked, the fractional rate **accumulates** until a body is affordable — a mammoth is a wait-then-one
+> pulse (`body/MSY` turns per kill), a rabbit takes *several per turn* (the credit ceiling never clamps
+> it to one). The bank **carries across policy changes** (earned regrowth toward the next animal;
+> switching Sustain↔Market must not reset it) and is **capped at the standing biomass** (never bank
+> credit for animals that do not exist — that would release a burst on recovery). Measured
+> (`fauna_market::the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game`): a full **Rabbit**
+> (MSY 350, body 2) Sustain-takes ~200 rabbits/turn tapering to `K/2`; a full **Mammoth** (MSY 120, body
+> 800) waits ~7 turns then takes one under Sustain, ~4 under Surplus, ~3 under Market.
+>
+> **Sustain's rate is sized against the PRE-regrowth biomass** (`Herd::biomass_before_regrowth`, captured
+> at the top of `regrow_biomass`). The take runs *after* Logistics regrowth, so evaluating
+> `sustainable_yield` at the grown stock takes slightly more than the herd grew (`regen(B_post) >
+> regen(B_pre)`) and slowly **leaks a below-`K/2` herd down**. Reading the pre-regrowth biomass makes
+> Sustain take exactly one turn's growth below `K/2` (the herd **holds/recovers** — pinned by
+> `fauna_market::a_below_half_k_herd_under_sustain_recovers_never_declines`) and a full MSY above it (a
+> **gentle** decline to `K/2`, no escapement burst).
+>
+> **Extinction is REAL and on-map.** Constant catch above MSY has no equilibrium: Surplus declines a
+> herd (reversible if switched back), **Market drives it extinct** (`market_hunt_drives_collapse`). The
+> resident band (`systems::hunt_take`) and the hunting expedition (`expedition_take_biomass`) share the
+> same rate + bank, so a herd hunted by either reads one accumulator.
+>
+> **Shared herd (chosen handling, reported):** credit advances **per hunt resolution** — once per
+> resident `hunt_take` and once per expedition take. The intended invariant is **one hunter per herd**
+> (a resident band leashes to a nearby herd; expeditions target distant migratory ones), where it is
+> exactly correct. Two *concurrent* hunters on one herd would each bank their rate (more pressure, a
+> faster harvest — realistic and non-crashing, since the bank is capped at the stock and kills at the
+> animal count). Not a per-worker-share split — that would be overbuilding for a case the labor system
+> does not normally produce.
+>
+> **Retired levers** (all stay retired): `follow.surplus_multiplier`, `surplus.take_fraction`,
+> `market.take_fraction`, `hunt.take_fraction` / `min_take` / `take_from`; `ecology.
+> surplus_escapement_fraction` and `fauna::hunt_policy_floor` were deleted with the ordered-floors cut.
+> `ecology.collapse_fraction` is once again **only** the Allee/depensation threshold (it briefly doubled
+> as Market's floor). Config: the `hunt.{surplus_multiplier, market_multiplier}` + `market` blocks of
+> `fauna_config.json`.
+
+> #### Herding is standing labor, and it scales with the HERD (slice 8)
+>
+> `fauna::herders_needed` — `ceil((biomass / body_mass) / animals_per_herder)` — is owed **every turn**
+> by a pastoral or penned herd, **including wait turns** when it cannot spare an animal. *Just because
+> you aren't killing an animal doesn't mean you aren't tending them, keeping them from running off,
+> repairing fences.* Before this a pen of 2 and a pen of 200 needed the same single keeper; only the
+> feed scaled.
+>
+> - **Downward hysteresis — staff it once and it holds.** The bare `ceil` is stateless, so a
+>   Sustain-hunted slow herd sitting near an `animals_per_herder` multiple (a Wild Aurochs near 12
+>   head) **flickers 1↔2 every turn** as the lumpy whole-animal kill breathes its biomass ±1 animal
+>   across the boundary — and because the `herded_fraction` decay lags a turn, the player is told
+>   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
+>   now a **persisted, deadband-stabilized `Herd::herders_needed`** (round-tripped through `HerdState`
+>   like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
+>   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
+>   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a
+>   playtest dial; `0` restores the raw flicker). A herd bumped to 2 stays at 2 through a one-animal dip
+>   and drops only on a genuine multi-band fall — wild = 0 unchanged (a wild herd isn't yours to
+>   maintain). `herd_herders_needed` reads this stabilized field (falling back to the raw ceil only for
+>   a not-yet-stabilized managed herd — the turn it is tamed, or a test fixture), so **every** consumer
+>   (`herded_fraction` decay, `managed_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
+>   wire field is unchanged, just no longer churning.
+> - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
+>   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
+>   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —
+>   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
+>   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
+>   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
+> - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
+>   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
+>   (`systems::labor::managed_crew_needed`) — but that team must be big enough for **both** jobs, which
+>   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
+>   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
+>   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
+>   one crew covering its busiest job. **Neither term dominates across the roster** (measured, settled
+>   radius-1 pens): small-bodied species are **herder-bound** (Wild Fowl 9 herders vs 5 haulers; Rabbit
+>   5 vs 4), big-bodied ones are **haul-bound** (Crag Goats 2 vs 7; Boar 1 vs 3; Aurochs 2 vs 3). Do not
+>   "simplify" the `max()` away.
+>
+> - **The haul term is the STEADY carry crew, not this turn's `carried`** (`fauna::hunt_haul_workers`).
+>   `workers_needed`'s hauling component is the crew that carries home the **peak per-turn animal drop**
+>   — `ceil((floor(rate/body) + 1)·body / per_worker)`, off the policy's **steady** `hunt_policy_rate`
+>   (not the credit-inclusive `hunt_credit_ceiling` burst) — the **same** count the client's compose
+>   panel `_max_useful_workers` caps at. It is deliberately **not** `workers_needed_for_take(take.carried,
+>   …)`: a slow breeder whose MSY < `body_mass` (a Wild Aurochs) drops **zero** animals on a wait turn
+>   while its kill-credit banks, so inverting `carried` collapses `workers_needed` to `0` — and, for a
+>   managed herd, to the bare herder count via `max()`. That made the panel contradict itself:
+>   `workersNeeded: 1` beside a 50%-`wastedYield` at one worker — *drop workers* and *add workers* on the
+>   same row, with half an aurochs rotting. Sizing the crew off the steady rate makes it **stable across
+>   wait and kill turns** (it can't flicker with the pulse) and **equal to `wasted_yield`'s answer**:
+>   `workers > workers_needed` ⇒ overstaffed, `wasted_yield > 0` ⇒ understaffed, and the two never
+>   disagree. Both hunt sites (wild/pastoral and pen) and the assign-time forecast seed
+>   (`fauna::forecast_source_yield`, off `SourceYieldForecast::ceiling_for`) read this one helper. **Wild
+>   hunting** gets the same steady haul crew (`herders_needed == 0`, so `max()` collapses to it) — so a
+>   wild herd's `workers_needed` is the client max-useful too. **Forage is untouched** — a gather is
+>   continuous (`body_mass_yield == 0`, no lumpiness), so it keeps the ordinary `workers_needed_for_take`
+>   overstaffing inversion.
+> - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
+>   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
+>   maintain + take.**
+> - **Understaffing degrades PROPORTIONALLY — never a binary escape.** `herded_fraction = min(1,
+>   assigned / needed)` scales the `animal:pastoral` rung's `decay_per_turn`, mirroring
+>   `pen_fed_fraction → starve_shrink_rate`. Floored, and **recoverable**: re-staffing stops the bleed
+>   outright, under *any* policy. Binary escape survives **only** for total abandonment (zero herders).
+> - **Maintenance is scoped to `is_corralled() || owner.is_some()`, NOT `is_domesticated()`** — a trap
+>   worth naming: `is_domesticated()` is a threshold at `1.0`, so the first under-herded turn drops the
+>   herd under it, the proportional rule stops applying, and it decays at the **full** abandonment rate
+>   however many herders you assign. The proportional regime would be measure-zero and "recoverable"
+>   would be false.
+> - **`decay_domestication`'s `is_domesticated()` early return is DELETED.** It made a tamed herd
+>   permanently tame, forever, for zero labor — "you need constant herders" was false at the top of the
+>   ladder. A properly-herded herd does not decay (including one you are merely *harvesting*); an
+>   under-herded one does. Pinned by
+>   `fauna_husbandry::{a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy,
+>   an_under_herded_tamed_herd_decays_proportionally_and_recovers}`.
 
 **Retired: single-task model → labor allocation (Early-Game Labor slice 3a).** The
 one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`
@@ -777,7 +1146,9 @@ staffed, scaling with head-count); Warrior is inert until the predator slice. `m
 worker count (0 unassigns; clamps to free headroom); `cancel_order` clears all assignments + stops
 movement (fully idle). The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
 summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt's policy) for the
-pre-3b client. Husbandry re-homes here: a Sustain Hunt on a Thriving herd accrues domestication. The
+pre-3b client. Husbandry re-homes here — but **Sustain no longer tames** (slice 3a): a **`Tame`** Hunt
+fills the meter, while any stewardship policy on a Thriving source earns the knowledge that source's
+current **rung** teaches (slice 4 — see "The knowledge pattern"). The
 **investment policies** `Cultivate` (Forage-only) / `Corral` (Hunt-only) also resolve here — a reduced
 take while the improvement is prepared, then the managed yield; see "Cultivation" / "Corral". Config:
 `labor_config.json`. Client allocation panel is PR 3b.
@@ -812,26 +1183,36 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 **Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A
 `Herd` carries `domestication_progress` (0–1, `1.0` = domesticated) and `owner:
 Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
-- *Emergent accrual*: in `advance_labor_allocation` (Population), a **Sustain** Hunt assignment on a
-  **Thriving** herd adds `husbandry.progress_per_turn` for the acting faction (sets
-  `owner` on first accrual; only the owner accrues). At `1.0` the herd auto-domesticates.
-- *Decay + yield*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after
-  `advance_herds` — runs *before* the same turn's accrual, so a Sustain-followed herd nets
-  `progress_per_turn − decay_per_turn` and an untended one only decays by
-  `husbandry.decay_per_turn`, clearing `owner` at 0). A **domesticated (pastoral)** herd pays its
-  owner the **MSY of the pastoral ecology** each turn — `fauna::managed_yield_biomass` under
-  `husbandry.pastoral.ecology` (`r` = 0.25) → `hunt_provisions`, split evenly across the owner's bands.
-  It stays **passive** (no worker, no upkeep — a roaming herd grazes the land for free) but the harvest
-  now **draws the herd down**, which is what makes it sustainable (see "The husbandry yield ladder"
-  below). The retired flat `provisions_per_biomass` (0.01) paid a share of standing **stock** with no
-  draw-down: a Red Deer herd at capacity printed 12 food/turn — *sixteen* ~30-person bands' entire
-  demand — free, forever.
+- *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
+  (Population), a Hunt assignment carrying **`FollowPolicy::Tame`** on a **Thriving** herd adds the
+  `animal:pastoral` rung's `progress_per_turn` × the species' `taming_rate` for the acting faction
+  (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
+  husbandry ceiling). At `1.0` the herd domesticates. **A `Sustain` hunt tames nothing** — it only
+  *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
+- *Decay*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after `advance_herds` — runs
+  *before* the same turn's accrual, so a `Tame`-worked herd nets `progress_per_turn − decay_per_turn`
+  and an abandoned one only decays by the `animal:pastoral` rung's `decay_per_turn`, clearing `owner`
+  at 0).
+- *Yield*: **none here — passive-free pastoral is RETIRED** (intensification ladder slice 3b, §3:
+  every rung is worker-driven). A tamed herd used to pay its owner the pastoral MSY **with no worker
+  at all**, split evenly across the owner's bands; `advance_husbandry` now pays **nothing** and a
+  pastoral herd yields **only** through a normal `Hunt` assignment, exactly like a wild one. The
+  taming payoff is **yield per worker**: `herd_ecology` puts a tamed herd on the pastoral ecology
+  (`r` = wild × `pastoral_gain` 2.0), so the *same* hunters take ~2× the sustainable food from the
+  same `K` (measured: `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder`).
+  That also deletes the "you are not paid twice" hazard structurally — with no second payment to
+  stack, the `Corral` dip is a real cost again — so the `Herd::worked_this_turn` flag that guarded it
+  is **gone**.
 - *Collapse immunity*: `regrow_biomass` uses plain `logistic_regrowth` (never the collapse
   branch) for a domesticated herd — a managed group recovers and never crashes.
-- *Explicit claim*: the `domesticate <faction_id> <herd_id>` command (`handle_domesticate`,
-  full proto/runtime/text/server plumbing) lets the owner claim a herd **early** once
-  `domestication_progress ≥ husbandry.claim_threshold` (snaps progress to 1.0); rejected for a
-  non-owner or an under-threshold herd. The emergent Sustain-follow is how progress is built.
+- *No early claim*: the `domesticate <faction_id> <herd_id>` command, its `husbandry.claim_threshold`
+  lever and `Herd::claim_domestication` are **deleted** (slice 3a). Snapping progress to `1.0` let the
+  player skip the investment, which is the entire decision — the plant side removed its twin for the
+  same reason. **Proto field 30 is reserved and must never be reused.** The `tame` command that
+  replaced it *sets the `Tame` policy*; it claims nothing.
+- *Practice teaches the next rung*: working this herd under a **stewardship** policy earns the faction
+  the knowledge its **current rung** teaches — **Herding** while it is wild, **Penning** once it is
+  pastoral (slice 4, §4). See "The knowledge pattern".
 - `HerdRegistry::domesticated_count(faction)` is the seam the future `SedentarizationScore`
   (`TASKS.md`) reads for its "domestication progress" input.
 
@@ -839,20 +1220,75 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 
 Authoritative design: `docs/plan_corral_managed_population.md`. **Management buys a *growth rate*, not
 a licence to eat the standing stock.** Every rung of the ladder pays the Maximum Sustainable Yield; the
-rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you:
+rungs differ *only* in the **ecology** that MSY is computed against, and in what that ecology costs you.
+**Every rung costs a worker** (intensification ladder §3): what climbing buys is **yield per worker**,
+not a rung that works itself.
+
+**The husbandry ladder scales BOTH `r` AND `K`, on two orthogonal per-species dials.** `r` (the growth
+*rate*) climbs on the global gains `husbandry.pastoral_gain` / `pen_gain` (folded per-species by
+`herd_ecology`). `K` (the carrying *ceiling*) climbs on the per-species **density** dials
+`SpeciesDef.pastoral_density` / `pen_density` (`fauna_config.json`, default **1.0** = neutral, so a wild
+herd is byte-identical) — *domestication makes the land hold more animals, non-linearly by species*.
+Without the density axis a species on marginal range (a goat penned at `K≈24`) stayed tiny even penned
+and a fast wild breeder out-yielded the prime domesticates at every rung, because taming touched only
+`r`. The gain for the herd's **current rung** is `fauna::herd_density_gain` (corralled → `pen_density`,
+tamed → `pastoral_density`, wild → `1.0`; mirrors `herd_ecology`'s dispatch, resolved live by display
+name via `FaunaConfig::pen_density_for` / `pastoral_density_for`), applied at the **one K seam**
+`ecological_carrying_capacity` — it multiplies the final range/footprint-derived `K` (`Some(flow /
+fodder × gain)`), so it is recomputed fresh each turn (idempotent, never a compounding read). Roster:
+crag_goat/aurochs **2.0 / 5.0**, boar **1.5 / 4.0**, rabbit/fowl **1.1 / 1.5**,
+steppe_runner/marsh_grazer **1.5 / 1.0** (pastoral only, so `pen_density` is inert), deer/mammoth omit
+both (wild ceiling → always `×1.0`). Validated finite & `>= 1.0` (a gain below 1 would make
+domestication *reduce* capacity). **Playtest dials.** The density axis is **scale-free in the pen's
+net-positive floor** (`K` cancels in `r·K/4·p` vs `u·K·(2+r)/4`), so it does not interact with that
+invariant.
+
+> #### The ladder is monotone in the LONG-RUN rate, NOT in any single turn — do not "fix" this back
+>
+> Since slice 8 a **Sustain** hunt is **constant escapement on whole animals**: the herd hands over
+> `B − K/2`, which is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2`
+> = **`K/2` for every rung — `r` cancels out entirely**, so a full herd's first harvest is *identical*
+> wild, pastoral and penned. **That is correct and load-bearing.** The surplus standing above the
+> escapement point is *accumulated stock*, and stock does not care how fast you breed. What the ladder
+> buys is that **the next animal comes sooner** — so *"management buys a growth rate"* is now literally
+> and exclusively true, rather than being smeared across a stock term.
+>
+> A single turn therefore cannot see the ladder at **either** biomass: at `B = K` you read the
+> rung-blind stock, and at `B = K/2` you read a **pulse** — zero for any species whose one-turn MSY is
+> lighter than one animal (a wild mammoth regrows 120 biomass against an **800-unit** body, so it
+> correctly **waits** ~7 turns, then pays 16 provisions at once). Both readings are honest; neither is
+> the ladder.
+>
+> So the invariant is asserted as a **long-run average over enough turns to contain the refills**
+> (`fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, 600 turns from `B*`),
+> where the pulses and the stock both wash out and what remains is `r·K/4`. **Measured**
+> (provisions/turn, barren harness ⇒ the pen is fully larder-fed):
+>
+> | species | `K` | wild | pastoral | pen gross | upkeep | pen net |
+> |---|---|---|---|---|---|---|
+> | Rabbit Warren | 200 | 0.350 | 0.700 | 1.000 | 0.280 | **0.720** |
+> | Red Deer | 1200 | 0.598 | 1.196 | 2.392 | 1.432 | **0.960** |
+> | Thunder Mammoths | 12000 | 2.373 | 4.746 | 9.492 | 13.506 | **−4.014** |
+>
+> Monotone in gross at every row, and `pastoral / wild` is exactly `pastoral_gain` (2.0). The **rabbit
+> pen gross rides the cap** (`r_pen = min(husbandry_regrowth_cap 1.0, 0.35 × pen_gain 4.0) = 1.0`), so
+> its pen/wild ratio is `1.0/0.35 ≈ 2.86`, not the full `pen_gain` — a fast breeder is clamped into the
+> stable logistic band, the cap's whole job. The mammoth's negative *barren* pen net is the §2.4
+> slow-breeder loss **by design** (a placement decision — on real pasture the footprint feeds it and
+> `upkeep → 0`), not a regression.
 
 | Rung | Ecology | `r` (Grazing 2d — **per-species**) | Costs |
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
-| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.5) | **none — passive** |
-| Corral, building | `corralling_yield_fraction × MSY` | — | a worker, 25 turns |
-| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 3.0, cap 0.75) | a worker + **feed (footprint-offset)** + pinned |
+| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 2.0) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
+| Corral, building | the `animal:pen` rung's `yield_fraction_while_building × MSY` | — | a worker, 25 turns |
+| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 4.0, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
-  **own wild `r`** by `husbandry.pastoral_gain` (1.5) / `pen_gain` (3.0), clamped to
-  `husbandry_regrowth_cap` (0.75) — a penned rabbit (`r` 0.75, booms) and a penned mammoth (`r` 0.12, a
-  long-haul investment) are different economies. This also fixes the fast-breeder pastoral inversion
-  (pastoral `r` = `wild_r × 1.5 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
+  **own wild `r`** by `husbandry.pastoral_gain` (2.0) / `pen_gain` (4.0), clamped to
+  `husbandry_regrowth_cap` (1.0) — a penned rabbit (`r` 1.0, cap-bound and booming) and a penned mammoth
+  (`r` 0.16, a long-haul investment) are different economies. This also fixes the fast-breeder pastoral
+  inversion (pastoral `r` = `wild_r × 2.0 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
   rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
   gain → capped` map.
 - **A penned herd's `K` is its FENCED FOOTPRINT's graze flow** (`hex_range_tiles(corralled_at,
@@ -872,16 +1308,17 @@ rungs differ *only* in the **ecology** that MSY is computed against, and in what
 - **The managed harvest draws the herd down**, and that is what makes it sustainable: it converges the
   herd on `K/2` and holds it there, paying `r·K/4` forever. Both husbandry rungs take it through the one
   shared helper **`fauna::managed_yield_biomass`**.
-- **You are not paid twice for the same animals.** `advance_husbandry` **skips the passive pastoral
-  rung** for a herd a labor assignment worked last turn (`Herd::worked_this_turn`, a transient flag set
-  in the Hunt arm of `advance_labor_allocation` — the same one-turn lag as `corralled_tended_this_turn`).
-  A band working the herd is already paid through the labor arm (its `hunt_take`, the `Corral` build dip,
-  or the pen's harvest). **Without the skip the corral's investment cost becomes a profit**: a Red Deer
-  under construction would pay the dip (0.50 × 1.50 = 0.75) **plus** the passive rung (1.50) = 2.25/turn
-  — *more* than the 1.50 of walking away — recreating on the animal side exactly the "free path" the
-  intensification ladder exists to delete (a plain Sustain hunt on a tamed herd was double-paid the same
-  way). With the skip, building the pen costs a real **0.75/turn for 25 turns (~19 provisions forgone)**,
-  recouped ~9 turns after completion (pen net ≈3.66 vs pastoral 1.50 at `B*`).
+- **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
+  passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
+  worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
+  construction collected the `Corral` dip (0.50 × 1.50 = 0.75) **plus** the passive rung (1.50) =
+  2.25/turn, *more* than the 1.50 of walking away, turning the pen's investment cost into a profit.
+  Retiring the passive rung removes the hazard by construction (there is no second payment left to
+  stack), so the flag and the skip are **deleted**. The dip is a real cost measured against the real
+  alternative — hunting the same herd
+  (`fauna_husbandry::building_a_corral_costs_more_than_hunting_the_same_herd`): building pays
+  **0.75/turn for 25 turns (~19 provisions forgone)** against the 1.50 those same hunters would have
+  taken, recouped ~9 turns after completion (pen ≈3.66 gross at `B*`).
 - **It is constant-*escapement* MSY** — `take = min(peak_regrowth(K), max(0, B − K/2))` — **not** the
   constant-catch `sustainable_yield` a *wild* `Sustain` hunt takes. The sim regrows in Logistics and
   harvests in Population, so a constant-catch take is evaluated at the **post**-regrowth biomass; above
@@ -892,13 +1329,20 @@ rungs differ *only* in the **ecology** that MSY is computed against, and in what
   managed herd **rebuilds** (yielding less, or nothing, while it does) and then pays `r·K/4` forever —
   stable from *both* sides, same yield at capacity and at the operating point.
 - A managed harvest therefore **never overdraws**: its yield telemetry reads `actual == sustainable`
-  (no ⚠), and `workers_needed = TENDED_SOURCE_WORKERS_NEEDED` (maintenance labor, not scaling gather).
+  (no ⚠). Its `workers_needed` is **derived like every other rung's** (slice 7): the pen collapses the
+  *policy* axis, never the **collection** cap — the keeper still carries the meat home, so the take is
+  `min(pen MSY, hunters × hunt.per_worker_biomass_capacity)` and the surplus it offered beyond that is
+  reported as `wasted`. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect
+  a pen of any size.
 
 Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
 `collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`
-(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, **`pastoral.ecology`**, **`pen`** — see
-"Corral" — plus `corralling_yield_fraction` / `corral_build_progress_per_turn` /
-`knowledge_progress_per_turn` / `knowledge_completion_threshold`) blocks of `fauna_config.json`.
+(**`pastoral.ecology`**, **`pen`** — see "Corral" — plus the per-species growth gains) blocks of
+`fauna_config.json`. **The pen's BUILD dials live in `intensification_ladder.json`** (the `animal:pen`
+rung's `build` block), and as of slice 4 so do the **earned-knowledge dials** (the ladder-level
+`knowledge` block — the old `knowledge_progress_per_turn` / `knowledge_completion_threshold`, which
+`labor_config` duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
+numbers.
 **`FaunaConfig` is validated** (`FaunaConfig::validate`, run inside `from_json_str`, so every load path
 — builtin, default file, `FAUNA_CONFIG_PATH` override — is covered; the `expedition_config.rs` /
 `crisis_config.rs` convention). A broken invariant is logged at **error** level
@@ -909,9 +1353,90 @@ pen may run at a **loss by design**, so the old every-pen guarantee is retired f
 floor), **the ladder is monotone as gains** (`pen_gain > pastoral_gain > 1`), ordered ecology phase
 bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all three ecologies, every
 `regrowth_rate > 0`, `husbandry_regrowth_cap > 0`, `0 ≤ pen.starve_shrink_rate ≤ 1`,
-`0 < corralling_yield_fraction < 1`, `corral_build_progress_per_turn > 0`,
-`knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold ≤ 1`,
-`progress_per_turn > decay_per_turn`, `hunt.provisions_per_biomass > 0`, and the follow/market bounds.
+`hunt.provisions_per_biomass > 0`, and the follow/market bounds. (The **knowledge** bounds moved to
+`LadderConfig::validate` with the dials in slice 4, where they hold for both webs at once.)
+
+### The `Tame` verb (Intensification rung 2) — the grammar fix
+
+**The animal twin of `Cultivate`**, and the correction the plant side already made
+(`docs/plan_intensification_ladder.md` §4.1). Taming used to be a **hidden side effect of a harvest
+policy**: one `Sustain` branch in `advance_labor_allocation` advanced Herding knowledge *and*
+`accrue_domestication`, so the same action both taught and tamed, invisibly and for free — while the
+*visible* verb (`Corral`) was disabled until the herd was already tame. Rung 2 is now an explicit,
+gated, **paid** verb, so both food webs read the same:
+
+| | plants | animals |
+|---|---|---|
+| rung 1 Sustain | earns **Cultivation** — *and tames nothing* | earns **Herding** — *and tames nothing* |
+| rung 2 verb | `Cultivate` → tended patch | **`Tame`** → pastoral herd |
+| rung 3 verb | *(`Sow` — a later slice)* | `Corral` → pen |
+
+- **`FollowPolicy::Tame`** (wire key `"tame"`) — **Hunt-only** (`valid_for_hunt`; a Forage assignment
+  carrying it is rejected at `assign_labor`, exactly as `Corral` is). It is an **investment** rung, so
+  it is in [`FollowPolicy::HUNT_POLICIES`] (the herd's policy list the client previews) but **not** in
+  `EXTRACTIVE` — an expedition can only take, never invest, so `send_hunt_expedition` rejects it and no
+  `huntTripEstimates` row is emitted for it.
+- **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
+  `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` (`hunt_policy_ceiling`, through
+  the *same* shared MSY helper — the crew is gentling the herd, not harvesting it; a fraction of MSY is
+  a sustainable draw, so the herd stays healthy), and `domestication_progress` accrues that rung's
+  `progress_per_turn` **× the species' `taming_rate`** (slice 3c — 0.04 × 1.0 → 25 turns for a rabbit, × 0.2
+  → 125 for a Steppe Runner) via the shared `RungDef::build_accrual` seam. **Gates:** the
+  faction knows **Herding**, the species' `husbandry_ceiling` allows domestication (Grazing 2d-δ), and
+  the herd is **Thriving**. A gate that lapses mid-run just **stops accrual that turn** — progress is
+  neither lost nor silently switched, and the herd is marked `tamed_this_turn` so it does not decay
+  either. Ownership is **not** in the gate: `accrue_domestication` owns the
+  `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
+  Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
+- **Feral if abandoned.** `advance_husbandry` spares a herd worked under `Tame` **last** turn
+  (`Herd::tamed_this_turn` — a transient, non-persisted flag, the animal twin of
+  `ForagePatch::tended_this_turn` with the same deliberate Logistics-reads-what-Population-wrote lag);
+  an abandoned part-tamed herd bleeds the `animal:pastoral` rung's `decay_per_turn` **× the same
+  species `taming_rate`** (slice 3c — the multiplier is a *timescale*: a Steppe Runner forgets 5×
+  slower than a rabbit, so the rung's 4:1 build:decay ratio holds for every species and the ladder's
+  "taming must out-run its decay" bound needs no per-species restatement — only `taming_rate > 0`,
+  which `FaunaConfig::validate` enforces), its owner lapsing at zero. **Distinct from an ordinary hunt
+  at any other policy**: a Sustain hunt *harvests* a herd, it must not hold the taming meter up.
+- **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
+  `CommandEventKind::Tame`) — **sets the `Tame` policy** on the bands already hunting the herd, the
+  command form of the client's policy picker. It **tames nothing outright**. It targets a **herd id**
+  (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
+  follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, shared with
+  the `assign_labor … tame` path): faction hasn't learned Herding / no such herd / the species is wild
+  game (hunt-only) / already domesticated (corral it instead) / another people are taming it / **no
+  band is hunting it** (staff it first). Deliberately **not** gated on Thriving, unlike the patch — a
+  herd's phase swings as it is hunted, and the labor arm pauses accrual gracefully.
+- **The `domesticate` early-claim is REMOVED** — command, `claim_threshold` lever, its validate bound,
+  and `Herd::claim_domestication`. It let the player snap progress to `1.0` and skip the investment,
+  which is the entire decision (the plant side removed its twin for that exact reason). **Proto field
+  30 is reserved and must never be reused.** Tests that needed a tamed-herd fixture now run the real
+  `accrue_domestication(faction, RUNG_COMPLETE)`, which obeys the husbandry ceiling — you cannot
+  fabricate a domesticated `wild` herd.
+- **Per-species pace (slice 3c).** The rung's single `progress_per_turn` tamed *every* species in the
+  same 25 turns — a rabbit cost what a Steppe Runner cost. The species now declares its own
+  **`taming_rate`** (`fauna_config.json`, default 1.0), and `RungDef::build_accrual`/`build_decay` take
+  it as a **build timescale** — the one seam that honors it, so the Tame arm of
+  `advance_labor_allocation` and the decay in `advance_husbandry` cannot disagree. Scaling *both* rates
+  is load-bearing, not tidiness: a progress-only multiplier would put a Steppe Runner at
+  `0.04 × 0.2 = 0.008`/turn against the rung's `0.01`/turn decay — **literally untameable**. Every
+  other rung passes `RUNG_TIMESCALE_UNSCALED` (penning is a flat 25 turns for every species — a fence
+  is a fence; only *taming* varies). See the `fauna_config.json` row for the roster.
+- **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
+  `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
+  promised),
+  `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn 0.01,
+  yield_fraction_while_building 0.50 }`. The first two **moved verbatim** from `fauna_config.json`
+  `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the animal-side `corral` precedent).
+- **Slice 3b landed the rest of the rung:** passive-free pastoral is **retired** (a tamed herd yields
+  only through a worker's Hunt assignment, at the pastoral `r` — see "Domestication / husbandry" and
+  "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
+  movement is a rung primitive").
+- **Slice 4 completed the rung's knowledge half:** practising it (working the resulting **pastoral**
+  herd under a stewardship policy) earns **Penning**, which now gates `corral` — so Herding gates
+  `tame` and **only** `tame`. See "The knowledge pattern".
+
+See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2 this now mirrors exactly), "Corral
+(Intensification Rung 1c)" (the rung above), "The Intensification Ladder" (the engine + the config).
 
 ### Corral (Intensification Rung 1c)
 
@@ -924,23 +1449,24 @@ policy with an investment cost** — not a free command. A `Herd` carries `corra
 the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at that tile) + a transient
 `corralled_tended_this_turn` flag. *Sim-only — the client readout is a follow-up (see below).*
 
-- **Rung 1c earned-knowledge gate — Herding.** The animal parallel of Cultivation knowledge, *learned
-  by doing* and **never start-granted**: a **Sustain** hunt on a **Thriving** herd accrues faction
-  **Herding** knowledge (discovery `HERDING_DISCOVERY_ID` = 2004, `fauna.rs`) in the per-faction
-  `DiscoveryProgressLedger` at `husbandry.knowledge_progress_per_turn` (in the Hunt arm of
-  `advance_labor_allocation`, alongside the existing domestication accrual). The **`Corral` policy** (and
-  the `corral` command that sets it) is refused until
-  `get_progress(faction, 2004) >= knowledge_completion_threshold`. The `herding` tag →
-  discovery 2004 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
-  **no start profile lists it**. **Asymmetry vs. Cultivation:** Herding gates *only corralling* —
-  mobile domestication (pastoralism) stays ungated (a patch, by contrast, cannot even *tame* until the
-  faction knows Cultivation), because a mobile herd needs no place-binding knowledge.
+- **Rung-3 earned-knowledge gate — PENNING** (slice 4's §4.3 reshuffle; **it was Herding**). *Learned
+  by doing* and **never start-granted**: working a **pastoral** (tamed) **Thriving** herd under a
+  stewardship policy accrues faction **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006,
+  `fauna.rs`) at the ladder's `knowledge.progress_per_turn` — *"you learn penning by managing tamed
+  herds"*. The **`Corral` policy** (and the `corral` / `extend_pen` commands, which ride the same
+  `animal:pen` rung) is refused until the faction knows it; every gate resolves the id off the rung
+  record, never a literal. The `penning` tag → discovery 2006 mapping is declared in
+  `start_profile_knowledge_tags.json` purely so it is mappable; **no start profile lists it**
+  (guarded by `start_profile::tests::no_start_profile_grants_a_ladder_knowledge`).
+  **The old Cultivation asymmetry is gone:** taming is no longer ungated (Herding gates `Tame`), so
+  both webs now gate rung 2 on the knowledge rung 1 teaches, and rung 3 on the knowledge rung 2
+  teaches. One knowledge per transition. See "The knowledge pattern".
 - **The `Corral` policy — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd worked
   under `FollowPolicy::Corral` (Hunt-only) **costs a yield dip while the pen is built**: the take
-  ceiling is `husbandry.corralling_yield_fraction × sustainable_yield(..)` (`hunt_policy_ceiling`,
+  ceiling is the `animal:pen` rung's `yield_fraction_while_building × sustainable_yield(..)` (`hunt_policy_ceiling`,
   reusing the **shared** MSY helper — the crew is building, not hunting; a fraction of MSY is a
   sustainable draw, so the herd stays healthy) and `corral_progress` accrues
-  `husbandry.corral_build_progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
+  that rung's `progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
   AND owns the **domesticated** herd; a gate that lapses **mid-build** just stops accrual that turn
   (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
@@ -952,14 +1478,17 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) now **sets
   the `Corral` policy** on the band(s) already hunting the herd standing on that tile — the command
   form of the client's policy picker. It **pens nothing outright**. Rejections: no herd there / faction
-  hasn't learned Herding / not domesticated / not the owner / already corralled / **no band is hunting
-  it** (staff it first). Same gates as the `assign_labor … corral` path (`validate_labor_policy`).
+  hasn't learned **Penning** ("…have not learned Penning yet. Tame and keep herds to learn it.") / not
+  domesticated / not the owner / already corralled / **no band is hunting it** (staff it first). Same
+  gates as the `assign_labor … corral` path (`validate_labor_policy`).
 - **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`): its yield follows the
   animals you actually keep, those animals **eat** every turn, and underfeeding **shrinks** the herd. A
   one-off 25-turn build that then printed food forever is now a **sustained commitment with a running
   cost**. Corralled = fixed + place-local worker-tended + **fed** + escapes-if-untended:
   - *Fixed* — `advance_herds` skips a corralled herd's `advance_herd_roam` (it stays at `corralled_at`,
     no heading arrow); it still grazes its footprint + regrows toward the footprint's `K` (Grazing 2d).
+    Since slice 3b this is **read off the `animal:pen` rung's `behavior.movement: fixed`**, not
+    hard-coded on `is_corralled()` — see "Herd movement is a rung primitive".
   - *Place-local worker-tended* — a **Hunt assignment on a corralled herd** is herding/tending it, and
     the turn has two halves (the tend branch of `advance_labor_allocation`'s Hunt arm, which `continue`s
     before `hunt_take` — a corralled herd is never both hunt-drawn AND paid):
@@ -998,8 +1527,9 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
     deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
     tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
-    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated herd (resuming the
-    passive even-split husbandry yield). **The pen is lost, not merely opened** — re-penning pays the
+    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated (pastoral) herd —
+    which, since slice 3b, pays **nothing at all** until a band hunts it again. **The pen is lost, not
+    merely opened** — re-penning pays the
     full 25-turn `Corral` investment again, at the herd's new position. *Why zero, when a patch's
     `cultivation_progress` only decays gradually:* **a patch is a place and a herd is not.**
     `cultivation_progress` can survive partially because the improvement sits on a tile that cannot
@@ -1027,15 +1557,17 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   only** now (its `regrowth_rate` is unused; the pen `r` is per-species — Grazing 2d),
   **`upkeep_per_biomass` (0.002 — the feed, now footprint-offset)** and `starve_shrink_rate` (**0.10** —
   a fully-unfed herd loses 10%/turn); `capacity_fraction` is **deleted** (`K_pen` is the fenced
-  footprint's graze flow). Plus the **per-species growth gains** `pastoral_gain` (1.5) / `pen_gain`
-  (3.0) / `husbandry_regrowth_cap` (0.75), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
-  validated `>= 1`), the **`pastoral`** block (phase bands only),
-  **`corralling_yield_fraction` (0.50 — the investment cost, the animal twin of
-  `cultivating_yield_fraction`)**, **`corral_build_progress_per_turn` (0.04 → 25 turns to build; a
-  dedicated lever so pen speed and *tame* speed tune independently)**, `knowledge_progress_per_turn`
-  (0.05 — ~20 Sustain-hunt turns to learn Herding), `knowledge_completion_threshold` (1.0).
-  `claim_threshold` (0.6) stays — it is the **`domesticate`** command's early-claim gate on *mobile*
-  taming, unrelated to corralling (which has no early claim). The retired flat rates
+  footprint's graze flow). Plus the **per-species growth gains** `pastoral_gain` (2.0) / `pen_gain`
+  (4.0) / `husbandry_regrowth_cap` (1.0), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
+  validated `>= 1`), the **`pastoral`** block (phase bands only). **The pen's
+  investment cost and build rate moved to `intensification_ladder.json`'s `animal:pen` rung** — the old
+  `corralling_yield_fraction` 0.50 is its `yield_fraction_while_building`, the old
+  `corral_build_progress_per_turn` 0.04 its `progress_per_turn` (unchanged values) — and in **slice 4**
+  the earned-knowledge levers `knowledge_progress_per_turn` (0.05) / `knowledge_completion_threshold`
+  (1.0) moved to that file's ladder-level **`knowledge`** block at the same values, `labor_config`
+  having duplicated them verbatim (see "The Intensification Ladder").
+  `claim_threshold` is **deleted** with the `domesticate` early-claim it gated (slice 3a — it let the
+  player skip the investment). The retired flat rates
   `provisions_per_biomass` (0.01) / `corral_provisions_per_biomass` (0.012) and `fauna::corral_provisions`
   are **deleted**.
   - **Retuned once, against measurement** (a scripted 100-turn campaign on three pinned seeds — the
@@ -1049,7 +1581,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   - **Every invariant above is enforced by `FaunaConfig::validate()`** — most importantly
     the pen's **best-case net-positive floor** (Grazing 2d §2.4 — `upkeep_per_biomass < r_pen · p /
     (2 + r_pen)` for the **fastest** species' `r_pen = min(husbandry_regrowth_cap, max_wild_r ×
-    pen_gain)` = `0.75 × 0.02 / 2.75 ≈ 0.0055`; shipped 0.002): derivation — at the operating point the
+    pen_gain)` = `min(1.0, 0.35 × 4.0) = 1.0`, so the bound is `1.0 × 0.02 / 3.0 ≈ 0.0067`; shipped
+    0.002): derivation — at the operating point the
     pen yields `r·K/4 · p` and eats `u · K·(2 + r)/4`, so `net > 0 ⟺ u < r·p/(2 + r)`. **This inverts
     the old every-pen guarantee:** with per-species `r` and pasture-dependent feed, a slow breeder or a
     poor-pasture pen may run at a **loss by design** (a placement decision), so validate only guarantees
@@ -1140,6 +1673,142 @@ Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shi
 below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
 sedentarization hard prompt to an actual `found_settlement`. The tile-based `HuntGame` handler stays
 neutralized (its client button no longer surfaces).
+
+---
+
+## The Intensification Ladder
+
+**One grammar for both food webs** (`intensification.rs`, config `src/data/intensification_ladder.json`;
+authoritative design: `docs/plan_intensification_ladder.md`). Plants and animals climb the *same*
+three-rung ladder — rung 1 you take what's there, rung 2 you manage the wild source in place, rung 3 you
+control its reproduction — and every rung-transition is the same **Cultivate-shaped verb**: pick it → the
+source pays a **reduced** yield while the crew prepares rather than harvests → a **per-source build
+meter** climbs → it decays if you walk away → at `1.0` the source steps up a rung.
+
+**The ladder is DATA over a bounded set of coded primitives.** A rung is a [`RungDef`] record, the ladder
+is a list, and adding a rung that recombines existing primitives is a one-record edit. See the
+`intensification_ladder.json` row in Configuration Files for the record shape and the shipped rungs.
+
+### The build engine — THE seam both tracks call
+
+`RungDef::build_accrual(policy, eligible)` / `build_decay()` / `yield_fraction_while_building()` are the
+**single** source of a rung's build math. Both food webs call them instead of reaching for their own
+bespoke accrue/decay/dip levers, so the two ladders **cannot drift apart numerically** — that is the
+whole reason the dials moved out of `labor_config`/`fauna_config` and into the ladder.
+
+- **`build_accrual`** returns `progress_per_turn × timescale` **only** when `policy` **is** the rung's
+  own `verb` *and* the caller's rung-specific gates hold (`eligible` — knows the unlock knowledge,
+  source healthy, species ceiling allows, faction owns it); otherwise `0`. **A rung with `verb: null`
+  is never driven** — which is what keeps the two `wild` rungs (nothing to build) out of the engine.
+- **`timescale` — the rung owns the mechanic, the source scales it** (slice 3c). `build_accrual` and
+  `build_decay` take the **same** factor, so it dilates a source's whole build *timescale* and the
+  rung's build:decay ratio is invariant. Today the only scaler is a species' **`taming_rate`** on
+  `animal:pastoral` (`FaunaConfig::taming_rate_for`, resolved live by display name); every other
+  caller passes **`RUNG_TIMESCALE_UNSCALED`** (the plant `tended` patch, the `pen` and its `ExtendPen`
+  rings — penning is a flat build for every species). See "The `Tame` verb" for why scaling both is
+  load-bearing.
+- **The per-source state does not move.** `ForagePatch::cultivation_progress`,
+  `Herd::domestication_progress` and `Herd::corral_progress` stay where they live: the engine supplies the *amount*, and the source owns its meter, the clamp to
+  `RUNG_COMPLETE`, and the side-effects of completing it (ownership, `corralled_at`, the feed line).
+- **Callers.** Accrual: the `Cultivate`, **`Tame`** and `Corral` arms of `advance_labor_allocation`
+  (Population) — the *same* call, once per rung. Decay: `forage::advance_cultivation` and
+  `fauna::advance_husbandry` (both Logistics; **the one-turn lag is deliberate** — each reads a flag
+  the labor arm wrote *last* turn: `ForagePatch::tended_this_turn` / `Herd::tamed_this_turn`); the pen
+  has **no** decay (`decay_per_turn: 0.0` — an untended pen escapes outright rather than bleeding).
+  The dip: `forage::forage_policy_ceiling`'s `Cultivate` arm and `fauna::hunt_policy_ceiling`'s
+  **`Tame`** and `Corral` arms — so **forecast == actual** for free (see "Pre-commit Yield
+  Forecast"). **Extending** a pen (2d-β) reads the *same* `animal:pen` rung, so a ring can never drift
+  from the initial build.
+
+### The knowledge pattern — practise rung N, unlock rung N+1
+
+**The one rule** (`docs/plan_intensification_ladder.md` §4, slice 4): **working a source teaches the
+knowledge its *current rung* declares in `earns_knowledge`.** "Practising rung N" means *working a
+source that stands on rung N* — **not** *"using rung N's verb"*. So the **same Sustain hunt** teaches
+**Herding** on a wild herd and **Penning** on a tamed one: *you learn herding by managing wild herds,
+penning by managing tamed ones*.
+
+**`RungDef::knowledge_earned(policy, eligible)` is THE earn seam** — the twin of `build_accrual`: the
+rung names the lesson, the caller credits the ledger. It replaced the two hard-coded per-web
+`Sustain && Thriving → <ID>` branches, so `earns_knowledge` went from declarative (slice 2) to live,
+for **every** rung including the wild ones. Callers resolve the rung via `fauna::herd_rung` /
+`forage::patch_rung`, both read once per source in `advance_labor_allocation`'s Hunt/Forage arms
+(**before** the arms branch, so every rung reaches the earn path uniformly).
+
+Three rules ride the seam:
+- **Only stewardship teaches** (§4.2) — `FollowPolicy::teaches_knowledge`, defined against the
+  `EXTRACTIVE` grouping: **Sustain** teaches (the one extractive rung that only takes the regrowth)
+  and so do the investment verbs (`Cultivate`/`Tame`/`Corral` — managing *is* the practice);
+  **Surplus/Market/Eradicate teach nothing, at any rung** (they overdraw — slaughtering isn't
+  practice).
+- **You learn from a healthy source** — `eligible` is the `EcologyPhase::Thriving` gate both shipped
+  earn sites already had, preserved unchanged.
+- **The two webs learn separately** (§4.2) — free, not enforced: the lesson is read off the source's
+  own rung, and a rung belongs to exactly one branch, so a hunt can only ever reach an `animal`
+  knowledge. A master rancher isn't automatically a farmer.
+
+**The gate.** `intensification::knows(ledger, faction, discovery, threshold)` is **THE** knowledge
+check — it retired the five inlined `get_progress(faction, ID) >= threshold` spellings (both labor
+arms, the `cultivate`/`corral` assignment validators, and `extend_pen`), and the `tame` validator + the
+`Tame` labor arm were built on it from the start. `threshold` stays a parameter to keep the helper a
+pure comparison, but **there is now exactly one value any caller passes**: the ladder's
+`knowledge.completion_threshold`. Every gate resolves its discovery off the **rung record**
+(`unlock_discovery_id()`), never a hard-coded id, so a gate cannot drift from the rung the labor arm
+accrues against.
+
+**The dials are the ladder's** (`knowledge.progress_per_turn` 0.05 / `completion_threshold` 1.0 →
+~20 turns per lesson). They **moved here from the two identical per-web copies** (`labor_config`'s
+`forage.cultivation`, `fauna_config`'s `husbandry`) once the earn path became one seam: a number that
+paces *both* webs belongs to the ladder, exactly like the build dials. `LadderConfig::validate` now
+states each bound **once** for both webs (`progress_per_turn > 0` — else the ladder silently freezes
+at rung 1; `0 < completion_threshold <= 1` — at `0` every gate is open on turn 1, above `1` no gate
+can ever open since the ledger clamps to `1.0`).
+
+**The pacing consequence — measured** (`fauna_husbandry::the_full_wild_to_pen_climb_is_paced_by_practising_each_rung`,
+Wild Boar): a pen is a **four-leg, ~97-turn climb** — Sustain-hunt wild → **Herding** (20) → `Tame`
+(32, at the boar's `taming_rate` 0.8) → Sustain-hunt the *pastoral* herd → **Penning** (20) →
+`Corral` (25). The **Penning leg is new** (§4.3): pre-slice-4 Herding gated `Corral` directly, so the
+climb was ~77 turns. **Intended** — one knowledge per transition, and you cannot skip a rung you have
+not practised.
+
+### Behavior primitives — `movement` is live; `feeding`/`harvest` are still declarative
+
+`behavior` is config over **coded** primitives (bounded enums): `movement` ∈ `fixed | roam |
+drift_to_owner`, `feeding` ∈ `photosynthesis | forage | self_graze`, `harvest` ∈ `worker_take |
+worker_tend | passive`. A rung that recombines existing primitives is pure config; a rung needing a
+*new* primitive codes that one primitive once, after which it too is config.
+
+- **`movement` IS READ** (slice 3b — the first primitive the engine applies): `fauna::advance_herds`
+  resolves each herd's rung and dispatches on it, which is what makes §3's proximity spine
+  (`roam` → `drift_to_owner` → `fixed`) a **config diff** rather than a code branch. `drift_to_owner`
+  is the primitive slice 3b coded; see "Herd movement is a rung primitive" under Fauna & Wild Game for
+  its ordering, its fallbacks, and the overgrazing tension it creates.
+- **`feeding` / `harvest` are parsed and validated only** — the seam later slices switch on. `harvest:
+  passive` is now **unused by every shipped rung**: retiring passive-free pastoral (§3, slice 3b) left
+  no rung that pays without workers. The variant stays as vocabulary for a future rung that genuinely
+  does.
+
+### The config states TODAY's truth, deliberately
+
+The whole thesis is that **later slices change behaviour by editing the JSON**, so the shipped file
+describes the sim as it is, not as it will be:
+
+| | rung 1 | rung 2 | rung 3 |
+|---|---|---|---|
+| **plant** | `wild` — no verb; **earns `cultivation`** | `tended` — verb **`cultivate`**, gate `cultivation`, **earns `seed_selection`** (slice 4) | `field` — verb **`sow`**, gate **`seed_selection`** (slice 5 — the consumer that knowledge was earned for), **`site_requirement` { min_forage_capacity 195, requires_fresh_water }** (the land must already be rich + watered — rung 3 moves seed, it cannot fertilize), earns nothing (`irrigation`/`rotation` = rung 4 Worked Land, parked); `movement: fixed` |
+| **animal** | `wild` — no verb; **earns `herding`**; `movement: roam` | `pastoral` — verb **`tame`**, gate `herding`, ceiling `pastoral`, **earns `penning`** (slice 4); **`movement: drift_to_owner`, `harvest: worker_take`** (slice 3b — was `roam`/`passive`) | `pen` — verb **`corral`**, gate **`penning`** (slice 4 — was `herding`), ceiling `pen`, earns nothing (`selective_breeding` = rung 4, parked); `movement: fixed` |
+
+Three consequences to keep straight, **all settled by slice 4**: `earns_knowledge` is **live, not
+declarative** — every rung's lesson is read through `RungDef::knowledge_earned` off the rung the source
+stands on, and the per-web `knowledge_progress_per_turn` copies that used to drive it are gone (see
+"The knowledge pattern"); **one knowledge per transition** — Herding gates `tame` **only**, `penning`
+gates `corral` + `extend_pen` (the §4.3 reshuffle; pinned by `builtin_ladder_describes_todays_rungs`,
+which asserts no two rungs share an unlock gate); and **both the build dials *and* the knowledge dials
+now live here**, so the two webs can only be tuned — and paced — together.
+
+See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2), "Corral (Intensification Rung 1c)"
+(the animal rung 3), "The husbandry yield ladder" (what each rung *pays*, which this arc does **not**
+unify — animals pay flow-MSY against `r`, plants pay a flat rate without draw-down).
 
 ---
 
@@ -1253,7 +1922,7 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
 - **The `Cultivate` policy — the investment.** In `advance_labor_allocation`'s **Forage** arm
   (Population), a patch worked under `FollowPolicy::Cultivate`:
   - **Costs a yield dip while preparing.** Its take ceiling is
-    `cultivation.cultivating_yield_fraction × sustainable_yield(..)` — a *fraction of the MSY ceiling*
+    the `plant:tended` rung's `yield_fraction_while_building × sustainable_yield(..)` — a *fraction of the MSY ceiling*
     (`forage_policy_ceiling`, reusing the **shared** `sustainable_yield` helper, never a second
     formula). The crew is clearing and planting, not gathering. Because the take is a fraction of MSY
     it is **sustainable**, so the patch stays Thriving (which the accrual gate requires) — the cost is
@@ -1276,20 +1945,27 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
     auto-accrual erased.
   - `ForagePatch` methods: `is_cultivated`/`accrue_cultivation`/`decay_cultivation` (the early-claim
     `claim_cultivation` is **removed**).
-- **Tended yield — paid to the tending band, place-local, higher output** — a tended (cultivated)
-  patch is **worked, not passive**. In the **Forage** arm, when the assignment's patch
-  `is_cultivated()`, the band whose Forage assignment tends it (≥1 worker on the tile → place-local by
-  construction) is paid `biomass × cultivation.tended_provisions_per_biomass × output_multiplier`
-  directly into `cohort.stores` (FOOD) — a **managed harvest** of the full standing crop **without**
-  drawing biomass down (a tended patch regrows freely, so biomass sits near cap). It is *maintenance
-  labor*: presence gates it (the `workers == 0` skip above), the amount is biomass-based, not
-  head-count-scaled. The patch is marked `tended_this_turn` (a transient, non-persisted per-turn flag)
-  so the decay pass can tell tended from abandoned. Yield telemetry reads `actual == sustainable` (a
-  managed harvest never overdraws — no ⚠). **This out-yields the same patch's wild MSY skim** — the
-  intensification incentive: a tended patch pays `K × 0.01` ≈ 1.2 prov/turn vs a wild patch's best
-  sustainable MSY `regrowth_rate × K/4 × forage.provisions_per_biomass` ≈ 0.375 prov/turn (~3.2×; see
-  the `CultivationConfig` tuning note). The old even-split-across-all-the-owner's-bands payment in
-  `advance_cultivation` is **retired**.
+- **Tended yield — a WILD STAND ON A BOOSTED CURVE, gathered place-local** (slice 7 — the rung-2
+  correction). A tended patch is **worked, not passive**, and it is **still wild**: what tending buys is
+  a faster curve (`cultivation.tended_regrowth_gain` 2.0, folded in by **`forage::patch_ecology`** — the
+  plant twin of `fauna::herd_ecology`, and the one seam every consumer resolves a patch's ecology
+  through). It is therefore gathered by the **ordinary `forage_take` path**, exactly like rung 1:
+  **policy-live** (Sustain/Surplus/Market/Eradicate are four different takes off its boosted MSY),
+  **worker-capped**, and **drawn down** — so a tended patch **can be over-farmed** and the overdraw ⚠
+  fires on it. This is the exact shape a **pastoral** herd already had (`hunt_policy_ceiling` on the
+  boosted pastoral `r`); the plant web used to collapse a rung *earlier* than the animal web, and that
+  asymmetry was the bug. **It still out-yields the same patch's wild Sustain** — the intensification
+  incentive, now carried by the curve rather than a flat rate, and **scale-free by construction**: it
+  *is* the gain (measured on `AlluvialPlain`, K = 195: wild **0.61** → tended **1.22** prov/turn).
+  Working a completed improvement at either rung marks it `tended_this_turn` (a transient,
+  non-persisted per-turn flag) so the decay pass can tell tended from abandoned. The old
+  even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
+  flat `tended_provisions_per_biomass` managed rate.
+  - **`Cultivate` on a COMPLETED patch still pays its dip.** The dip means "the crew is preparing
+    ground, not gathering", which does not stop being true once the ground is ready — so the player
+    switches to a harvest policy to collect the payoff. The animal side has always behaved this way
+    (`Tame` on an already-tamed herd pays the pastoral dip); slice 7 made the plant side agree, because
+    the retired managed branch ignored the policy entirely.
 - **Feral if unworked** — `advance_cultivation` (`forage.rs`, `TurnStage::Logistics` alongside
   `advance_forage_regrowth`) is the **decay/feral** pass only. A patch **worked as an improvement this
   turn** (`tended_this_turn` — tending a completed patch *or* preparing one under Cultivate) is
@@ -1318,21 +1994,28 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
 - **Sedentarization (folded)** — `sedentarization_tick` reads `herds.domesticated_count(faction) +
   forage.cultivated_count(faction)` for its **domestication** input: plant + animal domestication
   share the one driver (no new weight, no re-balance).
-- **Config** (`labor_config.json` `forage.cultivation`, `CultivationConfig`, cloning
-  `HusbandryConfig`): `progress_per_turn` (0.04 → 25 turns to prepare), `decay_per_turn` (0.01, the
-  feral-reversion rate), **`cultivating_yield_fraction` (0.25 — the investment cost: the preparing take
-  ceiling as a fraction of the patch's Sustain/MSY ceiling)**, `tended_provisions_per_biomass` (0.01 —
-  the **tended-harvest** rate on the full standing crop, distinct from and *lower per-biomass* than the
-  gather `forage.provisions_per_biomass`, but paid on the whole crop so it beats the wild MSY skim;
-  keep it `> regrowth_rate/4 × forage.provisions_per_biomass` so intensifying always pays), plus the
+- **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
+  rung (`build`: `progress_per_turn` 0.04 → 25 turns to prepare, `decay_per_turn` 0.01 the
+  feral-reversion rate, **`yield_fraction_while_building` 0.25** — the old `cultivating_yield_fraction`,
+  the investment cost: the preparing take ceiling as a fraction of the patch's Sustain/MSY ceiling), so
+  the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
+  in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.5 —
+  the rung-2 payoff, the plant twin of `husbandry.pastoral_gain` at its value; a tended patch's stock
+  regrows `gain ×` as fast as the same patch wild, so its MSY — and every policy ceiling on it — scales
+  with it; keep it `> 1.0` or Cultivate buys nothing), plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
   per Sustain-forage-Thriving turn, ~20 turns to know) and `knowledge_completion_threshold` (1.0 = the
-  ledger's completion value). The early-claim `claim_threshold` is **removed**. Intended invariants:
-  `progress_per_turn > decay_per_turn`, `0 < cultivating_yield_fraction < 1`,
-  `tended_provisions_per_biomass > 0`, `knowledge_progress_per_turn > 0`,
-  `0 < knowledge_completion_threshold <= 1`. As with fauna, **these are asserted over the *builtin*
-  only — `LaborConfig` has NO `validate()`** — so a `LABOR_CONFIG_PATH` override that breaks one is
-  accepted silently. Same open follow-up (see `TASKS.md`).
+  ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
+  invariants (`0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`,
+  `0 < yield_fraction_while_building < 1`) are now **enforced on every load path** by
+  `LadderConfig::validate()`, which owns them — as are the **knowledge** invariants
+  (`knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold <= 1`), which moved to the
+  ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
+  (slice 7 — the old "asserted over the *builtin* only, so a `LABOR_CONFIG_PATH` override that breaks it
+  is accepted silently" gap is **closed**): `LaborConfig::validate()` enforces the **plant ladder's
+  monotonicity** — `tended_regrowth_gain > 1` (wild < tended) and `field_provisions_per_biomass >
+  gain × regrowth_rate/4 × provisions_per_biomass` (tended < field), both scale-free in `K`, the payoff
+  twin of `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1`.
 - **Intensification display snapshot (on the wire, consumed by the client-dev rendering slice next).**
   The intensification-ladder state is now exported to the FlatBuffers client stream (append-only per
   the schema discipline; `snapshot.fbs`, `sim_schema`, `snapshot.rs`), on both `WorldSnapshot` and
@@ -1343,19 +2026,134 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
     `owner`/`hasOwner` (tending faction; `hasOwner = false` = wild), plus `biomass`/`carryingCapacity`/
     `ecologyPhase` for optional patch-health. This is the client's first per-tile forage-patch payload
     (previously forage was visible only via `laborAssignments`).
-  - **Faction Cultivation/Herding knowledge** — a new per-faction
-    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, cultivation, herding }]` list
-    (`snapshot_intensification_knowledge`, from the `DiscoveryProgressLedger`), mirroring
-    `sedentarization[]`. `cultivation`/`herding` are the 0..1 progress on discoveries
-    `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004); a faction is emitted only once it
-    has begun learning either ladder (both zero → skipped). Client renders these as learning/known
-    meters like the sedentarization meter.
+  - **Faction ladder knowledge** — a per-faction
+    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, cultivation, herding,
+    seedSelection, penning }]` list (`snapshot_intensification_knowledge`, from the
+    `DiscoveryProgressLedger`), mirroring `sedentarization[]`. **One field per rung-transition**, so it
+    reads as the ladder itself — `wild --cultivation--> tended --seedSelection--> field` and
+    `wild --herding--> pastoral --penning--> pen` — each the 0..1 progress on discoveries 2003 / 2004 /
+    **2005** / **2006** (the last two appended in slice 4, **append-only**: `cultivation`/`herding`
+    keep their shipped slots). A faction is emitted only once it has begun learning *something* (all
+    zero → skipped). Client renders these as learning/known meters like the sedentarization meter;
+    the **two-meter split** (faction knowledge vs per-source build progress, §4.1 — the root UX fix)
+    is the client slice, and both meters are already distinctly on the wire.
   - **Herd corral** — `HerdTelemetryState.corralled` (see the corral section above).
 - **Follow-ups:** **Rung 1c — corral** (the fauna-side pen behind a `herding` gate) **shipped** — see
   "Corral (Intensification Rung 1c)" under Fauna & Wild Game. The **client _rendering_ for both ladders**
   (tile-card cultivation N% / tended-patch + Cultivation/Herding knowledge meters + herd corral
   indicator) is the **final Phase-1 slice** and remains a client-dev follow-up; the sim/schema data is
   now all on the wire (fields above).
+
+### The `Sow` verb + the Field (Intensification rung 3) — the plant twin of the pen
+
+**Rung 3 places a food source where you want it** (`docs/plan_intensification_ladder.md` §2, slice 5).
+Once a faction knows **Seed Selection** (`SEED_SELECTION_DISCOVERY_ID` = 2005 — earned by *working
+tended patches*, slice 4's `plant:tended` `earns_knowledge`; earned then, spent here), a crew working
+a tile under **`FollowPolicy::Sow`** builds a **Field** on it. A Field is not a new entity: it is a
+`ForagePatch` **at rung 3**, carrying its own `field_progress` meter beside `cultivation_progress` —
+exactly as a `Herd` carries `corral_progress` beside `domestication_progress`. There is **no "extend
+the field"**: each tile is its own patch, so you sow another field (the pen extends only because one
+herd has one appetite).
+
+- **Placed, not conjured — and SCARCITY IS THE POINT.** Rung 3 is *"I know how to take seed from a
+  plant and put it somewhere else — but I do not know fertilization, so the land must already be very
+  fertile, and near fresh water"*. That rule is the rung's **`site_requirement`** on the ladder record
+  (`RungSiteRequirement` — the plant twin of `ceiling_required`, keyed on the **land** instead of the
+  species), and both dials are levers:
+  - **`min_forage_capacity: 195`** — a floor on the tile's own `tile_forage_capacity` (the *same*
+    helper that sizes a wild patch and the wire's `forageCapacity`, never a Field-specific table). It
+    admits exactly the **river-deposit class** — RiverDelta 210, Floodplain 205, AlluvialPlain 195 —
+    and stops just above ordinary MixedWoodland (190).
+  - **`requires_fresh_water: true`** — the tile must be on or beside **fresh** water
+    (`forage::tile_is_fresh_watered`): `TerrainTags::FRESHWATER` on the tile, **or** a river along one
+    of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
+    hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
+    `hex_neighbors_wrapped`). A **salt coast is not water** for this — you do not farm sea spray.
+  - **Measured on the standard map** (earthlike 80×52, seed 119304647): **49 sowable tiles of 4160
+    (1.2%)** post the "divides, not valleys" arc — **35** on the pre-arc dome — against **2328** tiles
+    that merely bear food. (The historical **46** figure predates that arc.) **The measurement only
+    means anything with `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are
+    hydrology's, so a fixture that skips it measures 0 at every grid size and every seed. The
+    **conjunction is still doing the work** (pre-arc measurement: 337 tiles cleared the fertility
+    floor and the water rule cut 291 of them, 86%). Few sowable tiles ⇒ *which* tile matters ⇒ a band may have to **move** to
+    farm at all. That friction is the design pillar, not a side effect.
+  - **The refusal names the fault** (`SiteRefusal::{TooPoor, TooDry, TooPoorAndTooDry}` — the rung
+    judges, the caller phrases) and points at **rung 4, Worked Land** (plows/irrigation, a future arc):
+    *"Your people can carry seed, but not yet water or feed the land…until they learn to work the land
+    itself."* Too poor and too dry are different problems with different answers (move, or wait).
+  - **Rung 4 will be a LOOSER COPY of this record and nothing else** — a lower floor,
+    `requires_fresh_water: false`. That is the arc's config-driven thesis paying out: a rung whose
+    *placement rule* differs is a config edit (pinned by
+    `a_looser_site_requirement_is_a_pure_config_edit`).
+- **It needs no source below it** — the one place the two webs legitimately differ (§2). Seed travels:
+  qualifying ground carrying *no forage site at all* is a legal target, and sowing it **creates** the
+  patch (`ForagePatch::sown` — the tile's own biome capacity, biomass at the reseed floor, normal
+  logistic regrowth). `Corral`, by contrast, needs a herd you already tamed. *(Reachability caveat,
+  measured: worldgen seeds a patch on **every** food-bearing tile — `classify_food_module` tags
+  essentially every biome — so on a generated map `Sow` always **upgrades an existing wild patch**. The
+  create-from-nothing path is live and tested against constructed bare ground, but its input does not
+  occur today. This is also the claim that the stale "~95% of tiles carry no `ForagePatch`" note above
+  had made look true.)*
+- **Not gated on Thriving, unlike Cultivate** — load-bearing, not a relaxation: sown ground starts at
+  the reseed floor, i.e. *Collapsing* by construction, so a health gate would forbid the case the rung
+  exists for. You *tend* a healthy wild stand; you *plant* bare ground. (`Tame` draws the same line.)
+- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.25) × what the ground
+  would otherwise pay: the MSY dip on a wild patch (via `forage_policy_ceiling`), and the **managed**
+  dip on a tended patch being upgraded (0.25 × its tended harvest — `forage_forecast` and the labor
+  arm both read the one shared `field_yield_fraction_while_building`). On **bare** ground that is a
+  fraction of nothing, so a bare-ground sow is near-pure investment: **~0.13 prov/turn across its
+  25-turn build against the 2.1/turn the Field then pays** (measured, `forage_field.rs`).
+- **The payout — rung 3 out-yields rung 2, or the rung is pointless.** A completed Field pays its
+  workers `biomass × cultivation.field_provisions_per_biomass` (**0.02**, `labor_config.json`), the
+  tended patch's *shape* at **2×** its rate, place-local and without drawing biomass down.
+  `sustainable == actual` (no ⚠). **But the collection cap still binds** (slice 7): rung 3 collapses the
+  *policy* axis, never the worker cap — you always carry the harvest home — so the actual take is
+  `min(production, workers × per-worker throughput)`, `workers_needed` is derived, and the crop the crew
+  could not carry is reported as `wasted`. **Measured production/turn on `AlluvialPlain` (K 195):**
+  wild Sustain **0.61** → tended **1.22** → Field **3.90**, needing **2 / 4 / 10** gatherers
+  respectively at 0.40 prov/worker.
+- **Feral if abandoned — one rule for the whole plant web.** `advance_cultivation` bleeds **both**
+  improvement meters at their own rung's `decay_per_turn` on any untended turn, so an abandoned Field
+  reverts to a **wild** gather patch (after the pass's deliberate one-turn lag) and both meters lapse
+  to zero over ~100 turns, ownership clearing only once nothing is left. It does **not** step down to a
+  tended patch on the way: that would pay the deserter rung 2's managed yield for free, and *an
+  improvement you stop working goes back to the wild* is the plant web's only story here.
+- **`sow <faction> <x> <y>` command** (`handle_sow`; `SowCommand` proto field **41**,
+  `CommandEventKind::Sow`) — **sets the `Sow` policy** on the bands already foraging that tile, the
+  command form of the client's policy picker. It sows nothing outright; the seed goes in when the crew
+  works the ground, so `assign_labor … sow` places a Field on identical terms. Rejections, each
+  distinct (`validate_sow`, shared with the `assign_labor` path): no such tile / **the land will not
+  take seed** — *too thin*, *too dry*, or both, each naming the fault and pointing at rung 4 / faction
+  hasn't learned **Seed Selection** ("Work tended patches to learn it") / already a Field / another
+  people's ground / **no band is foraging it**. The site rule gates the **labor arm** too (both the
+  seed placement and the build accrual), so `assign_labor … sow` cannot farm ground the command
+  refuses.
+- **`cultivated_count` counts Fields** (`ForagePatch::is_managed`), so the sedentarization
+  domestication signal cannot read rung 3 as *less* domesticated than rung 2 (a bare-ground Field
+  carries no cultivation meter at all).
+- **Persistence** — `field_progress` rides `ForageState` (its own field beside the shared
+  `EcologyState`'s cultivation `progress`/`owner`, mirroring `HerdState.corral_progress`), so a
+  rollback rewinds a half-sown Field.
+- **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
+  `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
+  never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
+  so the client has **both** plant meters for the §4.1 two-meter split; `ceilingSow:float` +
+  `fieldYield:float` (Sow's "preparing X → then Y" pair, the twins of `ceilingCultivate`/`tendedYield`
+  — `ceilingSow` is its **own** field for `ceilingTame`'s reason: two investment rungs on one branch
+  must never share a ceiling); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
+  `"too_poor"` / `"too_dry"` / `"too_poor_and_too_dry"` ([`SiteRefusal::as_str`], free-form per the
+  `species`/`ecologyPhase` convention). That last one ships **the answer, not a bool**: only ~1% of
+  tiles are sowable, so *"why can't I sow here?"* is the live question, and the client can re-derive
+  nothing (it holds neither the capacity table nor the hydrology). The capture resolves it through the
+  **same** `RungSiteRequirement::refusal` seam the command and the labor arm gate on — pinned by
+  `the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on`, so the wire cannot disagree with
+  the gate.
+- **Client follow-up (slice 6):** the native reader
+  (`clients/godot_thin_client/native/src/lib.rs::forage_patches_to_array`) does not yet surface the
+  five new fields as dict keys, and no panel renders them.
+
+See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (Intensification Rung 1c)"
+(the animal rung 3 this mirrors), "The Intensification Ladder" (the engine + the config).
 
 ---
 
@@ -1367,7 +2165,7 @@ webs** (authoritative design: `docs/plan_grazing_foundation.md`):
 | | `ForagePatch.biomass` (Depletable Forage) | **`GrazePatch.biomass`** |
 |---|---|---|
 | Who eats it | **humans** (Forage assignments) | **animals** (herds, wild and penned) |
-| Where it is | `FoodModuleTag` tiles (sparse) | **any vegetated land**, by biome (dense) |
+| Where it is | `FoodModuleTag` tiles — **not sparse**: nearly every biome is tagged, so in practice every food-bearing tile | **any vegetated land**, by biome (dense) |
 | What it is | seeds, nuts, tubers, fruit, shellfish | grass, browse, forbs — **cellulose humans cannot digest** |
 | Its capacity | `forage.capacity_by_biome` (`labor_config.json`) | `graze.capacity_by_biome` (`fauna_config.json`) |
 
@@ -1482,8 +2280,13 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   both `WorldSnapshot` and `WorldDelta`). The exact human-food mirror of `grazeCapacity`, so the client
   can draw a **Forage overlay** the same way it draws the pasture one. Sourced **directly from
   `forage.capacity_by_biome` (`ForageLaborConfig::capacity_for(tile.terrain)`)** for *every* tile —
-  **not** from the sparse `ForageRegistry` — precisely so the biome's potential shows on the ~95% of
-  tiles (all the best cropland) that carry no `ForagePatch`. Consequence, preserved deliberately: it is
+  **not** from the `ForageRegistry` — so the biome's potential shows on **every** tile, including the
+  water and the bare rock that hold no `ForagePatch` at all. (**Corrected:** this used to claim the
+  registry was *sparse* — "~95% of tiles, all the best cropland, carry no `ForagePatch`". That is
+  **false** and was measured false: `classify_food_module` tags essentially every biome, so
+  `spawn_initial_forage` seeds a patch on **every** food-bearing tile — standard map, **2328
+  food-bearing tiles, 2328 patches, zero bare**. The claim predates the per-biome capacity table, and
+  it is what the `Sow` design originally reasoned from; see "The `Sow` verb + the Field".) Consequence, preserved deliberately: it is
   **non-zero on fishery water** (`ContinentalShelf` 130 / `CoralShelf` 180 / `InlandSea` 110 — a fishery
   is a food module on water), a real divergence from graze where all water is 0; only a *stated-zero*
   biome (deep ocean, glacier, lava, salt flat) reads 0. On a food-module tile that *does* hold a
@@ -1619,10 +2422,11 @@ oscillates or crashes if built carelessly.
   expedition, which never filled under the old uniform `r`, now completes).
 - **The fast-breeder ladder inversion — FIXED in 2d.** A wild rabbit's `r`=0.35 exceeded the retired
   flat pastoral 0.25, so taming a rabbit *used* to be a growth downgrade. Grazing 2d makes the managed
-  rungs a *multiple* of each species' own wild `r` (§ "Phase 2d"), so pastoral `r = wild_r × 1.5 >
+  rungs a *multiple* of each species' own wild `r` (§ "Phase 2d"), so pastoral `r = wild_r × 2.0 >
   wild_r` for every species and the inversion is gone.
   `fauna_husbandry::the_husbandry_ladder_is_a_per_species_growth_rate_ladder` asserts the per-species
-  gross growth-rate ladder.
+  gross growth-rate ladder — as a **long-run average**, for the reason set out in "The husbandry yield
+  ladder" (escapement makes a single turn read stock, not rate).
 
 See Also: `docs/plan_grazing_2b.md` §2.2 (the convergence risk), §9 (the measure list),
 `docs/plan_corral_managed_population.md` §3 (the constant-escapement lesson this reuses).
@@ -1648,6 +2452,13 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
 - **Per-species husbandry `r`** (§3) — retires flat pastoral 0.25 / pen 0.90 for `min(cap, wild_r ×
   gain)` (`pastoral_gain` 1.5, `pen_gain` 3.0, `husbandry_regrowth_cap` 0.75). `capacity_fraction` /
   `pen_capacity` are **deleted**; `herd_capacity` collapses to `herd.carrying_capacity`.
+- **Per-species husbandry DENSITY (K)** — the ceiling twin of the `r`-gains: the per-species
+  `SpeciesDef.pastoral_density` / `pen_density` (default **1.0**) multiply a tamed / penned herd's
+  range-or-footprint-derived `K` at the one seam `ecological_carrying_capacity` (via
+  `fauna::herd_density_gain`), so domestication makes the land hold *more* animals, big for the prime
+  grazer domesticates (goat/aurochs **2.0 / 5.0**). Orthogonal to `r`, byte-identical for a wild herd
+  (`×1.0`), and scale-free in the pen net-positive floor. See "The husbandry yield ladder" for the
+  roster and the resolver.
 - **The net-positive invariant** is reworked to a **best-case floor** (§2.4): validate guarantees only
   the *fastest* species' pen nets positive when fully larder-fed; a slow breeder or poor-pasture pen may
   run at a **loss by design** (it pays off only when self-feeding drives upkeep → 0).
@@ -1669,9 +2480,9 @@ investment worked off over turns, reusing the corral build ladder — no materia
   `Herd::begin_pen_extension` (which re-checks penned / not-extending / below-max, so the command's
   validation and the mutation can never disagree).
 - **The build ladder** rides the corral-tend branch of `advance_labor_allocation`: while `pen_extending`,
-  the keeper's HARVEST is **dipped to `corralling_yield_fraction`** (the forgone yield *is* the labor
+  the keeper's HARVEST is **dipped to the `animal:pen` rung's `yield_fraction_while_building`** (the forgone yield *is* the labor
   cost of the ring, the same dip the corral *build* pays), and `Herd::accrue_pen_extension` adds
-  `husbandry.corral_build_progress_per_turn` (0.04 → ~25 turns/ring) to `pen_extend_progress` **after**
+  that same rung's `progress_per_turn` (0.04 → ~25 turns/ring) to `pen_extend_progress` **after**
   the take. At `1.0` the ring completes: `pen_radius += 1` (saturating at `pen_radius_max`),
   `pen_extend_progress` resets, `pen_extending` clears, and a `Corral` feed line fires; the larger
   footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
@@ -1726,13 +2537,46 @@ while the player is composing an assignment**.
 `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
 `perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
 (all `float`, **food/turn**, at the source's CURRENT biomass), **plus the investment rung**:
+
+> **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
+> TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
+> `hunt_credit_ceiling`, so each extractive/investment ceiling is `min(hunt_policy_rate, biomass)` —
+> the sustainable rate the confirmed-allocation row already headlines (`sustainable_yield`) — **not**
+> the credit-inclusive `min(credit + rate, biomass)` this-turn burst the take path cashes. For a slow
+> breeder whose MSY < `body_mass` (e.g. Wild Aurochs, `r ≈ 0.09`) the bank accumulates ~a whole animal,
+> and quoting `credit + rate` inflated every extractive ceiling by that banked amount — reading the Tame
+> dip *above* its own payoff and Sustain *above* Tame, inverting the ladder. Steady, the compose
+> forecast agrees with the resolved headline (no jump between them) and the aurochs ladder reads in
+> order: `Sustain 0.72 < Surplus 1.08 < Market 1.80`, Tame dip `+0.36 → payoff +1.44`, Corral payoff
+> `2.88`. **Eradicate is unchanged** (its rate is the whole stock `B`; it bypasses the bank). The take
+> path (`hunt_take` / `hunt_credit_ceiling`) keeps the bank untouched — only the readout is steady.
+> Pinned by `fauna::tests::the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst` (a full-bank
+> herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
+> continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
+
 `ForagePatchState.ceilingCultivate` + `tendedYield` and `HerdTelemetryState.ceilingCorral` +
 `corralYield`. The investment policy's `ceiling*` is the **preparing** yield
 (`fraction × ceilingSustain` — the dip); `tendedYield`/`corralYield` is what the source will pay
 **once the improvement completes**, so the client can show **"preparing X → then Y"** *before* the
 player commits to the cost. (Sim-side both live on the shared `SourceYieldForecast` as
 `ceiling_prepare` / `managed_yield` — the two investment policies are kind-exclusive, so one field
-serves both.)
+serves both.) **The `Tame` rung has its own payoff twin: `HerdTelemetryState.pastoralYield`** (sim
+`SourceYieldForecast::pastoral_yield`) — what a Sustain hunt pays **once the herd is tamed**, so the
+client can render Tame's `→ +Y` instead of quoting only its during-building dip (`ceiling_tame`, which
+reads *below* wild Sustain and hides that taming out-yields wild hunting). `0` on a source that never
+offers Tame (a forage patch, or a herd already penned/forage-tended). **Both `pastoralYield` and the
+un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
+`hunt_provisions(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
+the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
+escapement (`max(0, B − K/2)`) is `r`-independent, the sustained form is what makes the ladder visible
+at a single turn: **`ceiling_sustain < pastoral_yield < managed_yield`** (wild `r·K/4` < pastoral
+`r×2.0` < pen `r×4.0`, MSY-capped; measured ≈ 0.5 < 1.0 < 2.0 on a full Wild Boar). The old escapement
+projection read `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field
+exists for. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
+`hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
+constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
+projection* is the sustained MSY. Pinned by
+`fauna::tests::the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain`.
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
@@ -1742,9 +2586,13 @@ serves both.)
   `max_useful_workers` is invariant to it.
 - Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
   `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
-- A **tended (cultivated) patch** / **corralled herd** is maintenance labor, not scaling gather: every
-  ceiling is its managed yield and `perWorkerYield` equals it, so `max_useful_workers == 1`
-  (`TENDED_SOURCE_WORKERS_NEEDED`) and the policy is irrelevant.
+- A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the policy axis
+  collapses**: every ceiling is its managed yield (`SourceYieldForecast::managed`). **The worker cap does
+  not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =
+  ceil(production / perWorkerYield)` is an honest count that grows with the source (slice 7; it used to
+  be a hardcoded `1`, which claimed one worker could carry home whatever the land offered). A **tended
+  patch is NOT this shape** — it is rung 2, a wild stand on a boosted curve, and forecasts policy-live
+  like a wild patch.
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
@@ -1785,14 +2633,17 @@ client's compose-time "Expected yield" row promises. Shape:
 - **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
   workers, policy) = min(workers × per_worker_yield, forecast.ceiling_for(policy))`
   (`SourceYieldForecast::ceiling_for` is the `ceiling[policy]` lookup; the two investment policies
-  share `ceiling_prepare`, the reduced `cultivating_yield_fraction`/`corralling_yield_fraction` bite —
+  share `ceiling_prepare`, the reduced `yield_fraction_while_building` bite of the rung being built —
   once the improvement *completes* the source is `::tended`, whose every ceiling already **is**
   `managed_yield`). The client preview, the seed, and the forecast==actual tests all call it.
 - The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
   compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
-  `sustainable` = the same MSY value the resolution path records (a *managed* source reads
-  `sustainable == actual` — no ⚠), `workers_needed` = the same overstaffing inversion (a managed source
-  = `TENDED_SOURCE_WORKERS_NEEDED`). No new formula, no new config lever.
+  `sustainable` = the same MSY value the resolution path records (a *managed* source — **rung 3 only**
+  — reads `sustainable == actual`, no ⚠), `workers_needed` = the same overstaffing signal the resolution
+  path writes (the continuous inversion for a forage patch; the **steady peak-drop carry crew**
+  `hunt_haul_workers` off `SourceYieldForecast::ceiling_for` for a whole-animal source, so the seed
+  matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
+  config lever.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
@@ -2359,103 +3210,116 @@ mission:
   hunt.per_worker_carry`). Deliver only with a worthwhile load: a full pack **or** `herd_near_band &&
   carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
-- **Per-policy behaviour**: **Sustain** — takes the **shared MSY *flow* ceiling**
-  (`fauna::hunt_policy_ceiling(Sustain, …)`, the *same* take a resident band's Hunt arm makes from
-  the same herd state: "Sustain" has **one meaning** across the sim). It is **not** a stock target —
-  there is no sustain floor and no stock-line completion; the trip ends on a full pack, a near-band
-  delivery, a recall, or a lost herd, and the herd is held steady (skim = regrowth). **Surplus** —
-  one full-cap haul, capped by *stock* headroom down to the ecology collapse threshold
-  (`hunt_expedition_floor`) + **done**; **Market** — the same stock headroom, in repeated full-cap
-  trips via `Delivering`→deposit→**auto-relaunch** (the deposit fires once the party is back within
-  communication range of the home band — the shared `near_home` proximity — not necessarily on its
-  exact live tile), grinding the herd toward the collapse floor until it crashes or you recall;
-  **Eradicate** — no floor, **delivers no food** (denial): keeps taking each turn until the herd is
-  extinct, then folds back empty. A lost/extinct herd → shared `Returning`.
-- **Launch viability forecast — a bounded forward SIMULATION, not a division** (`hunt_trip_forecast`,
-  `systems.rs`). It runs the trip forward turn by turn — `fauna::regrow_biomass` (what `advance_herds`
-  does in Logistics) then `expedition_take_biomass` (what the `Hunting` arm does in Population), in
-  that order, accumulating the larder on the **fixed-point `Scalar` grid** exactly as the real one
-  does — until the pack is full or `hunt.forecast_horizon_turns` (**60**) is hit. There is no second
-  copy of the model to drift: each simulated turn is the same pair of calls the sim makes.
-  - *Why not a closed form?* **There is no single rate.** Dividing the carry cap by one per-policy
-    number is exact only when that number is a genuine per-turn **flow** (Sustain's MSY) or when the
-    party is throughput-bound for the whole trip (Surplus/Market on a *big* herd). Under
-    **Surplus/Market on a small herd it is a total *stock*** — the party strips the headroom down to
-    the collapse floor in a turn or two and then crawls at the herd's regrowth trickle. The division
-    read a full Rabbit Warren (K = 200, 4 hunters, Surplus) as a **~5-turn** trip; the simulation says
-    that party **never fills inside the 60-turn horizon** — only a *1-worker* party fills (in **23
-    turns**: a quarter the pack, so the regrowth trickle can still reach it). Simulating collapses
-    both regimes into one honest answer.
-  - The estimate is **turns spent hunting once you arrive** — **travel is not counted**, and the herd
-    is assumed stationary and in reach. **Eradicate** delivers no food (`delivers_food == false`) → no
-    ETA, ever.
-  - Past the horizon the answer is "**won't fill**", not a number: `viability_warn_turns` is 20, so a
-    60+-turn trip is emphatically not viable and the precise value carries no actionable information
-    — and the bound is what keeps the per-snapshot export cheap.
-  - **The "cannot fill" answer is O(1), not 60 simulated turns** (`hunt_trip_provisions_bound`). Most
-    of the exported estimate table is trips that never fill — small game under every policy, Sustain
-    on most herds — and simulating one to its horizon is spending the entire budget proving a "no" the
-    slowest possible way (measured: **85% of the table's cost**). So before simulating, the forecast
-    computes a **true upper bound** on the provisions the party could land over the whole horizon:
-    `min(horizon × party throughput, ecology)`, where *ecology* is `horizon × fauna::peak_regrowth`
-    for Sustain (a per-turn *flow* ceiling, capped by the logistic peak at K/2) and standing headroom
-    down to `hunt_expedition_floor` **plus** `horizon × peak_regrowth` for the depleting policies (a
-    *stock* draw-down — by conservation, everything the party can ever remove). Bound `< carry cap` →
-    "won't fill", returned after simulating only the **first** turn (the forecast still reports its
-    opening rate). Both terms over-estimate by construction, and the bound carries an explicit
-    rounding cushion (`CANNOT_FILL_BOUND_MARGIN` + the `Scalar` quantization slack — load-bearing:
-    the sim's `f32` conversion can land *exactly* on a cap an `f64` bound reads a hair below), so it
-    can never reject a trip that would have filled. Pinned by `systems::hunt_trip_bound_tests`, which
-    asserts the short-circuited forecast is **identical** to the unabridged simulation across every
-    policy × party size × herd state (wild + domesticated, sub-Allee → at-capacity), on the shipped
-    levers *and* off-nominal hot-reloadable ones. Exported table unchanged; measured **~2.3 ms →
-    ~0.8 ms per snapshot** at 122 herds (~19% → ~7% of a ~11.5 ms capture).
-    - *Not done, and why:* collapsing the 8 party sizes into one simulation where the trip is
-      throughput-bound (rate and cap both scale with workers → identical `turns_to_fill`) is
-      **measurably worthless on the shipped levers**: a hunter's 40 biomass/turn exceeds every game
-      herd's ceiling (Sustain's MSY is `0.0125 × K` — under 40 for any `K < 3200`, i.e. all non-
-      migratory herds), so the *herd* binds, not the party, and `turns_to_fill` genuinely varies with
-      party size. Only **4 of 488** (herd × policy) rows on a real map are constant across all 8
-      sizes — 0.005 ms of an 0.8 ms table. Revisit only if `hunt.per_worker_biomass_capacity` drops
-      far enough to make parties throughput-bound.
-  - Shipped-lever reality check (4 hunters, full herd): Red Deer ~5 turns under Surplus/Market and ~54
-    under Sustain; a full Rabbit Warren (K = 200) **never fills a 4-hunter pack inside the horizon**
-    under *any* policy (simulated past the horizon it would take ~320 turns under Sustain and ~495
-    under Surplus/Market — the forecast reports "won't fill" rather than those numbers). The *only*
-    small-game trip that fills at all is a **lone hunter** under Surplus/Market (**23 turns** — a
-    quarter the pack, so the herd's regrowth trickle can still reach it), and that is well past
-    `viability_warn_turns`. Small game simply cannot provision an expedition — the forecast now says
-    so.
-  - `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line — viable
-    (`≤ hunt.viability_warn_turns`) → "est. ~N turns to fill"; marginal (`>` it) → the same plus "NOT
-    VIABLE at this herd's yield"; **won't fill inside the horizon** → "the party will NOT fill its pack
-    within N turns; NOT VIABLE"; impossible (a sub-Allee herd — `first_turn_provisions == 0`) → "the
-    party will return empty"; **denial** (Eradicate) → "denial mission: the party delivers NO food".
-    It still launches — the player's call. `detail` carries `eta_turns=…`.
-  - Pinned end-to-end by `expedition_hunt.rs` (`party_fills_on_the_forecast_turn`), which launches a
-    **real party**, runs the sim forward, and asserts the larder first reaches the carry cap on exactly
-    the promised turn — across the throughput-bound, flow-bound and **stock-exhausted** regimes. The
-    forecast is pinned to the sim, never the reverse.
+> #### A hunting expedition is a GREEDY RAID, not a resident band's throttled skim (playtest fix)
+>
+> A resident band (`systems::hunt_take`) takes its policy's per-turn **rate** into the kill-credit
+> bank — worker-independent, so a second hunter only added pack to fill and made the *trip* longer
+> (the playtest bug). A detached party instead **grabs the herd's standing surplus above the policy's
+> floor in a burst and comes home**, so more hunters take more animals in **fewer-or-equal** turns.
+> This replaces the MSY-rate ceiling on the **expedition path only** (`expedition_take_biomass` /
+> `hunt_trip_forecast`); `hunt_take` and `hunt_policy_rate` are untouched.
+>
+> - **The floor is per-policy** (`hunt_expedition_floor`, `FaunaConfig::validate`-ordered
+>   `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`): Sustain `K/2` (0.50·K),
+>   Surplus `hunt.surplus_escapement_fraction·K` (0.30), Market `ecology.collapse_fraction·K` (0.15),
+>   Eradicate `0`. A deeper policy leaves a leaner herd — *"Surplus/Market raid deeper"*. (Expedition
+>   Market no longer drives extinction — it strips to 0.15·K and stops; extinction is the *resident*
+>   band's multiples-of-MSY axis, unchanged.)
+> - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
+>   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
+>   `hunt_credit`, and the bank meters *when* the next whole animal is **ready** (a body heavier than one
+>   turn's work takes `body / throughput` turns). Once one is banked (`affordable >= 1`) the party
+>   **kills it even if the pack cannot seat it whole**, carries the pack's worth, and **wastes the
+>   remainder** — exactly the resident band's `max(1, carryable)` rule (`fauna::quantise_animal_take`): a
+>   1-hunter party on an 800-biomass mammoth (16 food) whose pack holds only `per_worker_carry` = 4 food
+>   (200 biomass) kills it, delivers ~200 (≈ 25%), wastes ~600. So **`animals_taken` is now a KILL
+>   count**, and the delivered payload is `delivered_food` (`Σ hunt_provisions(carried)`), not
+>   `animals_taken × foodPerAnimal`. **"Too lean to raid" means `delivered_food == 0` (no surplus at any
+>   party size)**, NOT "party too small to carry a whole animal". This reconciles the expedition with the
+>   band's waste model; the earlier no-waste rule (`killed == carried`, `wasted == 0`) is retired.
+>   - **This does NOT reintroduce the over-kill bug** the no-waste rule guarded against. That bug was
+>     killing *many* animals per trip and carrying a sliver of each; the guard now is the **pack-full
+>     completion**. When the pack cannot seat a whole animal, the one forced-partial kill carries
+>     `min(body, room) = room` — a **full pack** — so `larder >= cap` fires and the trip ends after that
+>     ONE kill. The completion's "can't seat another whole animal" branch is now gated on
+>     `larder > 0` (already delivered), so it no longer sends a small-pack party home empty on turn 1
+>     before it can bank credit for its forced partial. One hunter per herd, so sharing `hunt_credit`
+>     with the band is safe.
+
+- **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
+  **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
+  surplus spent**, then fold home. **Market** — repeated FULL-cap trips (`Delivering`→deposit→
+  **auto-relaunch**) *while the herd still has surplus*; once stripped to `0.15·K` (surplus spent) it
+  comes home for good rather than trickle-churning at the floor. **Eradicate** — no floor, **delivers
+  no food** (denial): grinds the herd to extinction (→ lost-herd `Returning`).
+- **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
+  surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
+  raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**.
+- **Launch forecast — a bounded forward SIMULATION of the raid** (`hunt_trip_forecast`,
+  `systems::expeditions`). It runs the raid forward turn by turn — `fauna::regrow_biomass` (Logistics)
+  then `expedition_take_biomass` (Population), accumulating the larder on the **fixed-point `Scalar`
+  grid** — until the raid completes (fill OR surplus spent OR herd lost) or `hunt.forecast_horizon_turns`
+  (**60**). No second copy of the model, and the completion test mirrors the arm's `done`. It returns:
+  - **`turns_to_fill`** — turns until the raid **completes** (*"turns until the party comes home"*, NOT
+    *"turns until the pack is full"*: a big party on a full herd leaves a partial pack once it strips
+    the surplus, a successful short trip). `None` = never completed within the horizon.
+  - **`animals_taken`** — whole animals the raid **kills** (carried whole or partially wasted). `0` = the
+    herd is at/below the policy's floor with **no surplus to raid** (the honest non-viable case).
+  - **`delivered_food`** — food actually landed in the larder (`Σ hunt_provisions(carried)`), the primary
+    readout. **`wasted_food`** — food killed but not hauled (`Σ hunt_provisions(wasted)`); the waste
+    fraction is `wasted_food / (delivered_food + wasted_food)`. A small party on a big animal now
+    delivers a partial with waste, so **"too lean to raid" is `delivered_food == 0`**, not "party too
+    small to seat a whole animal".
+  - **Travel is not counted**; the herd is assumed stationary and in reach. **Eradicate** delivers no
+    food (`delivers_food == false`) → no ETA.
+  - *(The old O(1) "cannot fill" short-circuit + its `hunt_trip_bound_tests` sweep were **retired** with
+    the raid: their premise "won't fill the pack ⇒ doomed trip" is inverted by a raid, where "won't fill
+    the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
+    so simulating each to completion is already cheap. `surplus_escapement_fraction` replaced the retired
+    `hunt_expedition_ceiling`/kill-credit expedition ceiling and the bound's constants.)*
+- **Animals delivered SCALE WITH THE PACK** (`2 × workers` on a heavy-bodied herd with ample surplus,
+  since the pack seats `pack ÷ food-per-animal` whole animals) until the surplus caps them — the
+  plateau **is** the max-useful party size (`ceil(surplus_food / per_worker_carry)`), which the client
+  reads straight off `animalsTaken`. **Measured** (real pack 4 food/worker): a **Marsh Grazer** (body
+  100, food/animal 2, big surplus) delivers **2 / 4 / 6 / 8** animals for 1/2/3/4 hunters, ~5 hunting
+  turns each, **0 wasted**; a **Wild Boar** (K 1433, B 1010) delivers **4 / 8 / 7** for 1/2/3 hunters
+  (5 / 5 / 3 turns) — it goes surplus-bound sooner (only ~5–8 boar of surplus), and a *faster* big party
+  harvests slightly less regrowth on the way down.
+- **Travel is counted at launch, band-relative.** `hunt_trip_forecast` returns only the HUNTING turns
+  (once in reach); `handle_send_hunt_expedition` adds the **round-trip walk** (`ceil(2 ×
+  hex_distance(band, herd) / band_move_tiles_per_turn)`) to the feed line, where the launching band's
+  tile is known. The per-herd `huntTripEstimates` table is **band-agnostic** (one row per herd serves
+  every band), so its `turnsToFill` is the hunting turns and the **client** adds the same travel to the
+  pre-launch readout from the selected band's tile + `bandMoveTilesPerTurn`.
+- `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line: **denial**
+  (Eradicate) → "delivers NO food"; **no surplus** (`animals_taken == 0`) → "too lean to raid… no
+  surplus"; otherwise "est. ~N animals over ~M turns (H hunting + T travel)". It still launches — the
+  player's call. `detail` carries `eta_turns=… hunt_turns=… travel_turns=… animals=…`.
+- Pinned end-to-end by `expedition_hunt.rs` (`the_raid_forecast_matches_a_real_party_run`), which
+  launches a **real party**, runs the sim forward, and asserts the forecast completes on exactly the
+  turn the party leaves `Hunting` — across Sustain/Surplus/Market × full/depleted herds. The forecast
+  is pinned to the sim, never the reverse. The greedy-raid properties (more hunters → fewer turns,
+  Sustain leaves K/2, deeper policies raid deeper, surplus caps the take, no-surplus reads 0) are pinned
+  by the sibling tests in that file.
 - **Lives off its kills** — no launch provisions, no per-turn upkeep (upkeep is scout-only).
 - **The investment policies are NOT an expedition concept.** `Cultivate`/`Corral` are place-bound work
   a *resident* band does (prepare a patch, build a pen, then tend it) — a detached party cannot pen a
   herd and walk home. `handle_send_hunt_expedition` **rejects** them at launch (alongside an
   unparseable token), so the expedition's whole axis is `FollowPolicy::EXTRACTIVE` (the four extractive
-  rungs). `systems::hunt_expedition_ceiling`'s investment arm is therefore **unreachable**, and yields
-  **`0.0` + a `debug_assert!`** rather than quietly falling back to the Sustain flow: if that
-  validation ever regresses the party takes *nothing* and the hole is loud, instead of a
-  plausible-looking Sustain trip hiding it. (An unreachable arm must fail loudly, never quietly do
-  something plausible.) Guarded by
+  rungs). `systems::hunt_expedition_floor`'s investment arm is therefore **unreachable**, and yields
+  **`f32::INFINITY` (⇒ zero surplus ⇒ the party takes *nothing*) + a `debug_assert!`** rather than
+  quietly falling back to a real floor: if that validation ever regresses the party takes *nothing* and
+  the hole is loud, instead of a plausible-looking trip hiding it. (An unreachable arm must fail loudly,
+  never quietly do something plausible.) Guarded by
   `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
-- **Shared take helpers** (`fauna.rs`): **`hunt_policy_ceiling(policy, biomass, cap, fauna)`** is THE
-  single source of the per-policy take ceiling, exhaustive over all six policies (Sustain =
-  `sustainable_yield` / MSY, Surplus = × `follow.surplus_multiplier`, Market = `market.take_fraction ×
-  biomass`, Eradicate = `hunt.take_from`, **Corral** = `husbandry.corralling_yield_fraction ×
-  sustainable_yield(..)` — the investment dip while the pen is built, expressed through the *same* MSY
-  helper — and **Cultivate** = `0.0`, the forage-only policy's symmetric defensive case, mirroring how
-  `forage_policy_ceiling` yields nothing for `Corral`), and **`hunt_provisions(take, fauna,
-  output_multiplier)`** the single biomass→provisions conversion (an `f32`; the take path quantizes it
-  onto the larder's `Scalar` grid). `hunt_policy_ceiling` is the *building*-phase ceiling: a
+- **Shared take helpers** (`fauna.rs`, slice 8b): **`hunt_policy_rate(policy, biomass_before_regrowth,
+  cap, ecology, fauna, ladder)`** is THE per-turn take **rate** (Sustain `sustainable_yield`, Surplus/
+  Market `mult × MSY`, Eradicate the whole stock, Tame/Corral the dip × Sustain's rate, Cultivate/Sow
+  `0`), and **`hunt_credit_ceiling(policy, biomass, credit, rate)`** turns it into this turn's affordable
+  whole-animal take against the herd's banked `hunt_credit` — see "The hunt policy axis" for the model.
+  **`hunt_provisions(take, fauna, output_multiplier)`** is the single biomass→provisions conversion (an
+  `f32`; the take path quantizes it onto the larder's `Scalar` grid). The rate is the *building*-phase
+  ceiling: a
   **completed** corral is never hunt-drawn at all — the Hunt arm takes the tend branch (paid
   `corral_provisions`, no biomass drawn) — and `fauna::hunt_forecast` is the one place that phase split
   lives (`herd.is_corralled()` → `SourceYieldForecast::tended`). `hunt_take` (`systems.rs` — band Hunt
@@ -2513,30 +3377,36 @@ a formula** (see the forecast above: a small-herd Surplus party exhausts *stock*
 describes the trip), so the sim exports the **answer** it simulated, and the client's job is a **table
 lookup**:
 - `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
-  turnsToFill:uint, deliversFood:bool }]` — per **huntable** herd, one entry per
-  `FollowPolicy::EXTRACTIVE` × every legal party size (`1..=expedition_config.max_party_size`, so
-  4 × 8 = 32 rows/herd; `policy` is a free-form string like `species`, so a new policy needs no schema
-  change). **The four extractive rungs ONLY** — the investment policies are launch-rejected (above), so
-  a `Cultivate`/`Corral` row would be a number for a trip that cannot be launched, and would inflate a
-  table we just optimized (2.28 ms → 0.79 ms) for nothing. `turnsToFill` is the
-  simulated hunting-turn count; **`0` = does not fill** within `hunt.forecast_horizon_turns` → render
-  "won't fill", never a number. `deliversFood == false` (Eradicate) → render "no food delivered
-  (denial)", never an ETA. **Travel is excluded** — the number means "turns spent hunting once you
-  arrive".
+  turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
+  per **huntable** herd, one entry per `FollowPolicy::EXTRACTIVE` × every legal party size
+  (`1..=expedition_config.max_party_size`, so 4 × 8 = 32 rows/herd; `policy` is a free-form string like
+  `species`, so a new policy needs no schema change). **The four extractive rungs ONLY** — the investment
+  policies are launch-rejected (above), so a `Cultivate`/`Corral` row would be a number for a trip that
+  cannot be launched. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
+  surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
+  (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
+  the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
+  hunt_provisions(carried)`, appended strictly after `animalsTaken`), NOT `animalsTaken × foodPerAnimal`.
+  **`wastedFood`** (`Σ hunt_provisions(wasted)`, appended) gives the waste fraction `wastedFood /
+  (deliveredFood + wastedFood)`. **"Too lean to raid" is `deliveredFood == 0`** (no surplus at any party
+  size); a herd at/below its floor reads `0` on all three. Because the take is bounded by the standing
+  surplus, `deliveredFood`/`animalsTaken` **plateau** with `partyWorkers` once the surplus binds — that
+  plateau is the max-useful party size (`ceil(surplus_food / per_worker_carry)`) the stepper caps at.
+  `deliversFood == false` (Eradicate) → "no food delivered (denial)", never an ETA. **Travel is
+  excluded** — the number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
   — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::HUNT_POLICIES`: the four
   extractive rungs **plus `Corral`** (a legitimate *band* Hunt policy — its deliberately dipped yield
   is exactly what the player must see before committing to a 25-turn pen). `Cultivate` is Forage-only,
   so a herd has **no** cultivate row. Each is the worker-independent ceiling for the herd's current
-  state, in provisions/turn, **clamped to the herd's remaining biomass** (so it is a true maximum take,
-  not a formula value a nearly-extinct herd could never supply — inert under today's levers, but
-  `regrowth_rate` / `surplus_multiplier` / `market.take_fraction` are levers and raising one must not
-  silently over-state the readout). A collapsing (sub-Allee) herd exports `0` under Sustain/Surplus.
+  state, in provisions/turn, **clamped to the herd's remaining biomass** — a tautology now (every floor
+  is `≥ 0`, so `B − floor ≤ B`), kept as belt-and-braces against a hot-reloaded floor above `1`. A herd
+  below a policy's floor exports `0` for it (a herd at the brink spares nothing to Sustain *or* Surplus).
   **Sourced by projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
   the *same* object the scalar `ceilingSustain`/…/`ceilingCorral` fields export, so the list and the
   scalars are literally the same numbers and cannot drift, and the take path pays exactly them
   (forecast == actual). That also makes `Corral` **phase-correct for free**: the
-  `corralling_yield_fraction × MSY` dip while the pen is being built, and the **full corral yield**
+  the `animal:pen` rung's `yield_fraction_while_building × MSY` dip while the pen is being built, and the **full corral yield**
   once `is_corralled()` (a penned herd forecasts as `SourceYieldForecast::tended` — every ceiling is
   its managed yield, one keeper suffices). There is **no expedition ceiling field** — the retired
   `expeditionProvisionsPerTurn` was exactly the "one number that means a flow for Sustain and a stock
@@ -2549,9 +3419,12 @@ lookup**:
   outfit UI lives on the resident-band panel).
 
 **The two hunt readouts, and what each reads:**
-- **Expedition (pre-launch trip)** — a lookup: `huntTripEstimates[(policy, partyWorkers)]` →
-  `turnsToFill` (`0` = won't fill), `deliversFood`. Viable iff `0 < turnsToFill ≤
-  expeditionViabilityWarnTurns`. No arithmetic, no ecology model, no rate.
+- **Expedition (pre-launch raid)** — a lookup: `huntTripEstimates[(policy, partyWorkers)]` →
+  `deliveredFood` (the payload; `0` = too lean, no surplus at any party size), `wastedFood` (the waste
+  fraction is `wastedFood / (deliveredFood + wastedFood)`), `animalsTaken` (the KILL count), `turnsToFill`
+  (comes home in ~N turns; `0` = never completes in the horizon), `deliversFood`. Headline *"≈deliveredFood
+  food over turnsToFill turns"* with the animal count + waste % below; the stepper caps where
+  `deliveredFood` plateaus. No arithmetic, no ecology model, no rate.
 - **Resident band (local-hunt yield preview)** — pure arithmetic over the **band** ceiling, **× the
   cohort's already-exported `outputMultiplier`** (a band applies its morale/discontent productivity
   modifier at payout): `rate = min(workers × huntPerWorkerProvisions, bandCeiling_for(policy)) ×
@@ -2701,13 +3574,23 @@ is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actua
 evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
 A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
 overdraw ⚠). Scout/Warrior push `{0,0,0}`. **`workers_needed`** is the parallel **overstaffing**
-signal: the *minimum* assigned workers that would have produced the same take — `ceil(take_biomass /
-per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else `0`, computed in both
-the Forage arm (capacity = `forage.per_worker_biomass_capacity × seasonal_weight`, matching
-`forage_take`'s worker cap so a low-season labor-bound patch isn't falsely flagged) and the Hunt arm
-(capacity = `hunt.per_worker_biomass_capacity`, no seasonal) via the shared `workers_needed_for_take`
-helper. A *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is fixed at `1`
-(`TENDED_SOURCE_WORKERS_NEEDED`). When the binding constraint on a source's take is **not** labor
+signal — and it has **two shapes, because the two webs' products differ**:
+- **Forage (continuous)** — the *minimum* assigned workers that would have produced the same take:
+  `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else
+  `0`, via the shared `workers_needed_for_take` helper (capacity = `forage.per_worker_biomass_capacity ×
+  seasonal_weight`, matching `forage_take`'s worker cap so a low-season labor-bound patch isn't falsely
+  flagged).
+- **Hunt (whole animals)** — the **STEADY carry crew for the peak per-turn animal drop**
+  (`fauna::hunt_haul_workers`, `ceil((floor(rate/body)+1)·body / hunt.per_worker_biomass_capacity)`, off
+  the policy's steady `hunt_policy_rate`), **NOT** the lumpy `workers_needed_for_take(take.carried, …)`.
+  A slow breeder whose MSY < `body_mass` drops **0** animals on a wait turn, so inverting `carried` would
+  collapse `workers_needed` (to `0`, or the herder count for a managed herd) and **contradict the same
+  row's `wasted_yield`** on that turn. The steady crew is stable across wait/kill turns and equals the
+  client compose panel's `_max_useful_workers` cap by construction. A managed herd wraps it in
+  `max(herders_needed, hunt_haul_workers)`; a wild herd (`herders_needed == 0`) reports it directly. See
+  "Herding is standing labor" for the full note.
+**Every rung derives it** (slice 7 — a managed source used to be fixed at `1`, which asserted that one
+worker could carry home whatever the land offered). When the binding constraint on a source's take is **not** labor
 (policy ceiling / biomass / regrowth), `workers_needed < assigned` → the source is overstaffed and the
 extra workers were idle. The snapshot surfaces all of this: each `LaborAssignment` row
 carries `actualYield`/`sustainableYield`/**`workersNeeded`** (client accessor `workersNeeded()`), and
@@ -2722,6 +3605,15 @@ consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
 indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
+
+**The understaffing mirror — `wastedYield`** (slice 7, appended to `LaborAssignment`). `workersNeeded`
+only ever answered *"are there too many workers here?"*; nothing answered *"too few?"*. `SourceYield.wasted`
+= `production − actual` — what the source **offered that the crew could not collect**, where *production*
+is what it hands over this turn (the policy ceiling on a wild/tended source, the managed rate on a
+Field/pen) and *collection* is `workers × per-worker throughput`. The pair now answers both halves:
+`workers > workersNeeded` ⇒ drop some, `wastedYield > 0` ⇒ add some. On a **Field or a pen** it is
+genuinely food left standing (the crop rots / the meat stays on the hoof); on the **drawn-down rungs** it
+simply stays in the stock and regrows. **Client follow-up:** nothing renders it yet.
 
 All of the above is **post-hoc** (it reports what a committed turn produced). Its **pre-commit** twin —
 the per-source `perWorkerYield` + policy ceilings the client uses to show an expected yield and cap the
