@@ -290,9 +290,12 @@ func _build_new_game_command() -> void:
         params = launch.get("pending_new_game")
         launch.set("pending_new_game", null)
     var preset := String(params.get("preset_id", DEV_DEFAULT_NEW_GAME["preset_id"]))
-    var width := int(params.get("width", DEV_DEFAULT_NEW_GAME["width"]))
-    var height := int(params.get("height", DEV_DEFAULT_NEW_GAME["height"]))
-    var seed_value := int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"]))
+    var width := maxi(1, int(params.get("width", DEV_DEFAULT_NEW_GAME["width"])))
+    var height := maxi(1, int(params.get("height", DEV_DEFAULT_NEW_GAME["height"])))
+    # Clamp the seed to >= 0 at the wire boundary: the server parses it as a u64, so a negative
+    # seed fails the parse and the world never generates. Catches every caller (GameLaunch + dev
+    # default). 0 stays "derive from the run clock".
+    var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
     _new_game_command = {
         "line": "new_game %s %d %d %d %s" % [preset, width, height, seed_value, profile],

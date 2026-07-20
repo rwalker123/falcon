@@ -551,11 +551,19 @@ func _build_exit_pane() -> void:
 	_pane_body.add_child(actions)
 
 
+## The seed entered in the New Game field, clamped to a non-negative value — the single read
+## point for the seed. The server parses the seed as a u64, so a negative seed fails the parse
+## and the world never generates (the client is stranded on the loading overlay); 0 still means
+## "derive from the run clock".
+func _seed_value() -> int:
+	if _seed_edit == null or not _seed_edit.text.strip_edges().is_valid_int():
+		return 0
+	return maxi(0, int(_seed_edit.text.strip_edges()))
+
+
 func _on_begin_pressed() -> void:
 	var dims := MapSizes.option_for(_selected_size)
-	var seed_value := 0
-	if _seed_edit != null and _seed_edit.text.strip_edges().is_valid_int():
-		seed_value = int(_seed_edit.text.strip_edges())
+	var seed_value := _seed_value()
 	emit_signal(
 		"new_game_requested",
 		_selected_preset,
@@ -744,8 +752,8 @@ func _refresh_summary() -> void:
 	var seed_text := "clock"
 	if bool(preset.get("pinned", false)):
 		seed_text = "pinned"
-	elif _seed_edit != null and _seed_edit.text.strip_edges().is_valid_int() and int(_seed_edit.text.strip_edges()) != 0:
-		seed_text = _seed_edit.text.strip_edges()
+	elif _seed_value() != 0:
+		seed_text = str(_seed_value())
 	_add_summary_pair("World", world_name)
 	_add_summary_pair("Grid", "%s · %d × %d" % [String(dims["label"]), int(dims["width"]), int(dims["height"])])
 	_add_summary_pair("Seed", seed_text)
