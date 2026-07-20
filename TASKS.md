@@ -162,39 +162,64 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       `polar_microplates_*` already does — rather than routing through `build_bands` and hoping the
       geometry cooperates. Worth doing alongside the divides work above: both are cases of relief
       structure deriving from an incidental artifact rather than from the field.
-- [ ] **Water and land disagree about where "polar" starts.** *(Reported from play, 2026-07-20.)*
-      Observed on a live map: an **ocean** tile reads Polar at roughly **row 8** from the map edge,
-      while **land** tiles only read Polar from about **row 13** — so the two tile classes carry
-      polar bands of different depths, and a coastline at those latitudes has water tagged Polar
-      beside land that is not. Exact rows are approximate (eyeballed in play, not measured).
+- [ ] **Climate Authority — temperature decides the biome, not latitude.** *(Reported from play
+      2026-07-20; investigated and measured the same day. Design:
+      `docs/plan_climate_authority.md`.)* Reported as "a tile read `Climate: Polar` but was an
+      `AlluvialPlain`" — a freezing fertile floodplain.
 
-      **Two independent definitions of "polar" exist, expressed in DIFFERENT UNITS** — this is the
-      first thing to check, and probably the whole story:
-      - `terrain_classifier.polar_latitude_cutoff` (**0.35**) — a *normalized distance from the
-        equator* (`0` = equator, `1` = pole), tested at `terrain.rs:687` / `:865`. On a 52-row map
-        the half-span is 25.5 rows, so this trips at `0.35 × 25.5 ≈ 8.9` rows from the centre, i.e.
-        about **16 rows from the edge**. This gates the **land** biome ladder.
-      - `mountains.polar_latitude_fraction` (**0.18** earthlike, **0.22** polar_contrast) — a
-        *fraction of total map height*, converted to a row band at `mapgen.rs:1370`
-        (`polar_band = round(fraction × h)`). On the same map that is `0.18 × 52 ≈ 9` rows.
+      **Root cause: two systems answer "how cold is this tile?" differently.** Temperature is
+      `latitude − elevation lapse (≤12°) + jitter` (`climate_temperature`, `worldgen.rs:332`); the
+      biome ladder gates on **raw latitude only**, with no elevation term at all (`terrain.rs:687`,
+      `:865`). So high ground freezes without ever becoming eligible for a cold biome, and ground
+      near the poles gets cold biomes whether or not it is cold. Not reachable by tuning
+      `polar_latitude_cutoff` — the cutoff is a latitude, and latitude is the wrong variable.
 
-      Two levers meaning the same thing in different units, ~16 rows vs ~9, matches the reported
-      ~13 vs ~8 in both direction and rough magnitude.
+      **Measured** (20 runs: 2 presets × 5 seeds × 2 grids, 55,398 land tiles):
+      - **3,847 cold-but-temperate tiles = 6.9% of land** (per-run 2.8–15.6%). `CanyonBadlands` 1375,
+        **`AlluvialPlain` 795** (the reported case), `PeatHeath` 605, `AlpineMountain` 589. **45% are
+        below 0°C** — only 17.8% sit in the 2–3° band where rounding could explain it.
+      - **83.9% are elevation-only**, at mid/low latitude — worst case an `AlpineMountain` at
+        **−1.58°C** with `dist_from_equator = 0.304`, well inside the temperate band.
+      - **The reverse case is LARGER: 4,397 polar biomes in warm air (7.9% of land)**, median
+        **8.06°C**, max **20.5°C**, 41% above 10°C. Any fix must address both directions or it
+        trades one incoherence for the other.
+      - **64% of those warm-polar tiles come from the tag budget solver's polar family pass**, which
+        paints `Tundra` to hit a tag target with **no temperature check**. That is the
+        repaint-to-hit-a-quota pattern this repo has already rejected twice (`rebalance_land_ratio`,
+        and percentile river navigability). A target share is an input to generation, never a
+        reassignment applied afterward.
 
-      **Step 1 — confirm which path actually tags an OCEAN tile POLAR. This is NOT yet established.**
-      `polar_latitude_fraction` is confirmed to drive the polar microplate band and the belt-relief
-      row skip; it has **not** been confirmed to drive the water POLAR tag. Other candidates worth
-      eliminating: the tag budget solver's polar family pass (which paints `Tundra` over near-shore
-      ocean), and `classify_bands`. Do not assume the arithmetic above is the mechanism just because
-      the numbers line up — that is exactly the reasoning that cost this branch two wrong diagnoses.
+      **Alpine tundra is currently unrepresentable** — a mid-latitude mountain at −1.6°C cannot be
+      tundra because the classifier only knows its latitude. Fixing the gate adds a capability, not
+      just a label: altitude becomes a real settlement constraint instead of texture.
 
-      **Then decide what the right model is**, which is a design call, not just a bug fix: should
-      water and land share one polar boundary (one lever, one unit), or does open water legitimately
-      stay ice-free closer to the pole than land does? The latter is physically defensible — oceans
-      are thermally buffered and freeze later than continents at the same latitude — so the answer
-      may be "keep both, but state the difference deliberately and derive one from the other,"
-      rather than "make them equal." Whatever is chosen, the two levers should stop being expressed
-      in incompatible units.
+      **Blast radius:** six sites share the latitude cutoff (`terrain.rs:687`/`:865`,
+      `worldgen.rs:251`/`:923`/`:2180`, `map_preset.rs:900`/`948`) and must move together — the two
+      palette sites especially, or `apply_biome_palette_clamp` will re-stamp temperate biomes onto
+      cold tiles post-solver and undo the fix. Ordering is **not** a blocker (verified): temperature
+      is computed in a second loop, but its input `climate_elevation` is available before the
+      prototype loop, so only code arrangement is in the way.
+
+      Three **separable** bugs found alongside, each landable on its own:
+      1. **`PeatHeath` is not POLAR-tagged** yet the wetland pass stamps it inside the polar band
+         (`worldgen.rs:1355`, `:1379`) — 605 tiles at **row 0** at −5 to −15°C. Either tag it polar
+         or make the pass respect the band; not both.
+      2. **`RiverDelta` leaks the underlying biome's tags** — `hydrology.rs:2098` ORs only
+         `WETLAND|FRESHWATER` and keeps the rest, so a delta cut through Tundra renders `RiverDelta`
+         while carrying `POLAR` (95 tiles). That tag then feeds `BiomePalette::remap(is_polar)`,
+         `food.rs:196` and the tag census, so the leak propagates into three unrelated systems.
+      3. **`POLAR_LATITUDE_THRESHOLD` reads the DEFAULT, not the active preset**
+         (`systems/mod.rs:80`). Both shipped presets use the default so they agree *by luck*; a
+         preset overriding the cutoff would silently desync the tag solver from the biome ladder.
+         `climate_band_for_position` (`worldgen.rs:1029`) is a **third arithmetic copy** of the same
+         latitude rule, with a bare `0.18` literal and no config lever.
+
+      **Open before implementing** (see the design doc §8): where the temperature threshold lives and
+      how the client gets it (the client currently owns `cool_min = 3.0` in its own
+      `tile_climate_config.json` and the sim has no equivalent — if they drift, the tile card can
+      still contradict itself); whether one cut point or a band ladder; and whether the ±0.6°
+      `element_jitter` should reach the biome gate at all, since it currently dithers the boundary
+      row.
 - [ ] *(Optional, cheap)* **Morphological open/close on the land mask** — a majority filter that fills
       1-hex nooks and deletes 1-hex specks. Erosion took the sponge from 59% → 53%; a compact blob is
       ~14%, so there is still headroom that a direct attack on crenellation could take.
