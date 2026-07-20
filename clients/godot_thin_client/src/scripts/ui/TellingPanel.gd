@@ -491,6 +491,11 @@ func _paint_page(animate: bool, direction: int) -> void:
 		return
 	var mode: Dictionary = _mode()
 	var new_text := EMPTY_TEXT if _pages.is_empty() else ENTRY_SEPARATION.join(_pages[_page_index]["beats"])
+	# Did the VISIBLE page actually move? (Captured before `_shown_bbcode` is updated below.) A real turn
+	# changes it; a retaining medium's beat-arrival that only clamped the index — the same page repainted —
+	# does not. Gates the inner-scroll reset so a mid-page reader of a beyond-cap page is not yanked to the
+	# top by an idempotent repaint (yields-to-reader).
+	var page_changed := new_text != _shown_bbcode
 	var can_animate := (
 		animate
 		and _has_painted
@@ -513,7 +518,8 @@ func _paint_page(animate: bool, direction: int) -> void:
 		call_deferred("_fit_page_height")
 	_shown_bbcode = new_text
 	_has_painted = true
-	if _scroll != null:
+	# Start a genuinely-new page at its top; hold the reader's position on an idempotent repaint.
+	if _scroll != null and page_changed:
 		_scroll.scroll_vertical = 0
 	_sync_page_geometry()
 	if _page_frame != null:

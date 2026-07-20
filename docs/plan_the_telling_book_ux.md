@@ -1,6 +1,6 @@
 # The Telling — the Book UX
 
-**Status: design, ready to implement (client-only).** The narrative panel stops being a
+**Status: implemented (client-only, PR #140).** The narrative panel stops being a
 grow-and-cap scroll log and becomes a **book that assembles itself as the narrator's medium
 matures** — oral recitation → painted wall → written record. This is a pure client slice: the
 medium is already on the wire (`voiceMedium`, consumed by `TellingPanel.set_voice_medium`) and no
@@ -14,9 +14,10 @@ Two problems, one fix.
 
 1. **The panel fights the dock.** Today `TellingPanel` is a `DockScrollFit` card that grows with
    content and is capped against the right dock's remaining height (`ui/hud/DockScrollFit.gd`). That
-   machinery exists *only* because the card grows without bound. A **fixed-size page** removes the
-   whole class of sizing bugs — the card never grows, so the dock's own `RightScroll` trivially
-   stacks Telling + Victory + Terrain Types with no bespoke height math.
+   machinery exists *only* because the card grows *without bound*. A **page that fits its own bounded
+   content, capped at `PAGE_MAX_HEIGHT`** removes the whole class of sizing bugs — a page is one
+   turn's beats, so its height is bounded and the cap is the backstop; the dock's own `RightScroll`
+   trivially stacks Telling + Victory + Terrain Types with no bespoke height math.
 
 2. **The medium arc has no on-screen payoff.** Today medium maturation is carried by the title +
    accent + a hairline rule and nothing else (`TellingPanel.MEDIUM_STYLES`). The concept doc frames
@@ -162,9 +163,12 @@ page-turn *curl*; a turn is a state change with a brief transition, not an effec
 ### Collapse
 
 Keep the existing collapse toggle + its `telling_collapsed` pref (same `user://narrative.cfg`
-`[narrative]` section — **do not add a prefs file**). Fold the collapse control into the new header
-row alongside the page furniture. Collapsed = the page frame hides, the header stays (so the player
-can expand it back), exactly as today.
+`[narrative]` section — **do not add a prefs file**). The collapse control is its **own** row,
+deliberately **not** inside the page-furniture row: the furniture row *hides* while collapsed (it
+carries page number / marks / leaf controls, all meaningless with the page hidden), so a collapse
+button living in it would vanish exactly when it must stay visible to expand the panel again.
+Collapsed = the page frame + the furniture row hide, the header + collapse control stay, exactly as
+today.
 
 ### What does NOT change
 

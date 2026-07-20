@@ -1296,9 +1296,9 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    # The telling is a FIXED-SIZE book now (docs/plan_the_telling_book_ux.md), so it no longer needs a
-    # dock-scroll ceiling to fit against — its height is `PAGE_HEIGHT`, and the right dock's own scroll
-    # stacks it above Victory + Terrain Types with no bespoke height math.
+    # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
+    # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
+    # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
     _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label)
     _load_ui_balance_config()
     _connect_zoom_rail()
@@ -6867,9 +6867,10 @@ func _apply_victory_visibility() -> void:
         victory_panel.visible = should_show
     _refit_right_dock()
 
-## The Telling panel is a FIXED-SIZE book now, so a sibling's visibility flip no longer changes its
-## height — `refit()` is a harmless no-op (it only re-clamps the inner scroll). Kept so this call stays
-## valid and the right dock reflows the toggleable cards below it.
+## The Telling panel grows to fit its own (bounded) page, so a sibling's visibility flip no longer
+## changes its height — `refit()` just re-syncs the page geometry and re-fits the current page's height
+## (it does NOT touch the inner scroll). Kept so this call stays valid and the right dock reflows the
+## toggleable cards below it.
 func _refit_right_dock() -> void:
     if _telling != null:
         _telling.refit()

@@ -1684,6 +1684,28 @@ func _ready() -> void:
 		not _hud._telling.debug_page_scrolls())
 	await _save("telling_panel_oral_two_beats")
 
+	# SCROLL YIELDS-TO-READER — a beyond-cap (scrolling) page must NOT yank a mid-page reader to the top on
+	# an IDEMPOTENT static repaint (a retaining-medium beat arrival that leaves the visible page unmoved),
+	# but MUST start at the top on a real page turn. Two tall written pages that both overflow the cap.
+	_hud._telling.reset()
+	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_WRITTEN, "medium_index": 2}])
+	_hud.ingest_command_events(_telling_tall_pages_fixture())
+	_hud._telling.debug_jump_to(0)
+	await _settle()
+	var telling_scroll: ScrollContainer = _hud._telling._scroll
+	telling_scroll.scroll_vertical = 40   # the reader has scrolled down the tall page
+	await _settle()
+	_assert_hud("tall page overflows so the reader's scroll offset holds", telling_scroll.scroll_vertical == 40)
+	# Idempotent repaint: a new beat arrives on a NEW tick, but written stays on page 0 (index clamped, the
+	# visible page's text is unchanged) — the yields case. Must PRESERVE the reader's scroll position.
+	_hud.ingest_command_events([{"tick": 2, "kind": "narrative_beat", "label": "A far-off new telling waits.", "detail": "later"}])
+	_assert_hud("idempotent repaint of the same page preserves the reader's scroll position",
+		telling_scroll.scroll_vertical == 40)
+	# A real page turn resets the inner scroll to the top of the new page.
+	_hud._telling.leaf(1)
+	_assert_hud("a real page turn resets the inner scroll to the top", telling_scroll.scroll_vertical == 0)
+	_hud._telling.debug_end_turn()
+
 	# LIVE-PATH ORAL ARRIVAL — the REAL trigger, no debug hook. Drive the actual per-snapshot Hud entry
 	# points (`update_voice_medium` THEN `ingest_command_events`, plus the `_refit_right_dock` a real
 	# snapshot fires) with a genuinely new beat, and PROVE a running tween is created AND survives to paint
@@ -1900,6 +1922,18 @@ func _telling_two_beat_oral_fixture() -> Array:
 			"label": "We are more now than we were when we left the bone ground. The children born on this road have never slept anywhere else.",
 			"detail": "band.count = 31"},
 	]
+
+## TWO tall pages (ticks 0 and 1, seven distinct long beats each) that BOTH overflow `PAGE_MAX_HEIGHT`, so
+## the inner ScrollContainer actually scrolls — the fixture the yields-to-reader scroll test needs (a page
+## that fits the cap can hold no non-zero scroll offset to preserve).
+func _telling_tall_pages_fixture() -> Array:
+	var out: Array = []
+	var long := "The chase is longer every season and ends in less; the aurochs were the road we walked, and the road is going quiet under our own feet."
+	for tick in [0, 1]:
+		for i in range(7):
+			out.append({"tick": tick, "kind": "narrative_beat",
+				"label": "%d. %s" % [i, long], "detail": "beat %d of tick %d" % [i, tick]})
+	return out
 
 ## Ordinary command receipts for the split frame — the transactional acknowledgements that used to
 ## be pushed off the feed by two beats. Deliberately MORE than one, so "the feed is legible again"
