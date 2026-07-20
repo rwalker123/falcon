@@ -1247,11 +1247,9 @@ each PR is independently playtestable.
   toolbar and autoplay advance freely (a hard gate deadlocks autoplay, which disables
   itself on any failed advance) and push a feed note; the fork then rides its
   server-side expiry to defer. Revisit if the dev path proves too easy to skip.
-- **The command feed does not scale to narrative prose.** Two narrative beats fill the
-  entire visible feed and push ordinary command receipts off. The binding limit is the
-  card's height, not `COMMAND_FEED_LIMIT` (6) — a wrapped prose line plus gloss is ~3×
-  a command receipt. Needs either a separate narrative surface or a per-kind quota
-  before ambient volume rises. **This is the top open issue in the arc.**
+- ~~The command feed does not scale to narrative prose.~~ **RESOLVED** — the separate
+  narrative surface this called for shipped as the Telling panel and matured into the
+  medium-aware, grow-to-fit **book** (the Book UX arc, PR #134 + #140).
 - No per-fork expiry turn on the wire, so the panel cannot tell the player how long the
   question keeps before it auto-defers — which is exactly what makes deferring a real
   choice rather than a shrug. Wants an `expiresTick` on `PendingForkState`.
@@ -1267,11 +1265,6 @@ each PR is independently playtestable.
   gets the one that is true of them. Any future beat asserting something about the
   player's history must gate the same way — elapsed time alone is not evidence the
   claim still holds.
-- **Medium is presentational and must stay that way.** Three rungs ship
-  (oral/painted/written); `archive` was left out because its only plausible source
-  (`CapabilityFlags`) is not a registered signal, and an unattainable rung is worse
-  than an absent one. Do not "complete" the feature by authoring per-medium copy —
-  that is a 4x8 authoring cost for the thinnest payoff in the layer.
 - **The ui_preview harness renders at whatever size the display allows.** The same
   states captured 3456x2168 on one run and 5120x1410 on another; `--resolution` does
   not override it, and the letterboxed frames make dock panels look far more cramped
