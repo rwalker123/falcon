@@ -220,23 +220,61 @@ all move with this arc.
 
 ---
 
-## 8. Open questions — decide before implementing
+## 8. Decisions
 
-1. **Where does the threshold live, and how does the client get it?** Options: the sim publishes it
-   in the snapshot (a new field), or both read a shared config file, or the client keeps its own and
-   we accept the risk of drift. The first is most consistent with how the sim already ships
-   `seaLevel` on the elevation overlay so the client need not re-derive it.
-2. **One threshold or a band ladder?** Today the client has `cool_min` and the sim has a binary
-   polar/not. Real climate has more than two bands, and the biome ladder may want
-   polar / boreal / temperate / tropical cut points rather than one. More cut points is more
-   expressive but more to tune.
-3. **How much does the map actually change?** This will move biome distribution everywhere, not
-   just at the poles — every worldgen regression baseline will move, and the biome palette's niche
-   membership assumptions need re-checking. Measure before committing to values.
-4. **Does the temperature model itself need work first?** `element_jitter` (±0.6°) currently
-   straddles the hard cutoff and dithers the boundary row. With temperature driving biomes, that
-   jitter becomes a biome-level dither. Consider whether the gate should read the un-jittered
-   temperature, or whether the jitter is desirable texture at the biome level too.
+Settled 2026-07-20. Recorded here because each one closes off an alternative a future reader would
+otherwise reasonably reach for.
+
+### 8.1 A band ladder, not a single cut point
+
+Climate is a **ladder of bands** — polar / boreal / temperate / tropical — each with its own
+temperature cut point, and the biome ladder keys off which band a tile lands in.
+
+*Why not the simpler single "polar" threshold:* the measured incoherence is **not** confined to the
+polar edge. `BorealTaiga` was **1,601** of the 4,397 warm-polar tiles — the second-largest offender
+— which is a *boreal-band* problem specifically. A single polar cut point cannot express it, and we
+would be back here for the boreal fringe. Cost accepted: four numbers to tune instead of one, and
+more of the biome-selection chain moves.
+
+### 8.2 The jitter DOES reach the biome gate — ragged transitions are wanted
+
+The gate reads the **jittered** temperature, so per-tile variation carries through into biome
+selection and band boundaries come out ragged.
+
+*Why:* today's latitude gate produces **clean horizontal edges**, and that reads as artificial on a
+real map — straight lines of biome change across the world. Natural transitions are patchy. The
+±0.6° `element_jitter` is exactly the right magnitude to break a boundary up without moving it.
+
+*Consequence to accept:* scattered single tiles of the neighbouring band along every boundary. That
+is the intent, not a defect — do not "clean it up" later without re-reading this section. If it
+proves too noisy the lever is `climate.element_jitter_scale`, **not** re-gating on un-jittered
+temperature.
+
+### 8.3 The sim owns the thresholds and publishes them
+
+The band cut points live in sim config and ship in the snapshot; the client renders the band it is
+told rather than deciding one. The client's own `cool_min = 3.0` in
+`clients/godot_thin_client/src/config/tile_climate_config.json` is **retired**.
+
+*Why:* if the client keeps an independent opinion about where "Polar" starts, the tile card can
+still show a biome and a climate that disagree — the exact defect this arc exists to remove, merely
+relocated. Precedent: the sim already publishes `seaLevel` on the elevation overlay so the client
+need not re-derive it (`docs/plan_elevation_authority.md`).
+
+### 8.4 The secondary bugs land in this arc
+
+All three of §7 ride along rather than being split out. §7.1 and §7.3 are polar-classification bugs
+that the main change touches anyway, and §7.3 disappears outright when the latitude cutoff is
+retired. §7.2 (the `RiverDelta` tag leak) is independent but small, and its tag feeds
+`BiomePalette::remap(is_polar)` — which this arc re-keys — so landing it separately would mean
+touching the same predicate twice.
+
+### 8.5 Still to be measured, not decided
+
+**How much the map changes.** Biome distribution will move everywhere, not just at the poles: every
+worldgen regression baseline will move, and the biome palette's niche-membership assumptions need
+re-checking against the new gate. Measure before committing to cut-point values — and re-pin
+baselines from measurement, never widen a tolerance to absorb the drift.
 
 ---
 
