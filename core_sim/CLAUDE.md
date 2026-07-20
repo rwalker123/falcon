@@ -107,8 +107,26 @@ use.**
 
 Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, climate bands, resources, and wildlife spawners. Player-facing framing: manual §3a World Bootstrapping, §3b Terrain Palette.
 
+> ### Elevation is the sole authority
+>
+> **The land mask is a pure derived function of the heightfield — `land[i] = elevation[i] > sea_level`
+> — and is never stored and edited. Any stage that wants to move a coastline writes elevation and
+> re-derives.** Guarded by `core_sim/tests/elevation_authority.rs`.
+>
+> This is not style, it is the fix for a real defect: the mask used to be grown as a boolean blob and
+> then repainted by later stages, so the published bathymetry and the published terrain disagreed —
+> 543 water tiles sat *above* sea level and 218 land tiles *below* it on a sampled map. A water tile
+> above sea level is now **unrepresentable** rather than merely rare, because no stage has a way to
+> express one. `target_land_pct` is met by *shaping the field* (`anchor_contour_to_sea_level`), and
+> `continents` by the continental bias term — never by repainting tiles.
+>
+> Consequences a new stage must respect: `place_islands` raises a seamount above sea level;
+> `connect_inland_seas_via_straits` lowers a corridor below it; both then re-derive. There is no
+> `rebalance_land_ratio` and no tag-solver water branch — both were deleted because they corrected a
+> quota by repainting the output. Design: `docs/plan_elevation_authority.md`.
+
 ### Pipeline Stages
-1. **Macro landmask** - Continent seeds via weighted BFS to reach `target_land_pct`
+1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
 2. **Tectonics** - Drift vectors, collision belts, fault seams, volcanic arcs, dome plateaus → mountain mask
 3. **Polar microplates** - Subdivide polar tiles, converging vectors raise fold strength
 4. **Heightfield** - Multi-octave height raster with erosion smoothing → `elevation_m`
@@ -458,14 +476,44 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   off the corner network, which the segmentation fix does not touch). Per-seed spread is large and
   *should* be — see the verdict below.
 
+  > **These figures are PRE-`elevation-authority` and no longer describe an 80×52 map.** Post-arc,
+  > that size yields **zero navigable rivers on every seed**, and land-corner accumulation maxes at
+  > **10–20**, not 587. This is **not a regression** — measured, the largest basin is ~5% of its
+  > landmass both before and after the arc (the drainage surface is ~95% divided into small
+  > independent basins either way). What changed is *landmass size*: the old BFS grew an accidental
+  > ~1,580-tile supercontinent at 80×52 while the preset asked for 4 continents, and that surplus area
+  > was the only thing clearing the navigable discharge threshold of 25.0. It cleared it as a
+  > **lottery** — pre-arc counts across six seeds were `0, 1, 1, 6, 5, 1`, with one 41.7%-basin
+  > outlier seed carrying most of them. The arc removed the bug that was masking a pre-existing
+  > drainage deficiency.
+  >
+  > Consequently the navigable structural invariants run against a **river-capable fixture** at
+  > `NAVIGABLE_FIXTURE_GRID` = **128×96** (shipped presets, `continents: 4`, only the grid differs) —
+  > the smallest grid producing navigable rivers on every seed (5–9 each). A sweep over
+  > 80×52 / 128×96 / 192×128 / 256×192 × `continents` 4 / 2 / 1 showed `continents` barely moves the
+  > result, confirming **landmass area** is the binding constraint. See `hydrology_earthlike.rs`.
+  >
+  > **Do not "fix" a dry map by lowering `river_class_navigable_min_discharge`** or any hydrology
+  > threshold. Rivers are emergent; forcing a fixed river share onto whatever terrain exists is the
+  > repaint-to-hit-a-quota pattern `elevation-authority` deleted. The input to change is basin
+  > coherence or landmass size — `TASKS.md` → "Capture: the divides, not the valleys".
+
 ### Fluvial erosion — the heightfield the drainage runs on
 The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
 **sponges** (48–64% of a continent's tiles touched water, because the coastline is an iso-contour of
 fractal noise) and they **shed radially** with no trunk valleys to capture drainage across a divide.
 `heightfield::apply_fluvial_erosion` attacks the landscape directly, at the end of
 `build_elevation_field` — **before** `mapgen::generate_land_mask`, which is the whole point: the mask
-ranks tiles by elevation, so the coastline *is* a level set of this field, and reshaping the field
+is a pure threshold of this field, so the coastline **is** a level set of it, and reshaping the field
 reshapes the coast.
+
+> Since `elevation-authority` this is *literally* true rather than approximately so. The passage
+> above used to read "the mask **ranks** tiles by elevation" — it ranked them by
+> `elevation + macro_land.jitter × noise`, which is a **reordering**, so the coastline was a rank
+> contour over a jittered score and not a level set of anything. The conclusion held only by luck.
+> `jitter` is retired; its coastline raggedness now lives in the field itself as
+> `macro_land.coastline_roughness`, applied *before* `land_contour`, where it perturbs the shoreline
+> without decoupling the mask from the surface.
 
 - **The model** is the classic landscape-evolution equation minus uplift: `∂z/∂t = D∇²z − K·A^m·S^n`,
   iterated on the **square raster** (D8 — the hex/corner graph is hydrology's and stays there). Per
@@ -481,18 +529,28 @@ reshapes the coast.
 
 > #### Two things the pass had to learn the hard way — do not "simplify" them away
 >
-> **1. Base level is the land-mask's rank contour, NOT `sea_level`.** On the earthlike preset only
-> **24–37%** of cells sit above `sea_level = 0.62`, while `macro_land.target_land_pct` claims **38%**
-> of them for land — so the coastline actually falls at elevation **0.55–0.61, *below* sea level**.
-> A pass that freezes everything under `sea_level` freezes the entire coastal band it exists to
-> reshape, and measures as a **no-op** (it did: coastal 59.2% → 58.8%). `heightfield::land_contour`
-> computes the real thing.
+> **1. Base level is `land_contour`, which the anchor then makes equal to `sea_level`.**
+> `apply_fluvial_erosion` still takes its base level from `heightfield::land_contour` (the
+> `1 − target_land_pct` quantile) rather than from `sea_level`, and **that ordering still matters**:
+> erosion runs *before* `anchor_contour_to_sea_level`, so at the moment it runs the two are not yet
+> the same number.
 >
-> **2. A valley incised *to* base level DROWNS.** The mask ranks by elevation, so a trunk cut to the
-> contour ranks below it and becomes a sea inlet — taking its basin with it (measured: seed 4's
-> biggest basin collapsed **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0**
-> because measurement said the drowned stretches read as *estuaries* and leave the coast **smoother**
-> — but the lever is there, and the failure mode is real.
+> *Historical note — do not restore the old reasoning.* This note used to say base level is the
+> "land-mask's **rank** contour, NOT `sea_level`", justified by only **24–37%** of cells sitting above
+> `sea_level = 0.62` while the mask claimed **38%** for land, putting the coastline at **0.55–0.61,
+> *below* sea level**. That gap was a symptom of the jittered-rank mask, and it is **gone**: realized
+> land is now **37.7–37.8%** against a 0.38 target, and after the anchor the contour and `sea_level`
+> are identical by construction. The warning the note was protecting is still live — a pass that
+> freezes everything under a *wrong* base level freezes the coastal band it exists to reshape and
+> measures as a no-op (it did: coastal 59.2% → 58.8%) — but the specific 24–37%-vs-38% discrepancy no
+> longer describes this pipeline.
+>
+> **2. A valley incised *to* base level DROWNS.** Now direct rather than indirect: the mask is
+> `elevation > sea_level`, so a trunk cut below the contour simply **is** water on the next derive —
+> a sea inlet that takes its basin with it (measured pre-arc: seed 4's biggest basin collapsed
+> **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0** because measurement said
+> the drowned stretches read as *estuaries* and leave the coast **smoother** — but the lever is there,
+> and the failure mode is real.
 >
 > **3. `anchor_contour_to_sea_level` is what lets the carving reach hydrology at all.**
 > `restamp_elevation`'s lowland branch is only order-preserving *above* sea level; below it,
@@ -502,6 +560,13 @@ reshapes the coast.
 > monotone, piecewise-linear rescale that puts the coastline exactly on `sea_level`, making the
 > pipeline's "land ⟺ above sea level" assumption *true*. Monotone ⇒ it cannot reorder the field, so
 > the land mask still picks the same tiles.
+>
+> Since `elevation-authority` the anchor is **load-bearing rather than merely helpful**: it is the
+> only thing that makes `target_land_pct` come out right, because nothing downstream repaints the
+> mask to hit the target any more. It is also the reason the invariant is exact — the mask thresholds
+> the very surface the anchor just aligned. Its own justification finally holds too: monotonicity
+> guarantees the mask is unchanged *only* if the mask ranks on elevation, which before this arc it
+> did not.
 
 **Config** — the `erosion` block of each preset in `map_presets.json` (`ErosionConfig`):
 
@@ -520,7 +585,9 @@ reshapes the coast.
 | `anchor_contour_to_sea_level` | true | See note 3. |
 
 **Measured A/B** (`hydrology_earthlike::drainage_census`, `#[ignore]`d, 6 seeds, 80×52, shipped
-river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
+river thresholds held at 3.0/12.0/25.0 so the comparison is clean). **Measured PRE-`elevation-authority`**
+— the erosion-OFF-vs-ON comparison is still valid (both arms moved together), but the absolute
+navigable counts belong to the pre-arc landmass and are ~0 at this size today; see the note above:
 
 | metric | erosion OFF | erosion ON |
 |---|---|---|
@@ -535,7 +602,17 @@ river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
 > 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
 > single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
 > has; it does not move its divides.** The divides come from the continent-scale fbm, so the next
-> lever is the *noise*, not the erosion — see `TASKS.md`.
+> lever is the *noise*, not the erosion — see `TASKS.md` → "Capture: the divides, not the valleys".
+>
+> **`elevation-authority` added `continental_weight` / `continental_radius`, and they do NOT fix
+> capture.** They make `continents` a real lever for the first time (the old BFS grew a single
+> accidental supercontinent at 80×52 while the preset asked for 4), but the bias is a **radial
+> falloff — dome-shaped by construction**, so it moves landmasses apart without giving any one of them
+> an internal divide structure. A dome sheds radially; that is exactly the "sheds radially with no
+> trunk valleys" failure this section opens with, just at continent scale. Measured after the arc: the
+> largest basin still tops out at **~5% of its landmass**, statistically unchanged pre/post. Capture
+> needs a term that shapes *divides* — anisotropic/warped noise, tectonic uplift fields — not a
+> smoother continent outline. Design context: `docs/plan_elevation_authority.md`.
 >
 > `apply_coastal_smoothing` was **measured, not assumed** (the suspicion was that its 3×3 blur would
 > soften the incised valleys right where they matter). It does not blunt the result: the sponge metric
@@ -570,7 +647,43 @@ pole = −5° at sea level (mountains up to 12° colder).
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
 
-The active preset's `sea_level` is carried on the `ElevationField` resource (`heightfield.rs`, via `with_sea_level`; falls back to `DEFAULT_SEA_LEVEL` = 0.6) and exported in the snapshot as `ElevationOverlay.seaLevel` — **pre-normalized to the overlay's [minValue, maxValue] sample scale** (`snapshot.rs` `elevation_overlay_from_field`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+**`macro_land` — landmass shape** (`MacroLandConfig`, `map_preset.rs`). Since `elevation-authority`
+every one of these is honored by *shaping the heightfield*, never by editing the mask:
+
+| Key | earthlike | Meaning |
+|---|---|---|
+| `target_land_pct` | 0.38 | Land fraction. Delivered by `anchor_contour_to_sea_level` putting this quantile exactly on `sea_level`; realized **37.7–37.8%** pre-island with nothing correcting it downstream. |
+| `continents` | 4 | Number of continental bias centres, chosen deterministically from the world seed with Poisson-ish spacing (wrap-aware in x). Realized landmasses ≥`min_area`: 3–5. |
+| `min_area` | 256 | The landmass size that counts as a continent when auditing the above. |
+| `continental_weight` | 0.5 | Amplitude of the low-frequency continental bias added before erosion. `0.0` reproduces the pure fractal field — which thresholds into **one dominant supercontinent**, which is why the term exists. |
+| `continental_radius` | 0.35 | A continent's radius of influence, as a fraction of the **smaller** grid dimension. Beyond it the bias saturates at its minimum, which is what actively sinks inter-continental gaps rather than merely making them less high. |
+| `continental_falloff_exponent` | 1.5 | Shape of the falloff, `bias = 1 − 2·t^exponent` over `t = dist/radius`, taken as a **max over centres, not a sum** (summing fuses adjacent centres into a land bridge). |
+| `coastline_roughness` | 0.05 | High-frequency shoreline raggedness, applied to the field **before** `land_contour`. Replaces the retired `macro_land.jitter`, which perturbed the mask's *ranking* instead of the field and thereby decoupled the two. |
+
+> `macro_land.jitter` **no longer exists** and must not be reintroduced — it is the specific lever
+> that broke "land ⟺ above sea level". Its intent lives on as `coastline_roughness`.
+>
+> Measured caveat on the continental levers: they are radial and therefore **dome-shaped**, so they
+> separate continents but do not create internal divides — see the erosion section's capture verdict.
+
+**Coastline-editing levers** — the two stages permitted to move a coastline, both of which write
+elevation and re-derive:
+
+| Key | Block | Default | Meaning |
+|---|---|---|---|
+| `island_peak_margin` | `islands` | 0.06 | How far above `sea_level` an island's peak is raised. `place_islands` raises a radial dome and the mask is re-derived; this margin is what makes the dome *become* land. Placement (`continental_density`, `oceanic_density`, `min_distance_from_continent`) is unchanged. |
+| `strait_depth_margin` | `inland_sea` | 0.02 | How far **below** `sea_level` a strait corridor is cut by `connect_inland_seas_via_straits`. Deep enough to read as water on the re-derive, shallow enough to read as a channel and not a trench. |
+
+The active preset's `sea_level` is carried on the `ElevationField` resource, attached at the field's origin in `build_elevation_field` and propagated through `restamp_elevation` (`heightfield.rs` / `mapgen.rs`; falls back to `DEFAULT_SEA_LEVEL` = 0.6 only when no preset resolves — which also logs a `warn`, because a preset-less field skips erosion and the contour anchor entirely). It is exported in the snapshot as `ElevationOverlay.seaLevel` — **normalized to the overlay's [minValue, maxValue] sample scale AND quantized onto the same u16 lattice as the samples** (`snapshot/map.rs` `elevation_overlay_from_field`, `ELEVATION_SAMPLE_SCALE`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
+
+> **Samples and the published `sea_level` must share one quantization lattice.** The client decodes
+> `sample / 65535` and compares against `seaLevel`; publishing the threshold *unquantized* made every
+> tile sitting exactly at sea level decode to `0.6200046 > 0.62` and read as land-height water — 42 of
+> them in a live export, all with the identical raw sample `40632 = round(0.62 × 65535)`. Do not
+> reintroduce a second `65535.0` literal. Guarded by
+> `elevation_authority::the_published_sea_level_lies_on_the_sample_quantization_lattice`, which
+> asserts on the **encoded overlay** rather than the in-process `ElevationField` — the earlier test
+> read the f32 field, reported 0 violations, and missed all 42.
 
 **Continental shelf width** (`classify_bands` + `effective_shelf_width`, `mapgen.rs`; `ShelfConfig`, `map_preset.rs`): `ContinentalShelf` is the ocean band within a computed distance of the coast (slope collapses to `DeepOcean` downstream, so only the shelf boundary affects ocean composition). The model mirrors real margins — a **continuous ≥1-tile shelf off gentle (passive-margin) coasts, and deep water right at steep/cliff (active-margin) coasts** — via two knobs on top of the width scaling:
 - `min_width_tiles` (default **1.0**) — floors the computed width so a qualifying coast gets a *continuous* ≥1-tile ring instead of a sub-tile sparse fringe. Applied after the `width_frac`/`width_exp` (or `width_tiles`) computation, so a preset that bumps `width_frac` still scales the shelf wider than the floor on big maps.
@@ -581,7 +694,7 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
   **Final reconciliation pass — the shelf is hex-exact on the *final* map, not just at band time.** `classify_bands` decides the shelf early (stage 6), but later Startup stages repaint terrain near the coast *after* the shelf exists: `generate_hydrology` stamps `RiverDelta`/`Floodplain`/`FreshwaterMarsh` at river mouths, and `apply_tag_budget_solver` paints polar `Tundra` over near-shore ocean — each creating fresh gentle-land-vs-`DeepOcean` adjacencies with no shelf between them (band-level zero-gap ≠ final-map zero-gap). `reconcile_coastal_shelf` (`systems.rs`) is a deterministic post-pass registered in the Startup `.chain()` **right after `apply_biome_palette_clamp`** (so after hydrology + tag solver + palette clamp — the last word on ocean tiles): every `DeepOcean` tile odd-r hex-adjacent (`grid_utils::hex_neighbors_wrapped`, wrap-aware, honoring the active `map_topology.wrap_horizontal`) to a **gentle** land tile — non-`WATER` tags, rise `elevation.sample − sea_level < coast_height_threshold` (the SAME gate + hex convention as `classify_bands`) — is reclassified to `ContinentalShelf` (a `must_have` palette biome, so no palette conflict). So downstream-created coasts (deltas, marshes, solver tundra) all get a shelf seaward, while **steep** coasts (every land hex-neighbour rises `≥` threshold) still keep deep water right at the edge. Guarantees on the final map: **no `DeepOcean` tile touches gentle land.** Guarded by `integration_tests/tests/shelf_ratio.rs::earthlike_no_deep_ocean_touches_gentle_land_on_final_map` (0 gaps across sizes/seeds, + a steep-coast-keeps-deep-water assertion) and `earthlike_delta_and_marsh_coasts_have_shelf_not_deep_water`.
 - `width_tiles` (default 2) — legacy absolute band width, used only when `width_frac` is unset (e.g. `polar_contrast`). `width_frac` + `width_exp` (earthlike) scale the pre-floor width with map size as `width_frac * min(w, h)^width_exp`.
 
-  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs ~29-33% of ocean at 80×52 down to ~14% at 256×192 (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
+  Because the shelf is now a ~1-tile ring off *most* coastline, the fraction is **no longer** the old size-invariant 5-8%: it varies with coastline steepness and **shrinks as the open ocean grows** — measured full-pipeline (slope folded into deep water) with the hex-exact ring **plus** the final reconciliation pass it runs **~15-19% of ocean at 80×52 down to ~8.5% at 256×192** (re-measured after `elevation-authority`; the pre-arc figures were ~29-33% down to ~14%, and the drop is a *consequence* of the derived mask producing fewer, smoother landmasses — less coastline per unit of ocean, with the zero-gap invariant still holding) (a touch higher again than the band-only ring, since the post-pass also stamps shelf on the hydrology/tag-solver coasts; re-measured after the border-ring bathymetry fix below, which removed the orphaned offshore shelf the drowned border land used to strand). Guarded by `integration_tests/tests/shelf_ratio.rs`: a per-map sanity band (6-50%) plus the model assertion that coast land next to shelf tiles is lower than coast land next to deep-water-at-the-edge tiles. This is a pure ocean-tile reclassification — it does **not** touch the land mask, so mountains/rivers/land ratio are unchanged.
 
   The gate keys off the *immediately-adjacent* (hex-neighbour) coast land, which fully covers the 1-tile default (every shelf tile touches land). Deferred: a preset that widens the shelf past `d==1` leaves outer-ring tiles ungated (they touch no land, so they pass) and those outer rings still ride the square-connected `ocean_distance` — carrying the nearest-coast rise through a hex distance-transform is the follow-up for wide shelves. Also still deferred: a true *depth-based* shelf would need real offshore bathymetry (today ocean elevation is fractal noise with no coast-relative deepening); and if the narrower shelf's reduced `CoastalUpwelling` forage frontage matters for gameplay, lock the `Coastal` tag to stamp compensating `TidalFlat` (the tag solver's coastal pass). Neither shipped preset locks `Coastal` today.
 
@@ -595,7 +708,20 @@ The active preset's `sea_level` is carried on the `ElevationField` resource (`he
 
 **Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`.
 
-  **`terrain_tag_targets.Water` MUST track `1 − macro_land.target_land_pct`.** The landmask decides land vs. water; a locked `Water` target only tells the solver what that same map should *already* look like. Disagreement makes the solver invent bathymetry the pipeline never modeled: too high and its **add-water** branch scatters `DeepOcean` over `COASTAL`-tagged land (earthlike's old `Water = 0.65` vs `target_land_pct = 0.38` ⇒ 62% water would have drowned ~125 coastal tiles — the border-ring bug was accidentally supplying that missing 3%); too low and its **remove-water** branch mass-converts ocean into `Tundra`/`AlluvialPlain`. earthlike now sets `Water = 0.62` (`= 1 − 0.38`) and the water pass is **inert** (0 conversions in either direction on all sampled seeds). Any preset that changes `target_land_pct` must move `Water` with it (see the `_comment_water_target` note in `map_presets.json`).
+  **The solver has NO water branch, and `terrain_tag_targets.Water` is INERT.** Water share is an
+  elevation outcome: the mask is a pure threshold and the contour anchor already places
+  `target_land_pct` exactly. `elevation-authority` deleted the branch outright — it converted arbitrary
+  land tiles to `DeepOcean` (and ocean back to `Tundra`/`AlluvialPlain`) **with no elevation term at
+  all**, which is precisely how a "water" tile ended up above sea level. Listing `Water` in
+  `locked_terrain_tags` no longer does anything.
+
+  The target is kept only so the tag census has a reference figure, and should still track
+  `1 − macro_land.target_land_pct` for that reading to be meaningful (earthlike `0.62`;
+  polar_contrast was corrected `0.64 → 0.58` against its `target_land_pct = 0.42` during the arc —
+  the map had been right and the target stale). *Historical:* when the branch existed, a mismatched
+  target made the solver invent bathymetry the pipeline never modeled — earthlike's old `Water = 0.65`
+  vs `target_land_pct = 0.38` would have drowned ~125 `COASTAL` tiles. That failure mode is now
+  structurally impossible rather than avoided by convention.
 
 **Per-Map Biome Palette** (`biome_palette.rs`, design `docs/plan_biome_palette.md`): a curated,
 seed-driven, map-size-scaled subset of the 37 biomes chosen at world-gen time — small maps read
