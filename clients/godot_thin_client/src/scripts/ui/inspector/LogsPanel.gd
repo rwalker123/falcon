@@ -13,6 +13,7 @@ class_name LogsInspectorPanel
 
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
+const ServerPortsFile = preload("res://src/scripts/ServerPortsFile.gd")
 
 const LOG_ENTRY_LIMIT = 60
 const LOG_HOST_DEFAULT = "127.0.0.1"
@@ -191,6 +192,11 @@ func _determine_host() -> String:
 	env_host = OS.get_environment("COMMAND_HOST")
 	if env_host != "":
 		return env_host
+	# Same precedence as Main.gd's endpoint resolvers: explicit env var -> the
+	# server's ports file -> hardcoded default.
+	var discovered_host: String = ServerPortsFile.get_host()
+	if discovered_host != "":
+		return discovered_host
 	return LOG_HOST_DEFAULT
 
 func _determine_port() -> int:
@@ -199,6 +205,9 @@ func _determine_port() -> int:
 		var parsed: int = int(env_port)
 		if parsed > 0:
 			return parsed
+	var discovered_port: int = ServerPortsFile.get_port(ServerPortsFile.KEY_LOG)
+	if discovered_port > 0:
+		return discovered_port
 	return LOG_PORT_DEFAULT
 
 func _poll_stream(delta: float) -> void:

@@ -135,3 +135,4 @@ toggle_legend={
 [rendering]
 
 quality/driver/driver_name="opengl3"
+textures/vram_compression/import_etc2_astc=true

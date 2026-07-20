@@ -491,10 +491,10 @@ impl SimulationConfigMetadata {
 
 /// Port offsets from the `SIM_PORT_BASE` base for each listen socket, preserving
 /// the historical 41000-based layout (base = 41000 reproduces today's ports).
-const SNAPSHOT_PORT_OFFSET: u16 = 0;
-const COMMAND_PORT_OFFSET: u16 = 1;
-const SNAPSHOT_FLAT_PORT_OFFSET: u16 = 2;
-const LOG_PORT_OFFSET: u16 = 3;
+pub const SNAPSHOT_PORT_OFFSET: u16 = 0;
+pub const COMMAND_PORT_OFFSET: u16 = 1;
+pub const SNAPSHOT_FLAT_PORT_OFFSET: u16 = 2;
+pub const LOG_PORT_OFFSET: u16 = 3;
 
 /// Lowest accepted `SIM_PORT_BASE`. A base of 0 would set `snapshot_bind` to
 /// port 0, asking the OS for an ephemeral port and breaking clients that expect
@@ -505,7 +505,7 @@ const MIN_PORT_BASE: u16 = 1;
 /// Returns false (and leaves `config` unchanged) if `base` is below
 /// `MIN_PORT_BASE` (0 → ephemeral port) or `base + LOG_PORT_OFFSET` would
 /// overflow u16.
-fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
+pub fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
     if base < MIN_PORT_BASE || base.checked_add(LOG_PORT_OFFSET).is_none() {
         return false;
     }
@@ -518,20 +518,33 @@ fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
     true
 }
 
-/// Reads the optional `SIM_PORT_BASE` env override and applies it to `config`.
-/// Warns and leaves `config` unchanged on parse failure or out-of-range base
-/// (never panics), so a stray value can't take the server down.
-pub fn apply_port_base_override(config: &mut SimulationConfig) {
-    let raw = match env::var("SIM_PORT_BASE") {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let base: u16 = match raw.trim().parse() {
-        Ok(b) => b,
+/// Reads and validates the optional `SIM_PORT_BASE` env override. Returns
+/// `None` (with a warning) when unset, unparseable, or out of range, so a
+/// stray value can't take the server down. A `Some` result also means the
+/// operator chose the base *explicitly*, which suppresses port auto-bumping
+/// in `port_alloc::allocate`.
+pub fn port_base_override() -> Option<u16> {
+    let raw = env::var("SIM_PORT_BASE").ok()?;
+    match raw.trim().parse::<u16>() {
+        Ok(base) if base >= MIN_PORT_BASE && base.checked_add(LOG_PORT_OFFSET).is_some() => {
+            Some(base)
+        }
+        Ok(base) => {
+            tracing::warn!(target: "shadow_scale::config", base, "sim_port_base.out_of_range=ignored");
+            None
+        }
         Err(_) => {
             tracing::warn!(target: "shadow_scale::config", value = %raw, "sim_port_base.invalid=ignored");
-            return;
+            None
         }
+    }
+}
+
+/// Applies the optional `SIM_PORT_BASE` env override to `config`'s four binds.
+/// Leaves `config` unchanged when the override is absent or invalid.
+pub fn apply_port_base_override(config: &mut SimulationConfig) {
+    let Some(base) = port_base_override() else {
+        return;
     };
     if apply_port_base(config, base) {
         tracing::info!(

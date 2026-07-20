@@ -16,17 +16,19 @@ use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
 
 use core_sim::log_stream::start_log_stream_server;
+use core_sim::port_alloc;
 
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
+use core_sim::port_base_override;
 use core_sim::{
-    apply_port_base_override, available_workers, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile, rung_site_refusal,
-    tile_is_fresh_watered, ActiveStartProfile, BandTravel, CampaignLabel, Expedition,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation,
-    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
-    StartProfileOverrides, WellbeingConfigHandle, NO_FORAGE_SEASON,
+    apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
+    knows, output_multiplier, resolve_active_profile, rung_site_refusal, tile_is_fresh_watered,
+    ActiveStartProfile, BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget,
+    LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal, StartProfileOverrides,
+    WellbeingConfigHandle, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -67,13 +69,60 @@ const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
 const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
 
+/// Exit code when no port block could be bound. Distinct from a panic: this is
+/// an operator-actionable configuration/environment problem, not a bug.
+const PORT_ALLOC_EXIT_CODE: i32 = 2;
+
+/// The port base the process actually bound (which may differ from the
+/// configured one after an auto-bump). Config hot-reload re-applies *this*
+/// rather than the configured base, so a reload can't leave the in-world config
+/// claiming ports the server does not hold.
+#[derive(Resource, Clone, Copy)]
+struct ResolvedPortBase(u16);
+
 fn main() {
     let mut app = build_headless_app();
     app.insert_resource(SimulationMetrics::default());
 
     let config = app.world.resource::<SimulationConfig>().clone();
 
-    let log_stream = start_log_stream_server(config.log_bind);
+    // Bind the whole four-port block up front, all-or-nothing, before any
+    // subsystem starts. A busy port either bumps the block to the next free
+    // slot or aborts startup outright; the server never runs with a socket
+    // silently disabled.
+    let configured_base = config.snapshot_bind.port();
+    let base_is_explicit = port_base_override().is_some();
+    let bound_ports =
+        match port_alloc::allocate(config.snapshot_bind.ip(), configured_base, base_is_explicit) {
+            Ok(bound) => bound,
+            Err(err) => {
+                eprintln!("Shadow-Scale server cannot start: {err}");
+                std::process::exit(PORT_ALLOC_EXIT_CODE);
+            }
+        };
+    let port_base_bumped = bound_ports.base != configured_base;
+    let resolved_base = bound_ports.base;
+    let (snapshot_port, command_port, snapshot_flat_port, log_port) = (
+        bound_ports.snapshot_port(),
+        bound_ports.command_port(),
+        bound_ports.snapshot_flat_port(),
+        bound_ports.log_port(),
+    );
+
+    // Publish the resolved ports for client auto-discovery. Failure is never
+    // fatal: the server still runs, only discovery is lost. The guard removes
+    // the file when `main` returns normally.
+    let ports_file = port_alloc::write_ports_file(&bound_ports);
+
+    // Keep the in-world config honest about the ports actually bound, so the
+    // config-reload path and anything reading the binds report the truth.
+    if port_base_bumped {
+        let mut config_res = app.world.resource_mut::<SimulationConfig>();
+        apply_port_base(&mut config_res, resolved_base);
+    }
+    app.world.insert_resource(ResolvedPortBase(resolved_base));
+
+    let log_stream = start_log_stream_server(bound_ports.log);
     let log_stream_enabled = log_stream.is_some();
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -95,8 +144,8 @@ fn main() {
         warn!(target: "shadow_scale::server", "log_stream.start_failed");
     }
 
-    let snapshot_server = start_snapshot_server(config.snapshot_bind);
-    let snapshot_flat_server = start_snapshot_server(config.snapshot_flat_bind);
+    let snapshot_server = start_snapshot_server(bound_ports.snapshot);
+    let snapshot_flat_server = start_snapshot_server(bound_ports.snapshot_flat);
 
     let config_watch_path = app
         .world
@@ -129,7 +178,7 @@ fn main() {
         .path()
         .cloned();
 
-    let (command_rx, command_tx) = spawn_command_listener(config.command_bind);
+    let (command_rx, command_tx) = spawn_command_listener(bound_ports.command);
     app.world
         .insert_resource(CommandSenderResource(command_tx.clone()));
     app.world.insert_resource(ConfigWatcherRegistry::default());
@@ -169,25 +218,37 @@ fn main() {
 
     {
         let history = app.world.resource::<SnapshotHistory>();
-        broadcast_latest(
-            snapshot_server.as_ref(),
-            snapshot_flat_server.as_ref(),
-            history,
-        );
+        broadcast_latest(&snapshot_server, &snapshot_flat_server, history);
     }
 
+    let bind_host = config.snapshot_bind.ip();
+    if port_base_bumped {
+        warn!(
+            target: "shadow_scale::server",
+            configured_base,
+            resolved_base,
+            "port_block.bumped=configured base was in use"
+        );
+    }
     info!(
-        command_bind = %config.command_bind,
-        snapshot_bind = %config.snapshot_bind,
-        snapshot_flat_bind = %config.snapshot_flat_bind,
-        log_bind = %config.log_bind,
+        host = %bind_host,
+        port_base = resolved_base,
+        command_port,
+        snapshot_port,
+        snapshot_flat_port,
+        log_port,
+        port_base_bumped,
+        ports_file = ports_file
+            .as_ref()
+            .map(|guard| guard.path().display().to_string())
+            .unwrap_or_else(|| "unavailable".to_string()),
         log_stream_enabled,
         "Shadow-Scale headless server ready"
     );
 
     while let Ok(command) = command_rx.recv() {
-        let bin_server = snapshot_server.as_ref();
-        let flat_server = snapshot_flat_server.as_ref();
+        let bin_server = &snapshot_server;
+        let flat_server = &snapshot_flat_server;
         match command {
             Command::Turn(turns) => {
                 for _ in 0..turns {
@@ -995,8 +1056,10 @@ impl Drop for FileWatcherHandle {
 
 const MAX_PROTO_FRAME: usize = 64 * 1024;
 
-fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> (Receiver<Command>, Sender<Command>) {
-    let listener = TcpListener::bind(bind_addr).expect("command listener bind failed");
+/// Starts the command listener on an already-bound listener. Binding happens
+/// up front in `port_alloc::allocate`, so this can no longer panic on a port
+/// conflict.
+fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<Command>) {
     if let Err(err) = listener.set_nonblocking(true) {
         warn!("Failed to set nonblocking on command listener: {}", err);
     }
@@ -3257,10 +3320,14 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         None => (SimulationConfig::builtin(), None),
     };
 
-    // Reapply the SIM_PORT_BASE shift the same way startup does, so a reload of
-    // an unchanged file keeps the shifted binds and doesn't spuriously trip the
-    // socket_changed=restart_required warning below.
-    apply_port_base_override(&mut new_config);
+    // Reapply the port base the process ACTUALLY bound (post auto-bump), so a
+    // reload of an unchanged file keeps the live binds and doesn't spuriously
+    // trip the socket_changed=restart_required warning below. Rebinding live
+    // sockets is out of scope: the reloaded config must describe the ports the
+    // server holds, not the ones the file asks for.
+    if let Some(resolved) = app.world.get_resource::<ResolvedPortBase>().copied() {
+        apply_port_base(&mut new_config, resolved.0);
+    }
 
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
@@ -4354,18 +4421,20 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 /// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
 fn recapture_and_broadcast(
     app: &mut bevy::prelude::App,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     recapture_snapshot_in_place(&mut app.world);
 
     let history = app.world.resource::<SnapshotHistory>();
-    if let Some(server) = snapshot_server_bin {
+    {
+        let server = snapshot_server_bin;
         if let Some(bytes) = history.encoded_snapshot.as_ref() {
             server.broadcast(bytes.as_ref());
         }
     }
-    if let Some(server) = snapshot_server_flat {
+    {
+        let server = snapshot_server_flat;
         if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
             server.broadcast(bytes.as_ref());
         }
@@ -4376,8 +4445,8 @@ fn handle_order_submission(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     orders: FactionOrders,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let order_count = orders.orders.len();
     let result = {
@@ -4419,8 +4488,8 @@ fn handle_axis_bias(
     app: &mut bevy::prelude::App,
     axis: usize,
     value: f32,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     if axis >= 4 {
         warn!(
@@ -4454,15 +4523,18 @@ fn handle_axis_bias(
     };
 
     if let Some((binary, flat)) = broadcast_payload {
-        if let Some(server) = snapshot_server_bin {
+        {
+            let server = snapshot_server_bin;
             server.broadcast(binary.as_ref());
         }
-        if let Some(server) = snapshot_server_flat {
+        {
+            let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
         }
     }
 
-    if let Some(server) = snapshot_server_flat {
+    {
+        let server = snapshot_server_flat;
         let history = app.world.resource::<SnapshotHistory>();
         if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
             server.broadcast(snapshot_bytes.as_ref());
@@ -4482,8 +4554,8 @@ fn handle_influencer_channel_support(
     id: u32,
     channel: SupportChannel,
     magnitude: f32,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped = magnitude.clamp(0.1, 5.0);
     let scalar_amount = Scalar::from_f32(clamped);
@@ -4518,8 +4590,8 @@ fn handle_influencer_spawn(
     app: &mut bevy::prelude::App,
     scope: Option<InfluenceScopeKind>,
     generation: Option<GenerationId>,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let registry_snapshot = app.world.resource::<GenerationRegistry>().clone();
     let spawned = {
@@ -4561,8 +4633,8 @@ fn handle_influencer_spawn(
 
 fn broadcast_influencer_update(
     app: &mut bevy::prelude::App,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let (states, sentiment_totals, logistics_total, morale_total, power_total) = {
         let roster = app.world.resource::<InfluentialRoster>();
@@ -4604,23 +4676,28 @@ fn broadcast_influencer_update(
     };
 
     if let Some((bin, flat)) = influencer_delta {
-        if let Some(server) = snapshot_server_bin {
+        {
+            let server = snapshot_server_bin;
             server.broadcast(bin.as_ref());
         }
-        if let Some(server) = snapshot_server_flat {
+        {
+            let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
         }
     }
     if let Some((bin, flat)) = bias_delta {
-        if let Some(server) = snapshot_server_bin {
+        {
+            let server = snapshot_server_bin;
             server.broadcast(bin.as_ref());
         }
-        if let Some(server) = snapshot_server_flat {
+        {
+            let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
         }
     }
 
-    if let Some(server) = snapshot_server_flat {
+    {
+        let server = snapshot_server_flat;
         let history = app.world.resource::<SnapshotHistory>();
         if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
             server.broadcast(snapshot_bytes.as_ref());
@@ -4633,8 +4710,8 @@ fn handle_influencer_command(
     id: u32,
     magnitude: f32,
     action: InfluencerAction,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped = magnitude.clamp(0.1, 5.0);
     let scalar_amount = Scalar::from_f32(clamped);
@@ -4680,8 +4757,8 @@ fn handle_inject_corruption(
     subsystem: CorruptionSubsystem,
     intensity: f32,
     exposure_timer: u16,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped_intensity = intensity.clamp(-5.0, 5.0);
     let timer = exposure_timer.max(1);
@@ -4710,15 +4787,18 @@ fn handle_inject_corruption(
     };
 
     if let Some((binary, flat)) = delta_payload {
-        if let Some(server) = snapshot_server_bin {
+        {
+            let server = snapshot_server_bin;
             server.broadcast(binary.as_ref());
         }
-        if let Some(server) = snapshot_server_flat {
+        {
+            let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
         }
     }
 
-    if let Some(server) = snapshot_server_flat {
+    {
+        let server = snapshot_server_flat;
         let history = app.world.resource::<SnapshotHistory>();
         if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
             server.broadcast(snapshot_bytes.as_ref());
@@ -5009,8 +5089,8 @@ fn pick_best_agent_for_mission(
 
 fn resolve_ready_turn(
     app: &mut bevy::prelude::App,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let turn_start = std::time::Instant::now();
     let ready_orders = {
@@ -5065,8 +5145,8 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
-    snapshot_server_bin: Option<&SnapshotServer>,
-    snapshot_server_flat: Option<&SnapshotServer>,
+    snapshot_server_bin: &SnapshotServer,
+    snapshot_server_flat: &SnapshotServer,
 ) {
     let entry: Option<StoredSnapshot> = {
         let history = app.world.resource::<SnapshotHistory>();
@@ -5098,10 +5178,12 @@ fn handle_rollback(
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    if let Some(server) = snapshot_server_bin {
+    {
+        let server = snapshot_server_bin;
         server.broadcast(entry.encoded_snapshot.as_ref());
     }
-    if let Some(server) = snapshot_server_flat {
+    {
+        let server = snapshot_server_flat;
         server.broadcast(entry.encoded_snapshot_flat.as_ref());
     }
 }

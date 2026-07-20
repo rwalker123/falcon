@@ -27,19 +27,12 @@ impl SnapshotServer {
     }
 }
 
-pub fn start_snapshot_server(bind_addr: std::net::SocketAddr) -> Option<SnapshotServer> {
-    let listener = match TcpListener::bind(bind_addr) {
-        Ok(listener) => listener,
-        Err(err) => {
-            log::warn!(
-                "Snapshot server bind failed at {}: {}. Broadcasting disabled.",
-                bind_addr,
-                err
-            );
-            return None;
-        }
-    };
-
+/// Starts the snapshot broadcaster on an already-bound listener.
+///
+/// The listener is bound up front by `port_alloc::allocate`, so binding can no
+/// longer fail here — a busy port is caught before the server starts rather
+/// than silently disabling broadcasting on a running server.
+pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
     let (sender, receiver) = unbounded::<Vec<u8>>();
     listener
         .set_nonblocking(true)
@@ -96,22 +89,22 @@ pub fn start_snapshot_server(bind_addr: std::net::SocketAddr) -> Option<Snapshot
         }
     });
 
-    Some(SnapshotServer {
+    SnapshotServer {
         sender,
         latest_frame,
-    })
+    }
 }
 
 pub fn broadcast_latest(
-    bincode_server: Option<&SnapshotServer>,
-    flat_server: Option<&SnapshotServer>,
+    bincode_server: &SnapshotServer,
+    flat_server: &SnapshotServer,
     history: &SnapshotHistory,
 ) {
-    if let (Some(server), Some(bytes)) = (bincode_server, history.encoded_delta.as_ref()) {
-        server.broadcast(bytes.as_ref());
+    if let Some(bytes) = history.encoded_delta.as_ref() {
+        bincode_server.broadcast(bytes.as_ref());
     }
-    if let (Some(server), Some(bytes)) = (flat_server, history.encoded_snapshot_flat.as_ref()) {
-        server.broadcast(bytes.as_ref());
+    if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
+        flat_server.broadcast(bytes.as_ref());
     }
 }
 

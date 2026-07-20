@@ -1,0 +1,148 @@
+name: Desktop Playtest Release
+
+# Builds the Windows + macOS playtest packages on every merge to main and
+# refreshes a single rolling "latest" pre-release with both zips attached.
+# Also runnable on demand from the Actions tab.
+#
+# Both packages are produced on ONE macOS runner: Windows via the cross-compile
+# scripts/build_windows.sh (cargo-xwin, MSVC ABI) and macOS via
+# scripts/build_macos.sh (native). Godot's macOS editor exports both clients from
+# one templates install. These are the same scripts used for local dev builds, so
+# CI and a developer's machine build the packages identically.
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+# One release build at a time; a newer merge supersedes an in-flight one.
+concurrency:
+  group: desktop-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # create/update the GitHub Release + upload assets
+
+env:
+  GODOT_VERSION: "4.7-stable"
+  GODOT_DOTVERSION: "4.7.stable"   # the export_templates/<dir> name
+  FLATBUFFERS_VERSION: "25.9.23"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + Windows MSVC target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools (flatc, cargo-xwin, LLVM/lld)
+        run: |
+          set -euo pipefail
+          # flatc — the FlatBuffers bindings are generated at build time.
+          curl -sSL -o flatc.zip \
+            "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Mac.flatc.binary.zip"
+          unzip -o flatc.zip flatc
+          sudo mv flatc /usr/local/bin/flatc && sudo chmod +x /usr/local/bin/flatc
+          rm flatc.zip
+          # LLVM provides lld-link + clang-cl for the Windows (MSVC) cross-compile.
+          brew install llvm
+          # cargo-xwin drives the MSVC cross-compile (downloads the CRT/SDK, cached below).
+          cargo install cargo-xwin --locked
+
+      - name: Cache cargo-xwin CRT/SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/cargo-xwin
+          key: cargo-xwin-crt-${{ runner.os }}
+
+      - name: Cache Godot editor + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-bin
+            ~/Library/Application Support/Godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ runner.os }}
+
+      - name: Install Godot + export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot-bin"
+          # Editor (macOS universal).
+          curl -sSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
+          unzip -o godot.zip -d "$HOME/godot-bin"
+          rm godot.zip
+          # Export templates (all platforms) → the version dir Godot expects.
+          TPL="$HOME/Library/Application Support/Godot/export_templates/${GODOT_DOTVERSION}"
+          mkdir -p "$TPL"
+          curl -sSL -o templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          # Extract only the templates the two exports need (Windows + macOS) + version.txt.
+          unzip -o -j templates.tpz \
+            'templates/windows_release_x86_64.exe' \
+            'templates/windows_debug_x86_64.exe' \
+            'templates/windows_release_x86_64_console.exe' \
+            'templates/windows_debug_x86_64_console.exe' \
+            'templates/macos.zip' \
+            'templates/version.txt' -d "$TPL"
+          rm templates.tpz
+
+      - name: Expose godot on PATH
+        run: |
+          echo "GODOT_BIN=$HOME/godot-bin/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+
+      - name: Build Windows package (cross-compile)
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          export PATH="/opt/homebrew/opt/llvm/bin:$HOME/.cargo/bin:$PATH"
+          ./scripts/build_windows.sh
+
+      - name: Build macOS package (native)
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build_macos.sh
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          cp dist/windows/ShadowScale-windows-b${{ github.run_number }}.zip release-assets/
+          cp dist/macos/ShadowScale-macos-b${{ github.run_number }}.zip release-assets/
+          ls -la release-assets
+
+      - name: Publish rolling "latest" pre-release
+        # Delete-then-recreate so only the newest build's assets are ever attached
+        # (asset names carry the build number, so they would otherwise accumulate).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh release delete latest --yes --cleanup-tag || true
+          NOTES=$(cat <<EOF
+          Automated playtest build **b${BUILD}** from \`${SHA}\`.
+
+          **Downloads**
+          - \`ShadowScale-windows-b${BUILD}.zip\` — unzip, double-click \`run.bat\`.
+          - \`ShadowScale-macos-b${BUILD}.zip\` — unzip, see \`README.txt\` (macOS quarantines
+            unsigned apps; one \`xattr\` command clears it), then \`run.command\`.
+
+          These builds are unsigned; SmartScreen (Windows) / Gatekeeper (macOS) will warn.
+          EOF
+          )
+          gh release create latest release-assets/*.zip \
+            --prerelease \
+            --target "$SHA" \
+            --title "Latest playtest build (b${BUILD})" \
+            --notes "$NOTES"

@@ -18,10 +18,45 @@ scripts/run_stack.sh --client-only
 cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 ```
 
-**Sockets**:
+**Sockets** (defaults — see the discovery precedence below):
 - Snapshot stream: `127.0.0.1:41002` (FlatBuffers via `SimulationConfig::snapshot_flat_bind`)
 - Command socket: `127.0.0.1:41001` (Protobuf `CommandEnvelope`)
 - Log stream: `127.0.0.1:41003` (length-prefixed JSON tracing frames)
+
+**Endpoint discovery — env var → ports file → hardcoded default** (`src/scripts/ServerPortsFile.gd`).
+The packaged playtest build pins the three ports above, but if they are busy at launch the server binds
+a different free block and publishes its choice to a **ports file**; the client reads it so the two
+halves still find each other. Every resolver (`Main._determine_stream_*` / `_determine_command_*`,
+`LogsPanel._determine_host` / `_determine_port`) applies the same three-step precedence:
+1. the explicit env var (`STREAM_HOST`/`STREAM_PORT`/`COMMAND_HOST`/`COMMAND_PORT`/`COMMAND_PROTO_PORT`/
+   `LOG_HOST`/`LOG_PORT`) — **the env var always wins**, so `scripts/run_stack.sh`, which exports them
+   explicitly, is completely unaffected by this feature;
+2. the ports file;
+3. the hardcoded constant.
+
+**Ports-file path** — derived from the environment only, so it matches the server's derivation with no
+shared library: `SIM_PORTS_FILE` (used verbatim if set), else Windows `%LOCALAPPDATA%\ShadowScale\ports.json`,
+macOS `$HOME/Library/Application Support/ShadowScale/ports.json`, Linux/other `$XDG_STATE_HOME/ShadowScale/ports.json`
+(falling back to `$HOME/.local/state/…`). It is a **real filesystem path, not `res://`/`user://`** — opened
+with `FileAccess.open(abs_path, READ)`. Content:
+`{"host":"127.0.0.1","snapshot":41000,"command":41001,"snapshot_flat":41002,"log":41003,"pid":1234}`.
+
+**THE STREAM PORT IS `snapshot_flat`, NOT `snapshot`.** `snapshot` is the legacy JSON snapshot socket;
+the client consumes the **FlatBuffers** one. Reading the wrong key yields a client that connects to a
+live socket and then **silently never renders** — no error, no frames — which is the easiest thing to
+get wrong here and the hardest to diagnose.
+
+The helper is a **static-func script, not an autoload** (it holds no node state, is needed by both
+`Main.gd` and `LogsPanel.gd` before the tree settles, and both `preload` it like their other
+collaborators; the static cache gives the once-per-launch read without an `[autoload]` entry). It reads
+and parses **once per launch and caches the result — including the absent/invalid one**. Missing file,
+unreadable file, malformed JSON, missing keys and non-integer/out-of-range ports **all degrade silently
+to the defaults**: a playtester running a normally-ported server must never see an error because of this.
+(It parses via `JSON.new().parse()` rather than the `JSON.parse_string()` static, which pushes an
+engine-level ERROR to the console on malformed input.) Exactly one informational line is logged, and only
+when the file is actually used. A **stale file from a crashed server is expected and tolerated** — the
+existing connect/retry behaviour handles the refused connection. The client is a **pure reader**: it
+never writes, deletes, or liveness-checks the file.
 
 ---
 

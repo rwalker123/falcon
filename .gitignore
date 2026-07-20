@@ -2,6 +2,8 @@
 **/target/
 # Scratch directory for `export_map` command output (map JSON dumps).
 /exports/
+# Cross-compiled Windows playtest packages (scripts/build_windows.sh output).
+/dist/
 **/*.rs.bk
 .DS_Store
 /.idea
