@@ -519,8 +519,22 @@ func _send_command(line: String, success_message: String) -> bool:
 func send_runtime_command(line: String, success_message: String) -> bool:
 	return _send_command(line, success_message)
 
+## Optional observer invoked after a turn is advanced through THIS coordinator — i.e. the dev
+## toolbar and autoplay, which are DELIBERATELY NOT gated by the client-side end-turn gate the
+## turn orb applies (docs/plan_the_telling.md §1a: autoplay disables itself on a failed advance,
+## so a hard gate here would deadlock the dev loop, and the server auto-expires an unanswered
+## fork to its defer branch anyway). Main uses it to make that consequence VISIBLE rather than
+## silent — skipping the question is a coherent dev-tool act, but it must not go unremarked.
+var _turn_advance_observer: Callable = Callable()
+
+func set_turn_advance_observer(observer: Callable) -> void:
+	_turn_advance_observer = observer
+
 func _send_turn(steps: int) -> bool:
-	return _send_command("turn %d" % steps, "+%d turns requested." % steps)
+	var sent := _send_command("turn %d" % steps, "+%d turns requested." % steps)
+	if sent and _turn_advance_observer.is_valid():
+		_turn_advance_observer.call(steps)
+	return sent
 
 func _request_rollback(steps: int) -> void:
 	if _last_turn <= 0:

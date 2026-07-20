@@ -134,10 +134,14 @@ func _ready() -> void:
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
+        if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
+            hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
             hud.connect("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected"))
+    if inspector != null and inspector.has_method("set_turn_advance_observer"):
+        inspector.call("set_turn_advance_observer", Callable(self, "_on_inspector_turn_advanced"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
@@ -254,6 +258,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
+    # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
+    # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
+    # cached forks on absence would drop the end-turn gate every quiet turn.
+    if snapshot.has("pending_forks"):
+        _hud_invoke("update_pending_forks", [snapshot["pending_forks"]])
+    if snapshot.has("stance_axes"):
+        _hud_invoke("update_stance_axes", [snapshot["stance_axes"]])
     if snapshot.has("populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:
@@ -465,6 +476,28 @@ func _on_hud_next_turn(steps: int) -> void:
     var line := "turn %d" % clamped_steps
     var suffix := "s" if clamped_steps != 1 else ""
     _send_runtime_command(line, "Advance %d turn%s." % [clamped_steps, suffix])
+
+## The Inspector's dev toolbar / autoplay advanced a turn. That path is deliberately NOT gated on
+## a pending narrative fork (docs/plan_the_telling.md §1a) — but it must not be SILENT: note the
+## skip in the command feed so a developer sees the question went unanswered.
+func _on_inspector_turn_advanced(_steps: int) -> void:
+    if hud == null:
+        return
+    if hud.has_method("has_pending_fork") and hud.call("has_pending_fork"):
+        _hud_invoke("note_unanswered_fork")
+
+## The Telling: answer a pending narrative fork. The next snapshot is authoritative; the HUD has
+## already dropped the fork from its local cache so the end-turn gate lifts immediately.
+func _on_hud_answer_fork(payload: Dictionary) -> void:
+    var beat_id := String(payload.get("beat_id", "")).strip_edges()
+    var choice_id := String(payload.get("choice_id", "")).strip_edges()
+    if beat_id == "" or choice_id == "":
+        return
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    _send_runtime_command(
+        "answer_fork %d %s %s" % [faction, beat_id, choice_id],
+        "Answered the question."
+    )
 
 func _send_runtime_command(line: String, message: String) -> void:
     if inspector != null and inspector.has_method("send_runtime_command"):
