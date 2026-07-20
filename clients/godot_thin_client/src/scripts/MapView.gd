@@ -2339,14 +2339,17 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 ## Sprite sibling of `_draw_marker_glyph`: a bundled marker texture in a `size`×`size` box centered
 ## on `center`, wearing the SAME drop-shadow treatment (once offset in near-black, then again on
 ## top) so a sprite marker and an emoji marker sit on the map identically.
-## The sprite is deliberately drawn UNTINTED — see the herd-marker comment in
+## The sprite is drawn UNTINTED by default (`modulate` = white) — see the herd-marker comment in
 ## `SecondaryMarkerRenderer.draw_herd`: distress reads as ring + badge geometry, never as a modulate.
-func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int) -> void:
+## `modulate` exists for the ONE case where a tint is structural rather than semantic: the band
+## card-stack's behind cards, which recede via `BAND_STACK_BEHIND_TINT` exactly as the stage GLYPH
+## path does (`BandMarkerRenderer._draw_band_token`). Do not use it to encode state.
+func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int, modulate: Color = Color.WHITE) -> void:
 	if tex == null or size <= 0:
 		return
 	var box := Rect2(center - Vector2(size, size) * 0.5, Vector2(size, size))
 	draw_texture_rect(tex, Rect2(box.position + MARKER_GLYPH_SHADOW_OFFSET, box.size), false, MARKER_GLYPH_SHADOW_COLOR)
-	draw_texture_rect(tex, box, false)
+	draw_texture_rect(tex, box, false, modulate)
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
