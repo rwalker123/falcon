@@ -33,8 +33,11 @@ const AMPLE_LARDER: f32 = 500.0;
 /// branch of `advance_labor_allocation`). So a thin larder that only part-pays the *pen* must still
 /// cover the band's own ~4/turn food demand in full — otherwise the humans drain it dry and the pen
 /// is paid **zero**, which tests starvation, not a partial pen payment. This value feeds the people
-/// fully and leaves a remainder that is a genuine fraction of a Red-Deer-sized pen's ~10.8/turn feed.
-const THIN_LARDER: f32 = 8.0;
+/// fully and leaves a remainder that is a genuine *fraction* of the penned herd's per-turn feed
+/// demand (~3.1/turn on the pinned map), so the payment is partial. Re-pinned when the
+/// climate-authority arc reshaped the map under the pen; measured against the same-map fully-fed
+/// run, not guessed.
+const THIN_LARDER: f32 = 6.0;
 /// The exported floats are `f32` sums of `Scalar`-quantized takes; a few ULPs of slack, no more.
 const EPSILON: f32 = 0.01;
 

@@ -1,7 +1,7 @@
 use bevy::prelude::UVec2;
 use sim_runtime::{TerrainTags, TerrainType};
 
-use crate::{map_preset::TerrainClassifierConfig, mapgen::MountainType};
+use crate::{climate::ClimateBand, map_preset::TerrainClassifierConfig, mapgen::MountainType};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {
@@ -350,9 +350,17 @@ pub fn terrain_definition(terrain: TerrainType) -> TerrainDefinition {
             1.20,
             rb(1, 2, 1),
         ),
+        // POLAR-tagged deliberately (`docs/plan_climate_authority.md` §7.1). A blanket bog is a
+        // boreal-to-subpolar biome, and every producer already treats it as *the* cold wetland:
+        // the tag solver's wetland pass picks it inside the cold band (`FreshwaterMarsh` outside),
+        // `bias_terrain_for_preset` substitutes it for a cold marsh, and the biome palette
+        // documents it as the polar wetland a `CoastWetland` remap should reach. Only its tags
+        // disagreed — so 605 tiles sat at row 0 at −5..−15° reading as a temperate biome, and
+        // `BiomePalette::remap` could never actually select it for a cold tile
+        // (`biome_is_polar` was false). Tagging it is the fix; the wetland pass was already right.
         TerrainType::PeatHeath => def(
             terrain,
-            Tag::WETLAND | Tag::FERTILE,
+            Tag::WETLAND | Tag::FERTILE | Tag::POLAR,
             mp(1.4, 1.2, 1.6, 2.0),
             1.20,
             0.14,
@@ -631,13 +639,12 @@ pub fn classify_terrain(
     grid_size: UVec2,
     classifier: &TerrainClassifierConfig,
     bathymetry: BathymetryContext,
+    band: ClimateBand,
 ) -> TerrainType {
     let width = grid_size.x.max(1) as f32;
     let height = grid_size.y.max(1) as f32;
     let fx = position.x as f32 / width;
     let fy = position.y as f32 / height;
-    let dist_from_equator = (fy - 0.5).abs();
-    let is_high_latitude = dist_from_equator >= classifier.high_latitude_threshold;
     let noise = tile_noise(position);
     let humidity = ((noise >> 8) & 0xFF) as f32 / 255.0;
 
@@ -684,15 +691,37 @@ pub fn classify_terrain(
         }
     }
 
-    if dist_from_equator >= classifier.polar_latitude_cutoff {
-        return pick(
-            noise,
-            &[
-                TerrainType::Tundra,
-                TerrainType::PeriglacialSteppe,
-                TerrainType::SeasonalSnowfield,
-            ],
-        );
+    // The cold ladder is gated on the tile's TEMPERATURE band, never its latitude
+    // (`docs/plan_climate_authority.md` §4). This is what makes a cold mid-latitude highland
+    // eligible for a cold biome (§5.3) and a warm near-polar lowland ineligible for one.
+    //
+    // **Polar and boreal get DIFFERENT ladders** — that is the payoff of the four-rung band
+    // ladder (§8.1). The retired code reached these two sets through two unrelated raw-latitude
+    // tests (`polar_latitude_cutoff` for the ice set, `high_latitude_threshold` for the taiga
+    // set) which could and did disagree; now one variable selects both, so the taiga band is
+    // exactly the ground between freezing and the temperate boundary.
+    match band {
+        ClimateBand::Polar => {
+            return pick(
+                noise,
+                &[
+                    TerrainType::Tundra,
+                    TerrainType::PeriglacialSteppe,
+                    TerrainType::SeasonalSnowfield,
+                ],
+            );
+        }
+        ClimateBand::Boreal => {
+            return pick(
+                noise,
+                &[
+                    TerrainType::BorealTaiga,
+                    TerrainType::MixedWoodland,
+                    TerrainType::PeatHeath,
+                ],
+            );
+        }
+        ClimateBand::Temperate | ClimateBand::Tropical => {}
     }
 
     // Rare "discovery" biomes. Only a low `anomaly_fraction` of eligible lowland tiles pass
@@ -723,18 +752,27 @@ pub fn classify_terrain(
     // (`select_mountain_terrain`) and the real-elevation branches in
     // `terrain_for_position_with_classifier`, so they always sit on genuinely high
     // ground. The base classifier only assigns climate/humidity lowland biomes.
-    if humidity > 0.7 && !is_high_latitude {
+    // Reached only in the temperate/tropical bands (both cold bands returned above), so the
+    // retired `!is_high_latitude` guard is gone with the latitude variable it read.
+    //
+    // `PeatHeath` is NOT a member here any more. It is the cold wetland — the only biome
+    // carrying both WETLAND and POLAR, which is exactly why the tag solver's wetland pass
+    // reaches for it inside the cold band — so listing it as a warm humid lowland was the other
+    // half of the §7.1 bug: it put a cold biome in warm air on ~276 tiles per map. The warm
+    // humid wetland is `FreshwaterMarsh`, which the wetland pass already uses outside the cold
+    // band.
+    if humidity > 0.7 {
         return pick(
             noise,
             &[
                 TerrainType::Floodplain,
                 TerrainType::AlluvialPlain,
-                TerrainType::PeatHeath,
+                TerrainType::FreshwaterMarsh,
             ],
         );
     }
 
-    if humidity > 0.5 && !is_high_latitude {
+    if humidity > 0.5 {
         return pick(
             noise,
             &[
@@ -765,17 +803,6 @@ pub fn classify_terrain(
                 TerrainType::SemiAridScrub,
                 TerrainType::PrairieSteppe,
                 TerrainType::RollingHills,
-            ],
-        );
-    }
-
-    if is_high_latitude {
-        return pick(
-            noise,
-            &[
-                TerrainType::BorealTaiga,
-                TerrainType::MixedWoodland,
-                TerrainType::PeatHeath,
             ],
         );
     }
@@ -847,6 +874,7 @@ pub fn terrain_for_position_with_classifier(
     elevation: Option<f32>,
     mountain: Option<(MountainType, f32)>,
     classifier: &TerrainClassifierConfig,
+    band: ClimateBand,
 ) -> (TerrainType, TerrainTags) {
     // The bands path passes `Some(elevation)` (real bathymetry decided land/water upstream);
     // the preset-less fallback passes `None` and keeps the legacy edge-ring behavior.
@@ -855,17 +883,16 @@ pub fn terrain_for_position_with_classifier(
     } else {
         BathymetryContext::Absent
     };
-    let mut terrain = classify_terrain(position, grid_size, classifier, bathymetry);
+    let mut terrain = classify_terrain(position, grid_size, classifier, bathymetry, band);
     let mut definition = terrain_definition(terrain);
     let mut tags = definition.tags;
     let moisture = moisture.unwrap_or(0.5);
-    let lat_denom = grid_size.y.saturating_sub(1).max(1) as f32;
-    let lat = position.y as f32 / lat_denom;
-    let dist_from_equator = (lat - 0.5).abs();
-    let is_polar_lat = dist_from_equator >= classifier.polar_latitude_cutoff;
+    // Temperature, not latitude, decides whether this mountain ices over — so a tall cold peak
+    // glaciates at any latitude, and a warm near-polar one does not.
+    let is_cold = band.admits_cold_biomes();
 
     if let Some((kind, relief)) = mountain {
-        if is_polar_lat {
+        if is_cold {
             // Revived flavor biome (`docs/plan_biome_palette.md` §3.6): the coldest,
             // highest polar tiles (relief clearing the Alpine threshold) ice over into
             // a Glacier; lower polar relief stays a wind-scoured SeasonalSnowfield.
@@ -888,7 +915,7 @@ pub fn terrain_for_position_with_classifier(
             tags = definition.tags;
         }
     } else if let Some(elev) = elevation {
-        if !is_polar_lat
+        if !is_cold
             && elev >= classifier.high_dry_elevation
             && moisture < classifier.high_dry_moisture
         {
@@ -914,6 +941,7 @@ pub fn terrain_for_position_with_context(
     moisture: Option<f32>,
     elevation: Option<f32>,
     mountain: Option<(MountainType, f32)>,
+    band: ClimateBand,
 ) -> (TerrainType, TerrainTags) {
     terrain_for_position_with_classifier(
         position,
@@ -922,11 +950,16 @@ pub fn terrain_for_position_with_context(
         elevation,
         mountain,
         &TerrainClassifierConfig::default(),
+        band,
     )
 }
 
-pub fn terrain_for_position(position: UVec2, grid_size: UVec2) -> (TerrainType, TerrainTags) {
-    terrain_for_position_with_context(position, grid_size, None, None, None)
+pub fn terrain_for_position(
+    position: UVec2,
+    grid_size: UVec2,
+    band: ClimateBand,
+) -> (TerrainType, TerrainTags) {
+    terrain_for_position_with_context(position, grid_size, None, None, None, band)
 }
 
 fn tile_noise(position: UVec2) -> u32 {
@@ -972,6 +1005,7 @@ mod tests {
             Some(0.55),
             Some(0.9),
             Some((MountainType::Fold, BELT_CORE_RELIEF)),
+            ClimateBand::Temperate,
         );
         assert_eq!(terrain, TerrainType::AlpineMountain);
         assert!(tags.contains(TerrainTags::HIGHLAND));
@@ -987,6 +1021,7 @@ mod tests {
             Some(0.7),
             Some(0.75),
             Some((MountainType::Dome, 1.1)),
+            ClimateBand::Temperate,
         );
         assert_eq!(wet_terrain, TerrainType::HighPlateau);
         assert!(wet_tags.contains(TerrainTags::HIGHLAND));
@@ -997,6 +1032,7 @@ mod tests {
             Some(0.25),
             Some(0.72),
             Some((MountainType::Dome, 1.1)),
+            ClimateBand::Temperate,
         );
         assert_eq!(dry_terrain, TerrainType::RollingHills);
     }
@@ -1072,6 +1108,8 @@ mod tests {
                     grid,
                     &classifier,
                     BathymetryContext::Absent,
+                    // Anomalies are a warm-lowland branch; the cold ladder returns before it.
+                    ClimateBand::Temperate,
                 );
                 if ANOMALY_BIOMES.contains(&terrain) {
                     seen.insert(terrain);
@@ -1102,6 +1140,8 @@ mod tests {
                     grid,
                     &classifier,
                     BathymetryContext::Absent,
+                    // Anomalies are a warm-lowland branch; the cold ladder returns before it.
+                    ClimateBand::Temperate,
                 );
                 if ANOMALY_BIOMES.contains(&terrain) {
                     anomaly += 1;
@@ -1128,6 +1168,7 @@ mod tests {
             Some(0.3),
             Some(0.8),
             Some((MountainType::Volcanic, 0.6)),
+            ClimateBand::Temperate,
         );
         assert_eq!(low_relief, TerrainType::BasalticLavaField);
         let (high_relief, _) = terrain_for_position_with_context(
@@ -1136,6 +1177,7 @@ mod tests {
             Some(0.3),
             Some(0.9),
             Some((MountainType::Volcanic, 2.0)),
+            ClimateBand::Temperate,
         );
         assert_eq!(high_relief, TerrainType::ActiveVolcanoSlope);
     }
@@ -1143,13 +1185,15 @@ mod tests {
     #[test]
     fn glacier_is_reachable_from_high_relief_polar_mountains() {
         let grid = UVec2::new(64, 48);
-        let position = UVec2::new(8, 4); // polar latitude row
+        let position = UVec2::new(8, 4);
         let (terrain, tags) = terrain_for_position_with_context(
             position,
             grid,
             Some(0.15),
             Some(0.95),
             Some((MountainType::Fold, BELT_CORE_RELIEF)), // clears alpine_relief_threshold
+            // The gate is the tile's CLIMATE, not its row — so the fixture states the climate.
+            ClimateBand::Polar,
         );
         assert_eq!(terrain, TerrainType::Glacier);
         assert!(tags.contains(TerrainTags::POLAR));
@@ -1166,6 +1210,7 @@ mod tests {
             Some(0.18),
             Some(0.88),
             Some((MountainType::Fold, BELT_EDGE_RELIEF)),
+            ClimateBand::Polar,
         );
         assert_eq!(terrain, TerrainType::SeasonalSnowfield);
         assert!(tags.contains(TerrainTags::POLAR));
@@ -1190,6 +1235,7 @@ mod tests {
             Some(0.55),
             Some(0.9),
             Some((MountainType::Fold, BELT_CORE_RELIEF)),
+            ClimateBand::Temperate,
         );
         assert_eq!(terrain, TerrainType::AlpineMountain);
         assert!(tags.contains(TerrainTags::HIGHLAND));

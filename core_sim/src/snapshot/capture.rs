@@ -149,6 +149,7 @@ pub struct SnapshotHistory {
     military_raster: ScalarRasterState,
     moisture_raster: FloatRasterState,
     elevation_overlay: ElevationOverlayState,
+    climate_bands: ClimateBandsState,
     corruption: CorruptionLedger,
     victory: VictorySnapshotState,
     capability_flags: u32,
@@ -216,6 +217,7 @@ impl SnapshotHistory {
             military_raster: ScalarRasterState::default(),
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
+            climate_bands: ClimateBandsState::default(),
             corruption: CorruptionLedger::default(),
             victory: VictorySnapshotState::default(),
             capability_flags: 0,
@@ -349,6 +351,14 @@ impl SnapshotHistory {
             None
         } else {
             Some(elevation_state.clone())
+        };
+
+        // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
+        let climate_bands_state = snapshot.climate_bands;
+        let climate_bands_delta = if self.climate_bands == climate_bands_state {
+            None
+        } else {
+            Some(climate_bands_state)
         };
 
         let start_marker_state = snapshot.start_marker.clone();
@@ -615,6 +625,7 @@ impl SnapshotHistory {
             crisis_overlay: crisis_overlay_delta.clone(),
             moisture_raster: moisture_delta.clone(),
             elevation_overlay: elevation_delta.clone(),
+            climate_bands: climate_bands_delta,
             start_marker: start_marker_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
@@ -663,6 +674,7 @@ impl SnapshotHistory {
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
         self.elevation_overlay = elevation_state;
+        self.climate_bands = climate_bands_state;
         self.start_marker = start_marker_state;
         self.logistics_raster = logistics_raster_state;
         self.sentiment_raster = sentiment_raster_state;
@@ -874,6 +886,7 @@ impl SnapshotHistory {
             crisis_overlay: None,
             moisture_raster: None,
             elevation_overlay: None,
+            climate_bands: None,
             start_marker: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
@@ -1056,6 +1069,7 @@ impl SnapshotHistory {
             crisis_overlay: None,
             moisture_raster: None,
             elevation_overlay: None,
+            climate_bands: None,
             start_marker: None,
             axis_bias: None,
             sentiment: None,
@@ -1168,6 +1182,7 @@ impl SnapshotHistory {
             crisis_overlay: None,
             moisture_raster: None,
             elevation_overlay: None,
+            climate_bands: None,
             start_marker: None,
             axis_bias: None,
             sentiment: None,
@@ -1706,6 +1721,14 @@ pub fn capture_snapshot(
 
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
+    // The climate-band cut points ride the snapshot beside the other worldgen overlays
+    // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
+    // told. A per-map constant read straight off the active `ClimateConfig`.
+    let climate_bands_state = ClimateBandsState {
+        polar_max_temp: config.climate.polar_max_temp,
+        boreal_max_temp: config.climate.boreal_max_temp,
+        temperate_max_temp: config.climate.temperate_max_temp,
+    };
     let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
         .into_iter()
         .map(|entry| entry.to_schema())
@@ -1776,6 +1799,7 @@ pub fn capture_snapshot(
         visibility_raster: visibility_raster.clone(),
         moisture_raster: moisture_overlay_state.clone(),
         elevation_overlay: elevation_overlay_state.clone(),
+        climate_bands: climate_bands_state,
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),

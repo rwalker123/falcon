@@ -77,8 +77,6 @@ use sim_runtime::{
     TradeLeakCurve,
 };
 
-const POLAR_LATITUDE_THRESHOLD: f32 =
-    TerrainClassifierConfig::default_values().polar_latitude_cutoff;
 const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
 const BUCKET_COLS: u32 = 6;

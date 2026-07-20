@@ -16,6 +16,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 };
 
 mod biome_palette;
+pub mod climate;
 mod components;
 mod crisis;
 mod crisis_config;
@@ -232,6 +233,7 @@ pub use wellbeing_config::{
 };
 
 pub use biome_palette::{BiomePalette, PALETTE_SEED_SALT};
+pub use climate::{climate_band_for_temperature, ClimateBand};
 pub use metrics::SimulationMetrics;
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
@@ -261,6 +263,7 @@ pub use systems::{
     output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
     TradeDiffusionEvent,
 };
+pub use systems::{apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf};
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
     BeatCatalogHandle, BeatCatalogMetadata, BeatChoice, BeatConfig, BeatConfigHandle,

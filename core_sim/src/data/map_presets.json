@@ -90,7 +90,7 @@
         "volcanic_coastal_base": 0.55,
         "volcanic_coastal_gain": 0.7
       },
-      "climate_band_weights": { "polar": 0.12, "temperate": 0.46, "tropical": 0.42 },
+      "climate_band_weights": { "polar": 0.12, "boreal": 0.29, "temperate": 0.46, "tropical": 0.42 },
       "_comment_water_target": "INERT. The tag-budget solver no longer has a water branch: water share is an ELEVATION outcome (the land mask is a pure threshold of the heightfield, and the contour anchor puts the target_land_pct quantile exactly on sea_level). This target is kept only so the tag census has a reference figure, and should still track 1 - macro_land.target_land_pct for that reading to be meaningful. Listing \"Water\" in locked_terrain_tags no longer does anything.",
       "terrain_tag_targets": {
         "Water": 0.62,
@@ -231,7 +231,7 @@
         "volcanic_coastal_base": 0.55,
         "volcanic_coastal_gain": 0.7
       },
-      "climate_band_weights": { "polar": 0.18, "temperate": 0.42, "tropical": 0.4 },
+      "climate_band_weights": { "polar": 0.18, "boreal": 0.30, "temperate": 0.42, "tropical": 0.4 },
       "terrain_tag_targets": {
         "Water": 0.58,
         "Coastal": 0.07,

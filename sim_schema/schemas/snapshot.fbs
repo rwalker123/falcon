@@ -209,6 +209,18 @@ table ElevationOverlay {
   seaLevel:float;
 }
 
+// The climate-band ladder cut points (docs/plan_climate_authority.md §8.3). The sim
+// owns these thresholds and publishes them so the client renders the band it is TOLD
+// rather than deciding one — the same reason seaLevel rides the elevation overlay. Each
+// is the inclusive upper temperature bound of a band; a tile is polar at or below
+// polarMaxTemp, boreal up to borealMaxTemp, temperate up to temperateMaxTemp, tropical
+// above. The client's retired cool_min == borealMaxTemp (§5.2): one boundary, stated once.
+table ClimateBands {
+  polarMaxTemp:float;
+  borealMaxTemp:float;
+  temperateMaxTemp:float;
+}
+
 table InfluentialIndividualState {
   id:uint;
   name:string;
@@ -1356,6 +1368,9 @@ table MapSection {
   elevationOverlay:ElevationOverlay;
   moistureRaster:FloatRaster;
   removedTiles:[ulong];        // delta-only
+  // Per-map climate-band cut points (docs/plan_climate_authority.md §8.3). A single
+  // per-map constant, published once beside the other worldgen overlays. Appended field.
+  climateBands:ClimateBands;
 }
 
 table EconomySection {
