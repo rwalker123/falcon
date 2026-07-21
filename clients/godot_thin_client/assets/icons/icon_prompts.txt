@@ -80,7 +80,7 @@
 # ============================================================================
 # HOUSE STYLE
 # ============================================================================
-#
+
 # Every icon is a flat vector game marker, not an illustration. The skeleton:
 #
 #   Flat vector game icon of a <subject + its 2-3 identifying features>,
@@ -96,8 +96,10 @@
 # The load-bearing clauses — do not drop them:
 #   * SIDE PROFILE FACING RIGHT — the whole set faces right; one that faces left
 #     reads as broken in a roster row.
-#   * THICK DARK OUTLINE + fills LIGHTER THAN THE OUTLINE — this is what keeps the
-#     silhouette legible at marker size over any terrain.
+#   * THICK DARK OUTLINE — this is what keeps the silhouette legible at marker size
+#     over any terrain, and it is the one clause every shipped icon has. Naming the
+#     fills as lighter than the outline HELPS but is not strictly required: the
+#     shipped deer and rabbit prompts omit it and read fine.
 #   * NO GROUND SHADOW — a cast shadow keys out as a grey smear or survives as a
 #     dirty fringe, and the marker is composited over terrain that supplies its own.
 #   * READABLE AT 24 PIXELS — the real constraint. Fine texture, gradients and
@@ -105,25 +107,118 @@
 #   * SOLID MAGENTA BACKGROUND — the chroma key depends on it being flat and uniform.
 #   * CALM NEUTRAL POSE/EXPRESSION — these are map markers, not action art.
 #
-# ============================================================================
-# FAUNA
-# ============================================================================
-
-# --- REFERENCE EXEMPLAR (the canonical house style; art shipped as fowl.png) ---
-fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched tail, a red comb and wattle, and a compact rounded body, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm copper brown and dark bronze tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the bird floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
-
-# --- Grey Seals (species `seal`, coastal_littoral, hunt-only) ---
-# The set's first MARINE animal, so it departs from the warm earth palette on
-# purpose: cool greys read as "sea mammal" instantly and keep it distinct from the
-# brown quadrupeds beside it in a roster. The hauled-out pose (belly down, head and
-# chest raised) is what makes a limbless torpedo shape read as a seal rather than a
-# fish at 24px — a swimming pose loses the silhouette entirely.
-seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # ============================================================================
-# SITES / WONDERS / STAGES
+# FAUNA  ->  assets/icons/fauna/  (ui/FaunaSprites.gd)
 # ============================================================================
 #
-# Same pipeline, same house style, minus the animal-specific clauses (a site or a
-# settlement token has no facing or facial expression). Prompts for the shipped art
-# in those families were not preserved; add new ones here as they are generated.
+# The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
+# alias onto one file (see the notes). Coverage is complete: 11 files, 11 prompts.
+
+
+# aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
+aurochs: Flat vector game icon of a wild aurochs, a massive shaggy wild ox with a high shoulder hump and long forward-curving horns, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in deep warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+boar: Flat vector game icon of a wild boar standing in a calm neutral pose, with humped bristly shoulders, a short thick snout and two prominent curved white tusks, short sturdy legs, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in medium warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, the back bristles drawn as a few chunky simple spikes rather than many fine hairs, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the boar floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# cattle.png — the domestic ox; keyword aliases `cattle` + `oxen`
+cattle: Flat vector game icon of a domestic ox, a stocky heavy-bodied cow with short blunt horns and a straight back, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in light tan and cream earth tones with simple two-tone shading, clearly lighter overall than a dark wild ox, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# deer.png — also serves reindeer / caribou / elk / gazelle
+deer: Flat vector game icon of a wild red deer stag with large branching antlers, a slender body and long legs, head raised alert, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the deer floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# fowl.png — also serves grouse
+fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched tail, a red comb and wattle, and a compact rounded body, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm copper brown and dark bronze tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the bird floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# goat.png — also serves ibex
+goat: Flat vector game icon of a wild goat, a small slender animal with long backward-sweeping curved horns and a pointed chin beard, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm sandy tan earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+horse: Flat vector game icon of a wild horse with a short upright bristly mane, a compact sturdy body and a flowing tail, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in dun and warm grey-brown earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the horse floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+mammoth: Flat vector game icon of a woolly mammoth standing in a calm neutral pose, with two huge curved tusks, a domed head, a raised curled trunk and shaggy hanging fur, sturdy column legs, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in medium warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, the shaggy fur drawn as a few chunky simple locks rather than many fine hairs, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the mammoth floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+rabbit: Flat vector game icon of a wild brown rabbit with long upright ears, a compact crouched body and a short round tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the rabbit floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# seal.png — fauna/seal.png — NOT the same image as sites/seal.png
+seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a small dark face and dark slender legs, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette using a soft cream and warm grey fleece that is clearly darker than pure white, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the sheep floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# SITES  ->  assets/icons/sites/  (ui/SiteSprites.gd)
+# ============================================================================
+#
+# Keyed by FILENAME; the comment gives the FoodIcons module the file serves (the
+# SPRITE_PATHS key is the module, the file is the art). `hunt` has no file of its
+# own — a hunted site reuses fauna/deer.png.
+#
+# STILL MISSING PROMPTS: chestnut.png (temperate_forest) and sites/seal.png
+# (boreal_arctic) — a DIFFERENT image from fauna/seal.png. Add them when regenerated.
+
+
+# shell.png — coastal_littoral
+shell: Flat vector game icon of a small cluster of seashells, one large spiral shell and two clam shells, arranged as a compact group shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in warm sand and pale coral tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# fish.png — riverine_delta
+fish: Flat vector game icon of a single plump river fish seen in side profile facing right, with a broad tail fin and a visible dorsal fin, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool blue-grey and silver tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# grain.png — savanna_grassland
+grain: Flat vector game icon of a small bundle of ripe wheat ears with heavy drooping golden heads on short stalks, tied as a compact sheaf shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in golden amber and wheat tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# tuber.png — montane_highland
+tuber: Flat vector game icon of three oval root tubers with small sprouting eyes and a few thin roots, arranged as a compact cluster shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in dusty purple and warm tan tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# lotus.png — wetland_swamp
+lotus: Flat vector game icon of an open water lily flower with broad rounded petals resting beside one flat lily pad, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette using a pale rose pink flower against a deep green pad, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# cactus.png — semi_arid_scrub
+cactus: Flat vector game icon of a stout barrel cactus with two short upright arms and visible vertical ridges, topped with one small red bloom, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in muted sage green tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# shrimp.png — coastal_upwelling
+shrimp: Flat vector game icon of a single curled shrimp seen in side profile facing right, with a segmented body, long antennae and a fanned tail, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm coral pink and orange tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# mushroom.png — mixed_woodland
+mushroom: Flat vector game icon of a cluster of three round-capped mushrooms of differing heights on short thick stems, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette using warm russet brown caps above pale cream stems, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# reeds.png — FoodIcons.SITE_KEY_REEDS — the riverine reed variant
+reeds: Flat vector game icon of a small stand of tall marsh reeds with narrow upright stalks and dark brown seed heads, arranged as a compact clump shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in muted olive green and warm brown tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# sprig.png — FoodIcons.SITE_KEY_DEFAULT — the unknown-module fallback
+sprig: Flat vector game icon of a small leafy green sprig with a few broad simple leaves on a short stem, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in fresh medium green tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# WONDERS  ->  assets/icons/wonders/  (ui/WonderSprites.gd)
+# ============================================================================
+#
+# Keyed by the sim's stable `site_id` from core_sim/src/data/sites_config.json.
+
+
+# great_peak.png — site_id great_peak
+great_peak: Flat vector game icon of a single dramatic mountain peak with a snow-capped summit and one lower shoulder ridge, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in cool slate grey and stone blue with a pale snow cap that reads clearly against the rock, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# verdant_basin.png — site_id verdant_basin
+verdant_basin: Flat vector game icon of a lush green oasis basin, a small pool of blue water cradled in a bowl of green banks with two simple broad-leafed plants at its edge, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette using a bright blue pool against deep green banks so the water reads as the focal point, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# SETTLEMENT STAGES  ->  assets/icons/stages/  (ui/StageSprites.gd)
+# ============================================================================
+#
+# Keyed by the sim's `settlement_stage_config.json` id — the server sends the key,
+# so there is no client-side resolver. These are the ONE family whose art must read
+# as a PROGRESSION (nomadic -> camp -> village); see the warning on `camp`.
+
+
+# nomadic.png — stage id nomadic (⛺ Nomadic band)
+nomadic: Flat vector game icon of a simple conical hide tent with a single pole tip poking through the top and a dark triangular door opening, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in muted tan and warm grey hide tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# camp.png — stage id camp (🛖 Seasonal camp)
+# ⚠ UNRESOLVED: this prompt is currently IDENTICAL to `nomadic` (both a single conical
+# hide tent), so the first two stage tokens would render the same art. That defeats the
+# family's whole job — the token exists to show the settlement PROGRESSION, and the sim
+# itself distinguishes them (⛺ tent vs 🛖 hut). A seasonal camp should read as a step up:
+# e.g. two or three tents clustered with a drying rack or a hearth, or a sturdier hut with
+# a low wall. Regenerate before shipping camp art; the shipped camp.png predates this file.
+camp: Flat vector game icon of a simple conical hide tent with a single pole tip poking through the top and a dark triangular door opening, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in muted tan and warm grey hide tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# village.png — stage id village (🏘️ Village)
+village: Flat vector game icon of a small cluster of three simple houses with pitched roofs at differing heights standing close together, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire group, flat limited color palette in muted terracotta roofs above pale clay walls, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
