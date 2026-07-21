@@ -6,7 +6,7 @@
   "provision_draw_per_worker_per_tile": 1.0,
   "provision_upkeep_per_worker": 0.5,
   "hunt": {
-    "per_worker_carry": 4.0,
+    "per_worker_carry": 0.8,
     "reach_tiles": 1,
     "drop_off_within_tiles": 3,
     "min_deliver_fraction": 0.5,
