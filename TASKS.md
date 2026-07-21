@@ -811,7 +811,9 @@ from `display_name`; keywords for aurochs/bison/horse/goat/sheep already mapped 
 `species`/`sizeClass`/`husbandryCeiling` are free-form wire strings — **no Rust, client, or schema edit
 to add an animal whose fields fit the existing enums.**
 
-- [ ] **SHEEP — the missing Neolithic founder. DO THIS FIRST, right after slice 8.** We ship three of the
+- [x] **SHEEP — the missing Neolithic founder. SHIPPED** (worktree `fauna-roster`) as `wild_sheep`
+  (savanna_grassland, pen, `animals_per_herder` 50 — the shepherd signature). Pure config, icon 🐑
+  already mapped. We ship three of the
   four founder animals — **cattle** (Wild Aurochs), **pig** (Wild Boar), **goat** (Crag Goats) — and no
   **sheep**. Goats do not cover them: goats *browse* (anything, on rough marginal ground — which is why we
   put Crag Goats on `montane_highland`/`semi_arid_scrub`), sheep *graze* (they want open grass) and are
@@ -831,13 +833,32 @@ to add an animal whose fields fit the existing enums.**
     lot of with almost no labor**. That's a genuinely different answer to "how do I feed people", and it's
     the clearest test of whether the herder mechanic added in slice 8 earns its keep. **Deps: slice 8**
     (the lever must exist first). Verify it spawns (live `host_biomes` key + non-zero `abundance.per_biome`).
-- [ ] **Fill out the rest of the start-game roster (config).** Add the remaining animals as
-  `fauna_config.json` entries with designed ecology (biome affinity via `host_biomes`, stat block,
-  husbandry ceiling): **Wild Horse** (grassland; decide `pastoral` vs `pen`); more **regional game** to
-  give each biome a distinct fauna signature (currently many biomes share a short game list). Manual-first
-  (new gameplay content → `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config
-  entries. Verify each actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an
-  unmatched key silently never spawns.
+- [~] **Fill out the rest of the start-game roster (config).** SHIPPED so far (worktree `fauna-roster`):
+  **Wild Reindeer** (boreal_arctic/montane_highland, `pastoral` — the northern migrator, grows the
+  herd-but-never-fence tier), **Wild Horse** (savanna_grassland/semi_arid_scrub, `pastoral` — the
+  dry-steppe migrator, distinct from grassland-only Steppe Runners), and **Grey Seals** (coastal_littoral,
+  `wild` — the first marine species, a non-grazing constant-K haul-out colony). STILL OPEN: more
+  **regional game** to give each biome a distinct fauna signature (many biomes still share a short game
+  list — scrub/highland/forest each want a signature short-range species, which needs an
+  `abundance.per_biome` entry). Manual-first (new gameplay content →
+  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
+  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
+  never spawns.
+- [x] **Migratory placement now respects `host_biomes`. SHIPPED** (worktree `fauna-roster`). Was a real
+  bug found during this arc: `spawn_migratory_herds` picked a random migratory species and spiralled its
+  route around the *player start*, never reading `host_biomes` — so a migratory species' range was dead
+  metadata (the mammoth's boreal/montane range was cosmetic) and every migratory herd clustered at the
+  start. `fauna::build_migratory_route` now anchors a migratory herd's loiter patches on
+  `host_biomes`-suitable tiles across the map and migrates between them (less-suitable ground crossed on
+  the legs). In-biome anchor fraction **0.27 → 1.00** over 6 seeds. Consequence: migratory game is no
+  longer guaranteed near the start (short-range game, map-wide on suitable biomes, still is).
+- [ ] **WORLDGEN BLOCKER — coastal fauna has no habitat.** The `earthlike` preset never renders
+  `coastal_littoral` *land*: its coasts are `ContinentalShelf` → `coastal_upwelling` (a *water* fishery,
+  the forage layer). So **Grey Seals AND Wild Fowl** (both host `coastal_littoral`) never spawn on a
+  generated map — the reason the coast has read as fauna-empty all along. This is a **worldgen** fix, not
+  fauna: make earthlike coasts/deltas produce some tidal/mangrove/delta littoral land so the
+  `coastal_littoral` niche is reachable. Until then the seal is correct-but-habitatless (its constant-K
+  model is test-pinned; it appears wherever littoral land exists). Owner: worldgen.
   **NOTE — Bison is already in the roster.** It was listed here as a gap, but Steppe Runners *are* bison
   conceptually (settled with the user: 120/head, ~76 head at K — bison/wild-horse scale, not the mammoth's
   800/head), and they carry the **only** `pastoral` ceiling in the game. Don't add a duplicate; and don't
