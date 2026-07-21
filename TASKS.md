@@ -854,6 +854,53 @@ to add an animal whose fields fit the existing enums.**
   (movement fields on `SpeciesDef`; a data table or terrain-keyed affinity). The named roster above
   (bison/horse/caprines/aurochs) needs **none** of this — defer until a species actually requires it.
 
+### Flora Roster & Ecology (named plant species) — NOT YET STARTED
+
+**Why this exists.** Fauna is a concrete, data-driven roster (9 named species in
+`core_sim/src/data/fauna_config.json`, each a hand-tuned stat block); **flora has no named species at
+all.** Plants are modeled *abstractly* on three layers: `forage.capacity_by_biome`
+(`labor_config.json`, 38 biome rows of human-edible biomass), the `FoodModule` enum (`food.rs:14`, 10
+biome-keyed *gathering categories* — "what kind of gathering", not "which plant"), and the
+`wild → tended → field` intensification ladder (`intensification_ladder.json`, abstract rungs, no
+per-crop identity). That asymmetry is the itch: you can *name* the aurochs you herd but not the plant
+you sow. This arc gives flora a named roster to match fauna — **so plants become specific enough to
+carry animal feed and market crops, which the abstract model cannot express.**
+
+The three plant *roles* this needs to represent — none of which fit today's single human-forage scalar:
+- **Subsistence / staple food** — the human food web the forage layer already models abstractly
+  (seeds, nuts, tubers, fruit, shellfish). Named here so a biome's food signature reads as specific
+  plants, not a bare capacity number.
+- **Animal feed / fodder — the missing layer.** There is **no hay / fodder crop today.** Pens
+  self-feed from the live `GrazePatch` (grazing 2d), which chains herd size directly to standing
+  pasture. A cultivated, **storable** fodder (hay) is what historically decoupled the two — it lets a
+  herd overwinter or exceed live-graze carrying capacity. This is the flora side of the deferred
+  "Phase 2 — grazing / `ForagePatch` transpose" note above, and it must interlock with the pen/graze
+  economy rather than bolt on beside it.
+- **Market / cash crops** — **tobacco, cotton, sugar, tea** (and kin). Non-food trade goods with
+  strong biome affinity; they feed the command **yield-vector's** trade-good dimension and the Market
+  economy, and create a genuine land-use tension (calories *or* cash from the same scarce good tile).
+
+**Design tension to resolve first (do NOT skip).** The whole point of the abstract model was to avoid
+the 4X "settle turn 1, plant wheat" ritual — a fake decision (see the *scarcity-drives-the-real-decision*
+and *emergent-not-quota* principles). Named crops must **earn** their place through biome affinity +
+scarcity + the intensification ladder, so *which* crop and *whether it's worth the land* stay real
+choices — not a tech-tree checklist you fill regardless of terrain. The design doc has to show this
+before any config lands.
+
+- [ ] **Design doc first (manual-first, then config).** Author `docs/plan_flora_roster.md`: the flora
+  schema (mirror the `fauna_config.json` / `SpeciesDef` data-driven pattern — likely a
+  `flora_config.json` + loader, so adding a plant is config, not code), the three roles above, biome
+  affinity (reuse the `FoodModule` buckets or a terrain-keyed table — decide), how fodder interlocks
+  with `GrazePatch`/pen upkeep, and how cash crops feed the yield-vector + Market. New gameplay content
+  → add to `shadow_scale_strategy_game_concept_technical_plan_v_0.md` first, then the config. Cross-link
+  `docs/plan_grazing_foundation.md` (the two food webs), `docs/plan_intensification_ladder.md` (the
+  rung grammar), and this fauna section (the roster pattern it parallels).
+- [ ] **Then phased impl** — seed a starter roster per role, wire fodder into the pen economy, wire
+  cash crops into trade. Scope the phases in the design doc.
+
+**Deferred — fauna is the active arc.** The current work continues on the Fauna Roster above (sheep →
+horse → regional game); flora is the *next* content arc, not this one.
+
 ### Exploration & Wondrous Sites
 
 Design: `docs/plan_exploration_and_sites.md`. The early-game exploration layer — makes scouting
