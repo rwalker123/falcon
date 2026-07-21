@@ -40,6 +40,7 @@ const SPRITE_PATHS := {
 	"ibex": SPRITE_DIR + "goat.png",
 	"horse": SPRITE_DIR + "horse.png",
 	"sheep": SPRITE_DIR + "sheep.png",
+	"seal": SPRITE_DIR + "seal.png",
 	"fowl": SPRITE_DIR + "fowl.png",
 	"grouse": SPRITE_DIR + "fowl.png",
 }

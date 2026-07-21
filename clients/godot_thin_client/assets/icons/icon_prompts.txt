@@ -36,6 +36,33 @@
 #    (whiskers, antler tines) are being eaten. It trims and re-frames with a 6%
 #    margin per side so the outline never touches the texture edge.
 #
+#    THE DEFAULTS ARE TOO TIGHT FOR AI-TOOL OUTPUT. Those defaults assume clean
+#    input; generators hand back JPEGs, whose ringing around the subject leaves a
+#    visible MAGENTA RIM on the keyed PNG. Measured on the seal render, residual
+#    magenta fell 421 -> 325 -> 238 as --hi went 90 -> 130 -> 170. So for a JPEG:
+#
+#      python3 scripts/texture/icon_key.py in.jpg out.png --size 256 --lo 55 --hi 170
+#
+#    Always eyeball the keyed PNG for a pink rim before shipping it — a halo is
+#    invisible at 1024 against magenta and obvious once composited over terrain.
+#
+#    THE .import SIDECAR GODOT GENERATES IS WRONG BY DEFAULT. It writes
+#    mipmaps/generate=false and process/size_limit=0; every shipped icon needs
+#    mipmaps/generate=true and process/size_limit=64. Correct the sidecar after the
+#    first import and reimport, then diff it against a sibling (e.g. deer.png.import)
+#    — it should match modulo the uid and the .ctex path hash.
+#
+#    JUDGE AT TRUE MARKER SIZE (24-41px), NEVER at 1024. The two seal candidates
+#    inverted between the two: the one that looked bolder at full size lost its
+#    head/snout separation when downscaled, and the sleeker one won. Downscale
+#    candidates side by side against a shipped sprite before choosing.
+#
+#    A LOW, WIDE SUBJECT RENDERS SMALLER THAN ITS NEIGHBOURS, and that is correct.
+#    The framing normalizes the silhouette's bounding box into the square, so a
+#    hauled-out seal fills the width but only ~40% of the height and reads smaller
+#    on the map than a tall quadruped. Preserving aspect is right; do not "fix" it
+#    by cropping or stretching.
+#
 # 3. PLACE the PNG in the family's directory, named for its art KEY
 #    (e.g. fauna/seal.png).
 #
