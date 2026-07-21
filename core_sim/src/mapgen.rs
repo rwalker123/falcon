@@ -1128,10 +1128,10 @@ fn classify_bands(
 /// nothing else and touches only `mask`. It is extracted out of [`derive_mountain_mask`] precisely so
 /// the plate→fold contract can be unit-tested with **hand-constructed plates**, rather than by routing
 /// a synthetic elevation field through `build_bands` and *hoping* the RNG-seeded plate seeding
-/// (`pick_plate_seeds`) happens to place two plates whose drift converges. That indirection was
-/// knife-edge sensitive to plate-seed placement — during PR #133 review a single 3-tile island flipped
-/// a preset fold count between 202 and 0 — so the coverage it gave was luck, not structure. The move is
-/// a byte-identical lift of the original inline block (guarded by the worldgen regression baselines).
+/// (`pick_plate_seeds`) happens to place two plates whose drift converges. That indirection is
+/// knife-edge sensitive to plate-seed placement — removing a single small island can flip a preset's
+/// fold count by hundreds — so the coverage it gave was luck, not structure. The move is a
+/// byte-identical lift of the original inline block (guarded by the worldgen regression baselines).
 ///
 /// `plate_ids[i] < 0` means "no plate" (ocean / unassigned) and is skipped. A plate id out of range for
 /// `plate_flows` reads as a zero vector (`dot == 0`), matching the original inline guard.
@@ -3331,9 +3331,9 @@ mod tests {
     /// shared boundary; two plates whose drift **aligns** raise nothing. This pins the plate→fold
     /// contract on **hand-constructed plates**, so it can never pass on luck the way a pipeline fixture
     /// does when RNG plate-seeding (`pick_plate_seeds`) happens — or fails — to place two converging
-    /// plates. That indirection was knife-edge sensitive: during the PR #133 review, removing a single
-    /// 3-tile island flipped `polar_contrast_preset_builds_bands` between `fold = 202` and `fold = 0`.
-    /// Here the plates are the input, so the fold count is a property of the code, not the geometry.
+    /// plates. That indirection is knife-edge sensitive: removing a single small island can flip a
+    /// pipeline fixture's fold count by hundreds. Here the plates are the input, so the fold count is a
+    /// property of the code, not the geometry.
     #[test]
     fn stamp_fold_belts_folds_only_a_converging_boundary() {
         // 11×5 grid split into a left plate (x ≤ 5) and a right plate (x ≥ 6).
