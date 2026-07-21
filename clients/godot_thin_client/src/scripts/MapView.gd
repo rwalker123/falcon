@@ -2023,11 +2023,12 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _band_effective_col(band_col, radius, origin)
 	var band_center := _hex_center(eff_col, band_row, radius, origin)
 
-	# Scouting no longer draws a disc: `scout_reveal_radius` now carries the band's scout vantage
-	# distance (how far forward-observer vantages are posted, `0` with no scouts), and its effect is
-	# visible directly in the fog — staffed scouts reveal LOS from vantages that see around obstacles.
-	# The client can't reconstruct the true revealed area (it doesn't know the server-side LOS/terrain),
-	# so nothing is drawn here.
+	# Scouting draws no filled REVEAL DISC: `scout_reveal_radius` carries the band's scout vantage
+	# distance (how far forward-observer vantages are posted, `0` with no scouts), not a revealed-area
+	# radius. Staffed scouts reveal LOS from vantages that see around obstacles, and that true revealed
+	# area — which the client can't reconstruct (it doesn't know the server-side LOS/terrain) — shows
+	# directly in the fog. What IS drawn (below) is the azure scout range BORDER: a perimeter outline at
+	# `scout_reveal_radius` marking how far the vantage reach extends, not the tiles actually revealed.
 
 	# 1. Range borders — three clean perimeter outlines of the band's reaches (see _draw_range_border):
 	#    forage (green), hunt (red, only when it extends past the forage reach), and scout sight
