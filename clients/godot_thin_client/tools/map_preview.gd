@@ -1221,6 +1221,9 @@ func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary
 		"size": 30,
 		"id": "Band 1",
 		"work_range": work_range,
+		# hunt_reach = work_range + the hunt leash (the sim ships 5 = 2 + 3), so the selected-band
+		# HUNT range border draws at R=5 and the deer herd at (13,6) sits right on it.
+		"hunt_reach": work_range + 3,
 		"scout_reveal_radius": scout_radius,
 		"labor_assignments": assignments,
 	}, STAGE_NOMADIC)
@@ -1302,7 +1305,9 @@ func _snapshot_work() -> Dictionary:
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
-	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
+	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
+	# frame: green R2 innermost, azure R4, red hunt R5 outermost (the deer sits on the hunt border).
+	return _base_snapshot(_band(assignments, 2, 4), [_deer_herd()])
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
 ## its secondary glyph is drawn over that tile's yield label (the reported failure).

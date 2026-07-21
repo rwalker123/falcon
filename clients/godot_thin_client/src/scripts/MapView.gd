@@ -529,17 +529,36 @@ const EXPEDITION_GATHER_CUE_FACTOR := 0.30       # red gathering-cue ring radius
 const EXPEDITION_GATHER_CUE_OFFSET := 0.85       # cue offset down-right from marker center, of marker radius
 const EXPEDITION_GATHER_CUE_WIDTH := 2.0
 # Selected-player-band labor highlights (Early-Game Labor slice 3b). Distinct styles so
-# the layers read apart: the work-range reach (thin cyan outlines = "reachable"), the worked
-# forage tiles (strong green fill = "being worked"), and the hunted herds (red ring + link).
-# (Scouting no longer draws a disc — it extends the band's real sight, visible directly in the
-# fog; `scout_reveal_radius` is now a sight-range bonus, not a reveal-disc radius.)
+# the layers read apart: the three RANGE BORDERS (clean perimeter outlines = "how far each
+# reach extends"), the worked forage tiles (strong green fill = "being worked"), and the
+# hunted herds (red ring + link).
 # See _draw_band_work_highlights.
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
-# Work-range ring: outline every in-range tile (Chebyshev square), no fill — reads as the
-# reachable-forage cluster without competing with the worked-tile fills.
-const WORK_RANGE_OUTLINE := Color(0.310, 0.878, 0.812, 0.34)  # faint SIGNAL cyan
-const WORK_RANGE_OUTLINE_WIDTH := 1.5
+# Selected-band RANGE BORDERS: three clean PERIMETER outlines (the outer boundary of each hex
+# disk, traced edge-by-edge — NOT a filled tile-by-tile mesh), so the band's three reaches read
+# apart at a glance: forage (green, ties to the worked-forage fills), hunt (red, ties to the
+# hunted-herd rings), and scout sight (azure, the new "sight" color, kept clear of the slate fog
+# tint). See _draw_range_border.
+const FORAGE_RANGE_OUTLINE := Color(0.46, 0.96, 0.46, 0.85)   # green, tied to FORAGE_WORKED_*
+const FORAGE_RANGE_OUTLINE_WIDTH := 2.0
+const HUNT_RANGE_OUTLINE := Color(0.94, 0.40, 0.36, 0.85)     # red, tied to HUNT_WORKED_COLOR
+const HUNT_RANGE_OUTLINE_WIDTH := 2.0
+const SCOUT_RANGE_OUTLINE := Color(0.32, 0.66, 0.99, 0.85)    # azure "sight", distinct from fog slate
+const SCOUT_RANGE_OUTLINE_WIDTH := 2.0
+# Per-edge axial neighbour deltas in `_hex_points` EDGE order — edge i is the segment
+# pts[i]→pts[i+1], facing the direction (angle 60·i+60): 0 SE, 1 SW, 2 W, 3 NW, 4 NE, 5 E.
+# Used by _draw_range_border to test whether the tile across each edge is out of the disk (→ the
+# edge is on the perimeter). Axial so it round-trips through _offset_to_axial with no odd-r
+# parity table; must stay in _hex_points order.
+const RANGE_BORDER_EDGE_AXIAL: Array[Vector2i] = [
+	Vector2i(0, 1),   # 0 SE
+	Vector2i(-1, 1),  # 1 SW
+	Vector2i(-1, 0),  # 2 W
+	Vector2i(0, -1),  # 3 NW
+	Vector2i(1, -1),  # 4 NE
+	Vector2i(1, 0),   # 5 E
+]
 # Worked forage tiles: strong green fill + bold outline (the tiles actually being harvested).
 const FORAGE_WORKED_FILL := Color(0.30, 0.80, 0.30, 0.34)
 const FORAGE_WORKED_OUTLINE := Color(0.46, 0.96, 0.46, 0.95)
@@ -1976,14 +1995,14 @@ func _draw_supply_links(radius: float, origin: Vector2) -> void:
 				continue
 			draw_line(a, b, SUPPLY_LINK_COLOR, SUPPLY_LINK_WIDTH)
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
-##  - work-range ring: outline every tile within `work_range` of the band = the assignable
-##    forage area. Replicates the sim's true **odd-r hex distance** EXACTLY (offset→axial cube
-##    distance via _hex_distance, matching `hex_distance_wrapped`) so highlighted ==
-##    actually-assignable. This is a real hexagonal ring (19 tiles at range 2), NOT the old
-##    Chebyshev/king-move square whose diagonal corners were 3 hex-steps away yet wrongly lit.
+##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
+##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
+##    boundary == actually-in-range) — forage (green, `work_range`), hunt (red, `hunt_reach`,
+##    only when it extends past `work_range`), and scout sight (azure, `scout_reveal_radius`,
+##    only when scouts are staffed). Distinct colors so the nested reaches read apart at a glance.
 ##  - worked forage tiles: strong green fill on each `forage` assignment's target tile.
 ##  - hunted herds: a red ring on the herd tile + a band→herd link (the herd can sit outside
-##    the work-range ring — hunt reach = work_range + leash).
+##    the forage border — hunt reach = work_range + leash).
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
 func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	# Start every frame's annotation batch empty (cleared BEFORE the early-outs, so a deselected band
@@ -2010,28 +2029,19 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	# The client can't reconstruct the true revealed area (it doesn't know the server-side LOS/terrain),
 	# so nothing is drawn here.
 
-	# 1. Work-range ring: true odd-r hex-distance outline (matches the sim's hex_distance_wrapped).
-	# Iterate a ±work_range col/row bounding box (a superset of the hex disc) and outline only
-	# tiles whose hex distance from the band is <= work_range — a hexagonal ring, not a square.
+	# 1. Range borders — three clean perimeter outlines of the band's reaches (see _draw_range_border):
+	#    forage (green), hunt (red, only when it extends past the forage reach), and scout sight
+	#    (azure, only when scouts are staffed). Hunt is outermost, forage innermost; distinct colors
+	#    so the nested reaches read apart. All at every zoom, like the old work-range ring.
 	var work_range := int(band.get("work_range", 0))
+	var hunt_reach := int(band.get("hunt_reach", 0))
+	var scout_reveal_radius := int(band.get("scout_reveal_radius", 0))
 	if work_range > 0:
-		for drow in range(-work_range, work_range + 1):
-			var row := band_row + drow
-			if row < 0 or row >= grid_height:
-				continue
-			for dcol in range(-work_range, work_range + 1):
-				if dcol == 0 and drow == 0:
-					continue
-				var col := eff_col + dcol
-				# Both tiles already share the band's effective column frame, so the delta is
-				# seam-correct — measure hex distance and skip anything beyond work_range.
-				if _hex_distance(eff_col, band_row, col, row) > work_range:
-					continue
-				# Without horizontal wrap, edge columns fall off the map — don't outline
-				# nonexistent tiles (mirrors the grid_height row clamp above).
-				if not _wrap_horizontal and (col < 0 or col >= grid_width):
-					continue
-				_outline_hex(col, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
+		_draw_range_border(eff_col, band_row, work_range, FORAGE_RANGE_OUTLINE, FORAGE_RANGE_OUTLINE_WIDTH, radius, origin)
+	if hunt_reach > work_range:
+		_draw_range_border(eff_col, band_row, hunt_reach, HUNT_RANGE_OUTLINE, HUNT_RANGE_OUTLINE_WIDTH, radius, origin)
+	if scout_reveal_radius > 0:
+		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 
 	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments. Each staffed source is
 	# annotated with its per-turn `actual_yield` (LOD-suppressed at far zoom so tiny hexes stay clean).
@@ -2321,6 +2331,45 @@ func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Col
 	var pts := _hex_points(center, radius)
 	var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
 	draw_polyline(outline, color, width, true)
+
+## True if (col, row) is on-map AND within hex distance `r_range` of the band — the membership test
+## for a range disk. Both coords share the band's effective column frame (see _band_effective_col),
+## so the delta is seam-correct; off-map tiles (row/col out of bounds, sans wrap) count as OUTSIDE,
+## which is what lets a disk clipped by the map edge trace along that edge as its own border.
+func _in_range_disk(eff_col: int, band_row: int, col: int, row: int, r_range: int) -> bool:
+	if row < 0 or row >= grid_height:
+		return false
+	if not _wrap_horizontal and (col < 0 or col >= grid_width):
+		return false
+	return _hex_distance(eff_col, band_row, col, row) <= r_range
+
+## Draw the clean PERIMETER of the hex disk of radius `r_range` centered on the band's
+## (eff_col, band_row): for every in-range tile, draw each of its 6 edges ONLY when the neighbour
+## across that edge is out of the disk (or off-map), which traces the exact outer boundary as one
+## thin line — NOT a filled tile-by-tile mesh. Reuses the true odd-r `_hex_distance` membership test
+## (via _in_range_disk) and the shared `_hex_points` vertex geometry, and is seam-wrap-correct
+## because every column is measured in the band's effective frame. Shared by all three borders.
+func _draw_range_border(eff_col: int, band_row: int, r_range: int, color: Color, width: float, radius: float, origin: Vector2) -> void:
+	if r_range <= 0:
+		return
+	# A ±r_range col/row bounding box is a superset of the hex disk; _in_range_disk filters it.
+	for drow in range(-r_range, r_range + 1):
+		var row := band_row + drow
+		if row < 0 or row >= grid_height:
+			continue
+		for dcol in range(-r_range, r_range + 1):
+			var col := eff_col + dcol
+			if not _in_range_disk(eff_col, band_row, col, row, r_range):
+				continue
+			var axial := _offset_to_axial(col, row)
+			var center := _hex_center(col, row, radius, origin)
+			var pts := _hex_points(center, radius)
+			for edge in range(6):
+				var d: Vector2i = RANGE_BORDER_EDGE_AXIAL[edge]
+				var noff := _axial_to_offset(axial.x + d.x, axial.y + d.y)
+				if _in_range_disk(eff_col, band_row, noff.x, noff.y, r_range):
+					continue
+				draw_line(pts[edge], pts[(edge + 1) % 6], color, width, true)
 
 ## White outline on the selected hex + a faint outline on the hovered hex (skipped when
 ## hover == selection). Replaces the old brown-circle-as-selection feel; the hex-shape
