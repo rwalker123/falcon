@@ -1,0 +1,102 @@
+# Bundled Icon Generation Prompts
+#
+# The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
+# bundled PNG art behind the four icon families:
+#
+#   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
+#   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
+#   assets/icons/wonders/  Wondrous Site markers (ui/WonderSprites.gd)
+#   assets/icons/stages/   settlement tokens     (ui/StageSprites.gd)
+#
+# All four share ONE pipeline and ONE house style, so both are documented once here
+# rather than per family.
+#
+# NOTE: prompts predating this file were never committed — only the shipped PNGs
+# survive. The house style below is reconstructed from that art plus the wild-fowl
+# prompt (kept verbatim as the reference exemplar). Add every new prompt here.
+#
+# ============================================================================
+# PIPELINE
+# ============================================================================
+#
+# 1. GENERATE at a large square size (1024x1024) on a plain solid MAGENTA
+#    background. Any uniform background works — icon_key.py samples the four
+#    corners — but magenta keys cleanest against earth-tone subjects.
+#
+# 2. KEY OUT the background to transparency and normalize the framing:
+#
+#      python3 scripts/texture/icon_key.py in.jpg out.png --size 256
+#
+#    --size 256 matters: every shipped fauna sprite is 256x256 RGBA, and the
+#    .import files set process/size_limit=64 against MapView's pinned
+#    TEXTURE_FILTER_NEAREST. The script's own default is 512 — pass 256.
+#    Other flags: --bg R,G,B (default: sampled from the corners), --lo (default
+#    40) / --hi (default 90) bound the soft alpha ramp in 0-255 RGB distance.
+#    Widen --hi if JPEG ringing leaves a halo; narrow it if thin features
+#    (whiskers, antler tines) are being eaten. It trims and re-frames with a 6%
+#    margin per side so the outline never touches the texture edge.
+#
+# 3. PLACE the PNG in the family's directory, named for its art KEY
+#    (e.g. fauna/seal.png).
+#
+# 4. WIRE it. A fauna species needs BOTH tables or it silently draws an OS emoji:
+#      - ui/FoodIcons.gd    HERD_SPECIES: "<keyword>": "<emoji>"   (the fallback)
+#      - ui/FaunaSprites.gd SPRITE_PATHS: "<keyword>": SPRITE_DIR + "<file>.png"
+#    The keyword is matched as a substring of the sim's `display_name`, longest
+#    match first — so "Grey Seals" resolves via "seal". Aliases share art
+#    (reindeer/caribou/elk/gazelle -> deer.png, grouse -> fowl.png).
+#
+# 5. VERIFY at TRUE marker size (10-41px), never in a fitted preview frame which
+#    renders ~2.5x too big:
+#      godot --path . res://tools/map_preview.tscn   ->  map_fauna_sprites.png
+#
+# ============================================================================
+# HOUSE STYLE
+# ============================================================================
+#
+# Every icon is a flat vector game marker, not an illustration. The skeleton:
+#
+#   Flat vector game icon of a <subject + its 2-3 identifying features>,
+#   <calm neutral pose>, shown in side profile facing right, drawn as a bold
+#   simplified silhouette with a thick dark charcoal outline around the entire
+#   body, flat limited color palette in <two named tones> that stay clearly
+#   lighter than the outline, simple two-tone shading, calm neutral facial
+#   expression, crisp clean edges, centered with even padding on a plain solid
+#   magenta background, the <subject> floating with no ground shadow and no
+#   shadow beneath the feet, minimal graphic style that stays clearly readable
+#   when scaled down to 24 pixels, strategy game map marker icon
+#
+# The load-bearing clauses — do not drop them:
+#   * SIDE PROFILE FACING RIGHT — the whole set faces right; one that faces left
+#     reads as broken in a roster row.
+#   * THICK DARK OUTLINE + fills LIGHTER THAN THE OUTLINE — this is what keeps the
+#     silhouette legible at marker size over any terrain.
+#   * NO GROUND SHADOW — a cast shadow keys out as a grey smear or survives as a
+#     dirty fringe, and the marker is composited over terrain that supplies its own.
+#   * READABLE AT 24 PIXELS — the real constraint. Fine texture, gradients and
+#     background scenery all dissolve; ask for none of them.
+#   * SOLID MAGENTA BACKGROUND — the chroma key depends on it being flat and uniform.
+#   * CALM NEUTRAL POSE/EXPRESSION — these are map markers, not action art.
+#
+# ============================================================================
+# FAUNA
+# ============================================================================
+
+# --- REFERENCE EXEMPLAR (the canonical house style; art shipped as fowl.png) ---
+fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched tail, a red comb and wattle, and a compact rounded body, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm copper brown and dark bronze tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the bird floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# --- Grey Seals (species `seal`, coastal_littoral, hunt-only) ---
+# The set's first MARINE animal, so it departs from the warm earth palette on
+# purpose: cool greys read as "sea mammal" instantly and keep it distinct from the
+# brown quadrupeds beside it in a roster. The hauled-out pose (belly down, head and
+# chest raised) is what makes a limbless torpedo shape read as a seal rather than a
+# fish at 24px — a swimming pose loses the silhouette entirely.
+seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# SITES / WONDERS / STAGES
+# ============================================================================
+#
+# Same pipeline, same house style, minus the animal-specific clauses (a site or a
+# settlement token has no facing or facial expression). Prompts for the shipped art
+# in those families were not preserved; add new ones here as they are generated.
