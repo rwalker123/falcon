@@ -1118,6 +1118,129 @@ fn classify_bands(
     terrain
 }
 
+/// Stamp fold-mountain belts along **converging plate boundaries**, given an already-assigned plate
+/// map and each plate's drift vector. A cell borders a fold belt when it is adjacent to a *different*
+/// plate whose drift vector has `dot <= belt_convergence` (drift is radial-outward, so a low dot means
+/// the two plates push toward each other); every such boundary cell then seeds a BFS that dilates the
+/// belt up to `belt_width` tiles **into its own plate** (so a belt never crosses into the neighbour).
+///
+/// **This is a pure function of `(plate_ids, plate_flows, belt_convergence, belt_width)`** — it reads
+/// nothing else and touches only `mask`. It is extracted out of [`derive_mountain_mask`] precisely so
+/// the plate→fold contract can be unit-tested with **hand-constructed plates**, rather than by routing
+/// a synthetic elevation field through `build_bands` and *hoping* the RNG-seeded plate seeding
+/// (`pick_plate_seeds`) happens to place two plates whose drift converges. That indirection was
+/// knife-edge sensitive to plate-seed placement — during PR #133 review a single 3-tile island flipped
+/// a preset fold count between 202 and 0 — so the coverage it gave was luck, not structure. The move is
+/// a byte-identical lift of the original inline block (guarded by the worldgen regression baselines).
+///
+/// `plate_ids[i] < 0` means "no plate" (ocean / unassigned) and is skipped. A plate id out of range for
+/// `plate_flows` reads as a zero vector (`dot == 0`), matching the original inline guard.
+fn stamp_fold_belts(
+    plate_ids: &[i32],
+    plate_flows: &[(f32, f32)],
+    belt_convergence: f32,
+    belt_width: u32,
+    w: usize,
+    h: usize,
+    mask: &mut MountainMask,
+) {
+    let total = w * h;
+    let mut boundary_cells: Vec<(usize, usize)> = Vec::new();
+    let neighbor_offsets = neighbor_dirs();
+    for idx in 0..total {
+        let plate_id = plate_ids[idx];
+        if plate_id < 0 {
+            continue;
+        }
+        let mut is_boundary = false;
+        for &(dx, dy) in &neighbor_offsets {
+            let x = idx % w;
+            let y = idx / w;
+            let nx = x as isize + dx as isize;
+            let ny = y as isize + dy as isize;
+            if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                continue;
+            }
+            let nidx = ny as usize * w + nx as usize;
+            let other_plate = plate_ids[nidx];
+            if other_plate < 0 || other_plate == plate_id {
+                continue;
+            }
+            let flow_a = plate_flows
+                .get(plate_id as usize)
+                .copied()
+                .unwrap_or((0.0, 0.0));
+            let flow_b = plate_flows
+                .get(other_plate as usize)
+                .copied()
+                .unwrap_or((0.0, 0.0));
+            let dot = flow_a.0 * flow_b.0 + flow_a.1 * flow_b.1;
+            if dot <= belt_convergence {
+                if !is_boundary {
+                    boundary_cells.push((idx, plate_id as usize));
+                    is_boundary = true;
+                }
+                boundary_cells.push((nidx, other_plate as usize));
+            }
+        }
+        if is_boundary {
+            mask.set(
+                idx,
+                MountainCell {
+                    ty: MountainType::Fold,
+                    strength: (belt_width + 1) as u8,
+                },
+            );
+        }
+    }
+
+    if !boundary_cells.is_empty() {
+        let mut visited = vec![u32::MAX; total];
+        let mut belt_queue: VecDeque<(usize, usize, u32)> = VecDeque::new();
+        for (cell, comp) in boundary_cells {
+            belt_queue.push_back((cell, comp, 0));
+            visited[cell] = 0;
+        }
+        while let Some((cell, comp, dist)) = belt_queue.pop_front() {
+            if dist > belt_width {
+                continue;
+            }
+            if plate_ids[cell] < 0 || plate_ids[cell] as usize != comp {
+                continue;
+            }
+            let strength = ((belt_width + 1).saturating_sub(dist)) as u8;
+            mask.set(
+                cell,
+                MountainCell {
+                    ty: MountainType::Fold,
+                    strength,
+                },
+            );
+            if dist == belt_width {
+                continue;
+            }
+            let x = cell % w;
+            let y = cell / w;
+            for &(dx, dy) in &neighbor_offsets {
+                let nx = x as isize + dx as isize;
+                let ny = y as isize + dy as isize;
+                if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                    continue;
+                }
+                let nidx = ny as usize * w + nx as usize;
+                if plate_ids[nidx] < 0 || plate_ids[nidx] as usize != comp {
+                    continue;
+                }
+                if visited[nidx] <= dist + 1 {
+                    continue;
+                }
+                visited[nidx] = dist + 1;
+                belt_queue.push_back((nidx, comp, dist + 1));
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::manual_is_multiple_of)]
 fn derive_mountain_mask(
     land: &[bool],
@@ -1272,100 +1395,16 @@ fn derive_mountain_mask(
         global_plate_index += seeds.len();
     }
 
-    let mut boundary_cells: Vec<(usize, usize)> = Vec::new();
     let neighbor_offsets = neighbor_dirs();
-    for idx in 0..total {
-        let plate_id = plate_ids[idx];
-        if plate_id < 0 {
-            continue;
-        }
-        let mut is_boundary = false;
-        for &(dx, dy) in &neighbor_offsets {
-            let x = idx % w;
-            let y = idx / w;
-            let nx = x as isize + dx as isize;
-            let ny = y as isize + dy as isize;
-            if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
-                continue;
-            }
-            let nidx = ny as usize * w + nx as usize;
-            let other_plate = plate_ids[nidx];
-            if other_plate < 0 || other_plate == plate_id {
-                continue;
-            }
-            let flow_a = plate_flows
-                .get(plate_id as usize)
-                .copied()
-                .unwrap_or((0.0, 0.0));
-            let flow_b = plate_flows
-                .get(other_plate as usize)
-                .copied()
-                .unwrap_or((0.0, 0.0));
-            let dot = flow_a.0 * flow_b.0 + flow_a.1 * flow_b.1;
-            if dot <= cfg.belt_convergence {
-                if !is_boundary {
-                    boundary_cells.push((idx, plate_id as usize));
-                    is_boundary = true;
-                }
-                boundary_cells.push((nidx, other_plate as usize));
-            }
-        }
-        if is_boundary {
-            mask.set(
-                idx,
-                MountainCell {
-                    ty: MountainType::Fold,
-                    strength: (belt_width + 1) as u8,
-                },
-            );
-        }
-    }
-
-    if !boundary_cells.is_empty() {
-        let mut visited = vec![u32::MAX; total];
-        let mut belt_queue: VecDeque<(usize, usize, u32)> = VecDeque::new();
-        for (cell, comp) in boundary_cells {
-            belt_queue.push_back((cell, comp, 0));
-            visited[cell] = 0;
-        }
-        while let Some((cell, comp, dist)) = belt_queue.pop_front() {
-            if dist > belt_width {
-                continue;
-            }
-            if plate_ids[cell] < 0 || plate_ids[cell] as usize != comp {
-                continue;
-            }
-            let strength = ((belt_width + 1).saturating_sub(dist)) as u8;
-            mask.set(
-                cell,
-                MountainCell {
-                    ty: MountainType::Fold,
-                    strength,
-                },
-            );
-            if dist == belt_width {
-                continue;
-            }
-            let x = cell % w;
-            let y = cell / w;
-            for &(dx, dy) in &neighbor_offsets {
-                let nx = x as isize + dx as isize;
-                let ny = y as isize + dy as isize;
-                if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
-                    continue;
-                }
-                let nidx = ny as usize * w + nx as usize;
-                if plate_ids[nidx] < 0 || plate_ids[nidx] as usize != comp {
-                    continue;
-                }
-                if visited[nidx] <= dist + 1 {
-                    continue;
-                }
-                visited[nidx] = dist + 1;
-                belt_queue.push_back((nidx, comp, dist + 1));
-            }
-        }
-    }
+    stamp_fold_belts(
+        &plate_ids,
+        &plate_flows,
+        cfg.belt_convergence,
+        belt_width,
+        w,
+        h,
+        &mut mask,
+    );
 
     let mut polar_band = (cfg.polar_latitude_fraction.clamp(0.0, 0.5) * h as f32).round() as usize;
     if cfg.polar_microplate_density > f32::EPSILON && total > 0 {
@@ -3286,6 +3325,100 @@ mod tests {
             fold >= 6,
             "expected fold belts from polar microplates (got {fold})"
         );
+    }
+
+    /// Two plates whose drift **converges** (`dot ≤ belt_convergence`) raise a fold belt along their
+    /// shared boundary; two plates whose drift **aligns** raise nothing. This pins the plate→fold
+    /// contract on **hand-constructed plates**, so it can never pass on luck the way a pipeline fixture
+    /// does when RNG plate-seeding (`pick_plate_seeds`) happens — or fails — to place two converging
+    /// plates. That indirection was knife-edge sensitive: during the PR #133 review, removing a single
+    /// 3-tile island flipped `polar_contrast_preset_builds_bands` between `fold = 202` and `fold = 0`.
+    /// Here the plates are the input, so the fold count is a property of the code, not the geometry.
+    #[test]
+    fn stamp_fold_belts_folds_only_a_converging_boundary() {
+        // 11×5 grid split into a left plate (x ≤ 5) and a right plate (x ≥ 6).
+        let (w, h) = (11usize, 5usize);
+        let idx = |x: usize, y: usize| y * w + x;
+        let mut plate_ids = vec![0i32; w * h];
+        for y in 0..h {
+            for x in 6..w {
+                plate_ids[idx(x, y)] = 1;
+            }
+        }
+
+        // Converging: left plate drifts west, right plate drifts east → dot = −1 ≤ 0.25.
+        let converging = [(-1.0f32, 0.0f32), (1.0, 0.0)];
+        let mut mask = MountainMask::new(w, h, 1);
+        stamp_fold_belts(&plate_ids, &converging, 0.25, 1, w, h, &mut mask);
+        let (fold, fault, volcanic, dome) = mask.iter_counts();
+        // Only fold is stamped, and the belt is exactly the four columns straddling the boundary
+        // (x ∈ {4,5,6,7}): the two boundary columns, plus one belt_width=1 tile into each plate.
+        assert_eq!((fault, volcanic, dome), (0, 0, 0), "only fold belts here");
+        assert_eq!(
+            fold,
+            4 * h,
+            "belt is columns 4..=7 over every row (got {fold})"
+        );
+        for y in 0..h {
+            for x in 4..=7 {
+                assert!(
+                    matches!(mask.get(idx(x, y)), Some(c) if matches!(c.ty, MountainType::Fold)),
+                    "expected a fold belt at ({x},{y})"
+                );
+            }
+            // The belt does not reach the far interior of either plate.
+            assert!(mask.get(idx(0, y)).is_none(), "no fold at the west edge");
+            assert!(mask.get(idx(10, y)).is_none(), "no fold at the east edge");
+        }
+
+        // Aligned: both plates drift east → dot = +1 > 0.25 → no belt anywhere.
+        let aligned = [(1.0f32, 0.0f32), (1.0, 0.0)];
+        let mut mask = MountainMask::new(w, h, 1);
+        stamp_fold_belts(&plate_ids, &aligned, 0.25, 1, w, h, &mut mask);
+        assert_eq!(
+            mask.iter_counts(),
+            (0, 0, 0, 0),
+            "aligned drift raises no mountains"
+        );
+    }
+
+    /// `belt_width` is the ribbon half-width: the two boundary columns plus `belt_width` tiles dilated
+    /// into each plate, so the fold ribbon is `2·(belt_width + 1)` columns wide. The BFS never crosses
+    /// into the neighbouring plate (each cell keeps its own plate id), which is what keeps the two sides
+    /// of a range distinct.
+    #[test]
+    fn stamp_fold_belts_belt_width_sets_the_ribbon_thickness() {
+        let (w, h) = (11usize, 5usize);
+        let mut plate_ids = vec![0i32; w * h];
+        for y in 0..h {
+            for x in 6..w {
+                plate_ids[y * w + x] = 1;
+            }
+        }
+        let converging = [(-1.0f32, 0.0f32), (1.0, 0.0)];
+        for (belt_width, want_columns) in [(0u32, 2usize), (1, 4), (2, 6)] {
+            let mut mask = MountainMask::new(w, h, belt_width);
+            stamp_fold_belts(&plate_ids, &converging, 0.25, belt_width, w, h, &mut mask);
+            let (fold, _, _, _) = mask.iter_counts();
+            assert_eq!(
+                fold,
+                want_columns * h,
+                "belt_width {belt_width} should fold {want_columns} columns"
+            );
+        }
+    }
+
+    /// A single plate has no interior boundary, so no fold belt — the degenerate case every landmass
+    /// below the plate-splitting area threshold falls into (`comp_area < plate_area_bucket_2` ⇒ one
+    /// plate), and the reason two well-separated small masses give `fold = 0` outright.
+    #[test]
+    fn stamp_fold_belts_needs_two_plates() {
+        let (w, h) = (8usize, 6usize);
+        let plate_ids = vec![0i32; w * h]; // one plate over the whole grid
+        let flows = [(-1.0f32, 0.0f32)];
+        let mut mask = MountainMask::new(w, h, 2);
+        stamp_fold_belts(&plate_ids, &flows, 0.25, 2, w, h, &mut mask);
+        assert_eq!(mask.iter_counts(), (0, 0, 0, 0), "one plate → no boundary");
     }
 
     /// Grid the `polar_contrast` band fixture runs at — small next to a shipped 256x192 preset,
