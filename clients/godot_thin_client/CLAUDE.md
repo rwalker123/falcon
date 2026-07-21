@@ -1607,13 +1607,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     count). Pending is emitted to MapView via `labor_pending_changed` → `set_labor_pending`.
   - **Selected-band map highlights** (`MapView._draw_band_work_highlights`, drawn when a player band
     is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
-    `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
-    within `work_range`, replicating the sim's true **odd-r hex distance** `hex_distance_wrapped`
-    via `MapView._hex_distance` — a real hexagonal ring of 19 tiles at range 2, so highlighted ==
-    actually-assignable; the old Chebyshev square wrongly lit its diagonal corners, which are 3
-    hex-steps away), and the **hunted
-    herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
-    = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
+    `forage` assignment's `target_x/y`), the **three range borders** (`_draw_range_border`: a clean
+    PERIMETER outline of each reach's hex disk — traced edge-by-edge, drawing an edge only where the
+    neighbour across it leaves the disk, NOT a filled tile-by-tile mesh — using the sim's true **odd-r
+    hex distance** `hex_distance_wrapped` via `MapView._hex_distance`, so the boundary ==
+    actually-in-range; forage **green** at `work_range` (ties to the worked-forage fills), hunt **red**
+    at `hunt_reach` when it extends past `work_range` (ties to the hunted-herd rings), scout **azure**
+    at `scout_reveal_radius` when scouts are staffed — nested and color-distinct, all at every zoom),
+    and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is
+    since hunt reach = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
     tile / hunted herd is labeled with its per-turn rate (food/turn, from the assignment inside
     `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
     food-income **green**. **A HUNT label headlines `sustainable_yield`** (the steady per-turn rate),
@@ -1643,14 +1645,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     as the LAST draw call, after the markers/rings/links/pending/targeting. The LOD gate stays at the
     QUEUE site (`show_yields`), so a far-zoom label is never queued and deferral can't bypass the
     suppression. Guarded by `map_preview` state `map_band_label_overlap` (a herd parked ON a worked
-    forage tile + a pending hunt dashing across the hunted herd's label) and `map_band_yield_farzoom`. **Scouting draws no map highlight** — staffed scouts extend the band's
-    real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
-    disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
-    the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the
-    client can't turn into a true ring without the server-side `base_range`. New snapshot fields
-    `work_range` / `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed
-    onto the MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`);
-    `scout_reveal_radius` is still carried (it documents the field) but no longer drawn. **Optimistic pending**
+    forage tile + a pending hunt dashing across the hunted herd's label) and `map_band_yield_farzoom`. **Scouting draws its azure range border** (the scout vantage reach `scout_reveal_radius`, when
+    scouts are staffed) — a perimeter outline like the forage/hunt borders, NOT a filled reveal disc:
+    the old faint-blue scouted DISC was removed because `scout_reveal_radius` is a scout-vantage /
+    sight-range value, not a revealed-area radius, and the client can't reconstruct the true LOS-revealed
+    area; the border just marks how far the vantage reach extends. The band's actual sight is still
+    visible directly in the fog (a wider Active radius). Snapshot fields `work_range` / `hunt_reach` /
+    `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
+    MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`). **Optimistic pending**
     actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
     `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
     band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the
