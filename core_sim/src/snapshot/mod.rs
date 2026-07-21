@@ -685,6 +685,8 @@ mod tests {
                     overdraws: false,
                     // Continuous forage: realized == actual.
                     realized: 2.5,
+                    // A continuous source lands the same amount every turn.
+                    arrivals: vec![2.5; 3],
                 },
                 SourceYield {
                     actual: 0.5,
@@ -694,6 +696,8 @@ mod tests {
                     overdraws: true,
                     // Lumpy hunt: the steady average is below this kill turn's spike.
                     realized: 0.25,
+                    // A lumpy hunt: nothing for two turns, then a whole animal.
+                    arrivals: vec![0.0, 0.0, 0.75],
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -788,7 +792,7 @@ mod tests {
             policy: FollowPolicy::Market,
         };
         let assignment = LaborAssignment { target, workers: 6 };
-        let state = labor_assignment_to_state(&assignment, SourceYield::ZERO);
+        let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
         assert_eq!(state.policy, "market", "policy serialized");
 
         let restored = labor_allocation_from_state(std::slice::from_ref(&state));

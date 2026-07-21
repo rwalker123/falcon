@@ -2933,6 +2933,30 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `%AllocationPanel` (the no-panel `ui_preview` fallback) by appending those same blocks.
   Herd/expedition detail stays in the Occupants card (`%OccupantDetail` / `%AllocationPanel`
   — still the expedition host **and** the no-panel fallback).
+- **Arrival schedule — WHEN the steady food actually lands** (the discrete twin of the steady
+  `realized_yield` headline). The sim streams `LaborAssignment.arrivalSchedule:[float]` (index i = food
+  delivered i+1 turns from now, length = `arrivals_horizon_turns` = 20, `0.0` = nothing that turn, EMPTY =
+  "not projected" — never a famine), decoded in `native/src/lib.rs` beside `realized_yield` as
+  `arrival_schedule` (a `PackedFloat32Array`; `Hud._as_schedule` coerces a fixture Array/absent to
+  packed). Two client surfaces, both presentation over sim numbers — no yield/ecology is re-derived:
+  - **Per-source TICK STRIP** (`ui/hud/ArrivalStrip.gd`, a `_draw` Control): under each Current-actions
+    Forage/Hunt row's secondary line (`_build_two_line_stepper` appends it as an indented line 3, inside
+    the row container so the section-block/wide-tall packing is untouched), a compact 20-cell strip — one
+    cell per upcoming turn, `HEALTHY` = a delivering turn, `LINE_SOFT` = an empty one, ~2px apart. **It
+    renders ONLY when the schedule has a GAP** (`ArrivalStrip.has_gap` — at least one `0.0` in the
+    horizon): a continuous forage source has no lumpiness to explain, so it gets no strip; the gap test
+    is the whole rule (deliberately NOT a hunt/forage kind check). Per-cell tooltip `"Turn N — +X.XX
+    food"` / `"Turn N — nothing lands"` (N = `_current_turn + i + 1`; relative "in N turns" before the
+    first overlay).
+  - **Merged FOOD OUTLOOK chart** (`ui/hud/FoodOutlookChart.gd`, a `_draw` Control) — its own **section
+    block** (`_build_food_outlook_block`, appended right after the summary block, headed `FOOD OUTLOOK`;
+    BBCode can't host a drawn chart, so it is NOT a summary line). Composed CLIENT-SIDE: start from the
+    band's larder (`stores.provisions`), walk `food += Σ arrival_schedule[i] over the band's assignments
+    − (food_consumption + pen_feed_upkeep)`, clamped at 0, over the 20-turn horizon (drain held flat).
+    Draws a `SIGNAL` filled area + line, a `HEALTHY` dot on each haul turn, a faint `LINE_SOFT` baseline,
+    and a dashed `DANGER` vertical labelled `empty ~turn N` where the walk first hits 0. Same player +
+    real-food-flow gate as the Food breakdown, plus at least one non-empty schedule; a
+    `custom_minimum_size` (≤ `SECTION_COLUMN_WIDTH`) lets the wide-column packer measure it.
 - **Live + persistent.** `_refresh_panel_band()` (called each snapshot from
   `update_band_alerts`) hides the panel when there are zero player bands, else
   re-resolves `_panel_band` against the fresh snapshot (by entity, falling back to
@@ -3009,7 +3033,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **row-vocabulary** frame: a confirmed working forage row (`●` + `♻` + the overstaffing note) and a
   working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus one Active-expeditions row per
   phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning / `▮▮ Awaiting orders` in amber)
-  — read it at true size whenever a glyph changes.
+  — read it at true size whenever a glyph changes. States `band_panel_arrivals_left` /
+  `band_panel_arrivals_top` are the **arrival-schedule** frame (a lumpy hunt row with a gappy tick strip
+  beside a continuous forage row that draws NONE, + the rising `FOOD OUTLOOK` sawtooth chart, tall and
+  wide), and `band_panel_arrivals_empty` is the emptying-larder case (the descending chart's dashed
+  `empty ~turn N` marker).
 
 ## Inspector Panels
 

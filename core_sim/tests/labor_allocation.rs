@@ -342,7 +342,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
         if turn >= WARMUP {
-            let row = app.world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+            let row = app.world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
             actual.push(row.actual);
             realized.push(row.realized);
         }
@@ -609,7 +609,7 @@ fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
         .expect("band allocation")
         .last_yields
         .clone();
-    let y = yields[0];
+    let y = &yields[0];
     let after = app
         .world
         .resource::<ForageRegistry>()
@@ -685,5 +685,257 @@ fn market_forage_sells_trade_goods_others_do_not() {
     assert!(
         market_take > sustain_take,
         "Market depletes the patch faster than the Sustain skim: {market_take} vs {sustain_take}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The arrival schedule (`SourceYield::arrivals`) — WHEN the food lands, not how much on average.
+// ---------------------------------------------------------------------------------------------
+
+/// Pin a short-range herd's ecology so its lumpiness is a property of the fixture, not of whatever
+/// species worldgen happened to place, and staff a band hunting it. Returns `(herd_id, band)`.
+///
+/// `body` relative to the herd's MSY (`r·K/4`) is the whole dial: a body far heavier than one turn's
+/// MSY makes the kill-credit bank wait several turns per animal (lumpy); a body lighter than it clears
+/// a carcass every turn (continuous).
+fn stage_hunt(
+    app: &mut App,
+    capacity: f32,
+    regrowth: f32,
+    body: f32,
+    biomass: f32,
+    workers: u32,
+) -> (String, bevy::prelude::Entity) {
+    let id = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
+            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .map(|h| h.id.clone())
+            .expect("expected short-range game")
+    };
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.carrying_capacity = capacity;
+        herd.regrowth_rate = regrowth;
+        herd.body_mass = body;
+        herd.biomass = biomass;
+        herd.biomass_before_regrowth = biomass;
+        // A fresh bank, so the fixture's first arrival is decided by the fixture's own numbers.
+        herd.hunt_credit = 0.0;
+    }
+    let pos = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .position();
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("herd tile resolves");
+    let band = spawn_band(
+        app,
+        tile,
+        workers.max(1) * 4,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers,
+            }],
+            ..Default::default()
+        },
+    );
+    (id, band)
+}
+
+/// Run one real turn (Logistics regrow → Population take) and hand back the resolved telemetry row.
+fn resolve_turn(app: &mut App, band: bevy::prelude::Entity) -> core_sim::SourceYield {
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_labor_allocation);
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("band keeps its allocation")
+        .last_yields
+        .first()
+        .expect("the staffed hunt has a telemetry row")
+        .clone()
+}
+
+/// **THE test: the schedule is pinned to REAL behaviour, not to another forecast.** A big-game Sustain
+/// hunt (body 30 against an MSY of 10 — the bank needs three turns per animal) predicts a genuinely
+/// lumpy schedule at turn 0; driving the *real* systems forward must then deliver on exactly the turns
+/// the schedule named, in exactly the amounts. If the projection ever drifts from `hunt_take`, this
+/// fails — which is the point: a schedule agreeing with a sibling forecast proves nothing.
+#[test]
+fn the_arrival_schedule_matches_a_real_driven_hunt() {
+    let mut app = spawn_world();
+    // K 200 at r 0.2 → MSY = r·K/4 = 10 biomass/turn against a 30-unit body: one animal per ~3 turns.
+    let (_id, band) = stage_hunt(&mut app, 200.0, 0.2, 30.0, 100.0, 4);
+
+    // Turn 0 resolves and publishes the schedule for the turns that follow it.
+    let schedule = resolve_turn(&mut app, band).arrivals;
+    let horizon = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .arrivals_horizon_turns as usize;
+    assert_eq!(
+        schedule.len(),
+        horizon,
+        "the schedule is exactly `arrivals_horizon_turns` long: {schedule:?}"
+    );
+
+    // Now drive the REAL systems forward and record what each turn actually delivered.
+    let delivered: Vec<f32> = (0..horizon)
+        .map(|_| resolve_turn(&mut app, band).actual)
+        .collect();
+
+    // It must be genuinely lumpy — otherwise the test proves nothing about timing.
+    assert!(
+        delivered.iter().any(|d| *d <= 0.0) && delivered.iter().any(|d| *d > 0.0),
+        "the fixture must produce a lumpy hunt (zeros between hauls): {delivered:?}"
+    );
+    // The `Scalar` grid the larder accumulates on is coarser than the projection's `f32`, so compare
+    // on the arrival *turns* exactly and the amounts to within a grid step.
+    let predicted_turns: Vec<usize> = schedule
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| **v > 0.0)
+        .map(|(i, _)| i)
+        .collect();
+    let actual_turns: Vec<usize> = delivered
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| **v > 0.0)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        predicted_turns, actual_turns,
+        "the schedule must name the turns the sim really delivers on\n  predicted {schedule:?}\n  \
+         delivered {delivered:?}"
+    );
+    for (i, (predicted, actual)) in schedule.iter().zip(delivered.iter()).enumerate() {
+        assert!(
+            (predicted - actual).abs() < 1e-3,
+            "turn {} predicted {predicted} but the sim delivered {actual}\n  predicted {schedule:?}\
+             \n  delivered {delivered:?}",
+            i + 1
+        );
+    }
+}
+
+/// **A fast/small-game source is CONTINUOUS — every slot positive.** A body lighter than one turn's
+/// MSY clears a carcass every turn, so the bank never has to wait and the client draws a solid run.
+/// The same code path that produces the mammoth's gaps produces this, with no special case.
+#[test]
+fn fast_game_arrives_every_turn() {
+    let mut app = spawn_world();
+    // K 200 at r 0.35 → MSY = 17.5 biomass/turn against a 2-unit body: several rabbits every turn.
+    let (_id, band) = stage_hunt(&mut app, 200.0, 0.35, 2.0, 100.0, 4);
+
+    let schedule = resolve_turn(&mut app, band).arrivals;
+    assert!(
+        schedule.iter().all(|v| *v > 0.0),
+        "fast game delivers on every turn — a continuous source, no wait turns: {schedule:?}"
+    );
+}
+
+/// **The bank moves the TIMING, not the TOTAL.** `realized` deliberately drops the kill-credit bank
+/// and the schedule keeps it, so over the same horizon from the same state they must agree:
+/// `Σ arrivals ≈ realized × horizon`. The tolerance is the partial body still banked at the end —
+/// at most one animal's worth of provisions.
+#[test]
+fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
+    let mut app = spawn_world();
+    let (id, _band) = stage_hunt(&mut app, 200.0, 0.2, 30.0, 100.0, 4);
+
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(&id).expect("the staged herd is live");
+    // Both projections from the SAME state over the SAME horizon — the comparison is only meaningful
+    // if the only difference is the bank.
+    let horizon = labor.arrivals_horizon_turns;
+    let per_worker = labor.hunt.per_worker_biomass_capacity;
+    let realized = core_sim::project_realized_hunt(
+        herd,
+        &fauna,
+        &ladder,
+        per_worker,
+        1.0,
+        4,
+        FollowPolicy::Sustain,
+        horizon,
+    );
+    let schedule = core_sim::project_arrivals_hunt(
+        herd,
+        &fauna,
+        &ladder,
+        per_worker,
+        1.0,
+        4,
+        FollowPolicy::Sustain,
+        horizon,
+    );
+
+    let total: f32 = schedule.iter().sum();
+    let smooth = realized * horizon as f32;
+    // One whole animal's provisions: the most that can still be sitting in the bank, undelivered.
+    let one_animal = core_sim::hunt_provisions(herd.body_mass, &fauna, 1.0);
+    assert!(
+        (total - smooth).abs() <= one_animal,
+        "the schedule's total ({total}) must match the smooth average over the horizon ({smooth}) \
+         to within the partial body still banked ({one_animal}): {schedule:?}"
+    );
+}
+
+/// **A spent source schedules nothing — an all-zero run, and no panic.** Two ways to have nothing to
+/// take, both of which the client must be able to render as "this source will feed no one": a herd
+/// already at the extinction floor, and a herd whose animals are heavier than anything the stock
+/// could ever spare (`affordable < 1` forever — the wait that never ends).
+#[test]
+fn a_spent_source_schedules_nothing() {
+    let mut app = spawn_world();
+    // **The floor case is projected directly**, not driven: `advance_herds` *despawns* a herd this
+    // far gone and the assignment lapses with it, so there would be no telemetry row left to read.
+    // The projection still has to answer for that state without dividing by a dead herd.
+    let (id, _band) = stage_hunt(&mut app, 200.0, 0.2, 30.0, 0.0, 4);
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let schedule = core_sim::project_arrivals_hunt(
+        app.world.resource::<HerdRegistry>().find(&id).unwrap(),
+        &app.world.resource::<FaunaConfigHandle>().get(),
+        &app.world.resource::<LadderConfigHandle>().get(),
+        labor.hunt.per_worker_biomass_capacity,
+        1.0,
+        4,
+        FollowPolicy::Sustain,
+        labor.arrivals_horizon_turns,
+    );
+    assert_eq!(
+        schedule.len(),
+        labor.arrivals_horizon_turns as usize,
+        "even a dead source reports a full-length, all-zero schedule: {schedule:?}"
+    );
+    assert!(
+        schedule.iter().all(|v| *v == 0.0),
+        "a herd at the floor delivers nothing at any point in the horizon: {schedule:?}"
+    );
+
+    let mut app = spawn_world();
+    // A body 100× the whole standing stock: the bank can never clear one, so the hunt waits forever.
+    let (_id, band) = stage_hunt(&mut app, 200.0, 0.2, 20_000.0, 100.0, 4);
+    let schedule = resolve_turn(&mut app, band).arrivals;
+    assert!(
+        schedule.iter().all(|v| *v == 0.0),
+        "a herd that can never spare a whole animal delivers nothing: {schedule:?}"
     );
 }

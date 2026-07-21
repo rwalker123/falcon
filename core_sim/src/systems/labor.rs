@@ -53,6 +53,10 @@ pub fn advance_labor_allocation(
     // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
     // the first resolved value exactly.
     let realized_horizon = labor.yield_average_horizon_turns;
+    // The horizon for each source's discrete **arrival schedule** — what lands on each of the next N
+    // turns, from the same forward simulation run WITH the kill-credit bank. Its own lever: a
+    // schedule is a display span the client charts, where `realized_horizon` is a smoothing window.
+    let arrivals_horizon = labor.arrivals_horizon_turns;
     // **The ladder's knowledge dials (§4)** — the per-turn accrual every teaching rung pays, and the
     // ledger bar at which a faction may act on a knowledge. Hoisted out of the per-cohort loop.
     // **One pair for BOTH webs**: these used to be duplicated at identical values in
@@ -268,12 +272,28 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
+                        // **The arrival schedule — computed POST-take, unlike `realized`.** It
+                        // answers "when does the next food land", so it must start from the state the
+                        // turn leaves behind: projecting from the pre-take state would re-promise the
+                        // delivery this turn has already paid (and, on a hunt, spend the kill-credit
+                        // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
+                        let arrivals = crate::forage::project_arrivals_forage(
+                            patch,
+                            &labor.forage,
+                            &ladder,
+                            seasonal,
+                            mult_f,
+                            workers,
+                            *policy,
+                            arrivals_horizon,
+                        );
                         yields[idx] = SourceYield {
                             actual: paid,
                             // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
                             // The forward-projected steady headline (computed pre-take above).
                             realized: forage_realized,
+                            arrivals,
                             // The crop the crew could not carry: it stood in the field and rotted.
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
@@ -417,11 +437,27 @@ pub fn advance_labor_allocation(
                         &ladder,
                     )
                     .clamp(0.0, biomass_before);
+                    // **The arrival schedule — computed POST-take, unlike `realized`.** It
+                    // answers "when does the next food land", so it must start from the state the
+                    // turn leaves behind: projecting from the pre-take state would re-promise the
+                    // delivery this turn has already paid (and, on a hunt, spend the kill-credit
+                    // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
+                    let arrivals = crate::forage::project_arrivals_forage(
+                        patch,
+                        &labor.forage,
+                        &ladder,
+                        seasonal,
+                        mult_f,
+                        workers,
+                        *policy,
+                        arrivals_horizon,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
+                        arrivals,
                         wasted: forage_provisions(
                             (production - take).max(0.0),
                             &labor.forage,
@@ -645,12 +681,28 @@ pub fn advance_labor_allocation(
                         // escapement** (slice 8): a beast the keeper never killed is still standing in
                         // the pen, alive and breeding — it was never produced, so it cannot have been
                         // wasted. What `killed_biomass − carried` measures is meat that really rotted.
+                        // **The arrival schedule — computed POST-take, unlike `realized`.** It
+                        // answers "when does the next food land", so it must start from the state the
+                        // turn leaves behind: projecting from the pre-take state would re-promise the
+                        // delivery this turn has already paid, and would spend the herd's kill-credit
+                        // bank twice. Slot 0 is therefore genuinely the *next* turn's delivery.
+                        let arrivals = fauna::project_arrivals_hunt(
+                            herd,
+                            &fauna,
+                            &ladder,
+                            labor.hunt.per_worker_biomass_capacity,
+                            mult_f,
+                            workers,
+                            *policy,
+                            arrivals_horizon,
+                        );
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
                             // The forward-projected steady headline (computed pre-take above; a pen
                             // projects its managed yield, already smooth).
                             realized: hunt_realized,
+                            arrivals,
                             wasted: hunt_provisions(take.wasted, &fauna, mult_f),
                             // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
@@ -852,6 +904,21 @@ pub fn advance_labor_allocation(
                         labor.hunt.per_worker_biomass_capacity,
                     );
                     let workers_needed = managed_crew_needed(herders_needed, take_workers);
+                    // **The arrival schedule — computed POST-take, unlike `realized`.** It
+                    // answers "when does the next food land", so it must start from the state the
+                    // turn leaves behind: projecting from the pre-take state would re-promise the
+                    // delivery this turn has already paid, and would spend the herd's kill-credit
+                    // bank twice. Slot 0 is therefore genuinely the *next* turn's delivery.
+                    let arrivals = fauna::project_arrivals_hunt(
+                        herd,
+                        &fauna,
+                        &ladder,
+                        labor.hunt.per_worker_biomass_capacity,
+                        mult_f,
+                        workers,
+                        *policy,
+                        arrivals_horizon,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
@@ -861,6 +928,7 @@ pub fn advance_labor_allocation(
                         // The forward-projected steady headline (computed pre-take above): rate-based,
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized,
+                        arrivals,
                     };
                 }
                 LaborTarget::Scout => {
@@ -1396,8 +1464,8 @@ mod labor_yield_tests {
 
         let alloc = world.get::<LaborAllocation>(band).unwrap();
         assert_eq!(alloc.last_yields.len(), 2, "one yield row per assignment");
-        let forage = alloc.last_yields[0];
-        let hunt = alloc.last_yields[1];
+        let forage = alloc.last_yields[0].clone();
+        let hunt = alloc.last_yields[1].clone();
         assert!(forage.actual > 0.0, "forage produced food: {forage:?}");
         assert!(hunt.actual > 0.0, "hunt produced food: {hunt:?}");
         // Depletable forage (§0-ii): a Sustain gather under the binding regrowth ceiling skims
@@ -1454,7 +1522,7 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!(
             (hunt.sustainable - expected_sustainable).abs() < 1e-6,
             "sustainable pinned to the pre-take net regrowth"
@@ -1493,7 +1561,7 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!(
             hunt.sustainable > 0.0,
             "a herd at carrying capacity must stay sustainably huntable: {hunt:?}"
@@ -1543,7 +1611,7 @@ mod labor_yield_tests {
             "the long-run Sustain take averages MSY ({expected_sustainable}), realised as a kill every \
              few turns: got {avg}"
         );
-        let last = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let last = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!(!last.overdraws, "Sustain never overdraws: {last:?}");
     }
 
@@ -1664,7 +1732,7 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!(
             hunt.actual > 0.0,
             "the sustain hunt produced food: {hunt:?}"
@@ -1711,7 +1779,7 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert_eq!(
             forage.workers_needed, assigned,
             "a labor-bound take needs every assigned worker: {forage:?}"
@@ -1793,8 +1861,8 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0];
-        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0];
+        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0].clone();
+        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].clone();
         assert!(
             tended.actual > 0.0 && corral.actual > 0.0,
             "both tended sources pay out: tended={tended:?} corral={corral:?}"
@@ -1885,7 +1953,7 @@ mod labor_yield_tests {
             }],
         );
         world.run_system_once(advance_labor_allocation);
-        world.get::<LaborAllocation>(band).unwrap().last_yields[0]
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone()
     }
 
     /// One hunt turn under `policy` on the slow breeder (biomass above `K/2`, empty bank), staffed so
@@ -1905,7 +1973,7 @@ mod labor_yield_tests {
             }],
         );
         world.run_system_once(advance_labor_allocation);
-        world.get::<LaborAllocation>(band).unwrap().last_yields[0]
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone()
     }
 
     /// **The forward-projected `realized` reads the HONEST OVERHUNTING RATE — and sees the decline.**
@@ -2065,7 +2133,7 @@ mod labor_yield_tests {
             }],
         );
         world.run_system_once(advance_labor_allocation);
-        let yielded = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let yielded = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
 
         // The sim's expectation: one crew, `max(herders, steady_haul)`.
         let (herders, steady_haul, client_max_useful) = {
@@ -2453,7 +2521,8 @@ mod labor_yield_tests {
         let field_row = world
             .get::<LaborAllocation>(field_band)
             .unwrap()
-            .last_yields[0];
+            .last_yields[0]
+            .clone();
         let field_forecast =
             expected_yield(&patch_forecast, field_workers_needed, FollowPolicy::Sustain);
         assert!(field_forecast > 0.0);
@@ -2475,7 +2544,8 @@ mod labor_yield_tests {
         let pen_row = world
             .get::<LaborAllocation>(short_handed)
             .unwrap()
-            .last_yields[0];
+            .last_yields[0]
+            .clone();
         let pen_forecast = expected_yield(&herd_forecast, 1, FollowPolicy::Sustain);
         assert!(pen_forecast > 0.0);
         assert!(
@@ -2555,7 +2625,7 @@ mod labor_yield_tests {
         assert!(patch.tended_this_turn, "tending marks the patch worked");
         // Telemetry: a Sustain take of the boosted curve is exactly sustainable → no ⚠, but
         // `sustainable` is now a *measured* line rather than a copy of `actual`.
-        let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!((row.actual - expected).abs() < 1e-3);
         assert!((row.actual - row.sustainable).abs() < 1e-3);
     }
@@ -2604,7 +2674,7 @@ mod labor_yield_tests {
                 }],
             );
             world.run_system_once(advance_labor_allocation);
-            let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+            let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
             let patch = world.resource::<ForageRegistry>().patch(SOURCE).unwrap();
             assert!(
                 patch.biomass < patch_cap,

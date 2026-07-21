@@ -3700,6 +3700,41 @@ beside** the unchanged `foodIncome` = Σ `actual` (which stays the real arrivals
 **The `actual` value and the ledger identity are unchanged — `realized` is a parallel steady value,
 never a replacement.**
 
+**WHEN the food lands — `arrivals` / `arrivalSchedule`.** The discrete twin of `realized`, from the
+**same** forward simulation run **WITH** the kill-credit bank (`fauna::project_arrivals_hunt` /
+`forage::project_arrivals_forage`) — because the two answer opposite halves of one question: the bank
+decides *when* a whole animal lands and never *how much* lands over the window, so `realized` drops it
+to get the smooth average and this keeps it to get the timing. `SourceYield.arrivals[i]` is the food
+delivered `i + 1` turns from now, `labor_config.arrivals_horizon_turns` (**20**) entries long, `0.0` on
+a turn nothing lands. A big-game Sustain hunt reads genuinely lumpy (zeros between hauls); a forage
+patch — or fast game whose MSY clears a body every turn — is positive in **every** slot, a *continuous*
+source the client renders as a solid run, with no special case in the projection. Their totals agree by
+construction: `Σ arrivals ≈ realized × horizon`, to within the partial body still banked at the end.
+- **It starts from the herd's REAL `hunt_credit`, never zero**, and it is projected from the source's
+  **POST-take** state — so slot 0 is genuinely the *next* delivery, not the one this turn already paid.
+  Both are load-bearing and both are pinned: zeroing the bank, or projecting pre-take, shifts the
+  **first** arrival — the one the player cares most about — and
+  `labor_allocation::the_arrival_schedule_matches_a_real_driven_hunt` fails on the exact turn index.
+- **Pinned to real behaviour, not to another forecast** (the ~34-vs-~6-turn lesson): that test reads
+  the schedule published on turn 0, then drives the **real** systems forward `horizon` turns and
+  asserts the sim delivered on exactly the named turns in exactly the named amounts.
+- Reuses the shared take helpers verbatim (`regrow_biomass`, `hunt_policy_rate`,
+  `hunt_credit_ceiling`, `quantise_animal_take`, `pen_yield_biomass`, `hunt_provisions`,
+  `forage_take`, `herd_ecology`/`herd_capacity`) — **no second copy of the take math** — and simulates
+  on a clone, never the live source. Unlike the `realized` projection it does **not** break on a
+  zero take: there a zero means *spent* and would dilute an average; here it is a **wait** turn, which
+  is the entire mechanic. Only the extinction floor ends a hunt schedule early.
+- **`arrivals_horizon_turns` is its OWN lever** (`labor_config.json`, default **20**, validated `> 0`),
+  deliberately separate from `yield_average_horizon_turns` (40): this is a *display span* the client
+  charts turn-by-turn, that one is a *smoothing window*.
+- On the wire: `LaborAssignment.arrivalSchedule:[float]` (append-only, after `realizedYield`), on both
+  `WorldSnapshot` and `WorldDelta`. A flat `[float]` rather than a vector of `{turn, amount}` tables is
+  deliberate — **the index IS the turn offset**, so it needs no per-entry table and stays compact. An
+  **empty** vector means *not projected* (Scout/Warrior, or a rehydrated `SourceYield::ZERO`), which the
+  client must read as "no data", never as famine. **Client follow-up:** nothing renders it yet; the
+  merged per-band larder projection is the client's to compose from these plus consumption — the sim
+  owns the model (when + how much), walking the larder is presentation.
+
 **The understaffing mirror — `wastedYield`** (slice 7, appended to `LaborAssignment`). `workersNeeded`
 only ever answered *"are there too many workers here?"*; nothing answered *"too few?"*. `SourceYield.wasted`
 = `production − actual` — what the source **offered that the crew could not collect**, where *production*

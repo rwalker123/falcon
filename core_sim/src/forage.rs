@@ -1028,6 +1028,64 @@ pub fn project_realized_forage(
     }
 }
 
+/// **WHEN the food lands for a forage source** (the plant twin of `fauna::project_arrivals_hunt`) —
+/// the discrete sibling of [`project_realized_forage`], run over the same forward simulation and
+/// recording what is delivered on each projected turn. Returns exactly `horizon` entries: **index `i`
+/// is the food delivered `i + 1` turns from now**.
+///
+/// **A gather is continuous, so a healthy patch is positive in EVERY slot** — and that is the correct
+/// reading, not a degenerate one: `forage_take` has no kill-credit bank to quantise it, so the plant
+/// web's schedule is a solid run where the animal web's is a pulse. The pair still exists for the
+/// plant side because the *client* composes one larder projection out of every source's schedule, and
+/// a continuous source has to contribute its own turns rather than be special-cased there.
+///
+/// Simulated on a private clone through the same take path the real turn runs, so the schedule is
+/// what the sim will really pay. Unlike its animal twin there is no early completion test: a stripped
+/// stand reseeds and regrows, so its remaining slots are genuinely small-but-positive rather than
+/// "gone", and a truly dead source simply fills the schedule with zeros.
+// Same shape as its `realized` sibling — the projection needs the full take context.
+#[allow(clippy::too_many_arguments)]
+pub fn project_arrivals_forage(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
+    seasonal: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+    horizon: u32,
+) -> Vec<f32> {
+    // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
+    // client reads as "no data" exactly like an unprojected row.
+    let mut schedule = vec![0.0_f32; horizon as usize];
+    let mut sim = patch.clone();
+    for slot in schedule.iter_mut() {
+        // Logistics: the patch regrows first, exactly as `advance_forage_regrowth` runs before the
+        // Population stage's gather.
+        regrow_patch(&mut sim, forage);
+        // Population: the same branch `project_realized_forage` and the real Forage arm both take — a
+        // Field is a managed harvest (no drawdown, policy axis collapsed, worker-capped); every other
+        // patch is the drawn-down policy gather through the shared `forage_take` path.
+        *slot = if sim.is_field() {
+            let production = field_provisions(sim.biomass, forage, output_multiplier);
+            let collection = workers as f32 * managed_per_worker_yield(forage, output_multiplier);
+            production.min(collection)
+        } else {
+            forage_take(
+                &mut sim,
+                workers,
+                policy,
+                forage,
+                ladder,
+                output_multiplier,
+                seasonal,
+            )
+            .to_f32()
+        };
+    }
+    schedule
+}
+
 /// The assign-time yield telemetry seed for a **Forage** source: what staffing `patch` with `workers`
 /// gatherers under `policy` will pay next turn, in the same shape the Forage arm of
 /// `advance_labor_allocation` records after the take. Reuses `forage_forecast` (hence `forage_take`'s
@@ -1045,6 +1103,7 @@ pub fn forage_source_yield_preview(
     workers: u32,
     policy: FollowPolicy,
     realized_horizon: u32,
+    arrivals_horizon: u32,
 ) -> SourceYield {
     let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
     // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
@@ -1071,6 +1130,18 @@ pub fn forage_source_yield_preview(
         policy,
         realized_horizon,
     );
+    // The discrete twin, from the same patch state: what lands on each of the next
+    // `arrivals_horizon` turns. A gather is continuous, so this is normally positive throughout.
+    let arrivals = project_arrivals_forage(
+        patch,
+        forage,
+        ladder,
+        seasonal,
+        output_multiplier,
+        workers,
+        policy,
+        arrivals_horizon,
+    );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
     // and since rung 2 went back to being a drawn-down wild stand, a *tended* patch can be over-farmed
     // like any other, so it must keep its real sustainable line and its real ⚠.
@@ -1081,6 +1152,7 @@ pub fn forage_source_yield_preview(
         workers,
         policy,
         realized,
+        arrivals,
     )
 }
 

@@ -387,6 +387,14 @@ pub struct LaborConfig {
     /// herd's decline within the window. Its own lever, distinct from the expedition
     /// `forecast_horizon_turns` (a raid-length horizon, a different question). Validated `> 0`.
     pub yield_average_horizon_turns: u32,
+    /// **The forward-projection horizon for a source's ARRIVAL SCHEDULE**, in turns. Each source's
+    /// `SourceYield::arrivals` is *what lands on each of the next N turns* — the same forward
+    /// simulation `yield_average_horizon_turns` drives, but run **WITH** the kill-credit bank, so it
+    /// answers the opposite question: not *how much per turn on average* but *on which turns does the
+    /// food actually arrive*. That is why it is its **own** lever and deliberately shorter: a schedule
+    /// is read turn-by-turn on a chart, so the horizon is a display span (how far ahead the player can
+    /// plan their larder), where the average's horizon is a smoothing window. Validated `> 0`.
+    pub arrivals_horizon_turns: u32,
     pub forage: ForageLaborConfig,
     pub hunt: HuntLaborConfig,
     pub scout: ScoutLaborConfig,
@@ -432,6 +440,17 @@ impl LaborConfig {
                     "be at least 1 (the realized-yield forward-projection horizon in turns)"
                         .to_string(),
                 value: self.yield_average_horizon_turns.to_string(),
+            });
+        }
+        // The arrival schedule is a `Vec` of exactly this length — at `0` the sim would publish an
+        // empty schedule for every source and the client's chart would silently render nothing.
+        if self.arrivals_horizon_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "arrivals_horizon_turns",
+                constraint:
+                    "be at least 1 (the arrival-schedule forward-projection horizon in turns)"
+                        .to_string(),
+                value: self.arrivals_horizon_turns.to_string(),
             });
         }
         validate_plant_ladder_payoffs(&self.forage)

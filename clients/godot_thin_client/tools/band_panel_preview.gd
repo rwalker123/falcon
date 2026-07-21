@@ -19,6 +19,9 @@ const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
 # A left inspector strip width to prove co-edge stacking (bug 1).
 const INSPECTOR_STRIP := 300.0
+# The sim turn the arrival-schedule states render on, so the strip tooltips + the outlook "empty ~turn
+# N" marker read as absolute turns rather than the pre-first-overlay relative form.
+const ARRIVAL_PREVIEW_TURN := 40
 
 var _hud: HudLayer
 var _panel: BandCityPanel
@@ -209,6 +212,30 @@ func _ready() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_source_cap")
+
+	# ARRIVAL SCHEDULE — the per-source tick strip + the merged Food-outlook chart. Seed a current turn
+	# so the strip's cell tooltips + the chart's "empty ~turn N" marker read as absolute turns.
+	_hud.update_overlay(ARRIVAL_PREVIEW_TURN, {})
+	_hud.show_tile_selection({})
+	_hud._pending_labor.clear()
+
+	# (a) A LUMPY hunt (gaps) beside a CONTINUOUS forage (every slot positive). The hunt row must gain a
+	# tick strip with visible gaps; the forage row must gain NONE (the gap rule); the merged projection
+	# must sawtooth upward (hauls > flat drain).
+	_hud.update_band_alerts([_arrivals_band_fixture()])
+	for state in [{"edge": SIDE_LEFT, "name": "band_panel_arrivals_left"},
+			{"edge": SIDE_TOP, "name": "band_panel_arrivals_top"}]:
+		_panel.set_dock(state["edge"])
+		await _settle()
+		await _settle()   # let the deferred fit_content re-pack settle before capture
+		await _save(state["name"])
+
+	# (b) A band whose larder EMPTIES inside the horizon: sparse lumpy hauls under a heavy drain, so the
+	# walk hits 0 and the chart draws the dashed DANGER "empty ~turn N" marker.
+	_hud.update_band_alerts([_arrivals_starving_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_arrivals_empty")
 
 	get_tree().quit()
 
@@ -403,6 +430,75 @@ func _phase_expedition_fixtures() -> Array:
 	hunt_delivering["id"] = "Hunters 2"
 	hunt_delivering["expedition_phase"] = "delivering"
 	return [scout_outbound, scout_awaiting, scout_returning, hunt_hunting, hunt_delivering]
+
+## A LUMPY big-game hunt schedule: ~6-food hauls on scattered turns, zeros between them (the cadence a
+## whole-animal hunt actually delivers). Length = arrivals_horizon_turns (20). Realized ≈ 2.7/turn.
+func _lumpy_hunt_schedule() -> Array:
+	var haul_turns := {1: true, 3: true, 4: true, 6: true, 9: true, 11: true, 14: true, 16: true, 19: true}
+	var schedule: Array = []
+	for i in range(20):
+		schedule.append(6.0 if haul_turns.has(i) else 0.0)
+	return schedule
+
+## A CONTINUOUS forage schedule at `rate` every turn — no gap, so its row draws NO tick strip (the gap
+## rule). Length 20; `rate` matches the fixture's shown realized yield so the merged chart is honest.
+func _continuous_forage_schedule(rate: float = 0.9) -> Array:
+	var schedule: Array = []
+	for i in range(20):
+		schedule.append(rate)
+	return schedule
+
+## A SPARSE hunt schedule (two hauls, deep gaps) for the emptying-larder state: the drain outpaces the
+## trickle and the second haul lands too late, so the larder walk hits 0 mid-horizon.
+func _sparse_hunt_schedule() -> Array:
+	var haul_turns := {2: true, 9: true}
+	var schedule: Array = []
+	for i in range(20):
+		schedule.append(5.0 if haul_turns.has(i) else 0.0)
+	return schedule
+
+## A player band whose sources carry projected arrivals: a LUMPY hunt (gaps → strip) beside a
+## CONTINUOUS forage (no gap → no strip). Positive net (hauls + trickle > flat drain), so the merged
+## Food-outlook chart sawtooths UPWARD.
+func _arrivals_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 920
+	band["id"] = "Band 9"
+	band["days_of_food"] = 18.0
+	band["stores"] = {"provisions": 30.0}
+	band["food_income"] = 3.6
+	band["food_consumption"] = 2.0
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain",
+			"target_x": 70, "target_y": 17, "actual_yield": 2.7, "sustainable_yield": 2.7,
+			"realized_yield": 2.7, "arrival_schedule": _lumpy_hunt_schedule()},
+		{"kind": "forage", "workers": 3, "policy": "sustain", "target_x": 71, "target_y": 18,
+			"actual_yield": 0.9, "sustainable_yield": 0.9, "realized_yield": 0.9,
+			"arrival_schedule": _continuous_forage_schedule()},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+## A player band whose larder EMPTIES inside the horizon: a heavy drain over a sparse hunt + a thin
+## forage trickle, so the Food-outlook walk reaches 0 and the chart draws the dashed "empty ~turn N".
+func _arrivals_starving_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 921
+	band["id"] = "Band 10"
+	band["days_of_food"] = 4.0
+	band["stores"] = {"provisions": 12.0}
+	band["food_income"] = 0.9
+	band["food_consumption"] = 2.5
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "policy": "sustain",
+			"target_x": 70, "target_y": 17, "actual_yield": 0.5, "sustainable_yield": 0.5,
+			"realized_yield": 0.5, "arrival_schedule": _sparse_hunt_schedule()},
+		{"kind": "forage", "workers": 2, "policy": "sustain", "target_x": 71, "target_y": 18,
+			"actual_yield": 0.4, "sustainable_yield": 0.4, "realized_yield": 0.4,
+			"arrival_schedule": _continuous_forage_schedule(0.4)},
+		{"kind": "scout", "workers": 1},
+	]
+	return band
 
 ## A detached HUNT expedition outfitted by band 904, following game_deer_79 under a Surplus policy.
 func _hunt_expedition_fixture() -> Dictionary:

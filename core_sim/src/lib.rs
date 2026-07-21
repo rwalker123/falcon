@@ -125,9 +125,10 @@ pub use expedition_config::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, forecast_expected_take, herd_capacity,
     herd_ecology, herd_herders_needed, herded_fraction, herders_needed, hunt_credit_ceiling,
-    hunt_policy_rate, hunt_provisions, hunt_source_yield_preview, pen_upkeep, quantise_animal_take,
-    repopulate_fauna, spawn_initial_herds, AnimalTake, EcologyPhase, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FULLY_HERDED,
+    hunt_policy_rate, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
+    project_arrivals_hunt, project_realized_hunt, quantise_animal_take, repopulate_fauna,
+    spawn_initial_herds, AnimalTake, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FULLY_HERDED,
     HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
@@ -139,8 +140,9 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview, rung_site_refusal,
-    spawn_initial_forage, tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry,
+    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
+    project_arrivals_forage, project_realized_forage, rung_site_refusal, spawn_initial_forage,
+    tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry,
     CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};

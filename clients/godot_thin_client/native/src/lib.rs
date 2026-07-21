@@ -4295,6 +4295,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
+            // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
+            // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
+            // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY
+            // means "not projected" (Scout/Warrior, rehydrated save) — the client must read that as
+            // no data, never as famine. Always inserted so the entry shape is stable.
+            let mut arrival_schedule = PackedFloat32Array::new();
+            if let Some(schedule) = assignment.arrivalSchedule() {
+                for amount in schedule {
+                    arrival_schedule.push(amount);
+                }
+            }
+            let _ = entry.insert("arrival_schedule", &arrival_schedule);
             // Minimum workers that would have produced this turn's take. `workers > workers_needed`
             // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
             // capped by its policy ceiling / resource biomass, so the surplus workers idled here.

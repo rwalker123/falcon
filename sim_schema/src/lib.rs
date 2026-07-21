@@ -1966,6 +1966,18 @@ pub struct LaborAssignmentState {
     /// rehydrated save before the next tick). Appended (append-only).
     #[serde(default)]
     pub realized_yield: f32,
+    /// **WHEN the food actually lands** — the discrete twin of [`Self::realized_yield`], from the
+    /// *same* forward simulation run **with** the kill-credit bank. `arrival_schedule[i]` is the food
+    /// delivered `i + 1` turns from now; the length is `labor_config.arrivals_horizon_turns` (20), and
+    /// `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy — zeros between
+    /// hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the *timing* and not the
+    /// total — while a forage patch or fast game is positive in every slot, a continuous source the
+    /// client draws as a solid run. **Empty** on a row that was never projected (Scout/Warrior, or a
+    /// rehydrated [`SourceYield::ZERO`]): read that as *no data*, never as famine. Derived per-turn at
+    /// capture from the source's **post-take** state, so slot 0 is the *next* delivery. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub arrival_schedule: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -4555,6 +4567,13 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.policy))
                         };
+                        // An unprojected row ships no vector at all, so the client can tell "no
+                        // schedule" from "a schedule of zeros" (a real famine forecast).
+                        let arrival_schedule = if assignment.arrival_schedule.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_vector(&assignment.arrival_schedule))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -4570,6 +4589,7 @@ fn create_populations<'a>(
                                 wastedYield: assignment.wasted_yield,
                                 overdraws: assignment.overdraws,
                                 realizedYield: assignment.realized_yield,
+                                arrivalSchedule: arrival_schedule,
                             },
                         )
                     })

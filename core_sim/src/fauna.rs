@@ -2952,6 +2952,103 @@ pub fn project_realized_hunt(
     }
 }
 
+/// **WHEN the food lands for a hunt source — a FORWARD PROJECTION *with* the kill-credit bank.** The
+/// discrete sibling of [`project_realized_hunt`]: the same forward simulation, from the same herd
+/// state, under the same policy and crew — but run **with** [`Herd::hunt_credit`] and the whole-animal
+/// quantisation the real take path applies, recording what is delivered on each projected turn.
+///
+/// Returns exactly `horizon` entries: **index `i` is the food delivered `i + 1` turns from now**, and
+/// `0.0` is an honest *wait* turn (the bank could not yet afford a body), not a missing reading. A
+/// **continuous** source — a pen, or fast game whose MSY clears a body every turn — simply has a
+/// positive value in every slot, which the client draws as a solid run.
+///
+/// # Why this and `realized` are two functions, not one
+///
+/// The bank decides *when* a whole animal lands, never *how much* lands over the window — so
+/// `realized` omits it to get the smooth average directly, and this keeps it to get the timing. Their
+/// totals agree: `Σ arrivals ≈ realized × horizon`, up to the partial body still banked at the end.
+///
+/// # Where it starts
+///
+/// From the herd's **REAL current `hunt_credit`**, never zero — the first arrival is the one the
+/// player cares most about, and a herd six turns into banking a mammoth delivers on turn 1, not turn
+/// 7. Callers pass the **post-take** state so slot 0 is the *next* delivery rather than the one this
+/// turn already paid.
+///
+/// Simulated on a private clone (the caller's herd is never touched) through the same shared helpers
+/// the take path uses ([`regrow_biomass`], [`hunt_policy_rate`], [`hunt_credit_ceiling`],
+/// [`quantise_animal_take`], [`pen_yield_biomass`], [`hunt_provisions`],
+/// [`herd_ecology`]/[`herd_capacity`]) — **no second copy of the take math**, so the schedule is what
+/// the sim will really pay.
+// Same shape as its `realized` sibling — the projection needs the full take context.
+#[allow(clippy::too_many_arguments)]
+pub fn project_arrivals_hunt(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    per_worker_biomass_capacity: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+    horizon: u32,
+) -> Vec<f32> {
+    // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
+    // client reads as "no data" exactly like an unprojected row.
+    let mut schedule = vec![0.0_f32; horizon as usize];
+    // The projection runs on a private copy. Ecology and capacity cannot change under the projected
+    // take (the quarry is never tamed/penned mid-run), so resolve them once — as `project_realized_hunt`
+    // and `hunt_trip_forecast` both do.
+    let mut quarry = herd.clone();
+    let ecology = herd_ecology(&quarry, fauna);
+    let capacity = herd_capacity(&quarry, fauna);
+    let corralled = quarry.is_corralled();
+    let collection = workers as f32 * per_worker_biomass_capacity;
+    for slot in schedule.iter_mut() {
+        // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows `quarry.biomass`).
+        regrow_biomass(&mut quarry, fauna);
+        if quarry.biomass <= ecology.extinction_floor * capacity {
+            break; // `advance_herds` would despawn it here — the herd is gone, nothing more arrives.
+        }
+        // Population: the real take path, quantised to whole animals.
+        //
+        // **The completion test is the extinction floor ALONE — deliberately NOT the realized
+        // projection's `take <= EPSILON` break.** There, a zero take means the source is spent and
+        // would dilute an average; here a zero take is a *wait* turn, which is the entire mechanic
+        // this schedule exists to show. Breaking on it would truncate every big-game schedule at its
+        // first gap.
+        let carried = if corralled {
+            // A pen is a managed harvest: no bank, no policy axis — the keeper butchers whole animals
+            // out of the pen's own escapement MSY, exactly as the corral-tend branch of
+            // `advance_labor_allocation` does.
+            let production = pen_yield_biomass(&quarry, fauna);
+            let take = quantise_animal_take(production, collection, quarry.body_mass);
+            quarry.biomass -= take.killed_biomass();
+            take.carried
+        } else {
+            // A wild/pastoral herd banks its policy rate and kills once the bank clears a body — the
+            // `systems::hunt_take` sequence, helper for helper.
+            let rate = hunt_policy_rate(
+                policy,
+                quarry.biomass_before_regrowth,
+                capacity,
+                &ecology,
+                fauna,
+                ladder,
+            );
+            let ceiling = hunt_credit_ceiling(policy, quarry.biomass, quarry.hunt_credit, rate);
+            let take = quantise_animal_take(ceiling, collection, quarry.body_mass);
+            quarry.biomass -= take.killed_biomass();
+            if !matches!(policy, FollowPolicy::Eradicate) {
+                // Eradicate never touched the bank; every other policy drains it by what was killed.
+                quarry.hunt_credit = (quarry.hunt_credit + rate - take.killed_biomass()).max(0.0);
+            }
+            take.carried
+        };
+        *slot = hunt_provisions(carried, fauna, output_multiplier);
+    }
+    schedule
+}
+
 /// **What the source hands over, and what of it the crew keeps** — `(production, actual)`, the pair
 /// [`forecast_expected_take`] and [`forecast_source_yield`] both need, resolved once so the take and
 /// the waste can never be computed against different productions.
@@ -3011,11 +3108,16 @@ pub(crate) fn forecast_source_yield(
     workers: u32,
     policy: FollowPolicy,
     realized: f32,
+    arrivals: Vec<f32>,
 ) -> SourceYield {
     let (production, actual) = forecast_production_and_take(forecast, workers, policy);
     SourceYield {
         actual,
         sustainable: if managed { actual } else { sustainable },
+        // The discrete twin of `realized`, from the same forward simulation run with the kill-credit
+        // bank (`project_arrivals_hunt` / `project_arrivals_forage`) — also the caller's, for the same
+        // reason: a pure function of the source state, so seed and resolved row agree.
+        arrivals,
         // The steady headline: the forward-projected average food/turn over the next horizon turns
         // (`project_realized_hunt` / `project_realized_forage`), computed by the caller from the same
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
@@ -3058,6 +3160,7 @@ pub fn hunt_source_yield_preview(
     workers: u32,
     policy: FollowPolicy,
     realized_horizon: u32,
+    arrivals_horizon: u32,
 ) -> SourceYield {
     let forecast = hunt_forecast(
         herd,
@@ -3087,6 +3190,18 @@ pub fn hunt_source_yield_preview(
         policy,
         realized_horizon,
     );
+    // The discrete twin, from the same herd state: when each of the next `arrivals_horizon` deliveries
+    // lands, bank and all.
+    let arrivals = project_arrivals_hunt(
+        herd,
+        fauna,
+        ladder,
+        per_worker_biomass_capacity,
+        output_multiplier,
+        workers,
+        policy,
+        arrivals_horizon,
+    );
     forecast_source_yield(
         &forecast,
         sustainable,
@@ -3094,6 +3209,7 @@ pub fn hunt_source_yield_preview(
         workers,
         policy,
         realized,
+        arrivals,
     )
 }
 

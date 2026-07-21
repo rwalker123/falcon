@@ -689,6 +689,9 @@ const ALLOC_SECTION_FONT_SIZE := 10
 const ALLOC_BLOCK_SEPARATION := 6
 const ALLOC_HEADER_ACTIONS := "Current actions"
 const ALLOC_HEADER_ROLES := "Band roles"
+# The merged larder projection's section header (see `_build_food_outlook_block`). Its own block, not
+# a line inside the summary RichTextLabel — BBCode cannot host a drawn chart.
+const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
@@ -2912,6 +2915,9 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "workers_needed": int(a.get("workers_needed", 0)),
             # Provisions offered but not collected (under-crewed) — drives the muted "· N wasted" note.
             "wasted_yield": float(a.get("wasted_yield", 0.0)),
+            # WHEN this source's food lands (index i = i+1 turns from now) — drives the row's arrival
+            # tick strip. Empty = "not projected", which renders no strip (never a famine).
+            "arrival_schedule": _as_schedule(a.get("arrival_schedule", null)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -2925,8 +2931,23 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             # the next snapshot resolves what the source actually used.
             "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
             "workers_needed": 0,
+            # Nor any projected arrivals — the schedule comes from the sim's forward run, so an
+            # un-acknowledged edit shows no strip until the next snapshot projects it.
+            "arrival_schedule": PackedFloat32Array(),
         }
     return merged
+
+## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
+## packed array; a fixture (or an absent field) may hand over a plain Array or null, and this is the
+## one place that difference is absorbed.
+func _as_schedule(value: Variant) -> PackedFloat32Array:
+    if value is PackedFloat32Array:
+        return value
+    var packed := PackedFloat32Array()
+    if value is Array:
+        for amount in (value as Array):
+            packed.push_back(float(amount))
+    return packed
 
 ## Effective worker count for one role/source, overlaying any pending value.
 func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
@@ -3030,7 +3051,11 @@ func _policy_hint(kind: String, policy: String) -> String:
 ## line 1, and the yield/policy text (`status_line`) + the status glyph + the ⚠/overstaff/wasted notes
 ## drop to an indented, smaller secondary line 2 that WRAPS rather than widening the panel. When "",
 ## every existing caller (Scout/Warrior, the compose steppers) renders the unchanged single-line HBox.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "") -> Control:
+## `arrival_schedule` (default empty) is the source's projected per-turn deliveries. When it has a GAP
+## (`ArrivalStrip.has_gap`) the two-line form gains a third, indented line: the arrival tick strip that
+## shows WHEN the steady average actually lands. A continuous source (or an unprojected row) has no
+## lumpiness to explain and gets no strip. Ignored by the single-line form.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "", arrival_schedule: PackedFloat32Array = PackedFloat32Array()) -> Control:
     # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
     var status_key := FoodIcons.STATUS_PENDING if pending else status
     var row_tooltip := _append_status_tooltip(tooltip, status_key)
@@ -3040,7 +3065,7 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
     if status_line != "":
         return _build_two_line_stepper(
             label_text, count, plus_enabled, on_change, warn, row_tooltip, note,
-            on_focus_source, status_key, muted_note, status_line, row_ink)
+            on_focus_source, status_key, muted_note, status_line, row_ink, arrival_schedule)
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -3076,7 +3101,7 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
 ## the yield/policy text, the status glyph, then the ⚠/overstaff/wasted notes — the SAME per-part
 ## colors the single-line path uses, just relocated below. Pending tints the TITLE amber (row 1's
 ## identity) and shows the ◌ glyph on row 2.
-func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color) -> VBoxContainer:
+func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color, arrival_schedule: PackedFloat32Array) -> VBoxContainer:
     var col := VBoxContainer.new()
     col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     col.add_theme_constant_override("separation", TWO_LINE_STEPPER_SEPARATION)
@@ -3117,6 +3142,17 @@ func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool,
         status_flow.add_child(_build_status_part(muted_note, HudStyle.INK_FAINT))
     status_margin.add_child(status_flow)
     col.add_child(status_margin)
+    # Line 3 (only when the deliveries are LUMPY): the arrival tick strip, indented onto the same
+    # gutter as line 2 so it reads as part of the row's secondary information. It stays INSIDE this
+    # row's container, so the panel's section-block layout and the wide/tall packing are untouched.
+    if ArrivalStrip.has_gap(arrival_schedule):
+        var strip_margin := MarginContainer.new()
+        strip_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        strip_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
+        var strip := ArrivalStrip.new()
+        strip.set_schedule(arrival_schedule, _current_turn)
+        strip_margin.add_child(strip)
+        col.add_child(strip_margin)
     return col
 
 ## The clickable title (or plain Label) shared by both stepper forms. `on_focus_source` (when valid)
@@ -3543,6 +3579,53 @@ func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
     else:
         _render_occupant_drawer()
 
+## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
+## the number the Food summary row prints (rounded there).
+func _band_provisions(band: Dictionary) -> float:
+    var stores_variant: Variant = band.get("stores", {})
+    if stores_variant is Dictionary:
+        return float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))
+    return 0.0
+
+## The band-wide merged arrival schedule: element-wise sum of every source's `arrival_schedule`, so
+## slot i is ALL the food landing i+1 turns from now. Length = the longest schedule present (they are
+## all `arrivals_horizon_turns` long in practice); empty when no source was projected, which is the
+## signal to omit the Food-outlook block entirely rather than draw a flat starving line.
+func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
+    var merged := PackedFloat32Array()
+    for a in _labor_assignments_of(band):
+        if not (a is Dictionary):
+            continue
+        var schedule := _as_schedule((a as Dictionary).get("arrival_schedule", null))
+        if schedule.is_empty():
+            continue
+        if merged.size() < schedule.size():
+            merged.resize(schedule.size())
+        for i in range(schedule.size()):
+            merged[i] += schedule[i]
+    return merged
+
+## "FOOD OUTLOOK" section block: the merged larder projection chart (`FoodOutlookChart`). Returns null
+## — the block is omitted — for a non-player band, a band with no real food flow (same gate as the Food
+## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
+## than a summary line because BBCode cannot host a drawn chart.
+func _build_food_outlook_block(band: Dictionary) -> VBoxContainer:
+    if not (_is_player_unit(band) and _band_has_food_flow(band)):
+        return null
+    var arrivals := _merged_arrival_schedule(band)
+    if arrivals.is_empty():
+        return null
+    var block := _make_alloc_block()
+    block.add_child(_alloc_section_label(ALLOC_HEADER_FOOD_OUTLOOK))
+    var chart := FoodOutlookChart.new()
+    # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
+    # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
+    chart.set_projection(
+        _band_provisions(band), arrivals,
+        float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _current_turn)
+    block.add_child(chart)
+    return block
+
 ## A fresh section-block VBox: the discrete, self-contained unit the Band/City panel arranges (a
 ## vertical stack when tall, a column-flow when wide). Rows are added into it exactly as they used to
 ## be added into the flat allocation container — only the parent node changes.
@@ -3675,7 +3758,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line))
+                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line,
+                _as_schedule(m.get("arrival_schedule", null))))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -3709,7 +3793,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),
                 # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line))
+                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line,
+                _as_schedule(m.get("arrival_schedule", null))))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -5498,6 +5583,12 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band, true))
     summary_block.add_child(detail_label)
     blocks.append(summary_block)
+    # "Food outlook" block — the merged larder projection over the arrivals horizon (its own section
+    # because BBCode can't host the drawn chart). Sits right after the summary; omitted for a band with
+    # no projected food flow.
+    var outlook_block := _build_food_outlook_block(_panel_band)
+    if outlook_block != null:
+        blocks.append(outlook_block)
     # "Active expeditions" block the panel band has detached (grouped by home_band_entity); omitted
     # when the band has none.
     var exp_block := _build_panel_expeditions_block(_panel_band)

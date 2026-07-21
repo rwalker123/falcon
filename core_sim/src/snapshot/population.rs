@@ -58,7 +58,7 @@ pub(crate) fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> La
 /// e.g. a rehydrated save before the next tick).
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
-    yields: SourceYield,
+    yields: &SourceYield,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -69,6 +69,10 @@ pub(crate) fn labor_assignment_to_state(
         wasted_yield: yields.wasted,
         overdraws: yields.overdraws,
         realized_yield: yields.realized,
+        // The discrete arrival schedule: index `i` = the food landing `i + 1` turns ahead. Cloned
+        // rather than moved so the caller's telemetry row (which the band roll-ups below still read)
+        // is untouched.
+        arrival_schedule: yields.arrivals.clone(),
         ..Default::default()
     };
     match &assignment.target {
@@ -182,10 +186,7 @@ pub(crate) fn population_state(
                 .iter()
                 .enumerate()
                 .map(|(i, assignment)| {
-                    labor_assignment_to_state(
-                        assignment,
-                        a.last_yields.get(i).copied().unwrap_or(NO_YIELD),
-                    )
+                    labor_assignment_to_state(assignment, a.last_yields.get(i).unwrap_or(&NO_YIELD))
                 })
                 .collect()
         })

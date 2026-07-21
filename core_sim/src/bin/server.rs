@@ -1814,6 +1814,7 @@ fn seed_source_yield(
                 workers,
                 *policy,
                 labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
             )
         }
         LaborTarget::Hunt { fauna_id, policy } => {
@@ -1837,6 +1838,7 @@ fn seed_source_yield(
                 workers,
                 *policy,
                 labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
             )
         }
         LaborTarget::Scout | LaborTarget::Warrior => return,
@@ -7218,6 +7220,7 @@ mod tests {
             BAND_WORKERS,
             FollowPolicy::Sustain,
             labor.yield_average_horizon_turns,
+            labor.arrivals_horizon_turns,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,
@@ -7282,6 +7285,7 @@ mod tests {
             BAND_WORKERS,
             FollowPolicy::Sustain,
             labor.yield_average_horizon_turns,
+            labor.arrivals_horizon_turns,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,

@@ -773,6 +773,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         workers,
                         policy,
                         labor.yield_average_horizon_turns,
+                        labor.arrivals_horizon_turns,
                     )
                     .actual
                 };

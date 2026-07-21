@@ -709,6 +709,17 @@ table LaborAssignment {
   // the jumpy actualYield. Derived per-turn at capture (0 on a rehydrated save before the next tick).
   // Appended (append-only).
   realizedYield:float = 0;
+  // WHEN the food actually lands — the discrete twin of realizedYield, from the SAME forward
+  // simulation run WITH the kill-credit bank. Index i = the food delivered i+1 turns from now;
+  // length = labor_config.arrivals_horizon_turns (20); 0 on a turn nothing lands. A big-game Sustain
+  // hunt reads lumpy (zeros between hauls, whose total is ~ realizedYield x horizon — the bank moves
+  // the timing, not the total); a forage patch or fast game is positive in every slot, which the
+  // client draws as a solid run. A flat [float] deliberately, NOT a vector of {turn, amount} tables:
+  // the INDEX IS the turn offset, so it needs no per-entry table and stays compact. Empty on a row
+  // that has not been projected (Scout/Warrior, or a rehydrated SourceYield::ZERO) — read that as
+  // "no data", never as famine. Derived per-turn at capture, from the source's POST-take state so
+  // slot 0 is the next delivery. Appended (append-only).
+  arrivalSchedule:[float];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

@@ -808,7 +808,19 @@ pub struct LaborAssignment {
 /// *while the source lasts* rather than a horizon-diluted average. On a **continuous** source (forage
 /// patch / Field) the projection reuses `forage_take` directly. `actual` and the ledger identity are
 /// unchanged — this is a parallel steady value, added beside them, never replacing them.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `arrivals` = **when the food actually lands** — the other half of the same question `realized`
+/// answers, from the same forward simulation run **WITH** the kill-credit bank
+/// ([`fauna::project_arrivals_hunt`] / [`forage::project_arrivals_forage`]). Index `i` is the food
+/// delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns` turns; `0.0` where
+/// nothing lands. `realized` deliberately *omits* the bank because the bank decides **when** a whole
+/// animal arrives and not **how much** arrives over the window; this is the value that keeps the
+/// timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros, then a mammoth) whose total
+/// is ≈ `realized × horizon`, while a forage patch — or fast game whose MSY clears a body every turn —
+/// is positive in every slot, which is a **continuous** source correctly rendered as a solid run.
+/// Projected from the source's **post-take** state, so slot 0 is genuinely the *next* delivery and not
+/// the one this turn already paid.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
@@ -819,6 +831,10 @@ pub struct SourceYield {
     /// `labor_config.yield_average_horizon_turns` turns, a pure function of the source's current state.
     /// See the struct-level doc above.
     pub realized: f32,
+    /// **The discrete arrival schedule** — `arrivals[i]` = the food landing `i + 1` turns from now,
+    /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
+    /// struct-level doc above.
+    pub arrivals: Vec<f32>,
 }
 
 impl SourceYield {
@@ -835,6 +851,10 @@ impl SourceYield {
         overdraws: false,
         // Nothing was taken, so the steady average is zero too.
         realized: 0.0,
+        // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
+        // has not been projected at all, and the client renders "no data" rather than "famine".
+        // `Vec::new` allocates nothing, so this stays a `const`.
+        arrivals: Vec::new(),
     };
 }
 
