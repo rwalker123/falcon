@@ -2869,7 +2869,12 @@ pub fn forecast_expected_take(
 /// stops and the average divides only by the turns that actually delivered. It is deliberately far
 /// below any live source's one-turn take (the slowest wild MSY is ~`r·K/4` ≫ this on every species),
 /// so a healthy source never trips it and a dead one always does.
-pub(crate) const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
+///
+/// **Biomass-space only** — that is what the argument above measures. The plant web's projection
+/// breaks on an already-converted *provisions* take, so it carries its own sibling constant
+/// (`forage::REALIZED_PROJECTION_PROVISIONS_EPSILON`) justified on the provisions scale, rather than
+/// borrowing this one across a unit boundary its doc does not cover.
+const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 
 /// **The steady `realized` yield for a hunt source — a FORWARD PROJECTION.** The average food/turn the
 /// herd delivers over the next `horizon` turns, computed by simulating it forward from its CURRENT

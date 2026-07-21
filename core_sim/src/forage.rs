@@ -959,6 +959,22 @@ pub(crate) fn managed_per_worker_yield(forage: &ForageLaborConfig, output_multip
     )
 }
 
+/// **The negligible-take floor (in PROVISIONS) that ends a `realized` forward projection.** Below
+/// this a patch is treated as *spent* — stripped to nothing — so the loop stops and the average
+/// divides only by the turns that actually delivered.
+///
+/// **Provisions-space, which is why it is not [`crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON`]**:
+/// the animal twin breaks on a *biomass* take, while both branches here are already converted
+/// (`field_provisions`, `forage_take`), so the two thresholds justify their magnitudes on different
+/// scales and each gets its own constant rather than sharing one whose doc only covers biomass.
+///
+/// The magnitude is deliberately far below any live patch's one-turn gather: the smallest is a wild
+/// Sustain skim, `r·K/4 × provisions_per_biomass` — ~0.61 provisions on the measured K=195
+/// AlluvialPlain stand (see `labor_config.json` → `cultivation`), and a Field pays several times
+/// that. Four orders of magnitude of headroom, so a healthy patch never trips it and a dead one
+/// always does.
+const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
+
 /// **The steady `realized` yield for a forage source — a FORWARD PROJECTION** (the plant twin of
 /// `fauna::project_realized_hunt`). The average food/turn the patch delivers over the next `horizon`
 /// turns, simulated forward from its CURRENT state under `policy` + `workers`, mirroring the real turn
@@ -1015,7 +1031,7 @@ pub fn project_realized_forage(
             )
             .to_f32()
         };
-        if take <= crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON {
+        if take <= REALIZED_PROJECTION_PROVISIONS_EPSILON {
             break; // the stand is spent — stop before diluting the average with empty turns.
         }
         total += take;

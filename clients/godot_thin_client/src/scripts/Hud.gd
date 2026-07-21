@@ -3491,8 +3491,14 @@ func _band_pen_feed(band: Dictionary) -> float:
 ## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
 ## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted,
 ## not zeroed).
+##
+## **The income term MUST be the same `_band_food_income` the headline sums, not the wire's lumpy
+## `food_income`.** They diverged once and it hid the readout exactly when it was needed: a starving
+## band has `food_consumption` 0 (an empty larder debits nothing) and a whole-animal hunt pays 0 on a
+## wait turn, so a band with a perfectly good STEADY income failed all three tests and lost its net
+## line and breakdown entirely. Gate on the same number you display.
 func _band_has_food_flow(band: Dictionary) -> bool:
-    return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
+    return _band_food_income(band) >= FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN \
         or _band_pen_feed(band) >= FOOD_FLOW_MIN
 
