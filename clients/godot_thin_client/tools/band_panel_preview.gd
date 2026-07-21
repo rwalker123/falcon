@@ -464,7 +464,10 @@ func _arrivals_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 920
 	band["id"] = "Band 9"
-	band["days_of_food"] = 18.0
+	# NET-POSITIVE (income 3.6 vs drain 2.0), so the runway is the not-food-limited sentinel and the
+	# Food line reads ∞ — the sim reports 999 whenever net drain <= 0. A finite countdown here would
+	# contradict the upward-sawtoothing chart directly beneath it.
+	band["days_of_food"] = BandFoodStatus.UNLIMITED_DAYS
 	band["stores"] = {"provisions": 30.0}
 	band["food_income"] = 3.6
 	band["food_consumption"] = 2.0
@@ -485,7 +488,10 @@ func _arrivals_starving_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 921
 	band["id"] = "Band 10"
-	band["days_of_food"] = 4.0
+	# The runway is the HONEST one — larder walked with income counted (12 food, net drain ~1.6/turn),
+	# so it lands on the same turn the chart's dashed "empty ~turn N" marker does. The old
+	# larder/consumption reading would have said 4 here and visibly contradicted the chart below it.
+	band["days_of_food"] = 9.0
 	band["stores"] = {"provisions": 12.0}
 	band["food_income"] = 0.9
 	band["food_consumption"] = 2.5

@@ -517,6 +517,11 @@ table PopulationCohortState {
   elders:long = 0;
   stores:[CohortStore];
   ageTurns:uint = 0;
+  // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
+  // walked off the sources' arrival schedules so it agrees with the client's food-outlook chart.
+  // 999.0 = not food-limited (no demand, or income meets the drain). An expedition has no income,
+  // so it reduces to provisions / consumption. The "days" in the name is a MISNOMER pending a
+  // rename — the sim counts turns, and the client already renders "turns".
   daysOfFood:float = 0;
   activity:string;
   supplyNetworkId:uint = 0;

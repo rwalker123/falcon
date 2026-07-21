@@ -3605,10 +3605,47 @@ network, `>= 1` = shared id) so the client can draw supply links between co-netw
 derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
-`daysOfFood:float` (`larder / one-turn food_demand`; `999.0` = a zero-demand cohort, "not
-food-limited") and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
+`daysOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
+included** — and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
 with the most workers in the band's `LaborAllocation`). Both are computed at capture in
-`population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
+`population_state`.
+
+> #### `daysOfFood` is `larder / net drain` — ONE formula for a band and an expedition
+>
+> **`runway = larder / (consumption + penFeedUpkeep − income)`.** An expedition has no labor income
+> and keeps no pens, so it reduces to `provisions / consumption` — **exactly** the historical
+> reading, unchanged (pinned by `snapshot::population::tests::an_expedition_reports_provisions_over_consumption`).
+> A resident band with real income gets the honest number instead of the old `larder / demand`, which
+> **assumed the band stops gathering and hunting** and so read badly pessimistic — a header saying "4"
+> above a FOOD OUTLOOK chart showing ~9. Do not special-case the two actors.
+>
+> It is resolved the way that chart resolves it (`snapshot::population::larder_runway_turns`), so
+> they cannot disagree by a turn or two on the same panel: (1) walk the larder forward over the
+> **merged per-source `arrivals` schedules**, debiting `consumption + penFeedUpkeep` per turn and
+> clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
+> source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
+> smooth `larder / net_drain` on the **steady** `foodIncomeAverage`, capped at the sentinel; (3)
+> `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
+> renders as ∞.
+>
+> **Consumption here is the forward `food_demand`** (what the people will *want* to eat), not
+> `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` on a
+> rehydrated save and falls short of demand in a famine. The client's chart drains by
+> `foodConsumption` instead, so the two differ **only for a band already eating short** — where the
+> sim is the pessimistic (correct) one.
+>
+> **Consequence, intended:** a band with strong income now reads healthier and **stops tripping
+> starvation alerts it should never have tripped** (the map food dot, the turn-orb `starving`
+> producer and `_food_is_concerning` all key off this field). Measured on a fed 30-person forage
+> band: **4 turns → ∞**. A genuinely starving band is unchanged to within the walk's ±1 clamp. The
+> UI thresholds (`band_status_config.json` warn 10 / critical 5) are now measured against a runway
+> that is *income-inclusive*, so they fire later by construction — retune there if red arrives too
+> late to act on.
+>
+> **The `days` in the name is a MISNOMER pending a rename** (the sim counts turns; the client already
+> renders "turns"). Renaming it across schema/native/client is a mechanical sweep held out of this arc.
+
+Alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
 for the work-range ring) and `scoutRevealRadius` (**repurposed**: now carries the band's effective
 **scout vantage distance** — `scout.vantage_distance(scouts)` = `min(vantage_distance_base + scouts ×
@@ -3662,7 +3699,8 @@ each `PopulationCohortState` carries band-level
 turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at the turn's *opening*
 brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
 births would inflate that and break the larder ledger identity by exactly the growth. `daysOfFood`
-still divides by the post-turn `food_demand` — a forward "turns I can last", a different question).
+drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
+see the runway callout above).
 All derived at capture (0 on a rehydrated save before the next tick). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,

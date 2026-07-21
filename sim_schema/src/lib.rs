@@ -2007,8 +2007,16 @@ pub struct PopulationCohortState {
     /// freshly-spawned band can't emigrate immediately; persisted so rollback preserves the gate.
     #[serde(default)]
     pub age_turns: u32,
-    /// How many turns the band's current food larder covers (`food / demand`); `999.0` means
-    /// "not food-limited" (a zero-population cohort with no demand). Computed at capture.
+    /// **TURNS until the larder is empty, income included** — the honest runway
+    /// `larder / (consumption + pen_feed − income)`, resolved turn-by-turn off the sources'
+    /// arrival schedules so it agrees with the client's FOOD OUTLOOK chart. `999.0` means "not
+    /// food-limited" (no demand at all, or income that meets the drain). An expedition has no
+    /// income, so it reduces to `provisions / consumption`. Computed at capture; see
+    /// `core_sim::snapshot::population::larder_runway_turns`.
+    ///
+    /// **The `days` in the name is a MISNOMER pending a rename** — the sim has no days, only
+    /// turns, and the client already renders it as "turns". Renaming the field across
+    /// schema/native/client is a mechanical sweep held out of the arc that made it honest.
     #[serde(default)]
     pub days_of_food: f32,
     /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.

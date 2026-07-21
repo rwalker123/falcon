@@ -2503,11 +2503,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `core_sim` — Wondrous Sites.
 - **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
   `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
-  `supply_network_id` / `stores{item:qty}`): the green/amber/red warn·critical thresholds and the
-  day→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
+  `supply_network_id` / `stores{item:qty}`).
+  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME IS A MISNOMER PENDING A RENAME.** It is the
+  > **larder runway — turns until the larder empties, WITH income counted** — resolved sim-side by
+  > walking the per-source `arrivalSchedule`s (falling back to `larder / net_drain`, and to the
+  > `999` not-food-limited sentinel when the band is net-positive). It used to be
+  > `larder / consumption`, i.e. *"how long if you stop hunting"*, which read badly pessimistic for
+  > any band with real income and visibly contradicted the FOOD OUTLOOK chart beneath it. Because
+  > it walks the same schedules the chart does, the header and the chart now agree. **This game
+  > counts turns, never days** — `Hud._food_days_text` is the single place the unit is spelled, and
+  > it renders "turns". One consequence to keep in mind: the runway assumes income *holds*, so a
+  > band whose income nearly covers its drain reports a very long runway and reads green until that
+  > income lapses. The old figure warned earlier by assuming the worst.
+  The green/amber/red warn·critical thresholds and the
+  runway→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
   key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
-  (1) `MapView._draw_band_status` draws a food-days dot on each **player** band
-  (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
+  (1) `MapView._draw_band_status` draws a food-runway dot on each **player** band
+  (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> turns)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
   — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
   reason: **a rival's larder is not ours to see**). A foreign cohort carries no
@@ -2522,7 +2534,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
-  `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 days) · +0.76 /turn` —
+  `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
   where **net = `_band_net_food` = income − food_consumption − pen_feed_upkeep**, tinted green (≥0) /
   red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
@@ -2538,7 +2550,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
   yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
   `larder_delta == income − consumption − pen_feed` is pinned by `integration_tests/tests/pen_food_ledger.rs`).
-  The days-to-empty stays only in the `(N days)` figure; it is not
+  The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-expand disclosure** (a `▸/▾` caret) toggling a
   **category breakdown** beneath it — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
   (people)` / `▼ −W  🐄 Pen feed (animals)` sub-lines (Gathered/Hunted = Σ per-source `actual_yield`

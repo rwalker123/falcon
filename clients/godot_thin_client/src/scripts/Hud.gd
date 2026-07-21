@@ -6207,12 +6207,16 @@ func _morale_cause_label(cause: int) -> String:
         _:
             return ""
 
-## Human-readable days-of-food: the ∞ glyph when the band is not food-limited,
-## otherwise a whole-day count.
+## Human-readable food runway: the ∞ glyph when the source is not food-limited, otherwise a
+## whole count of TURNS. **The unit is turns, never "days"** — this game counts turns, and the
+## underlying figure is a turn count that was only ever labelled in days. One helper feeds every
+## surface that shows it (the band Food line, the expedition Carried/Provisions rows, and the
+## turn-orb starving alert), so the unit is stated in exactly one place.
 func _food_days_text(days: float) -> String:
     if not BandFoodStatus.is_limited(days):
         return FOOD_UNLIMITED_GLYPH
-    return "%d days" % int(round(days))
+    var turns := int(round(days))
+    return "%d turn" % turns if turns == 1 else "%d turns" % turns
 
 func _format_food_module_label(module_key: String) -> String:
     if module_key == "":
