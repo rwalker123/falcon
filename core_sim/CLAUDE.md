@@ -955,8 +955,16 @@ Goats** (🐐, wild r 0.22 → fast hardy hill stock) on highland/dry-upland
 
 **Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
 `HerdRegistry`.
-1. **Migratory** — a few start-anchored long-route walkers (`determine_herd_count`,
-   `build_route`), species drawn from the config's `migratory` rows.
+1. **Migratory** — a few long-route walkers (`determine_herd_count`,
+   `build_migratory_route`), species drawn from the config's `migratory` rows. **`host_biomes` is
+   LIVE here** (it was previously ignored): a herd's loiter **anchors** are placed on tiles suitable
+   for its species (`module_at ∈ host_biomes`), drawn from a regional home range
+   (`MIGRATORY_HOME_RANGE_RADIUS`, spaced by `MIGRATORY_ANCHOR_MIN_SPACING`) around a random suitable
+   seed tile and ordered into a walkable circuit by nearest-neighbour chaining — so the migration
+   legs cross the less-suitable ground *between* the patches and the herd lives in its biome range
+   across the map rather than clustered at the player start. A species whose host biomes the map
+   lacks (empty `suitable`) **falls back to the start-anchored spiral** (`build_route`), so it still
+   spawns somewhere.
 2. **Short-range game** — iterate land tiles, classify each via
    `classify_food_module`, roll `abundance.per_biome[module]`; the map-wide winners
    are shuffled then greedily placed respecting `min_spacing` up to `max_total_game`

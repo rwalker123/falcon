@@ -1314,12 +1314,14 @@ pub fn spawn_initial_herds(
 
     let width = config.grid_size.x.max(4);
     let height = config.grid_size.y.max(4);
+    let wrap = config.map_topology.wrap_horizontal;
     let base = start_location
         .position()
         .unwrap_or(UVec2::new(width / 2, height / 2));
 
     let mut herds = Vec::new();
-    // 1. Long-range migratory herds — start-anchored, species/biomass from config.
+    // 1. Long-range migratory herds — anchored on host-biome-suitable tiles across the map, with
+    //    each species drawn from the config's migratory rows.
     spawn_migratory_herds(
         &fauna,
         base,
@@ -1329,6 +1331,7 @@ pub fn spawn_initial_herds(
         &tiles,
         &mut rng,
         &mut herds,
+        wrap,
     );
     // 2. Short-range wild game — biome-density placement across the whole map.
     spawn_short_range_game(
@@ -1361,9 +1364,15 @@ fn log_herd_spawn(herd: &Herd) {
     );
 }
 
-/// Long-range migratory herds: a handful of cross-region walkers anchored on the
-/// start area, one per `determine_herd_count`, species drawn from the config's
-/// migratory rows.
+/// Long-range migratory herds: a handful of cross-region walkers, one per
+/// `determine_herd_count`, species drawn from the config's migratory rows.
+///
+/// **`host_biomes` is LIVE for migratory species** (it was previously ignored): a herd's loiter
+/// anchors sit on tiles suitable for its species (`module_at ∈ host_biomes`), drawn from a regional
+/// home range, and the migration legs cross whatever less-suitable ground lies between — so a herd
+/// lives in its biome range across the map rather than clustered at the player start. A species whose
+/// host biomes the map lacks falls back to the start-anchored spiral (`build_migratory_route`), so it
+/// still spawns somewhere.
 #[allow(clippy::too_many_arguments)]
 fn spawn_migratory_herds(
     fauna: &FaunaConfig,
@@ -1374,24 +1383,40 @@ fn spawn_migratory_herds(
     tiles: &Query<&Tile>,
     rng: &mut SmallRng,
     herds: &mut Vec<Herd>,
+    wrap: bool,
 ) {
     let migratory = fauna.migratory_species();
     if migratory.is_empty() {
         return;
     }
+    // Bucket every land tile by its host food module once (deterministic (y, x) scan order → ordered
+    // Vecs), so each herd's per-species suitable-tile slice is a cheap concat instead of an O(w·h)
+    // rescan. A tile has exactly one module, so buckets are disjoint (no cross-bucket duplicates).
+    let mut suitable_by_module: BTreeMap<FoodModule, Vec<UVec2>> = BTreeMap::new();
+    for y in 0..height {
+        for x in 0..width {
+            let pos = UVec2::new(x, y);
+            if let Some(module) = module_at(pos, tile_registry, tiles) {
+                suitable_by_module.entry(module).or_default().push(pos);
+            }
+        }
+    }
     let herd_target = determine_herd_count(width, height);
     for idx in 0..herd_target {
         let (key, def) = migratory[rng.gen_range(0..migratory.len())];
         let steps = def.sample_route_len(rng);
-        let Some(route) = build_route(
+        let suitable = suitable_tiles_for(def, &suitable_by_module);
+        let Some(route) = build_migratory_route(
             base,
             width,
             height,
             tile_registry,
             tiles,
             &fauna.graze,
+            &suitable,
             rng,
             steps,
+            wrap,
         ) else {
             continue;
         };
@@ -3533,6 +3558,20 @@ fn determine_herd_count(width: u32, height: u32) -> u32 {
 /// grass without redrawing the spiral's shape.
 const ANCHOR_FERTILITY_SCAN_RADIUS: u32 = 1;
 
+/// Hex radius around a seed suitable-tile within which a migratory herd's loiter anchors are drawn —
+/// its regional **home range** (`build_migratory_route`). Big enough to give the herd a real
+/// migration circuit across a biome patch, small enough to keep it *in* one region rather than
+/// scattered map-wide.
+const MIGRATORY_HOME_RANGE_RADIUS: u32 = 12;
+
+/// Minimum hex spacing between chosen migratory anchors, so they are distinct loiter patches rather
+/// than adjacent tiles (`build_migratory_route`).
+const MIGRATORY_ANCHOR_MIN_SPACING: u32 = 3;
+
+/// The fewest distinct anchors a migratory route may have (mirrors `build_route`'s own `< 3` floor):
+/// below this the herd falls back to the seed-centred spiral, which guarantees ≥3 or `None`.
+const MIGRATORY_MIN_ANCHORS: usize = 3;
+
 /// Long migratory route: a jittered spiral of `steps` waypoints around `origin`, keeping only land
 /// tiles and **biasing each anchor onto fertile ground** so the route connects pasture (2b-i §4.1).
 /// Returns `None` if fewer than 3 distinct points land.
@@ -3582,6 +3621,152 @@ fn build_route(
     } else {
         Some(points)
     }
+}
+
+/// The host-biome-suitable tiles for `def`: the union of the pre-bucketed [`FoodModule`] lists for
+/// each of its `host_biomes` keys, restored to global (y, x) scan order (each bucket is already in
+/// scan order, but concatenating disjoint buckets is not). Empty when the map hosts none of the
+/// species' biomes — the graceful-fallback case `build_migratory_route` handles.
+fn suitable_tiles_for(
+    def: &SpeciesDef,
+    suitable_by_module: &BTreeMap<FoodModule, Vec<UVec2>>,
+) -> Vec<UVec2> {
+    let mut out: Vec<UVec2> = Vec::new();
+    for module in FoodModule::VARIANTS {
+        if def.hosts_biome(module.as_str()) {
+            if let Some(bucket) = suitable_by_module.get(&module) {
+                out.extend_from_slice(bucket);
+            }
+        }
+    }
+    out.sort_by_key(|p| (p.y, p.x));
+    out
+}
+
+/// Build a migratory herd's route so its loiter **anchors** sit on tiles suitable for its species
+/// (`module_at ∈ host_biomes`), drawn from a regional home range, with the migration legs crossing
+/// whatever less-suitable ground lies between. The sim's Loiter↔Migrate machine steps through the
+/// anchors in order, so placing them on suitable patches is the whole mechanic — no movement-code
+/// change. Guaranteed to return a route of ≥3 anchors, or `None` only where `build_route` would.
+///
+/// `suitable` is the precomputed host-biome tile slice for THIS species (see [`suitable_tiles_for`]).
+/// Determinism: only the passed seeded `rng`, no `HashMap`/`HashSet` iteration, every tie broken by
+/// an explicit `(y, x)` key — mirroring `build_route` / `spawn_short_range_game`.
+#[allow(clippy::too_many_arguments)]
+fn build_migratory_route(
+    base: UVec2,
+    width: u32,
+    height: u32,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze_config: &GrazeConfig,
+    suitable: &[UVec2],
+    rng: &mut SmallRng,
+    steps: u32,
+    wrap: bool,
+) -> Option<Vec<UVec2>> {
+    // 1. No host-biome tiles on this map: fall back to the start-anchored spiral so the species
+    //    still spawns somewhere rather than vanishing.
+    if suitable.is_empty() {
+        return build_route(
+            base,
+            width,
+            height,
+            registry,
+            tiles,
+            graze_config,
+            rng,
+            steps,
+        );
+    }
+    // 2. Seed the home range on a random suitable tile.
+    let seed = suitable[rng.gen_range(0..suitable.len())];
+    // 3. The regional home range: suitable tiles within `MIGRATORY_HOME_RANGE_RADIUS` of the seed
+    //    (which is always in the pool, its own distance being 0).
+    let pool: Vec<UVec2> = suitable
+        .iter()
+        .copied()
+        .filter(|&tile| {
+            hex_distance_wrapped(seed, tile, width, wrap) <= MIGRATORY_HOME_RANGE_RADIUS
+        })
+        .collect();
+    // 4. Too few suitable patches nearby to form a circuit: a biome-blind spiral, but centred on the
+    //    in-biome seed so the herd is at least in/near its range.
+    if pool.len() < MIGRATORY_MIN_ANCHORS {
+        return build_route(
+            seed,
+            width,
+            height,
+            registry,
+            tiles,
+            graze_config,
+            rng,
+            steps,
+        );
+    }
+    // 5. Greedily pick spaced-out anchors from the shuffled pool, `seed` first (so it is anchor #0).
+    let mut shuffled = pool;
+    shuffled.shuffle(rng);
+    let mut accepted = vec![seed];
+    for tile in shuffled {
+        if accepted.len() as u32 >= steps {
+            break;
+        }
+        if accepted
+            .iter()
+            .all(|&a| hex_distance_wrapped(a, tile, width, wrap) >= MIGRATORY_ANCHOR_MIN_SPACING)
+        {
+            accepted.push(tile);
+        }
+    }
+    if accepted.len() < MIGRATORY_MIN_ANCHORS {
+        return build_route(
+            seed,
+            width,
+            height,
+            registry,
+            tiles,
+            graze_config,
+            rng,
+            steps,
+        );
+    }
+    // 6. Order the anchors into a walkable circuit by nearest-neighbour chaining from `seed`, so
+    //    consecutive migration legs stay short rather than teleporting across the home range.
+    Some(order_anchors_nearest_neighbor(accepted, seed, width, wrap))
+}
+
+/// Order `anchors` into a walkable circuit by nearest-neighbour chaining starting from `start`:
+/// repeatedly append the nearest not-yet-chained anchor (wrap-aware hex distance; ties by `(y, x)`
+/// ascending for determinism). `start` is guaranteed to be present (it is anchor #0).
+fn order_anchors_nearest_neighbor(
+    anchors: Vec<UVec2>,
+    start: UVec2,
+    width: u32,
+    wrap: bool,
+) -> Vec<UVec2> {
+    let mut remaining = anchors;
+    let start_idx = remaining.iter().position(|&a| a == start).unwrap_or(0);
+    let mut ordered = Vec::with_capacity(remaining.len());
+    ordered.push(remaining.remove(start_idx));
+    while !remaining.is_empty() {
+        let current = *ordered.last().expect("ordered is seeded with start");
+        let mut best_idx = 0usize;
+        let mut best_key = (u32::MAX, u32::MAX, u32::MAX);
+        for (i, &cand) in remaining.iter().enumerate() {
+            let key = (
+                hex_distance_wrapped(current, cand, width, wrap),
+                cand.y,
+                cand.x,
+            );
+            if key < best_key {
+                best_key = key;
+                best_idx = i;
+            }
+        }
+        ordered.push(remaining.remove(best_idx));
+    }
+    ordered
 }
 
 /// The land tile of the highest **graze capacity** (from the config table) within
