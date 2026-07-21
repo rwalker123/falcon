@@ -147,7 +147,7 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
          harness now runs the real pipeline and pins its own grid, and the shipped-map playability
          check is a separate, deliberately config-reading test.
 
-- [ ] **Fold-mountain counts are knife-edge sensitive to plate-drift RNG.** *(Surfaced by PR #133
+- [x] **Fold-mountain counts are knife-edge sensitive to plate-drift RNG.** *(Surfaced by PR #133
       review; test-level symptom fixed there, root cause untouched.)* `derive_mountain_mask` splits each
       land component into 1–4 plates by area bucket, and whether those plates actually *collide* turns
       out to hinge on plate seed placement rather than on landmass structure. Measured during the PR #133
@@ -162,6 +162,21 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
       `polar_microplates_*` already does — rather than routing through `build_bands` and hoping the
       geometry cooperates. Worth doing alongside the divides work above: both are cases of relief
       structure deriving from an incidental artifact rather than from the field.
+
+      _Status_: **Done — the durable fix landed.** The plate→fold logic (the boundary-detection +
+      belt-dilation block) is extracted from `derive_mountain_mask` into a **pure** `stamp_fold_belts(
+      plate_ids, plate_flows, belt_convergence, belt_width, w, h, &mut mask)` — a byte-identical lift
+      (every worldgen regression baseline stays green: `earthlike_regression_metrics_stable`,
+      `polar_contrast_regression_metrics_stable`, `polar_contrast_preset_builds_bands`,
+      `mountain_mask_counts_match_expectations`). Three unit tests (`mapgen::tests::stamp_fold_belts_*`)
+      now feed it **hand-constructed plates** — two plates whose drift converges raise a belt, aligned
+      drift raises nothing, `belt_width` sets the ribbon thickness (`2·(belt_width+1)` columns), and a
+      single plate folds nothing — so the plate→fold contract is a property of the code, not of whether
+      RNG plate-seeding happened to place converging plates. The brittle pipeline fixture
+      (`polar_contrast_preset_builds_bands`, the two 609-tile cones) is retained for its fault/volcanic
+      coverage but is no longer the *only* guard on folds. `stamp_fold_belts` introduces no new
+      clippy/fmt warnings (`derive_mountain_mask`'s pre-existing `too_many_arguments`/`is_multiple_of`
+      lints are untouched). Files: `core_sim/src/mapgen.rs`.
 - [x] **Climate Authority — temperature decides the biome, not latitude.** *(Landed by PR #139;
       `docs/plan_climate_authority.md` reads "Status: implemented (sim + schema + client)". Retained
       below for the measurements and the secondary-bug notes.)* *(Reported from play
@@ -433,7 +448,7 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
   capture→restore→advance cycle**, since that's the only thing that would have caught this.
   (Owner: TBD, Estimate: 0.5d; Deps: none.)
 
-- [ ] **A local hunt should not pay the carry-home cost.** `hunt_take` applies the same
+- [x] ~~**A local hunt should not pay the carry-home cost.**~~ **CLOSED — not needed (premise rejected).** `hunt_take` applies the same
   `per_worker_biomass_capacity` cap whether the band is **standing on the herd** (within its hunt reach)
   or a detached party is hauling the kill back N tiles. Those are different acts: **hunt = reach + carry;
   harvest-at-home = no haul, you're already there.** This is what makes megafauna coherent — a 3-hunter
@@ -441,6 +456,17 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
   *moves to the carcass* should keep the beast. Without it, "go to the mammoth" is merely the absence of a
   punishment rather than a reward, and the Roaming Bands arc above has nothing to stand on. Small change,
   large consequence. Next slice after slice 8. (Owner: TBD, Estimate: 0.5d; Deps: slice 8.)
+  _Resolution (reviewed with the owner):_ **the premise is rejected — no work needed.** The remaining
+  `workers × per_worker_biomass_capacity` cap on a resident-band hunt is **not** a haul-distance penalty
+  (a local hunt already incurs no travel cost); it is the crew's per-turn **carry/processing throughput**,
+  and it **should** scale with workers — worker-independent local hunting was never the intention.
+  "Keep the whole beast" would drop that throttle and make a 1-hunter band on a mammoth keep all of it
+  (the kill count is already worker-independent), gutting `workers_needed` / `hunt_haul_workers` / the
+  compose-panel max-useful cap for local hunts. The motivating scenario — a band **following a migratory
+  herd** and camping on the kill — is just an ordinary **local hunt** once the band is standing there, so
+  there is nothing to special-case; it folds into the nomadic / Roaming-Bands arc rather than being its
+  own task. The megafauna-waste on a big animal (a small crew can't process a whole mammoth in one turn)
+  is **correct behaviour**, not a bug.
 - [ ] **~~Hunting expeditions never say a hunter is idle~~ — LARGELY SUPERSEDED by slice 8.** The ticket
   below proposed *explaining the smooth model better*; the user's read was that **the smooth model was the
   bug**, and slice 8 replaced it (whole animals + real escapement). Extra hunters now genuinely change the
