@@ -377,6 +377,24 @@ pub struct LaborConfig {
     pub hunt_leash_tiles: u32,
     /// Tiles a `move_band` order advances the band toward its target each turn.
     pub band_move_tiles_per_turn: u32,
+    /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
+    /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
+    /// turns*, computed by simulating the herd/patch forward N turns from its CURRENT state under the
+    /// assignment's policy + worker count (the smooth policy RATE, not the lumpy kill-credit bank).
+    /// It is a **pure function of state** — no history, no cold-start — so the assign-time seed and
+    /// the resolved row compute the identical number (exact forecast == actual). A larger horizon
+    /// smooths a settled Sustain herd to flat ≈ MSY and lets a Surplus/Market projection see the
+    /// herd's decline within the window. Its own lever, distinct from the expedition
+    /// `forecast_horizon_turns` (a raid-length horizon, a different question). Validated `> 0`.
+    pub yield_average_horizon_turns: u32,
+    /// **The forward-projection horizon for a source's ARRIVAL SCHEDULE**, in turns. Each source's
+    /// `SourceYield::arrivals` is *what lands on each of the next N turns* — the same forward
+    /// simulation `yield_average_horizon_turns` drives, but run **WITH** the kill-credit bank, so it
+    /// answers the opposite question: not *how much per turn on average* but *on which turns does the
+    /// food actually arrive*. That is why it is its **own** lever and deliberately shorter: a schedule
+    /// is read turn-by-turn on a chart, so the horizon is a display span (how far ahead the player can
+    /// plan their larder), where the average's horizon is a smoothing window. Validated `> 0`.
+    pub arrivals_horizon_turns: u32,
     pub forage: ForageLaborConfig,
     pub hunt: HuntLaborConfig,
     pub scout: ScoutLaborConfig,
@@ -412,6 +430,29 @@ impl LaborConfig {
     /// the same discipline, because it fails the same way: silently, and invisibly.
     pub fn validate(&self) -> Result<(), LaborConfigError> {
         validate_forage_capacity_table(&self.forage)?;
+        // The realized-yield forward projection needs a positive horizon: it averages provisions over
+        // `1..=horizon` simulated turns, and `horizon == 0` would divide by zero (an empty projection
+        // has no average to report).
+        if self.yield_average_horizon_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "yield_average_horizon_turns",
+                constraint:
+                    "be at least 1 (the realized-yield forward-projection horizon in turns)"
+                        .to_string(),
+                value: self.yield_average_horizon_turns.to_string(),
+            });
+        }
+        // The arrival schedule is a `Vec` of exactly this length — at `0` the sim would publish an
+        // empty schedule for every source and the client's chart would silently render nothing.
+        if self.arrivals_horizon_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "arrivals_horizon_turns",
+                constraint:
+                    "be at least 1 (the arrival-schedule forward-projection horizon in turns)"
+                        .to_string(),
+                value: self.arrivals_horizon_turns.to_string(),
+            });
+        }
         validate_plant_ladder_payoffs(&self.forage)
     }
 

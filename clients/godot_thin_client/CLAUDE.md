@@ -2505,11 +2505,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `core_sim` — Wondrous Sites.
 - **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
   `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
-  `supply_network_id` / `stores{item:qty}`): the green/amber/red warn·critical thresholds and the
-  day→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
+  `supply_network_id` / `stores{item:qty}`).
+  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME IS A MISNOMER PENDING A RENAME.** It is the
+  > **larder runway — turns until the larder empties, WITH income counted** — resolved sim-side by
+  > walking the per-source `arrivalSchedule`s (falling back to `larder / net_drain`, and to the
+  > `999` not-food-limited sentinel when the band is net-positive). It used to be
+  > `larder / consumption`, i.e. *"how long if you stop hunting"*, which read badly pessimistic for
+  > any band with real income and visibly contradicted the FOOD OUTLOOK chart beneath it. Because
+  > it walks the same schedules the chart does, the header and the chart now agree. **This game
+  > counts turns, never days** — `Hud._food_days_text` is the single place the unit is spelled, and
+  > it renders "turns". One consequence to keep in mind: the runway assumes income *holds*, so a
+  > band whose income nearly covers its drain reports a very long runway and reads green until that
+  > income lapses. The old figure warned earlier by assuming the worst.
+  The green/amber/red warn·critical thresholds and the
+  runway→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
   key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
-  (1) `MapView._draw_band_status` draws a food-days dot on each **player** band
-  (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
+  (1) `MapView._draw_band_status` draws a food-runway dot on each **player** band
+  (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> turns)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
   — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
   reason: **a rival's larder is not ours to see**). A foreign cohort carries no
@@ -2524,17 +2536,25 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
-  `_band_food_line` appends the **net per-turn rate** — `Food 15 (19 days) · −0.77 /turn` — where
-  **net = `food_income − food_consumption − pen_feed_upkeep`** (`_band_net_food`), tinted green (≥0) /
-  red (<0). **The ledger has THREE terms, not two:** a band keeping a corral pays its penned herd's
-  feed straight off the larder every turn (a confined herd cannot graze), and that debit is in
-  *neither* of the other two. Omitting it made the row **lie** — a Red Deer pen overstated the surplus
-  by ~1.74/turn against a band that eats ~1.2, and the larder then drained with no explanation.
+  `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
+  where **net = `_band_net_food` = income − food_consumption − pen_feed_upkeep**, tinted green (≥0) /
+  red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
+  `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
+  as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
+  `food_income`-based net did (0 on a hunt's wait turn, a spike on its kill turn). It is summed from the
+  breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
+  with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
+  this and then **retired as redundant** — a separately-computed total is a second source of truth that
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms, not two:**
+  a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
+  herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
+  a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then
+  drained with no explanation.
   `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
   keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
   yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
   `larder_delta == income − consumption − pen_feed` is pinned by `integration_tests/tests/pen_food_ledger.rs`).
-  The days-to-empty stays only in the `(N days)` figure; it is not
+  The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-expand disclosure** (a `▸/▾` caret) toggling a
   **category breakdown** beneath it — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
   (people)` / `▼ −W  🐄 Pen feed (animals)` sub-lines (Gathered/Hunted = Σ per-source `actual_yield`
@@ -2930,6 +2950,30 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `%AllocationPanel` (the no-panel `ui_preview` fallback) by appending those same blocks.
   Herd/expedition detail stays in the Occupants card (`%OccupantDetail` / `%AllocationPanel`
   — still the expedition host **and** the no-panel fallback).
+- **Arrival schedule — WHEN the steady food actually lands** (the discrete twin of the steady
+  `realized_yield` headline). The sim streams `LaborAssignment.arrivalSchedule:[float]` (index i = food
+  delivered i+1 turns from now, length = `arrivals_horizon_turns` = 20, `0.0` = nothing that turn, EMPTY =
+  "not projected" — never a famine), decoded in `native/src/lib.rs` beside `realized_yield` as
+  `arrival_schedule` (a `PackedFloat32Array`; `Hud._as_schedule` coerces a fixture Array/absent to
+  packed). Two client surfaces, both presentation over sim numbers — no yield/ecology is re-derived:
+  - **Per-source TICK STRIP** (`ui/hud/ArrivalStrip.gd`, a `_draw` Control): under each Current-actions
+    Forage/Hunt row's secondary line (`_build_two_line_stepper` appends it as an indented line 3, inside
+    the row container so the section-block/wide-tall packing is untouched), a compact 20-cell strip — one
+    cell per upcoming turn, `HEALTHY` = a delivering turn, `LINE_SOFT` = an empty one, ~2px apart. **It
+    renders ONLY when the schedule has a GAP** (`ArrivalStrip.has_gap` — at least one `0.0` in the
+    horizon): a continuous forage source has no lumpiness to explain, so it gets no strip; the gap test
+    is the whole rule (deliberately NOT a hunt/forage kind check). Per-cell tooltip `"Turn N — +X.XX
+    food"` / `"Turn N — nothing lands"` (N = `_current_turn + i + 1`; relative "in N turns" before the
+    first overlay).
+  - **Merged FOOD OUTLOOK chart** (`ui/hud/FoodOutlookChart.gd`, a `_draw` Control) — its own **section
+    block** (`_build_food_outlook_block`, appended right after the summary block, headed `FOOD OUTLOOK`;
+    BBCode can't host a drawn chart, so it is NOT a summary line). Composed CLIENT-SIDE: start from the
+    band's larder (`stores.provisions`), walk `food += Σ arrival_schedule[i] over the band's assignments
+    − (food_consumption + pen_feed_upkeep)`, clamped at 0, over the 20-turn horizon (drain held flat).
+    Draws a `SIGNAL` filled area + line, a `HEALTHY` dot on each haul turn, a faint `LINE_SOFT` baseline,
+    and a dashed `DANGER` vertical labelled `empty ~turn N` where the walk first hits 0. Same player +
+    real-food-flow gate as the Food breakdown, plus at least one non-empty schedule; a
+    `custom_minimum_size` (≤ `SECTION_COLUMN_WIDTH`) lets the wide-column packer measure it.
 - **Live + persistent.** `_refresh_panel_band()` (called each snapshot from
   `update_band_alerts`) hides the panel when there are zero player bands, else
   re-resolves `_panel_band` against the fresh snapshot (by entity, falling back to
@@ -3006,7 +3050,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **row-vocabulary** frame: a confirmed working forage row (`●` + `♻` + the overstaffing note) and a
   working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus one Active-expeditions row per
   phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning / `▮▮ Awaiting orders` in amber)
-  — read it at true size whenever a glyph changes.
+  — read it at true size whenever a glyph changes. States `band_panel_arrivals_left` /
+  `band_panel_arrivals_top` are the **arrival-schedule** frame (a lumpy hunt row with a gappy tick strip
+  beside a continuous forage row that draws NONE, + the rising `FOOD OUTLOOK` sawtooth chart, tall and
+  wide), and `band_panel_arrivals_empty` is the emptying-larder case (the descending chart's dashed
+  `empty ~turn N` marker).
 
 ## Inspector Panels
 

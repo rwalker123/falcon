@@ -4197,6 +4197,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Band food ledger (food/turn): total realized income across all worked sources and total
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);
+    // NOTE: there is deliberately no band-level "steady income" key here. The Food line's income half
+    // is summed CLIENT-side from the per-source `realized_yield` (see `Hud._band_food_income`), so the
+    // headline provably equals the Gathered + Hunted rows beneath it rather than being a second,
+    // independently-computed number that could drift from them. The cohort-level `foodIncomeAverage`
+    // that briefly existed for this was redundant and is retired.
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
     // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
     // the pens it keeps, summed across every corralled herd it works. It is taken straight off the
@@ -4288,6 +4293,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // The per-source STEADY average: the honest long-run average of this source's lumpy
+            // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
+            let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
+            // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
+            // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
+            // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY
+            // means "not projected" (Scout/Warrior, rehydrated save) — the client must read that as
+            // no data, never as famine. Always inserted so the entry shape is stable.
+            let mut arrival_schedule = PackedFloat32Array::new();
+            if let Some(schedule) = assignment.arrivalSchedule() {
+                for amount in schedule {
+                    arrival_schedule.push(amount);
+                }
+            }
+            let _ = entry.insert("arrival_schedule", &arrival_schedule);
             // Minimum workers that would have produced this turn's take. `workers > workers_needed`
             // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
             // capped by its policy ceiling / resource biomass, so the surplus workers idled here.

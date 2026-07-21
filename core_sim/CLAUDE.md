@@ -3621,10 +3621,48 @@ network, `>= 1` = shared id) so the client can draw supply links between co-netw
 derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
-`daysOfFood:float` (`larder / one-turn food_demand`; `999.0` = a zero-demand cohort, "not
-food-limited") and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
+`daysOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
+included** — and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
 with the most workers in the band's `LaborAllocation`). Both are computed at capture in
-`population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
+`population_state`.
+
+> #### `daysOfFood` is `larder / net drain` — ONE formula for a band and an expedition
+>
+> **`runway = larder / (consumption + penFeedUpkeep − income)`.** An expedition has no labor income
+> and keeps no pens, so it reduces to `provisions / consumption` — **exactly** the historical
+> reading, unchanged (pinned by `snapshot::population::tests::an_expedition_reports_provisions_over_consumption`).
+> A resident band with real income gets the honest number instead of the old `larder / demand`, which
+> **assumed the band stops gathering and hunting** and so read badly pessimistic — a header saying "4"
+> above a FOOD OUTLOOK chart showing ~9. Do not special-case the two actors.
+>
+> It is resolved the way that chart resolves it (`snapshot::population::larder_runway_turns`), so
+> they cannot disagree by a turn or two on the same panel: (1) walk the larder forward over the
+> **merged per-source `arrivals` schedules**, debiting `consumption + penFeedUpkeep` per turn and
+> clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
+> source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
+> smooth `larder / net_drain` on the **steady** income (Σ per-source `realized`, computed locally at
+> capture — see the retirement note below), capped at the sentinel; (3)
+> `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
+> renders as ∞.
+>
+> **Consumption here is the forward `food_demand`** (what the people will *want* to eat), not
+> `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` on a
+> rehydrated save and falls short of demand in a famine. The client's chart drains by
+> `foodConsumption` instead, so the two differ **only for a band already eating short** — where the
+> sim is the pessimistic (correct) one.
+>
+> **Consequence, intended:** a band with strong income now reads healthier and **stops tripping
+> starvation alerts it should never have tripped** (the map food dot, the turn-orb `starving`
+> producer and `_food_is_concerning` all key off this field). Measured on a fed 30-person forage
+> band: **4 turns → ∞**. A genuinely starving band is unchanged to within the walk's ±1 clamp. The
+> UI thresholds (`band_status_config.json` warn 10 / critical 5) are now measured against a runway
+> that is *income-inclusive*, so they fire later by construction — retune there if red arrives too
+> late to act on.
+>
+> **The `days` in the name is a MISNOMER pending a rename** (the sim counts turns; the client already
+> renders "turns"). Renaming it across schema/native/client is a mechanical sweep held out of this arc.
+
+Alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
 for the work-range ring) and `scoutRevealRadius` (**repurposed**: now carries the band's effective
 **scout vantage distance** — `scout.vantage_distance(scouts)` = `min(vantage_distance_base + scouts ×
@@ -3632,7 +3670,7 @@ vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since
 posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
-`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, workers_needed }`
+`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, wasted, workers_needed, overdraws, realized }`
 (f32 provisions + a worker count)
 per assignment, **in the same index order** as `assignments` (so the snapshot zips by index — every
 `LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is
@@ -3678,12 +3716,88 @@ each `PopulationCohortState` carries band-level
 turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at the turn's *opening*
 brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
 births would inflate that and break the larder ledger identity by exactly the growth. `daysOfFood`
-still divides by the post-turn `food_demand` — a forward "turns I can last", a different question).
+drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
+see the runway callout above).
 All derived at capture (0 on a rehydrated save before the next tick). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
 indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
+
+**The steady headline — `realized` / `realizedYield`.** The lumpy per-source
+`actual` makes the band panel's "Food /turn" **swing** turn-to-turn (a whole-animal hunt pays 0 for
+~6 turns then a spike). So each `SourceYield` also carries **`realized`** — a **FORWARD PROJECTION**:
+the average food/turn the source will deliver over the next `labor_config.yield_average_horizon_turns`
+(default **40**) turns, computed by simulating the herd/patch forward from its CURRENT state under the
+assignment's policy + worker count (`fauna::project_realized_hunt` / `forage::project_realized_forage`,
+mirroring the real turn order Logistics-regrow → Population-take, exactly as
+`systems::expeditions::hunt_trip_forecast` does). It is a **pure function of state** — no history, no
+persistence — so the assign-time seed and the resolved row compute the identical number (exact
+forecast == actual, the true no-jump: `resolved_hunt_realized_equals_the_seeded_realized`). **Simulated
+rate-based, WITHOUT the kill-credit bank:** the bank only quantises *when* whole animals arrive, never
+the N-turn total, so projecting the smooth `hunt_policy_rate` gives the smooth average directly. **Why
+not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
+`sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
+(drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
+N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Market
+re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Market herd
+declines within the window and the average honestly reflects it). A **self-terminating** policy
+(Eradicate strips the herd in ~1 turn, Market drives it extinct) **breaks the loop early and divides by
+the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
+the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
+negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,
+`hunt_policy_rate`, `pen_yield_biomass`, `hunt_provisions`, `forage_take`, `herd_ecology`/`herd_capacity`)
+— no second copy of the ecology or take math. On the wire, `LaborAssignment.realizedYield` is appended
+(append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
+steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
+it is: it is the real arrivals and is load-bearing for the
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` ledger identity.
+
+> **RETIRED: the band-level `PopulationCohortState.foodIncomeAverage` (= Σ `realized`).** The client
+> sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown
+> rows it renders, so the headline equals the Gathered + Hunted rows it sits above **by construction**
+> rather than being a second, independently-computed total that could drift from them. That made a
+> band-level duplicate redundant, and it was read by nobody. Marked `(deprecated)` in `snapshot.fbs`
+> rather than deleted — deleting frees the field id for the next appender, and this repo is worked by
+> concurrent sessions that append to these tables, so a freed slot is exactly how two branches collide
+> on one id. **Do not re-add it**: if a band-level steady income is ever wanted again, sum the rows.
+> The Σ `realized` value still exists as a *local* in `snapshot::population`, because
+> `larder_runway_turns` needs a steady income term; it is simply not exported.
+
+**WHEN the food lands — `arrivals` / `arrivalSchedule`.** The discrete twin of `realized`, from the
+**same** forward simulation run **WITH** the kill-credit bank (`fauna::project_arrivals_hunt` /
+`forage::project_arrivals_forage`) — because the two answer opposite halves of one question: the bank
+decides *when* a whole animal lands and never *how much* lands over the window, so `realized` drops it
+to get the smooth average and this keeps it to get the timing. `SourceYield.arrivals[i]` is the food
+delivered `i + 1` turns from now, `labor_config.arrivals_horizon_turns` (**20**) entries long, `0.0` on
+a turn nothing lands. A big-game Sustain hunt reads genuinely lumpy (zeros between hauls); a forage
+patch — or fast game whose MSY clears a body every turn — is positive in **every** slot, a *continuous*
+source the client renders as a solid run, with no special case in the projection. Their totals agree by
+construction: `Σ arrivals ≈ realized × horizon`, to within the partial body still banked at the end.
+- **It starts from the herd's REAL `hunt_credit`, never zero**, and it is projected from the source's
+  **POST-take** state — so slot 0 is genuinely the *next* delivery, not the one this turn already paid.
+  Both are load-bearing and both are pinned: zeroing the bank, or projecting pre-take, shifts the
+  **first** arrival — the one the player cares most about — and
+  `labor_allocation::the_arrival_schedule_matches_a_real_driven_hunt` fails on the exact turn index.
+- **Pinned to real behaviour, not to another forecast** (the ~34-vs-~6-turn lesson): that test reads
+  the schedule published on turn 0, then drives the **real** systems forward `horizon` turns and
+  asserts the sim delivered on exactly the named turns in exactly the named amounts.
+- Reuses the shared take helpers verbatim (`regrow_biomass`, `hunt_policy_rate`,
+  `hunt_credit_ceiling`, `quantise_animal_take`, `pen_yield_biomass`, `hunt_provisions`,
+  `forage_take`, `herd_ecology`/`herd_capacity`) — **no second copy of the take math** — and simulates
+  on a clone, never the live source. Unlike the `realized` projection it does **not** break on a
+  zero take: there a zero means *spent* and would dilute an average; here it is a **wait** turn, which
+  is the entire mechanic. Only the extinction floor ends a hunt schedule early.
+- **`arrivals_horizon_turns` is its OWN lever** (`labor_config.json`, default **20**, validated `> 0`),
+  deliberately separate from `yield_average_horizon_turns` (40): this is a *display span* the client
+  charts turn-by-turn, that one is a *smoothing window*.
+- On the wire: `LaborAssignment.arrivalSchedule:[float]` (append-only, after `realizedYield`), on both
+  `WorldSnapshot` and `WorldDelta`. A flat `[float]` rather than a vector of `{turn, amount}` tables is
+  deliberate — **the index IS the turn offset**, so it needs no per-entry table and stays compact. An
+  **empty** vector means *not projected* (Scout/Warrior, or a rehydrated `SourceYield::ZERO`), which the
+  client must read as "no data", never as famine. **Client follow-up:** nothing renders it yet; the
+  merged per-band larder projection is the client's to compose from these plus consumption — the sim
+  owns the model (when + how much), walking the larder is presentation.
 
 **The understaffing mirror — `wastedYield`** (slice 7, appended to `LaborAssignment`). `workersNeeded`
 only ever answered *"are there too many workers here?"*; nothing answered *"too few?"*. `SourceYield.wasted`

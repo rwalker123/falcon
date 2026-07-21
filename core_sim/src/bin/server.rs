@@ -1813,6 +1813,8 @@ fn seed_source_yield(
                 output_mult,
                 workers,
                 *policy,
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
             )
         }
         LaborTarget::Hunt { fauna_id, policy } => {
@@ -1835,6 +1837,8 @@ fn seed_source_yield(
                 output_mult,
                 workers,
                 *policy,
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
             )
         }
         LaborTarget::Scout | LaborTarget::Warrior => return,
@@ -7166,6 +7170,17 @@ mod tests {
             .actual
     }
 
+    /// The first source's **steady** realized rate (the honest average of the lumpy `actual`).
+    fn source_realized(app: &bevy::prelude::App, band: Entity) -> f32 {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .expect("the staffed source has a telemetry row")
+            .realized
+    }
+
     /// Resolve one turn of labor (the only system that used to write yield telemetry).
     fn resolve_labor(app: &mut bevy::prelude::App) {
         use bevy_ecs::system::RunSystemOnce;
@@ -7204,6 +7219,8 @@ mod tests {
             1.0,
             BAND_WORKERS,
             FollowPolicy::Sustain,
+            labor.yield_average_horizon_turns,
+            labor.arrivals_horizon_turns,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,
@@ -7267,6 +7284,8 @@ mod tests {
             1.0,
             BAND_WORKERS,
             FollowPolicy::Sustain,
+            labor.yield_average_horizon_turns,
+            labor.arrivals_horizon_turns,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,
@@ -7307,6 +7326,37 @@ mod tests {
         assert!(
             (resolved - seeded).abs() < SEED_EPSILON,
             "the turn must pay the seeded yield (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **Hunt, no jump — the STEADY `realized` projection is a pure function of state.** The
+    /// assign-time seeded `realized` is the forward projection off `hunt_forecast`'s herd, and the
+    /// first resolved turn recomputes the identical projection from the identical (unchanged) herd
+    /// state — so the headline "Food /turn" does not move at all between compose-time and the first
+    /// resolved turn, even though `actual` (the lumpy kill) may. Asserted as exact equality, the true
+    /// no-jump restored by the forward-projection definition.
+    #[test]
+    fn resolved_hunt_realized_equals_the_seeded_realized() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        let seeded = source_realized(&app, band);
+        assert!(
+            seeded > 0.0,
+            "a staffed, thriving herd must seed a positive steady average, not 0: {seeded}"
+        );
+        resolve_labor(&mut app);
+        let resolved = source_realized(&app, band);
+
+        assert!(
+            (resolved - seeded).abs() < SEED_EPSILON,
+            "the forward-projected realized is a pure function of state, so seed == first resolved \
+             (seed {seeded}, resolved {resolved})"
         );
     }
 

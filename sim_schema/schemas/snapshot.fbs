@@ -517,6 +517,11 @@ table PopulationCohortState {
   elders:long = 0;
   stores:[CohortStore];
   ageTurns:uint = 0;
+  // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
+  // walked off the sources' arrival schedules so it agrees with the client's food-outlook chart.
+  // 999.0 = not food-limited (no demand, or income meets the drain). An expedition has no income,
+  // so it reduces to provisions / consumption. The "days" in the name is a MISNOMER pending a
+  // rename — the sim counts turns, and the client already renders "turns".
   daysOfFood:float = 0;
   activity:string;
   supplyNetworkId:uint = 0;
@@ -651,6 +656,15 @@ table PopulationCohortState {
   // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
   // Appended last (append-only schema discipline).
   bandMoveTilesPerTurn:float = 0;
+  // RETIRED. Was the band's steady food income = Σ of every worked source's realizedYield. The client
+  // now sums that income half itself from the per-source realizedYield of the breakdown rows, so the
+  // headline equals the Gathered + Hunted rows it sits above by construction instead of being a second,
+  // independently-computed total that could drift from them — which made this band-level duplicate
+  // redundant. Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo
+  // is worked by concurrent sessions that append to these tables, and a freed slot is how two branches
+  // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
+  // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
+  foodIncomeAverage:float = 0 (deprecated);
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -693,6 +707,25 @@ table LaborAssignment {
   // Eradicate. A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
   // Derived per-turn at capture. Appended (append-only).
   overdraws:bool = false;
+  // THE STEADY per-turn income this source realizes = the honest long-run average of the lumpy
+  // actualYield: min(workers × per-worker throughput, this policy's steady per-turn ceiling) — the
+  // pre-quantization rate the kill-credit bank is fed. On a whole-animal (hunt) source actualYield
+  // pulses (0 on wait turns, spikes on kills) while this holds steady at ~MSY; on a continuous
+  // forage/Field source the two are equal. The client's headline "Food /turn" reads this instead of
+  // the jumpy actualYield. Derived per-turn at capture (0 on a rehydrated save before the next tick).
+  // Appended (append-only).
+  realizedYield:float = 0;
+  // WHEN the food actually lands — the discrete twin of realizedYield, from the SAME forward
+  // simulation run WITH the kill-credit bank. Index i = the food delivered i+1 turns from now;
+  // length = labor_config.arrivals_horizon_turns (20); 0 on a turn nothing lands. A big-game Sustain
+  // hunt reads lumpy (zeros between hauls, whose total is ~ realizedYield x horizon — the bank moves
+  // the timing, not the total); a forage patch or fast game is positive in every slot, which the
+  // client draws as a solid run. A flat [float] deliberately, NOT a vector of {turn, amount} tables:
+  // the INDEX IS the turn offset, so it needs no per-entry table and stays compact. Empty on a row
+  // that has not been projected (Scout/Warrior, or a rehydrated SourceYield::ZERO) — read that as
+  // "no data", never as famine. Derived per-turn at capture, from the source's POST-take state so
+  // slot 0 is the next delivery. Appended (append-only).
+  arrivalSchedule:[float];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

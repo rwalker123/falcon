@@ -689,6 +689,9 @@ const ALLOC_SECTION_FONT_SIZE := 10
 const ALLOC_BLOCK_SEPARATION := 6
 const ALLOC_HEADER_ACTIONS := "Current actions"
 const ALLOC_HEADER_ROLES := "Band roles"
+# The merged larder projection's section header (see `_build_food_outlook_block`). Its own block, not
+# a line inside the summary RichTextLabel — BBCode cannot host a drawn chart.
+const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
@@ -2912,6 +2915,9 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "workers_needed": int(a.get("workers_needed", 0)),
             # Provisions offered but not collected (under-crewed) — drives the muted "· N wasted" note.
             "wasted_yield": float(a.get("wasted_yield", 0.0)),
+            # WHEN this source's food lands (index i = i+1 turns from now) — drives the row's arrival
+            # tick strip. Empty = "not projected", which renders no strip (never a famine).
+            "arrival_schedule": _as_schedule(a.get("arrival_schedule", null)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -2925,8 +2931,23 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             # the next snapshot resolves what the source actually used.
             "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
             "workers_needed": 0,
+            # Nor any projected arrivals — the schedule comes from the sim's forward run, so an
+            # un-acknowledged edit shows no strip until the next snapshot projects it.
+            "arrival_schedule": PackedFloat32Array(),
         }
     return merged
+
+## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
+## packed array; a fixture (or an absent field) may hand over a plain Array or null, and this is the
+## one place that difference is absorbed.
+func _as_schedule(value: Variant) -> PackedFloat32Array:
+    if value is PackedFloat32Array:
+        return value
+    var packed := PackedFloat32Array()
+    if value is Array:
+        for amount in (value as Array):
+            packed.push_back(float(amount))
+    return packed
 
 ## Effective worker count for one role/source, overlaying any pending value.
 func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
@@ -3030,7 +3051,11 @@ func _policy_hint(kind: String, policy: String) -> String:
 ## line 1, and the yield/policy text (`status_line`) + the status glyph + the ⚠/overstaff/wasted notes
 ## drop to an indented, smaller secondary line 2 that WRAPS rather than widening the panel. When "",
 ## every existing caller (Scout/Warrior, the compose steppers) renders the unchanged single-line HBox.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "") -> Control:
+## `arrival_schedule` (default empty) is the source's projected per-turn deliveries. When it has a GAP
+## (`ArrivalStrip.has_gap`) the two-line form gains a third, indented line: the arrival tick strip that
+## shows WHEN the steady average actually lands. A continuous source (or an unprojected row) has no
+## lumpiness to explain and gets no strip. Ignored by the single-line form.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "", arrival_schedule: PackedFloat32Array = PackedFloat32Array()) -> Control:
     # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
     var status_key := FoodIcons.STATUS_PENDING if pending else status
     var row_tooltip := _append_status_tooltip(tooltip, status_key)
@@ -3040,7 +3065,7 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
     if status_line != "":
         return _build_two_line_stepper(
             label_text, count, plus_enabled, on_change, warn, row_tooltip, note,
-            on_focus_source, status_key, muted_note, status_line, row_ink)
+            on_focus_source, status_key, muted_note, status_line, row_ink, arrival_schedule)
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -3076,7 +3101,7 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
 ## the yield/policy text, the status glyph, then the ⚠/overstaff/wasted notes — the SAME per-part
 ## colors the single-line path uses, just relocated below. Pending tints the TITLE amber (row 1's
 ## identity) and shows the ◌ glyph on row 2.
-func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color) -> VBoxContainer:
+func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color, arrival_schedule: PackedFloat32Array) -> VBoxContainer:
     var col := VBoxContainer.new()
     col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     col.add_theme_constant_override("separation", TWO_LINE_STEPPER_SEPARATION)
@@ -3117,6 +3142,17 @@ func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool,
         status_flow.add_child(_build_status_part(muted_note, HudStyle.INK_FAINT))
     status_margin.add_child(status_flow)
     col.add_child(status_margin)
+    # Line 3 (only when the deliveries are LUMPY): the arrival tick strip, indented onto the same
+    # gutter as line 2 so it reads as part of the row's secondary information. It stays INSIDE this
+    # row's container, so the panel's section-block layout and the wide/tall packing are untouched.
+    if ArrivalStrip.has_gap(arrival_schedule):
+        var strip_margin := MarginContainer.new()
+        strip_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        strip_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
+        var strip := ArrivalStrip.new()
+        strip.set_schedule(arrival_schedule, _current_turn)
+        strip_margin.add_child(strip)
+        col.add_child(strip_margin)
     return col
 
 ## The clickable title (or plain Label) shared by both stepper forms. `on_focus_source` (when valid)
@@ -3247,12 +3283,17 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % _format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        # HEADLINE the row with the honest per-turn RATE, never the pulse. A HUNT source's
-        # `actual_yield` is the kill-credit PULSE (0 on wait turns, a spike on kill turns), so its
-        # smoothed rate is `sustainable_yield` (the herd's per-turn throughput); the pulse's overdraw
-        # is still carried by the ⚠ flag + tooltip. Forage has no pulse (actual == sustainable), so it
-        # keeps `actual`. The caller pairs a hunt headline with the kill-rhythm from `body_mass`.
-        rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
+        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
+        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
+        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
+        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
+        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
+        # absent (older snapshot).
+        if m.has("realized_yield"):
+            rate = float(m["realized_yield"])
+        else:
+            rate = sustainable if kind == LABOR_KIND_HUNT else actual
         label_suffix = " %s" % _format_yield(rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
@@ -3427,9 +3468,21 @@ func _is_overdraw(actual: float, sustainable: float) -> bool:
 ## (`integration_tests/tests/pen_food_ledger.rs`). Omitting the term made this row LIE: a band with a
 ## Red Deer pen showed a surplus overstated by the ~1.74/turn its herd ate, then drained anyway.
 func _band_net_food(band: Dictionary) -> float:
-    return float(band.get("food_income", 0.0)) \
+    return _band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
         - _band_pen_feed(band)
+
+## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
+## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
+## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
+## does NOT swing. It feeds the headline net (`_band_net_food` = income − Eaten − Pen feed) and the
+## `_food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
+## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
+## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
+## for one commit and was retired as redundant; do not reintroduce it.)
+func _band_food_income(band: Dictionary) -> float:
+    return _sum_realized_yield(band, LABOR_KIND_FORAGE) \
+        + _sum_realized_yield(band, LABOR_KIND_HUNT)
 
 ## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
 func _band_pen_feed(band: Dictionary) -> float:
@@ -3438,18 +3491,27 @@ func _band_pen_feed(band: Dictionary) -> float:
 ## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
 ## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted,
 ## not zeroed).
+##
+## **The income term MUST be the same `_band_food_income` the headline sums, not the wire's lumpy
+## `food_income`.** They diverged once and it hid the readout exactly when it was needed: a starving
+## band has `food_consumption` 0 (an empty larder debits nothing) and a whole-animal hunt pays 0 on a
+## wait turn, so a band with a perfectly good STEADY income failed all three tests and lost its net
+## line and breakdown entirely. Gate on the same number you display.
 func _band_has_food_flow(band: Dictionary) -> bool:
-    return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
+    return _band_food_income(band) >= FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN \
         or _band_pen_feed(band) >= FOOD_FLOW_MIN
 
-## Sum of per-source `actual_yield` (food/turn) across this band's labor assignments of one kind —
-## the category total behind the Food breakdown (Gathered = forage, Hunted = hunt).
-func _sum_actual_yield(band: Dictionary, kind: String) -> float:
+## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
+## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
+## Hunted = hunt). Reads the steady average (not the lumpy `actual_yield`) so the rows don't swing AND
+## sum to the steady headline income (`_band_food_income`); falls back to `actual_yield` if absent.
+func _sum_realized_yield(band: Dictionary, kind: String) -> float:
     var total := 0.0
     for a in _labor_assignments_of(band):
         if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
-            total += float((a as Dictionary).get("actual_yield", 0.0))
+            var d := a as Dictionary
+            total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
 
 ## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
@@ -3489,10 +3551,10 @@ func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> 
 ## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
 func _food_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    var gathered := _sum_actual_yield(band, LABOR_KIND_FORAGE)
+    var gathered := _sum_realized_yield(band, LABOR_KIND_FORAGE)
     if gathered >= FOOD_FLOW_MIN:
         lines.append(_food_breakdown_row(gathered, FOOD_LABEL_GATHERED))
-    var hunted := _sum_actual_yield(band, LABOR_KIND_HUNT)
+    var hunted := _sum_realized_yield(band, LABOR_KIND_HUNT)
     if hunted >= FOOD_FLOW_MIN:
         lines.append(_food_breakdown_row(hunted, FOOD_LABEL_HUNTED))
     var eaten := float(band.get("food_consumption", 0.0))
@@ -3524,6 +3586,53 @@ func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
         _render_band_into_panel(_panel_band)
     else:
         _render_occupant_drawer()
+
+## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
+## the number the Food summary row prints (rounded there).
+func _band_provisions(band: Dictionary) -> float:
+    var stores_variant: Variant = band.get("stores", {})
+    if stores_variant is Dictionary:
+        return float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))
+    return 0.0
+
+## The band-wide merged arrival schedule: element-wise sum of every source's `arrival_schedule`, so
+## slot i is ALL the food landing i+1 turns from now. Length = the longest schedule present (they are
+## all `arrivals_horizon_turns` long in practice); empty when no source was projected, which is the
+## signal to omit the Food-outlook block entirely rather than draw a flat starving line.
+func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
+    var merged := PackedFloat32Array()
+    for a in _labor_assignments_of(band):
+        if not (a is Dictionary):
+            continue
+        var schedule := _as_schedule((a as Dictionary).get("arrival_schedule", null))
+        if schedule.is_empty():
+            continue
+        if merged.size() < schedule.size():
+            merged.resize(schedule.size())
+        for i in range(schedule.size()):
+            merged[i] += schedule[i]
+    return merged
+
+## "FOOD OUTLOOK" section block: the merged larder projection chart (`FoodOutlookChart`). Returns null
+## — the block is omitted — for a non-player band, a band with no real food flow (same gate as the Food
+## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
+## than a summary line because BBCode cannot host a drawn chart.
+func _build_food_outlook_block(band: Dictionary) -> VBoxContainer:
+    if not (_is_player_unit(band) and _band_has_food_flow(band)):
+        return null
+    var arrivals := _merged_arrival_schedule(band)
+    if arrivals.is_empty():
+        return null
+    var block := _make_alloc_block()
+    block.add_child(_alloc_section_label(ALLOC_HEADER_FOOD_OUTLOOK))
+    var chart := FoodOutlookChart.new()
+    # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
+    # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
+    chart.set_projection(
+        _band_provisions(band), arrivals,
+        float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _current_turn)
+    block.add_child(chart)
+    return block
 
 ## A fresh section-block VBox: the discrete, self-contained unit the Band/City panel arranges (a
 ## vertical stack when tall, a column-flow when wide). Rows are added into it exactly as they used to
@@ -3657,7 +3766,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
                 func() -> void: _focus_labor_source(fx, fy),
                 # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line))
+                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line,
+                _as_schedule(m.get("arrival_schedule", null))))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -3691,7 +3801,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
                 func() -> void: _focus_hunt_source(herd_id, hx, hy),
                 # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line))
+                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line,
+                _as_schedule(m.get("arrival_schedule", null))))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -5480,6 +5591,12 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band, true))
     summary_block.add_child(detail_label)
     blocks.append(summary_block)
+    # "Food outlook" block — the merged larder projection over the arrivals horizon (its own section
+    # because BBCode can't host the drawn chart). Sits right after the summary; omitted for a band with
+    # no projected food flow.
+    var outlook_block := _build_food_outlook_block(_panel_band)
+    if outlook_block != null:
+        blocks.append(outlook_block)
     # "Active expeditions" block the panel band has detached (grouped by home_band_entity); omitted
     # when the band has none.
     var exp_block := _build_panel_expeditions_block(_panel_band)
@@ -5994,6 +6111,9 @@ func _band_food_line(unit_data: Dictionary) -> String:
     # An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
     if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
+        # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
+        # so it no longer swings turn-to-turn) minus what the people (Eaten) and the pens (Pen feed)
+        # draw off the larder. The breakdown below itemizes the income rows and the debits.
         var net := _band_net_food(unit_data)
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, _format_yield(net)]
@@ -6095,12 +6215,16 @@ func _morale_cause_label(cause: int) -> String:
         _:
             return ""
 
-## Human-readable days-of-food: the ∞ glyph when the band is not food-limited,
-## otherwise a whole-day count.
+## Human-readable food runway: the ∞ glyph when the source is not food-limited, otherwise a
+## whole count of TURNS. **The unit is turns, never "days"** — this game counts turns, and the
+## underlying figure is a turn count that was only ever labelled in days. One helper feeds every
+## surface that shows it (the band Food line, the expedition Carried/Provisions rows, and the
+## turn-orb starving alert), so the unit is stated in exactly one place.
 func _food_days_text(days: float) -> String:
     if not BandFoodStatus.is_limited(days):
         return FOOD_UNLIMITED_GLYPH
-    return "%d days" % int(round(days))
+    var turns := int(round(days))
+    return "%d turn" % turns if turns == 1 else "%d turns" % turns
 
 func _format_food_module_label(module_key: String) -> String:
     if module_key == "":

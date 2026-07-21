@@ -683,6 +683,10 @@ mod tests {
                     wasted: 0.0,
                     workers_needed: 1,
                     overdraws: false,
+                    // Continuous forage: realized == actual.
+                    realized: 2.5,
+                    // A continuous source lands the same amount every turn.
+                    arrivals: vec![2.5; 3],
                 },
                 SourceYield {
                     actual: 0.5,
@@ -690,6 +694,10 @@ mod tests {
                     wasted: 0.0,
                     workers_needed: 5,
                     overdraws: true,
+                    // Lumpy hunt: the steady average is below this kill turn's spike.
+                    realized: 0.25,
+                    // A lumpy hunt: nothing for two turns, then a whole animal.
+                    arrivals: vec![0.0, 0.0, 0.75],
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -708,7 +716,7 @@ mod tests {
         cohort.last_food_consumption = CONSUMED;
         let state = capture_food_state(&cohort, &allocation);
 
-        // food_income = Σ actual (2.5 + 0.5).
+        // food_income = Σ actual (2.5 + 0.5) — the real (lumpy) arrivals, unchanged.
         assert!(
             (state.food_income - 3.0).abs() < 1e-5,
             "food_income sums per-source actual: {}",
@@ -730,6 +738,9 @@ mod tests {
         // The overstaffing signal (workers_needed) carries onto the display state, zipped by index.
         assert_eq!(state.labor_assignments[0].workers_needed, 1);
         assert_eq!(state.labor_assignments[1].workers_needed, 5);
+        // The steady realized rate carries onto each row too (the client's headline "Food /turn").
+        assert!((state.labor_assignments[0].realized_yield - 2.5).abs() < 1e-5);
+        assert!((state.labor_assignments[1].realized_yield - 0.25).abs() < 1e-5);
     }
 
     /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
@@ -773,7 +784,7 @@ mod tests {
             policy: FollowPolicy::Market,
         };
         let assignment = LaborAssignment { target, workers: 6 };
-        let state = labor_assignment_to_state(&assignment, SourceYield::ZERO);
+        let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
         assert_eq!(state.policy, "market", "policy serialized");
 
         let restored = labor_allocation_from_state(std::slice::from_ref(&state));

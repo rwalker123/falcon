@@ -791,13 +791,50 @@ pub struct LaborAssignment {
 /// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
 /// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
 /// true for Surplus/Market/Eradicate, which genuinely draw down toward the collapse threshold.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
+/// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
+/// simulating the herd/patch forward from its CURRENT state under the assignment's policy + worker
+/// count ([`fauna::project_realized_hunt`] / [`forage::project_realized_forage`]). A **pure function of
+/// state** — no history, no persistence — so the assign-time seed and the resolved row compute the
+/// identical number (exact forecast == actual, true no-jump). It is simulated **rate-based, without the
+/// kill-credit bank**: the bank only quantises *when* whole animals arrive, never the N-turn total, so
+/// projecting the smooth policy rate gives the smooth average directly. That is the whole point — the
+/// lumpy bank-quantised take is what `actual` already reports, and averaging the instantaneous
+/// `sustainable_yield(current biomass)` instead would *sawtooth* with the biomass (drops one body per
+/// kill, regrows between). So on a mammoth's six wait turns `actual` is `0` and on the seventh it
+/// spikes, while `realized` reads flat ≈ `MSY`. A self-terminating policy (Eradicate/Market) breaks the
+/// projection early and divides by the turns actually simulated, so it reads the rate it delivers
+/// *while the source lasts* rather than a horizon-diluted average. On a **continuous** source (forage
+/// patch / Field) the projection reuses `forage_take` directly. `actual` and the ledger identity are
+/// unchanged — this is a parallel steady value, added beside them, never replacing them.
+///
+/// `arrivals` = **when the food actually lands** — the other half of the same question `realized`
+/// answers, from the same forward simulation run **WITH** the kill-credit bank
+/// ([`fauna::project_arrivals_hunt`] / [`forage::project_arrivals_forage`]). Index `i` is the food
+/// delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns` turns; `0.0` where
+/// nothing lands. `realized` deliberately *omits* the bank because the bank decides **when** a whole
+/// animal arrives and not **how much** arrives over the window; this is the value that keeps the
+/// timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros, then a mammoth) whose total
+/// is ≈ `realized × horizon`, while a forage patch — or fast game whose MSY clears a body every turn —
+/// is positive in every slot, which is a **continuous** source correctly rendered as a solid run.
+/// Projected from the source's **post-take** state, so slot 0 is genuinely the *next* delivery and not
+/// the one this turn already paid.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
     pub wasted: f32,
     pub workers_needed: u32,
     pub overdraws: bool,
+    /// The steady headline per-turn yield — the forward-projected average food/turn over the next
+    /// `labor_config.yield_average_horizon_turns` turns, a pure function of the source's current state.
+    /// See the struct-level doc above.
+    pub realized: f32,
+    /// **The discrete arrival schedule** — `arrivals[i]` = the food landing `i + 1` turns from now,
+    /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
+    /// struct-level doc above.
+    pub arrivals: Vec<f32>,
 }
 
 impl SourceYield {
@@ -812,6 +849,12 @@ impl SourceYield {
         workers_needed: 0,
         // Nothing was taken, so nothing was overdrawn.
         overdraws: false,
+        // Nothing was taken, so the steady average is zero too.
+        realized: 0.0,
+        // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
+        // has not been projected at all, and the client renders "no data" rather than "famine".
+        // `Vec::new` allocates nothing, so this stays a `const`.
+        arrivals: Vec::new(),
     };
 }
 
