@@ -421,6 +421,34 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
 
 ## Core Simulation — Bugs
 
+- [ ] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
+  `systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
+  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`. Its
+  three Startup siblings all guard and early-return on an already-populated registry:
+  `fauna::spawn_initial_herds` (also rebuilding telemetry/density before returning),
+  `forage::spawn_initial_forage` (`forage.rs:489`) and `graze::spawn_initial_graze` (`graze.rs:184`).
+  Worldgen is the outlier, so running the Startup chain twice **doubles the world** instead of being
+  a no-op.
+  **How it surfaced (PR #149, Copilot):** a test called `world.run_schedule(Startup)` and then
+  `app.update()`. On bevy 0.13 `Main::run_main` gates the startup labels behind a `Local<bool>` owned
+  by the Main schedule's own system, which `run_schedule` never touches — so `update()` re-ran the
+  whole chain. **Measured: `Query<&Tile>` returned 8320 entities on an 80×52 (= 4160) map**, i.e. a
+  complete duplicate tile set carried for the rest of the run, plus duplicate starting units.
+  **Not a live defect today** — the shipped server boots idle and builds worlds through
+  `rebuild_world_from_config` (`new_game` / `map_size`), and nothing in production runs Startup twice.
+  It is a **trap for tests**: any harness that resolves turns after a manual Startup silently pays for
+  two worlds, and any future assertion that counts tiles, counts bands, or queries `Query<&Tile>`
+  broadly reads doubled values. The PR #149 test was corrected at the call site
+  (`core_sim/tests/fauna_coastal_habitat.rs`, commit `48da2c8`) rather than at the cause, which is
+  this entry.
+  **Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
+  to check first:** `spawn_initial_world` does more than stamp tiles (it also seeds starting
+  inventory, knowledge fragments, and culture), and `rebuild_world_from_config` *deliberately*
+  regenerates the world on `new_game`/`ResetMap`. So the guard must distinguish "Startup fired twice
+  by accident" from "the operator asked for a new world" — confirm how the rebuild path clears state
+  before choosing what to key the guard on, or a naive `tiles.is_empty()` check will break map
+  regeneration. Owner: core_sim.
+
 - [x] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** **Fixed.** Proven
   end-to-end first: `core_sim/tests/rollback_tended_survival.rs` drives a real
   `recapture_snapshot_in_place` → `restore_world_from_snapshot` → `run_turn` cycle and, on the
