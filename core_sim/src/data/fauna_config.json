@@ -243,10 +243,11 @@
       "adjective": "seal",
       "size_class": "big",
       "migratory": false,
-      "route_len": [1, 2],
+      "route_len": [1, 1],
       "biomass": [500, 1000],
       "body_mass": 30,
-      "host_biomes": ["coastal_littoral"],
+      "host_biomes": ["boreal_arctic", "coastal_littoral"],
+      "requires_adjacent_water": true,
       "dwell_turns": 1,
       "regrowth_rate": 0.08,
       "husbandry_ceiling": "wild"
