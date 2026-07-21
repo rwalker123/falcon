@@ -1733,8 +1733,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     LaborConfig scalar echoed per-cohort) is **now decoded in `native/src/lib.rs` and flowed onto the band
     marker** (`_rebuild_unit_markers`, guarded by `marker_field_guard`), so travel lights up on the live
     wire (it degrades to hunting turns only if a snapshot omits it).
-    **WARNED vs BLOCKED — the line that matters:** a **slow** raid (finite `turnsToFill` past
-    `viability_warn_turns`) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
+    **WARNED vs BLOCKED — the line that matters:** a **slow** raid (the **TOTAL** trip —
+    `hunt_turns + round-trip travel`, NOT hunting-only `turnsToFill` — past `viability_warn_turns`;
+    see `_hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
+    alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
     `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
     false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
@@ -2853,7 +2855,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   Plus the global levers echoed on every cohort (same idiom as `maxExpeditionPartySize`, decoded +
   flowed onto the MapView unit marker + covered by `marker_field_guard`). **Neither of them is an
   input to an expedition's raid** — that is the lookup above. Their real jobs: `expeditionViabilityWarnTurns`
-  = the **slow-raid threshold** applied to `turnsToFill`, and
+  = the **slow-raid threshold** applied to the **TOTAL** trip (`turnsToFill` HUNTING turns **+** the
+  client's round-trip travel — a distant herd trips it on travel alone), and
   `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
   client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
   that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
