@@ -16,6 +16,10 @@ pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
 pub struct SnapshotContext<'w> {
     pub config: Res<'w, SimulationConfig>,
     pub tick: Res<'w, SimulationTick>,
+    /// The monotonic world-build counter, stamped onto the snapshot header so a client can tell a
+    /// freshly-generated world from a stale one the snapshot server replays. Always present (the
+    /// idle boot app inserts a default `0`; the server overwrites it per world (re)build).
+    pub world_epoch: Res<'w, WorldEpoch>,
     pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
     pub metrics: Res<'w, SimulationMetrics>,
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
@@ -1281,6 +1285,7 @@ pub fn capture_snapshot(
     let SnapshotContext {
         config,
         tick,
+        world_epoch,
         overlays,
         metrics,
         crisis_overlay,
@@ -1706,6 +1711,7 @@ pub fn capture_snapshot(
     );
     header.wrap_horizontal = config.map_topology.wrap_horizontal;
     header.server_build = crate::BUILD_ID.to_string();
+    header.world_epoch = world_epoch.0;
 
     if let Some(label_res) = campaign_label.as_ref() {
         let label = label_res.as_ref();

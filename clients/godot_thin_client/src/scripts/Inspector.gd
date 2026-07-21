@@ -410,7 +410,7 @@ func set_streaming_active(active: bool) -> void:
 	if stream_active:
 		_append_command_log("Streaming snapshots active.")
 	else:
-		_append_command_log("Streaming unavailable; using mock playback.")
+		_append_command_log("Streaming unavailable.")
 		if autoplay_timer != null and not autoplay_timer.is_stopped():
 			_disable_autoplay(true)
 	_update_command_status()

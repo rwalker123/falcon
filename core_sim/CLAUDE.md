@@ -3504,6 +3504,16 @@ flushed tiles), "Visibility Systems" (the `Without<Expedition>` gate).
 ## Campaign Loop & System Activation
 
 ### Start Flow
+- **Boot idle → `new_game`**: `bin/server.rs` boots **IDLE** — it binds its ports and command
+  listener but does **not** run the Startup worldgen, so no world exists and nothing is captured or
+  broadcast (Bevy's `Startup` schedule only fires on the first `app.update()`, so simply not calling
+  `run_turn` leaves the world ungenerated; `ElevationField` stays uninserted, so the Snapshot stage
+  must never run on the empty world — see the `world_active` guard). A world is generated **on
+  demand** by `new_game <preset_id> <width> <height> <seed> <profile_id>` (proto field **43**; `seed
+  == 0` randomizes, mirroring `map_size`/ResetMap; an unknown `profile_id` is rejected without
+  building, an unknown `preset_id` falls through to the worldgen default). `new_game` and `map_size`
+  (ResetMap) share one world-build helper (`rebuild_world_from_config`). A `turn` sent **before** a
+  world exists is rejected with a warning. See `server-dev`'s boot flow in `bin/server.rs`.
 - **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`
 - **Spawn**: Worldgen seeds the profile's `starting_units`, unlocks `ScoutArea`, `FollowHerd`. Each spawned band's head-count comes from its unit's `band_size` (config lever in `start_profiles.json`; falls back to `DEFAULT_STARTING_BAND_SIZE` = 30 in `start_profile.rs`) — no hardcoded size. `late_forager_tribe` ships a **single ~30-person band** (labor-pool scale per `docs/plan_early_game_labor.md`), not the retired four-band/900-person opening.
 - **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)

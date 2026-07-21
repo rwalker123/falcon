@@ -991,6 +991,11 @@ pub struct SnapshotHeader {
     /// Build identifier of the server binary (see `snapshot.fbs`). Set by core_sim.
     #[serde(default)]
     pub server_build: String,
+    /// Monotonic world-build counter (see `snapshot.fbs`). Incremented on every world (re)build,
+    /// identical for every snapshot within one world; a client uses it to ignore a stale world the
+    /// snapshot server replays to reconnecting subscribers. Set by core_sim.
+    #[serde(default)]
+    pub world_epoch: u32,
 }
 
 impl SnapshotHeader {
@@ -1015,6 +1020,7 @@ impl SnapshotHeader {
             campaign_label: None,
             wrap_horizontal: false,
             server_build: String::new(),
+            world_epoch: 0,
         }
     }
 
@@ -2955,6 +2961,7 @@ fn build_snapshot_flatbuffer<'a>(
             victory: Some(victory_state),
             wrapHorizontal: snapshot.header.wrap_horizontal,
             serverBuild: Some(server_build_fb),
+            worldEpoch: snapshot.header.world_epoch,
         },
     );
 
@@ -3027,6 +3034,7 @@ fn build_delta_flatbuffer<'a>(
             victory: victory_state,
             wrapHorizontal: delta.header.wrap_horizontal,
             serverBuild: server_build_fb,
+            worldEpoch: delta.header.world_epoch,
         },
     );
 

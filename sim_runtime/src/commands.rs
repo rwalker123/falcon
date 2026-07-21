@@ -211,6 +211,16 @@ pub enum CommandPayload {
     ExportMap {
         path: Option<String>,
     },
+    /// Boot-idle new game: generate a world on demand (the server boots with none). `seed == 0`
+    /// randomizes the map seed, mirroring `ResetMap`; an unknown `profile_id` is rejected server-side.
+    /// Proto field 43.
+    NewGame {
+        preset_id: String,
+        width: u32,
+        height: u32,
+        seed: u64,
+        profile_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -641,6 +651,19 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::NewGame {
+                preset_id,
+                width,
+                height,
+                seed,
+                profile_id,
+            } => pb::command_envelope::Command::NewGame(pb::NewGameCommand {
+                preset_id: preset_id.clone(),
+                width: *width,
+                height: *height,
+                seed: *seed,
+                profile_id: profile_id.clone(),
+            }),
         });
 
         pb::CommandEnvelope {
@@ -920,6 +943,13 @@ impl CommandEnvelope {
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }
             }
+            pb::command_envelope::Command::NewGame(cmd) => CommandPayload::NewGame {
+                preset_id: cmd.preset_id,
+                width: cmd.width,
+                height: cmd.height,
+                seed: cmd.seed,
+                profile_id: cmd.profile_id,
+            },
         };
 
         Ok(CommandEnvelope {

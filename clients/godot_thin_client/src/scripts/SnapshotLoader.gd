@@ -3,8 +3,6 @@ class_name SnapshotLoader
 
 const SnapshotStream := preload("res://src/scripts/SnapshotStream.gd")
 
-var frames: Array[Dictionary] = []
-var index: int = 0
 var stream: Object = null
 var stream_enabled: bool = false
 var last_stream_snapshot: Dictionary = {}
@@ -13,24 +11,6 @@ var decoder: Object = null
 var _last_stream_status: int = StreamPeerTCP.STATUS_NONE
 var _warned_stream_error: bool = false
 var _warned_decoder_missing: bool = false
-
-func load_mock_data(path: String) -> void:
-    var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-    if file == null:
-        push_error("Unable to open mock snapshot data at %s" % path)
-        frames = []
-        return
-    var json_text: String = file.get_as_text()
-    var parsed: Variant = JSON.parse_string(json_text)
-    if typeof(parsed) != TYPE_ARRAY:
-        push_error("Expected mock snapshot data to be an array of frames")
-        frames = []
-        return
-    frames = []
-    for entry in parsed:
-        if typeof(entry) == TYPE_DICTIONARY:
-            frames.append(entry)
-    index = 0
 
 func enable_stream(host: String, port: int) -> Error:
     print("SnapshotLoader: attempting stream connection to %s:%d" % [host, port])
@@ -111,20 +91,3 @@ func poll_stream(delta: float) -> Dictionary:
     if updated:
         return last_stream_snapshot
     return {}
-
-func current() -> Dictionary:
-    if frames.is_empty():
-        return {}
-    return frames[index]
-
-func advance() -> Dictionary:
-    if frames.is_empty():
-        return {}
-    index = (index + 1) % frames.size()
-    return frames[index]
-
-func rewind() -> Dictionary:
-    if frames.is_empty():
-        return {}
-    index = (index - 1 + frames.size()) % frames.size()
-    return frames[index]

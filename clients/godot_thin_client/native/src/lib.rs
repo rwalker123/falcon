@@ -1203,6 +1203,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if let Some(header) = delta.header() {
         agg.tick = header.tick();
         agg.wrap_horizontal = header.wrapHorizontal();
+        agg.world_epoch = header.worldEpoch();
         if let Some(build) = header.serverBuild() {
             agg.server_build = build.to_string();
         }
@@ -1451,6 +1452,7 @@ struct DeltaAggregator {
     height: u32,
     wrap_horizontal: bool,
     server_build: String,
+    world_epoch: u32,
     tile_updates: HashMap<(u32, u32), f32>,
     terrain_width: u32,
     terrain_height: u32,
@@ -1732,6 +1734,7 @@ impl DeltaAggregator {
             height,
             wrap_horizontal,
             server_build,
+            world_epoch,
             tile_updates,
             terrain_width,
             terrain_height,
@@ -2038,6 +2041,10 @@ impl DeltaAggregator {
         if !server_build.is_empty() {
             let _ = dict.insert("server_build", server_build.as_str());
         }
+        // Same world-generation counter the full-snapshot path carries (see snapshot.fbs
+        // `worldEpoch`), so a delta arriving before the first full frame can be recognised as
+        // pre-/post-rebuild by the loading gate. Default 0 (idle boot app / absent header).
+        let _ = dict.insert("world_epoch", world_epoch as i64);
         dict
     }
 }
@@ -2864,6 +2871,12 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     if let Some(server_build) = header.serverBuild() {
         let _ = dict.insert("server_build", server_build);
     }
+
+    // Monotonic world-generation counter (see snapshot.fbs `worldEpoch`): 0 for the idle boot
+    // app, 1 for the first real world, +1 on every rebuild (`new_game`/`ResetMap`). The client's
+    // loading gate reveals the map only once a full snapshot arrives whose epoch exceeds the
+    // last-revealed baseline, so a reconnecting client ignores the replayed pre-rebuild frame.
+    let _ = dict.insert("world_epoch", header.worldEpoch() as i64);
 
     if let Some(sedentarization) = snapshot.subsistence().and_then(|s| s.sedentarization()) {
         let _ = dict.insert(

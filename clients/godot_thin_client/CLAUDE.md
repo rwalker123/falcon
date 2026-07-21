@@ -64,7 +64,11 @@ never writes, deletes, or liveness-checks the file.
 
 | Script | Purpose |
 |--------|---------|
-| `Main.gd` | Scene orchestration, streaming toggle |
+| `Main.gd` | Scene orchestration, streaming toggle. On boot sends the `new_game <preset> <w> <h> <seed> <profile>` command (built from the `GameLaunch` autoload handoff, or a dev default) since the server now boots idle and only generates a world on `new_game`. Owns the `$PauseLayer` ESC overlay: ESC opens/closes the pause `MenuShell`, but yields to MapView's targeting-cancel when `hud.is_targeting_active()` |
+| `ui/MenuShell.gd` (`ui/MenuShell.tscn`) | The ONE shared menu surface (DRY) for BOTH the landing screen and the ESC pause menu; `mode` ("landing"\|"pause") re-filters a single registry-driven nav and re-lays-out (full-bleed vs centered card over a scrim). Built in code, styled through `HudStyle`. New Game pane = preset picker (earthlike / polar_contrast) + map-size picker (from `MapSizes.OPTIONS`, Standard default) + seed field. Functional items emit `new_game_requested`/`resume_requested`/`abandon_requested`/`exit_requested`; Map Selection/Load/Save/Options render inert placeholder panes |
+| `ui/LandingScreen.gd` (`ui/LandingScreen.tscn`) | The boot main-scene (`project.godot` run/main_scene): a MenuShell in landing mode over a dark ground. `new_game_requested` stashes params in `GameLaunch.pending_new_game` and swaps to `Main.tscn`; `exit_requested` quits |
+| `MapSizes.gd` | Canonical 5-entry map-size list (`OPTIONS` + `DEFAULT_KEY`), shared by `MapPanel` and `MenuShell` (DRY) |
+| `GameLaunch.gd` (autoload) | Cross-scene handoff: `pending_new_game` dict set by LandingScreen, consumed + cleared by `Main._build_new_game_command` |
 | `MapView.gd` | Terrain rendering, overlays, hex selection (select-then-cycle through a tile's band stack), navigation (WASD/QE/mouse), tile picking, and the coordinator for the **layered hex-marker system** (see Map markers below). Three cohesive subsystems are composed out into owned renderer helpers, each holding a `_view: MapView` back-ref and driven from MapView's `_ready`/`_draw` (all shared geometry/glyph/pill/fog primitives + the marker source arrays + selection state stay on MapView): the **2D minimap** (`ui/MinimapController.gd`, `_minimap`), the **primary band markers** (`ui/BandMarkerRenderer.gd`, `_band_markers`), and the **secondary markers** (`ui/SecondaryMarkerRenderer.gd`, `_secondary_markers`). Still on MapView: the `_draw_*` overlay families NOT yet extracted — terrain/shader/cache, the selected-band work-highlights + yield-labels + herd-range, supply links, routes, targeting, trade/crisis annotations (see the Step-4 report for why each was left) |
 | `ui/MinimapController.gd` | Owns MapView's 2D minimap: the `MinimapPanel` instance, its terrain/FoW image (rebuilt only on grid/data/FoW change), the viewport-indicator overlay and click-to-pan. Holds a `_view: MapView` back-ref; behaviour is identical to the old inlined minimap code |
 | `ui/BandMarkerRenderer.gd` | Owns MapView's PRIMARY player-band markers: the offset card-stack of settlement-stage tokens / expedition flag-discs, the faction nameplate banner (+ its reused StyleBoxFlat), the food-days dot, the travel/task arrow, and the ×N over-cap count pill. `_view: MapView` back-ref; `draw_primary_bands()` called during MapView's `_draw`; pixel-identical to the old inlined code (verified via `map_preview` byte-diff) |
@@ -3322,6 +3326,7 @@ the narrative beat engine.
 | `L` | Show/hide the Terrain Types legend (**hidden by default**, persisted) |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
+| `Esc` | Open/close the pause menu (yields to targeting-cancel while a command is targeting) |
 
 ---
 

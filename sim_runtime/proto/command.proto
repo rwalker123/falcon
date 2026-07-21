@@ -324,6 +324,19 @@ message ExportMapCommand {
   optional string path = 1;
 }
 
+// Boot-idle new game: the server boots with NO world generated, and this command generates one on
+// demand. `preset_id` selects the map preset (an unknown id falls through to the worldgen default,
+// mirroring ResetMap), `width`/`height` size the grid, `seed == 0` randomizes the map seed (mirrors
+// ResetMap), and `profile_id` selects the start profile (an unknown id is rejected — the world is NOT
+// built). Shares the world-build path with ResetMap.
+message NewGameCommand {
+  string preset_id = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint64 seed = 4;
+  string profile_id = 5;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -377,5 +390,7 @@ message CommandEnvelope {
     // Field numbers are immutable once released — 40 and 41 are held by `tame` and
     // `sow`, so `answer_fork` takes 42. Never renumber a field that has shipped.
     AnswerForkCommand answer_fork = 42;
+    // 42 is held by `answer_fork`, so `new_game` takes 43 (the next free field, append-only).
+    NewGameCommand new_game = 43;
   }
 }
