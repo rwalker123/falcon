@@ -48,6 +48,11 @@ pub fn advance_labor_allocation(
     let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
+    // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
+    // average food/turn the source will deliver over the next N turns, simulated forward from its
+    // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
+    // the first resolved value exactly.
+    let realized_horizon = labor.yield_average_horizon_turns;
     // **The ladder's knowledge dials (§4)** — the per-turn accrual every teaching rung pays, and the
     // ledger bar at which a faction may act on a knowledge. Hoisted out of the per-cohort loop.
     // **One pair for BOTH webs**: these used to be duplicated at identical values in
@@ -208,6 +213,20 @@ pub fn advance_labor_allocation(
                     {
                         discovery.add_progress(faction, knowledge, knowledge_delta);
                     }
+                    // **The steady headline** — the forward-projected average food/turn over the next
+                    // `realized_horizon` turns, computed from the patch's PRE-take state (before either
+                    // branch draws it down), so it equals the assign-time seed exactly. Both the Field
+                    // and the drawn-down branches record this one value.
+                    let forage_realized = crate::forage::project_realized_forage(
+                        patch,
+                        &labor.forage,
+                        &ladder,
+                        seasonal,
+                        mult_f,
+                        workers,
+                        *policy,
+                        realized_horizon,
+                    );
                     // **A FIELD (rung 3) is worked, not wild-gathered** — the plant web's one managed
                     // rung, and the twin of a penned herd's keeper income (paid place-local here).
                     // The band whose Forage assignment works it (≥1 worker here → place-local by
@@ -253,6 +272,8 @@ pub fn advance_labor_allocation(
                             actual: paid,
                             // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
+                            // The forward-projected steady headline (computed pre-take above).
+                            realized: forage_realized,
                             // The crop the crew could not carry: it stood in the field and rotted.
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
@@ -399,6 +420,8 @@ pub fn advance_labor_allocation(
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        // The forward-projected steady headline (computed pre-take above).
+                        realized: forage_realized,
                         wasted: forage_provisions(
                             (production - take).max(0.0),
                             &labor.forage,
@@ -449,6 +472,22 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // **The steady headline** — the forward-projected average food/turn over the next
+                    // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
+                    // feed/harvest or the wild take mutates it), so it equals the assign-time seed
+                    // exactly. Rate-based (no kill-credit bank), so it is smooth where `actual` pulses;
+                    // a corralled herd projects its managed pen yield instead. Both the pen-tend and the
+                    // wild-take branches record this one value.
+                    let hunt_realized = fauna::project_realized_hunt(
+                        herd,
+                        &fauna,
+                        &ladder,
+                        labor.hunt.per_worker_biomass_capacity,
+                        mult_f,
+                        workers,
+                        *policy,
+                        realized_horizon,
+                    );
                     // **THE earn path (§4)** — the exact mirror of the Forage arm's call, and the
                     // heart of this ladder: the lesson is read off **the rung this herd stands on**,
                     // so the *same* Sustain hunt teaches **Herding** on a wild herd and **Penning** on
@@ -609,6 +648,9 @@ pub fn advance_labor_allocation(
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
+                            // The forward-projected steady headline (computed pre-take above; a pen
+                            // projects its managed yield, already smooth).
+                            realized: hunt_realized,
                             wasted: hunt_provisions(take.wasted, &fauna, mult_f),
                             // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
@@ -816,6 +858,9 @@ pub fn advance_labor_allocation(
                         wasted: hunt_provisions(take.wasted, &fauna, mult_f),
                         workers_needed,
                         overdraws: policy.overdraws(),
+                        // The forward-projected steady headline (computed pre-take above): rate-based,
+                        // so it is smooth where `actual` (the whole-animal kill) pulses.
+                        realized: hunt_realized,
                     };
                 }
                 LaborTarget::Scout => {
@@ -1841,6 +1886,99 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         world.get::<LaborAllocation>(band).unwrap().last_yields[0]
+    }
+
+    /// One hunt turn under `policy` on the slow breeder (biomass above `K/2`, empty bank), staffed so
+    /// the worker cap never binds; returns the captured yield row.
+    fn slow_breeder_hunt_policy(policy: FollowPolicy) -> SourceYield {
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, 0.0);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0]
+    }
+
+    /// **The forward-projected `realized` reads the HONEST OVERHUNTING RATE — and sees the decline.**
+    /// `sustainable` is the herd's MSY (the overhunting reference), policy-independent. The lumpy
+    /// `actual` cannot be compared to it turn by turn (a kill cashes a whole banked animal and spikes
+    /// above MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized`
+    /// IS comparable: a **Sustain** hunt projects `≈ sustainable` (stable at K/2), an overhunting
+    /// **Surplus/Market** hunt projects *above* it — and, because the projection simulates the herd
+    /// declining under the overdraw, **Market projects BELOW its naive `2.5×MSY` steady rate** (the
+    /// stock runs out inside the horizon), the honest reading the instantaneous rate could not give.
+    #[test]
+    fn realized_reads_the_honest_overhunting_rate() {
+        let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
+        let surplus = slow_breeder_hunt_policy(FollowPolicy::Surplus);
+        let market = slow_breeder_hunt_policy(FollowPolicy::Market);
+
+        // `sustainable` is MSY, the same under every policy (it is the reference, not the take).
+        assert!(
+            (sustain.sustainable - surplus.sustainable).abs() < 1e-6
+                && (sustain.sustainable - market.sustainable).abs() < 1e-6,
+            "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {market:?}"
+        );
+        // Sustain projects ~its sustainable MSY (a Sustain hunt holds the herd at K/2 and does not
+        // overdraw, so the whole horizon pays MSY).
+        assert!(
+            (sustain.realized - sustain.sustainable).abs() < 1e-5,
+            "a Sustain hunt projects ≈ its sustainable MSY: {sustain:?}"
+        );
+        // Overhunting projects the honest rate ABOVE the sustainable reference, ordered by policy.
+        assert!(
+            surplus.realized > surplus.sustainable,
+            "Surplus projects above the sustainable MSY (the honest overhunt rate): {surplus:?}"
+        );
+        assert!(
+            market.realized > surplus.realized,
+            "Market projects deeper than Surplus: {market:?} {surplus:?}"
+        );
+        // The projection SEES THE DECLINE: Market drives the herd out within the horizon, so its
+        // average is strictly below the naive instantaneous `market_multiplier × MSY` steady rate — the
+        // honest reading the old instantaneous rate could not produce. MSY = `sustainable` (both are
+        // `hunt_provisions(peak_regrowth)` above K/2), so the naive Market rate is `2.5 × sustainable`.
+        let naive_market_rate =
+            FaunaConfigHandle::default().get().hunt.market_multiplier * market.sustainable;
+        assert!(
+            market.realized > 0.0 && market.realized < naive_market_rate,
+            "Market projects below its naive {naive_market_rate} steady rate (sees the decline): \
+             {market:?}"
+        );
+    }
+
+    /// **Eradicate reads the STRIP RATE it delivers, NOT a diluted average.** Eradicate strips the herd
+    /// in ~1 turn; the projection breaks the moment the source is spent and divides by the turns it
+    /// actually delivered, so `realized` reads the high one-shot strip rate — far above Sustain's MSY —
+    /// rather than that rate smeared thin across ~40 mostly-empty horizon turns (which would read
+    /// *below* Sustain, the exact dilution the divide-by-turns-simulated rule prevents).
+    #[test]
+    fn eradicate_realized_reads_the_strip_rate_not_a_diluted_average() {
+        let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
+        let eradicate = slow_breeder_hunt_policy(FollowPolicy::Eradicate);
+
+        assert!(
+            eradicate.realized > sustain.realized,
+            "Eradicate strips faster than Sustain sustains: {eradicate:?} vs {sustain:?}"
+        );
+        // Not diluted toward zero: the one-turn strip of the whole standing stock dwarfs the
+        // sustainable MSY. Diluting it over the full horizon would drop it to ~MSY/horizon, *below*
+        // Sustain — so this margin is what proves the loop divided by the turns actually simulated.
+        assert!(
+            eradicate.realized > 10.0 * sustain.sustainable,
+            "Eradicate reads its strip rate, not a horizon-diluted average: {eradicate:?} \
+             (sustainable {})",
+            sustain.sustainable
+        );
     }
 
     /// **A hunt's `workers_needed` is its STEADY carry crew — the same on a wait turn and a kill turn.**

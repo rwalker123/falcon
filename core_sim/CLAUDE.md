@@ -3616,7 +3616,7 @@ vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since
 posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
-`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, workers_needed }`
+`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, wasted, workers_needed, overdraws, realized }`
 (f32 provisions + a worker count)
 per assignment, **in the same index order** as `assignments` (so the snapshot zips by index — every
 `LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is
@@ -3668,6 +3668,37 @@ consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
 indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
+
+**The steady headline — `realized` / `foodIncomeAverage` / `realizedYield`.** The lumpy per-source
+`actual` makes the band panel's "Food /turn" **swing** turn-to-turn (a whole-animal hunt pays 0 for
+~6 turns then a spike). So each `SourceYield` also carries **`realized`** — a **FORWARD PROJECTION**:
+the average food/turn the source will deliver over the next `labor_config.yield_average_horizon_turns`
+(default **40**) turns, computed by simulating the herd/patch forward from its CURRENT state under the
+assignment's policy + worker count (`fauna::project_realized_hunt` / `forage::project_realized_forage`,
+mirroring the real turn order Logistics-regrow → Population-take, exactly as
+`systems::expeditions::hunt_trip_forecast` does). It is a **pure function of state** — no history, no
+persistence — so the assign-time seed and the resolved row compute the identical number (exact
+forecast == actual, the true no-jump: `resolved_hunt_realized_equals_the_seeded_realized`). **Simulated
+rate-based, WITHOUT the kill-credit bank:** the bank only quantises *when* whole animals arrive, never
+the N-turn total, so projecting the smooth `hunt_policy_rate` gives the smooth average directly. **Why
+not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
+`sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
+(drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
+N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Market
+re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Market herd
+declines within the window and the average honestly reflects it). A **self-terminating** policy
+(Eradicate strips the herd in ~1 turn, Market drives it extinct) **breaks the loop early and divides by
+the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
+the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
+negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,
+`hunt_policy_rate`, `pen_yield_biomass`, `hunt_provisions`, `forage_take`, `herd_ecology`/`herd_capacity`)
+— no second copy of the ecology or take math. Rolled up per band as
+`PopulationCohortState.foodIncomeAverage` = Σ `realized` (the client's steady "Food /turn"), **added
+beside** the unchanged `foodIncome` = Σ `actual` (which stays the real arrivals and preserves the
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` ledger identity). On the wire,
+`LaborAssignment.realizedYield` + `PopulationCohortState.foodIncomeAverage` are appended (append-only).
+**The `actual` value and the ledger identity are unchanged — `realized` is a parallel steady value,
+never a replacement.**
 
 **The understaffing mirror — `wastedYield`** (slice 7, appended to `LaborAssignment`). `workersNeeded`
 only ever answered *"are there too many workers here?"*; nothing answered *"too few?"*. `SourceYield.wasted`

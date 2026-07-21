@@ -959,11 +959,83 @@ pub(crate) fn managed_per_worker_yield(forage: &ForageLaborConfig, output_multip
     )
 }
 
+/// **The steady `realized` yield for a forage source — a FORWARD PROJECTION** (the plant twin of
+/// `fauna::project_realized_hunt`). The average food/turn the patch delivers over the next `horizon`
+/// turns, simulated forward from its CURRENT state under `policy` + `workers`, mirroring the real turn
+/// order (Logistics regrow → Population take). A **pure function of the passed patch state**, so the
+/// assign-time seed and the resolved row compute the identical number (exact forecast == actual).
+///
+/// Foraging was never lumpy — `forage_take` is already rate-based (no kill-credit bank) — so the
+/// projection just reuses the *same* take path the real turn runs each simulated turn: a **Field**
+/// (rung 3) pays its managed `field_provisions` capped by the crew's throughput and never draws down;
+/// every other patch pays `forage_take`'s drawn-down policy gather. So the projection is exactly the
+/// forward average of what the source really pays, computed through one shared take path.
+// The projection needs the full take context (source, config, ladder, season, multiplier, crew,
+// policy, horizon) — the same shape `forage_source_yield_preview` already carries.
+#[allow(clippy::too_many_arguments)]
+pub fn project_realized_forage(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
+    seasonal: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+    horizon: u32,
+) -> f32 {
+    if horizon == 0 {
+        return 0.0; // `LaborConfig::validate` pins `horizon > 0`; belt-and-braces against /0.
+    }
+    let mut sim = patch.clone();
+    let mut total = 0.0_f32;
+    // Turns actually simulated — the average divides by this, not the full `horizon`, so a
+    // self-terminating gather (an Eradicate strip) reads the rate it delivers while the stand lasts
+    // rather than being diluted by empty turns (the animal twin's rule). A patch reseeds, so in
+    // practice it rarely trips the break — but the rule is uniform with `project_realized_hunt`.
+    let mut turns = 0u32;
+    for _ in 0..horizon {
+        // Logistics: the patch regrows first, exactly as `advance_forage_regrowth` runs before the
+        // Population stage's gather.
+        regrow_patch(&mut sim, forage);
+        // Population: a Field is a managed harvest (no drawdown, policy axis collapsed, worker-capped);
+        // every other patch is the drawn-down policy gather through the shared `forage_take` path.
+        let take = if sim.is_field() {
+            let production = field_provisions(sim.biomass, forage, output_multiplier);
+            let collection = workers as f32 * managed_per_worker_yield(forage, output_multiplier);
+            production.min(collection)
+        } else {
+            forage_take(
+                &mut sim,
+                workers,
+                policy,
+                forage,
+                ladder,
+                output_multiplier,
+                seasonal,
+            )
+            .to_f32()
+        };
+        if take <= crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON {
+            break; // the stand is spent — stop before diluting the average with empty turns.
+        }
+        total += take;
+        turns += 1;
+    }
+    if turns > 0 {
+        total / turns as f32
+    } else {
+        0.0
+    }
+}
+
 /// The assign-time yield telemetry seed for a **Forage** source: what staffing `patch` with `workers`
 /// gatherers under `policy` will pay next turn, in the same shape the Forage arm of
 /// `advance_labor_allocation` records after the take. Reuses `forage_forecast` (hence `forage_take`'s
 /// own ceiling/conversion helpers) and the shared MSY `sustainable_yield`, so the seed is exactly the
 /// number the turn then produces — no jump. The animal mirror is `fauna::hunt_source_yield_preview`.
+// The seed composes the whole telemetry row, so it carries the full take context (see the sibling
+// `project_realized_forage`).
+#[allow(clippy::too_many_arguments)]
 pub fn forage_source_yield_preview(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
@@ -972,6 +1044,7 @@ pub fn forage_source_yield_preview(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    realized_horizon: u32,
 ) -> SourceYield {
     let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
     // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
@@ -986,10 +1059,29 @@ pub fn forage_source_yield_preview(
         forage,
         output_multiplier,
     );
+    // The steady headline is the forward projection from THIS patch state — the same computation the
+    // resolved Forage arm runs, so seed == first resolved value exactly.
+    let realized = project_realized_forage(
+        patch,
+        forage,
+        ladder,
+        seasonal,
+        output_multiplier,
+        workers,
+        policy,
+        realized_horizon,
+    );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
     // and since rung 2 went back to being a drawn-down wild stand, a *tended* patch can be over-farmed
     // like any other, so it must keep its real sustainable line and its real ⚠.
-    forecast_source_yield(&forecast, sustainable, patch.is_field(), workers, policy)
+    forecast_source_yield(
+        &forecast,
+        sustainable,
+        patch.is_field(),
+        workers,
+        policy,
+        realized,
+    )
 }
 
 #[cfg(test)]

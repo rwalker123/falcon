@@ -271,6 +271,223 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
     );
 }
 
+/// **The lumpy `actual` pulses; the forward-projected `realized` reads FLAT.** A whole-animal Sustain
+/// hunt on a slow breeder (MSY ≪ `body_mass`) pays nothing for several turns then a whole animal at
+/// once — so `actual` swings 0 → spike → 0 — while `realized` (the average food/turn projected over the
+/// next N turns, rate-based) holds essentially flat at ≈ MSY every turn, never reaching the spike, and
+/// averages to the same long-run mean. This is the regression guard for the whole fix: the headline
+/// "Food /turn" is a steady number instead of the jumpy `actual`, and it does NOT sawtooth with the
+/// biomass (the instantaneous-rate bug this replaced).
+#[test]
+fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
+    let mut app = spawn_world();
+    // A stationary game herd (route_len 1 → stays put across the run, so the hunt never lapses).
+    let id = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
+            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .map(|h| h.id.clone())
+            .expect("expected short-range game")
+    };
+    // Force a SLOW-BREEDER profile so the take pulses: MSY = r·K/4 = 10, body_mass = 30 (3× MSY), so a
+    // Sustain hunt kills one body every ~3 turns and waits between. Sustain holds the herd near K/2.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.carrying_capacity = 200.0;
+        herd.regrowth_rate = 0.2;
+        herd.body_mass = 30.0;
+        herd.biomass = herd.carrying_capacity * 0.5; // K/2 — Sustain's operating point.
+        herd.biomass_before_regrowth = herd.biomass;
+        herd.hunt_credit = 0.0;
+    }
+    let pos = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .position();
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("herd tile resolves");
+    // 2 hunters × 40 per-worker = 80 biomass throughput > body_mass, so a killed body is carried whole
+    // (no waste) and `realized` is never worker-bound — it reads the policy ceiling.
+    let band = spawn_band(
+        &mut app,
+        tile,
+        10,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: 2,
+            }],
+            ..Default::default()
+        },
+    );
+
+    // Warm up past the first bank fill, then sample enough turns to contain many pulses.
+    const WARMUP: usize = 8;
+    const SAMPLES: usize = 60;
+    let mut actual = Vec::with_capacity(SAMPLES);
+    let mut realized = Vec::with_capacity(SAMPLES);
+    for turn in 0..(WARMUP + SAMPLES) {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+        if turn >= WARMUP {
+            let row = app.world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+            actual.push(row.actual);
+            realized.push(row.realized);
+        }
+    }
+
+    // `actual` PULSES — it is 0 on wait turns and > 0 on kill turns.
+    assert!(
+        actual.contains(&0.0),
+        "a slow-breeder hunt must wait (actual == 0) on some turns: {actual:?}"
+    );
+    assert!(
+        actual.iter().any(|&a| a > 0.0),
+        "a slow-breeder hunt must kill (actual > 0) on some turns: {actual:?}"
+    );
+
+    let realized_mean: f32 = realized.iter().sum::<f32>() / realized.len() as f32;
+    let actual_mean: f32 = actual.iter().sum::<f32>() / actual.len() as f32;
+    let actual_max = actual.iter().cloned().fold(0.0_f32, f32::max);
+    let realized_max = realized.iter().cloned().fold(0.0_f32, f32::max);
+    assert!(
+        realized_mean > 0.0,
+        "realized must be positive: {realized:?}"
+    );
+
+    // The pulse really is spiky — a kill turn spikes well above the steady rate.
+    assert!(
+        actual_max > 2.0 * realized_mean,
+        "a kill turn must spike above the steady rate (max {actual_max}, steady {realized_mean})"
+    );
+
+    // `realized` is FLAT — a settled Sustain herd sits above K/2, where the projected policy rate is
+    // MSY every simulated turn regardless of the biomass sawtooth, so the headline barely moves. Its
+    // turn-to-turn change is a tiny fraction of the steady rate (NOT the sawtooth the instantaneous
+    // rate would show), and it never reaches the kill spike.
+    let max_delta_realized = realized
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        max_delta_realized < 0.05 * realized_mean,
+        "realized must read flat turn-to-turn (max Δrealized {max_delta_realized}, \
+         steady {realized_mean}): {realized:?}"
+    );
+    assert!(
+        realized_max < 0.7 * actual_max,
+        "the steady average must never reach the kill spike (realized max {realized_max}, \
+         actual max {actual_max})"
+    );
+
+    // The long-run mean of the lumpy `actual` ≈ the (flat) `realized` — the projection is unbiased.
+    assert!(
+        (actual_mean - realized_mean).abs() < 0.15 * realized_mean,
+        "the long-run mean of actual ({actual_mean}) must ≈ realized ({realized_mean})"
+    );
+}
+
+/// **A herd being drawn down (`B > K/2`) reads `realized` that drifts SMOOTHLY, never sawtooths.** Off
+/// the stable operating point — a full herd a Sustain hunt is walking down toward `K/2` — the biomass
+/// falls turn by turn *and* sawtooths with every whole-animal kill. The forward projection reads
+/// through both: it holds at ≈ MSY with only tiny per-turn steps, where the instantaneous
+/// `sustainable_yield(current biomass)` would jitter with the kill sawtooth. This is the draw-down half
+/// of the fix.
+#[test]
+fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
+    let mut app = spawn_world();
+    let id = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
+            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .map(|h| h.id.clone())
+            .expect("expected short-range game")
+    };
+    // A big-bodied slow breeder started well ABOVE K/2, so a Sustain hunt walks it *down* toward the
+    // K/2 operating point over the run — a genuine draw-down the herd survives (Market would drive it
+    // extinct and lapse the assignment, which measures nothing about smoothness).
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.carrying_capacity = 200.0;
+        herd.regrowth_rate = 0.2;
+        herd.body_mass = 30.0;
+        herd.biomass = herd.carrying_capacity * 0.9; // 0.9K — a standing surplus above the K/2 floor.
+        herd.biomass_before_regrowth = herd.biomass;
+        herd.hunt_credit = 0.0;
+    }
+    let pos = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .position();
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("herd tile resolves");
+    let band = spawn_band(
+        &mut app,
+        tile,
+        10,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: 4,
+            }],
+            ..Default::default()
+        },
+    );
+
+    const TURNS: usize = 20;
+    let mut realized = Vec::with_capacity(TURNS);
+    for _ in 0..TURNS {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert!(
+            !allocation.last_yields.is_empty(),
+            "the hunt must not lapse during a survivable draw-down"
+        );
+        realized.push(allocation.last_yields[0].realized);
+    }
+
+    let realized_mean: f32 = realized.iter().sum::<f32>() / realized.len() as f32;
+    assert!(
+        realized_mean > 0.0,
+        "realized must be positive: {realized:?}"
+    );
+    // Every turn-to-turn step is small relative to the level — a smooth drift, never a sawtooth jump.
+    let max_delta = realized
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        max_delta < 0.2 * realized_mean,
+        "a drawn-down realized must drift smoothly, not sawtooth (max Δ {max_delta}, \
+         mean {realized_mean}): {realized:?}"
+    );
+}
+
 /// (c) A Hunt assignment lapses once the herd is beyond `band_work_range + hunt_leash_tiles`.
 #[test]
 fn hunt_lapses_beyond_leash() {

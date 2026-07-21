@@ -2522,12 +2522,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
-  `_band_food_line` appends the **net per-turn rate** — `Food 15 (19 days) · −0.77 /turn` — where
-  **net = `food_income − food_consumption − pen_feed_upkeep`** (`_band_net_food`), tinted green (≥0) /
-  red (<0). **The ledger has THREE terms, not two:** a band keeping a corral pays its penned herd's
-  feed straight off the larder every turn (a confined herd cannot graze), and that debit is in
-  *neither* of the other two. Omitting it made the row **lie** — a Red Deer pen overstated the surplus
-  by ~1.74/turn against a band that eats ~1.2, and the larder then drained with no explanation.
+  `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 days) · +0.76 /turn` —
+  where **net = `_band_net_food` = income − food_consumption − pen_feed_upkeep**, tinted green (≥0) /
+  red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
+  `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
+  as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
+  `food_income`-based net did (0 on a hunt's wait turn, a spike on its kill turn). It is summed from the
+  breakdown rows rather than read off the cohort-level `food_income_average`, so the net's income half
+  can never disagree with the Gathered/Hunted rows beneath it. **The ledger has THREE terms, not two:**
+  a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
+  herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
+  a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then
+  drained with no explanation.
   `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
   keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
   yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity

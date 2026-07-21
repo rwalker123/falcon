@@ -1957,6 +1957,15 @@ pub struct LaborAssignmentState {
     /// per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub overdraws: bool,
+    /// **The steady per-turn income this source realizes** — the honest long-run average of the lumpy
+    /// [`Self::actual_yield`]: `min(workers × per-worker throughput, this policy's steady per-turn
+    /// ceiling)`, the pre-quantization rate the kill-credit bank is fed. On a whole-animal (hunt)
+    /// source `actual_yield` pulses (0 on wait turns, spikes on kills) while this holds steady at
+    /// ~`MSY`; on a continuous forage/Field source the two are equal. The client's headline "Food
+    /// /turn" reads this instead of the jumpy `actual_yield`. Derived per-turn at capture (0 on a
+    /// rehydrated save before the next tick). Appended (append-only).
+    #[serde(default)]
+    pub realized_yield: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2200,6 +2209,15 @@ pub struct PopulationCohortState {
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
+    /// **The band's STEADY food income this turn = Σ of every worked source's [`LaborAssignmentState::realized_yield`]**
+    /// (the per-source steady averages summed) — the honest long-run average of the lumpy
+    /// [`Self::food_income`]. Because a whole-animal hunt pays in pulses, `food_income` swings
+    /// turn-to-turn while this holds steady; the client's headline "Food /turn" reads this. Distinct
+    /// from `food_income`, which stays the real arrivals and preserves the
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep` ledger identity. Derived
+    /// per-turn at capture (0.0 on a rehydrated save before the next tick). Appended (append-only).
+    #[serde(default)]
+    pub food_income_average: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -4551,6 +4569,7 @@ fn create_populations<'a>(
                                 workersNeeded: assignment.workers_needed,
                                 wastedYield: assignment.wasted_yield,
                                 overdraws: assignment.overdraws,
+                                realizedYield: assignment.realized_yield,
                             },
                         )
                     })
@@ -4669,6 +4688,7 @@ fn create_populations<'a>(
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
+                    foodIncomeAverage: cohort.food_income_average,
                 },
             )
         })

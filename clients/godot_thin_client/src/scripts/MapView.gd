@@ -2065,10 +2065,10 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
 			# `Hud._source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
 			# trips ⚠.
-			if show_yields and entry.has("actual_yield"):
+			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := bool(entry.get("overdraws", false))
-				_queue_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
+				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
 					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
@@ -2084,16 +2084,18 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
 				draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
 			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
-			# Depletable herd: HEADLINE the steady per-turn rate (`sustainable_yield`), NOT the
+			# Depletable herd: HEADLINE the STEADY realized average (`realized_yield`), NOT the
 			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
-			# the Band panel's hunt-headline rule in `Hud._source_yield_readout` (rate = sustainable for
-			# HUNT), so the map label and the Band panel can never disagree. The overhunt ⚠ flag is the
-			# sim-answered `overdraws` bool (policy-driven, false for Sustain) — NOT `actual > sustainable`,
-			# which false-positives on a kill turn when a banked animal spikes `actual`.
-			if show_yields and entry.has("sustainable_yield"):
+			# the Band panel's hunt-headline rule in `Hud._source_yield_readout` (which now reads
+			# `realized_yield` for both hunt and forage), so the map label and the Band panel can never
+			# disagree. Falls back to the old `sustainable_yield` if `realized_yield` is absent. The
+			# overhunt ⚠ flag is the sim-answered `overdraws` bool (policy-driven, false for Sustain) —
+			# NOT `actual > sustainable`, which false-positives on a kill turn when a banked animal spikes.
+			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
 				var overhunt := bool(entry.get("overdraws", false))
-				_queue_yield_label(hc, float(entry.get("sustainable_yield", 0.0)), overhunt, radius,
-					String(entry.get("policy", "")))
+				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
+					else float(entry.get("sustainable_yield", 0.0))
+				_queue_yield_label(hc, hunt_rate, overhunt, radius, String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -2410,6 +2412,14 @@ func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int, modulate: C
 	var box := Rect2(center - Vector2(size, size) * 0.5, Vector2(size, size))
 	draw_texture_rect(tex, Rect2(box.position + MARKER_GLYPH_SHADOW_OFFSET, box.size), false, MARKER_GLYPH_SHADOW_COLOR)
 	draw_texture_rect(tex, box, false, modulate)
+## The STEADY per-source rate a yield label headlines: the assignment's `realized_yield` (the honest
+## long-run average of its lumpy `actual_yield`), falling back to `actual_yield` if absent (older
+## snapshot). Reading the steady average keeps the map label and the Band panel row in lockstep.
+func _entry_realized_yield(entry: Dictionary) -> float:
+	if entry.has("realized_yield"):
+		return float(entry["realized_yield"])
+	return float(entry.get("actual_yield", 0.0))
+
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —

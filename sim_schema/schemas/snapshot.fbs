@@ -651,6 +651,14 @@ table PopulationCohortState {
   // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
   // Appended last (append-only schema discipline).
   bandMoveTilesPerTurn:float = 0;
+  // The band's STEADY food income this turn = Σ of every worked source's realizedYield (the per-source
+  // steady averages summed) — the honest long-run average of the lumpy foodIncome. Because a
+  // whole-animal hunt pays in pulses, foodIncome swings turn-to-turn while this holds steady; the
+  // client's headline "Food /turn" reads this. Distinct from foodIncome, which stays the real arrivals
+  // and preserves the larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
+  // Derived per-turn at capture (0 on a rehydrated save before the next tick). Appended last
+  // (append-only schema discipline).
+  foodIncomeAverage:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -693,6 +701,14 @@ table LaborAssignment {
   // Eradicate. A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
   // Derived per-turn at capture. Appended (append-only).
   overdraws:bool = false;
+  // THE STEADY per-turn income this source realizes = the honest long-run average of the lumpy
+  // actualYield: min(workers × per-worker throughput, this policy's steady per-turn ceiling) — the
+  // pre-quantization rate the kill-credit bank is fed. On a whole-animal (hunt) source actualYield
+  // pulses (0 on wait turns, spikes on kills) while this holds steady at ~MSY; on a continuous
+  // forage/Field source the two are equal. The client's headline "Food /turn" reads this instead of
+  // the jumpy actualYield. Derived per-turn at capture (0 on a rehydrated save before the next tick).
+  // Appended (append-only).
+  realizedYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

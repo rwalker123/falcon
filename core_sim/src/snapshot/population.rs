@@ -68,6 +68,7 @@ pub(crate) fn labor_assignment_to_state(
         workers_needed: yields.workers_needed,
         wasted_yield: yields.wasted,
         overdraws: yields.overdraws,
+        realized_yield: yields.realized,
         ..Default::default()
     };
     match &assignment.target {
@@ -196,6 +197,16 @@ pub(crate) fn population_state(
     // (`demand` above stays post-turn for `days_of_food`, which is a forward "turns I can last".)
     let food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
+        .unwrap_or(0.0);
+    // The **steady** headline income = Σ per-source `realized` (the honest long-run average of the
+    // lumpy `actual`). Distinct from `food_income` above precisely on whole-animal sources, where
+    // `actual` pulses (0 on wait turns, spikes on kills) while `realized` holds steady. The client's
+    // "Food /turn" uses this so the number stops swinging turn-to-turn; `food_income` stays the real
+    // arrivals and preserves the `larder_delta == foodIncome − foodConsumption − penFeedUpkeep`
+    // ledger identity. Derived per-turn, like `food_income` (0.0 on a rehydrated save until the next
+    // tick).
+    let food_income_average = allocation
+        .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
         .unwrap_or(0.0);
     let food_consumption = cohort.last_food_consumption;
     // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
@@ -338,6 +349,7 @@ pub(crate) fn population_state(
         ),
         settlement_stage,
         food_income,
+        food_income_average,
         food_consumption,
         pen_feed_upkeep,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI

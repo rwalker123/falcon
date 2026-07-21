@@ -3247,12 +3247,17 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % _format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        # HEADLINE the row with the honest per-turn RATE, never the pulse. A HUNT source's
-        # `actual_yield` is the kill-credit PULSE (0 on wait turns, a spike on kill turns), so its
-        # smoothed rate is `sustainable_yield` (the herd's per-turn throughput); the pulse's overdraw
-        # is still carried by the ⚠ flag + tooltip. Forage has no pulse (actual == sustainable), so it
-        # keeps `actual`. The caller pairs a hunt headline with the kill-rhythm from `body_mass`.
-        rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
+        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
+        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
+        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
+        # band-level `food_income_average` it sums into) steady. The pulse's overdraw is still carried by
+        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
+        # absent (older snapshot).
+        if m.has("realized_yield"):
+            rate = float(m["realized_yield"])
+        else:
+            rate = sustainable if kind == LABOR_KIND_HUNT else actual
         label_suffix = " %s" % _format_yield(rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
@@ -3427,9 +3432,19 @@ func _is_overdraw(actual: float, sustainable: float) -> bool:
 ## (`integration_tests/tests/pen_food_ledger.rs`). Omitting the term made this row LIE: a band with a
 ## Red Deer pen showed a surplus overstated by the ~1.74/turn its herd ate, then drained anyway.
 func _band_net_food(band: Dictionary) -> float:
-    return float(band.get("food_income", 0.0)) \
+    return _band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
         - _band_pen_feed(band)
+
+## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
+## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
+## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
+## does NOT swing. It feeds the headline net (`_band_net_food` = income − Eaten − Pen feed) and the
+## `_food_is_concerning` gate. Deliberately client-summed from the rows rather than read off the
+## cohort-level `food_income_average`, so it can never disagree with the breakdown it sits above.
+func _band_food_income(band: Dictionary) -> float:
+    return _sum_realized_yield(band, LABOR_KIND_FORAGE) \
+        + _sum_realized_yield(band, LABOR_KIND_HUNT)
 
 ## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
 func _band_pen_feed(band: Dictionary) -> float:
@@ -3443,13 +3458,16 @@ func _band_has_food_flow(band: Dictionary) -> bool:
         or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN \
         or _band_pen_feed(band) >= FOOD_FLOW_MIN
 
-## Sum of per-source `actual_yield` (food/turn) across this band's labor assignments of one kind —
-## the category total behind the Food breakdown (Gathered = forage, Hunted = hunt).
-func _sum_actual_yield(band: Dictionary, kind: String) -> float:
+## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
+## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
+## Hunted = hunt). Reads the steady average (not the lumpy `actual_yield`) so the rows don't swing AND
+## sum to the steady headline income (`food_income_average`); falls back to `actual_yield` if absent.
+func _sum_realized_yield(band: Dictionary, kind: String) -> float:
     var total := 0.0
     for a in _labor_assignments_of(band):
         if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
-            total += float((a as Dictionary).get("actual_yield", 0.0))
+            var d := a as Dictionary
+            total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
 
 ## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
@@ -3489,10 +3507,10 @@ func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> 
 ## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
 func _food_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    var gathered := _sum_actual_yield(band, LABOR_KIND_FORAGE)
+    var gathered := _sum_realized_yield(band, LABOR_KIND_FORAGE)
     if gathered >= FOOD_FLOW_MIN:
         lines.append(_food_breakdown_row(gathered, FOOD_LABEL_GATHERED))
-    var hunted := _sum_actual_yield(band, LABOR_KIND_HUNT)
+    var hunted := _sum_realized_yield(band, LABOR_KIND_HUNT)
     if hunted >= FOOD_FLOW_MIN:
         lines.append(_food_breakdown_row(hunted, FOOD_LABEL_HUNTED))
     var eaten := float(band.get("food_consumption", 0.0))
@@ -5994,6 +6012,9 @@ func _band_food_line(unit_data: Dictionary) -> String:
     # An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
     if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
+        # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
+        # so it no longer swings turn-to-turn) minus what the people (Eaten) and the pens (Pen feed)
+        # draw off the larder. The breakdown below itemizes the income rows and the debits.
         var net := _band_net_food(unit_data)
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, _format_yield(net)]

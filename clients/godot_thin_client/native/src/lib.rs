@@ -4197,6 +4197,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Band food ledger (food/turn): total realized income across all worked sources and total
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);
+    // The STEADY total food income: the honest long-run average of the lumpy `food_income` (whole-animal
+    // hunts deliver 0 for several turns then a spike). The Band panel headlines THIS so "Food /turn" and
+    // the runway don't swing; `food_income` stays for other uses.
+    let _ = dict.insert("food_income_average", cohort.foodIncomeAverage() as f64);
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
     // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
     // the pens it keeps, summed across every corralled herd it works. It is taken straight off the
@@ -4288,6 +4292,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // The per-source STEADY average: the honest long-run average of this source's lumpy
+            // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
+            let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
             // Minimum workers that would have produced this turn's take. `workers > workers_needed`
             // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
             // capped by its policy ceiling / resource biomass, so the surplus workers idled here.

@@ -683,6 +683,8 @@ mod tests {
                     wasted: 0.0,
                     workers_needed: 1,
                     overdraws: false,
+                    // Continuous forage: realized == actual.
+                    realized: 2.5,
                 },
                 SourceYield {
                     actual: 0.5,
@@ -690,6 +692,8 @@ mod tests {
                     wasted: 0.0,
                     workers_needed: 5,
                     overdraws: true,
+                    // Lumpy hunt: the steady average is below this kill turn's spike.
+                    realized: 0.25,
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -708,11 +712,19 @@ mod tests {
         cohort.last_food_consumption = CONSUMED;
         let state = capture_food_state(&cohort, &allocation);
 
-        // food_income = Σ actual (2.5 + 0.5).
+        // food_income = Σ actual (2.5 + 0.5) — the real (lumpy) arrivals, unchanged.
         assert!(
             (state.food_income - 3.0).abs() < 1e-5,
             "food_income sums per-source actual: {}",
             state.food_income
+        );
+        // food_income_average = Σ realized (2.5 + 0.25) — the steady headline, distinct from the lumpy
+        // Σ actual above precisely because the hunt row's realized (0.25) sits below its kill-turn
+        // actual (0.5).
+        assert!(
+            (state.food_income_average - 2.75).abs() < 1e-5,
+            "food_income_average sums per-source realized: {}",
+            state.food_income_average
         );
         // food_consumption == the food actually eaten (`cohort.last_food_consumption`).
         assert!(
@@ -730,6 +742,9 @@ mod tests {
         // The overstaffing signal (workers_needed) carries onto the display state, zipped by index.
         assert_eq!(state.labor_assignments[0].workers_needed, 1);
         assert_eq!(state.labor_assignments[1].workers_needed, 5);
+        // The steady realized rate carries onto each row too (the client's headline "Food /turn").
+        assert!((state.labor_assignments[0].realized_yield - 2.5).abs() < 1e-5);
+        assert!((state.labor_assignments[1].realized_yield - 0.25).abs() < 1e-5);
     }
 
     /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
