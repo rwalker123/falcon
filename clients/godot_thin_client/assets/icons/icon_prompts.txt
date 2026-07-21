@@ -152,8 +152,7 @@ sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a sm
 # SPRITE_PATHS key is the module, the file is the art). `hunt` has no file of its
 # own — a hunted site reuses fauna/deer.png.
 #
-# STILL MISSING PROMPTS: chestnut.png (temperate_forest) and sites/seal.png
-# (boreal_arctic) — a DIFFERENT image from fauna/seal.png. Add them when regenerated.
+# Coverage is COMPLETE: 12 files, 12 prompts.
 
 
 # shell.png — coastal_littoral
@@ -164,6 +163,17 @@ fish: Flat vector game icon of a single plump river fish seen in side profile fa
 
 # grain.png — savanna_grassland
 grain: Flat vector game icon of a small bundle of ripe wheat ears with heavy drooping golden heads on short stalks, tied as a compact sheaf shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in golden amber and wheat tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# chestnut.png — temperate_forest
+chestnut: Flat vector game icon of three glossy chestnuts in their split spiky husk, arranged as a compact cluster shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in rich reddish-brown nuts against a pale cream husk, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# seal.png — boreal_arctic
+# NOT the same image as fauna/seal.png, and neither is a stale copy of the other: this
+# SITE icon is a plump seal with a ROUNDED TAIL (it stands for arctic fishing/sealing as a
+# food source), while the FAUNA marker is sleeker with PAIRED REAR FLIPPERS (it stands for
+# a huntable herd). Two files, two families, both legitimately named seal.png — do not
+# "dedupe" them.
+seal: Flat vector game icon of a plump seal resting with its head raised, shown in side profile facing right, with short front flippers and a rounded tail, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and pale silver tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral expression, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # tuber.png — montane_highland
 tuber: Flat vector game icon of three oval root tubers with small sprouting eyes and a few thin roots, arranged as a compact cluster shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline, flat limited color palette in dusty purple and warm tan tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
