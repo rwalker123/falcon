@@ -205,20 +205,20 @@ verdant_basin: Flat vector game icon of a lush green oasis basin, a small pool o
 #
 # Keyed by the sim's `settlement_stage_config.json` id — the server sends the key,
 # so there is no client-side resolver. These are the ONE family whose art must read
-# as a PROGRESSION (nomadic -> camp -> village); see the warning on `camp`.
+# as a PROGRESSION, and each rung is a different KIND of thing, not just a bigger one:
+# hide tent (nomadic) -> built thatched hut (camp) -> cluster of houses (village).
+# Verified against the shipped PNGs. Keep that escalation when regenerating any of them.
 
 
 # nomadic.png — stage id nomadic (⛺ Nomadic band)
 nomadic: Flat vector game icon of a simple conical hide tent with a single pole tip poking through the top and a dark triangular door opening, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in muted tan and warm grey hide tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # camp.png — stage id camp (🛖 Seasonal camp)
-# ⚠ UNRESOLVED: this prompt is currently IDENTICAL to `nomadic` (both a single conical
-# hide tent), so the first two stage tokens would render the same art. That defeats the
-# family's whole job — the token exists to show the settlement PROGRESSION, and the sim
-# itself distinguishes them (⛺ tent vs 🛖 hut). A seasonal camp should read as a step up:
-# e.g. two or three tents clustered with a drying rack or a hearth, or a sturdier hut with
-# a low wall. Regenerate before shipping camp art; the shipped camp.png predates this file.
-camp: Flat vector game icon of a simple conical hide tent with a single pole tip poking through the top and a dark triangular door opening, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in muted tan and warm grey hide tones that stay clearly lighter than the outline, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+# The middle rung: a BUILT structure rather than a tent, which is what makes the step up
+# from `nomadic` legible at marker size and matches the sim's own ⛺ -> 🛖 distinction.
+# (This entry was briefly a copy-paste of the `nomadic` tent prompt. The shipped
+# camp.png was always the thatched hut — only the prompt was wrong.)
+camp: Flat vector game icon of a single round thatched hut with a domed straw roof and a dark arched doorway, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire shape, flat limited color palette in straw gold roof above muted earth-brown walls, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # village.png — stage id village (🏘️ Village)
 village: Flat vector game icon of a small cluster of three simple houses with pitched roofs at differing heights standing close together, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire group, flat limited color palette in muted terracotta roofs above pale clay walls, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
