@@ -141,6 +141,22 @@ pub struct SpeciesDef {
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
+    /// **The shore predicate** — when `true`, the species may only spawn on a land tile that
+    /// **borders open water** on one of its six hex sides ([`crate::fauna::has_adjacent_water`]).
+    /// The site rule a *marine forager* must satisfy: a seal colony hauls out on a shoreline, never
+    /// on inland tundra.
+    ///
+    /// It is deliberately a **site** rule and nothing else. The *cold* half of "cold coast" comes
+    /// from [`SpeciesDef::host_biomes`] (`boreal_arctic` = BorealTaiga/Tundra/PeriglacialSteppe/
+    /// SeasonalSnowfield) — **not** from a second climate gate, because
+    /// `climate::climate_band_for_temperature` is the single climate authority and a parallel one
+    /// would drift from it. And it **reads** the coastline geometry rather than editing terrain, so
+    /// worldgen stays the sole authority on where the water is.
+    ///
+    /// Defaults to `false`, so every species that omits it is byte-identical. **Rejected in
+    /// combination with [`SpeciesDef::migratory`]** — see [`FaunaConfig::validate`].
+    #[serde(default)]
+    pub requires_adjacent_water: bool,
     /// Turns the group grazes its current tile before stepping ≤1 hex (the graze-wander cadence,
     /// `advance_herds`). `~1` → effectively half speed, so an equal-speed party can catch it during
     /// a graze turn. Game rows use this; migratory rows use it for the pause between loiter wanders.
@@ -1044,6 +1060,22 @@ impl FaunaConfig {
             // so an older config that omits them stays valid.
             require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
             require_at_least_one(species_field("pen_density"), def.pen_density)?;
+            // **The shore predicate is only applied on the short-range game path.** The migratory
+            // placement path (`suitable_tiles_for` / `build_migratory_route`) picks its loiter
+            // anchors off `host_biomes` alone and never consults the site rule, so a migratory
+            // species asking for adjacent water would have that request **silently ignored** — it
+            // would spawn inland and nothing would say why. Make the unhandled state
+            // unrepresentable and loud rather than quietly wrong.
+            if def.migratory && def.requires_adjacent_water {
+                return Err(FaunaConfigError::Invalid {
+                    field: species_field("requires_adjacent_water"),
+                    constraint:
+                        "not be combined with `migratory: true` — the migratory placement path does \
+                         not apply the site rule, so the water requirement would be silently ignored"
+                            .to_string(),
+                    value: "true".to_string(),
+                });
+            }
         }
 
         // --- The ladder is MONOTONE, now as GAINS (Grazing 2d §3): management buys a *multiple* of the

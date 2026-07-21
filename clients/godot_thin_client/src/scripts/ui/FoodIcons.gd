@@ -32,6 +32,7 @@ const HERD_SPECIES := {
 	"caribou": "🦌",
 	"deer": "🦌",
 	"elk": "🦌",
+	"gazelle": "🦌",
 	"horse": "🐎",
 	"boar": "🐗",
 	"goat": "🐐",
@@ -40,6 +41,7 @@ const HERD_SPECIES := {
 	"seal": "🦭",
 	"rabbit": "🐇",
 	"fowl": "🐓",
+	"grouse": "🐓",
 }
 
 # Take-policy glyphs (the extractive `LABOR_HUNT_POLICIES` set shared by forage + hunt, plus the two

@@ -421,6 +421,34 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
 
 ## Core Simulation — Bugs
 
+- [ ] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
+  `systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
+  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`. Its
+  three Startup siblings all guard and early-return on an already-populated registry:
+  `fauna::spawn_initial_herds` (also rebuilding telemetry/density before returning),
+  `forage::spawn_initial_forage` (`forage.rs:489`) and `graze::spawn_initial_graze` (`graze.rs:184`).
+  Worldgen is the outlier, so running the Startup chain twice **doubles the world** instead of being
+  a no-op.
+  **How it surfaced (PR #149, Copilot):** a test called `world.run_schedule(Startup)` and then
+  `app.update()`. On bevy 0.13 `Main::run_main` gates the startup labels behind a `Local<bool>` owned
+  by the Main schedule's own system, which `run_schedule` never touches — so `update()` re-ran the
+  whole chain. **Measured: `Query<&Tile>` returned 8320 entities on an 80×52 (= 4160) map**, i.e. a
+  complete duplicate tile set carried for the rest of the run, plus duplicate starting units.
+  **Not a live defect today** — the shipped server boots idle and builds worlds through
+  `rebuild_world_from_config` (`new_game` / `map_size`), and nothing in production runs Startup twice.
+  It is a **trap for tests**: any harness that resolves turns after a manual Startup silently pays for
+  two worlds, and any future assertion that counts tiles, counts bands, or queries `Query<&Tile>`
+  broadly reads doubled values. The PR #149 test was corrected at the call site
+  (`core_sim/tests/fauna_coastal_habitat.rs`, commit `48da2c8`) rather than at the cause, which is
+  this entry.
+  **Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
+  to check first:** `spawn_initial_world` does more than stamp tiles (it also seeds starting
+  inventory, knowledge fragments, and culture), and `rebuild_world_from_config` *deliberately*
+  regenerates the world on `new_game`/`ResetMap`. So the guard must distinguish "Startup fired twice
+  by accident" from "the operator asked for a new world" — confirm how the rebuild path clears state
+  before choosing what to key the guard on, or a naive `tiles.is_empty()` check will break map
+  regeneration. Owner: core_sim.
+
 - [x] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** **Fixed.** Proven
   end-to-end first: `core_sim/tests/rollback_tended_survival.rs` drives a real
   `recapture_snapshot_in_place` → `restore_world_from_snapshot` → `run_turn` cycle and, on the
@@ -852,13 +880,31 @@ to add an animal whose fields fit the existing enums.**
   `host_biomes`-suitable tiles across the map and migrates between them (less-suitable ground crossed on
   the legs). In-biome anchor fraction **0.27 → 1.00** over 6 seeds. Consequence: migratory game is no
   longer guaranteed near the start (short-range game, map-wide on suitable biomes, still is).
-- [ ] **WORLDGEN BLOCKER — coastal fauna has no habitat.** The `earthlike` preset never renders
-  `coastal_littoral` *land*: its coasts are `ContinentalShelf` → `coastal_upwelling` (a *water* fishery,
-  the forage layer). So **Grey Seals AND Wild Fowl** (both host `coastal_littoral`) never spawn on a
-  generated map — the reason the coast has read as fauna-empty all along. This is a **worldgen** fix, not
-  fauna: make earthlike coasts/deltas produce some tidal/mangrove/delta littoral land so the
-  `coastal_littoral` niche is reachable. Until then the seal is correct-but-habitatless (its constant-K
-  model is test-pinned; it appears wherever littoral land exists). Owner: worldgen.
+- [x] **Coastal fauna habitat — RESOLVED in fauna, and the "worldgen blocker" premise was WRONG.**
+  This was filed as *"the `earthlike` preset never renders `coastal_littoral` land, so Grey Seals and
+  Wild Fowl never spawn"*. **Measured, that is false**: `RiverDelta` classifies as `coastal_littoral`
+  (`food.rs`, `classify_food_module_from_traits`) and hydrology stamps deltas at gentle river mouths on
+  **every** seed — ~19 littoral land tiles at 80×52, ~48 at 128×96, ~83 at 192×128. The original claim
+  conflated the open **shelf** coast (`ContinentalShelf` → `coastal_upwelling`, correctly *water*) with
+  river-mouth deltas. The real defect was habitat **size**: seals hosted *only* `coastal_littoral`, at
+  abundance 0.10, **sharing those ~19 tiles with Wild Fowl** — an expected ~0–1 colonies per map.
+  **Fixed in fauna, not worldgen** (no new terrain, no tag-solver lock, no coastline repaint — see the
+  rejected options below): seals now also host `boreal_arctic` gated by the new per-species
+  **`requires_adjacent_water`** shore rule, so they seat on arctic/boreal shorelines and never inland.
+  Measured **2 → 14 colonies over a 6-seed sweep**. Seals also took `route_len: [1, 1]` — a rookery is a
+  fixed haul-out, which makes the shore invariant *structural* rather than placement-only.
+  *Rejected, deliberately:* locking the `Coastal` tag to stamp `TidalFlat` would have worked in one JSON
+  line but activates the tag solver's **quota-repaint** pass (stamp to hit 6%, then arbitrary fill) —
+  the "repaint outputs to hit a target %" pattern this repo rejects.
+- [ ] **Coastline biome variety (optional, worldgen).** `TidalFlat` and `MangroveSwamp` render **0 times**
+  on earthlike across 18 seed×grid runs — they sit in the thinnable `CoastWetland` niche (only `RiverDelta`
+  is `must_have`) and the one pass that would place `TidalFlat` is gated off (`lock_coastal`, and neither
+  shipped preset locks `Coastal`). Consequence: non-river coasts carry no littoral land and no tidal/
+  mangrove variety. **Not a fauna blocker any more** (above) — this is a *richness* enhancement. If taken,
+  the principled shape is a **gentle-coast stamping stage in `generate_hydrology`**, reusing the delta
+  pass's own `is_gentle_coast` (`ShelfConfig.coast_height_threshold`) + seamask on land tiles bordering
+  water that carry no river — geometry-driven, so it honors elevation-authority. `reconcile_coastal_shelf`
+  does not constrain it (that pass only rewrites the **water** side). Owner: worldgen.
   **NOTE — Bison is already in the roster.** It was listed here as a gap, but Steppe Runners *are* bison
   conceptually (settled with the user: 120/head, ~76 head at K — bison/wild-horse scale, not the mammoth's
   800/head), and they carry the **only** `pastoral` ceiling in the game. Don't add a duplicate; and don't

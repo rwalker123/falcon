@@ -1338,6 +1338,7 @@ pub fn spawn_initial_herds(
         &fauna,
         width,
         height,
+        wrap,
         &tile_registry,
         &tiles,
         &mut rng,
@@ -1450,10 +1451,12 @@ fn spawn_migratory_herds(
 /// Short-range wild game (big + small): iterate land tiles, roll the per-biome
 /// abundance, then greedily place bounded, spaced-out groups from a shuffled pool
 /// so placement is spread across the map rather than clustered by scan order.
+#[allow(clippy::too_many_arguments)] // Bevy resources + grid bounds + topology; a struct would only move the noise
 fn spawn_short_range_game(
     fauna: &FaunaConfig,
     width: u32,
     height: u32,
+    wrap: bool,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     rng: &mut SmallRng,
@@ -1501,6 +1504,7 @@ fn spawn_short_range_game(
             fauna,
             width,
             height,
+            wrap,
             tile_registry,
             tiles,
             rng,
@@ -1528,11 +1532,24 @@ fn spawn_game_group_at(
     fauna: &FaunaConfig,
     width: u32,
     height: u32,
+    wrap: bool,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     rng: &mut SmallRng,
 ) -> Option<Herd> {
-    let candidates = fauna.game_species_for_biome(module_key);
+    // **Site-filter the candidate list BEFORE the pick.** A species carrying a site rule may only
+    // be drawn where the ground satisfies it, so a cold *inland* tile whose only candidate is a
+    // marine forager correctly spawns nothing rather than seating a seal on the tundra. The shore
+    // test is computed once for the tile, and the draw stays exactly one `gen_range` — only its
+    // bound changes.
+    let mut candidates = fauna.game_species_for_biome(module_key);
+    if candidates
+        .iter()
+        .any(|(_, def)| def.requires_adjacent_water)
+    {
+        let shore = has_adjacent_water(pos, width, height, wrap, tile_registry, tiles);
+        candidates.retain(|(_, def)| !def.requires_adjacent_water || shore);
+    }
     if candidates.is_empty() {
         return None;
     }
@@ -2401,6 +2418,7 @@ pub fn repopulate_fauna(
             &fauna,
             width,
             height,
+            config.map_topology.wrap_horizontal,
             &tile_registry,
             &tiles,
             &mut rng,
@@ -3874,6 +3892,26 @@ fn clamp_to_grid(x: i32, y: i32, width: u32, height: u32) -> Option<UVec2> {
     let clamped_x = x.clamp(0, max_x) as u32;
     let clamped_y = y.clamp(0, max_y) as u32;
     Some(UVec2::new(clamped_x, clamped_y))
+}
+
+/// True when `position` borders open water on any of its six hex sides — the **shore predicate** a
+/// marine forager's spawn site must satisfy ([`crate::fauna_config::SpeciesDef::requires_adjacent_water`]).
+/// It **reads** the real coastline geometry (the `WATER` terrain tag worldgen stamped) and never
+/// edits terrain, so the sole authority on where the water is stays worldgen's.
+fn has_adjacent_water(
+    position: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+) -> bool {
+    (0..HEX_DIRECTION_COUNT).any(|dir| {
+        hex_neighbor(position.x, position.y, dir, width, height, wrap)
+            .and_then(|(nx, ny)| registry.index(nx, ny))
+            .and_then(|entity| tiles.get(entity).ok())
+            .is_some_and(|tile| tile.terrain_tags.contains(TerrainTags::WATER))
+    })
 }
 
 fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) -> bool {

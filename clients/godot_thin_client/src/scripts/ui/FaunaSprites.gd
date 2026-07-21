@@ -28,6 +28,7 @@ const SPRITE_PATHS := {
 	"reindeer": SPRITE_DIR + "deer.png",
 	"caribou": SPRITE_DIR + "deer.png",
 	"elk": SPRITE_DIR + "deer.png",
+	"gazelle": SPRITE_DIR + "deer.png",
 	"boar": SPRITE_DIR + "boar.png",
 	"mammoth": SPRITE_DIR + "mammoth.png",
 	"aurochs": SPRITE_DIR + "aurochs.png",
@@ -39,7 +40,9 @@ const SPRITE_PATHS := {
 	"ibex": SPRITE_DIR + "goat.png",
 	"horse": SPRITE_DIR + "horse.png",
 	"sheep": SPRITE_DIR + "sheep.png",
+	"seal": SPRITE_DIR + "seal.png",
 	"fowl": SPRITE_DIR + "fowl.png",
+	"grouse": SPRITE_DIR + "fowl.png",
 }
 
 ## Bundled sprite for a migratory herd, or `null` when this species has no art yet (the caller
