@@ -15,7 +15,7 @@ use core_sim::{
     FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
     GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
@@ -163,6 +163,13 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::pre
                 }],
                 ..Default::default()
             },
+            // A taming/keeping crew is a **resident** band (only resident bands allocate labor;
+            // expeditions can't tame), so mark it one. This is what makes a *tamed* herd's
+            // `drift_to_owner` movement keep it beside its keeper instead of "roaming normally" (the
+            // no-owner-band fallthrough) and wandering out of the hunt leash — which decouples these
+            // rate fixtures from wherever worldgen happens to place the herd, the same robustness the
+            // `FIXTURE_SPECIES` pin exists for.
+            ResidentBand,
         ))
         .id()
 }

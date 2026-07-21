@@ -333,23 +333,28 @@ fn a_second_hunter_raids_more_animals_no_slower() {
 
 /// **Animals delivered SCALE WITH THE PACK (the over-kill regression).** A heavy-bodied herd with a
 /// large standing surplus (a Marsh Grazer: body 100, food/animal 2, surplus far bigger than any pack)
-/// is pack-limited at every party size, so the raid delivers `pack ÷ food-per-animal` whole animals —
-/// `2 × workers` — and **never over-kills** (a lone hunter that can process only 40 biomass/turn still
-/// carries its 100-body kills home *whole*, over several turns, wasting nothing). This is the bug the
-/// rework fixes: the old model killed at the throughput rate and wasted the carcass it couldn't carry,
-/// then reported the *kill* count (which plateaued at 1 useful worker). Prints the table.
+/// is pack-limited at every party size, so the raid delivers `floor(pack ÷ food-per-animal)` whole
+/// animals and **never over-kills** (a hunter carries its 100-body kills home *whole*, over several
+/// turns, wasting nothing). This is the bug the rework fixes: the old model killed at the throughput
+/// rate and wasted the carcass it couldn't carry, then reported the *kill* count (which plateaued at 1
+/// useful worker). Prints the table. **After the biomass-anchor retune (`per_worker_carry` 4.0 → 0.8)
+/// a whole 2-food Marsh Grazer needs a ≥3-worker crew** (a 1–2 worker party can't seat one and instead
+/// force-partials — a separate regime, covered elsewhere), so this test sweeps the whole-seating range.
 #[test]
 fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
     let fauna = FaunaConfig::builtin();
     let labor = LaborConfig::builtin();
-    let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (4 food/worker)
+    let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (0.8 food/worker)
                                            // Marsh Grazer: body 100 ⇒ food/animal = 100 × 0.02 = 2; a full 6000-K herd stands 3000 (30 animals)
                                            // of surplus above K/2 — vastly more than any legal party's pack, so every size is pack-limited.
     const MARSH_BODY: f32 = 100.0;
     let herd = wild_herd(6000.0, 6000.0, MARSH_BODY, 0.04);
     let food_per_animal = MARSH_BODY * fauna.hunt.provisions_per_biomass; // 2.0
 
-    for workers in 1..=4u32 {
+    // Sweep the whole-seating regime: at per_worker_carry 0.8, a 2-food animal needs ceil(2/0.8)=3
+    // workers before the pack seats one whole, so a 1–2 worker party force-partials instead (its own
+    // regime). Here the pack seats 1,1,2,2,2,3 whole animals for 3..=8 hunters — scaling, no over-kill.
+    for workers in 3..=8u32 {
         let f = hunt_trip_forecast(workers, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
         let pack_animals =
             (workers as f32 * cfg.hunt.per_worker_carry / food_per_animal).floor() as u32;
@@ -361,7 +366,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
         );
         assert_eq!(
             f.animals_taken, pack_animals,
-            "a pack-limited raid delivers exactly what the pack seats whole (2 × workers), no over-kill"
+            "a pack-limited raid delivers exactly what the pack seats whole, no over-kill"
         );
     }
 }

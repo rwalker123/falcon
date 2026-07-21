@@ -37,6 +37,7 @@ const HERD_SPECIES := {
 	"goat": "🐐",
 	"ibex": "🐐",
 	"sheep": "🐑",
+	"seal": "🦭",
 	"rabbit": "🐇",
 	"fowl": "🐓",
 }
