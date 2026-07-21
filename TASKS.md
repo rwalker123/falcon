@@ -1174,117 +1174,23 @@ Concept: `docs/Emergent Narrative.md`. Engineering plan, schema, and PR slicing:
 the player author a disposition that colors and steers which beats surface. Sliced so
 each PR is independently playtestable.
 
-### PR-A — beat engine + ambient tier (no new client code) ✅
-- [x] `core_sim/src/telling/` module + `BeatLedger` resource (fired-set, edge state,
-      wardrobe usage/novelty memory, stance vector, consequence flags, pending forks),
-      saved and restored with the sim.
-- [x] Signal registry — named accessors over sim state, the engine/content boundary.
-      Content composes signals; it cannot invent them. Seed with the signals the
-      opening arc needs (`sedentarization.score`, `turn.index`, `culture.axis.*`).
-- [x] Predicate grammar (`all`/`any`/`not`, scalar comparisons, `crosses`
-      rising/falling edges, `trend`, `flag`, `fired within`). `crosses` generalizes the
-      `sedentarization_tick` rising-edge pattern; edge state in the ledger so a beat
-      fires once per crossing, not every tick the condition holds.
-- [x] Noun-slot resolver registry (`fauna.most_hunted`, `fauna.dominant_local`,
-      `site.last_discovered`, `biome.current_dominant`, …) returning
-      `{ name, plural, adjective }`, with fallback chains. A wardrobe entry whose
-      required slot fails to resolve is excluded from selection so no line renders
-      with a hole in it.
-- [x] Beat catalog loader — `core_sim/src/data/beat_definitions.json`, mirroring
-      `great_discovery_definitions.json`'s shape and load path, with a `validate()`
-      following the `FaunaConfig`/`ExpeditionConfig` convention (error-level log +
-      builtin fallback on a broken invariant).
-- [x] Weighted wardrobe selection (`fit × novelty × stance_affinity`), seeded per
-      decision from `hash(world_seed, turn_index, beat_id)` — never a rolling global
-      stream — so selection is reproducible and independent of beat evaluation order.
-      All weights and the novelty window in `beat_config.json`.
-- [x] `telling_tick` turn-pipeline stage, placed after the systems whose state it
-      reads; ambient/beat tiers emit through the existing `CommandEventLog` (renders
-      today, no client change). Per-tier per-turn budget + cooldowns in config.
-- [x] Opening-arc ambient content: enough wardrobe depth to judge whether emergent
-      noun dressing produces copy worth reading. Both voice registers (`mythic`,
-      `warm`) per entry.
-
-### PR-B — the fork tier ✅
-- [x] Snapshot field carrying pending forks + the choice-submission command path.
-- [x] The one genuinely new client component: an interrupt decision surface
-      (no modal/choice UI exists today; nearest patterns are the TurnOrb attention
-      popover and the top-center targeting banner).
-- [x] Stance write-back and the stance vector's backing-signal map
-      (`roam_settle` → `SedentarizationScore`, `appetite_restraint` →
-      `culture.axis.ascetic_indulgent`, …; axis list is config, not code).
-- [x] Stance re-coloring of *shared* events, not just unlocking stance-specific beats
-      — the concept's §6 "key nuance" and the cheapest characterful win in the design.
-- [x] Player-facing voice-register toggle (both registers already carried as data).
-
-### PR-C — voice evolution + callbacks ✅
-- [x] Voice medium progression (oral saga → painted chronicle → written record →
-      institutional archive) tied to `CapabilityFlags` milestone crossings.
-- [x] Memory-ledger threads (a rival, a sacred mountain, a valley refused) and
-      callback beats that reference them — what makes a 200-turn emergent game feel
-      authored.
-
-**PR-A landed** (`23f55bc`). Deviations and notes carried forward:
-- `band.count` sums people, not bands — the authored copy needs "There are {count} of us".
-- `sites.discovered_this_turn` keeps its cumulative count under a reserved ledger key
-  (`internal.sites.discovered_total`) that the signal registry rejects, so it persists
-  through rollback for free and content cannot reference it.
-- `culture.axis.*` reads the **global** culture layer. There is no faction-level culture
-  rollup and PR-B needs a decision on whether to build one.
-- A `fit.biome` narrative tag vocabulary (`nouns.rs`) was added beyond spec — an
-  exhaustive `TerrainType` match, load-time validated, so a new terrain forces a
-  narrative decision instead of silently failing to match.
-- **Known behaviour:** a beat whose signal is already above its threshold the first turn
-  it is sampled never fires — there is no `prev` to cross from, and it never falls back
-  to re-arm. Correct for the current content (scores start at 0) but a trap for any
-  future beat gated on a signal that starts high.
-- `core_sim/tests/grazing_2d_pen::extend_pen_...` failed once during a combined-package
-  run and passed on every rerun. Unrelated to this arc; possible flake, worth a second
-  look if it recurs.
-
-**PR-B landed** (server `763efed`, client `5e04128`). Carried forward:
-- The end-turn gate is **client-side and covers the turn orb only**. The Inspector
-  toolbar and autoplay advance freely (a hard gate deadlocks autoplay, which disables
-  itself on any failed advance) and push a feed note; the fork then rides its
-  server-side expiry to defer. Revisit if the dev path proves too easy to skip.
-- **The command feed does not scale to narrative prose.** Two narrative beats fill the
-  entire visible feed and push ordinary command receipts off. The binding limit is the
-  card's height, not `COMMAND_FEED_LIMIT` (6) — a wrapped prose line plus gloss is ~3×
-  a command receipt. Needs either a separate narrative surface or a per-kind quota
-  before ambient volume rises. **This is the top open issue in the arc.**
-- No per-fork expiry turn on the wire, so the panel cannot tell the player how long the
-  question keeps before it auto-defers — which is exactly what makes deferring a real
-  choice rather than a shrug. Wants an `expiresTick` on `PendingForkState`.
-- `answer_fork` failing (socket down) clears the fork locally until the next snapshot
-  re-adds it, briefly lifting the gate. Self-correcting within a turn; flagged rather
-  than given a rollback path.
-- `PendingForkState.wardrobeId`/`postedTick` are currently unused by the client.
-
-**PR-C landed** (server `91ec7c6`, client `9333b20`) — arc complete. Carried forward:
-
-- **The voice never lies, enforced structurally.** Each fork declaration has a *kept*
-  and a *broken* beat, exactly complementary on the stance sign, so a player always
-  gets the one that is true of them. Any future beat asserting something about the
-  player's history must gate the same way — elapsed time alone is not evidence the
-  claim still holds.
-- **Medium is presentational and must stay that way.** Three rungs ship
-  (oral/painted/written); `archive` was left out because its only plausible source
-  (`CapabilityFlags`) is not a registered signal, and an unattainable rung is worse
-  than an absent one. Do not "complete" the feature by authoring per-medium copy —
-  that is a 4x8 authoring cost for the thinnest payoff in the layer.
-- **The ui_preview harness renders at whatever size the display allows.** The same
-  states captured 3456x2168 on one run and 5120x1410 on another; `--resolution` does
-  not override it, and the letterboxed frames make dock panels look far more cramped
-  than they are in a normal window. Frames are therefore not comparable across runs
-  or machines. Worth rendering to a fixed-size SubViewport instead of grabbing the
-  window texture — this degrades every visual verification, not just this arc's.
+**Shipped.** PR-A (beat engine + ambient tier, `23f55bc`), PR-B (fork tier + stance,
+server `763efed` / client `5e04128`), PR-C (voice evolution + memory-thread callbacks,
+server `91ec7c6` / client `9333b20`), and the **Book UX arc** (PR #134 + #140) that gave
+the layer its own medium-maturing surface. The full record of what shipped and why lives
+in the docs, not here: `docs/plan_the_telling.md` (engine, schema, PR slicing),
+`core_sim/CLAUDE.md` → *The Telling* (signals, predicates, stance, memory threads, the
+maturing voice, the `answered` gate — including the forward constraints once tracked here:
+the **voice-never-lies** gating rule and the "**a signal already above its threshold never
+fires**" edge), and `clients/godot_thin_client/CLAUDE.md` → *TellingPanel* (the book UX).
 
 ### The Telling — remaining / possible next
 - [ ] Ambient beat volume tuning once the Telling panel has been played with — the
       per-tier budgets and cooldowns were set before there was a surface that could
       hold the output.
 - [ ] `expiresTick` on `PendingForkState` so the fork panel can say how long the
-      question keeps before it auto-defers (see the PR-B notes).
+      question keeps before it auto-defers — no per-fork expiry turn is on the wire
+      today, which is exactly what makes deferring a real choice rather than a shrug.
 - [ ] Tent-pole tier (concept §5) — the authored spine moments. Deliberately not
       built: the catalog format should be proven in play before committing writing
       effort at volume.
@@ -1316,4 +1222,9 @@ each PR is independently playtestable.
       to copy; a likely culprit class is hover/cursor artefacts (that probe disables
       `_unhandled_input` for exactly this reason), but it has not been investigated.
       Either stabilise the flappy states or mark them explicitly non-comparable so nobody
-      diffs them. (Owner: TBD, Estimate: 0.5d; Deps: none.)
+      diffs them. The harness also renders at whatever size the display allows (the same
+      states captured 3456x2168 on one run and 5120x1410 on another; `--resolution` does
+      not override it), and the letterboxed frames make dock panels look far more cramped
+      than they are in a normal window — so frames are not comparable across runs or
+      machines either. Worth rendering to a fixed-size SubViewport instead of grabbing the
+      window texture. (Owner: TBD, Estimate: 0.5d; Deps: none.)
