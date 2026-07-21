@@ -656,14 +656,15 @@ table PopulationCohortState {
   // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
   // Appended last (append-only schema discipline).
   bandMoveTilesPerTurn:float = 0;
-  // The band's STEADY food income this turn = Σ of every worked source's realizedYield (the per-source
-  // steady averages summed) — the honest long-run average of the lumpy foodIncome. Because a
-  // whole-animal hunt pays in pulses, foodIncome swings turn-to-turn while this holds steady; the
-  // client's headline "Food /turn" reads this. Distinct from foodIncome, which stays the real arrivals
-  // and preserves the larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
-  // Derived per-turn at capture (0 on a rehydrated save before the next tick). Appended last
-  // (append-only schema discipline).
-  foodIncomeAverage:float = 0;
+  // RETIRED. Was the band's steady food income = Σ of every worked source's realizedYield. The client
+  // now sums that income half itself from the per-source realizedYield of the breakdown rows, so the
+  // headline equals the Gathered + Hunted rows it sits above by construction instead of being a second,
+  // independently-computed total that could drift from them — which made this band-level duplicate
+  // redundant. Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo
+  // is worked by concurrent sessions that append to these tables, and a freed slot is how two branches
+  // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
+  // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
+  foodIncomeAverage:float = 0 (deprecated);
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

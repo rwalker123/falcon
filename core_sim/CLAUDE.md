@@ -3624,7 +3624,8 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > **merged per-source `arrivals` schedules**, debiting `consumption + penFeedUpkeep` per turn and
 > clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
 > source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
-> smooth `larder / net_drain` on the **steady** `foodIncomeAverage`, capped at the sentinel; (3)
+> smooth `larder / net_drain` on the **steady** income (Σ per-source `realized`, computed locally at
+> capture — see the retirement note below), capped at the sentinel; (3)
 > `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
 > renders as ∞.
 >
@@ -3707,7 +3708,7 @@ consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
 indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
 
-**The steady headline — `realized` / `foodIncomeAverage` / `realizedYield`.** The lumpy per-source
+**The steady headline — `realized` / `realizedYield`.** The lumpy per-source
 `actual` makes the band panel's "Food /turn" **swing** turn-to-turn (a whole-animal hunt pays 0 for
 ~6 turns then a spike). So each `SourceYield` also carries **`realized`** — a **FORWARD PROJECTION**:
 the average food/turn the source will deliver over the next `labor_config.yield_average_horizon_turns`
@@ -3730,13 +3731,22 @@ the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-ra
 the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
 negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,
 `hunt_policy_rate`, `pen_yield_biomass`, `hunt_provisions`, `forage_take`, `herd_ecology`/`herd_capacity`)
-— no second copy of the ecology or take math. Rolled up per band as
-`PopulationCohortState.foodIncomeAverage` = Σ `realized` (the client's steady "Food /turn"), **added
-beside** the unchanged `foodIncome` = Σ `actual` (which stays the real arrivals and preserves the
-`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` ledger identity). On the wire,
-`LaborAssignment.realizedYield` + `PopulationCohortState.foodIncomeAverage` are appended (append-only).
-**The `actual` value and the ledger identity are unchanged — `realized` is a parallel steady value,
-never a replacement.**
+— no second copy of the ecology or take math. On the wire, `LaborAssignment.realizedYield` is appended
+(append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
+steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
+it is: it is the real arrivals and is load-bearing for the
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` ledger identity.
+
+> **RETIRED: the band-level `PopulationCohortState.foodIncomeAverage` (= Σ `realized`).** The client
+> sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown
+> rows it renders, so the headline equals the Gathered + Hunted rows it sits above **by construction**
+> rather than being a second, independently-computed total that could drift from them. That made a
+> band-level duplicate redundant, and it was read by nobody. Marked `(deprecated)` in `snapshot.fbs`
+> rather than deleted — deleting frees the field id for the next appender, and this repo is worked by
+> concurrent sessions that append to these tables, so a freed slot is exactly how two branches collide
+> on one id. **Do not re-add it**: if a band-level steady income is ever wanted again, sum the rows.
+> The Σ `realized` value still exists as a *local* in `snapshot::population`, because
+> `larder_runway_turns` needs a steady income term; it is simply not exported.
 
 **WHEN the food lands — `arrivals` / `arrivalSchedule`.** The discrete twin of `realized`, from the
 **same** forward simulation run **WITH** the kill-credit bank (`fauna::project_arrivals_hunt` /

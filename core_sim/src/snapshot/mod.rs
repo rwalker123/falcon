@@ -722,14 +722,6 @@ mod tests {
             "food_income sums per-source actual: {}",
             state.food_income
         );
-        // food_income_average = Σ realized (2.5 + 0.25) — the steady headline, distinct from the lumpy
-        // Σ actual above precisely because the hunt row's realized (0.25) sits below its kill-turn
-        // actual (0.5).
-        assert!(
-            (state.food_income_average - 2.75).abs() < 1e-5,
-            "food_income_average sums per-source realized: {}",
-            state.food_income_average
-        );
         // food_consumption == the food actually eaten (`cohort.last_food_consumption`).
         assert!(
             (state.food_consumption - CONSUMED).abs() < 1e-5,

@@ -4197,10 +4197,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Band food ledger (food/turn): total realized income across all worked sources and total
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);
-    // The STEADY total food income: the honest long-run average of the lumpy `food_income` (whole-animal
-    // hunts deliver 0 for several turns then a spike). The Band panel headlines THIS so "Food /turn" and
-    // the runway don't swing; `food_income` stays for other uses.
-    let _ = dict.insert("food_income_average", cohort.foodIncomeAverage() as f64);
+    // NOTE: there is deliberately no band-level "steady income" key here. The Food line's income half
+    // is summed CLIENT-side from the per-source `realized_yield` (see `Hud._band_food_income`), so the
+    // headline provably equals the Gathered + Hunted rows beneath it rather than being a second,
+    // independently-computed number that could drift from them. The cohort-level `foodIncomeAverage`
+    // that briefly existed for this was redundant and is retired.
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
     // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
     // the pens it keeps, summed across every corralled herd it works. It is taken straight off the

@@ -257,14 +257,14 @@ pub(crate) fn population_state(
     let food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
-    // The **steady** headline income = Σ per-source `realized` (the honest long-run average of the
-    // lumpy `actual`). Distinct from `food_income` above precisely on whole-animal sources, where
-    // `actual` pulses (0 on wait turns, spikes on kills) while `realized` holds steady. The client's
-    // "Food /turn" uses this so the number stops swinging turn-to-turn; `food_income` stays the real
-    // arrivals and preserves the `larder_delta == foodIncome − foodConsumption − penFeedUpkeep`
-    // ledger identity. Derived per-turn, like `food_income` (0.0 on a rehydrated save until the next
-    // tick).
-    let food_income_average = allocation
+    // The **steady** income = Σ per-source `realized` (the honest long-run average of the lumpy
+    // `actual`). Distinct from `food_income` above precisely on whole-animal sources, where `actual`
+    // pulses (0 on wait turns, spikes on kills) while `realized` holds steady, so it is the right
+    // income term for the forward-looking runway below — `days_of_food` must not swing with the
+    // pulses. Purely local: it is no longer exported, because the client sums the same quantity from
+    // the per-source `realized_yield` of the breakdown rows so its headline cannot disagree with the
+    // rows it sits above (see `core_sim/CLAUDE.md`).
+    let steady_food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
         .unwrap_or(0.0);
     let food_consumption = cohort.last_food_consumption;
@@ -286,7 +286,7 @@ pub(crate) fn population_state(
             cohort.stores.get(FOOD).to_f32(),
             demand.to_f32(),
             pen_feed_upkeep,
-            food_income_average,
+            steady_food_income,
             &merged_arrival_schedule(allocation),
         )
     };
@@ -423,7 +423,6 @@ pub(crate) fn population_state(
         ),
         settlement_stage,
         food_income,
-        food_income_average,
         food_consumption,
         pen_feed_upkeep,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI

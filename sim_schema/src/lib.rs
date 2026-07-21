@@ -2229,15 +2229,6 @@ pub struct PopulationCohortState {
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
-    /// **The band's STEADY food income this turn = Σ of every worked source's [`LaborAssignmentState::realized_yield`]**
-    /// (the per-source steady averages summed) — the honest long-run average of the lumpy
-    /// [`Self::food_income`]. Because a whole-animal hunt pays in pulses, `food_income` swings
-    /// turn-to-turn while this holds steady; the client's headline "Food /turn" reads this. Distinct
-    /// from `food_income`, which stays the real arrivals and preserves the
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep` ledger identity. Derived
-    /// per-turn at capture (0.0 on a rehydrated save before the next tick). Appended (append-only).
-    #[serde(default)]
-    pub food_income_average: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -4716,7 +4707,6 @@ fn create_populations<'a>(
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
-                    foodIncomeAverage: cohort.food_income_average,
                 },
             )
         })

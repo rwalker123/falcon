@@ -2540,8 +2540,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
   as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
   `food_income`-based net did (0 on a hunt's wait turn, a spike on its kill turn). It is summed from the
-  breakdown rows rather than read off the cohort-level `food_income_average`, so the net's income half
-  can never disagree with the Gathered/Hunted rows beneath it. **The ledger has THREE terms, not two:**
+  breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
+  with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
+  this and then **retired as redundant** — a separately-computed total is a second source of truth that
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms, not two:**
   a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
   herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
   a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then

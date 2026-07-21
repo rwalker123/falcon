@@ -3287,7 +3287,7 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
         # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
         # `sustainable` ceiling to the true realized average — which is what makes the row (and the
-        # band-level `food_income_average` it sums into) steady. The pulse's overdraw is still carried by
+        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
         # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
         # absent (older snapshot).
         if m.has("realized_yield"):
@@ -3476,8 +3476,10 @@ func _band_net_food(band: Dictionary) -> float:
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
 ## does NOT swing. It feeds the headline net (`_band_net_food` = income − Eaten − Pen feed) and the
-## `_food_is_concerning` gate. Deliberately client-summed from the rows rather than read off the
-## cohort-level `food_income_average`, so it can never disagree with the breakdown it sits above.
+## `_food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
+## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
+## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
+## for one commit and was retired as redundant; do not reintroduce it.)
 func _band_food_income(band: Dictionary) -> float:
     return _sum_realized_yield(band, LABOR_KIND_FORAGE) \
         + _sum_realized_yield(band, LABOR_KIND_HUNT)
@@ -3497,7 +3499,7 @@ func _band_has_food_flow(band: Dictionary) -> bool:
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
 ## Hunted = hunt). Reads the steady average (not the lumpy `actual_yield`) so the rows don't swing AND
-## sum to the steady headline income (`food_income_average`); falls back to `actual_yield` if absent.
+## sum to the steady headline income (`_band_food_income`); falls back to `actual_yield` if absent.
 func _sum_realized_yield(band: Dictionary, kind: String) -> float:
     var total := 0.0
     for a in _labor_assignments_of(band):

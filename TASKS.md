@@ -307,6 +307,17 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
   repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
   source.
+- [ ] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
+  no longer means `larder / consumption`: since the food-arrivals arc (PR #150) it is the **larder
+  runway — turns until the larder empties, with income counted**, resolved by walking the per-source
+  `arrivalSchedule`s. The unit was fixed at the display layer (`Hud._food_days_text` renders "turns",
+  and it is the single place the unit is spelled), but the wire field, the decoder key, and every
+  client identifier still say "days". A field whose name contradicts its meaning is how the *next*
+  person reintroduces the old formula. Deliberately kept out of PR #150 to avoid bloating a diff that
+  was ready to merge. Scope is mechanical but wide: `snapshot.fbs` + `sim_schema` + `snapshot/population.rs`,
+  `native/src/lib.rs`'s `days_of_food` key, and the client's `days_of_food` / `UNLIMITED_DAYS` /
+  `warn_days` / `color_for_days` / `food_days.{warn,critical}` config key. No back-compat needed
+  (no shipped saves), so it can be a straight rename rather than a deprecation.
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -1273,6 +1284,23 @@ fires**" edge), and `clients/godot_thin_client/CLAUDE.md` → *TellingPanel* (th
 ---
 
 ## HUD Discoverability
+
+- [ ] **Retune the food-starvation thresholds against the honest runway — they may now warn too
+      late.** The food-arrivals arc (PR #150) corrected `daysOfFood` from `larder / consumption`
+      ("how long if you stop hunting") to the real runway with income counted. That is the right
+      number, but the warn/critical thresholds in `clients/godot_thin_client/src/config/band_status_config.json`
+      (`food_days.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and three
+      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_days`), the turn-orb
+      `starving` attention producer, and `Hud._food_is_concerning`'s auto-expand. Measured on a real
+      turn (seed 119304647): a well-fed band moves **9.39 → 52.89** (amber → green, correct), a
+      genuinely starving band stays **0.43** (unchanged, correct — with no income the formula degrades
+      to the old one). **The gap is the band in between:** one whose income *nearly* covers its drain
+      divides by a near-zero net, reports a very long runway, and reads green right up until that
+      income lapses — where the old figure warned early precisely because it assumed the worst. Decide
+      whether the runway alone should drive the alert, or whether the dot/orb should key on a more
+      conservative measure (e.g. the income-free `larder / consumption`, kept alongside) so a
+      knife-edge band still warns. Needs playtest evidence before tuning numbers. (Owner: TBD,
+      Estimate: 0.5d; Deps: play a campaign past the first herd depletion.)
 
 - [ ] **In-game hotkey list.** There is no on-screen key reference — the bindings live
       only in `clients/godot_thin_client/CLAUDE.md`. This became load-bearing when the
