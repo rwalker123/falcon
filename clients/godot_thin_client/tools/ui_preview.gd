@@ -637,6 +637,29 @@ func _ready() -> void:
 	_assert_hud("…and that rung's full prerequisites leave the card",
 		not _has_label_containing(_hud._compose_sheet, "Seed Selection"))
 
+	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE FORECAST. The "→ then" term used to quote
+	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
+	# appeared to change nothing above it. These two frames are the SAME tile with a DIFFERENT crop
+	# selected; the assertion is that the forecast line differs between them, which is the only thing
+	# that proves the substitution is wired to the selection rather than rendered once.
+	_hud._forage_assign_count = 1
+	_hud._forage_assign_species = "wild_emmer"
+	# The ARROW, not the bare word: the Cultivate policy hint on the same card also says "then".
+	_compose_forage(_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_then_emmer")
+	var then_emmer := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+
+	_hud._forage_assign_species = "ground_nut"
+	_compose_forage(_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_then_groundnut")
+	var then_groundnut := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+	print("ui_preview: then-term  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
+	_assert_hud("the forecast's 'then' payoff tracks the SELECTED crop",
+		then_emmer != "" and then_groundnut != "" and then_emmer != then_groundnut)
+	_hud._forage_assign_species = ""
+
 	# State 2-crop-marginal — the ALL-MARGINAL tile (RollingHills' real ratios). Every legal crop is
 	# below 1.0×, so the whole list is warn-inked and the hint says why — and every row stays PRESSABLE.
 	# The ratio is here to stop a bad idea being invisible, never to forbid it.
@@ -690,7 +713,7 @@ func _ready() -> void:
 	_assert_hud("…and the forecast drops the 'then' promise it cannot keep",
 		not _has_label_containing(_hud._compose_sheet, "Preparing:"))
 	_assert_hud("…while still showing what the tile would pay once prepared",
-		_has_label_containing(_hud._compose_sheet, "to begin"))
+		_has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
 	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
 	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
@@ -708,8 +731,8 @@ func _ready() -> void:
 	var unassign_btn := _find_button_by_text(_hud._compose_sheet, "Unassign")
 	_assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
 		unassign_btn != null and not unassign_btn.disabled)
-	_assert_hud("…and does not also tell the player to assign foragers to begin",
-		not _has_label_containing(_hud._compose_sheet, "to begin"))
+	_assert_hud("…and does not also tell the player to assign foragers",
+		not _has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
 	# Restore the unassigned near band for the frames that follow.
 	_hud._player_band = _forage_range_bands()[0]
@@ -2569,6 +2592,25 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 ## Does any Label under `root` contain this text? The gate-reason assertions' instrument: a reason that
 ## has been COLLAPSED into a tooltip is no longer any label's text, so this tells a spelled-out
 ## prerequisite from a one-line "locked (N requirements unmet)" summary.
+## The text of the first Label under `root` containing `needle` — "" when there is none. Lets a frame
+## assert on a value that must CHANGE (the forecast's "→ then" term) rather than merely be present.
+## The forecast's dip→payoff arrow. Deliberately NOT the bare word "then": the Cultivate policy hint
+## rendered on the same card ("…then a much higher tended yield") contains it too.
+const FORECAST_THEN_NEEDLE := "→ then"
+## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
+const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
+
+func _label_text_containing(root: Node, needle: String) -> String:
+	if root == null:
+		return ""
+	if root is Label and (root as Label).text.contains(needle):
+		return (root as Label).text
+	for child in root.get_children():
+		var found := _label_text_containing(child, needle)
+		if found != "":
+			return found
+	return ""
+
 func _has_label_containing(root: Node, text: String) -> bool:
 	if root == null:
 		return false
@@ -3348,18 +3390,25 @@ func _food_tile_fixture() -> Dictionary:
 		# `can_cultivate` / `can_sow` are SPECIES-GLOBAL rung legality (flora roster S1), deliberately
 		# mixed here so the crop picker has a greyed row in every frame: Oak Mast climbs nothing (a wild
 		# harvest forever) and Ground Nut tends but never sows. `*_yield_ratio` is what committing PAYS
-		# relative to gathering wild — a winner (1.35×), a legal LOSS (0.85×) and the 0 sentinel on the
-		# rows the flags grey out, so one frame carries all three cases.
+		# relative to gathering wild, on the CORRECTED scale (the sim's ratio omitted
+		# `tended_regrowth_gain`, understating every Cultivate figure by exactly 2×) — so above 1.0 is
+		# now the NORM and these read: a strong crop (2.40×), an honest middle one (1.70×) and the 0
+		# sentinel on the greyed rows. `*_payoff` is the same rung's provisions/turn committed to THAT
+		# species, and it is what the compose sheet's "→ then" term quotes once a crop is picked: the two
+		# rows differ (1.20 vs 0.85), which is what makes the selection visibly move the forecast.
 		"patch_composition": [
 			{"species": "wild_grain", "display_name": "Wild Grain", "share": 0.455,
 				"can_cultivate": true, "can_sow": true,
-				"cultivate_yield_ratio": 1.35, "sow_yield_ratio": 2.10},
+				"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
+				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
 			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.295,
 				"can_cultivate": true, "can_sow": false,
-				"cultivate_yield_ratio": 0.85, "sow_yield_ratio": 0.0},
+				"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.85, "sow_payoff": 0.0},
 			{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.25,
 				"can_cultivate": false, "can_sow": false,
-				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0},
+				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		],
 		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
 		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
@@ -3403,19 +3452,24 @@ func _long_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = [
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.34,
 			"can_cultivate": true, "can_sow": true,
-			"cultivate_yield_ratio": 1.35, "sow_yield_ratio": 2.10},
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
 		{"species": "hazel", "display_name": "Hazel", "share": 0.24,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.67, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 1.34, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.67, "sow_payoff": 0.0},
 		{"species": "river_fish", "display_name": "River Fish", "share": 0.18,
 			"can_cultivate": false, "can_sow": false,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
 		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.10,
 			"can_cultivate": false, "can_sow": false,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 	]
 	return tile
 
@@ -3434,28 +3488,36 @@ func _overlong_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = [
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.22,
 			"can_cultivate": true, "can_sow": true,
-			"cultivate_yield_ratio": 1.35, "sow_yield_ratio": 2.10},
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
 		{"species": "hazel", "display_name": "Hazel", "share": 0.17,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 1.10, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 2.20, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 1.10, "sow_payoff": 0.0},
 		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.85, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.85, "sow_payoff": 0.0},
 		{"species": "river_fish", "display_name": "River Fish", "share": 0.13,
 			"can_cultivate": false, "can_sow": false,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.11,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.72, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 1.44, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.72, "sow_payoff": 0.0},
 		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.09,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
 		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.08,
 			"can_cultivate": false, "can_sow": false,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		{"species": "marsh_reed", "display_name": "Marsh Reed", "share": 0.06,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.35, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.70, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.35, "sow_payoff": 0.0},
 	]
 	return tile
 
@@ -3466,16 +3528,20 @@ func _marginal_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = [
 		{"species": "hazel", "display_name": "Hazel", "share": 0.34,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.67, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.94, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.47, "sow_payoff": 0.0},
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.28,
 			"can_cultivate": true, "can_sow": true,
-			"cultivate_yield_ratio": 0.60, "sow_yield_ratio": 0.90},
+			"cultivate_yield_ratio": 0.84, "sow_yield_ratio": 1.26,
+			"cultivate_payoff": 0.42, "sow_payoff": 0.63},
 		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.22,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.68, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.34, "sow_payoff": 0.0},
 		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.16,
 			"can_cultivate": true, "can_sow": false,
-			"cultivate_yield_ratio": 0.35, "sow_yield_ratio": 0.0},
+			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.25, "sow_payoff": 0.0},
 	]
 	return tile
 

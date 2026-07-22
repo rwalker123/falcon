@@ -2583,7 +2583,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>` — the **second** optional token,
   worker count always last, omitted entirely when empty.
   **THE PAYOFF, BESIDE THE SHARE** (`cultivateYieldRatio` / `sowYieldRatio` → `cultivate_yield_ratio` /
-  `sow_yield_ratio`, read per rung by `_flora_entry_ratio`): a row reads `Wild Emmer 34% · 1.4×` —
+  `sow_yield_ratio`, read per rung by `_flora_entry_ratio`): a row reads `Wild Emmer 34% · 2.7×` —
   what committing this tile to this plant yields **relative to gathering it wild**. The sim folds the
   share AND the species' conversion rate into it through the same seams the real payout uses, so the
   client only **formats** it (`FLORA_CROP_ROW_FORMAT`, one decimal — the question is "better or worse
@@ -2593,6 +2593,26 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   the ratio exists to stop a bad idea being invisible, never to forbid it, so nothing is hidden,
   clamped, sorted by or disabled on it. **`0` is the "cannot climb this rung" SENTINEL, not a number**
   (a real ratio is never 0), so a row greyed by the climbability flags prints no ratio at all.
+  **ABOVE 1.0 IS THE NORM, so the verdict wording is keyed to 1.0 and never to an impression of the
+  numbers.** The sim's ratio once omitted `tended_regrowth_gain` and understated every Cultivate figure
+  by exactly 2× — a genuinely strong crop rendered `0.9×` over a tooltip calling it poor. Fixed sim-side;
+  best-country ratios now run 2.3–2.7×. The tooltip therefore has **three tiers**, all relative to
+  `FLORA_CROP_BREAK_EVEN_RATIO`: below it *"it loses to simply gathering here"*, at/above
+  `FLORA_CROP_STRONG_RATIO` *"strong ground for it"*, and the honest middle *"worth committing to"*.
+  Amber is now the exception rather than the rule on good ground, which is the intended read.
+  **AND THE `→ then` TERM FOLLOWS THE SELECTED CROP** (`cultivatePayoff` / `sowPayoff` →
+  `cultivate_payoff` / `sow_payoff`, carried through `_flora_basket_entries` and substituted by
+  `_forecast_for_selected_crop`). Without it the forecast quoted a species-BLIND patch, so committing to
+  Ground Nut displayed Wild Emmer's payoff and **the picker appeared to change nothing above it**. Same
+  units and output-multiplier convention as the forecast `payoff` it replaces, so this is a
+  **SUBSTITUTION, not a calculation** — do no arithmetic on it here. Only `payoff` is substituted; the
+  ceiling and per-worker rate still describe the PATCH, which is what caps the stepper. The picker's own
+  handler rebuilds the whole controls, so changing the crop moves the line on the same frame — pinned by
+  the `forage_crop_then_emmer` / `forage_crop_then_groundnut` pair, whose assertion is that the two
+  frames' forecast lines **differ** (`+1.35` vs `+0.45`); asserting the line merely *exists* would pass
+  against a hardcoded one. **Carrying the payoff through `_flora_basket_entries` is the load-bearing
+  half** — the substitution silently no-ops if the basket entry drops the field, which is exactly how it
+  first failed.
   **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
   (`FLORA_CROP_LIST_MAX_HEIGHT`, derived as `FLORA_CROP_LIST_VISIBLE_ROWS × row + separations`, with the
   rows on the work board's compact idiom via `_compact_control` — default button chrome pads 9px top AND
@@ -2630,8 +2650,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   RollingHills tile — every legal crop below `1.0×`, all warn-inked, all pressable, the default still the
   highest-share one) / `forage_crop_picker_overlong` (the SYNTHETIC 8-plant tile — the internal scroll's
   only frame, plus its own on-screen-button assertion) / `forage_crop_picker_sow` (the SAME basket one rung up — only Wild Emmer survives
-  and reads `2.1×`, which is what proves both the gate and the ratio are per-rung) /
-  `forage_crop_committed` (the locked readout) / `forage_cultivate` (the 3-entry reference tile).
+  and reads `4.2×`, which is what proves both the gate and the ratio are per-rung) /
+  `forage_crop_committed` (the locked readout) / `forage_cultivate` (the 3-entry reference tile) /
+  `forage_crop_then_emmer` + `forage_crop_then_groundnut` (the selection-tracking PAIR).
 - **The forage compose's TWO ZERO-WORKER SUBMITS** (`_build_forage_assign_controls`; playtest defect,
   pre-existing). `workers == 0` is the **sim's unassign** (`server.rs`: *"Unassigning (`workers == 0`) is
   always allowed"*) and the Work zone's unassign paths depend on it, so the submit is gated on **"would
@@ -2644,8 +2665,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     sequence the player is explicitly NOT on track for, since an unstaffed build meter never advances.
     It now states the payoff as a CONDITION (`INVESTMENT_FORECAST_UNSTAFFED_FORMAT` — *"Assign foragers
     to begin — prepared, this pays +1.20 /turn"*), keeping the number, which is how you decide the tile
-    is worth staffing at all. That line doubles as the dead button's explanation, per the
-    `_forecast_worker_cap` "a dead button is always explained" precedent.
+    is worth staffing at all. The copy is deliberately SHORT — `Assign foragers — +1.20 /turn` — because
+    the moment one worker is on it the full `Preparing: … → then …` line renders anyway. It doubles as
+    the dead button's explanation, per the `_forecast_worker_cap` "a dead button is always explained"
+    precedent.
   - **0 and currently assigned** → a real unassign: button **enabled**, renamed `Unassign`, and the
     forecast row is **suppressed entirely** — "assign foragers to begin" above an `Unassign` button
     tells the player two opposite things. No new warning was invented for it: what abandoning costs is

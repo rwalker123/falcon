@@ -3611,6 +3611,13 @@ fn forage_patches_to_array(
                 // alone and would put the payoff formula in two places.
                 let _ = share_dict.insert("cultivate_yield_ratio", share.cultivateYieldRatio());
                 let _ = share_dict.insert("sow_yield_ratio", share.sowYieldRatio());
+                // WHAT THIS RUNG PAYS ONCE COMPLETE, committed to THIS species — same units and
+                // output-multiplier convention as the forecast `payoff` the compose sheet already
+                // renders, so the client SUBSTITUTES it into the "→ then" term rather than computing
+                // anything. 0 on a rung the species cannot climb. (The ratio above is exactly this
+                // divided by the wild rate; both come from the sim so the two can never disagree.)
+                let _ = share_dict.insert("cultivate_payoff", share.cultivatePayoff());
+                let _ = share_dict.insert("sow_payoff", share.sowPayoff());
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

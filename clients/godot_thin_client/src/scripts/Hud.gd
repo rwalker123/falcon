@@ -624,8 +624,14 @@ const FLORA_CROP_NO_SOW_FORMAT := "%s cannot be sown — its seed is not yours t
 # two species flags disable anything. The warning rides the ROW's own tooltip rather than a standing
 # hint line: a line under the list costs the sheet ~40px of height, and the commit button below it is
 # what pays (see FLORA_CROP_LIST_MAX_HEIGHT).
-const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — a poor crop, but a legal one."
-const FLORA_CROP_GAIN_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does."
+# THE VERDICT IS RELATIVE TO 1.0, never to an impression of what the numbers "usually" look like.
+# Committing beats gathering wild on most good ground, so ratios above 1.0 are the NORM: "poor" is
+# reserved for a crop that genuinely loses to simply gathering the tile, and the tier between break-even
+# and FLORA_CROP_STRONG_RATIO is the honest middle — worth doing, not worth celebrating.
+const FLORA_CROP_STRONG_RATIO := 1.5
+const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — it loses to simply gathering here."
+const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — worth committing to."
+const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
 # THE PAYOFF, beside the share — `cultivate_yield_ratio` / `sow_yield_ratio`: what committing this tile
 # to this plant yields RELATIVE to gathering it wild. The sim folds the share AND the species'
 # conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
@@ -1008,8 +1014,10 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # "Preparing: +0.00 /turn → then +1.22 /turn" — a sequence the player is emphatically NOT on track for,
 # since an unstaffed build meter never advances at all. The payoff itself stays on screen (it is how you
 # decide whether the source is worth staffing), but as a CONDITION rather than an imminent arrival.
-const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s to begin — prepared, this pays %s"
-const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s to begin — prepared, this pays %s − %s feed"
+# Short on purpose: the moment ONE worker is on it the full "Preparing: … → then …" line renders, so a
+# long unstaffed sentence earns nothing. Crew-named, so a herd rung says hunters/herders.
+const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s — %s"
+const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s — %s − %s feed"
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
@@ -6233,6 +6241,34 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE))
     return float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE))
 
+## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
+## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
+## substituted) on a rung the species cannot climb.
+func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
+    if policy == LABOR_POLICY_SOW:
+        return float(entry.get("sow_payoff", 0.0))
+    return float(entry.get("cultivate_payoff", 0.0))
+
+## The forecast, with its species-BLIND payoff replaced by the selected crop's own. Without this the
+## "→ then" term quotes one number no matter which crop is picked, so the picker appears to change
+## nothing above it — the player commits to Reeds and is shown Wild Emmer's payoff. A SUBSTITUTION,
+## not a calculation: the client does no arithmetic on the sim's figure. Returns the forecast untouched
+## when nothing is committed (no selection, a non-committing rung, or a species with no payoff on it).
+func _forecast_for_selected_crop(forecast: Dictionary, entries: Array[Dictionary], policy: String,
+        species: String) -> Dictionary:
+    if species == "" or not (policy in FLORA_COMMITTING_POLICIES):
+        return forecast
+    for entry in entries:
+        if String(entry["species"]) != species:
+            continue
+        var payoff := _flora_entry_payoff(entry, policy)
+        if payoff <= 0.0:
+            return forecast
+        var adjusted := forecast.duplicate()
+        adjusted["payoff"] = payoff
+        return adjusted
+    return forecast
+
 ## The crop this compose will SEND: the player's pick while it is still legal on this tile+rung, else
 ## the HIGHEST-SHARE legal entry — which is the sim's own `default_species_for_rung`, so picking
 ## nothing and accepting the default behave identically. Returns "" (send nothing, still valid) for a
@@ -6307,8 +6343,10 @@ func _build_crop_picker(
                 btn.add_theme_color_override("font_color", HudStyle.WARN)
                 btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
                 btn.tooltip_text = FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio]
+            elif ratio >= FLORA_CROP_STRONG_RATIO:
+                btn.tooltip_text = FLORA_CROP_STRONG_TOOLTIP_FORMAT % [crop_name, ratio]
             elif ratio > FLORA_CROP_RATIO_NONE:
-                btn.tooltip_text = FLORA_CROP_GAIN_TOOLTIP_FORMAT % [crop_name, ratio]
+                btn.tooltip_text = FLORA_CROP_MODEST_TOOLTIP_FORMAT % [crop_name, ratio]
             btn.pressed.connect(func() -> void: on_pick.call(species))
         else:
             var reason_format := FLORA_CROP_NO_SOW_FORMAT if policy == LABOR_POLICY_SOW \
@@ -6426,6 +6464,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
     # switching policy moves the cap).
     var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    # THE "→ then" TERM FOLLOWS THE CROP. `_forecast_inputs` answers for the patch, which is species-
+    # blind; once a crop is committed the payoff is that crop's. `basket` and `_forage_assign_species`
+    # are resolved above, and the picker's own handler rebuilds these whole controls, so changing the
+    # selection moves this line on the same frame. Only `payoff` is substituted — the ceiling and the
+    # per-worker rate still describe the PATCH, which is what caps the stepper.
+    forecast = _forecast_for_selected_crop(forecast, basket, _forage_assign_policy, _forage_assign_species)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
@@ -8739,6 +8783,10 @@ func _flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             "can_sow": bool(entry.get("can_sow", false)),
             "cultivate_yield_ratio": float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE)),
             "sow_yield_ratio": float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE)),
+            # Carried through so the compose sheet's "→ then" term can quote the SELECTED crop's own
+            # payoff; without these the row renders a correct ratio above a forecast that ignores it.
+            "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
+            "sow_payoff": float(entry.get("sow_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries
