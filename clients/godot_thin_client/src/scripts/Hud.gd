@@ -1003,8 +1003,18 @@ const PEOPLE_LABEL_ELDERS := "elders"
 const PEOPLE_DEPENDENCY_BASE := 100
 ## Above this many dependents per 100 workers the band carries more mouths than hands → WARN.
 const PEOPLE_DEPENDENCY_HEAVY := 100
-const PEOPLE_DEPENDENCY_FORMAT := "dep %d/100"
-const PEOPLE_DEPENDENCY_TOOLTIP := "%d dependents per %d working-age adults"
+## The chip says the COUNT, not the ratio. `dep 88/100` was the analyst's framing of a number the
+## player has to act on — it reads as a score out of 100 (and the game's designer could not tell what
+## it meant), while the bar beside it already shows the split. "14 dependents" is the fact; the ratio
+## and what it implies live in the tooltip, which is where the teaching belongs.
+const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
+## Spelled out wherever the ratio appears — the panel chip AND the top-bar strip — so the two
+## surfaces can never explain the same number differently.
+const PEOPLE_DEPENDENCY_TOOLTIP := """%d dependents — children and elders. They eat from the larder but cannot be assigned to work.
+%d working-age adults carry them: %d dependents per 100 workers.
+Only the working age can forage, hunt or hold a role."""
+## Appended when dependents outnumber workers.
+const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nThere are now more mouths than hands — every worker is feeding more than one other person."
 
 ## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
 ## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
@@ -2198,6 +2208,12 @@ func update_demographics(demographics_variant: Variant) -> void:
     else:
         dependency = 999
     demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d  dep %d/100" % [total, children, working, elders, dependency]
+    # The compact `dep N/100` stays — the top bar is deliberately dense and any wording long enough to
+    # be self-explanatory would run it off the edge (the knowledge strip already had to wrap for that
+    # reason). It carries the SAME tooltip as the Band panel's chip instead, so the one place a player
+    # can ask "what is this?" answers identically wherever they hover.
+    demographics_label.tooltip_text = _dependency_tooltip(children + elders, working)
+    demographics_label.mouse_filter = Control.MOUSE_FILTER_STOP
     # A high dependency ratio (more mouths than hands) is the warning state.
     demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
 
@@ -4197,19 +4213,34 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
     block.add_child(_build_composition_key(segments, _build_dependency_chip(children, working, elders)))
     return block
 
+## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
+func _dependency_per_hundred(dependents: int, working: int) -> int:
+    if working <= 0:
+        return 0
+    return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
+
+## What "dependents" MEANS, in the player's terms, plus the ratio and its consequence. Shared by the
+## Band panel's chip and the top-bar demographics strip so one number never gets two explanations.
+func _dependency_tooltip(dependents: int, working: int) -> String:
+    var per_hundred := _dependency_per_hundred(dependents, working)
+    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % [dependents, working, per_hundred]
+    if per_hundred > PEOPLE_DEPENDENCY_HEAVY:
+        text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
+    return text
+
 ## The dependency ratio chip: dependents (children + elders) per 100 working-age adults, WARN-tinted
 ## once the band carries more mouths than hands. Null when there is no working-age cohort to divide by.
 func _build_dependency_chip(children: int, working: int, elders: int) -> Control:
     if working <= 0:
         return null
     var dependents := children + elders
-    var per_hundred := int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
+    var per_hundred := _dependency_per_hundred(dependents, working)
     var chip := Label.new()
-    chip.text = PEOPLE_DEPENDENCY_FORMAT % per_hundred
+    chip.text = PEOPLE_DEPENDENCY_FORMAT % dependents
     chip.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
     chip.add_theme_color_override("font_color",
         HudStyle.WARN if per_hundred > PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
-    chip.tooltip_text = PEOPLE_DEPENDENCY_TOOLTIP % [dependents, working]
+    chip.tooltip_text = _dependency_tooltip(dependents, working)
     chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     return chip

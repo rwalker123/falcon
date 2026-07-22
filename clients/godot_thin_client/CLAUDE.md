@@ -3021,8 +3021,20 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
   the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
   (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its
-  key and the **dependency ratio** `dep (children+elders)/working × 100`, WARN above
-  `PEOPLE_DEPENDENCY_HEAVY`. **Absent age data OMITS the whole block** — never a fabricated split.
+  key and the **dependent count** — `14 dependents`, WARN-tinted once the RATIO
+  `(children+elders)/working × 100` passes `PEOPLE_DEPENDENCY_HEAVY`. **The chip says the COUNT, not
+  the ratio**: `dep 88/100` read as a score out of 100 and the game's own designer could not tell what
+  it meant, while the bar beside it already shows the split — so the number the player acts on is on
+  the face and the ratio moved into the tooltip, where the teaching belongs. `_dependency_tooltip`
+  spells out what a dependent IS, who carries them, the ratio, and (when heavy) its consequence, and
+  the **top-bar `dep N/100` strip carries the SAME tooltip** — one number, one explanation, wherever
+  you hover. (The top bar keeps its compact wording: it is deliberately dense and self-explanatory
+  copy would run it off the edge, the same pressure that forced the knowledge strip to wrap.)
+  **The brackets arrive FRACTIONAL** (`Scalar` — see the decoder note) and are apportioned to whole
+  people by LARGEST REMAINDER (`_apportion_people`), never rounded one at a time: 9.29 + 16.54 + 4.64
+  rounds independently to 9 + 17 + 5 = **31** for a band of 30, and a panel that disagrees with the
+  top bar about how many people are in the band reads as a bug in both.
+  **Absent age data OMITS the whole block** — never a fabricated split.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
   **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `INK_FAINT`): two bars,
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
