@@ -247,7 +247,7 @@
       "biomass": [500, 1000],
       "body_mass": 30,
       "host_biomes": ["boreal_arctic", "coastal_littoral"],
-      "requires_adjacent_water": true,
+      "adjacent_water": "salt",
       "dwell_turns": 1,
       "regrowth_rate": 0.08,
       "husbandry_ceiling": "wild"
@@ -322,7 +322,7 @@
       "biomass": [400, 900],
       "body_mass": 2,
       "host_biomes": ["riverine_delta", "wetland_swamp", "coastal_littoral"],
-      "requires_adjacent_water": true,
+      "adjacent_water": "any",
       "dwell_turns": 1,
       "regrowth_rate": 0.30,
       "husbandry_ceiling": "wild"

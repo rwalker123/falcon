@@ -134,7 +134,8 @@ pub use fauna::{
 };
 pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
-    GrazeConfig, HusbandryCeiling, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
+    GrazeConfig, HusbandryCeiling, ShoreRequirement, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG,
+    NO_GRAZE_CAPACITY,
 };
 pub use flora_config::{
     load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,

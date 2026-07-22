@@ -11,8 +11,9 @@
 //! solver → palette clamp → `spawn_initial_herds`) over [`SWEEP_SEEDS`]:
 //!
 //! - **Silt Catfish** (`river_fish`) — the wet biomes' own game, hosting `riverine_delta` /
-//!   `wetland_swamp` / `coastal_littoral` under the same `requires_adjacent_water` site rule the
-//!   seal rides (see `fauna_coastal_habitat.rs`, which owns that rule's spec). Its shore invariant
+//!   `wetland_swamp` / `coastal_littoral` under the same `adjacent_water` site rule the seal rides
+//!   — at `any`, where the seal asks for `salt` (see `fauna_coastal_habitat.rs`, which owns that
+//!   rule's spec). Its shore invariant
 //!   is asserted here too, because a catfish on dry inland ground is a bug in the same predicate.
 //! - **Snow Hare Warren** (`snow_hare`) — the first `pen`-ceiling species hosting `boreal_arctic`.
 //!   Before it, a northern start could reach no pen at all: the intensification ladder's middle rung
@@ -31,7 +32,7 @@ use bevy::math::UVec2;
 
 use core_sim::{
     build_headless_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry,
-    HusbandryCeiling, SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
+    HusbandryCeiling, ShoreRequirement, SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
 };
 use sim_runtime::TerrainTags;
 
@@ -184,9 +185,11 @@ fn the_wet_and_cold_rows_declare_reachable_hosts() {
         .species
         .get("river_fish")
         .expect("the roster defines river_fish");
-    assert!(
-        catfish.requires_adjacent_water,
-        "a river fish must sit on a shore"
+    assert_eq!(
+        catfish.adjacent_water,
+        ShoreRequirement::Any,
+        "a river fish must sit on a shore — any shore: it is freshwater game, so unlike the seal it \
+         is not restricted to salt water"
     );
     assert!(
         !catfish.migratory,

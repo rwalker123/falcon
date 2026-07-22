@@ -1510,7 +1510,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     - **LIFECYCLE.** Opens on the drawer button; one sheet at a time. Closes on commit, the `✕`, a
       catcher click, `Esc`, a **selection change** (`show_*_selection` / `_select_roster_occupant` /
       `_on_land_row_selected` / `clear_selection`) or a **targeting flow starting** (`_on_move_band_
-      pressed` / `_on_send_expedition_pressed` / `_on_send_hunt_expedition_pressed` — a sheet floating
+      pressed` / `_on_send_expedition_pressed` / `_on_pick_quarry_pressed` — a sheet floating
       over the map while the player is asked to click a hex is a trap). **A SNAPSHOT MUST NOT CLOSE
       IT** — `reapply_selection` runs every turn and closing would make the sheet unusable under
       autoplay; `_refresh_compose_sheet` (called from `_render_subject_drawer`, the snapshot
@@ -1542,12 +1542,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     bug cannot reach). Verified to FAIL with MapView's `"land"` branch removed.
   - Each occupant row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
-  activity glyph; a **wildlife** row reads **species + size class** and nothing else
-  (`🦌 Red Deer   Big game`). **A detail row never restates what its
+  activity glyph; a **wildlife** row reads **species + its STAFFING** — the hunters on the herd in
+  the same `<count> <glyph>` form the land row uses (`🦌 Red Deer   1 🏹`, twin of `◈ Savanna   2 🌾`),
+  with the unworked-but-huntable form `0 🏹` and *no* meta at all on a non-huntable herd. The
+  **size class** moved into the herd drawer's first row (`Size: Big game`) because the row's one
+  meta slot now belongs to the count. **A detail row never restates what its
   roster row already shows** (the same rule the Band/City panel header follows). The roster
-  row IS the identity line — name + size — so every drawer dropped
-  the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species` / `Size`
-  (the name appeared three times, the size twice); expedition → `Unit` + `Party` (`Party`
+  row IS the identity line — name + size/staffing — so every drawer dropped
+  the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species`
+  (the name appeared three times); expedition → `Unit` + `Party` (`Party`
   printed the same `size` field the row's meta shows). **THE FAUNA ID IS A DATABASE KEY AND IS
   NEVER RENDERED** (`game_fowl_27` means nothing to a player and crowded out the two things that
   do). It briefly rode the row as a dim meta on the theory that the command feed named herds by
@@ -1556,7 +1559,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
   `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
   (`_herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
-  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
+  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Biomass / Ecology /
   Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
   Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
   Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
@@ -1878,10 +1881,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     a one-shot set only by a policy CLICK, consumed on the next rebuild before the clamp — the "give me
     everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
     the manual `−/+` stepper is untouched (it never sets the flag).
-    The **band-first targeting flow gates identically**: `_try_dispatch_pending_send_hunt_expedition`
-    refuses to emit on a no-surplus herd and posts the SAME `_hunt_no_surplus_reason` sentence to the
-    command feed, staying in targeting — the click is never silently swallowed
-    (mirrors the existing "no huntable herd there" nudge). The **local** branch has no carry cap, so a raid readout is meaningless and
+    The **band-panel launch flow gates identically, in its own form**: its compose sheet picks the
+    quarry first and then styles its Send with the SAME `_style_send_hunt_button` + `_hunt_no_surplus_reason`,
+    so a no-surplus herd disables there too. The quarry PICKER itself (`_try_pick_quarry`) deliberately
+    does NOT test surplus — no policy is chosen at that point, so the verdict is unknowable; it only
+    nudges "No huntable herd there — click on a herd." so a click is never silently swallowed. The **local** branch has no carry cap, so a raid readout is meaningless and
     it instead previews the crew's honest **carry-aware delivered take, ANIMALS-first**
     (`_local_hunt_preview_bbcode` / `_hunt_delivered_and_waste`). A hunt takes WHOLE animals via a
     kill-credit bank, so the crew's raw food throughput
@@ -3066,7 +3070,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →
   `_refresh_targeting()` machinery: `_pending_move_band` (`command: "move"`, `need: "tile"`),
   `_pending_send_expedition` (`command: "expedition"`, `need: "tile"`, carries the outfitted band +
-  party size), and `_pending_send_hunt_expedition` (`command: "hunt_expedition"`, `need: "herd"`).
+  party size), and `_pending_pick_quarry` (`command: "quarry"`, `need: "herd"`, plus **`min_distance`**
+  = the band's `hunt_reach` — the party compose sheet's quarry PICKER: it carries only the band,
+  dispatches nothing, and returns the clicked herd to the sheet).
   `_current_targeting_info()` returns a descriptor (`{active, command, need, origin_x/y,
   context_label}`) for whichever is set; `_refresh_targeting()` shows the floating **targeting
   banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
@@ -3131,13 +3137,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   section (party stepper + "Send scouting expedition"), a **hunt policy radio**
   (`_build_policy_picker(…, _send_hunt_policy)`, Sustain/Surplus/Market/Eradicate, default Sustain)
   with a one-line behaviour hint (`SEND_HUNT_POLICY_HINTS`), then "Send hunting expedition". It enters
-  a HERD-targeting pending mode (`_pending_send_hunt_expedition`, `command: "hunt_expedition"`,
-  `need: "herd"`) carrying band + party + policy; the target click resolves to a huntable herd on the
-  clicked hex (`_huntable_herd_id_on_tile` reads `tile_info.herds`) and emits
+  a HERD-targeting pending mode (`_pending_pick_quarry`, `command: "quarry"`, `need: "herd"`) carrying
+  the band; the pick resolves to a huntable herd on the clicked hex (`_huntable_herd_on_tile` reads
+  `tile_info.herds`), fills the sheet's Quarry row, and the sheet's own Send then emits
   `send_hunt_expedition_requested` → `Main._on_hud_send_hunt_expedition` →
   `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [policy]` (trailing policy;
   server defaults Sustain). No huntable herd on the hex → a command-feed nudge, stays in targeting.
-  `MapView._draw_targeting` glows huntable herds + reticles the hovered hex for `need == "herd"`.
+  For `need == "herd"` `MapView._draw_targeting` reticles the hovered hex and glows the herds that are
+  **valid quarries — those strictly BEYOND the outfitting band's `hunt_reach`**, never every huntable
+  herd. A nearer herd is a LOCAL hunt (the same split `_build_herd_assign_controls` makes between
+  "Assign Local Hunt" and the expedition branch), so haloing it would promise a mission the pick then
+  refuses. The reach rides the targeting info dict as **`min_distance`** — "a valid target must lie
+  strictly farther than this from `origin_x/origin_y`"; every other targeting mode omits it and MapView
+  defaults it to **0**, which admits everything and changes nothing for move/scout-tile targeting. The
+  MapView test is commented as the RENDER-SIDE MIRROR of `Hud._is_expedition_quarry` — change the two
+  together, in both directions.
   (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
   `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
   (5) **Pre-launch RAID forecast — the delivered payload + waste** (server `5a130e0`): a hunting expedition
@@ -3145,12 +3159,20 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   home. A party too small to carry a whole animal now **kills one and hauls the fraction its pack holds,
   wasting the rest**, so the readout headlines the delivered PAYLOAD: **the animal count over the turns, the
   FOOD landed, and the WASTE**, `delivers ≈1 Thunder Mammoth over ≈20 turns · ~4 food · ⚠ 75% wasted`. The
-  player must know **before** committing workers, but the herd isn't chosen until the *targeting* step (the
-  outfit block only picks party + policy), so the forecast hangs off the **targeting banner**: while
-  `_pending_send_hunt_expedition` is armed, `Hud.show_tooltip` (already fed by `MapView.tile_hovered`)
-  records the hovered hex in `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
-  `_hunt_forecast_bbcode` — cyan `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for
-  a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
+  player must know **before** committing workers — and the band-panel launch flow now guarantees they can,
+  because it asks for the **QUARRY FIRST, inside the compose sheet**. The old premise ("the herd isn't
+  chosen until the targeting step, so the forecast has to hang off the targeting banner") is **inverted and
+  gone**, and the hover-forecast + `_hovered_tile_info` with it: the herd is what determines the useful
+  party size, the per-policy take, the trip length and whether the raid is worth making, so it cannot be
+  the LAST question. The targeting mode is now a quarry **PICKER** (`_pending_pick_quarry` /
+  `_on_pick_quarry_pressed` / `_try_pick_quarry`, `command: "quarry"`, `need: "herd"` — still what makes
+  MapView glow the huntable herds): it carries only the band, dispatches nothing, and on a hit stores the
+  herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
+  and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's
+  beyond-reach branch uses (`_expedition_policy_takes` · `_expedition_useful_cap` · `_hunt_trip_forecast` →
+  `_hunt_forecast_line_bbcode` · `_style_send_hunt_button` · `_hunt_no_surplus_reason`), so the two entry
+  points structurally cannot quote different numbers. The line reads cyan
+  `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
   over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
   delivering), amber denial `<Herd> — denial mission … delivers no food` (Eradicate), and DANGER-red
   `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
@@ -3160,8 +3182,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   **The food total** is `HuntTripEstimate.deliveredFood` — the sim's forward-simulated landed food (NOT
   `animals × foodPerAnimal`, which counts the whole kill and overstates a partial), set on the returned dict
   as `food` (always present on a delivering forecast); the waste % is `wastedFood / (deliveredFood +
-  wastedFood)`. All rendered by the shared `_hunt_forecast_line_bbcode` at **both** entry points (banner +
-  herd panel), so the two can never quote different numbers.
+  wastedFood)`. All rendered by the shared `_hunt_forecast_line_bbcode` at **both** entry points (the party
+  compose sheet + the herd drawer), so the two can never quote different numbers.
   **The client does ZERO arithmetic for an expedition's raid — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
@@ -3388,10 +3410,34 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   behind the same confirm), one row per party (mission glyph · subject · phase · an always-visible
   recall `✕` at `PARTY_RECALL_REST_ALPHA`, brightening on hover — parties have no stepper and no
   inspector, so it is their only removal path; the row BODY keeps the existing focus+select), and the
-  footer. **`Send a party…` stays VISIBLE and DISABLED with its reason when idle == 0** — the section
-  vanishing is what made expeditions look removed from the game. Pressing it swaps in the **compose
-  sheet, MISSION FIRST**: nothing below appears until a mission is picked, so the policy picker is
-  unreachable except under Hunt (it used to sit above the scouting button and read as if it modified it).
+  footer. The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
+  and **both stay VISIBLE and DISABLED with their reason when idle == 0** (the section vanishing is
+  what made expeditions look removed from the game). Pressing one swaps in the **compose sheet already
+  on that mission**, titled `Setup a scouting/hunting party…`, with the `✕` as the only way back. The
+  mission is therefore still chosen FIRST and the policy picker is still unreachable except under Hunt
+  (it used to sit above the scouting button and read as if it modified it) — what is gone is the
+  intermediate `Send a party…` page that only existed to ask which mission.
+  **The HUNT form asks QUARRY → POLICY → PARTY**, in the order the decision is actually made: the herd
+  sets the per-policy take, the useful party size and the trip length, so every field under it is
+  unanswerable without it. The `Quarry` row mirrors the `Party` row's shape with a button instead of a
+  stepper (`Choose…` primary when empty, `🐗 Wild Boar` ghost once picked, either way opening the map
+  quarry picker); with no quarry the sheet renders the hint plus a **visible, disabled** Send and nothing
+  else. **A quarry must lie strictly BEYOND the band's `hunt_reach`** — a hunting party exists for game
+  the band cannot work from home, so a nearer herd is a local hunt. `_is_expedition_quarry` is the ONE
+  definition (`_band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
+  route through it: MapView's glow rings only eligible herds (via `min_distance` — see Command
+  Targeting), `_try_pick_quarry` REFUSES an in-reach herd and stays in targeting with a
+  `QUARRY_WITHIN_REACH_FORMAT` nudge naming the herd, the distance, the reach and the local alternative
+  (the split is invisible on the map, so the refusal is where it gets taught), and the sheet
+  re-validates every render, so a herd that MIGRATES into reach falls back to `Choose…` rather than
+  forecasting a raid the player should not make. With one, the policy rungs finally carry their ascending metric, the party stepper caps at the
+  raid's max-useful plateau (a policy click auto-fills to it via the sheet's own `_send_party_autofill` —
+  **not** the herd drawer's `_hunt_assign_autofill`), the trip forecast renders, and the Send button takes
+  its viable/slow/denial/no-surplus treatment and emits `send_hunt_expedition_requested` directly.
+  `_send_party_quarry_id` is re-resolved through `_find_world_herd` every render (a vanished herd clears
+  it rather than forecasting a stale id) and cleared on open, cancel, send, and a panel-band change.
+  **SCOUT is unchanged** — its only input is party size and nothing about it depends on the destination,
+  so it has no ordering problem to fix and still picks its target tile on the map after the send.
 - **Destructive bulk actions ASK, and name what is SPARED** (`_confirm_destructive`, a
   `ConfirmationDialog` — a Window, like the `⋯` `MenuButton`'s popup, so opening either cannot move a
   zone's height). `Unassign all work` sends **`cancel_order <faction> <band> work`** — the signal
@@ -3432,8 +3478,15 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `band_panel_work_page` (34 sources, narrow shell) · `band_panel_work_wide` (the same 34 in the
   bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
   open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`
-  (mission → party → policy → forecast) · `band_panel_no_idle` (the disabled `Send a party…` and its
-  reason) · `band_panel_clear_confirm`. The harness also ASSERTS, per state, that **no
+  (quarry → policy → party → forecast, with the real per-policy metrics and max-useful cap) ·
+  `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
+  below) · `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
+  BEHAVIOURAL assertion rides beside them: `_assert_quarry_eligibility` drives the real
+  `_try_pick_quarry` with a herd INSIDE the fixture band's `hunt_reach` (must leave
+  `_send_party_quarry_id` empty and stay armed) and one beyond it (must set it) — verified to FAIL
+  with the `_is_expedition_quarry` test removed. The GLOW is MapView's, so its frame is
+  `map_preview`'s `map_quarry_targeting` (two huntable herds straddling the reach; only the far one
+  may wear the ring) · `band_panel_no_idle` (both mission buttons disabled and their shared reason) · `band_panel_clear_confirm`. The harness also ASSERTS, per state, that **no
   `ScrollContainer` exists anywhere in the panel** and that **nothing a zone renders falls outside its
   zone rect** — checked RECURSIVELY, since the top-level content is anchored full-rect and so always
   "fits" while the thing that actually overflows is a board row off the bottom of a column. Both

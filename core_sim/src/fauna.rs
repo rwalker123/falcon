@@ -1539,16 +1539,18 @@ fn spawn_game_group_at(
 ) -> Option<Herd> {
     // **Site-filter the candidate list BEFORE the pick.** A species carrying a site rule may only
     // be drawn where the ground satisfies it, so a cold *inland* tile whose only candidate is a
-    // marine forager correctly spawns nothing rather than seating a seal on the tundra. The shore
-    // test is computed once for the tile, and the draw stays exactly one `gen_range` — only its
-    // bound changes.
+    // marine forager correctly spawns nothing rather than seating a seal on the tundra. Candidates
+    // may ask for *different kinds* of water, so the neighbour scan still runs once for the tile and
+    // each candidate is tested against its own requirement; the draw stays exactly one `gen_range`
+    // — only its bound changes.
     let mut candidates = fauna.game_species_for_biome(module_key);
     if candidates
         .iter()
-        .any(|(_, def)| def.requires_adjacent_water)
+        .any(|(_, def)| def.adjacent_water.is_required())
     {
-        let shore = has_adjacent_water(pos, width, height, wrap, tile_registry, tiles);
-        candidates.retain(|(_, def)| !def.requires_adjacent_water || shore);
+        let (has_salt, has_fresh) =
+            adjacent_water_kinds(pos, width, height, wrap, tile_registry, tiles);
+        candidates.retain(|(_, def)| def.adjacent_water.satisfied_by(has_salt, has_fresh));
     }
     if candidates.is_empty() {
         return None;
@@ -4133,23 +4135,43 @@ fn clamp_to_grid(x: i32, y: i32, width: u32, height: u32) -> Option<UVec2> {
     Some(UVec2::new(clamped_x, clamped_y))
 }
 
-/// True when `position` borders open water on any of its six hex sides — the **shore predicate** a
-/// marine forager's spawn site must satisfy ([`crate::fauna_config::SpeciesDef::requires_adjacent_water`]).
-/// It **reads** the real coastline geometry (the `WATER` terrain tag worldgen stamped) and never
-/// edits terrain, so the sole authority on where the water is stays worldgen's.
-fn has_adjacent_water(
+/// Is this tile **salt** water, and is it **fresh** water? The shore predicate's vocabulary, stated
+/// once.
+///
+/// Salt = `WATER` **without** `FRESHWATER`; fresh = `WATER` **with** it. The salt half is exactly
+/// the rule `TileWorld::is_ocean` states in `hydrology.rs` (the drainage code's "only the ocean is a
+/// sink"), in the same tag vocabulary — a landlocked lake, an inland sea and a navigable river are
+/// all `WATER | FRESHWATER` and are therefore *not* ocean.
+fn water_kind(tags: TerrainTags) -> (bool, bool) {
+    if !tags.contains(TerrainTags::WATER) {
+        return (false, false);
+    }
+    let fresh = tags.contains(TerrainTags::FRESHWATER);
+    (!fresh, fresh)
+}
+
+/// What kinds of open water `position` borders across its six hex sides, as `(has_salt, has_fresh)`
+/// — the **shore predicate** a site rule is tested against
+/// ([`crate::fauna_config::SpeciesDef::adjacent_water`]).
+///
+/// It **reads** the real coastline geometry (the terrain tags worldgen stamped) and never edits
+/// terrain, so the sole authority on where the water is stays worldgen's.
+fn adjacent_water_kinds(
     position: UVec2,
     width: u32,
     height: u32,
     wrap: bool,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
-) -> bool {
-    (0..HEX_DIRECTION_COUNT).any(|dir| {
-        hex_neighbor(position.x, position.y, dir, width, height, wrap)
+) -> (bool, bool) {
+    (0..HEX_DIRECTION_COUNT).fold((false, false), |(salt, fresh), dir| {
+        let tags = hex_neighbor(position.x, position.y, dir, width, height, wrap)
             .and_then(|(nx, ny)| registry.index(nx, ny))
             .and_then(|entity| tiles.get(entity).ok())
-            .is_some_and(|tile| tile.terrain_tags.contains(TerrainTags::WATER))
+            .map(|tile| tile.terrain_tags)
+            .unwrap_or_else(TerrainTags::empty);
+        let (neighbor_salt, neighbor_fresh) = water_kind(tags);
+        (salt || neighbor_salt, fresh || neighbor_fresh)
     })
 }
 
@@ -4164,8 +4186,206 @@ fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fauna_config::ShoreRequirement;
     use crate::intensification::RUNG_COMPLETE;
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
+    use crate::terrain::terrain_definition;
+    use sim_runtime::TerrainType;
+
+    // ---- The shore predicate: salt vs fresh --------------------------------------------------
+
+    /// A 3x1 strip `[water, land, land]` whose only water neighbour carries `tags`, plus the
+    /// `Query<&Tile>` machinery `adjacent_water_kinds` wants. Returns `(has_salt, has_fresh)` for
+    /// the land tile at `(1, 0)`.
+    fn adjacent_water_kinds_beside(water: TerrainType) -> (bool, bool) {
+        use bevy::ecs::system::SystemState;
+
+        const WIDTH: u32 = 3;
+        const HEIGHT: u32 = 1;
+
+        let mut world = World::new();
+        let mut tiles = Vec::new();
+        for x in 0..WIDTH {
+            let terrain = if x == 0 { water } else { TerrainType::Tundra };
+            let entity = world
+                .spawn(Tile {
+                    position: UVec2::new(x, 0),
+                    terrain,
+                    terrain_tags: terrain_definition(terrain).tags,
+                    ..Default::default()
+                })
+                .id();
+            tiles.push(entity);
+        }
+        let registry = TileRegistry {
+            tiles,
+            width: WIDTH,
+            height: HEIGHT,
+        };
+
+        let mut state: SystemState<Query<&Tile>> = SystemState::new(&mut world);
+        let query = state.get(&world);
+        adjacent_water_kinds(UVec2::new(1, 0), WIDTH, HEIGHT, false, &registry, &query)
+    }
+
+    /// **A lake is not a coast.** `InlandSea` is `WATER | FRESHWATER`, so a land tile beside one
+    /// reads fresh-but-not-salt and cannot satisfy a `Salt` site rule — the bug that let a Grey Seal
+    /// colony haul out on a one-hex freshwater lake. `ContinentalShelf` is `WATER` without
+    /// `FRESHWATER` (the ocean) and does satisfy it.
+    #[test]
+    fn a_salt_shore_rule_rejects_a_lake_and_accepts_the_ocean() {
+        let (lake_salt, lake_fresh) = adjacent_water_kinds_beside(TerrainType::InlandSea);
+        assert!(!lake_salt, "an inland sea is fresh water, never salt");
+        assert!(lake_fresh, "an inland sea is fresh water");
+        assert!(
+            !ShoreRequirement::Salt.satisfied_by(lake_salt, lake_fresh),
+            "a marine forager must not seat itself beside a landlocked freshwater lake"
+        );
+
+        let (shelf_salt, shelf_fresh) = adjacent_water_kinds_beside(TerrainType::ContinentalShelf);
+        assert!(
+            shelf_salt,
+            "the continental shelf is the ocean — salt water"
+        );
+        assert!(!shelf_fresh, "the ocean is not fresh water");
+        assert!(
+            ShoreRequirement::Salt.satisfied_by(shelf_salt, shelf_fresh),
+            "an ocean shore is exactly what a seal colony hauls out on"
+        );
+    }
+
+    /// Drive the **real** short-range spawn path (`spawn_game_group_at`) `DRAWS` times on a
+    /// `boreal_arctic` land tile whose single water neighbour carries `water`, and report which
+    /// species it seated.
+    ///
+    /// A sweep over generated maps cannot prove this: measured over the six standard seeds, a
+    /// seal-hosting land tile bordering **only** fresh water is 0–10 tiles against 59–100 salt-shore
+    /// ones, and the map-wide game cap seats just 2–3 colonies per map — so the buggy case is a few
+    /// percent per seed and the sweep passes on the old predicate by luck. The fixture removes the
+    /// luck: here fresh-only shore is the **only** ground on offer.
+    fn species_spawned_beside(water: TerrainType) -> std::collections::BTreeSet<String> {
+        use bevy::ecs::system::SystemState;
+
+        /// Wide enough that `build_short_route` always finds land for a multi-anchor species, so a
+        /// missing species means the site rule dropped it and never that routing failed.
+        const SIZE: u32 = 7;
+        /// Enough draws that a candidate surviving the filter is seen with overwhelming probability
+        /// (the pick is uniform over a handful of candidates).
+        const DRAWS: u64 = 200;
+        /// The one water hex, orthogonally adjacent to the target below.
+        const WATER_TILE: UVec2 = UVec2::new(3, 2);
+        /// The land hex under test — its only water neighbour is [`WATER_TILE`].
+        const TARGET: UVec2 = UVec2::new(3, 3);
+
+        let mut world = World::new();
+        let mut tiles = Vec::new();
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let pos = UVec2::new(x, y);
+                // Tundra is an explicit `boreal_arctic` arm of `classify_food_module`.
+                let terrain = if pos == WATER_TILE {
+                    water
+                } else {
+                    TerrainType::Tundra
+                };
+                let entity = world
+                    .spawn(Tile {
+                        position: pos,
+                        terrain,
+                        terrain_tags: terrain_definition(terrain).tags,
+                        ..Default::default()
+                    })
+                    .id();
+                tiles.push(entity);
+            }
+        }
+        let registry = TileRegistry {
+            tiles,
+            width: SIZE,
+            height: SIZE,
+        };
+        let fauna = FaunaConfig::builtin();
+
+        let mut state: SystemState<Query<&Tile>> = SystemState::new(&mut world);
+        let query = state.get(&world);
+        (0..DRAWS)
+            .filter_map(|draw| {
+                let mut rng = SmallRng::seed_from_u64(draw);
+                spawn_game_group_at(
+                    TARGET,
+                    FoodModule::BorealArctic.as_str(),
+                    0,
+                    &fauna,
+                    SIZE,
+                    SIZE,
+                    false,
+                    &registry,
+                    &query,
+                    &mut rng,
+                )
+                .map(|herd| herd.species)
+            })
+            .collect()
+    }
+
+    /// **The regression: no seal colony on a lakeshore.** Driven through the real spawn path, on a
+    /// `boreal_arctic` tile whose only water is an `InlandSea`. Under the pre-fix any-`WATER`
+    /// predicate the seal survives the filter and this fails; the `ContinentalShelf` arm is what
+    /// keeps it from passing vacuously (the same fixture, salt water, **must** seat seals).
+    #[test]
+    fn the_spawn_path_seats_seals_on_an_ocean_shore_and_never_on_a_lakeshore() {
+        const SEAL: &str = "Grey Seals";
+
+        let beside_ocean = species_spawned_beside(TerrainType::ContinentalShelf);
+        assert!(
+            beside_ocean.iter().any(|species| species == SEAL),
+            "the fixture must be able to seat a seal at all, or the lakeshore assertion proves \
+             nothing — got {beside_ocean:?}"
+        );
+
+        let beside_lake = species_spawned_beside(TerrainType::InlandSea);
+        assert!(
+            !beside_lake.iter().any(|species| species == SEAL),
+            "a seal colony hauled out beside a landlocked freshwater lake — the shore rule must \
+             read SALT water, not any water; got {beside_lake:?}"
+        );
+        assert!(
+            !beside_lake.is_empty(),
+            "the lakeshore tile must still host the biome's other game, or the filter is dropping \
+             everything rather than just the marine forager"
+        );
+    }
+
+    /// The freshwater species are **unaffected** by the lake case — the Silt Catfish rides `Any` and
+    /// must keep its pre-split behaviour exactly, and a hypothetical `Fresh` species wants the lake.
+    #[test]
+    fn fresh_and_any_shore_rules_are_satisfied_by_a_lake() {
+        let (salt, fresh) = adjacent_water_kinds_beside(TerrainType::InlandSea);
+        assert!(ShoreRequirement::Any.satisfied_by(salt, fresh));
+        assert!(ShoreRequirement::Fresh.satisfied_by(salt, fresh));
+        assert!(ShoreRequirement::None.satisfied_by(salt, fresh));
+    }
+
+    /// A tile with no water at all satisfies nothing but `None` — including `Any`, which is the
+    /// state the pre-split `requires_adjacent_water: true` expressed.
+    #[test]
+    fn a_dry_site_satisfies_only_the_absent_rule() {
+        let (salt, fresh) = adjacent_water_kinds_beside(TerrainType::Tundra);
+        assert!(!salt);
+        assert!(!fresh);
+        assert!(ShoreRequirement::None.satisfied_by(salt, fresh));
+        for requirement in [
+            ShoreRequirement::Any,
+            ShoreRequirement::Salt,
+            ShoreRequirement::Fresh,
+        ] {
+            assert!(
+                !requirement.satisfied_by(salt, fresh),
+                "{} must not be satisfied by dry ground",
+                requirement.as_str()
+            );
+        }
+    }
 
     #[test]
     fn ecology_phase_string_roundtrips() {

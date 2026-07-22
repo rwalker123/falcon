@@ -53,6 +53,11 @@ const HUNT_FORECAST_PARTY := 4
 # above every policy ceiling here, so the HERD (not the hunters) is the binding constraint — which is
 # exactly the case where the per-turn yield preview earns its keep.
 const LOCAL_HUNT_HUNTERS := 6
+# The crowded hex's staffed-wildlife-row state: the SAME herd worked both ways at once. Two distinct
+# counts so the row's meta can only read right if it SUMS them (4 + 6 = `10 🏹`) — a single shared
+# number would pass even if one source were dropped.
+const OCCUPANTS_HUNT_LOCAL_WORKERS := 4
+const OCCUPANTS_HUNT_PARTY_WORKERS := 6
 # The sim's forward-SIMULATED turns-to-fill for the 4-worker party in these states (it exports the
 # answer; the client never divides). Sustain is a small renewable flow → slow; Surplus/Market strip the
 # herd's stock headroom first → fast. The deer's Sustain trip (54) blows past the 20-turn viability
@@ -1553,6 +1558,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("occupants_herd")
 
+	# State 3e-staffed — the SAME hex, with the bison actually being hunted BOTH ways at once: a
+	# standing local hunt (4 workers assigned by Band Fen) and a detached hunting party of 6
+	# committed to the same herd. The wildlife row's meta must read the SUM, `10 🏹`, right-aligned
+	# exactly like the land row's `N 🌾` — one herd, two mechanisms, one staffing number. The drawer
+	# leads with `Size: Big game`, the class that used to ride the row.
+	var hunted_bands: Array = _occupied_units_fixture()
+	hunted_bands[0]["labor_assignments"] = [
+		{"kind": "hunt", "workers": OCCUPANTS_HUNT_LOCAL_WORKERS, "fauna_id": "game_bison_02",
+			"policy": "sustain", "target_x": 58, "target_y": 24},
+	]
+	_hud._player_bands = hunted_bands
+	_hud._player_band = hunted_bands[0]
+	_hud._player_expeditions = [
+		{"id": "Party Fen", "entity": 401, "home_band_entity": 301,
+			"size": OCCUPANTS_HUNT_PARTY_WORKERS, "expedition_mission": "hunt",
+			"expedition_target_herd": "game_bison_02", "expedition_phase": "outbound",
+			"current_x": 59, "current_y": 24},
+	]
+	_hud.show_herd_selection(_occupied_herd_fixture())
+	await _settle()
+	await _save("occupants_herd_staffed")
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._player_expeditions = []
+
 	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
 	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its
 	# first row, and one height-capped drawer that whichever row is lit fills. These six states are
@@ -1850,22 +1880,10 @@ func _ready() -> void:
 	await _save("targeting_banner")
 	_hud.cancel_active_targeting()
 
-	# States 4a–4c — the PRE-LAUNCH HUNT FORECAST. A hunt expedition is armed (4 workers, Sustain);
-	# the player is now hovering a herd, and the banner's second line says what the trip would cost
-	# BEFORE the click commits. The turns are LOOKED UP in the hovered herd's `hunt_trip_estimates`
-	# (the sim forward-simulated the trip; the client divides nothing). Under Sustain the party lives
-	# off a small renewable flow, so the answer is entirely herd-dependent. Same party, three herds:
-	#   4a viable      — Thunder Mammoth: the sim's cell says 6 turns → within the 20-turn warn line
-	#   4b not viable  — Red Deer:        the sim's cell says 54 turns → past the warn line
-	#   4c never fills — a collapsing Wild Fowl flock: `turns_to_fill = 0` → the party would return empty
-	for state: Dictionary in _hunt_forecast_states():
-		_hud.show_unit_selection(_band_fixture())
-		_hud._on_send_hunt_expedition_pressed(_band_fixture(), HUNT_FORECAST_PARTY, "sustain")
-		_hud.show_tooltip(state["tile"])
-		await _settle()
-		await _save(String(state["name"]))
-		_hud.cancel_active_targeting()
-		_hud.show_tooltip({})
+	# The old states 4a–4c — the pre-launch raid forecast hanging off the TARGETING BANNER — are
+	# gone with the mechanism. They existed because the herd was only known at the targeting step; the
+	# band-panel launch flow now picks the quarry FIRST, inside the compose sheet, so the forecast
+	# lives in the form with the real party size and policy (band_panel_preview `band_panel_compose_hunt`).
 
 	# State 5 — quick-hunt convenience (map double-click a herd): with idle workers it
 	# assigns them to hunt; with none it posts a command-feed note instead of silently
@@ -3588,42 +3606,6 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 		"river_edges": river_mask,
 	}
 
-## The three pre-launch hunt-forecast states, each a hovered hex carrying one huntable herd whose
-## exported `hunt_trip_estimates` row (the sim's forward-simulated turns-to-fill, which the banner
-## LOOKS UP — it computes nothing) puts the same 4-worker Sustain party in a different place:
-## comfortably viable, viable-but-a-trap, and never fills.
-func _hunt_forecast_states() -> Array:
-	return [
-		{
-			# A brisk raid: ≈8 animals over ≈6 turns.
-			"name": "hunt_forecast_viable",
-			"tile": _herd_hover_tile(_forecast_herd(
-				"game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
-				MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
-				MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS
-			)),
-		},
-		{
-			# A slow raid: ≈6 animals, but over 54 turns (past the warn line) → amber "a slow raid".
-			"name": "hunt_forecast_slow",
-			"tile": _herd_hover_tile(_forecast_herd(
-				"game_deer_07", "Red Deer", "thriving", 0.30,
-				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
-				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS
-			)),
-		},
-		{
-			"name": "hunt_forecast_no_surplus",
-			# A collapsing (sub-Allee) flock at/below its floor: animalsTaken = 0, so the raid would
-			# come home empty → red "too lean to raid".
-			"tile": _herd_hover_tile(_forecast_herd(
-				"game_fowl_03", "Wild Fowl", "collapsing", 0.0,
-				NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS,
-				NO_SURPLUS_ANIMALS, NO_SURPLUS_ANIMALS
-			)),
-		},
-	]
-
 ## A herd carrying the two DIFFERENT things the sim exports for the two DIFFERENT actors:
 ##   `hunt_policy_ceilings` — the BAND's renewable FLOW ceiling {policy → provisions/turn}. The local
 ##       hunt preview is pure arithmetic over it (Sustain's entry IS the herd's sustainable yield).
@@ -3693,12 +3675,6 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 			},
 		},
 	}
-
-## The hovered-hex payload MapView.tile_hovered delivers (Hud.show_tooltip): the herds the hex carries.
-func _herd_hover_tile(herd: Dictionary) -> Dictionary:
-	var tile := _food_tile_fixture()
-	tile["herds"] = [herd]
-	return tile
 
 ## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
 ## (the phase gates cultivation, so it always shows on a patch) as a WARN-amber "⚠ Stressed".
