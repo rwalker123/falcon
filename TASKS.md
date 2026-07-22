@@ -432,9 +432,28 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
 
 ## Core Simulation — Bugs
 
-- [ ] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
-  `systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
-  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`. Its
+- [x] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
+  **Fixed.** `spawn_initial_world` now takes `tile_registry: Option<Res<TileRegistry>>` and
+  early-returns (with a `worldgen.spawn_initial_world.skipped=already_built` **warn** — a second
+  Startup pass is never intentional, so it leaves a trace where the silent siblings do not) **before**
+  the inventory/knowledge/culture seeding, which runs ahead of any tile work and would otherwise
+  double the start profile's grants regardless of a tile-level guard.
+  **The subtlety resolved:** the guard cannot break map regeneration, because `new_game`/`ResetMap`
+  never re-run Startup on the live world — their shared `rebuild_world_from_config`
+  (`core_sim/src/bin/server.rs:1341`) starts from `build_headless_app()`, i.e. a brand-new `World`
+  with no `TileRegistry` at all. `Option<Res<..>>` (not `Res<..>`) is load-bearing for the same
+  reason: `TileRegistry` is inserted *by this system* via `Commands`, never `init_resource`'d, so on
+  the legitimate first run — and on the shipped idle-booting server — the resource does not exist.
+  **Proven failing first**, then fixed: `core_sim/tests/worldgen_startup_idempotent.rs` runs the real
+  `Startup` schedule twice and measured, unguarded, **2080 tile entities against a 1040-cell grid**
+  (the reported 8320-vs-4160 doubling), **2 cohorts vs 1**, and a **stockpile of 80 vs 40** — while
+  `TileRegistry.tiles` stayed at 1040, confirming the orphaned first tile set the registry no longer
+  indexes. The inventory surface is a separate test because `apply_trade_goods_bonus` drains
+  `trade_goods` to zero two systems later, so the double grant is real but invisible at chain end.
+  The PR #149 call-site workaround in `core_sim/tests/fauna_coastal_habitat.rs` is retired — the
+  harness drives `run_schedule(Startup)` unconditionally again.
+  ~~`systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
+  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`.~~ Its
   three Startup siblings all guard and early-return on an already-populated registry:
   `fauna::spawn_initial_herds` (also rebuilding telemetry/density before returning),
   `forage::spawn_initial_forage` (`forage.rs:489`) and `graze::spawn_initial_graze` (`graze.rs:184`).
@@ -452,13 +471,10 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
   broadly reads doubled values. The PR #149 test was corrected at the call site
   (`core_sim/tests/fauna_coastal_habitat.rs`, commit `48da2c8`) rather than at the cause, which is
   this entry.
-  **Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
-  to check first:** `spawn_initial_world` does more than stamp tiles (it also seeds starting
-  inventory, knowledge fragments, and culture), and `rebuild_world_from_config` *deliberately*
-  regenerates the world on `new_game`/`ResetMap`. So the guard must distinguish "Startup fired twice
-  by accident" from "the operator asked for a new world" — confirm how the rebuild path clears state
-  before choosing what to key the guard on, or a naive `tiles.is_empty()` check will break map
-  regeneration. Owner: core_sim.
+  ~~**Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
+  to check first:** the guard must distinguish "Startup fired twice by accident" from "the operator
+  asked for a new world."~~ Answered above: the rebuild path builds a fresh `App`, so the two cases
+  are never in the same `World` and a registry-emptiness key is safe. Owner: core_sim.
 
 - [x] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** **Fixed.** Proven
   end-to-end first: `core_sim/tests/rollback_tended_survival.rs` drives a real
