@@ -1,0 +1,267 @@
+{
+  "_comment": "THE FLORA ROSTER — NAMING DECOMPOSES, IT DOES NOT ADD (docs/plan_flora_roster.md §2, the ruling this whole file rests on). A roster entry says what a tile's EXISTING forage capacity IS MADE OF; it never adds capacity on top. MixedWoodland's 190 (labor_config.json -> forage.capacity_by_biome) becomes named shares — hazel + oak mast + berry — that still sum to 190. The shares are DERIVED, never authored per tile: share(species, biome) = weight(species, biome) / SUM of the weights of every species hosting that biome, and patch_capacity(species, tile) = share x forage.capacity_by_biome[tile.biome]. Because the shares are normalized they sum to 1 BY CONSTRUCTION, so a tile's total can never drift from capacity_by_biome and adding a species to a biome DILUTES the others rather than inflating the tile. This file therefore changes NO capacity, NO yield and NO behaviour on its own — F1 is provably economy-neutral, and the neutrality is structural (see _comment_host_biomes) rather than a tuning promise. Keyed on TerrainType (the 38 biomes), NOT on FoodModule (the 10 buckets): fauna keys host_biomes off FoodModule because an animal RANGES over a region, but a plant IS its tile, and the buckets are too coarse to say 'this wants floodplain silt, not any wetland'. FoodModule is untouched — it still decides what KIND of gathering a tile offers, and its seasonal_weight.",
+
+  "_comment_coverage": "COVERAGE MUST BE TOTAL OVER THE NON-ZERO FORAGE BIOMES, and must touch none of the zeros. validate_against_forage() rejects (a) any biome with a NON-ZERO forage.capacity_by_biome that NO species hosts — a tile whose food has no name — and (b) any species hosting a biome whose capacity is ZERO — claiming ground that carries no forage. That strict pair is the same 'zero must be stated, never defaulted' discipline capacity_by_biome itself enforces, and it is what forces BREADTH BEFORE DEPTH: F1 cannot ship 'a couple of species', it must ship a complete-but-coarse roster (13 broad families, each hosting many biomes). A later slice refines it into a fine-grained one; a permissive 'unnamed remainder' would quietly become permanent. The 30 non-zero biomes are all named below (NavigableRiver by river_fish alone — see _comment_river_fish; its capacity_by_biome row is bypassed, so that host row means the FISHERY BONUS term, not the row); the 8 stated zeros (DeepOcean, HydrothermalVentField, SaltFlat, Glacier, ActiveVolcanoSlope, BasalticLavaField, AshPlain, FumaroleBasin) are named by nobody.",
+
+  "_comment_host_biomes": "host_biomes IS A TABLE OF RELATIVE AFFINITY WEIGHTS, NOT CAPACITIES. A weight is meaningful only against the other weights on the SAME biome — 0.55 does not mean '0.55 of anything', it means 'more of this biome's basket than a species weighted 0.30 on it'. A species' best country carries its higher weight (date palm 0.55 on OasisBasin against 0.45 on HotDesertErg). NORMALIZATION IS WHAT MAKES NEUTRALITY STRUCTURAL: the engine divides each weight by the biome's total, so the shares sum to exactly 1 whatever anyone writes here. You cannot retune this table into a capacity change — the only thing a weight edit can do is move share BETWEEN the named plants of one biome. Retuning the human food web is a labor_config.json edit and must never ride in on a roster change.",
+
+  "_comment_yield": "THE YIELD VECTOR — three characteristic SHAPES of one per-species output vector, not three subsystems. A harvest of B biomass pays B x yield.* into three different accounts: provisions (human food, the shipped forage path), fodder (animal feed) and trade_goods (trade value, which differentiates today's single flat scalar). `role` survives only as a DISPLAY TAG derived from which component dominates — it is never branched on in the sim. IN F1 EVERY ROW CARRIES TODAY'S FLAT VALUES VERBATIM: provisions_per_biomass 0.05 is labor_config.json's forage.provisions_per_biomass, trade_goods_per_biomass 0.005 is its forage.market.trade_goods_per_biomass, and fodder_per_biomass is 0.0 because there is no hay in the model yet. So today's behaviour is the degenerate case — every existing patch behaves as a single implicit species with exactly this vector — and F1 cannot move the economy by construction. THE VECTOR IS PARSED AND VALIDATED ONLY IN F1: nothing reads it. Divergence (a fodder-dominant crop, a trade-dominant cash crop, a per-species provisions rate) is later slices, and each of those IS a balance change that must be measured in a live campaign.",
+
+  "_comment_cultivation_ceiling": "HOW FAR UP THE PLANT LADDER A SPECIES CAN CLIMB — the exact twin of fauna_config.json's husbandry_ceiling, for the same reason. The ladder is a SEQUENCE (wild -> tended -> field), so a species' reach is a single ceiling and not two independent flags, which makes the incoherent 'sowable but not tendable' state unrepresentable (no validate() combination guard needed). `wild` is a gather-forever stand — an oak's mast is a wild harvest and you do not sow an oak forest on a five-turn horizon; `tended` reaches Cultivate but never Sow; `field` is the full ladder. Not every plant climbs, mirroring the manual's 'not every animal climbs'. The accessors exist and are unused in F1 — Cultivate/Sow start reading them in F2, exactly as HusbandryCeiling shipped its accessors ahead of its gates.",
+
+  "_comment_regrowth_rate": "PER-SPECIES LOGISTIC REGROWTH — the plant twin of SpeciesDef.regrowth_rate. Every F1 row carries labor_config.json's forage.ecology.regrowth_rate (0.25) VERBATIM, so regrowth is unmoved along with everything else. Per-species divergence (a berry scrub that reseeds hot, a nut grove that does not) is a later slice.",
+
+  "_comment_river_fish": "THE CHANNEL ITSELF, NOT THE VALLEY IT WAS CUT THROUGH. A navigable hex's forage capacity is TWO terms, not one (ForageLaborConfig::navigable_forage_capacity): capacity_for(underlying biome) + navigable_river_forage_bonus (80). The NavigableRiver row in forage.capacity_by_biome is vestigial and bypassed, so decomposing that row would name nothing that is actually there — and decomposing only the underlying biome would leave the whole 80-unit fishery UNNAMED, which is exactly the nameless food the coverage validator exists to forbid, leaking in through a path that validator cannot see. So this species is ALONE on NavigableRiver and means precisely the bonus term: a giant river is always a fishery. FloraConfig::navigable_composition blends the two baskets in the same two-term shape as navigable_forage_capacity (each weighted by ITS OWN term, then renormalized), and forage::tile_flora_composition is THE single seam every caller reads, so the capacity and the composition cannot drift.",
+
+  "species": {
+    "shellfish_beds": {
+      "display_name": "Shellfish Beds",
+      "plural": "shellfish beds",
+      "adjective": "shellfish",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "TidalFlat": 0.55,
+        "ContinentalShelf": 0.5,
+        "CoralShelf": 0.45,
+        "InlandSea": 0.35,
+        "MangroveSwamp": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "reed_and_root": {
+      "display_name": "Reeds & Water Roots",
+      "plural": "reeds and water roots",
+      "adjective": "reed",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "FreshwaterMarsh": 0.55,
+        "RiverDelta": 0.5,
+        "MangroveSwamp": 0.45,
+        "TidalFlat": 0.3,
+        "Floodplain": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_emmer": {
+      "display_name": "Wild Emmer",
+      "plural": "wild emmer",
+      "adjective": "emmer",
+      "role": "staple",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "AlluvialPlain": 0.45,
+        "Floodplain": 0.35,
+        "OasisBasin": 0.3,
+        "PrairieSteppe": 0.3,
+        "RollingHills": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "seed_grasses": {
+      "display_name": "Seed Grasses",
+      "plural": "seed grasses",
+      "adjective": "seed-grass",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "PrairieSteppe": 0.5,
+        "PeriglacialSteppe": 0.4,
+        "SemiAridScrub": 0.35,
+        "HighPlateau": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "hazel": {
+      "display_name": "Hazel",
+      "plural": "hazel",
+      "adjective": "hazel",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "MixedWoodland": 0.4,
+        "KarstHighland": 0.35,
+        "RollingHills": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "oak_mast": {
+      "display_name": "Oak Mast",
+      "plural": "oak mast",
+      "adjective": "oak",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "MixedWoodland": 0.35
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "berry_scrub": {
+      "display_name": "Berry Scrub",
+      "plural": "berry scrub",
+      "adjective": "berry",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "PeatHeath": 0.5,
+        "BorealTaiga": 0.45,
+        "Tundra": 0.35,
+        "SeasonalSnowfield": 0.3,
+        "MixedWoodland": 0.25,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "pine_nut": {
+      "display_name": "Pine Nut",
+      "plural": "pine nuts",
+      "adjective": "pine-nut",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "BorealTaiga": 0.4,
+        "AlpineMountain": 0.4,
+        "HighPlateau": 0.35,
+        "KarstHighland": 0.3,
+        "SeasonalSnowfield": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_tubers": {
+      "display_name": "Wild Tubers",
+      "plural": "wild tubers",
+      "adjective": "tuber",
+      "role": "staple",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "ImpactCraterField": 0.5,
+        "SinkholeField": 0.5,
+        "AquiferCeiling": 0.45,
+        "KarstCavernMouth": 0.4,
+        "AlluvialPlain": 0.35,
+        "Floodplain": 0.3,
+        "RollingHills": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "date_palm": {
+      "display_name": "Date Palm",
+      "plural": "date palms",
+      "adjective": "date",
+      "role": "staple",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "OasisBasin": 0.55,
+        "HotDesertErg": 0.45,
+        "AquiferCeiling": 0.35
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "desert_gourd": {
+      "display_name": "Desert Gourd",
+      "plural": "desert gourds",
+      "adjective": "gourd",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "RockyReg": 0.55,
+        "CanyonBadlands": 0.55,
+        "SemiAridScrub": 0.4,
+        "HotDesertErg": 0.35
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "arctic_greens": {
+      "display_name": "Arctic Greens",
+      "plural": "arctic greens",
+      "adjective": "arctic-green",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "Tundra": 0.45,
+        "SeasonalSnowfield": 0.4,
+        "PeriglacialSteppe": 0.35,
+        "AlpineMountain": 0.25,
+        "KarstCavernMouth": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "river_fish": {
+      "display_name": "River Fish & Mussels",
+      "plural": "river fish and mussels",
+      "adjective": "river-fish",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "NavigableRiver": 1.0
+      },
+      "yield": {
+        "provisions_per_biomass": 0.05,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    }
+  }
+}

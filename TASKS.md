@@ -266,6 +266,22 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Extend `sim_schema/schemas/snapshot.fbs` and generated bindings with Knowledge Ledger tables (`KnowledgeLedgerState`, modifier breakdown children, espionage timeline) plus supporting enums, then update Rust builders and Godot bindings (Owner: Tooling Team — Mei, Estimate: 1d; Deps: KnowledgeLedger infrastructure task). _Status_: Schema/rust bindings now emit ledger entries, modifier breakdowns, espionage timeline, and knowledge metric payloads; FlatBuffers regenerated via `cargo build -p shadow_scale_flatbuffers`._
 - [x] Surface the new knowledge metrics/log channels in `sim_runtime` (`SimulationMetrics`, `knowledge.telemetry`) and integrate helper views for ledger payloads (Owner: Tooling Team — Mei, Estimate: 0.5d; Deps: schema extension task). _Status_: sim_runtime now exposes knowledge ledger/timeline views, encode/decode helpers, telemetry parsing, and SimulationMetrics/WorldSnapshot wiring carries knowledge counters._
 
+- [ ] **Per-entity diffing for the forage-patch snapshot section.** Surfaced by a Copilot review on
+  PR #157 (flora F1), and the finding is bigger than the field that exposed it.
+  `SnapshotHistory` diffs `forage_patches` as a **whole vector** (`core_sim/src/snapshot/capture.rs`
+  — `if self.forage_patches == forage_patches_state { None } else { Some(...) }`), and patches regrow
+  **every turn**, so the entire array reships on essentially every delta rather than only on full
+  snapshots. Patch count is order-1000 on a standard map (one per non-zero-capacity `FoodModuleTag`
+  tile, which is nearly all land plus `ContinentalShelf`/`InlandSea`), and the section now carries 22
+  fields per patch — so this is one of the larger recurring payloads on the wire.
+  **Measure first, then fix:** encoded snapshot size on a standard map, before and after. The fix is
+  per-entity diffing of the section (pays off across all 22 fields), **not** trimming any one field.
+  Explicitly *rejected* as the fix: dropping `FloraShareInfo.displayName` to ship ids only — the
+  client holds no roster by design (the same server-resolves-display-names rule the discovered-sites
+  wire follows), and a per-biome composition table referenced by id is only valid in F1, since
+  `docs/plan_flora_roster.md` §4.2 makes composition genuinely per-patch at F2 when `Cultivate`/`Sow`
+  commit a tile to one species. (Owner: TBD, Estimate: 1d + measurement; Deps: none.)
+
 ### Culture Trait Stack
 - [x] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
 - [x] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
@@ -1085,19 +1101,34 @@ scarcity + the intensification ladder, so *which* crop and *whether it's worth t
 choices — not a tech-tree checklist you fill regardless of terrain. The design doc has to show this
 before any config lands.
 
-- [ ] **Design doc first (manual-first, then config).** Author `docs/plan_flora_roster.md`: the flora
-  schema (mirror the `fauna_config.json` / `SpeciesDef` data-driven pattern — likely a
-  `flora_config.json` + loader, so adding a plant is config, not code), the three roles above, biome
-  affinity (reuse the `FoodModule` buckets or a terrain-keyed table — decide), how fodder interlocks
-  with `GrazePatch`/pen upkeep, and how cash crops feed the yield-vector + Market. New gameplay content
-  → add to `shadow_scale_strategy_game_concept_technical_plan_v_0.md` first, then the config. Cross-link
-  `docs/plan_grazing_foundation.md` (the two food webs), `docs/plan_intensification_ladder.md` (the
-  rung grammar), and this fauna section (the roster pattern it parallels).
-- [ ] **Then phased impl** — seed a starter roster per role, wire fodder into the pen economy, wire
-  cash crops into trade. Scope the phases in the design doc.
-
-**Deferred — fauna is the active arc.** The current work continues on the Fauna Roster above (sheep →
-horse → regional game); flora is the *next* content arc, not this one.
+- [x] **Design doc + manual section. DONE** (worktree `flora-roster`). `docs/plan_flora_roster.md`
+  plus the manual's §2a *"What Grows There — Named Plants"*. The rulings it settles:
+  **(1) naming decomposes, it never adds** — a species' share of `forage.capacity_by_biome`, normalized
+  per tile, so the roster is provably economy-neutral at the wild rung and the crop choice only becomes
+  a decision at rungs 2–3; **(2) affinity is terrain-keyed** (the 38 biomes), *not* the 10 `FoodModule`
+  buckets — a plant *is* its tile where an animal *ranges*, and the buckets can't say "floodplain silt,
+  not any wetland"; **(3) the three roles are one yield vector**
+  (`provisions`/`fodder`/`trade_goods` per biomass), with `role` demoted to a display tag — which is
+  what gives the future Market/yield-vector arc a data surface instead of a fourth thing to invent;
+  **(4) `cultivation_ceiling`** (wild|tended|field), the `husbandry_ceiling` twin — not every plant
+  climbs; **(5) fodder is a coupling, not a lever** — a fodder Field fills a *separate* feed store that
+  adds a term to `K_pen`, keeping the deliberately-lossy human-larder path intact (grazing foundation
+  §2.1, "the larder can never be the strategy").
+- [ ] **F1 — schema + loader + decomposition, economy-neutral.** `flora_config.json` + `FloraDef`
+  (mirror the `fauna_config.rs` loader), `validate()` (every non-zero-capacity biome must be hosted;
+  no nameless food), the derived per-tile share table, `ForagePatch.species: Option<FloraSpeciesId>`
+  (`None` = wild mix), tile-card readout. **Verification is that nothing moves**: map-wide and
+  per-start food capacity identical to pre-arc.
+- [ ] **F2 — the rungs get a subject.** `Cultivate`/`Sow` select a species; the yield vector drives
+  the harvest; the displaced basket is the cost of committing. First balance-moving slice — playtest.
+- [ ] **F3 — fodder, both halves.** Fodder store + fodder Field (plant side, no new plant knowledge —
+  `Sow` already exists), then the animal rung 4: `Foddering` (discovery id **2007**, next free) and
+  the `delivered_fodder_flow` term in `K_pen`. Measure: a fed pen on thin pasture is survivable but
+  *expensive*, never free.
+- [ ] **F4 — cash crops.** Trade-dominant vectors replacing the flat `trade_goods_per_biomass`; the
+  calories-or-cash tension on rung 3's already-scarce good ground.
+- [ ] **F5 — mass-fill + client.** Full roster across all non-zero biomes, icons, labels, composition
+  readout.
 
 ### Exploration & Wondrous Sites
 

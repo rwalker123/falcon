@@ -3581,6 +3581,25 @@ fn forage_patches_to_array(
         if let Some(sow_site_refusal) = patch.sowSiteRefusal() {
             let _ = dict.insert("sow_site_refusal", sow_site_refusal);
         }
+        // WHAT GROWS HERE (flora roster F1) — the named plants this tile's forage capacity is made
+        // of, as normalized shares that sum to 1. Derived from the BIOME, not from patch state, so
+        // every tile of a biome reads the same list. Already sorted (share DESC, then species key
+        // ASC) server-side: preserve the wire order, never re-sort client-side.
+        if let Some(composition) = patch.composition() {
+            let mut shares = VarArray::new();
+            for share in composition {
+                let mut share_dict = VarDictionary::new();
+                if let Some(species) = share.species() {
+                    let _ = share_dict.insert("species", species);
+                }
+                if let Some(display_name) = share.displayName() {
+                    let _ = share_dict.insert("display_name", display_name);
+                }
+                let _ = share_dict.insert("share", share.share());
+                shares.push(&share_dict.to_variant());
+            }
+            let _ = dict.insert("composition", &shares);
+        }
         array.push(&dict.to_variant());
     }
     array
