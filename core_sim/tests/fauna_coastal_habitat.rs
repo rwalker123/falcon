@@ -76,20 +76,17 @@ fn survey(seed: u64, turns: u32) -> Survey {
     app.world.insert_resource(config);
 
     // Run the Startup chain in shipped order (worldgen → hydrology → tag solver → palette clamp →
-    // reconcile → `spawn_initial_herds`) exactly once, then resolve `turns` full turns so
-    // `advance_herds` gets its chance to move the colony off its spawn tile.
+    // reconcile → `spawn_initial_herds`), then resolve `turns` full turns so `advance_herds` gets
+    // its chance to move the colony off its spawn tile.
     //
     // `app.update()` runs Startup itself on its **first** call: `Main::run_main` owns the
     // `Local<bool>` that gates the startup labels, and `world.run_schedule(Startup)` never touches
-    // that local. So a manual `run_schedule` alongside `update()` double-runs worldgen —
-    // `spawn_initial_world` has no idempotency guard and would lay down a second full `width ×
-    // height` tile set. Hence: drive Startup by hand only when no turn is resolved.
-    if turns == 0 {
-        app.world.run_schedule(bevy::app::Startup);
-    } else {
-        for _ in 0..turns {
-            app.update();
-        }
+    // that local, so the chain here runs twice whenever a turn is resolved. That is a no-op — every
+    // Startup spawner guards on an already-built world, `spawn_initial_world` included (see
+    // `core_sim/tests/worldgen_startup_idempotent.rs`).
+    app.world.run_schedule(bevy::app::Startup);
+    for _ in 0..turns {
+        app.update();
     }
 
     let width = GRID.x;

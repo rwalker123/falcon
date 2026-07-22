@@ -345,6 +345,11 @@ const ACTIVITY_GLYPHS := {
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 const FOOD_UNLIMITED_GLYPH := "∞"
+# The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the
+# ONE reader (`_format_detail_bbcode`'s Food/Provisions/Carried threshold tint, which recognizes the
+# row by looking for this word). They must never drift: the tint went dead once already because the
+# renderer switched from "days" to "turns" while the guard kept testing for the old literal.
+const FOOD_RUNWAY_UNIT := "turn"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 # Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
 # register into — one prefs file, its own section; the path/section constants are borrowed.
@@ -401,7 +406,7 @@ var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
 # can threshold-tint the Food row. NAN when no band is selected.
-var _selected_band_food_days: float = NAN
+var _selected_band_food_turns: float = NAN
 # Set by `_band_food_line`: the current player band carries real food flow, so the Food row becomes a
 # clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
 var _food_flow_present: bool = false
@@ -434,9 +439,9 @@ const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 const LABOR_POLICY_SUSTAIN := "sustain"
 const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
 # INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
-# cost — the source pays only its dip ceiling (`ceiling_cultivate` / `ceiling_sow` / `ceiling_tame`'s
-# equivalent / `ceiling_corral`) while the workers prepare it, then flips to the much higher managed
-# yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
+# cost — the source pays only its dip ceiling (the patch's `ceiling_cultivate` / `ceiling_sow`
+# scalars; for a herd, the `tame` / `corral` rows of its `hunt_policy_ceilings` list) while the
+# workers prepare it, then flips to the much higher managed yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
 # + Corral are hunt-only. Each ladder now runs its verb TWICE — one verb per rung-transition:
 #   plants:  wild --cultivate--> Tended Patch --sow--> Field
 #   animals: wild --tame------> Pastoral herd --corral--> Pen
@@ -817,9 +822,10 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # raid-animals face any more — the three pickers read identically.
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
-# forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
-# both the forage patch and the herd, a `per_worker_yield` plus one take ceiling per policy — all
-# food/turn at the source's CURRENT biomass and at output_multiplier 1.0:
+# forecast is the same truth shown WHILE COMPOSING: the sim exports, for the forage patch and the
+# herd alike, a `per_worker_yield` plus one take ceiling per policy (the patch as scalar fields, the
+# herd as its `hunt_policy_ceilings` list) — all food/turn at the source's CURRENT biomass and at
+# output_multiplier 1.0:
 #     expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy]) × band output
 #     max_useful_workers(policy) = ceil(ceiling[policy] / per_worker_yield)
 # The ceilings are already biomass-clamped, so that `min` IS the take. The worker stepper caps at
@@ -832,18 +838,20 @@ const FORECAST_CEILING_KEYS := {
     "surplus": "ceiling_surplus",
     "market": "ceiling_market",
     "eradicate": "ceiling_eradicate",
-    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch/pen is being prepared —
-    # so the same expected(workers, policy) math shows the cost of the investment while composing.
+    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
+    # same expected(workers, policy) math shows the cost of the investment while composing.
     "cultivate": "ceiling_cultivate",
-    "corral": "ceiling_corral",
     # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
     # are independently tunable, and folding them onto one number would pass every forecast==actual
     # test by coincidence and lie the moment either rung is retuned.
     "sow": "ceiling_sow",
-    # NOTE — `tame` is deliberately ABSENT. There is no flat `ceilingTame` scalar on the wire; the
-    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so `_forecast_inputs` reads it via
-    # `_hunt_policy_ceiling` (its payoff, `pastoral_yield`, is a real scalar in FORECAST_PAYOFF_KEYS).
-    # Adding a key here would silently fall back to Sustain's ceiling and quote the wrong dip.
+    # NOTE — this dict is the FORAGE PATCH's ceiling map, and ONLY that. A patch carries no policy
+    # list, so a scalar field per rung is its whole representation. Every HERD policy — the four
+    # extractive rungs plus `tame` and `corral` — resolves instead through the `hunt_policy_ceilings`
+    # LIST via `_hunt_policy_ceiling`; the herd's matching scalars are deprecated schema slots and are
+    # no longer decoded. That's why `tame` and `corral` are absent here (their payoffs, `pastoral_yield`
+    # / `corral_yield`, ARE real scalars and live in FORECAST_PAYOFF_KEYS). Adding a herd rung here
+    # would read a field the wire no longer carries and quote a 0 dip.
 }
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
@@ -898,15 +906,27 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
 # flow here", used by the band ledger's rows and by this row alike.)
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
-# A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
-# `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
-const HERD_FORECAST_PREFIX := ""
+# How a forecast dict SPELLS its field keys — a key spelling, nothing more.
+#
+# Two dict shapes carry them BARE and so share one prefix: a herd dict, and the RAW wire
+# forage-patch dict (decoded in native `forage_patches_to_array`, stored in `_forage_patch_lookup`,
+# and read by the Current-actions Forage row). Only `tile_info` carries the patch's fields under a
+# `patch_` prefix, because that is a cross-ref MapView stamps on in `_tile_info_at`.
+#
+# ⚠ A PREFIX CANNOT IDENTIFY A SOURCE KIND — that is why the bare case is ONE const and not two
+# same-valued ones. It used to be two (a `HERD_*` and a `WIRE_FORAGE_PATCH_*`, both `""`), and
+# having a herd-sounding name for the empty string invited `prefix == HERD_…` as an "is this a
+# herd?" test; it read as discriminating and was not, so it silently routed forage patches down the
+# herd branch and left the `+` button dead on every Current-actions Forage row. Pass `SOURCE_KIND_*`
+# when you need the kind; a prefix only ever tells you how to spell a key.
+const BARE_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
-# The RAW wire forage-patch dict (as decoded in native `forage_patches_to_array` and stored in
-# `_forage_patch_lookup`) carries the forecast fields BARE — the `patch_` prefix above is only the
-# cross-ref MapView stamps onto `tile_info`. The Current-actions Forage row reads the raw dict, so it
-# forecasts with the bare prefix.
-const WIRE_FORAGE_PATCH_PREFIX := ""
+# WHICH KIND OF SOURCE a forecast dict describes. Stated explicitly by every `_forecast_inputs`
+# caller because it CANNOT be recovered from the dict: the two kinds share a key prefix (see the
+# warning above), and a shape test (`has("hunt_policy_ceilings")`) would misread a herd whose
+# snapshot omitted the list as a forage patch. The caller knows what it fetched; it says so.
+const SOURCE_KIND_HERD := "herd"
+const SOURCE_KIND_FORAGE := "forage"
 # Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
 # Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
@@ -932,7 +952,7 @@ const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to se
 # The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
 # (idle >= max party), so the advice is wrong — say we're at the party limit instead.
 const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
-# Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
+# Band food flow lives on the Food summary line: `Food 15 (19 turns) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
@@ -1870,7 +1890,7 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
             continue
         takes[String(policy)] = _extractive_take(rate)
     for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
-        var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, policy)
+        var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
@@ -1946,10 +1966,10 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
 func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
     # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
     # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
-    var sustain := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
+    var sustain := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
     if not bool(sustain["known"]):
         return ""
-    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, policy)
     if not bool(forecast["known"]):
         return ""
     var output := float(band.get("output_multiplier", OUTPUT_FULL))
@@ -2701,7 +2721,7 @@ func update_food_modules(modules_variant: Variant) -> void:
 ## array — the same dicts in `MapView.forage_patch_lookup`), keyed by tile. A Current-actions Forage
 ## row reads the patch here to forecast its max-useful worker cap (the compose control gets the same
 ## forecast off `tile_info`'s `patch_`-prefixed cross-ref; the RAW wire dict here carries the fields
-## BARE — see `WIRE_FORAGE_PATCH_PREFIX`).
+## BARE — see `BARE_FORECAST_PREFIX`).
 var _forage_patch_lookup: Dictionary = {}
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
@@ -3418,16 +3438,29 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
 ## An INVESTMENT policy additionally carries `payoff` (the tended/corral yield the preparation buys)
 ## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
-func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
+## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the scalar keys (the two are
+## independent — a forage patch reaches here under either forage prefix).
+func _forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
-    # The DIP ceiling paid while the source is prepared. Every rung reads a scalar ceiling field EXCEPT
-    # `tame`, whose dip has no scalar on the wire (there is no `ceilingTame`) — it rides the
-    # `hunt_policy_ceilings` LIST, so resolve it through `_hunt_policy_ceiling` (< 0 unavailable → 0).
+    # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
+    # branch on the kind the CALLER STATED — the prefix cannot answer this (a herd and a raw wire
+    # forage patch share the empty prefix), and neither can the dict's shape:
+    #   HERD  → the `hunt_policy_ceilings` LIST is the herd's ONLY wire representation (the old
+    #           per-policy `ceilingSustain`/… scalars are deprecated schema slots), so every herd rung
+    #           — Sustain/Surplus/Market/Eradicate, Tame, Corral — resolves through it.
+    #   FORAGE→ a patch has no such list; its per-policy scalars are its only representation.
+    # `_hunt_policy_ceiling` returns HUNT_RATE_UNAVAILABLE (< 0) for a herd with no row, which falls
+    # back to Sustain's row exactly as the old scalar lookup did, then clamps to 0. That 0 never
+    # manufactures a row: `known` is decided by `per_worker` alone, so a herd with no forecast data
+    # still reads "not known" and callers show no row and apply no cap.
     var ceiling := 0.0
-    if policy in FORECAST_CEILING_KEYS:
+    if kind == SOURCE_KIND_HERD:
+        ceiling = _hunt_policy_ceiling(src, policy)
+        if ceiling < 0.0:
+            ceiling = _hunt_policy_ceiling(src, DEFAULT_HUNT_POLICY)
+        ceiling = maxf(ceiling, 0.0)
+    elif policy in FORECAST_CEILING_KEYS:
         ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy]), 0.0))
-    elif policy == LABOR_POLICY_TAME:
-        ceiling = maxf(_hunt_policy_ceiling(src, LABOR_POLICY_TAME), 0.0)
     else:
         ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[DEFAULT_HUNT_POLICY]), 0.0))
     # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —
@@ -3610,9 +3643,9 @@ func _sum_realized_yield(band: Dictionary, kind: String) -> float:
 ## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
 ## below the warn threshold — mirroring `_morale_is_concerning`'s below-warn / falling gate.
 func _food_is_concerning(band: Dictionary) -> bool:
-    var days := float(band.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+    var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return _band_net_food(band) < 0.0 \
-        or (BandFoodStatus.is_limited(days) and days < BandFoodStatus.warn_days())
+        or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
 ## Per-row-per-band expand-override key.
 func _breakdown_key(kind: String, band: Dictionary) -> String:
@@ -3845,10 +3878,11 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
             # Cap the `+` at this patch's max-useful (the compose control's cap, applied to the confirmed
             # row) so a single source can't absorb workers past the point they help. The raw wire patch
-            # dict carries the forecast fields BARE (WIRE_FORAGE_PATCH_PREFIX), unlike the `patch_`-prefixed
+            # dict carries the forecast fields BARE (BARE_FORECAST_PREFIX), unlike the `patch_`-prefixed
             # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
             var forage_forecast := _forecast_inputs(
-                _forage_patch_lookup.get(Vector2i(fx, fy), {}), WIRE_FORAGE_PATCH_PREFIX, forage_emit_policy)
+                _forage_patch_lookup.get(Vector2i(fx, fy), {}), SOURCE_KIND_FORAGE, BARE_FORECAST_PREFIX,
+                forage_emit_policy)
             var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sForage (%d, %d)" % [forage_icon, fx, fy],
@@ -3880,9 +3914,9 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
             # Cap the `+` at this herd's max-useful (the compose control's cap, applied to the confirmed
             # row) so a single source can't absorb workers past the point they help. Herds carry the
-            # forecast fields BARE (HERD_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
+            # forecast fields BARE (BARE_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
             # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
-            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), HERD_FORECAST_PREFIX, policy)
+            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, policy)
             var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sHunt %s" % [hunt_icon, herd_label],
@@ -4181,7 +4215,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
-    var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, _hunt_assign_policy)
+    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, _hunt_assign_policy)
     # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
     #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
     #       what you give up, for how long, to get what. That IS the Corral decision, and the local
@@ -4485,7 +4519,7 @@ func _expedition_policy_takes(band: Dictionary, herd: Dictionary) -> Dictionary:
 func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
     var takes := {}
     for policy in LABOR_HUNT_POLICIES:
-        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
+        var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, String(policy))
         if not bool(forecast["known"]):
             continue
         takes[String(policy)] = _extractive_take(float(forecast["ceiling"]))
@@ -4494,7 +4528,7 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
     # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
     # the picker already explains the lock. Absent/zero payoff → no entry, so the button stays bare.
     for policy in [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]:
-        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+        var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
@@ -4787,7 +4821,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
     # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
     # switching policy moves the cap).
-    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
@@ -5432,7 +5466,7 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
         return
     # Reset the band-food/morale/output tint context; `_unit_summary_lines` re-sets it if
     # a band is being rendered into the drawer.
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     _assemble_roster(_selected_tile_info)
@@ -5902,7 +5936,7 @@ func _on_land_row_selected() -> void:
     _selected_unit = {}
     _selected_herd = {}
     _selected_subject = SUBJECT_LAND
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     _rebuild_subject_list()
@@ -5927,7 +5961,7 @@ func _build_band_row(unit: Dictionary) -> Button:
     var dot_color := HudStyle.INK_FAINT
     var glyph := ""
     if is_player:
-        dot_color = BandFoodStatus.color_for_days(float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)))
+        dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
         glyph = _activity_glyph(String(unit.get("activity", "")))
     var button := _make_roster_button(selected)
     var row := _make_roster_row(selected, dot_color)
@@ -6079,7 +6113,7 @@ func _select_roster_occupant(kind: String, id: Variant) -> void:
         _selected_herd = _find_roster_herd(String(id)).duplicate(true)
         _selected_unit = {}
         _selected_subject = SUBJECT_HERD
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     _rebuild_subject_list()
@@ -6094,7 +6128,7 @@ func _render_occupant_drawer() -> void:
         tile_detail.visible = false
     if forage_assign_controls != null:
         forage_assign_controls.visible = false
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     var is_band := not _selected_unit.is_empty()
@@ -6155,7 +6189,7 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # column-flow). Ownership passes to the panel, which frees the previous render's blocks. Order
     # per docs/plan_band_panel_wide_flow.md: Summary, Active expeditions, then the allocation sections
     # (Workers / Current actions / Band roles / Orders / Send expedition).
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     var blocks: Array = []
@@ -6555,10 +6589,10 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     var lines: Array[String] = []
     # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
     # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
-    # must not inherit the previous render's caret or its food-days tint.
+    # must not inherit the previous render's caret or its food-turns tint.
     _disclosure_state = {}
     _food_flow_present = false
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     if in_panel:
         # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
         # calculation is moved here, never forked.
@@ -6566,7 +6600,7 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
             int(unit_data.get("size", 0)), int(unit_data.get("working_age", 0)),
             _effective_idle(unit_data)]])
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
-    # `days_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
+    # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
     # band shows only what we can honestly observe from outside: where it is (Position) and roughly
     # how many (its roster row's size).
@@ -6608,7 +6642,7 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     return lines
 
 ## Drawer readout for a selected expedition (docs/plan_exploration_and_sites.md §2 / §2b):
-## mission, humanized phase, party size, and carried food (from stores/daysOfFood). A hunt
+## mission, humanized phase, party size, and carried food (from stores/turnsOfFood). A hunt
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
 ## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
@@ -6636,10 +6670,10 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
-    # days from daysOfFood. Reuse the food-days tint context (`_selected_band_food_days`, read
+    # turns from turnsOfFood. Reuse the food-turns tint context (`_selected_band_food_turns`, read
     # back in `_format_detail_bbcode`).
-    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-    _selected_band_food_days = days
+    var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+    _selected_band_food_turns = turns
     var carried := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
@@ -6654,11 +6688,11 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
-            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_days_text(days), full_badge])
+            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_turns_text(turns), full_badge])
         else:
-            lines.append("Carried: %d  (%s)" % [carried, _food_days_text(days)])
+            lines.append("Carried: %d  (%s)" % [carried, _food_turns_text(turns)])
     else:
-        lines.append("Provisions: %d  (%s)" % [carried, _food_days_text(days)])
+        lines.append("Provisions: %d  (%s)" % [carried, _food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -6679,18 +6713,18 @@ func _expedition_phase_label(phase: String) -> String:
         return EXPEDITION_PHASE_LABELS[key]
     return key.capitalize()
 
-## Selection-panel band food row: "Food  <provisions>  (<days>)" — provisions from
-## the band's larder stores, days from `days_of_food` (∞ when not food-limited).
-## Stashes the days on `_selected_band_food_days` so `_format_detail_bbcode` can
+## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
+## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
+## Stashes the turns on `_selected_band_food_turns` so `_format_detail_bbcode` can
 ## tint the value by the shared warn/critical thresholds.
 func _band_food_line(unit_data: Dictionary) -> String:
-    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-    _selected_band_food_days = days
+    var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+    _selected_band_food_turns = turns
     var provisions := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
-    var line := "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+    var line := "Food: %d  (%s)" % [provisions, _food_turns_text(turns)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
     # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
     # An enemy band shows the bare larder line, exactly as before.
@@ -6801,15 +6835,17 @@ func _morale_cause_label(cause: int) -> String:
             return ""
 
 ## Human-readable food runway: the ∞ glyph when the source is not food-limited, otherwise a
-## whole count of TURNS. **The unit is turns, never "days"** — this game counts turns, and the
-## underlying figure is a turn count that was only ever labelled in days. One helper feeds every
-## surface that shows it (the band Food line, the expedition Carried/Provisions rows, and the
-## turn-orb starving alert), so the unit is stated in exactly one place.
-func _food_days_text(days: float) -> String:
-    if not BandFoodStatus.is_limited(days):
+## whole count of TURNS — spelled from the shared `FOOD_RUNWAY_UNIT`, which the Food-row tint guard
+## in `_format_detail_bbcode` also keys on, so the two can never disagree about the unit. One helper
+## feeds every surface that shows it (the band Food line, the expedition Carried/Provisions rows,
+## and the turn-orb starving alert), so the unit is stated in exactly one place.
+func _food_turns_text(runway: float) -> String:
+    if not BandFoodStatus.is_limited(runway):
         return FOOD_UNLIMITED_GLYPH
-    var turns := int(round(days))
-    return "%d turn" % turns if turns == 1 else "%d turns" % turns
+    var turns := int(round(runway))
+    if turns == 1:
+        return "%d %s" % [turns, FOOD_RUNWAY_UNIT]
+    return "%d %ss" % [turns, FOOD_RUNWAY_UNIT]
 
 func _format_food_module_label(module_key: String) -> String:
     if module_key == "":
@@ -7203,10 +7239,13 @@ func _format_detail_bbcode(lines: Array) -> String:
             var value_hex := HudStyle.INK_HEX
             if String(kv[0]) == "Food" or String(kv[0]) == "Provisions" or String(kv[0]) == "Carried":
                 # The band larder / expedition provisions / hunt-party carried-food row tints by the
-                # food-days thresholds; its value carries a day count or the ∞ glyph.
+                # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT`
+                # the one renderer (`_food_turns_text`) spells the runway with — never a bare
+                # literal, which is how this guard silently went dead when the unit changed — or by
+                # the ∞ glyph for a band that is not food-limited.
                 var food_value := String(kv[1])
-                if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):
-                    value_hex = BandFoodStatus.hex_for_days(_selected_band_food_days)
+                if not is_nan(_selected_band_food_turns) and (food_value.contains(FOOD_RUNWAY_UNIT) or food_value.contains(FOOD_UNLIMITED_GLYPH)):
+                    value_hex = BandFoodStatus.hex_for_turns(_selected_band_food_turns)
             elif String(kv[0]) == "Morale":
                 # The player band's morale row tints by the morale thresholds.
                 if not is_nan(_selected_band_morale):
@@ -7394,7 +7433,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         band_number += 1
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
-        var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+        var turns := float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
         var morale := float(entry.get("morale", 1.0))
         var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
         var last_emigrated := int(entry.get("last_emigrated", 0))
@@ -7403,12 +7442,12 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var band_name := _band_display_name(entry, band_number)
         new_sizes[entity] = size
         # Producer 1 — starving: larder below the critical threshold (red/critical).
-        if BandFoodStatus.is_critical(days):
+        if BandFoodStatus.is_critical(turns):
             attention.append({
                 "kind": ATTENTION_KIND_STARVING,
                 "severity": ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
-                "detail": _food_days_text(days),
+                "detail": _food_turns_text(turns),
                 "x": x, "y": y,
             })
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
@@ -7417,7 +7456,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "kind": ATTENTION_KIND_LOSING_POPULATION,
                 "severity": ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
-                "detail": _decline_reason(days, morale, morale_cause, last_emigrated),
+                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
                 "x": x, "y": y,
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
@@ -7470,8 +7509,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
 ## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
 ## only say "low morale" if morale is actually low, else leave it plain rather than
 ## asserting a false reason.
-func _decline_reason(days: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
-    if BandFoodStatus.is_limited(days) and days < BandFoodStatus.critical_days():
+func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
+    if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
         return DECLINE_REASON_STARVING
     if last_emigrated > 0:
         return DECLINE_REASON_PEOPLE_LEAVING

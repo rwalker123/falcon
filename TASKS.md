@@ -296,7 +296,7 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Provide serde-compatible adapters for early testing.
 - [x] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
-- [ ] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
+- [x] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
   per-policy band hunt ceiling **twice**: the flat scalars (`ceilingSustain`/`ceilingSurplus`/
   `ceilingMarket`/`ceilingEradicate`/`ceilingCorral` + `corralYield`/`perWorkerYield`) and the
   `huntPolicyCeilings:[{policy, provisionsPerTurn}]` list. They are the **same numbers** — the list is a
@@ -307,7 +307,58 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
   repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
   source.
-- [ ] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
+  _Status_: **Done — with two corrections to the scope above, both forced by reading the code.**
+  1. **The five ceiling scalars are marked `(deprecated)` in `snapshot.fbs`, NOT deleted.** They sit
+     **mid-table** in `HerdTelemetryState`, with a long appended tail after them (`huntPolicyCeilings`,
+     `huntTripEstimates`, `penUpkeep`, `penFedFraction`, `bodyMass`, `foodPerAnimal`, `pastoralYield`,
+     …). A FlatBuffers field's vtable slot is **positional**, so deleting a line silently renumbers
+     every field below it and corrupts the wire for all of them. `(deprecated)` retains the slot and
+     drops the accessors, which is what "retire" has to mean here. Verified post-change: order
+     unchanged, and the regenerated bindings emit no herd accessors while `ForagePatchState`'s still
+     resolve.
+  2. **Only FIVE of the seven named fields were retired.** `perWorkerYield` and `corralYield` are
+     **kept** — they are not ceilings, and `huntPolicyCeilings` (`[{policy, provisionsPerTurn}]`)
+     structurally cannot carry them: `perWorkerYield` is the per-worker RATE (the divisor in
+     `maxUsefulWorkers = ceil(ceiling / perWorkerYield)`, which drives the worker-stepper cap) and
+     `corralYield` is the post-pen PAYOFF (`FORECAST_PAYOFF_KEYS`, rendered as Corral's `→ +5.40/turn`).
+     Retiring them would have deleted information, not a duplicate.
+
+  **`ForagePatchState` keeps its identical-looking scalar block** (`perWorkerYield` + the four
+  extractive ceilings) on the wire, in the decoder, and behind `MapView`'s `patch_`-prefixed
+  cross-refs: a patch has **no** `huntPolicyCeilings` list, so for a patch the scalars are the only
+  representation. The herd↔patch asymmetry is now the documented rule in both CLAUDE.mds.
+
+  Client: `_forecast_inputs` branches on `prefix == HERD_FORECAST_PREFIX` → `_hunt_policy_ceiling`
+  (the list) for **every** herd rung, else the unchanged scalar lookup — a generalization of the
+  branch that already existed for `tame`, whose dip never had a scalar. `FORECAST_CEILING_KEYS` is
+  now the FORAGE-only map (lost its hunt-only `corral` entry). The "not known" contract is unchanged
+  and was checked, not assumed: `known` is `per_worker >= FORECAST_MIN_PER_WORKER` and never
+  consulted the ceiling, so a herd with no forecast data still renders no row and applies no cap —
+  the clamped `0.0` cannot manufacture a `+0.00`.
+
+  Verified: `cargo fmt`/`clippy -D warnings` clean, 491 core_sim + 46 sim_schema + every
+  integration-test binary green, `cargo build --workspace` clean, `cargo xtask godot-build` OK,
+  `marker_field_guard` PASS. **8 of the 9 herd-forecast ui_preview frames are byte-identical** to the
+  pre-change baseline (this is a representation change, so identical pixels is the contract):
+  `herd_hunt_delivered_clean`, `herd_hunt_delivered_waste`, `hunt_picker_ascending`, `herd_corral`,
+  `herd_tame`, `two_meter_split`, `herd_hunt_local_sustain`, `herd_hunt_local_overdraw`.
+
+  **The 9th frame changed, and it is the best argument for this task.** `herd_corral_depleted`'s
+  fixture was internally contradictory in a way only the duplicate representation allowed: it
+  overrode `ceiling_sustain 0.10` / `ceiling_corral 0.05` (read by the forecast) while leaving the
+  inherited `huntPolicyCeilings` at `sustain 0.90 / corral 0.23` (read by the picker), so the frame
+  rendered `Preparing: +0.05` beside a `♻ +0.90` Sustain button — **two different numbers for one
+  herd, a state the wire can no longer express.** With one representation the button reads `♻ +0.10`,
+  consistent with `per_worker_yield 0.10`. Everything the frame exists to prove is pixel-identical
+  (`Preparing: +0.05 → then +0.00 − 0.14 feed`, and the amber `⚠ Too depleted to pen…` note).
+
+  **Note the claim this task rested on was never test-pinned.** "They cannot drift" held only because
+  both views were built from one `SourceYieldForecast` — no test asserted the scalars and the list
+  agree (checked; there wasn't one, so nothing was silently weakened by the removal). Collapsing to
+  one representation makes non-divergence **structural** rather than incidental, which is the durable
+  win — and the `herd_corral_depleted` fixture is proof the two views could and did disagree in
+  practice, at least in a harness.
+- [x] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
   no longer means `larder / consumption`: since the food-arrivals arc (PR #150) it is the **larder
   runway — turns until the larder empties, with income counted**, resolved by walking the per-source
   `arrivalSchedule`s. The unit was fixed at the display layer (`Hud._food_days_text` renders "turns",
@@ -318,6 +369,34 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   `native/src/lib.rs`'s `days_of_food` key, and the client's `days_of_food` / `UNLIMITED_DAYS` /
   `warn_days` / `color_for_days` / `food_days.{warn,critical}` config key. No back-compat needed
   (no shipped saves), so it can be a straight rename rather than a deprecation.
+  _Status_: **Done.** Straight rename end-to-end, zero behaviour change (the `999.0` not-food-limited
+  sentinel is untouched). Wire: `daysOfFood` → **`turnsOfFood`**, renamed **in place** on its original
+  line in `PopulationCohortState` — a FlatBuffers field's slot is positional, so it was NOT moved,
+  reordered, or delete-and-appended. Sim: `sim_schema`'s `days_of_food` → `turns_of_food`,
+  `core_sim`'s `NOT_FOOD_LIMITED_DAYS` → `NOT_FOOD_LIMITED_TURNS`, plus `snapshot/population.rs`,
+  `snapshot/mod.rs` and `integration_tests/tests/larder_runway.rs`. Client: the decoder key
+  (`native/src/lib.rs`), the whole `BandFoodStatus` vocabulary (`UNLIMITED_TURNS`, `warn_turns()`,
+  `color_for_turns`, `hex_for_turns`, …), the config key **`food_turns.{warn,critical}`** (values
+  unchanged), `Hud._food_turns_text` / `_selected_band_food_turns`, `MapView`, `BandMarkerRenderer`,
+  and all three preview harnesses — including `marker_field_guard`'s `PANEL_CONSUMED_KEYS`, whose
+  fixture + assertion moved with it so the guard keeps guarding the field. The "misnomer pending a
+  rename" caveats are deleted from `snapshot.fbs`, `sim_schema`, `core_sim/CLAUDE.md` and the client
+  `CLAUDE.md`. Verified: `cargo fmt` clean, `clippy -D warnings` clean, **491 core_sim + 46 sim_schema
+  + every integration-test binary green**, `cargo xtask godot-build` OK, `marker_field_guard` PASS.
+
+  **A live defect was found and fixed on the way — the Food row's threshold tint was dead.**
+  `Hud._format_detail_bbcode` recognized the runway row by sniffing the rendered string for `"day"`,
+  but PR #150 had changed `_food_days_text` to render `"%d turns"` — so `contains("day")` was **always
+  false** for a finite runway and the value rendered in neutral ink instead of WARN/DANGER. Only the
+  `∞` case still tinted, and that one tints healthy-green, so **a starving band's `Food: 3 (2 turns)`
+  row showed no warning colour at all**; the same guard covers the expedition `Provisions`/`Carried`
+  rows. (The map dot and the turn-orb `starving` producer were unaffected — they call the colour
+  helper directly.) Fixed at the root rather than by patching the literal: a shared
+  **`Hud.FOOD_RUNWAY_UNIT`** const is now the ONE place the unit word is spelled, consumed by both the
+  renderer and the guard, so they cannot drift apart again. Confirmed on rendered frames, not by
+  inspection: `band_food_concerning.png` (4 turns → **red**), `band.png` (22 turns → **green**),
+  `expedition_panel.png` (9 turns → **amber**), `band_panel_food_concerning_top.png` (the Band/City
+  panel's row, red).
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -432,9 +511,28 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
 
 ## Core Simulation — Bugs
 
-- [ ] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
-  `systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
-  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`. Its
+- [x] **`spawn_initial_world` has no idempotency guard — the lone Startup spawner without one.**
+  **Fixed.** `spawn_initial_world` now takes `tile_registry: Option<Res<TileRegistry>>` and
+  early-returns (with a `worldgen.spawn_initial_world.skipped=already_built` **warn** — a second
+  Startup pass is never intentional, so it leaves a trace where the silent siblings do not) **before**
+  the inventory/knowledge/culture seeding, which runs ahead of any tile work and would otherwise
+  double the start profile's grants regardless of a tile-level guard.
+  **The subtlety resolved:** the guard cannot break map regeneration, because `new_game`/`ResetMap`
+  never re-run Startup on the live world — their shared `rebuild_world_from_config`
+  (`core_sim/src/bin/server.rs:1341`) starts from `build_headless_app()`, i.e. a brand-new `World`
+  with no `TileRegistry` at all. `Option<Res<..>>` (not `Res<..>`) is load-bearing for the same
+  reason: `TileRegistry` is inserted *by this system* via `Commands`, never `init_resource`'d, so on
+  the legitimate first run — and on the shipped idle-booting server — the resource does not exist.
+  **Proven failing first**, then fixed: `core_sim/tests/worldgen_startup_idempotent.rs` runs the real
+  `Startup` schedule twice and measured, unguarded, **2080 tile entities against a 1040-cell grid**
+  (the reported 8320-vs-4160 doubling), **2 cohorts vs 1**, and a **stockpile of 80 vs 40** — while
+  `TileRegistry.tiles` stayed at 1040, confirming the orphaned first tile set the registry no longer
+  indexes. The inventory surface is a separate test because `apply_trade_goods_bonus` drains
+  `trade_goods` to zero two systems later, so the double grant is real but invisible at chain end.
+  The PR #149 call-site workaround in `core_sim/tests/fauna_coastal_habitat.rs` is retired — the
+  harness drives `run_schedule(Startup)` unconditionally again.
+  ~~`systems::spawn_initial_world` (`core_sim/src/systems/worldgen.rs:41`) unconditionally lays down a
+  full `width × height` tile set plus the profile's starting units and replaces `TileRegistry`.~~ Its
   three Startup siblings all guard and early-return on an already-populated registry:
   `fauna::spawn_initial_herds` (also rebuilding telemetry/density before returning),
   `forage::spawn_initial_forage` (`forage.rs:489`) and `graze::spawn_initial_graze` (`graze.rs:184`).
@@ -452,13 +550,10 @@ indivisible and huge); the local-hunt carry distinction below. **Manual-first** 
   broadly reads doubled values. The PR #149 test was corrected at the call site
   (`core_sim/tests/fauna_coastal_habitat.rs`, commit `48da2c8`) rather than at the cause, which is
   this entry.
-  **Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
-  to check first:** `spawn_initial_world` does more than stamp tiles (it also seeds starting
-  inventory, knowledge fragments, and culture), and `rebuild_world_from_config` *deliberately*
-  regenerates the world on `new_game`/`ResetMap`. So the guard must distinguish "Startup fired twice
-  by accident" from "the operator asked for a new world" — confirm how the rebuild path clears state
-  before choosing what to key the guard on, or a naive `tiles.is_empty()` check will break map
-  regeneration. Owner: core_sim.
+  ~~**Fix shape:** mirror the siblings — early-return when the world is already built. **The subtlety
+  to check first:** the guard must distinguish "Startup fired twice by accident" from "the operator
+  asked for a new world."~~ Answered above: the rebuild path builds a fresh `App`, so the two cases
+  are never in the same `World` and a registry-emptiness key is safe. Owner: core_sim.
 
 - [x] **⚠ Rollback/load may permanently destroy tended patches, Fields, and pens.** **Fixed.** Proven
   end-to-end first: `core_sim/tests/rollback_tended_survival.rs` drives a real
@@ -872,17 +967,42 @@ to add an animal whose fields fit the existing enums.**
     lot of with almost no labor**. That's a genuinely different answer to "how do I feed people", and it's
     the clearest test of whether the herder mechanic added in slice 8 earns its keep. **Deps: slice 8**
     (the lever must exist first). Verify it spawns (live `host_biomes` key + non-zero `abundance.per_biome`).
-- [~] **Fill out the rest of the start-game roster (config).** SHIPPED so far (worktree `fauna-roster`):
-  **Wild Reindeer** (boreal_arctic/montane_highland, `pastoral` — the northern migrator, grows the
-  herd-but-never-fence tier), **Wild Horse** (savanna_grassland/semi_arid_scrub, `pastoral` — the
-  dry-steppe migrator, distinct from grassland-only Steppe Runners), and **Grey Seals** (coastal_littoral,
-  `wild` — the first marine species, a non-grazing constant-K haul-out colony). STILL OPEN: more
-  **regional game** to give each biome a distinct fauna signature (many biomes still share a short game
-  list — scrub/highland/forest each want a signature short-range species, which needs an
-  `abundance.per_biome` entry). Manual-first (new gameplay content →
-  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
-  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
-  never spawns.
+- [x] **Fill out the rest of the start-game roster (config). DONE** — roster now **19 rows**. Earlier
+  (worktree `fauna-roster`): **Wild Reindeer** (boreal_arctic/montane_highland, `pastoral` — the northern
+  migrator, grows the herd-but-never-fence tier), **Wild Horse** (savanna_grassland/semi_arid_scrub,
+  `pastoral` — the dry-steppe migrator, distinct from grassland-only Steppe Runners), **Grey Seals**
+  (coastal_littoral, `wild` — the first marine species, a non-grazing constant-K haul-out colony), and the
+  dry-biome signature pass (Wild Elk, Alpine Ibex, Desert Gazelle, Forest Grouse). Closed by the
+  **wet-biome pass** (worktree `fauna-wet-biomes`), which a fresh sweep showed was what actually remained
+  — every dry biome had its resident, the three *water-adjacent* ones did not, and one gap was structural
+  rather than cosmetic:
+  - **`river_fish` ("Silt Catfish")** — riverine_delta/wetland_swamp/coastal_littoral, `wild`,
+    `requires_adjacent_water`, `route_len [1,1]`. Structurally the `seal` row, so **pure config**. Gives
+    the delta and the littoral a resident that isn't the 0.25 kg fowl they shared with the swamp.
+  - **`snow_hare` ("Snow Hare Warren")** — boreal_arctic/montane_highland at a **`pen`** ceiling.
+    `boreal_arctic` was the **only land biome with no `pen`-ceiling species at all** (mammoth/elk `wild`,
+    reindeer `pastoral`), so the intensification ladder's pen rung was unreachable from a northern start.
+    A warren, not fenced big livestock — the north stays harsh.
+  - **`boar` gained `riverine_delta`** — one key; the delta gets a resident big pennable animal.
+  Verified over `SWEEP_SEEDS` on 80×52: **22 catfish** (all water-adjacent), **66 warrens**, **53 delta
+  boars** — each **0** before. Guard: `core_sim/tests/fauna_wet_biome_roster.rs` (floors ~3× under
+  measured, each tripped by a `0`), which also asserts the *gameplay* invariant "`boreal_arctic` offers a
+  pen-capable species" so a future roster shuffle can't quietly undo it. Icons: `catfish.png` shipped;
+  `hare` aliases `rabbit.png`. NOTE the manual names no individual species — the roster's authoritative
+  prose lives in `core_sim/CLAUDE.md` → Fauna & Wild Game, so "manual-first" did not apply here.
+- [ ] **Decide whether `abundance.max_total_game` should rise — the roster cap is SATURATED, so new
+  species DISPLACE rather than add.** Measured during the wet-biome pass: **122 herds per map on every
+  seed** (`max_total_game` 120 short-range + 2 migratory) — and re-running the identical probe against the
+  *pre-change* config gives **122 per map / 732 over the sweep, byte-identical**. So the three additions
+  changed the roster's **composition** and not its **density**: ~141 new herds over the sweep pushed ~141
+  others off the map, most visibly **Wild Boar 61 → 112** (essentially all of it delta boars winning rolls
+  that used to go elsewhere). That is arguably correct — a *signature* pass is a composition change, and
+  this repo rejects repainting outputs to hit a target (see *emergent-not-quota*) — but it means the last
+  few roster passes have been redistributing a fixed pool, and nobody decided that on purpose. **Decide
+  deliberately, from a playtest, and as its own change**: raising the cap lifts total game availability
+  economy-wide, which is a food-economy edit that must not ride in on a roster PR. If it does rise, re-run
+  `fauna_wet_biome_roster.rs`'s measurement probe — its floors were measured under the saturated cap.
+  (Owner: TBD, Estimate: 0.5d + playtest; Deps: none.)
 - [x] **Migratory placement now respects `host_biomes`. SHIPPED** (worktree `fauna-roster`). Was a real
   bug found during this arc: `spawn_migratory_herds` picked a random migratory species and spiralled its
   route around the *player start*, never reading `host_biomes` — so a migratory species' range was dead
@@ -1353,12 +1473,17 @@ fires**" edge), and `clients/godot_thin_client/CLAUDE.md` → *TellingPanel* (th
 ## HUD Discoverability
 
 - [ ] **Retune the food-starvation thresholds against the honest runway — they may now warn too
-      late.** The food-arrivals arc (PR #150) corrected `daysOfFood` from `larder / consumption`
+      late.** The food-arrivals arc (PR #150) corrected `turnsOfFood` (then still named `daysOfFood`)
+      from `larder / consumption`
       ("how long if you stop hunting") to the real runway with income counted. That is the right
       number, but the warn/critical thresholds in `clients/godot_thin_client/src/config/band_status_config.json`
-      (`food_days.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and three
-      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_days`), the turn-orb
-      `starving` attention producer, and `Hud._food_is_concerning`'s auto-expand. Measured on a real
+      (`food_turns.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and **four**
+      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_turns`), the turn-orb
+      `starving` attention producer, `Hud._food_is_concerning`'s auto-expand, and — **newly live, so
+      it has never been playtested against these numbers** — the selection-panel Food row's own
+      threshold tint, which was dead from PR #150 until the `turnsOfFood` rename fixed it (see that
+      entry). Retuning must account for the fact that the row's colour is now visible at all.
+      Measured on a real
       turn (seed 119304647): a well-fed band moves **9.39 → 52.89** (amber → green, correct), a
       genuinely starving band stays **0.43** (unchanged, correct — with no income the formula degrades
       to the old one). **The gap is the band in between:** one whose income *nearly* covers its drain

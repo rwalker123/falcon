@@ -181,8 +181,9 @@ pub(crate) fn hunt_trip_estimate_entries(
 /// in the capture, both are read in the same frame — reports a zeroed forecast and no rows).
 /// Captured at `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 ///
-/// The scalar `ceiling*` fields and the `hunt_policy_ceilings` list are two views of the **same**
-/// `SourceYieldForecast` — one forecast per herd, projected twice — so they can never disagree.
+/// The `hunt_policy_ceilings` list is the single wire view of a herd's per-policy ceilings — one
+/// `SourceYieldForecast` per herd, projected once, keyed by a free-form policy name (the old scalar
+/// `ceiling*` fields are retired `(deprecated)` slots).
 #[allow(clippy::too_many_arguments)] // every config the exported forecast reads is a lever
 pub(crate) fn herd_snapshot_entries(
     telemetry: &HerdTelemetry,
@@ -229,12 +230,8 @@ pub(crate) fn herd_snapshot_entries(
                 corralled: entry.corralled,
                 corral_progress: entry.corral_progress,
                 per_worker_yield: forecast.per_worker_yield,
-                ceiling_sustain: forecast.ceiling_sustain,
-                ceiling_surplus: forecast.ceiling_surplus,
-                ceiling_market: forecast.ceiling_market,
-                ceiling_eradicate: forecast.ceiling_eradicate,
-                // The Corral investment rung: the preparing dip + the (gross) payoff once penned.
-                ceiling_corral: forecast.ceiling_prepare,
+                // The Corral investment rung's (gross) payoff once penned; the preparing dip is the
+                // `corral` row of `hunt_policy_ceilings` below.
                 corral_yield: forecast.managed_yield,
                 // The pen as a managed population: what it EATS, and whether its keeper is paying.
                 // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to

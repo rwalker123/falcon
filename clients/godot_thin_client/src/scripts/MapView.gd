@@ -490,7 +490,7 @@ const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
 const PLAYER_FACTION_ID := 0
 
-# --- Band status decorations (food-days dot, activity glyph, supply links) ---
+# --- Band status decorations (food-runway dot, activity glyph, supply links) ---
 # Sit relative to the band marker radius so they scale with zoom.
 const BAND_FOOD_DOT_RADIUS_FACTOR := 0.28   # of the band marker radius
 const BAND_FOOD_DOT_OFFSET_FACTOR := 0.9    # dot center offset up-right from marker center
@@ -2664,7 +2664,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# expedition) in _draw_travel_destination.
 			"travel_target_x": int(entry.get("travel_target_x", 0)),
 			"travel_target_y": int(entry.get("travel_target_y", 0)),
-			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
+			"turns_of_food": float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)),
 			# Band food ledger (food/turn) — total income across worked sources vs total consumption.
 			# Carried onto the marker so the allocation panel's ledger footer reads them off the
 			# selected-unit copy (the per-source actual/sustainable yields ride inside labor_assignments).

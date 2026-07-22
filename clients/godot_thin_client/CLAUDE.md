@@ -109,7 +109,7 @@ never writes, deletes, or liveness-checks the file.
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, `chip_stylebox(border)` (the selection card's pinned condition pills), `hairline_stylebox()` (a standalone 1px LINE_SOFT rule inside a card — the list ↔ drawer boundary; the caller owns the thickness), and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`, which takes an optional tile `terrain_id`: **`riverine_delta` splits fish 🐟 ↔ reeds 🎋** — dry floodplain LAND (`alluvial_plain`/`floodplain`) reads as reeds via `RIVERINE_REED_ICON`, open `navigable_river` keeps 🐟; MapView stamps each food site's `terrain_id` so the map marker + HUD Forage row resolve the same glyph — the resolution itself is factored into the public **`site_key_for(module_key, is_hunt, terrain_id)`**, which returns a stable ART KEY (`"hunt"` / `"reeds"` / a module key verbatim / `"default"`, the three non-module keys deliberately disjoint from `ICONS`) so `SiteSprites` resolves the same site without a second copy of the fish↔reeds branch; `for_site` is written in terms of it, so there is exactly ONE implementation — the twin of `species_key_for` on the herd side), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first — the matching itself is factored into the public **`species_key_for(label)`**, which returns the matched HERD_SPECIES key (`""` when none) so `FaunaSprites` can resolve the same species without a second copy of the matcher; `for_herd` is written in terms of it, so there is exactly ONE implementation), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the **four investment** rungs of the Intensification Ladder — cultivate 🌱 / sow ▦ / tame ◎ / corral 🐄. Each verb wears the glyph of **the rung it builds** (🌱 the crop, ▦ the plotted Field, ◎ the pastoral herd that now keeps near your camp — the rung's defining effect is proximity — 🐄 the penned livestock; 🐄 is also the herd drawer's Domesticated/Corralled badge, and ▦ the tile card's `▦ Field` badge). Verified legible at picker size in `forage_cultivate.png` / `forage_sow.png` / `two_meter_split.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately TEXT-PRESENTATION symbols** (♻ ⬆ ⇄ ▦ ◎) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. **The mechanism is sharper than "prefer line art", and it decides the choice:** a text-presentation glyph **inherits the label's font colour**, so it renders at the button's full contrast and greys out *with* the button when a rung is disabled; an **emoji carries its own colours and cannot be tinted**, so it renders at whatever contrast its art happens to have and stays stubbornly coloured while disabled. 🐾 was tried for `tame` and rejected on exactly that — at picker size it came out a faint washed-out tan against the dark console, the weakest glyph in a row next to a crisp white 💀 (see the first cut of `two_meter_split.png`) — and ◎ replaced it. Prefer a text-presentation symbol for any NEW policy glyph; the surviving emoji (💀 🌱 🐄) are grandfathered and legible. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
-| `ui/FaunaSprites.gd` | Bundled PNG art for map HERD markers — the sprite half of `FoodIcons`' herd vocabulary, and the reason a rabbit no longer renders white on macOS and pink on Windows: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned the look. Static-only (same reasoning as `ServerPortsFile.gd`): `SPRITE_PATHS` maps a species KEY (a `FoodIcons.HERD_SPECIES` key, resolved via `FoodIcons.species_key_for` — **never a second matcher**) to a file in `assets/icons/fauna/`, aliasing shared art exactly as HERD_SPECIES aliases emoji (deer/reindeer/caribou/elk → `deer.png`). `for_herd(label) -> Texture2D` returns the cached texture or **`null` when this species has no art yet**, which is the fallback contract: `SecondaryMarkerRenderer.draw_herd` resolves the sprite first and calls `MapView._draw_marker_sprite`, else falls through to the unchanged emoji `_draw_marker_glyph`. **Coverage is COMPLETE** — all 20 HERD_SPECIES keys map to one of 11 PNGs (aliases share art: bison/buffalo → `aurochs.png`, oxen → `cattle.png`, ibex → `goat.png`, reindeer/caribou/elk/gazelle → `deer.png`, grouse → `fowl.png`; `seal.png` closed the last gap), so no herd species in the game draws an OS emoji. Adding a species is still: drop the PNG in, add the key here. **The `null` fallback stays load-bearing even at full coverage** — it catches a herd label naming a species the client does not know (`species_key_for` → `""`) and the `HERD_DEFAULT` case, both of which still render emoji. Because every shipped species has art, **the emoji path is no longer exercised by map_preview fixtures at all**; only a fixture herd labelled with an unknown/unmapped species guards it. Loaded with `load()` (not `preload()`) so a missing file degrades to the emoji rather than breaking scene load, with one warning per missing path. **The sprite is drawn UNTINTED**, like the emoji — a starving pen still reads as the distress ring + badge GEOMETRY drawn under/over the marker, never a modulate. **Import options are load-bearing**: the sources are 256px but `MapView.texture_filter` is pinned `TEXTURE_FILTER_NEAREST` (to keep the terrain-cache blit seam-free), so the `.import` files set `process/size_limit=64` to cut a 7:1 nearest minification down to ~1.8:1; `mipmaps/generate=true` is set too but is INERT under NEAREST — it only starts paying if that filter is ever raised to linear-with-mipmaps. Judge any art change at TRUE marker size (10–41px), not in a fitted preview frame, which renders them ~2.5× too big |
+| `ui/FaunaSprites.gd` | Bundled PNG art for map HERD markers — the sprite half of `FoodIcons`' herd vocabulary, and the reason a rabbit no longer renders white on macOS and pink on Windows: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned the look. Static-only (same reasoning as `ServerPortsFile.gd`): `SPRITE_PATHS` maps a species KEY (a `FoodIcons.HERD_SPECIES` key, resolved via `FoodIcons.species_key_for` — **never a second matcher**) to a file in `assets/icons/fauna/`, aliasing shared art exactly as HERD_SPECIES aliases emoji (deer/reindeer/caribou/elk → `deer.png`). `for_herd(label) -> Texture2D` returns the cached texture or **`null` when this species has no art yet**, which is the fallback contract: `SecondaryMarkerRenderer.draw_herd` resolves the sprite first and calls `MapView._draw_marker_sprite`, else falls through to the unchanged emoji `_draw_marker_glyph`. **Coverage is COMPLETE** — all 22 HERD_SPECIES keys map to one of 12 PNGs (aliases share art: bison/buffalo → `aurochs.png`, oxen → `cattle.png`, ibex → `goat.png`, reindeer/caribou/elk/gazelle → `deer.png`, grouse → `fowl.png`, **hare → `rabbit.png`**; `seal.png` closed the last gap, and `catfish.png` is the wet-biome roster pass's own art — deliberately unlike `sites/fish.png`, which can share a delta hex with it), so no herd species in the game draws an OS emoji. Adding a species is still: drop the PNG in, add the key here. **The `null` fallback stays load-bearing even at full coverage** — it catches a herd label naming a species the client does not know (`species_key_for` → `""`) and the `HERD_DEFAULT` case, both of which still render emoji. Because every shipped species has art, **the emoji path is no longer exercised by map_preview fixtures at all**; only a fixture herd labelled with an unknown/unmapped species guards it. Loaded with `load()` (not `preload()`) so a missing file degrades to the emoji rather than breaking scene load, with one warning per missing path. **The sprite is drawn UNTINTED**, like the emoji — a starving pen still reads as the distress ring + badge GEOMETRY drawn under/over the marker, never a modulate. **Import options are load-bearing**: the sources are 256px but `MapView.texture_filter` is pinned `TEXTURE_FILTER_NEAREST` (to keep the terrain-cache blit seam-free), so the `.import` files set `process/size_limit=64` to cut a 7:1 nearest minification down to ~1.8:1; `mipmaps/generate=true` is set too but is INERT under NEAREST — it only starts paying if that filter is ever raised to linear-with-mipmaps. Judge any art change at TRUE marker size (10–41px), not in a fitted preview frame, which renders them ~2.5× too big |
 | `ui/SiteSprites.gd` | Bundled PNG art for map FOOD-SITE markers — the sprite half of `FoodIcons`' site vocabulary, and the food-module twin of `FaunaSprites` (same reasoning: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned what a shellfish bed or a nut grove looked like). `SPRITE_PATHS` maps a site ART KEY — resolved via **`FoodIcons.site_key_for`, never a second copy of the fish↔reeds branch** — to a file in `assets/icons/sites/`; `for_site(module_key, is_hunt, terrain_id) -> Texture2D` takes the SAME arguments as `FoodIcons.for_site`, so the sprite and the emoji can never disagree about which site this is. **Coverage is COMPLETE** — all 10 `ICONS` modules plus the three non-module keys map to bundled art (12 PNGs, with **`hunt` reusing the fauna `deer.png`**: a hunted site IS game, and a second copy under `sites/` would be one more thing to keep in sync), so no food site in the game draws an OS emoji and — exactly as on the fauna side — **no map_preview fixture exercises the emoji path any more**. The `null` fallback stays load-bearing: it catches an art key with no art (a new food module added to `ICONS` without a PNG), which still renders the emoji. `SecondaryMarkerRenderer.draw_food_site` resolves the sprite first and calls `MapView._draw_marker_sprite`, else falls through to the unchanged `_draw_marker_glyph`. **Same import options as fauna** (`process/size_limit=64`, `mipmaps/generate=true` — inert under the pinned `TEXTURE_FILTER_NEAREST`, see the FaunaSprites row) and the same judging rule: at true marker size. The **reeds are the busiest icon in the set** — at ~36px the individual blades merge into a mass, though the vertical tuft + brown cattail heads stay unmistakable and unique; it is the first one to re-check on any sizing change. Verify the whole set on `map_preview`'s **`map_site_sprites`** (the SPRITE ROSTER: one site per art key in one row, incl. the hunted-site deer and an unknown module's `default` sprig) + **`map_riverine_split`** (the decisive frame: ONE module, `riverine_delta`, drawing the FISH on open navigable river and the REEDS on dry alluvial plain — the branch `site_key_for` exists for) |
 | `ui/WonderSprites.gd` | Bundled PNG art for map **DISCOVERED-SITE (Wondrous Site)** markers — the third art family behind `IconSprites`, after `FaunaSprites` and `SiteSprites` (same reasoning: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font owned what a Great Peak looked like, and ⛰/⛲ blob at marker size). **Keyed on `site_id`** — the sim's stable catalog key from `core_sim/src/data/sites_config.json`, **already on the wire** (decoded in `native/src/lib.rs`, already read by `SecondaryMarkerRenderer._wonder_key`), so this needed **no schema or server change**. Deliberately NOT keyed on the `glyph` string: that is presentation the server also happens to send, and two sites may share one glyph (the fixture's `sky_arch` reuses ⛰), so keying on it would collapse distinct sites onto one sprite. `for_site_id(site_id) -> Texture2D` returns the cached texture or `null`. **THE `null` FALLBACK IS GENUINELY LIVE HERE — the one way this table differs from `FaunaSprites`/`SiteSprites`**, whose coverage is complete and whose fallbacks only guard an unknown key. `great_peak` + `verdant_basin` are the whole catalog *today*, but that catalog is **data-driven** and expected to grow: a designer adds a site entry with a glyph and it ships with no art, so falling through to the server-provided emoji is a real, **exercised** path (`map_sites.png`'s `sky_arch` renders it). Adding art stays: drop the PNG in `assets/icons/wonders/`, add the id here. **TWO consumers now, and both key on `site_id`:** the map marker (`SecondaryMarkerRenderer.draw_discovered_site`) and the **HUD top-bar discoveries strip** (`Hud.update_discoveries` — see the Wondrous Sites bullet), which was the last place in the client keying site presentation on the glyph and has been migrated onto this table. Neither builds a second art map; `for_site_id` is the one lookup. A site with art must draw **even if the server sent no glyph**, and that takes BOTH halves of `SecondaryMarkerRenderer`, which is why they share one predicate, `_wonder_renders(site)` = *has a sprite OR a non-empty glyph*: (1) `compute_slots` must admit sprite-only sites to **slot eligibility** — it originally tested the glyph alone, so such a site got no slot and `draw_discovered_site` bailed at its `slot < 0` return long before any sprite check, making the guarantee unreachable; and (2) `draw_discovered_site`'s own early-return must likewise account for the sprite, not just the glyph. Past that guard it calls `MapView._draw_marker_sprite`, else falls through to the unchanged emoji `_draw_marker_glyph`. Latent while every shipped site carries a glyph — keep the two tests on the shared helper so they cannot drift back apart. **Same import options as fauna/sites** (`process/size_limit=64`, `mipmaps/generate=true` — inert under the pinned `TEXTURE_FILTER_NEAREST`) and the same judging rule: at true marker size. At ~36px `great_peak`'s snow-capped silhouette is unmistakable; `verdant_basin`'s leaf fronds merge into the green mass (the `reeds` caveat again) but its green-ring-around-blue-water read stays distinct — re-check it first on any sizing change. Verify on `map_preview`'s **`map_sites`** (both sprites + the unmapped `sky_arch` falling to emoji) and **`map_sites_fogged`** (the case unique to this marker: a site persists on a *remembered* tile under the mist tint — both sprites must still read there) |
 | `ui/StageSprites.gd` | Bundled PNG art for **SETTLEMENT-STAGE** tokens — the fourth art family behind `IconSprites`, covering BOTH the map band token (`BandMarkerRenderer._draw_band_token`) and the **Band/City panel header** (`BandCityPanel.set_header`, which swaps a `TextureRect` in for each of its two glyph `Label`s). Same reasoning as the rest: the emoji path draws through `ThemeDB.fallback_font`, so the OS emoji font decided what a camp/village looked like, and ⛺/🛖/🏘️ blob at token size. **THE ONE WAY THIS FAMILY DIFFERS FROM ALL THE OTHERS: its key comes STRAIGHT FROM THE SERVER, with no client-side resolver.** `FaunaSprites` derives a species key from a free-text herd label (`FoodIcons.species_key_for`) and `SiteSprites` from a module+terrain branch (`site_key_for`); here the sim's `settlement_stage_id` (from `settlement_stage_config.json`, already on the wire and decoded in `native/src/lib.rs` — this needed **no schema or server change**, only a GDScript reader) IS the key, so `for_stage(stage_id) -> Texture2D` is a direct table hit. Deliberately NOT keyed on `settlement_stage_icon`: that is presentation the server also happens to send, and keying art on a glyph string is the brittle reverse-mapping this table exists to avoid. **The `null` fallback is LIVE, like `WonderSprites`' and unlike fauna/sites'** — `settlement_stage_config.json` is user-editable, so a game may define stages beyond the three bundled (`nomadic`/`camp`/`village`), and those must keep rendering their configured emoji. **Precedence in `_draw_band_token` is load-bearing:** expedition → **sprite** → glyph → placeholder square. The sprite attempt MUST precede the empty-glyph placeholder branch, which returns early — otherwise a sprite-mapped stage whose glyph happened to be empty would wrongly draw a square. `dim` (a behind card in the band stack) modulates the sprite by `BAND_STACK_BEHIND_TINT`, mirroring what the glyph path does to its colour — the ONE case `MapView._draw_marker_sprite`'s `modulate` param is for; it is structural recession, never a state encoding (see that helper's comment). Same import options as the other families (`process/size_limit=64`) and the same judging rule: at true marker size. Verify on `map_preview`'s **`map_stage_glyphs`** (the ⛺→🛖→🏘️ progression as sprites, plus the empty-stage band still drawing the neutral placeholder square) and `band_panel_preview`'s header (the fixture carries `settlement_stage_id: "camp"`) |
@@ -1583,8 +1583,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView.select_occupant`, which moves the map selection ring** (sets
   `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
   auto-selects the first occupant through the same path. The **vitality dot is
-  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_days`
-  (`days_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
+  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_turns`
+  (`turns_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
   (`ecology_phase` → thriving green / stressed amber / collapsing red), sharing the
   exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
   dot and no allocation panel (their larder/orders aren't ours to see). (The Tile card
@@ -1698,11 +1698,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Current-actions rows are PER-SOURCE max-useful capped** (mirroring the compose controls' cap): each
     row's `+` is gated on `idle > 0 AND workers < max_useful` via `_source_worker_cap_state` +
     `_max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
-    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `HERD_FORECAST_PREFIX`); the
+    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `BARE_FORECAST_PREFIX`); the
     Forage row reads its patch from the new `_forage_patch_lookup` (Main pushes the snapshot
-    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the bare
-    `WIRE_FORAGE_PATCH_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
-    the `patch_`-prefixed tile_info cross-ref the compose control reads). An unknown forecast
+    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the SAME
+    `BARE_FORECAST_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
+    the `patch_`-prefixed tile_info cross-ref the compose control reads) — the two rows are told apart
+    by their `SOURCE_KIND_*`, never by the prefix they share. An unknown forecast
     (`MAX_USEFUL_UNBOUNDED`) falls back to the plain `idle > 0` gate; a source capped at max-useful with
     idle still available spells the reason in the row tooltip (`MAX_USEFUL_CAPPED_TOOLTIP`). **Scout /
     Warrior are band-wide roles with no ceiling — they keep the plain `idle > 0` gate.** Verified by
@@ -2088,11 +2089,22 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
       misled. ui_preview `herd_corral_depleted`.
-    - **TAME's dip has no scalar ceiling field — its DIP rides the list, its PAYOFF is a scalar.** There
-      is no flat `ceilingTame` on the wire (the Tame dip rides the `huntPolicyCeilings` LIST, so `tame`
-      has **no** `FORECAST_CEILING_KEYS` entry — adding one would silently fall back to Sustain's ceiling
-      and quote the wrong dip); `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
-      instead. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+    - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
+      wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
+      `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
+      `_forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
+      (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
+      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
+      list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**: a herd dict
+      and a raw wire forage-patch dict both carry the forecast fields bare, so they share the ONE
+      `BARE_FORECAST_PREFIX` and a prefix test cannot separate them. That is not merely a convention —
+      the bare case was deliberately collapsed from two same-valued consts (`HERD_FORECAST_PREFIX` /
+      `WIRE_FORAGE_PATCH_PREFIX`, both `""`) into one **because** a herd-sounding name for the empty
+      string invited exactly that test: `prefix == HERD_…` read as discriminating, was not, and sent the
+      Current-actions Forage row down the herd branch, where no `hunt_policy_ceilings` key exists —
+      collapsing its ceiling to 0 and leaving the row's `+` button permanently dead. Nor may it infer the
+      kind from the dict's shape (`has("hunt_policy_ceilings")` would misread a herd whose snapshot
+      omitted the list). The `prefix` parameter survives for the FORAGE scalar key lookup only. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
@@ -2126,8 +2138,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `patch_field_progress` / `patch_is_field` / `patch_ceiling_sow` / `patch_field_yield` /
       `patch_sow_site_refusal` (MapView cross-refs all onto `tile_info` with the `patch_` prefix; ALL
       are in `FOW_DISCOVERED_HIDDEN_KEYS`, mirroring their rung-2 twins). `HerdTelemetryState`:
-      `ceilingCorral` / `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
-      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
+      `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
+      (the herd's SOLE ceiling representation — the sim exports one row per
+      `FollowPolicy::HUNT_POLICIES`, i.e. the four extractive rungs **plus `tame` and `corral`**, so
+      the investment DIPS ride it too; the old per-policy scalars `ceilingSustain` / `ceilingSurplus` /
+      `ceilingMarket` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
+      are no longer decoded) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
@@ -2201,10 +2217,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
-    were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
-    `HerdTelemetryState` (`perWorkerYield` / `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` /
-    `ceilingEradicate` — all food/turn at the source's **current biomass**, exported at
-    `output_multiplier = 1.0`), enough to compute the take *while composing*:
+    were wasted. The sim now streams, on `ForagePatchState` and `HerdTelemetryState` alike, a
+    `perWorkerYield` plus one take ceiling per policy — all food/turn at the source's **current
+    biomass**, exported at `output_multiplier = 1.0` — enough to compute the take *while composing*.
+    **The two source kinds carry the ceilings differently, and that asymmetry is load-bearing:** the
+    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+    plus `ceilingCultivate` / `ceilingSow`) because it has no policy list; the HERD has ONLY the
+    `huntPolicyCeilings` list (its identically-named scalars are deprecated slots — a new policy costs
+    the herd no schema change).
     `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
     already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
     ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`
@@ -2617,35 +2637,41 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   it's known knowledge. The server also pushes a `SiteDiscovered` command-feed entry, which renders
   generically via the server-provided `kind`/`label` (no client kind→label map needed). See
   `core_sim` — Wondrous Sites.
-- **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
-  `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
+- **Band food status** (snapshot `PopulationCohortState.turnsOfFood` / `activity` / `supplyNetworkId` /
+  `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `turns_of_food` / `activity` /
   `supply_network_id` / `stores{item:qty}`).
-  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME IS A MISNOMER PENDING A RENAME.** It is the
+  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME NOW SAYS SO** (it was `daysOfFood`; renamed
+  > end-to-end — wire, decoder, config key `food_turns.{warn,critical}`, and every client helper).
+  > It is the
   > **larder runway — turns until the larder empties, WITH income counted** — resolved sim-side by
   > walking the per-source `arrivalSchedule`s (falling back to `larder / net_drain`, and to the
   > `999` not-food-limited sentinel when the band is net-positive). It used to be
   > `larder / consumption`, i.e. *"how long if you stop hunting"*, which read badly pessimistic for
   > any band with real income and visibly contradicted the FOOD OUTLOOK chart beneath it. Because
   > it walks the same schedules the chart does, the header and the chart now agree. **This game
-  > counts turns, never days** — `Hud._food_days_text` is the single place the unit is spelled, and
-  > it renders "turns". One consequence to keep in mind: the runway assumes income *holds*, so a
+  > counts turns, never days** — `Hud._food_turns_text` is the single place the unit is spelled, and
+  > it spells it from the shared `Hud.FOOD_RUNWAY_UNIT` const. **The Food-row threshold tint in
+  > `_format_detail_bbcode` keys on that SAME const**, because it recognizes the row by finding the
+  > unit word in the rendered value — the guard tested a bare `"day"` literal after the renderer had
+  > moved to turns, so a starving band's Food row rendered in neutral ink and only the `∞` case
+  > tinted. Never spell the unit at either site with a literal. One consequence to keep in mind: the runway assumes income *holds*, so a
   > band whose income nearly covers its drain reports a very long runway and reads green until that
   > income lapses. The old figure warned earlier by assuming the worst.
   The green/amber/red warn·critical thresholds and the
   runway→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
-  key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
+  key `food_turns.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
   (1) `MapView._draw_band_status` draws a food-runway dot on each **player** band
   (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> turns)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
   — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
   reason: **a rival's larder is not ours to see**). A foreign cohort carries no
-  `days_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
+  `turns_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
   — a healthy-green `Food 0 (∞)`, the UI claiming we'd counted a larder we cannot observe.
   A foreign band's drawer now shows only what is honestly observable from outside: its
   **Position**, plus the name/size on its roster row. The reset of the disclosure context
-  (`_food_flow_present` / `_selected_band_food_days` / `_disclosure_state`) lives at the top
+  (`_food_flow_present` / `_selected_band_food_turns` / `_disclosure_state`) lives at the top
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
-  previous render's caret or food-days tint behind;
+  previous render's caret or food-runway tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
@@ -2807,7 +2833,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   producers** (all in `Hud.update_band_alerts`, each pushed with the tile `current_x`/`current_y` so
   Jump locates it) — the folded-in Alerts panel, plus the expedition one. The first three run in one
   loop over the player faction's BANDS:
-  - **`starving`** (critical) — `BandFoodStatus.is_critical(days)`; label `"<band> starving"`, detail = `_food_days_text(days)`.
+  - **`starving`** (critical) — `BandFoodStatus.is_critical(turns)`; label `"<band> starving"`, detail = `_food_turns_text(turns)`.
   - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
   - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
 
@@ -2900,7 +2926,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   at marker-rebuild). Resident-band rendering is untouched.
   (2) **Expedition drawer panel** (`Hud._render_occupant_drawer` → `_build_expedition_panel`):
   replaces the labor-allocation panel for a selected expedition (no labor in v1). Drawer text
-  (`_expedition_summary_lines`) shows Mission / humanized Phase / Party / Provisions (`daysOfFood`);
+  (`_expedition_summary_lines`) shows Mission / humanized Phase / Party / Provisions (`turnsOfFood`);
   the panel hosts **Recall** (→ `recall_expedition_requested` → `Main._on_hud_recall_expedition` →
   `recall_expedition …`) + **Move** (reuses `_on_move_band_pressed`; `_resolve_assign_band` returns
   the selected expedition since it's a player unit — Move retargets it via `move_band` unchanged, no
@@ -2927,7 +2953,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   expedition", **Target** herd (`expedition_target_herd`, species via `_herd_label_for_id` → raw id
   fallback), **Policy** (`expedition_hunt_policy`, capitalized), humanized **Phase**
   (Hunting/Delivering/Returning), Party, and **Carried X / cap** (`stores` total vs
-  `expedition_carry_cap`, days from `daysOfFood`) with a **· FULL** badge at the ceiling. Reuses
+  `expedition_carry_cap`, turns from `turnsOfFood`) with a **· FULL** badge at the ceiling. Reuses
   `_build_expedition_panel` (Recall + Move, "Returning"-when-returning treatment — mission-agnostic,
   so hunt parties get it too).
   (3) **Outfit UI** (`Hud._build_send_expedition_controls`): under the shared "Send expedition"

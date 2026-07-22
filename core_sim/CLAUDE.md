@@ -945,13 +945,47 @@ former hard-coded `HerdSpecies` enum is now a data-driven table. Each row has a
 keyword, e.g. "Red Deer" → 🦌), `size_class` (`migratory`/`big`/`small`),
 `migratory` flag, `route_len` `[min,max]` (= roaming range), `biomass` `[min,max]`
 (group size), and `host_biomes` (a list of **`FoodModule` keys**, reusing
-`classify_food_module`). Shipped species: migratory mammoth/steppe_runner/
-marsh_grazer (long routes); big game deer/boar/**aurochs** (2–3 tiles); small game
-rabbit/fowl/**crag_goat** (~1 tile, stationary). The two **pennable grazer livestock**
-(Grazing 2d) are `pen`-ceiling: **Wild Aurochs** (🦬, wild r 0.09 → slow ranch cattle) on
-grass + woodland edge (`savanna_grassland`/`temperate_forest`/`mixed_woodland`), **Crag
-Goats** (🐐, wild r 0.22 → fast hardy hill stock) on highland/dry-upland
-(`montane_highland`/`semi_arid_scrub`).
+`classify_food_module`). Shipped roster (19 rows): **migratory** mammoth/steppe_runner/
+marsh_grazer/reindeer/wild_horse (long routes); **big game** deer/boar/aurochs/seal/wild_elk
+(2–3 tiles); **small game** rabbit/fowl/crag_goat/wild_sheep/alpine_ibex/gazelle/forest_grouse/
+**river_fish**/**snow_hare** (~1 tile, stationary). The `pen`-ceiling **livestock** are
+aurochs (🦬, wild r 0.09 → slow ranch cattle) on grass + woodland edge, **Crag Goats** (🐐,
+wild r 0.22 → fast hardy hill stock) on highland/dry-upland, plus boar, rabbit, fowl,
+wild_sheep and snow_hare.
+
+**Regional signature — every biome offers distinct game, and every land biome offers a pen.**
+Three roster rows close the last gaps:
+- **`river_fish` ("Silt Catfish")** — the wet biomes' own game, hosting
+  `riverine_delta`/`wetland_swamp`/`coastal_littoral`. Structurally the `seal` row: a
+  non-grazing, non-migratory colony with `route_len [1,1]`, pinned to the shore by
+  **`requires_adjacent_water`**, so it needs no new Rust. A catfish inland is a bug.
+- **`snow_hare` ("Snow Hare Warren")** — hosts **`boreal_arctic` alone** at a **`pen`** ceiling.
+  Before it, `boreal_arctic` was the **only land biome with no `pen`-ceiling species at all**: the
+  mammoth and elk there are `wild`, the reindeer only `pastoral`, so the intensification ladder's
+  pen rung was flat unreachable from a northern start. The hare is what makes it reachable.
+
+> **`host_biomes` names a MODULE, not a terrain — and `montane_highland` is the leaky one.**
+> `CanyonBadlands` (an arid desert canyon) carries `ARID | HIGHLAND` and reaches the **fallback**
+> arm of `classify_food_module_from_traits`, where the `HIGHLAND` test runs **before** the `ARID`
+> test — so arid badlands classify as `montane_highland`. A live playtest duly found snow hares
+> warrening in a desert canyon. There is no way to target one exact `TerrainType`, so the fix is to
+> drop the module: `boreal_arctic` is an **explicit** arm (BorealTaiga | Tundra | PeriglacialSteppe
+> | SeasonalSnowfield) and is exactly the hare's range. Nothing is lost but the occasional alpine
+> warren, and no gameplay gap opens — `montane_highland` already has `crag_goat` at a `pen` ceiling.
+> **The next cold-climate species pointed at `montane_highland` will hit this same trap.** Guarded
+> by `fauna_wet_biome_roster::snow_hares_never_warren_the_highlands`, which asserts on the *spawned
+> tile's module* — a count floor would not catch it, since re-adding the host raises the count.
+- **`boar` gained `riverine_delta`**, giving the delta a big-game row beside the migratory marsh
+  grazer and the small fowl/catfish.
+
+Measured over `SWEEP_SEEDS` on the standard 80×52 earthlike map
+(`core_sim/tests/fauna_wet_biome_roster.rs`, the guard against the silent never-spawn of an
+unmatched `host_biomes` key): **20 catfish colonies** (1–6 per map, all water-adjacent), **37
+snow-hare warrens** (4–8), **54 boar groups on delta tiles** (5–15) — each **0** before the
+change. **The map-wide game cap is saturated** (122 herds per map against
+`abundance.max_total_game` 120 + 2 migratory, identical pre- and post-change), so these three are
+**displacing** other short-range game rather than adding to it — the roster shifts composition,
+never density. Raise `max_total_game` if the intent is more game, not different game.
 
 **Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
 `HerdRegistry`.
@@ -1701,7 +1735,7 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     **that**, never `penUpkeep`. So no consumer needs a "0 when unpenned" reading, and one field with
     one meaning beats two that must be kept in lockstep.
 
-  Plus the forecast pair `ceilingCorral` / `corralYield` (see
+  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `corralYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.
 - **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
@@ -2602,10 +2636,13 @@ forecast is its pre-commit twin: per in-range source, the snapshot exposes enoug
 show a live **"Expected yield: +X.XX /turn"** and **cap its worker stepper at the max-useful count
 while the player is composing an assignment**.
 
-**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`) — the same shape on
-`ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
-`perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
-(all `float`, **food/turn**, at the source's CURRENT biomass), **plus the investment rung**:
+**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`): `perWorkerYield:float` on
+both `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd), plus the per-policy ceilings
+(**food/turn**, at the source's CURRENT biomass) — which are carried **differently on the two sides**:
+a patch keeps the scalars `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+while a **herd carries them only as the `huntPolicyCeilings` list** (its scalar twins are retired
+`(deprecated)` slots — a free-form `policy` string means a new policy needs no schema change, and the
+list and the scalars were provably the same numbers). **Plus the investment rung**:
 
 > **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
 > TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
@@ -2623,9 +2660,9 @@ while the player is composing an assignment**.
 > herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
 > continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
 
-`ForagePatchState.ceilingCultivate` + `tendedYield` and `HerdTelemetryState.ceilingCorral` +
-`corralYield`. The investment policy's `ceiling*` is the **preparing** yield
-(`fraction × ceilingSustain` — the dip); `tendedYield`/`corralYield` is what the source will pay
+`ForagePatchState.ceilingCultivate` + `tendedYield` and, on a herd, `huntPolicyCeilings`' **corral**
+row + `corralYield`. The investment policy's ceiling is the **preparing** yield
+(`fraction × the Sustain/MSY ceiling` — the dip); `tendedYield`/`corralYield` is what the source will pay
 **once the improvement completes**, so the client can show **"preparing X → then Y"** *before* the
 player commits to the cost. (Sim-side both live on the shared `SourceYieldForecast` as
 `ceiling_prepare` / `managed_yield` — the two investment policies are kind-exclusive, so one field
@@ -3472,8 +3509,9 @@ lookup**:
   is `≥ 0`, so `B − floor ≤ B`), kept as belt-and-braces against a hot-reloaded floor above `1`. A herd
   below a policy's floor exports `0` for it (a herd at the brink spares nothing to Sustain *or* Surplus).
   **Sourced by projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
-  the *same* object the scalar `ceilingSustain`/…/`ceilingCorral` fields export, so the list and the
-  scalars are literally the same numbers and cannot drift, and the take path pays exactly them
+  the **only** wire representation of a herd's per-policy ceilings (the scalar
+  `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
+  `(deprecated)` slots), and the take path pays exactly them
   (forecast == actual). That also makes `Corral` **phase-correct for free**: the
   the `animal:pen` rung's `yield_fraction_while_building × MSY` dip while the pen is being built, and the **full corral yield**
   once `is_corralled()` (a penned herd forecasts as `SourceYieldForecast::tended` — every ceiling is
@@ -3621,12 +3659,12 @@ network, `>= 1` = shared id) so the client can draw supply links between co-netw
 derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
-`daysOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
+`turnsOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
 included** — and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
 with the most workers in the band's `LaborAllocation`). Both are computed at capture in
 `population_state`.
 
-> #### `daysOfFood` is `larder / net drain` — ONE formula for a band and an expedition
+> #### `turnsOfFood` is `larder / net drain` — ONE formula for a band and an expedition
 >
 > **`runway = larder / (consumption + penFeedUpkeep − income)`.** An expedition has no labor income
 > and keeps no pens, so it reduces to `provisions / consumption` — **exactly** the historical
@@ -3658,9 +3696,6 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > UI thresholds (`band_status_config.json` warn 10 / critical 5) are now measured against a runway
 > that is *income-inclusive*, so they fire later by construction — retune there if red arrives too
 > late to act on.
->
-> **The `days` in the name is a MISNOMER pending a rename** (the sim counts turns; the client already
-> renders "turns"). Renaming it across schema/native/client is a mechanical sweep held out of this arc.
 
 Alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
@@ -3715,7 +3750,7 @@ each `PopulationCohortState` carries band-level
 `foodIncome` (Σ per-source `actual`) + `foodConsumption` (the food the people **actually ate** this
 turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at the turn's *opening*
 brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
-births would inflate that and break the larder ledger identity by exactly the growth. `daysOfFood`
+births would inflate that and break the larder ledger identity by exactly the growth. `turnsOfFood`
 drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
 see the runway callout above).
 All derived at capture (0 on a rehydrated save before the next tick). **The client

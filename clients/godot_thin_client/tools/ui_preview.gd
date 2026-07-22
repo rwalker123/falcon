@@ -352,7 +352,7 @@ func _ready() -> void:
 	var full_hunt := _hunt_expedition_fixture()
 	full_hunt["expedition_phase"] = "delivering"
 	full_hunt["stores"] = {"provisions": 16.0}
-	full_hunt["days_of_food"] = 8.0
+	full_hunt["turns_of_food"] = 8.0
 	_hud.show_unit_selection(full_hunt)
 	await _settle()
 	await _save("expedition_hunt_full")
@@ -362,7 +362,7 @@ func _ready() -> void:
 	var returning_hunt := _hunt_expedition_fixture()
 	returning_hunt["expedition_phase"] = "returning"
 	returning_hunt["stores"] = {"provisions": 12.0}
-	returning_hunt["days_of_food"] = 6.0
+	returning_hunt["turns_of_food"] = 6.0
 	_hud.show_unit_selection(returning_hunt)
 	await _settle()
 	await _save("expedition_hunt_returning")
@@ -910,7 +910,7 @@ func _ready() -> void:
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
-	# − 0.34 feed", ceiling_corral → corral_yield minus the projected pen_upkeep, stepper capped at the
+	# − 0.34 feed", the `corral` ceiling row → corral_yield minus the projected pen_upkeep, stepper capped at the
 	# 1 keeper a managed source needs), and the drawer carries the "Corral: Building 40%" row — the
 	# herd twin of the tile's "Cultivation N%". The picker's 🐄 Corral button wears the `→ +1.50/turn`
 	# PAYOFF (corral_yield), above ◎ Tame's `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
@@ -1340,7 +1340,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 
 	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
-	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
+	# player bands (turns_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
 	# harvest / scout / idle activity glyphs) under Bands (3), and one stressed herd
 	# (amber ecology dot) under Wildlife (1). Auto-selects the first band, so the
 	# drawer shows its Rations and the Scout verb.
@@ -1664,7 +1664,7 @@ func _ready() -> void:
 	_hud.clear_selection()
 	_hud.update_overlay(42, {})
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 501, "size": 40, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 501, "size": 40, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 30, "current_y": 20, "idle_workers": 0},
 	])
 	await _settle()
@@ -1688,7 +1688,7 @@ func _ready() -> void:
 	# attention entry, open via the face click, then fire the footer button and assert the emit.
 	advance_hits[0] = 0
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 511, "size": 40, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 511, "size": 40, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 30, "current_y": 20, "idle_workers": 5},
 	])
 	_hud.turn_orb._on_face_pressed()
@@ -1713,27 +1713,27 @@ func _ready() -> void:
 	# it produces NO attention entry (never "Band N starving") and does not shift Band 2/Band 3's
 	# positional numbers — the idle-workers row still reads "Band 3", matching the picker/header.
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
+		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 12.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
-		{"faction": 0, "entity": 602, "size": 90, "days_of_food": 999.0, "activity": "hunt",
+		{"faction": 0, "entity": 602, "size": 90, "turns_of_food": 999.0, "activity": "hunt",
 			"current_x": 31, "current_y": 21},
-		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9},
 	])
 	_hud.update_band_alerts([
-		# Band 1 — starving (3 days of food, below critical).
-		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
+		# Band 1 — starving (3 turns of food, below critical).
+		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
 		# A detached hunt expedition, also starving — must NOT emit a "Band N starving" entry and
 		# must NOT consume a band number (Band 2/Band 3 below stay 2 and 3).
-		{"faction": 0, "entity": 650, "size": 6, "days_of_food": 2.0, "is_expedition": true,
+		{"faction": 0, "entity": 650, "size": 6, "turns_of_food": 2.0, "is_expedition": true,
 			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
 			"current_x": 25, "current_y": 18},
 		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
-		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
+		{"faction": 0, "entity": 602, "size": 78, "turns_of_food": 999.0, "morale": 0.30,
 			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
 		# Band 3 — idle labor: 4 working-age workers unassigned.
-		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
 	])
 	_hud.turn_orb.open_popover()
@@ -1749,23 +1749,23 @@ func _ready() -> void:
 	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
 	_hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 701, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 701, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
-		{"faction": 0, "entity": 751, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+		{"faction": 0, "entity": 751, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 39, "current_y": 26},
 		# The hunt party names its OBJECTIVE by species (game_deer_07 → "Red Deer" via the world-herd
 		# list pushed above), not the raw fauna id — the row has to be actionable at a glance.
-		{"faction": 0, "entity": 752, "size": 5, "days_of_food": 7.0, "is_expedition": true,
+		{"faction": 0, "entity": 752, "size": 5, "turns_of_food": 7.0, "is_expedition": true,
 			"expedition_mission": "hunt", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"expedition_target_herd": "game_deer_07", "current_x": 64, "current_y": 11},
-		{"faction": 0, "entity": 753, "size": 4, "days_of_food": 6.0, "is_expedition": true,
+		{"faction": 0, "entity": 753, "size": 4, "turns_of_food": 6.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 18, "current_y": 44},
-		{"faction": 0, "entity": 754, "size": 4, "days_of_food": 5.0, "is_expedition": true,
+		{"faction": 0, "entity": 754, "size": 4, "turns_of_food": 5.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 51, "current_y": 8},
-		{"faction": 0, "entity": 755, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+		{"faction": 0, "entity": 755, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "outbound", "home_band_entity": 701,
 			"current_x": 33, "current_y": 30},
 	])
@@ -1781,7 +1781,7 @@ func _ready() -> void:
 	_hud.turn_orb.set_attention([])
 	_hud.update_herds([_starving_pen_herd_fixture()])
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 801, "size": 46, "days_of_food": 1.0, "activity": "hunt",
+		{"faction": 0, "entity": 801, "size": 46, "turns_of_food": 1.0, "activity": "hunt",
 			"current_x": 64, "current_y": 11, "idle_workers": 0,
 			"labor_assignments": [
 				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral",
@@ -2407,7 +2407,7 @@ func _band_fixture() -> Dictionary:
 		"pos": [71, 18],
 		# Good food state: a long larder runway (≥ warn) + positive net (0.94 − 0.68 = +0.26) → the
 		# Food line reads "… · +0.26 /turn" and the category breakdown is collapsed (clickable open).
-		"days_of_food": 22.0,
+		"turns_of_food": 22.0,
 		# Good morale (≥ warn, not falling) → the Morale row is collapsed with a ▸ caret. The signed
 		# Layer-1 contributions (above the breakdown epsilon) give the disclosure real content on expand.
 		"morale": 0.82,
@@ -2482,7 +2482,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = PEN_KEEPER_BAND_ENTITY
 	band["id"] = "Band 4"
-	band["days_of_food"] = 22.0
+	band["turns_of_food"] = 22.0
 	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
 	band["food_consumption"] = 1.15     # the PEOPLE's meals
 	band["pen_feed_upkeep"] = 1.74      # the ANIMALS' feed — a debit in neither row above
@@ -2503,7 +2503,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 ## shrinks, so it yields less, so there is less to feed it with.
 func _starving_pen_band_fixture() -> Dictionary:
 	var band := _pen_keeper_band_fixture()
-	band["days_of_food"] = 3.0
+	band["turns_of_food"] = 3.0
 	band["food_income"] = 1.32          # forage 0.48 + the shrunken pen's 0.84
 	band["pen_feed_upkeep"] = 0.70      # PAID, not demanded — the herd starves for the difference
 	band["labor_assignments"] = [
@@ -2520,7 +2520,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 905
 	band["id"] = "Band 3"
-	band["days_of_food"] = 4.0
+	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
 	band["labor_assignments"] = [
@@ -2540,7 +2540,7 @@ func _expedition_fixture() -> Dictionary:
 		"entity": 7001,
 		"faction": 0,
 		"pos": [80, 30],
-		"days_of_food": 9.0,
+		"turns_of_food": 9.0,
 		"stores": {"provisions": 48.0},
 		"is_expedition": true,
 		"expedition_mission": "scout",
@@ -2565,7 +2565,7 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"entity": 7101,
 		"faction": 0,
 		"pos": [64, 22],
-		"days_of_food": 4.0,
+		"turns_of_food": 4.0,
 		# Carried 8 of a 16 carry cap → "Carried 8 / 16".
 		"stores": {"provisions": 8.0},
 		"is_expedition": true,
@@ -2590,7 +2590,7 @@ func _low_morale_band_fixture() -> Dictionary:
 	var fixture := _band_fixture()
 	fixture["id"] = "Band 5"
 	fixture["entity"] = 905
-	fixture["days_of_food"] = 999.0
+	fixture["turns_of_food"] = 999.0
 	fixture["stores"] = {"provisions": 260.0}
 	fixture["morale"] = 0.22
 	# Falling morale driven by the harsh cavern terrain: the drawer shows
@@ -2625,22 +2625,22 @@ func _low_morale_band_fixture() -> Dictionary:
 ## compare against (Band Ash drops 90 → 78 in the live fixture below).
 func _band_alert_baseline() -> Array:
 	return [
-		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 12.0, "activity": "harvest", "current_x": 71, "current_y": 18},
-		{"faction": 0, "entity": 102, "size": 90, "days_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22},
-		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "harvest", "current_x": 12, "current_y": 9},
+		{"faction": 0, "entity": 101, "size": 60, "turns_of_food": 12.0, "activity": "harvest", "current_x": 71, "current_y": 18},
+		{"faction": 0, "entity": 102, "size": 90, "turns_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22},
+		{"faction": 0, "entity": 103, "size": 45, "turns_of_food": 999.0, "activity": "harvest", "current_x": 12, "current_y": 9},
 	]
 
 func _band_alert_fixture() -> Array:
 	return [
-		# Starving: 3 days of food (< critical) → red alert.
-		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
+		# Starving: 3 turns of food (< critical) → red alert.
+		{"faction": 0, "entity": 101, "size": 60, "turns_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
 			"harvest": {"band_label": "Band Fen"}},
 		# Losing population to relocation: size 90 → 78, well-fed (∞) but discontented and
 		# 12 people emigrated last turn → amber alert "losing population — people leaving".
-		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 40, "current_y": 22,
+		{"faction": 0, "entity": 102, "size": 78, "turns_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 40, "current_y": 22,
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
-		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
+		{"faction": 0, "entity": 103, "size": 45, "turns_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
 	]
 
 ## Two player bands (multi-band split is deferred, but the assign controls' band-picker must
@@ -3013,8 +3013,6 @@ func _delivered_oracle_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 1.23,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.33, "ceiling_surplus": 3.5,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.33, "surplus": 3.5, "market": 5.0, "eradicate": 7.0,
 		},
@@ -3034,8 +3032,6 @@ func _big_game_window_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 16.0,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.4, "ceiling_surplus": 3.6,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.4, "surplus": 3.6, "market": 5.0, "eradicate": 7.0,
 		},
@@ -3218,17 +3214,12 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"food_per_animal": fpa,
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
-		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
+		#   • `per_worker_yield` + the `hunt_policy_ceilings` table, which drive the shared
 		#     `_forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
-		#   • `hunt_policy_ceilings` / `hunt_trip_estimates` below (the BAND flow ceiling and the
-		#     sim's forward-simulated EXPEDITION trip answers).
-		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings match the
+		#   • `hunt_trip_estimates` below (the sim's forward-simulated EXPEDITION trip answers).
+		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings ARE the
 		# band ceilings, because the sim exports one hunt model — the two paths must agree.
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": sustain_ceiling,
-		"ceiling_surplus": sustain_ceiling * 4.0,
-		"ceiling_market": sustain_ceiling * 2.0,
-		"ceiling_eradicate": 0.0,
 		"hunt_policy_ceilings": {
 			"sustain": sustain_ceiling,
 			"surplus": sustain_ceiling * 4.0,
@@ -3460,28 +3451,22 @@ func _herd_fixture() -> Dictionary:
 		# decoder now emits. The kill-rhythm divides it by the food rate (both provisions): 2.0
 		# food/animal vs a 0.90/turn Sustain take reads "≈1 Red Deer / 3 turns".
 		"food_per_animal": 2.0,
-		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
-		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
-		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this
-		# herd), so the Hunters stepper caps at 3 with the "max 3 workers useful here" note.
+		# Pre-commit yield forecast (food/turn at this herd's biomass, at output_multiplier 1.0).
+		# Sustain admits ceil(0.90 / 0.30) = 3 useful hunters, below the reference band's 7 assignable
+		# (3 idle + the 4 it already has on this herd), so the Hunters stepper caps at 3 with the
+		# "max 3 workers useful here" note.
 		"per_worker_yield": 0.30,
-		"ceiling_sustain": 0.90,
-		"ceiling_surplus": 1.80,
-		"ceiling_market": 2.70,
-		"ceiling_eradicate": 4.50,
 		# The two INVESTMENT rungs' PAYOFFS — the food/turn each rung pays ONCE prepared (the pastoral
 		# MSY after taming, the pen's sustained rate once built), NOT the during-build dip. Ordered
 		# Sustain (0.90) < Tame (1.20) < Corral (1.50) so the picker's `→ +Y/turn` payoff buttons read
 		# as an ascending ladder, both clearly above Sustain's `up to +0.90/turn` cap.
-		"ceiling_corral": 0.23,
 		"corral_yield": 1.50,
 		"pastoral_yield": 1.20,
 		"corral_progress": 0.0,
-		# The TAME/Corral DIPS. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
-		# rides the `hunt_policy_ceilings` LIST (the sim exports a row for every one of the six
-		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder produces and where
-		# `_forecast_inputs` reads Tame's dip. The extractive rows match the flat ceilings above,
-		# because the sim exports ONE hunt model and the two views must agree.
+		# EVERY ceiling — the four extractive rungs plus the Tame/Corral DIPS — rides this ONE list;
+		# the herd has no flat `ceiling*` scalars on the wire any more (deprecated schema slots). The
+		# sim exports a row for every one of the six `FollowPolicy::HUNT_POLICIES`, so this is the
+		# shape the decoder produces and where `_forecast_inputs` reads every herd ceiling.
 		"hunt_policy_ceilings": {
 			"sustain": 0.90,
 			"surplus": 1.80,
@@ -3518,10 +3503,6 @@ func _aurochs_big_game_fixture() -> Dictionary:
 	fixture["husbandry_ceiling"] = "wild"
 	fixture["food_per_animal"] = 1.6
 	fixture["per_worker_yield"] = 0.80
-	fixture["ceiling_sustain"] = 0.74
-	fixture["ceiling_surplus"] = 1.20
-	fixture["ceiling_market"] = 1.86
-	fixture["ceiling_eradicate"] = 2.60
 	fixture["hunt_policy_ceilings"] = {
 		"sustain": 0.74, "surplus": 1.20, "market": 1.86, "eradicate": 2.60,
 	}
@@ -3582,7 +3563,7 @@ func _crowded_bands_fixture() -> Array:
 	return [
 		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
 			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
-			"work_range": 2, "hunt_reach": 4, "days_of_food": 15.0, "morale": 0.72,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 15.0, "morale": 0.72,
 			"activity": "forage", "stores": {"provisions": 180.0},
 			"food_income": 3.2, "food_consumption": 2.4,
 			"labor_assignments": [
@@ -3592,11 +3573,11 @@ func _crowded_bands_fixture() -> Array:
 			]},
 		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
 			"current_x": 58, "current_y": 24, "working_age": 44, "idle_workers": 4,
-			"work_range": 2, "hunt_reach": 4, "days_of_food": 7.0, "morale": 0.51,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 7.0, "morale": 0.51,
 			"activity": "scout", "stores": {"provisions": 40.0}, "labor_assignments": []},
 		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
 			"current_x": 58, "current_y": 24, "working_age": 27, "idle_workers": 0,
-			"work_range": 2, "hunt_reach": 4, "days_of_food": 2.0, "morale": 0.30,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 2.0, "morale": 0.30,
 			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
 	]
 
@@ -3654,11 +3635,11 @@ func _occupied_tile_fixture() -> Dictionary:
 func _occupied_units_fixture() -> Array:
 	return [
 		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
-			"days_of_food": 15.0, "activity": "harvest", "stores": {"provisions": 180.0}},
+			"turns_of_food": 15.0, "activity": "harvest", "stores": {"provisions": 180.0}},
 		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
-			"days_of_food": 7.0, "activity": "scout", "stores": {"provisions": 40.0}},
+			"turns_of_food": 7.0, "activity": "scout", "stores": {"provisions": 40.0}},
 		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
-			"days_of_food": 2.0, "activity": "idle", "stores": {"provisions": 8.0}},
+			"turns_of_food": 2.0, "activity": "idle", "stores": {"provisions": 8.0}},
 	]
 
 ## The stressed herd sharing the occupied hex (amber ecology dot).
@@ -3826,8 +3807,13 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	fixture["corral_progress"] = 0.0
 	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
 	fixture["per_worker_yield"] = 0.10
-	fixture["ceiling_sustain"] = 0.10
-	fixture["ceiling_corral"] = 0.05
+	# Override the inherited ceiling table's two rows this frame reads — Sustain (the extractive
+	# baseline) and the Corral DIP. The herd's ceilings live only in `hunt_policy_ceilings` now, so
+	# a depleted variant must restate them here rather than shadowing them with flat scalars.
+	var depleted_ceilings: Dictionary = (fixture["hunt_policy_ceilings"] as Dictionary).duplicate()
+	depleted_ceilings["sustain"] = 0.10
+	depleted_ceilings["corral"] = 0.05
+	fixture["hunt_policy_ceilings"] = depleted_ceilings
 	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
 	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture
