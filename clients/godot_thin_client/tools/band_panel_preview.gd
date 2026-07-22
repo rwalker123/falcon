@@ -20,6 +20,14 @@ const PREVIEW_PREFS_PATH := "user://band_panel_preview_prefs.cfg"
 ## not the band zone they exist to show) and wrote its own tab walk back over the player's.
 const PREVIEW_DOCK_PREFS_PATH := "user://band_panel_preview_dock.cfg"
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
+## The real MapView, for the map-selection path state (see `band_panel_people_map_path`).
+const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
+const MAP_PATH_TILE := Vector2i(71, 18)
+## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
+const MAP_PATH_GRID_W := 80
+const MAP_PATH_GRID_H := 30
+const MAP_PATH_TERRAIN_ID := 11
 const OUT_DIR := "res://ui_preview_out"
 # A left inspector strip width to prove co-edge stacking (bug 1).
 const INSPECTOR_STRIP := 300.0
@@ -291,6 +299,32 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# band_panel_people_map_path — THE SAME PEOPLE BLOCK, reached the OTHER way: by clicking the band
+	# ON THE MAP. `band_panel_people` above drives the SNAPSHOT path (`update_band_alerts` re-resolves
+	# the band from the raw `populations` floats), which is exactly the path that SELF-HEALS the marker
+	# truncation bug — so it could never have caught it. The map path feeds the panel MapView's unit
+	# MARKER instead (`_rebuild_unit_markers` → `refresh_selection_payload` → `show_unit_selection` →
+	# `_render_band_into_panel`), and a marker that narrowed the fractional age brackets with `int()`
+	# zeroes every remainder, leaving `_apportion_people` nothing to redistribute: 9 + 16 + 4 = 29 in
+	# the PEOPLE header against a band of 30. Driven through the REAL MapView, never a hand-built dict.
+	var map_path_view: Node2D = MAP_VIEW_SCRIPT.new()
+	map_path_view.visible = false   # data only — a visible map would render behind every later frame
+	add_child(map_path_view)
+	map_path_view.display_snapshot(_map_path_snapshot())
+	map_path_view.unit_selected.connect(_hud.show_unit_selection)
+	map_path_view.handle_hex_click(MAP_PATH_TILE.x, MAP_PATH_TILE.y, MOUSE_BUTTON_LEFT)
+	# The HUD already holds its own copy of the payload, so the map goes away BEFORE the capture:
+	# MapView's minimap is its own CanvasLayer and is NOT hidden by `visible = false`, so a surviving
+	# instance paints a stray thumbnail into this frame and every later one (map_preview's gotcha).
+	map_path_view.unit_selected.disconnect(_hud.show_unit_selection)
+	map_path_view.queue_free()
+	await get_tree().process_frame
+	await _settle()
+	_assert_people_sum_matches_size(_hud._selected_unit, "band_panel_people_map_path")
+	await _save("band_panel_people_map_path")
+	# Restore the snapshot-path band so the later states start from the same subject they always did.
+	_hud.update_band_alerts([_band_fixture()])
+
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
 	# pager must appear and NOTHING may scroll.
 	_hud.update_food_modules(_many_forage_modules())
@@ -420,6 +454,27 @@ func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
 			state_name, expected, actual])
 	else:
 		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
+
+## GUARD: the PEOPLE block's three brackets must account for EVERY person in the band. They arrive
+## fractional (Scalar), so `Hud._apportion_people` distributes the remainders by largest remainder —
+## which only works if the remainders survive the trip. A marker that narrowed them with `int()`
+## truncates every one to zero, and the header then undercounts against the band's own size.
+func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> void:
+	var raw: Array[float] = [
+		float(band.get("age_children", 0.0)),
+		float(band.get("age_working", 0.0)),
+		float(band.get("age_elders", 0.0)),
+	]
+	var whole := _hud._apportion_people(raw)
+	var total := 0
+	for part in whole:
+		total += part
+	var size := int(band.get("size", 0))
+	if total != size:
+		push_error("band_panel_preview: %s PEOPLE brackets sum to %d but the band holds %d (raw %s — narrowed?)" % [
+			state_name, total, size, str(raw)])
+	else:
+		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
 
 ## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
 ## silently reintroduce the content-dependent sizing the rework removed.
@@ -688,6 +743,19 @@ func _cap_demo_band_fixture() -> Dictionary:
 		{"kind": "scout", "workers": 1},
 	]
 	return band
+
+## The MapView snapshot behind `band_panel_people_map_path` — the SAME `_band_fixture()` cohort the
+## snapshot-path state uses, on a flat grid just big enough to hold its hex, so the marker MapView
+## builds carries exactly the age structure the panel is judged on. FoW is off in a fresh MapView.
+func _map_path_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(MAP_PATH_GRID_W * MAP_PATH_GRID_H)
+	terrain.fill(MAP_PATH_TERRAIN_ID)
+	return {
+		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [_band_fixture()],
+	}
 
 ## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
 ## working-age labor with idle workers + a couple of active assignments + the settlement stage

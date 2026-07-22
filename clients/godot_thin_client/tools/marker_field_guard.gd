@@ -80,9 +80,57 @@ const PANEL_CONSUMED_KEYS := [
 	"band_move_tiles_per_turn"         # round-trip TRAVEL turns = ceil(2 × dist / this)
 ]
 
+# The SECOND bug class this guard exists for: a CONTINUOUS field the native decoder emits as a
+# float (a fixed-point Scalar run through `fixed64_to_f64`, or a `float` wire field) that the
+# marker copy silently NARROWS with `int(...)`. Presence-only / integral-fixture checks cannot see
+# it — the key is there, the value is merely truncated — yet it is live-visible: the marker IS the
+# selection payload for a band clicked ON THE MAP (MapView.refresh_selection_payload →
+# Hud.show_unit_selection → _selected_unit), so e.g. truncated age brackets made a 30-person band's
+# PEOPLE block read 9+16+4 = 29 until the next snapshot re-resolved it from the raw floats.
+#
+# Every key below is fed a deliberately NON-INTEGER value and must come back within
+# FRACTIONAL_EPSILON. Membership rule: the field must be continuous end to end (fixed-point Scalar
+# or `float` in snapshot.fbs). Integer counts (`size`, `working_age`, `idle_workers`), entity ids,
+# and coordinates are deliberately EXCLUDED — asserting a fraction on them would be a false claim.
+# These values are also the fixture's values for these keys (merged over FIXTURE_ENTRY), so the
+# fixture cannot drift away from what the round-trip asserts.
+const FRACTIONAL_ROUND_TRIP_KEYS := {
+	# Age structure — fixed-point Scalars (cohort.children/working/elders → fixed64_to_f64).
+	# THE regression: these three were copied with int(...). Values mirror the decoder test.
+	"age_children": 9.2925,
+	"age_working": 16.5375,
+	"age_elders": 4.6425,
+	# Morale + its four signed Layer-1 contributions — all fixed-point Scalars.
+	"morale": 0.4137,
+	"morale_delta": -0.0325,
+	"morale_settling": 0.0113,
+	"morale_terrain": -0.0217,
+	"morale_climate": -0.0154,
+	"morale_unrest": -0.0061,
+	# Wellbeing scalars — fixed-point.
+	"output_multiplier": 0.7225,
+	"discontent_fraction": 0.1837,
+	# Food ledger — `float` wire fields (foodIncome / foodConsumption / penFeedUpkeep / turnsOfFood).
+	"turns_of_food": 12.75,
+	"food_income": 0.8325,
+	"food_consumption": 0.6075,
+	"pen_feed_upkeep": 1.7425,
+	# Expedition + config levers that are `float` in the schema (carry caps, rates, move speed).
+	"expedition_carry_cap": 16.25,
+	"hunt_per_worker_provisions": 0.8125,
+	"expedition_per_worker_carry": 4.375,
+	"band_move_tiles_per_turn": 3.5,
+}
+
+# Tolerance for the fractional round-trip. Loose enough for float32 wire fields widened to f64,
+# tight enough that any int() narrowing (>= 0.0061 of error for every value above) fails.
+const FRACTIONAL_EPSILON := 0.0001
+
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
 # emits — carrying a distinct non-default value for every panel-consumed field so a dropped
-# copy shows up as a defaulted value, not a coincidental match.
+# copy shows up as a defaulted value, not a coincidental match. Every CONTINUOUS field lives in
+# FRACTIONAL_ROUND_TRIP_KEYS instead and is merged over this dict at test time, so the fixture and
+# the fractional assertion can never quote different values.
 const FIXTURE_ENTRY := {
 	"entity": 9001,
 	"faction": 0,
@@ -90,12 +138,6 @@ const FIXTURE_ENTRY := {
 	"current_y": 6,
 	"size": 30,
 	"label": "River Band",
-	"turns_of_food": 12.0,
-	"food_income": 0.83,
-	"food_consumption": 0.60,
-	"pen_feed_upkeep": 1.74,
-	"morale": 0.41,
-	"morale_delta": -0.03,
 	"morale_cause": 1,
 	"activity": "forage",
 	"hunt_mode": "sustain",
@@ -107,12 +149,6 @@ const FIXTURE_ENTRY := {
 	"travel_target_y": 9,
 	"working_age": 16,
 	"idle_workers": 7,
-	"output_multiplier": 0.72,
-	"discontent_fraction": 0.18,
-	"morale_settling": 0.01,
-	"morale_terrain": -0.02,
-	"morale_climate": -0.015,
-	"morale_unrest": -0.005,
 	"labor_assignments": [
 		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.42, "sustainable_yield": 0.42},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "actual_yield": 0.31, "sustainable_yield": 0.18},
@@ -127,20 +163,18 @@ const FIXTURE_ENTRY := {
 	"max_expedition_party_size": 8,
 	"expedition_target_herd": "game_deer_07",
 	"expedition_hunt_policy": "surplus",
-	"expedition_carry_cap": 16.0,
 	"home_band_entity": 7777,
 	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
-	"hunt_per_worker_provisions": 0.8,
 	"expedition_viability_warn_turns": 20,
-	"expedition_per_worker_carry": 4.0,
-	"band_move_tiles_per_turn": 3.0,
 }
 
 var _failures: Array[String] = []
 
 func _ready() -> void:
 	var mv: Node = MAP_VIEW.new()
-	var snapshot := {"populations": [FIXTURE_ENTRY]}
+	var entry: Dictionary = FIXTURE_ENTRY.duplicate(true)
+	entry.merge(FRACTIONAL_ROUND_TRIP_KEYS, true)
+	var snapshot := {"populations": [entry]}
 	mv._rebuild_unit_markers(snapshot)
 
 	var markers: Array = mv.units
@@ -178,20 +212,20 @@ func _ready() -> void:
 	_expect_int(marker, "max_expedition_party_size", 8)
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
 	_expect_str(marker, "expedition_hunt_policy", "surplus")
-	_expect_float(marker, "expedition_carry_cap", 16.0)
 	_expect_int(marker, "home_band_entity", 7777)
-	_expect_float(marker, "hunt_per_worker_provisions", 0.8)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
-	_expect_float(marker, "expedition_per_worker_carry", 4.0)
-	_expect_float(marker, "band_move_tiles_per_turn", 3.0)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
-	_expect_float(marker, "morale", 0.41)
-	_expect_float(marker, "output_multiplier", 0.72)
-	_expect_float(marker, "turns_of_food", 12.0)
-	_expect_float(marker, "food_income", 0.83)
-	_expect_float(marker, "food_consumption", 0.60)
-	_expect_float(marker, "pen_feed_upkeep", 1.74)
+
+	# 3. Fractional round-trip guard: a continuous field must NOT be narrowed by the marker copy.
+	for key in FRACTIONAL_ROUND_TRIP_KEYS:
+		var want: float = float(FRACTIONAL_ROUND_TRIP_KEYS[key])
+		if not marker.has(key):
+			continue  # the superset guard above already reported a missing key
+		var got := float(marker.get(key))
+		if absf(got - want) > FRACTIONAL_EPSILON:
+			_fail("%s did NOT round-trip: fed %s, marker returned %s (narrowed with int()?)"
+					% [key, str(want), str(got)])
 
 	# labor_assignments must round-trip as a non-empty, value-preserving copy (the
 	# allocation panel iterates it to build the per-source steppers + per-source yields).
