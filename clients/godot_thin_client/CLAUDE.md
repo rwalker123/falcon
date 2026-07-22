@@ -2632,6 +2632,28 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   only frame, plus its own on-screen-button assertion) / `forage_crop_picker_sow` (the SAME basket one rung up — only Wild Emmer survives
   and reads `2.1×`, which is what proves both the gate and the ratio are per-rung) /
   `forage_crop_committed` (the locked readout) / `forage_cultivate` (the 3-entry reference tile).
+- **The forage compose's TWO ZERO-WORKER SUBMITS** (`_build_forage_assign_controls`; playtest defect,
+  pre-existing). `workers == 0` is the **sim's unassign** (`server.rs`: *"Unassigning (`workers == 0`) is
+  always allowed"*) and the Work zone's unassign paths depend on it, so the submit is gated on **"would
+  this change anything"**, never on a raw count — a client-side floor of 1 would fix the no-op and break
+  the unassign. `current` (pending-aware standing staffing on this tile for THIS band) splits the two,
+  and **the button and the forecast line must agree in each**:
+  - **0 and NOT currently assigned** → the command would do nothing: button **disabled**, still reading
+    `Forage`, and the forecast drops its `→ then` promise. `Preparing` is staffing-scaled while the
+    payoff is not, so an unstaffed row used to read `Preparing: +0.00 /turn → then +1.20 /turn` — a
+    sequence the player is explicitly NOT on track for, since an unstaffed build meter never advances.
+    It now states the payoff as a CONDITION (`INVESTMENT_FORECAST_UNSTAFFED_FORMAT` — *"Assign foragers
+    to begin — prepared, this pays +1.20 /turn"*), keeping the number, which is how you decide the tile
+    is worth staffing at all. That line doubles as the dead button's explanation, per the
+    `_forecast_worker_cap` "a dead button is always explained" precedent.
+  - **0 and currently assigned** → a real unassign: button **enabled**, renamed `Unassign`, and the
+    forecast row is **suppressed entirely** — "assign foragers to begin" above an `Unassign` button
+    tells the player two opposite things. No new warning was invented for it: what abandoning costs is
+    already on the card in the rung's own policy hint (*"It must stay staffed or it goes feral"*).
+  The unstaffed copy lives in the SHARED `_forecast_yield_row`, so the hunt/herd investment rungs get the
+  same fix; it takes a `crew_label` so the sentence names hunters/herders/foragers correctly. ui_preview:
+  `forage_unstaffed` / `forage_unassign`, each with assertions on the button state AND on the copy, so
+  the pair cannot drift back into contradicting itself.
 - **Tile-card Pasture rows — the ANIMAL-edible twin of Forage biomass** (`Hud._tile_terrain_lines`;
   Grazing Phase 2a, `docs/plan_grazing_foundation.md`). `TileState.grazeBiomass` / `grazeCapacity` /
   `grazeEcologyPhase` are decoded in `native/src/lib.rs tile_to_dict` (plain floats, not fixed-point;

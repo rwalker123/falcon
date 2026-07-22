@@ -1003,6 +1003,13 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # a zero payoff a net LOSS rather than merely a nothing.
 # (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
 # flow here", used by the band ledger's rows and by this row alike.)
+# AT ZERO WORKERS THERE IS NO "PREPARING" TO STATE. `Preparing` is staffing-scaled (workers ×
+# per_worker) while the `→ then` payoff is not, so an unstaffed forecast used to read
+# "Preparing: +0.00 /turn → then +1.22 /turn" — a sequence the player is emphatically NOT on track for,
+# since an unstaffed build meter never advances at all. The payoff itself stays on screen (it is how you
+# decide whether the source is worth staffing), but as a CONDITION rather than an imminent arrival.
+const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s to begin — prepared, this pays %s"
+const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s to begin — prepared, this pays %s − %s feed"
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
@@ -1148,6 +1155,13 @@ const SEND_HUNTING_EXPEDITION_BUTTON := "Send Hunting Expedition"
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
+# `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
+# player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
+# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a tile this band
+# already works it is a legitimate unassign and says so, and at 0 on a tile it does not work it is a
+# no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the unassign.
+const FORAGE_UNASSIGN_BUTTON := "Unassign"
+const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
 # ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
 # Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
 # in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
@@ -3925,7 +3939,8 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## projects for an un-penned herd too, on the same biomass basis). The feed is NEVER folded away, and
 ## a **zero payoff is rendered, loudly** (see INVESTMENT_FORECAST_DEPLETED_NOTE) — a depleted herd
 ## below the escapement point pays nothing, and that is the row's most important reading.
-func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
+func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary,
+        crew_label: String = FORAGE_CREW_LABEL) -> Label:
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
     var hex := HudStyle.HEALTHY
@@ -3933,7 +3948,16 @@ func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -
     var payoff := float(forecast.get("payoff", 0.0)) * output
     var feed := float(forecast.get("feed", 0.0)) * output
     var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
-    if has_feed:
+    # UNSTAFFED: state the payoff as a condition, never as a sequence already under way — see
+    # INVESTMENT_FORECAST_UNSTAFFED_FORMAT. The depleted-payoff note below still applies either way.
+    var crew := crew_label.to_lower()
+    if workers <= 0:
+        if has_feed:
+            row.text = INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT % [
+                crew, _format_yield(payoff), _format_magnitude(feed)]
+        else:
+            row.text = INVESTMENT_FORECAST_UNSTAFFED_FORMAT % [crew, _format_yield(payoff)]
+    elif has_feed:
         row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
             expected, _format_yield(payoff), _format_magnitude(feed)]
     else:
@@ -5699,7 +5723,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # promise the expedition player a payoff the sim never pays.
     if forecast_active:
         target.add_child(
-            _forecast_yield_row(forecast, _hunt_assign_count, band))
+            _forecast_yield_row(forecast, _hunt_assign_count, band, crew_label))
     if is_expedition:
         target.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -6418,15 +6442,29 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(_alloc_hint_label(cap_note))
+    # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
+    # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
+    # forecast line and button TOGETHER — has to read coherently for each:
+    #   • 0 on a tile this band does NOT work → the command would do nothing. Dead button (still
+    #     "Forage"), and the forecast states the payoff as a CONDITION ("Assign foragers to begin…").
+    #   • 0 on a tile it DOES work → the sim's unassign (server.rs: "Unassigning (workers == 0) is
+    #     always allowed"). Live button, renamed, and NO "assign to begin" line — a panel whose button
+    #     says Unassign above a line reading "assign to begin" tells the player two opposite things.
+    # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
+    var is_unassign := _forage_assign_count <= 0 and current > 0
+    var is_noop := _forage_assign_count <= 0 and current <= 0
     # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
     # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
     # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
     # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
     # warning an Eradicate/Market forage used to render silently.
     if _forage_assign_policy in INVESTMENT_POLICIES:
-        if bool(forecast["known"]):
+        # Nothing is forecast for an unassign — see is_unassign above. What abandoning costs is already
+        # on the card in the rung's own policy hint ("It must stay staffed or it goes feral"), so a
+        # second warning here would state one fact twice.
+        if bool(forecast["known"]) and not is_unassign:
             target.add_child(
-                _forecast_yield_row(forecast, _forage_assign_count, band))
+                _forecast_yield_row(forecast, _forage_assign_count, band, FORAGE_CREW_LABEL))
     else:
         var yield_line := _local_forage_preview_bbcode(
             band, tile_info, _forage_assign_policy, _forage_assign_count)
@@ -6443,11 +6481,15 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if out_of_range:
         target.add_child(_alloc_hint_label(
             "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
+    # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
+    # the cap note has not already said it, so the panel never states one fact twice.
+    if is_noop and cap_note == "":
+        target.add_child(_alloc_hint_label(FORAGE_NOOP_HINT))
     var assign_btn := Button.new()
-    assign_btn.text = FORAGE_ASSIGN_BUTTON
+    assign_btn.text = FORAGE_UNASSIGN_BUTTON if is_unassign else FORAGE_ASSIGN_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
     # Out of range → disabled (no expedition fallback for stationary gathering).
-    assign_btn.disabled = out_of_range
+    assign_btn.disabled = out_of_range or is_noop
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "",
             _forage_assign_policy, _forage_assign_species)

@@ -664,6 +664,58 @@ func _ready() -> void:
 	_assert_hud("an 8-plant crop picker still leaves the Forage button on screen",
 		overlong_scroll.get_v_scroll_bar().max_value - overlong_scroll.size.y <= 1.0)
 
+	# ---- THE TWO ZERO-WORKER SUBMITS (playtest defect) -------------------------------------------
+	# `workers == 0` means two different things depending on whether this band already works the tile,
+	# and the button + the forecast line have to agree in BOTH. These frames are judged as a PAIR.
+	#
+	# State 2-unstaffed (A) — 0 foragers on a tile this band does NOT work. Pressing Forage would send a
+	# command that changes nothing, so the button is DISABLED and still reads `Forage`; the forecast
+	# drops the "Preparing: +0.00 → then +1.20" promise (an unstaffed build meter never advances, so
+	# that sequence cannot arrive) and states the payoff as a condition instead. The payoff NUMBER stays
+	# — it is how the player decides the tile is worth staffing at all.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._forage_assign_key = ""
+	_hud.show_tile_selection(_food_tile_fixture())
+	# The FIRST compose settles the source key; the policy and count must be set after it, because a
+	# source change re-seeds both from the band's standing assignment and would overwrite them.
+	_compose_forage(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_count = 0
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("forage_unstaffed")
+	var unstaffed_btn := _find_button_by_text(_hud._compose_sheet, "Forage")
+	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
+		unstaffed_btn != null and unstaffed_btn.disabled)
+	_assert_hud("…and the forecast drops the 'then' promise it cannot keep",
+		not _has_label_containing(_hud._compose_sheet, "Preparing:"))
+	_assert_hud("…while still showing what the tile would pay once prepared",
+		_has_label_containing(_hud._compose_sheet, "to begin"))
+
+	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
+	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
+	# gone — it would contradict the button. What abandoning costs is already on the card in the
+	# Cultivate policy hint ("It must stay staffed or it goes feral").
+	_hud._player_band = _cultivating_forage_band_fixture()
+	_hud._forage_assign_key = ""
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_count = 0
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("forage_unassign")
+	var unassign_btn := _find_button_by_text(_hud._compose_sheet, "Unassign")
+	_assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
+		unassign_btn != null and not unassign_btn.disabled)
+	_assert_hud("…and does not also tell the player to assign foragers to begin",
+		not _has_label_containing(_hud._compose_sheet, "to begin"))
+
+	# Restore the unassigned near band for the frames that follow.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_count = 1
+
 	# State 2-crop-committed — the patch has already committed, and commitment is one-way until it
 	# lapses: the picker is replaced by a locked READOUT naming the crop, so the UI cannot imply a
 	# switch the sim will refuse.
@@ -2877,6 +2929,20 @@ func _forage_range_bands() -> Array:
 ## INDEPENDENT flags the summary shares with a Band-panel Current-actions row: `overdraws` true (a
 ## Market patch drawing past regrowth — the ecological ⚠) AND 4 workers where 2 are needed (the labor
 ## "· only 2 of 4 working" note). `realized_yield` is the steady average the summary headlines.
+## The near band of `_forage_range_bands`, ALREADY WORKING the (66,10) food tile at a MODEST staffing —
+## the fixture behind the compose sheet's UNASSIGN state. Deliberately separate from
+## `_standing_forage_band_fixture`, whose assignment is tuned to trip the drawer summary's overdraw and
+## overstaff flags; this one is a plain, healthy Cultivate crew, so the unassign frame is judged on the
+## button/forecast pair and nothing else.
+func _cultivating_forage_band_fixture() -> Dictionary:
+	var band: Dictionary = _forage_range_bands()[0]
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": 1, "target_x": 66, "target_y": 10, "policy": "cultivate",
+		"actual_yield": 0.24, "sustainable_yield": 0.96, "realized_yield": 0.24,
+		"workers_needed": 1, "overdraws": false,
+	}]
+	return band
+
 func _standing_forage_band_fixture() -> Dictionary:
 	var band: Dictionary = _forage_range_bands()[0]
 	band["labor_assignments"] = [{
