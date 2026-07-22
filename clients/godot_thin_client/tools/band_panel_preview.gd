@@ -22,6 +22,13 @@ const INSPECTOR_STRIP := 300.0
 # The sim turn the arrival-schedule states render on, so the strip tooltips + the outlook "empty ~turn
 # N" marker read as absolute turns rather than the pre-first-overlay relative form.
 const ARRIVAL_PREVIEW_TURN := 40
+# The paged-board states work a row of this many forage patches from this origin — far past one
+# page in either shell, which is the whole point of the pager.
+const MANY_SOURCE_COUNT := 34
+const MANY_SOURCE_ORIGIN_X := 40
+const MANY_SOURCE_ORIGIN_Y := 20
+# Sub-pixel slack when comparing a zone's content rect against its host rect.
+const ZONE_BOUNDS_TOLERANCE := 1.0
 
 var _hud: HudLayer
 var _panel: BandCityPanel
@@ -237,7 +244,170 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_arrivals_empty")
 
+	# ---- Zone content (docs/band_panel_ux_proposal.html) ----------------------
+	# PEOPLE + WORKFORCE bars and the two role CARDS, in the TALL (L dock) shell where the band zone
+	# gets its full height: both bars, their keys, the dependency ratio, and the hinted cards.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_people")
+	_assert_zones_within_bounds()
+
+	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
+	# pager must appear and NOTHING may scroll.
+	_hud.update_food_modules(_many_forage_modules())
+	_hud.update_band_alerts([_many_sources_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_page")
+	_assert_zones_within_bounds()
+
+	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_work_wide")
+	_assert_zones_within_bounds()
+
+	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
+	_panel.set_dock(SIDE_LEFT)
+	_hud._toggle_work_inspector(_hud._work_source_models(_hud._panel_band, 0)[0]["key"])
+	await _settle()
+	await _save("band_panel_inspector")
+	_assert_zones_within_bounds()
+	_hud._toggle_work_inspector(_hud._work_open_key)
+
+	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
+	_hud._on_work_unassign_all_pressed(_hud._panel_band, 34)
+	await _settle()
+	await _save("band_panel_clear_confirm")
+	_dismiss_dialogs()
+
+	# The parties COMPOSE sheet, mission-first: Hunt picked → party stepper, policy picker, forecast.
+	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_panel.set_active_tab(&"parties")
+	_hud._party_compose_open = true
+	_hud._party_compose_mission = "hunt"
+	_hud._rerender_panel_allocation()
+	await _settle()
+	await _save("band_panel_compose_hunt")
+	_assert_zones_within_bounds()
+	_hud._party_compose_open = false
+
+	# Zero idle workers: "Send a party…" stays VISIBLE and DISABLED, with its reason.
+	_hud.update_band_alerts([_no_idle_band_fixture()])
+	await _settle()
+	await _save("band_panel_no_idle")
+
+	_assert_no_scroll_containers()
+	_assert_zones_within_bounds()
+
 	get_tree().quit()
+
+## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
+## silently reintroduce the content-dependent sizing the rework removed.
+func _assert_no_scroll_containers() -> void:
+	var found := _find_scroll_container(_panel)
+	if found != null:
+		push_error("band_panel_preview: ScrollContainer in the panel at %s — the zones must not scroll" % found.get_path())
+	else:
+		print("band_panel_preview: assert OK — no ScrollContainer in the panel")
+
+func _find_scroll_container(node: Node) -> Node:
+	if node is ScrollContainer:
+		return node
+	for child in node.get_children():
+		var found := _find_scroll_container(child)
+		if found != null:
+			return found
+	return null
+
+## GUARD: nothing a zone renders may fall outside the zone rect it was given. Checked RECURSIVELY —
+## the top-level content is anchored full-rect and so always "fits", while the thing that actually
+## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
+## in the frame; this is the only thing that catches it.
+func _assert_zones_within_bounds() -> void:
+	var failures: Array[String] = []
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		_collect_zone_overflow(host, host.get_global_rect(), failures)
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — every zone renders inside its zone rect")
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s" % failure)
+
+func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) -> void:
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var rect := content.get_global_rect()
+		# Zero-sized spacers/separators report a degenerate rect; only real content can overflow.
+		if rect.size.x > 0.0 and rect.size.y > 0.0:
+			var over_x: float = rect.end.x - bounds.end.x
+			var over_y: float = rect.end.y - bounds.end.y
+			if over_x > ZONE_BOUNDS_TOLERANCE or over_y > ZONE_BOUNDS_TOLERANCE:
+				failures.append("%s (%s) overflows its zone by (%.1f, %.1f)" % [
+					content.name, content.get_class(), maxf(over_x, 0.0), maxf(over_y, 0.0)])
+				continue   # one report per subtree — its children overflow by construction
+		_collect_zone_overflow(content, bounds, failures)
+
+## The panel's fixed-size zone hosts (BandCityPanel names them `Zone_<key>` / `NarrowZoneHost`).
+func _find_zone_hosts(node: Node) -> Array:
+	var hosts: Array = []
+	if String(node.name).begins_with("Zone_") or node.name == "NarrowZoneHost":
+		hosts.append(node)
+	for child in node.get_children():
+		hosts.append_array(_find_zone_hosts(child))
+	return hosts
+
+## Close any modal the preview opened, so the next state renders unobstructed.
+func _dismiss_dialogs() -> void:
+	for child in _hud.get_children():
+		if child is AcceptDialog:
+			(child as AcceptDialog).hide()
+			child.queue_free()
+
+## 34 gather modules on a row of tiles, so every Forage row resolves a real map glyph.
+func _many_forage_modules() -> Array:
+	var modules: Array = []
+	for i in range(MANY_SOURCE_COUNT):
+		modules.append({"x": MANY_SOURCE_ORIGIN_X + i, "y": MANY_SOURCE_ORIGIN_Y,
+			"module": "savanna_grassland", "kind": "gather"})
+	return modules
+
+## A band working MANY_SOURCE_COUNT forage patches — the case the paged board exists for (34 rows
+## would be ~950px of unbroken list in the old stack).
+func _many_sources_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["working_age"] = MANY_SOURCE_COUNT * 2
+	band["idle_workers"] = MANY_SOURCE_COUNT
+	var assignments: Array = []
+	for i in range(MANY_SOURCE_COUNT):
+		assignments.append({
+			"kind": "forage", "workers": 1,
+			# Every third patch is overstaffed, so the ⚠ attention chip + the WARN stripe have content.
+			"workers_needed": 1 if i % 3 != 0 else 0,
+			"policy": "sustain",
+			"target_x": MANY_SOURCE_ORIGIN_X + i, "target_y": MANY_SOURCE_ORIGIN_Y,
+			"actual_yield": 0.10 + 0.01 * float(i), "sustainable_yield": 0.10 + 0.01 * float(i),
+		})
+	band["labor_assignments"] = assignments
+	return band
+
+## Every worker committed: the parties footer must still SHOW its button, disabled, with the reason.
+func _no_idle_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 16, "workers_needed": 16, "policy": "sustain",
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+	]
+	return band
 
 func _settle() -> void:
 	await get_tree().process_frame
@@ -335,6 +505,11 @@ func _band_fixture() -> Dictionary:
 		"stores": {"provisions": 84.0},
 		"working_age": 16,
 		"idle_workers": 3,
+		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
+		# dep = round((34 + 15) / 99 * 100) = 49 per 100 workers, i.e. a healthy (un-WARNed) band.
+		"age_children": 34,
+		"age_working": 99,
+		"age_elders": 15,
 		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"hunt_reach": 16,

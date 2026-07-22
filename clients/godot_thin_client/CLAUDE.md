@@ -94,7 +94,7 @@ never writes, deletes, or liveness-checks the file.
 | `ui/hud/LegendController.gd` | Owns the right-dock legend card: row rendering, the terrain-only Name/Count sort header + its display-only sort state, the suppress toggle, and internal-scroll sizing. `HudLayer.LEGEND_SORT_FIELD_*` alias to its `SORT_FIELD_*` consts. Behaviour identical to the old inlined legend code |
 | `ui/hud/CommandFeedController.gd` | Owns the left-dock command feed card: the rolling entry list (`COMMAND_FEED_LIMIT` 6), signature de-duplication (`ingest_events`), client `note()`s, and — via the shared `DockScrollFit` — the internal-scroll sizing. It is a **command log again**: `ingest_events` **SKIPS** every kind `TellingPanel.handles_kind()` claims (the narrative ones), so the PR-B `KIND_STYLE` prose branch is gone and every remaining kind takes the original `Turn N` + bold-label / italic-detail receipt shape. The feed **always snaps to newest** (a receipt is worthless once read) — read-position preservation is the Telling panel's concern, not this one's |
 | `ui/hud/DockScrollFit.gd` | Shared sizing for a dock card whose content grows without bound (**the command feed** — the Telling panel grows to fit its own bounded page capped at `PAGE_MAX_HEIGHT` now and no longer uses this): grow to fit the label, capped by the room left in the dock's `ScrollContainer` beneath it, so the card scrolls INTERNALLY rather than dragging the fixed panels through the dock scroll. **"Room left" excludes what the cards BELOW it need** (`_height_reserved_below`, summed over *visible* following siblings): a growing card used to always be the LAST in its dock so the distinction never arose, but the command feed sits above the fixed cards in its dock, and claiming everything beneath it pushed them clean out of the visible dock. Only visible siblings count, so the both-hidden default is unchanged and toggling one on simply hands the room back. **Deliberately not `AutoSizingPanel`** — that one sizes a FREE-FLOATING control against the viewport (`global_position` + anchors + `offset_bottom`, as NarrativeForkPanel and the Inspector do), and a card inside the dock's VBoxContainer has neither: the container overwrites its size every layout pass and the ceiling that matters is the DOCK's remaining height. `PanelCard` + this helper is the container-side equivalent |
-| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail as **section blocks** via `set_band_sections` (tall = vertical stack that fits its width to the content, wide = manual balanced-column packing that fits its height to the content). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts **THREE NAMED ZONES AT A FIXED CROSS-AXIS SIZE** via **`set_zones(band, work, parties)`** (keys `&"band"`/`&"work"`/`&"parties"`; the panel OWNS and frees them). Two shells, chosen by the panel's own **WIDTH** (`WIDE_SHELL_MIN_WIDTH` 900 — never a dock-edge test, so a resizable dock needs no special case): **wide** (in practice T/B) = the three zones side by side, band/parties fixed `ZONE_BAND_WIDTH`/`ZONE_PARTY_WIDTH` (300), work EXPAND_FILL, `LINE_SOFT` hairlines between, no tab bar; **narrow** (in practice L/R) = a Band·Work·Parties tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `PANEL_HEIGHT_WIDE` 360 clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **There is deliberately no `ScrollContainer` anywhere in the panel** (no-scroll by design; the work zone pages itself against **`work_zone_size()`**, the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 1244×298 in a 1920 bottom dock — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`Hud._corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
@@ -3006,47 +3006,92 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   drawer; `_panel_band` stays put. `home_band_entity` is decoded in
   `native/src/lib.rs population_to_dict` from the snapshot's `homeBandEntity`,
   flowed onto the MapView unit marker, and covered by `marker_field_guard`.
-- **Responsive body — section blocks (tall stack vs wide column-flow).** The band
-  content is a list of discrete **section blocks** Hud hands the panel via
-  **`set_band_sections(blocks: Array)`** (replacing the old
-  `get_band_alloc_container()`/`get_band_detail_label()`/`get_band_expeditions_container()`
-  fill-a-container contract): the summary RichTextLabel block, the Active-expeditions
-  block, then the allocation sections (Workers / Current actions / Band roles / Orders /
-  Send expedition). Hud builds them in `_render_band_into_panel` (allocation sections from
-  `_build_allocation_sections` — the per-row stepper/band-picker/pending/expedition wiring
-  is unchanged, only each row's *parent* is its section VBox now; the legacy flat
-  `%AllocationPanel` fallback still fills by appending the same blocks). The panel **owns**
-  the blocks (frees the prior set on each call) and arranges them by dock aspect
-  (`_relayout_body`/`_arrange_sections`, hooked off `_apply_dock_layout`, reparenting the
-  **same** block nodes on a tall↔wide flip — no Hud re-render): **tall** (LEFT/RIGHT) = a
-  vertical `ScrollContainer` stack whose reserved **WIDTH fits the content** (`_measure_tall_width`,
-  the mirror of the wide height fit): the cross-axis width is `maxf(PANEL_WIDTH, content-min)` (the
-  PanelContainer's combined min width — margins + widest section), floored at `PANEL_WIDTH`, so
-  `_root`, the seam (`_position_seam`), and the reservation all track the **true card edge** — a wide
-  section (a long Hunt row, the send-expedition button) no longer overflows a fixed-380 `_root` and
-  freezes the seam mid-card. Re-measured (deferred one frame, `is_equal_approx`-guarded — the content
-  min is width-independent so there's no resize feedback) on `set_band_sections`, dock/collapse change,
-  and viewport resize. **Wide** (TOP/BOTTOM) = **manual balanced-column packing** (`_pack_wide_columns`):
-  column count from the
-  available width (`num_cols = clamp(avail / (_widest_block_width() + WIDE_FLOW_SEPARATION), 1,
-  #blocks)` — the budget is `max(SECTION_COLUMN_WIDTH, widest section's own min width)`, NOT the
-  nominal column width: a section wider than nominal (a Current-actions row now carries a resource
-  glyph + label + policy tag + yield + ⚠ + the stepper) grows its column, and budgeting off the
-  nominal width summed the columns past the window — the last one clipped behind a horizontal
-  scrollbar), blocks distributed **greedily into the shortest column** so the tallest column
-  is minimized, columns in an HBox. The panel then **sizes its T/B height to the content** —
-  the reservation it reports (`reservation_changed`) is `header + tallest-column + margins`,
-  so the map/HUD reflow to exactly fit and **nothing clips** (fit-to-content, not a fixed
-  `PANEL_HEIGHT`). Re-packs on dock change, `set_band_sections` (content change), and window
-  `size_changed`; a deferred re-measure (`await process_frame`) lets the `fit_content` summary
-  RichTextLabel settle before the height is finalized. Safety net: reserved height is capped
-  at `MAX_WIDE_HEIGHT_FRACTION` of the window, past which the columns' ScrollContainer
-  re-enables vertical scroll. (Earlier `VFlowContainer` / fixed-height wide layouts were
-  replaced — VFlowContainer can't do fit-to-content *and* multi-column: unbounded height
-  stops it wrapping.)
+- **Responsive body — THREE NAMED ZONES, two shells (`set_zones`).** The block-packing body
+  (`set_band_sections` + `_pack_wide_columns`) is **gone**: column membership used to be a function
+  of *measured block heights*, so a section hopped columns when the player pressed a `+`, and the
+  panel fitted its cross-axis size to content, so every content change re-emitted
+  `reservation_changed` and flickered the map. The body is now three named zones — `band` / `work` /
+  `parties` — at a **fixed** cross-axis size, hosted by the wide (3 columns) or narrow (tabbed) shell
+  per the panel's own WIDTH. Nothing is balanced, so nothing migrates; nothing is content-fitted, so
+  the reservation is constant per dock edge. See the `ui/BandCityPanel.gd` roster row for the full
+  contract (`work_zone_size()`, `zones_resized`, `set_tab_badge`, the no-ScrollContainer rule, and
+  the plain-`Control` zone hosts).
+- **Zone `band` — vitals · PEOPLE · food outlook · WORKFORCE + role cards** (`_build_band_zone_content`).
+  The Food/Morale/Output disclosure rows are unchanged; the `Population … Workers … (Idle …)` LINE is
+  **gone** — the two bars below state the same facts as charts, and a text restatement above them was
+  the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
+  (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its
+  key and the **dependency ratio** `dep (children+elders)/working × 100`, WARN above
+  `PEOPLE_DEPENDENCY_HEAVY`. **Absent age data OMITS the whole block** — never a fabricated split.
+  Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
+  **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `INK_FAINT`): two bars,
+  same shape, different question — *who they are* vs *what they do* — and they must not read as the
+  same chart twice. Scout + Warrior are **CARDS** now (bordered, name · hint · the same `−/+` stepper
+  and `assign_labor` emit), not rows in a list — the fix for a standing role being indistinguishable
+  from a worked source. **The zone yields by HEIGHT TIER** (`_band_zone_tier`, measured against the
+  zone box — never the dock edge): full chart + hinted cards at/above `BAND_ZONE_TALL_MIN_HEIGHT`, a
+  compact chart above `BAND_ZONE_CHART_MIN_HEIGHT`, and below it **no chart and hint-less cards** (a
+  360px T/B dock). A tier change re-renders the zones; anything else just re-pages the board — that
+  is what `_on_zones_resized` distinguishes, and skipping it lands a tall-shell band zone in a short
+  box where its host silently clips it.
+- **Zone `work` — THE PAGED BOARD** (`_build_work_zone_content` / `_fill_work_zone`). Header (`WORK` ·
+  n sources · total /turn · a `⋯` `MenuButton`) · filter CHIPS · the board · pager · inspector strip.
+  **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
+  the last hidden at k = 0), replacing collapsible group headers. Rows are ONE line at a fixed
+  `WORK_ROW_HEIGHT`: severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · clipped
+  label · rate · policy/⚠ marks · the existing `−/+`. **Capacity is derived ENTIRELY from
+  `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
+  WORK_MAX_COLUMNS)`, `rows = (h − head − chips − inspector − pager) / WORK_ROW_HEIGHT`, filled
+  **column-major** with a hairline between columns; the pager is resolved in **two passes** because it
+  only exists when one page cannot hold everything yet costs a row. **EVERY reserved height must be
+  what the element actually draws at** — the default `HudStyle` button chrome pads 9px top and bottom,
+  which alone makes a stepper ~40px and pushes the page off the bottom of the zone, so the board's
+  buttons take `_compact_control`'s squeeze. Clicking a row opens the **inspector strip**: the row's
+  old second/third lines in one place (yield/policy/status in words, warning lines, the `ArrivalStrip`)
+  plus three inline links — `Jump to source` · `Change policy` (an inline picker, the four EXTRACTIVE
+  rungs only — the investment rungs are ladder commitments made at the source's own compose control,
+  where their gates and payoff forecasts live) · **`Unassign`**. That is the per-source removal: a
+  hover `✕` beside the `−` stepper would be a mis-click hazard, this is the labelled version. One row
+  open at a time, and it COSTS board rows, which is why the capacity maths subtracts it.
+- **Zone `parties`** (`_build_parties_zone_content`): head + a `⋯` menu (`Recall all parties (n)`,
+  behind the same confirm), one row per party (mission glyph · subject · phase · an always-visible
+  recall `✕` at `PARTY_RECALL_REST_ALPHA`, brightening on hover — parties have no stepper and no
+  inspector, so it is their only removal path; the row BODY keeps the existing focus+select), and the
+  footer. **`Send a party…` stays VISIBLE and DISABLED with its reason when idle == 0** — the section
+  vanishing is what made expeditions look removed from the game. Pressing it swaps in the **compose
+  sheet, MISSION FIRST**: nothing below appears until a mission is picked, so the policy picker is
+  unreachable except under Hunt (it used to sit above the scouting button and read as if it modified it).
+- **Destructive bulk actions ASK, and name what is SPARED** (`_confirm_destructive`, a
+  `ConfirmationDialog` — a Window, like the `⋯` `MenuButton`'s popup, so opening either cannot move a
+  zone's height). `Unassign all work` sends **`cancel_order <faction> <band> work`** — the signal
+  `cancel_order_requested(band, scope)` gained the scope this pass; `work` clears Forage + Hunt only
+  and leaves standing roles, parties and an in-progress move alone. `Recall all` is one
+  `recall_expedition` per party (no bulk verb, and parties are few).
+- **Move and Clear all are GONE from the panel.** Move belongs to the Tile panel in a later change;
+  `_on_move_band_pressed` / `_pending_move_band` / the whole targeting machinery are intact and still
+  reachable (the expedition drawer's Move), just not surfaced here.
+- **A zone must FIT its zone.** The hosts clip, so overflow is invisible in a frame — and a zone
+  content whose *minimum* size exceeds the zone (four policy rungs abreast in a 380px dock) does worse:
+  it drags the whole zone column out past its host, taking the section menu beside it off the edge.
+  Hence `ZONE_POLICY_PICKER_COLUMNS` and `band_panel_preview`'s **recursive zone-bounds assertion**,
+  which is the only thing that catches either.
+- **The no-dock fallback renders the SAME three builders**, stacked into `%AllocationPanel`
+  (`_build_allocation_panel`) — there is no second layout to maintain. It passes `with_vitals = false`,
+  since the Occupants card's own drawer already prints those rows above it.
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
-  band_panel_{left,right,top,bottom,collapsed}.png`). State `band_panel_status_glyphs` is the
+  band_panel_{left,right,top,bottom,collapsed}.png`). **The ZONE states are the Part-2 frames:**
+  `band_panel_people` (both bars, the dependency ratio, the two role cards) ·
+  `band_panel_work_page` (34 sources, narrow shell) · `band_panel_work_wide` (the same 34 in the
+  bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
+  open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`
+  (mission → party → policy → forecast) · `band_panel_no_idle` (the disabled `Send a party…` and its
+  reason) · `band_panel_clear_confirm`. The harness also ASSERTS, per state, that **no
+  `ScrollContainer` exists anywhere in the panel** and that **nothing a zone renders falls outside its
+  zone rect** — checked RECURSIVELY, since the top-level content is anchored full-rect and so always
+  "fits" while the thing that actually overflows is a board row off the bottom of a column. Both
+  assertions have already caught real regressions (a stepper's default button chrome busting
+  `WORK_ROW_HEIGHT`; the band zone standing 5px past a 360px T/B dock); **keep them green.** State `band_panel_status_glyphs` is the
   **row-vocabulary** frame: a confirmed working forage row (`●` + `♻` + the overstaffing note) and a
   working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus one Active-expeditions row per
   phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning / `▮▮ Awaiting orders` in amber)

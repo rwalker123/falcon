@@ -196,8 +196,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
-        summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
-        usage: "cancel_order <faction_id> [band_entity_bits]",
+        summary: "Clear a band's labor assignments: scope 'work' unassigns worked sources (forage/hunt), 'roles' clears standing roles (scout/warrior), 'all' clears both and stops movement. Defaults to 'all'; the narrow scopes leave travel running.",
+        usage: "cancel_order <faction_id> [band_entity_bits] [all|work|roles]",
     },
     CommandVerbHelp {
         verb: "assign_labor",
@@ -238,8 +238,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective, ReloadConfigKind,
-    SecurityPolicyKind, SupportChannel,
+    CancelScope, CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective,
+    ReloadConfigKind, SecurityPolicyKind, SupportChannel,
 };
 
 #[derive(Debug, Error)]
@@ -875,13 +875,24 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let band_bits = parts.next();
+            // Both trailing tokens are optional, so the grammar is resolved by shape rather than
+            // position: a numeric token is the band, anything else must be a scope word. An
+            // unrecognised word fails closed — silently falling back to `all` would mass-unassign a
+            // band whose player asked only for `work`.
+            let mut band_entity_bits = None;
+            let mut scope = CancelScope::All;
+            for token in parts.by_ref().take(2) {
+                if token.chars().all(|c| c.is_ascii_digit()) {
+                    band_entity_bits = Some(parse_u64(token, "cancel_order band_entity_bits")?);
+                } else {
+                    scope = CancelScope::parse(token)
+                        .ok_or_else(|| CommandParseError::UnexpectedToken(token.to_string()))?;
+                }
+            }
             Ok(CommandPayload::CancelOrder {
                 faction_id: parse_u32(faction_str, "cancel_order faction")?,
-                band_entity_bits: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "cancel_order band_entity_bits")?),
-                    None => None,
-                },
+                band_entity_bits,
+                scope,
             })
         }
         "assign_labor" => {
@@ -1581,5 +1592,54 @@ mod tests {
                 scheduled_tick: None,
             }
         );
+    }
+
+    /// Both trailing tokens are optional, so the grammar is resolved by shape: a number is the
+    /// band, a word is the scope, and either may be omitted.
+    #[test]
+    fn parse_cancel_order_band_and_scope_are_each_optional() {
+        assert_eq!(
+            parse_command_line("cancel_order 1 42 work").unwrap(),
+            CommandPayload::CancelOrder {
+                faction_id: 1,
+                band_entity_bits: Some(42),
+                scope: CancelScope::Work,
+            }
+        );
+        // No scope token → the historical clear-everything behaviour.
+        assert_eq!(
+            parse_command_line("cancel_order 1 42").unwrap(),
+            CommandPayload::CancelOrder {
+                faction_id: 1,
+                band_entity_bits: Some(42),
+                scope: CancelScope::All,
+            }
+        );
+        // Band omitted, scope given — the default-band picker still applies.
+        assert_eq!(
+            parse_command_line("cancel_order 1 work").unwrap(),
+            CommandPayload::CancelOrder {
+                faction_id: 1,
+                band_entity_bits: None,
+                scope: CancelScope::Work,
+            }
+        );
+        assert_eq!(
+            parse_command_line("cancel_order 1 42 ROLES").unwrap(),
+            CommandPayload::CancelOrder {
+                faction_id: 1,
+                band_entity_bits: Some(42),
+                scope: CancelScope::Roles,
+            }
+        );
+    }
+
+    /// Fail closed: silently falling back to `all` would mass-unassign a band that asked for `work`.
+    #[test]
+    fn parse_cancel_order_rejects_an_unrecognised_scope() {
+        assert!(matches!(
+            parse_command_line("cancel_order 1 42 bogus"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "bogus"
+        ));
     }
 }

@@ -173,6 +173,7 @@ pub enum CommandPayload {
     CancelOrder {
         faction_id: u32,
         band_entity_bits: Option<u64>,
+        scope: CancelScope,
     },
     AssignLabor {
         faction_id: u32,
@@ -228,6 +229,46 @@ pub struct EspionageGeneratorUpdate {
     pub template_id: String,
     pub enabled: Option<bool>,
     pub per_faction: Option<u8>,
+}
+
+/// What a `cancel_order` clears on the band. The Band panel splits the old single "cancel"
+/// button into per-section clears, so the verb has to name its target rather than always wiping
+/// everything.
+///
+/// [`CancelScope::All`] is the default (an absent wire/text token decodes to it) and keeps the
+/// historical behaviour. The two narrow scopes deliberately leave travel alone: moving is not
+/// working, so unassigning a band's sources must not also strand it mid-journey.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CancelScope {
+    /// Worked sources + standing roles, and stop any in-progress travel.
+    #[default]
+    All,
+    /// Worked food sources only (Forage/Hunt). Roles and travel untouched.
+    Work,
+    /// Standing roles only (Scout/Warrior). Sources and travel untouched.
+    Roles,
+}
+
+impl CancelScope {
+    /// Wire/text token for this scope.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CancelScope::All => "all",
+            CancelScope::Work => "work",
+            CancelScope::Roles => "roles",
+        }
+    }
+
+    /// Parse a scope token (case-insensitive). `None` for anything unrecognised, so callers choose
+    /// whether to fail closed (the text parser) or fall back to [`CancelScope::All`] (the wire).
+    pub fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(CancelScope::All),
+            "work" => Some(CancelScope::Work),
+            "roles" => Some(CancelScope::Roles),
+            _ => None,
+        }
+    }
 }
 
 /// Directive for faction orders.
@@ -579,9 +620,11 @@ impl CommandEnvelope {
             CommandPayload::CancelOrder {
                 faction_id,
                 band_entity_bits,
+                scope,
             } => pb::command_envelope::Command::CancelOrder(pb::CancelOrderCommand {
                 faction_id: *faction_id,
                 band_entity_bits: *band_entity_bits,
+                scope: Some(scope.as_str().to_string()),
             }),
             CommandPayload::AssignLabor {
                 faction_id,
@@ -901,6 +944,13 @@ impl CommandEnvelope {
             pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
                 faction_id: cmd.faction_id,
                 band_entity_bits: cmd.band_entity_bits,
+                // Absent legitimately means "all", and the wire is not a boundary worth hard-failing
+                // on: an unrecognised token degrades to the historical clear-everything behaviour.
+                scope: cmd
+                    .scope
+                    .as_deref()
+                    .and_then(CancelScope::parse)
+                    .unwrap_or_default(),
             },
             pb::command_envelope::Command::AssignLabor(cmd) => CommandPayload::AssignLabor {
                 faction_id: cmd.faction_id,

@@ -495,15 +495,16 @@ func _on_map_tile_selected(tile_info: Dictionary) -> void:
     _hud_invoke("show_tile_selection", [tile_info])
     _hud_invoke("notify_hex_selected", [tile_info])
 
-func _on_hud_cancel_order(band: Dictionary) -> void:
+func _on_hud_cancel_order(band: Dictionary, scope: String) -> void:
     var band_bits := int(band.get("entity", -1))
     if band_bits < 0:
         return
     var faction := int(band.get("faction", PLAYER_FACTION_ID))
-    # cancel_order is repurposed (Early-Game Labor slice 3a) to clear ALL of a band's
-    # labor assignments — the "Clear all" affordance returns the band fully idle.
-    var line := "cancel_order %d %d" % [faction, band_bits]
-    _send_runtime_command(line, "Clear all labor assignments for band.")
+    # `cancel_order <faction> <band> <scope>` — scope is `all` / `work` / `roles` (the server rejects
+    # anything else as a parse error). `work` clears Forage + Hunt only, leaving standing roles,
+    # parties and an in-progress move alone; the Work zone's bulk action sends that.
+    var line := "cancel_order %d %d %s" % [faction, band_bits, scope]
+    _send_runtime_command(line, "Clear labor assignments (%s) for band." % scope)
 
 ## Early-Game Labor (slice 3b): assign/unassign working-age workers to a source or a
 ## band-wide role. workers==0 removes/zeroes the assignment; the server clamps totals

@@ -1013,6 +1013,43 @@ impl LaborAllocation {
         self.assignments.clear();
         self.last_yields.clear();
     }
+
+    /// Drop every assignment `keep` rejects, retaining the rest — the scoped counterpart of
+    /// [`Self::clear`] (`cancel_order … work` clears the worked sources, `… roles` the standing
+    /// roles). Returns the workers freed, so the caller can report what it unassigned.
+    ///
+    /// `last_yields` is realigned first and then filtered **by the same index**, because the
+    /// snapshot zips the two vectors positionally: a partial clear that dropped an assignment while
+    /// leaving its telemetry row behind would re-attribute that row to the next source.
+    pub fn clear_kinds(&mut self, keep: impl Fn(&LaborTarget) -> bool) -> u32 {
+        self.align_yields();
+        // Decide once per index, then apply the *same* mask to both vectors so they stay aligned.
+        let keep_mask: Vec<bool> = self
+            .assignments
+            .iter()
+            .map(|assignment| keep(&assignment.target))
+            .collect();
+        let freed: u32 = self
+            .assignments
+            .iter()
+            .zip(keep_mask.iter())
+            .filter(|(_, retain)| !**retain)
+            .map(|(assignment, _)| assignment.workers)
+            .sum();
+        let mut index = 0;
+        self.assignments.retain(|_| {
+            let retain = keep_mask[index];
+            index += 1;
+            retain
+        });
+        let mut index = 0;
+        self.last_yields.retain(|_| {
+            let retain = keep_mask[index];
+            index += 1;
+            retain
+        });
+        freed
+    }
 }
 
 /// A pending `move_band` order: the band advances toward `target` at

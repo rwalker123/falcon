@@ -50,6 +50,9 @@ const PANEL_CONSUMED_KEYS := [
 	"morale_unrest",       # _morale_breakdown_lines
 	"working_age",         # allocation header Workers / _effective_idle
 	"idle_workers",        # allocation header Idle / quick_assign_hunters
+	"age_children",        # band panel age-structure row (children / working / elders)
+	"age_working",         # band panel age-structure row — NOT working_age (assignable workers)
+	"age_elders",          # band panel age-structure row
 	"labor_assignments",   # allocation "Current actions" steppers
 	"work_range",          # selected-band map highlights
 	"hunt_reach",          # herd-hunt affordance local-vs-expedition distance gate

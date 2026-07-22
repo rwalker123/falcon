@@ -2712,6 +2712,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
 			"working_age": int(entry.get("working_age", 0)),
 			"idle_workers": int(entry.get("idle_workers", 0)),
+			# Age structure of THIS band (children / working / elders). Distinct from `working_age`
+			# above, which counts assignable workers — hence the `age_` prefix on all three.
+			"age_children": int(entry.get("age_children", 0)),
+			"age_working": int(entry.get("age_working", 0)),
+			"age_elders": int(entry.get("age_elders", 0)),
 			# Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
 			# cohort tagged Expedition flowing through this same populations[] array. These three
 			# discriminator fields drive the distinct expedition marker (_draw_band_token →

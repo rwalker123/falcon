@@ -6,12 +6,30 @@ class_name BandCityPanel
 ## A CanvasLayer that renders a card against one screen edge and *reserves* that
 ## strip via the slice-1 reservation API (Main fans `reservation_changed` out to
 ## `MapView`/`Hud`, so the map + HUD reflow off the edge rather than being
-## overlaid). This slice is the **chrome scaffold**: settlement header (stage
-## glyph + name + stage label), a settlement cycler, a 4-cell dock chooser, and a
-## collapse toggle, plus dock persistence. The body hosts the relocated band detail as an ordered
-## list of **section blocks** Hud hands over via `set_band_sections` (summary, active-expeditions,
-## then the allocation sections); the panel owns those blocks and arranges them by dock aspect —
-## a vertical stack when tall (L/R), a column-flow that fills the strip when wide (T/B).
+## overlaid). Chrome: settlement header (stage glyph + name + stage label), a
+## settlement cycler, a 4-cell dock chooser, and a collapse toggle, plus dock +
+## tab persistence.
+##
+## THE BODY IS **THREE NAMED ZONES AT A FIXED CROSS-AXIS SIZE** (`set_zones`):
+## `band` (vitals), `work` (the paged work board) and `parties`. Nothing is
+## balanced, so no content can migrate between zones; nothing is fitted to
+## content, so the reservation this panel reports changes ONLY on dock / collapse
+## / hide / viewport-resize — never on a content edit. That is the whole point of
+## the model: the previous block-packing body re-measured on every render and
+## re-emitted `reservation_changed`, which invalidated the map cache and flickered
+## the map on every `+` press.
+##
+## Two SHELLS host those zones, chosen by the panel's own WIDTH (never by dock
+## edge, so a resizable dock needs no special case):
+##   * WIDE  (width >= `WIDE_SHELL_MIN_WIDTH`, in practice a T/B dock): the three
+##     zones side by side, band + parties fixed-width, work taking the rest,
+##     hairline separators between. No tab bar.
+##   * NARROW (otherwise, in practice a L/R dock): a tab bar under the header and
+##     exactly one zone beneath it filling the panel.
+##
+## There is deliberately **no ScrollContainer anywhere in this panel** — the design
+## is no-scroll (the work zone pages itself against `work_zone_size()`), and a
+## scroll container would silently reintroduce content-dependent sizing.
 ##
 ## All geometry/typography flows from named constants + `HudStyle` (no magic
 ## numbers, one visual-language source).
@@ -19,9 +37,12 @@ class_name BandCityPanel
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 # ---- geometry (canvas-space px) --------------------------------------------
-## Cross-axis size of the expanded panel: width when docked L/R, height when T/B.
+## Cross-axis size of the expanded panel when docked L/R. FIXED — it is never fitted to the band
+## content, so the reserved strip (and therefore the map inset) cannot move when a section grows.
 const PANEL_WIDTH := 380.0
-const PANEL_HEIGHT := 260.0
+## Cross-axis size of the expanded panel when docked T/B. Likewise fixed; tall enough for the three
+## zones' rows without eating the map.
+const PANEL_HEIGHT_WIDE := 360.0
 ## Cross-axis size when collapsed to a thin rail (both orientations).
 const COLLAPSED_SIZE := 46.0
 ## Render above the map (and the HUD/Inspector) so the panel owns its reserved strip.
@@ -58,21 +79,54 @@ const BODY_SEPARATION := 8
 ## height math reuses the exact same paddings the card draws with (no magic 12/10 duplicated).
 const PANEL_CONTENT_MARGIN_H := 12
 const PANEL_CONTENT_MARGIN_V := 10
-# ---- responsive body layout (tall L/R stack vs wide T/B manual columns) -----
-## In the wide (T/B) dock the section blocks are packed by hand into fixed-width columns that FILL the
-## strip width, and the panel reserves exactly the height its tallest column needs (fit-to-content, so
-## nothing clips). Each block is capped to this width so a column is a tidy, readable measure and the
-## stepper `−/+` controls stay beside their labels (≈ the tall dock's content width).
-const SECTION_COLUMN_WIDTH := 340.0
-## Gap between the packed columns AND between blocks within a column, in wide mode.
-const WIDE_FLOW_SEPARATION := 16
-## Safety net for a pathological single column taller than most of the screen: the reserved wide-dock
-## height never exceeds this fraction of the window height; past it the columns gain a vertical scroll
-## rather than the panel eating the whole screen. Fit-to-content is the primary behaviour; this caps it.
+# ---- responsive body layout (wide 3-column shell vs narrow tabbed shell) -----
+## The panel switches to the wide (3-zones-side-by-side) shell once its own WIDTH reaches this;
+## below it the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a
+## resizable dock or a narrow window needs no special case. Three zones at their fixed widths plus a
+## work zone worth reading need roughly this much room.
+const WIDE_SHELL_MIN_WIDTH := 900.0
+## Fixed widths of the two flanking zones in the wide shell; Work takes whatever is left.
+const ZONE_BAND_WIDTH := 300.0
+const ZONE_PARTY_WIDTH := 300.0
+## Hairline separator drawn between adjacent zones in the wide shell.
+const ZONE_SEPARATOR_THICKNESS := 1.0
+## Gap either side of a zone separator, so the hairline is not flush against zone content.
+const ZONE_SEPARATION := 12
+## Safety net so a short window can never let the T/B strip eat the screen: the reserved wide-dock
+## height is `PANEL_HEIGHT_WIDE` clamped to this fraction of the window height.
 const MAX_WIDE_HEIGHT_FRACTION := 0.6
-## A few px of slack on the computed wide-dock height so sub-pixel min-size vs rendered-height rounding
-## never clips the last row of the tallest column.
-const WIDE_CONTENT_SAFETY_PAD := 4.0
+## Card border thickness (`_panel_stylebox`), subtracted alongside the content margins when the
+## panel reports the interior box its Work zone may fill.
+const PANEL_BORDER_WIDTH := 1.0
+## Header height used for the interior maths before the header has laid out once (it is pure chrome —
+## two text rows beside `ICON_BUTTON_SIZE` controls — so this is a bootstrap value, not a guess about
+## content).
+const HEADER_HEIGHT_FALLBACK := 44.0
+
+# ---- narrow-shell tab bar ---------------------------------------------------
+## Zone keys. The same keys index `set_zones`' slots, the tab bar and `set_tab_badge`.
+const ZONE_BAND := &"band"
+const ZONE_WORK := &"work"
+const ZONE_PARTIES := &"parties"
+## Tab order + display labels, in the prototype's order (Band · Work · Parties).
+const TAB_ORDER: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES]
+const TAB_LABELS := {
+	ZONE_BAND: "Band",
+	ZONE_WORK: "Work",
+	ZONE_PARTIES: "Parties",
+}
+## The tab a fresh session opens on: work is the zone the player acts in.
+const DEFAULT_TAB := ZONE_WORK
+const TAB_FONT_SIZE := 12
+const TAB_BADGE_FONT_SIZE := 10
+const TAB_SEPARATION := 4
+const TAB_PADDING_H := 10
+const TAB_PADDING_V := 5
+## Thickness of the active tab's underline (the prototype's SIGNAL rule under the selected tab).
+const TAB_UNDERLINE_THICKNESS := 2
+const TAB_BADGE_CORNER_RADIUS := 7
+const TAB_BADGE_PADDING_H := 5
+const TAB_BADGE_PADDING_V := 1
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
@@ -88,6 +142,8 @@ const CONFIG_PATH := "user://band_city_dock.cfg"
 const CONFIG_SECTION := "dock"
 const CONFIG_KEY_EDGE := "edge"
 const CONFIG_KEY_COLLAPSED := "collapsed"
+## The narrow shell's selected tab, so a reopened session lands where the player left it.
+const CONFIG_KEY_TAB := "tab"
 
 ## The four dock edges, in the prototype's 2×2 chooser order (row-major:
 ## left/top on the first row, bottom/right on the second).
@@ -97,6 +153,9 @@ signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
 ## The header subject cluster (stage glyph + name + stage label) was clicked — "jump to my band".
 signal subject_activated
+## `work_zone_size()` changed — a shell flip, dock change, collapse or viewport resize. Hud re-pages
+## its work board on this rather than re-rendering everything.
+signal zones_resized
 
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
@@ -125,39 +184,30 @@ var _stage_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
-# Body layout: `_body_host` holds two alternative layout containers, one visible at a time — a
-# vertical `ScrollContainer`→VBox stack (`_tall_*`, for the tall L/R docks) and a MANUAL column pack
-# (`_wide_*`, for the wide T/B docks): an HBox of column VBoxes the panel fills by hand. Hud hands the
-# panel an ordered list of self-contained **section blocks** via `set_band_sections`; the panel OWNS
-# them (frees the previous set, arranges the new one). On a tall↔wide dock flip the SAME block nodes
-# are reparented into the other container (`_relayout_body`) — no Hud re-render needed. Wide mode packs
-# blocks height-balanced into as many `SECTION_COLUMN_WIDTH` columns as the width allows and reserves
-# exactly the tallest column's height (fit-to-content — see `_pack_wide_columns`), so a short fixed
-# strip can never clip a tall column. The column VBoxes are transient scaffolding, rebuilt each pack.
+# Body layout: `_body_host` holds the two alternative SHELLS, exactly one visible at a time (chosen by
+# panel width — see `_shell_is_wide`). The wide shell is an HBox of three zone hosts (band + parties
+# fixed-width, work expanding) with hairline separators; the narrow shell is a tab bar over a single
+# zone host. `_zones` holds the three Hud-built zone Controls the panel OWNS (freed on the next
+# `set_zones`); `_reparent_zones` homes them into whichever hosts are active, so a shell flip needs no
+# Hud re-render. Nothing here measures content — the shells fill a card whose size is fixed per dock.
 var _body_host: VBoxContainer
-var _tall_scroll: ScrollContainer
-var _tall_vbox: VBoxContainer
-var _wide_scroll: ScrollContainer
-var _wide_columns_row: HBoxContainer
+var _wide_shell: HBoxContainer
+var _wide_zone_hosts: Dictionary = {}   # zone:StringName -> Control (a plain, clipping zone host)
+var _narrow_shell: VBoxContainer
+var _tab_bar: HBoxContainer
+var _narrow_zone_host: Control
 var _body_is_wide: bool = false
 var _band_present: bool = false
 var _empty_state: Label
-var _section_blocks: Array = []   # the Hud-built section blocks the panel currently owns
-# Wide-dock fit-to-content state: the reserved cross-axis HEIGHT `_cross_axis_size` reports for T/B
-# (derived from the tallest packed column, capped by MAX_WIDE_HEIGHT_FRACTION), and a re-measure guard
-# so the deferred settle pass (fit_content RichTextLabel heights) is queued at most once.
-var _wide_content_height: float = PANEL_HEIGHT
-var _wide_capped: bool = false
-var _wide_remeasure_queued: bool = false
-# Tall-dock (L/R) fit-to-content WIDTH — the mirror of `_wide_content_height` for the vertical docks.
-# The reserved cross-axis WIDTH tracks the section content so `_root`, the seam (`_position_seam`), and
-# the reservation (`current_reservation_size`) all agree on the true card edge. The fixed PANEL_WIDTH
-# used to freeze the seam mid-card whenever a section (a long Hunt row, the send-expedition button, …)
-# grew the content-sized PanelContainer past 380. PANEL_WIDTH stays the floor (a sparse band still gets
-# the nominal strip). `_tall_remeasure_queued` mirrors `_wide_remeasure_queued` (one deferred settle
-# pass per burst).
-var _tall_content_width: float = PANEL_WIDTH
-var _tall_remeasure_queued: bool = false
+## The three zone contents the panel currently owns (zone:StringName -> Control). A zone may be absent
+## or null → that zone renders empty.
+var _zones: Dictionary = {}
+## Narrow-shell tab state: the selected zone key (persisted) and each tab's badge (`{text, hot}`).
+var _active_tab: StringName = DEFAULT_TAB
+var _tab_badges: Dictionary = {}
+var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
+## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
+var _last_work_zone_size: Vector2 = Vector2.ZERO
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -167,11 +217,12 @@ func _ready() -> void:
 	_apply_dock_layout()
 	_refresh_collapse_state()
 	_refresh_dock_cells()
-	# A window resize changes the available width → the wide-dock column count (and thus the
-	# fit-to-content height), so re-pack + re-report the reservation when the viewport resizes.
+	# A window resize changes the T/B panel width (hence the shell) and the clamped wide height, so
+	# re-choose the shell and re-report both the reservation and the work-zone box.
 	var vp := get_viewport()
 	if vp != null:
 		vp.size_changed.connect(_on_viewport_resized)
+	_notify_zones_resized()
 
 # ---- public API ------------------------------------------------------------
 
@@ -197,41 +248,67 @@ func set_cycler(index: int, count: int) -> void:
 	else:
 		_count_label.text = "%d / %d" % [index + 1, count]
 
-## Hand the panel the ordered list of Hud-built section blocks (summary, active-expeditions, then the
-## allocation section blocks). The panel takes OWNERSHIP: it frees the blocks from the previous render
-## and arranges the new ones in the active layout (tall stack / wide column-flow). An empty array →
-## the empty-state placeholder.
-func set_band_sections(blocks: Array) -> void:
-	_free_section_blocks()
-	for b in blocks:
-		if b is Control:
-			_section_blocks.append(b)
-	if _section_blocks.is_empty():
+## Hand the panel its three zone contents. The panel takes OWNERSHIP (frees the previous set) and
+## parents them into whichever shell is active. Any may be null → that zone renders empty.
+func set_zones(band: Control, work: Control, parties: Control) -> void:
+	_free_zones()
+	_zones[ZONE_BAND] = band
+	_zones[ZONE_WORK] = work
+	_zones[ZONE_PARTIES] = parties
+	if band == null and work == null and parties == null:
 		set_band_present(false)
 		return
 	_band_present = true
 	if _empty_state != null:
 		_empty_state.visible = false
-	_arrange_sections()
+	if not _body_is_wide:
+		_rebuild_tab_bar()   # which zones exist can move `_effective_tab`, hence the highlight
+	_reparent_zones()
+	_update_body_visibility()
+
+## The box the Work zone's content may fill, in canvas px — the zone's INTERIOR, after the panel's own
+## chrome (card border + content margins + header, and in the narrow shell the tab bar). Hud sizes its
+## paged work board from this. Purely a function of the dock edge, the collapse state and the window;
+## it never consults the content.
+func work_zone_size() -> Vector2:
+	if _collapsed or not _shown:
+		return Vector2.ZERO
+	var interior := _interior_size()
+	var body_height: float = maxf(interior.y - _header_height(), 0.0)
+	if _shell_is_wide():
+		var flanks := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH
+		var separators := 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
+		return Vector2(maxf(interior.x - flanks - separators, 0.0), body_height)
+	return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
+
+## Push a tab's badge (narrow shell only; ignored in the wide shell, which has no tab bar).
+## `hot` tints it WARN. An empty `text` clears the badge.
+func set_tab_badge(zone: StringName, text: String, hot: bool) -> void:
+	if not TAB_LABELS.has(zone):
+		return
+	_tab_badges[zone] = {"text": text, "hot": hot}
+	if not _body_is_wide:
+		_rebuild_tab_bar()
 
 ## Toggle between the band-detail content and the empty-state placeholder. `false` also frees any
-## owned section blocks (no band → nothing to show).
+## owned zones (no band → nothing to show).
 func set_band_present(present: bool) -> void:
 	_band_present = present
 	if not present:
-		_free_section_blocks()
+		_free_zones()
 	if _empty_state != null:
 		_empty_state.visible = not present
 	_update_body_visibility()
 
-## Free (and detach) the section blocks from the previous render. Ownership is unambiguous: the panel
+## Free (and detach) the zone contents from the previous render. Ownership is unambiguous: the panel
 ## owns exactly what it was last handed, and drops it here before taking the next set.
-func _free_section_blocks() -> void:
-	for block_variant in _section_blocks:
-		if block_variant is Node:
-			_detach(block_variant)
-			(block_variant as Node).queue_free()
-	_section_blocks.clear()
+func _free_zones() -> void:
+	for key in _zones:
+		var zone_variant: Variant = _zones[key]
+		if zone_variant is Node:
+			_detach(zone_variant)
+			(zone_variant as Node).queue_free()
+	_zones.clear()
 
 ## Dock the panel to an edge (a Godot SIDE_* const). Re-anchors, persists, and
 ## re-emits the reservation so the map + HUD reflow.
@@ -245,6 +322,7 @@ func set_dock(edge: int) -> void:
 	_refresh_dock_cells()
 	_save_prefs()
 	_emit_reservation()
+	_notify_zones_resized()
 
 func get_dock() -> int:
 	return _dock_edge
@@ -269,6 +347,7 @@ func set_collapsed(collapsed: bool) -> void:
 	_apply_dock_layout()
 	_save_prefs()
 	_emit_reservation()
+	_notify_zones_resized()
 
 func is_collapsed() -> bool:
 	return _collapsed
@@ -282,6 +361,7 @@ func set_shown(shown: bool) -> void:
 	if _root != null:
 		_root.visible = shown
 	_emit_reservation()
+	_notify_zones_resized()
 
 ## The strip the panel currently reserves (0 hidden, COLLAPSED_SIZE collapsed,
 ## else the cross-axis size). Main queries this to seed the initial reservation.
@@ -315,8 +395,8 @@ func _build() -> void:
 	_header_rail = _build_header_rail()
 	column.add_child(_header_rail)
 
-	# The body host holds both alternative layout containers + the empty-state; only one layout is
-	# visible per dock. Collapse hides the whole host.
+	# The body host holds both alternative shells + the empty-state; only one shell is visible at a
+	# time. Collapse hides the whole host.
 	_body_host = VBoxContainer.new()
 	_body_host.name = "BandBodyHost"
 	_body_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -332,38 +412,36 @@ func _build() -> void:
 	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body_host.add_child(_empty_state)
 
-	# Tall layout (L/R docks): a single vertical stack of section blocks in a vertical scroll.
-	_tall_scroll = ScrollContainer.new()
-	_tall_scroll.name = "TallScroll"
-	_tall_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_tall_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_tall_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_tall_scroll.visible = false
-	_body_host.add_child(_tall_scroll)
-	_tall_vbox = VBoxContainer.new()
-	_tall_vbox.name = "TallColumn"
-	_tall_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_tall_vbox.add_theme_constant_override("separation", BODY_SEPARATION)
-	_tall_scroll.add_child(_tall_vbox)
+	# WIDE shell: the three zones side by side, band + parties fixed-width, work taking the rest,
+	# hairline separators between. No tab bar — every zone is visible at once.
+	_wide_shell = HBoxContainer.new()
+	_wide_shell.name = "WideShell"
+	_wide_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_wide_shell.add_theme_constant_override("separation", ZONE_SEPARATION)
+	_wide_shell.visible = false
+	_body_host.add_child(_wide_shell)
+	_wide_zone_hosts[ZONE_BAND] = _add_wide_zone_host(ZONE_BAND, ZONE_BAND_WIDTH)
+	_wide_shell.add_child(_make_zone_separator())
+	_wide_zone_hosts[ZONE_WORK] = _add_wide_zone_host(ZONE_WORK, 0.0)
+	_wide_shell.add_child(_make_zone_separator())
+	_wide_zone_hosts[ZONE_PARTIES] = _add_wide_zone_host(ZONE_PARTIES, ZONE_PARTY_WIDTH)
 
-	# Wide layout (T/B docks): a MANUAL column pack. The panel reserves exactly the tallest column's
-	# height (fit-to-content), so the columns normally fit with no scroll; the ScrollContainer is the
-	# cap safety net — vertical scroll flips to AUTO only when a pathological column exceeds
-	# MAX_WIDE_HEIGHT_FRACTION of the window, and horizontal AUTO is defensive against column overrun.
-	_wide_scroll = ScrollContainer.new()
-	_wide_scroll.name = "WideScroll"
-	_wide_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_wide_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_wide_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_wide_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_wide_scroll.visible = false
-	_body_host.add_child(_wide_scroll)
-	# The row of hand-packed column VBoxes (begin-aligned, so columns fill from the left and any
-	# leftover width stays empty on the right). `_pack_wide_columns` rebuilds its children each pack.
-	_wide_columns_row = HBoxContainer.new()
-	_wide_columns_row.name = "WideColumns"
-	_wide_columns_row.add_theme_constant_override("separation", WIDE_FLOW_SEPARATION)
-	_wide_scroll.add_child(_wide_columns_row)
+	# NARROW shell: a tab bar directly under the header + exactly one zone filling the rest.
+	_narrow_shell = VBoxContainer.new()
+	_narrow_shell.name = "NarrowShell"
+	_narrow_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_narrow_shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_narrow_shell.add_theme_constant_override("separation", BODY_SEPARATION)
+	_narrow_shell.visible = false
+	_body_host.add_child(_narrow_shell)
+	_tab_bar = HBoxContainer.new()
+	_tab_bar.name = "ZoneTabs"
+	_tab_bar.add_theme_constant_override("separation", TAB_SEPARATION)
+	_narrow_shell.add_child(_tab_bar)
+	_narrow_zone_host = _make_zone_host("NarrowZoneHost", 0.0)
+	_narrow_shell.add_child(_narrow_zone_host)
+	_rebuild_tab_bar()
 
 	# The accent seam sits on the map-facing edge, above the card fill.
 	_seam = ColorRect.new()
@@ -556,230 +634,270 @@ func _apply_root_anchors() -> void:
 			_set_root_offsets(0.0, -far, 0.0, -near)
 	_position_seam()
 
-## Switch the body between the tall single-stack layout (L/R docks) and the wide manual-column layout
-## (T/B docks). Called on every dock-layout pass; the actual work is cheap and idempotent, so it just
-## re-arranges into the active mode (the wide packer re-runs on width/content change anyway).
+## Choose the shell for the panel's current WIDTH and home the zones into it. Called on every
+## dock-layout pass; cheap and idempotent.
 func _relayout_body() -> void:
-	if _tall_vbox == null or _wide_columns_row == null:
+	if _wide_shell == null or _narrow_shell == null:
 		return
-	_body_is_wide = not _is_vertical_edge(_dock_edge)
-	_arrange_sections()
-
-## Home the owned section blocks into the active layout — a single vertical stack when tall, the
-## hand-packed balanced columns when wide — then refresh which container is visible.
-func _arrange_sections() -> void:
-	if _body_is_wide:
-		_arrange_wide()
-	else:
-		_arrange_tall()
+	var was_wide := _body_is_wide
+	_body_is_wide = _shell_is_wide()
+	if _body_is_wide != was_wide:
+		_rebuild_tab_bar()
+	_reparent_zones()
 	_update_body_visibility()
 
-## Tall (L/R): every block stacks in the vertical scroll's VBox, filling the strip width (min-x 0 →
-## the VBox's EXPAND_FILL stretches them). Reparents only blocks not already homed there.
-func _arrange_tall() -> void:
-	for block_variant in _section_blocks:
-		if not (block_variant is Control):
+## True when the panel is wide enough for the three zones side by side. A WIDTH test, never a
+## dock-edge test — see `WIDE_SHELL_MIN_WIDTH`.
+func _shell_is_wide() -> bool:
+	return _panel_extent().x >= WIDE_SHELL_MIN_WIDTH
+
+## The panel card's outer size for the current dock: fixed on the cross axis, the window on the other.
+func _panel_extent() -> Vector2:
+	var window := _viewport_size()
+	if _is_vertical_edge(_dock_edge):
+		return Vector2(PANEL_WIDTH, window.y)
+	return Vector2(window.x, _wide_panel_height())
+
+## The T/B cross-axis size: the fixed `PANEL_HEIGHT_WIDE`, clamped to a fraction of the window so a
+## short window can never let the strip eat the screen.
+func _wide_panel_height() -> float:
+	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+
+## The card's INTERIOR box — the outer extent less the border and the content margins the card draws
+## with (`_panel_stylebox`). Chrome only; never content.
+func _interior_size() -> Vector2:
+	var outer := _panel_extent()
+	var chrome_h := 2.0 * (PANEL_CONTENT_MARGIN_H + PANEL_BORDER_WIDTH)
+	var chrome_v := 2.0 * (PANEL_CONTENT_MARGIN_V + PANEL_BORDER_WIDTH)
+	return Vector2(maxf(outer.x - chrome_h, 0.0), maxf(outer.y - chrome_v, 0.0))
+
+## Height of the header row — pure chrome (two text rows beside the icon controls), so measuring it
+## keeps the interior maths content-independent. Falls back before the first layout pass.
+func _header_height() -> float:
+	if _header_full == null:
+		return HEADER_HEIGHT_FALLBACK
+	var measured := _header_full.get_combined_minimum_size().y
+	return measured if measured > 0.0 else HEADER_HEIGHT_FALLBACK
+
+## Height the narrow shell's tab bar takes off the body (plus the gap under it).
+func _tab_bar_height() -> float:
+	if _tab_bar == null:
+		return 0.0
+	var measured := _tab_bar.get_combined_minimum_size().y
+	return measured + float(BODY_SEPARATION)
+
+## The tab the narrow shell actually shows: the selected one when it has content, else the first zone
+## that does. A selected tab whose zone was handed in as null must not black the panel out — and this
+## is what keeps the Part-1 shim (which fills only the BAND zone) previewable under the `work` default.
+func _effective_tab() -> StringName:
+	if _zones.get(_active_tab) is Control:
+		return _active_tab
+	for zone in TAB_ORDER:
+		if _zones.get(zone) is Control:
+			return zone
+	return _active_tab
+
+## Home each owned zone Control into the active shell's host: all three side by side in the wide
+## shell, only the selected tab's zone in the narrow one (the other two are detached but still owned,
+## so a tab switch is a reparent rather than a Hud re-render).
+func _reparent_zones() -> void:
+	for zone in TAB_ORDER:
+		var zone_variant: Variant = _zones.get(zone)
+		if not (zone_variant is Control):
 			continue
-		var block: Control = block_variant
-		if block.get_parent() != _tall_vbox:
-			_detach(block)
-			_tall_vbox.add_child(block)
-		block.custom_minimum_size.x = 0.0
-	# Fit the reserved WIDTH to the just-homed content (deferred a frame so the summary RichTextLabel's
-	# fit_content settles first), so the seam sits on the true card edge rather than a fixed PANEL_WIDTH.
-	_schedule_tall_remeasure()
+		var control: Control = zone_variant
+		var host: Control = null
+		if _body_is_wide:
+			host = _wide_zone_hosts.get(zone)
+		elif zone == _effective_tab():
+			host = _narrow_zone_host
+		if host == null:
+			_detach(control)
+			continue
+		if control.get_parent() != host:
+			_detach(control)
+			host.add_child(control)
+		# The host is a plain Control, so the zone content anchors itself to fill it.
+		control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-## Wide (T/B): cap each block to a tidy column measure, pack the balanced columns now (using current
-## min sizes), then queue one deferred re-pack so the fit_content summary height settles before the
-## reserved height is finalised.
-func _arrange_wide() -> void:
-	if _section_blocks.is_empty():
-		return   # nothing to pack yet; `_cross_axis_size` falls back to PANEL_HEIGHT until a band arrives
-	for block_variant in _section_blocks:
-		if block_variant is Control:
-			(block_variant as Control).custom_minimum_size.x = SECTION_COLUMN_WIDTH
-	_pack_wide_columns()
-	_schedule_wide_remeasure()
-
-## Show the active layout container (tall or wide) when a band is present, else neither (the
-## empty-state placeholder shows instead). Collapse is handled separately by `_refresh_collapse_state`
-## hiding the whole `_body_host`.
+## Show the active shell when a band is present, else neither (the empty-state placeholder shows
+## instead). Collapse is handled separately by `_refresh_collapse_state` hiding the whole `_body_host`.
 func _update_body_visibility() -> void:
-	if _tall_scroll != null:
-		_tall_scroll.visible = _band_present and not _body_is_wide
-	if _wide_scroll != null:
-		_wide_scroll.visible = _band_present and _body_is_wide
+	if _wide_shell != null:
+		_wide_shell.visible = _band_present and _body_is_wide
+	if _narrow_shell != null:
+		_narrow_shell.visible = _band_present and not _body_is_wide
 
-## Pack the owned section blocks into height-balanced fixed-width columns and reserve exactly the
-## height the tallest column needs (fit-to-content, so nothing clips). Steps:
-##   1. Column count from the available width (full window width for a T/B dock, minus card padding),
-##      clamped to 1..blocks so a wide screen fills with many columns but never more than blocks.
-##   2. Greedy balance: each block (in order) joins the currently-SHORTEST column, minimising the
-##      tallest column → minimising the height we must reserve. Column VBoxes are rebuilt each pack.
-##   3. Reserved height = card V-padding + header + tallest column (+ a px of slack), capped at
-##      MAX_WIDE_HEIGHT_FRACTION of the window (past which the columns gain a vertical scroll). Report
-##      it via `reservation_changed` (through `_cross_axis_size`) so the map/HUD reflow to fit.
-## The width one packed column must actually afford: the nominal SECTION_COLUMN_WIDTH, raised to the
-## widest section's own minimum width when a section's content exceeds it.
-func _widest_block_width() -> float:
-	var widest := SECTION_COLUMN_WIDTH
-	for block_variant in _section_blocks:
-		if block_variant is Control:
-			widest = maxf(widest, (block_variant as Control).get_combined_minimum_size().x)
-	return widest
+# ---- wide shell scaffolding ------------------------------------------------
 
-func _pack_wide_columns() -> void:
-	if _wide_columns_row == null:
+## One wide-shell zone column. `fixed_width > 0` pins the column (band / parties); 0 makes it the
+## expanding one (work).
+func _add_wide_zone_host(zone: StringName, fixed_width: float) -> Control:
+	var host := _make_zone_host("Zone_%s" % String(zone), fixed_width)
+	_wide_shell.add_child(host)
+	return host
+
+## A zone host. Deliberately a PLAIN `Control`, not a container: a container reports its children's
+## combined minimum size, so an over-wide zone content would push the whole card past its FIXED
+## cross-axis size (a 380 L/R strip rendering 456px wide, spilling over the map) — the very
+## content-dependence this rework removes. A plain Control reports no minimum, so the zone stays the
+## size the shell gave it, and `clip_contents` keeps anything that does not fit inside its own zone
+## instead of painting over its neighbour. Zone content is anchored full-rect into it by
+## `_reparent_zones`.
+func _make_zone_host(host_name: String, fixed_width: float) -> Control:
+	var host := Control.new()
+	host.name = host_name
+	host.clip_contents = true
+	host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if fixed_width > 0.0:
+		host.custom_minimum_size = Vector2(fixed_width, 0.0)
+		host.size_flags_horizontal = Control.SIZE_FILL
+	else:
+		host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return host
+
+## The hairline rule between two adjacent zones in the wide shell.
+func _make_zone_separator() -> ColorRect:
+	var rule := ColorRect.new()
+	rule.name = "ZoneSeparator"
+	rule.color = HudStyle.LINE_SOFT
+	rule.custom_minimum_size = Vector2(ZONE_SEPARATOR_THICKNESS, 0.0)
+	rule.size_flags_horizontal = Control.SIZE_FILL
+	rule.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rule
+
+# ---- narrow shell tab bar --------------------------------------------------
+
+## Rebuild the tab row (Band · Work · Parties) from the current selection + badges. Cheap enough to
+## redo wholesale, and it keeps the active/inactive styling in exactly one place.
+func _rebuild_tab_bar() -> void:
+	if _tab_bar == null:
 		return
-	# (1) Column count from available width. For a T/B dock `_root` spans the full window width, so the
-	# usable content width is the window width minus the card's horizontal padding.
-	var window_w := _viewport_size().x
-	var avail := window_w - 2.0 * PANEL_CONTENT_MARGIN_H
-	var block_count := _section_blocks.size()
-	# A column is at least SECTION_COLUMN_WIDTH, but a block whose content is WIDER than that (e.g. a
-	# Current-actions row: resource glyph + label + policy tag + yield + ⚠ + the −/+ stepper) makes its
-	# column grow to fit. Size the column budget off the WIDEST block, else the packed columns sum past
-	# the window and the last one clips / spawns a horizontal scrollbar.
-	var per_col := _widest_block_width() + float(WIDE_FLOW_SEPARATION)
-	var num_cols := clampi(int(avail / per_col), 1, maxi(block_count, 1))
-	# (2) Rebuild the column scaffolding: detach the owned blocks first (so freeing the old columns
-	# never frees a block), then create fresh column VBoxes.
-	for block_variant in _section_blocks:
-		if block_variant is Node:
-			_detach(block_variant)
-	for child in _wide_columns_row.get_children():
+	for child in _tab_bar.get_children():
 		child.queue_free()
-	var columns: Array[VBoxContainer] = []
-	var col_heights: Array[float] = []
-	for i in range(num_cols):
-		var col := VBoxContainer.new()
-		col.size_flags_horizontal = Control.SIZE_FILL
-		col.size_flags_vertical = Control.SIZE_FILL
-		col.custom_minimum_size = Vector2(SECTION_COLUMN_WIDTH, 0.0)
-		col.add_theme_constant_override("separation", WIDE_FLOW_SEPARATION)
-		_wide_columns_row.add_child(col)
-		columns.append(col)
-		col_heights.append(0.0)
-	# Greedy: add each block to the shortest column.
-	for block_variant in _section_blocks:
-		if not (block_variant is Control):
-			continue
-		var block: Control = block_variant
-		var target := _shortest_column_index(col_heights)
-		if col_heights[target] > 0.0:
-			col_heights[target] += float(WIDE_FLOW_SEPARATION)
-		col_heights[target] += block.get_combined_minimum_size().y
-		columns[target].add_child(block)
-	# (3) Reserved height from the tallest column + chrome, capped by the window fraction.
-	var tallest := 0.0
-	for h in col_heights:
-		tallest = maxf(tallest, h)
-	var header_h := _header_full.get_combined_minimum_size().y if _header_full != null else 0.0
-	var content_h := 2.0 * PANEL_CONTENT_MARGIN_V + header_h + tallest + WIDE_CONTENT_SAFETY_PAD
-	var cap := _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION
-	_wide_capped = content_h > cap
-	var new_height := minf(content_h, cap) if _wide_capped else content_h
-	# Capped → let the columns scroll vertically within the (shorter) reserved height; else they fit
-	# exactly, no scroll.
-	if _wide_scroll != null:
-		_wide_scroll.vertical_scroll_mode = (
-			ScrollContainer.SCROLL_MODE_AUTO if _wide_capped else ScrollContainer.SCROLL_MODE_DISABLED)
-	# Re-anchor + re-report the reservation only when the height actually moved (avoids reflow churn).
-	if not is_equal_approx(new_height, _wide_content_height):
-		_wide_content_height = new_height
-		if not _collapsed and _shown:
-			_apply_root_anchors()
-			_emit_reservation()
+	_tab_buttons.clear()
+	for zone in TAB_ORDER:
+		var tab: Control = _make_tab_button(zone)
+		_tab_bar.add_child(tab)
+		_tab_buttons[zone] = tab
 
-## Index of the shortest column (ties → the leftmost), for the greedy height balance.
-func _shortest_column_index(heights: Array[float]) -> int:
-	var best := 0
-	for i in range(1, heights.size()):
-		if heights[i] < heights[best]:
-			best = i
-	return best
+## One tab. A `PanelContainer` (not a `Button`) wrapping a mouse-transparent row, exactly as the
+## header's subject cluster does — a Button is not a Container, so a label+badge row parented to one
+## is never laid out and the tabs pile up at the origin.
+func _make_tab_button(zone: StringName) -> Control:
+	var active := zone == _effective_tab()
+	var tab := PanelContainer.new()
+	tab.name = "Tab_%s" % String(zone)
+	tab.mouse_filter = Control.MOUSE_FILTER_STOP
+	tab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	tab.tooltip_text = TAB_LABELS[zone]
+	tab.add_theme_stylebox_override("panel", _tab_stylebox(active))
+	tab.gui_input.connect(func(event: InputEvent): _on_tab_gui_input(event, zone))
 
-## Queue one deferred re-pack so the fit_content summary RichTextLabel (bounded to SECTION_COLUMN_WIDTH)
-## reports its final wrapped height before the reserved height is finalised. Guarded so a burst of
-## arrange calls collapses to a single settle pass.
-func _schedule_wide_remeasure() -> void:
-	if _wide_remeasure_queued:
-		return
-	_wide_remeasure_queued = true
-	_run_wide_remeasure.call_deferred()
+	# A mouse-transparent row inside the tab so the label + badge read (and click) as one tab.
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", TAB_SEPARATION)
+	tab.add_child(row)
 
-func _run_wide_remeasure() -> void:
-	_wide_remeasure_queued = false
-	if not _body_is_wide or not _band_present:
-		return
-	# One frame lets the just-packed blocks lay out at their column width so fit_content settles.
-	await get_tree().process_frame
-	if not is_instance_valid(self) or not _body_is_wide or not _band_present:
-		return
-	_pack_wide_columns()
+	var label := Label.new()
+	label.text = TAB_LABELS[zone]
+	label.add_theme_font_size_override("font_size", TAB_FONT_SIZE)
+	label.add_theme_color_override("font_color", HudStyle.SIGNAL if active else HudStyle.INK_FAINT)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(label)
 
-## Fit the tall (L/R) reserved WIDTH to the section content, floored at PANEL_WIDTH — the mirror of
-## `_pack_wide_columns`'s height fit. The content minimum is read off the PanelContainer's combined
-## minimum size (it already folds in the card stylebox margins, the column separation, and the tall
-## stack's widest section), which is INDEPENDENT of the current allocated width — so measuring never
-## feeds back into a resize loop. `is_equal_approx` guards against reflow churn, exactly like the wide
-## height fit. On a real change, re-anchor `_root` (which re-pins the seam) + re-report the reservation
-## so the map/HUD reflow to the true card edge.
-func _measure_tall_width() -> void:
-	if _panel == null or _collapsed or not _shown or not _band_present:
-		return
-	if not _is_vertical_edge(_dock_edge):
-		return
-	# Floor at PANEL_WIDTH FIRST, then guard on the effective (floored) value — the mirror of
-	# `_pack_wide_columns` guarding on its capped `new_height`. `_tall_content_width` therefore always
-	# holds the width actually reserved by `_cross_axis_size`, so a sub-PANEL_WIDTH content wiggle (a
-	# "· pending" suffix, an expedition row appearing) that leaves the reserved edge unchanged does NOT
-	# re-anchor/re-emit and needlessly invalidate the map cache downstream.
-	var content_width := maxf(PANEL_WIDTH, _panel.get_combined_minimum_size().x)
-	if is_equal_approx(content_width, _tall_content_width):
-		return
-	_tall_content_width = content_width
-	_apply_root_anchors()
-	_emit_reservation()
+	var badge := _make_tab_badge(zone)
+	if badge != null:
+		row.add_child(badge)
+	return tab
 
-## Queue one deferred tall-width measure so the fit_content summary RichTextLabel reports its final size
-## before the reserved width is finalised. Guarded so a burst of arrange calls collapses to a single pass
-## (mirrors `_schedule_wide_remeasure`).
-func _schedule_tall_remeasure() -> void:
-	if _tall_remeasure_queued:
-		return
-	_tall_remeasure_queued = true
-	_run_tall_remeasure.call_deferred()
+## Left-click anywhere on a tab selects it.
+func _on_tab_gui_input(event: InputEvent, zone: StringName) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		set_active_tab(zone)
 
-func _run_tall_remeasure() -> void:
-	_tall_remeasure_queued = false
-	if _collapsed or not _shown or not _band_present or not _is_vertical_edge(_dock_edge):
-		return
-	# One frame lets the just-homed blocks lay out so the content minimum (fit_content summary) settles.
-	await get_tree().process_frame
-	if not is_instance_valid(self):
-		return
-	if _collapsed or not _shown or not _band_present or not _is_vertical_edge(_dock_edge):
-		return
-	_measure_tall_width()
+## The tab's small rounded count pill — WARN-filled when the caller marked it hot, else a quiet
+## LINE_SOFT chip. Returns null when this tab carries no badge.
+func _make_tab_badge(zone: StringName) -> Control:
+	var badge_variant: Variant = _tab_badges.get(zone)
+	if not (badge_variant is Dictionary):
+		return null
+	var badge_data: Dictionary = badge_variant
+	var text := String(badge_data.get("text", ""))
+	if text.is_empty():
+		return null
+	var hot := bool(badge_data.get("hot", false))
+	var pill := PanelContainer.new()
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pill.add_theme_stylebox_override("panel", _tab_badge_stylebox(hot))
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", TAB_BADGE_FONT_SIZE)
+	label.add_theme_color_override("font_color", HudStyle.GROUND if hot else HudStyle.INK_DIM)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.add_child(label)
+	return pill
 
-## A window resize changes the available width (column count) and thus the fit-to-content height —
-## re-pack + re-report when wide and showing a band. When tall, the content minimum width is unchanged
-## by a resize, but re-measure defensively (the `is_equal_approx` guard makes a no-op cheap).
+## Tab background: transparent either way (the tab is text, not a box); the ACTIVE one wears a SIGNAL
+## underline. Identical content margins in both states so selection never shifts the row.
+func _tab_stylebox(active: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	sb.content_margin_left = TAB_PADDING_H
+	sb.content_margin_right = TAB_PADDING_H
+	sb.content_margin_top = TAB_PADDING_V
+	sb.content_margin_bottom = TAB_PADDING_V
+	if active:
+		sb.border_width_bottom = TAB_UNDERLINE_THICKNESS
+		sb.border_color = HudStyle.SIGNAL
+	return sb
+
+func _tab_badge_stylebox(hot: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = HudStyle.WARN if hot else HudStyle.LINE_SOFT
+	sb.set_corner_radius_all(TAB_BADGE_CORNER_RADIUS)
+	sb.content_margin_left = TAB_BADGE_PADDING_H
+	sb.content_margin_right = TAB_BADGE_PADDING_H
+	sb.content_margin_top = TAB_BADGE_PADDING_V
+	sb.content_margin_bottom = TAB_BADGE_PADDING_V
+	return sb
+
+## Select a narrow-shell tab. Persisted, so a reopened session lands where the player left it. The
+## wide shell shows all three zones, so this only changes what the narrow shell will show.
+func set_active_tab(zone: StringName) -> void:
+	if not TAB_LABELS.has(zone) or zone == _active_tab:
+		return
+	_active_tab = zone
+	_save_prefs()
+	_rebuild_tab_bar()
+	_reparent_zones()
+	_notify_zones_resized()
+
+## A window resize changes the T/B panel width (hence the shell) and the clamped wide height, so
+## re-choose the shell, re-anchor and re-report both the reservation and the work-zone box.
 func _on_viewport_resized() -> void:
-	if not _band_present:
-		return
-	if _body_is_wide:
-		_arrange_wide()
-	elif _is_vertical_edge(_dock_edge):
-		_schedule_tall_remeasure()
+	_apply_dock_layout()
+	_emit_reservation()
+	_notify_zones_resized()
 
-## The current window (viewport) size, the basis for the wide-dock column count + height cap.
+## Re-report `work_zone_size()` when it actually moved, so Hud re-pages its work board once per real
+## geometry change rather than on every layout pass.
+func _notify_zones_resized() -> void:
+	var size := work_zone_size()
+	if size.is_equal_approx(_last_work_zone_size):
+		return
+	_last_work_zone_size = size
+	zones_resized.emit()
+
+## The current window (viewport) size, the basis for the panel's long-axis extent + the height clamp.
 func _viewport_size() -> Vector2:
 	var vp := get_viewport()
 	if vp != null:
 		return vp.get_visible_rect().size
-	return Vector2(PANEL_WIDTH, PANEL_HEIGHT)
+	return Vector2(PANEL_WIDTH, PANEL_HEIGHT_WIDE)
 
 func _detach(node: Node) -> void:
 	if node != null and node.get_parent() != null:
@@ -851,21 +969,15 @@ func _emit_reservation() -> void:
 
 # ---- helpers ---------------------------------------------------------------
 
+## The reserved cross-axis size. **It must never depend on content** — that independence is what
+## keeps `current_reservation_size` (and therefore MapView's inset + cache invalidation) constant
+## while the player edits the band, so a `+` press cannot flicker the map.
 func _cross_axis_size() -> float:
 	if _collapsed:
 		return COLLAPSED_SIZE
 	if _is_vertical_edge(_dock_edge):
-		# Tall (L/R): `_tall_content_width` is the already-floored effective width from the last measure
-		# (`_measure_tall_width` stores `maxf(PANEL_WIDTH, content-min)`, mirroring how `_pack_wide_columns`
-		# stores its capped height), so `_root`/seam/reservation track the real card edge. No band → nominal.
-		if _band_present:
-			return _tall_content_width
 		return PANEL_WIDTH
-	# Wide (T/B): the fit-to-content height from the last column pack. Before the first pack (or with no
-	# band) fall back to the nominal PANEL_HEIGHT so the reserved strip is sensible.
-	if _band_present and _wide_content_height > 0.0:
-		return _wide_content_height
-	return PANEL_HEIGHT
+	return _wide_panel_height()
 
 ## True when the dock reserves a vertical strip (left/right → width on the x-axis).
 func _is_vertical_edge(edge: int) -> bool:
@@ -978,10 +1090,14 @@ func _load_prefs() -> void:
 	if DOCK_EDGES.has(edge):
 		_dock_edge = edge
 	_collapsed = bool(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_COLLAPSED, false))
+	var tab := StringName(str(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(DEFAULT_TAB))))
+	if TAB_LABELS.has(tab):
+		_active_tab = tab
 
 func _save_prefs() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(CONFIG_PATH)   # preserve any other sections; ignore load errors
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_EDGE, _dock_edge)
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_COLLAPSED, _collapsed)
+	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(_active_tab))
 	cfg.save(CONFIG_PATH)
