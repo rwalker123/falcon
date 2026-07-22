@@ -21,7 +21,8 @@ class_name BandCityPanel
 ##
 ## Two SHELLS host those zones, chosen by the panel's own WIDTH (never by dock
 ## edge, so a resizable dock needs no special case):
-##   * WIDE  (width >= `WIDE_SHELL_MIN_WIDTH`, in practice a T/B dock): the three
+##   * WIDE  (width >= `WIDE_SHELL_MIN_WIDTH`, DERIVED from what the wide shell needs — in practice
+##     a T/B dock on a wide window): the three
 ##     zones side by side, band + parties fixed-width, work taking the rest,
 ##     hairline separators between. No tab bar.
 ##   * NARROW (otherwise, in practice a L/R dock): a tab bar under the header and
@@ -79,30 +80,52 @@ const BODY_SEPARATION := 8
 ## height math reuses the exact same paddings the card draws with (no magic 12/10 duplicated).
 const PANEL_CONTENT_MARGIN_H := 12
 const PANEL_CONTENT_MARGIN_V := 10
+## Card border thickness (`_panel_stylebox`), subtracted alongside the content margins when the
+## panel reports the interior box its Work zone may fill. Declared here, beside the margins it is
+## always summed with, so `PANEL_CHROME_H` below can be a `const`.
+const PANEL_BORDER_WIDTH := 1.0
 # ---- responsive body layout (wide 3-column shell vs narrow tabbed shell) -----
-## The panel switches to the wide (3-zones-side-by-side) shell once its own WIDTH reaches this;
-## below it the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a
-## resizable dock or a narrow window needs no special case. Three zones at their fixed widths plus a
-## work zone worth reading need roughly this much room.
-const WIDE_SHELL_MIN_WIDTH := 900.0
 ## Fixed widths of the two flanking zones in the wide shell; Work takes whatever is left.
 const ZONE_BAND_WIDTH := 300.0
 const ZONE_PARTY_WIDTH := 300.0
+## The NARROWEST the WORK zone may be for the wide shell to be worth choosing: one readable board
+## column. MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` (380) — the width below which `_work_board_capacity`
+## clamps to a single column, and a single column crammed into less than that clips its row labels.
+## Kept here rather than read from Hud — the panel must not depend on its content's internals — but
+## this and `ZONE_WORK_MAX_WIDTH` are a PAIR with Hud's column consts: change the board's column
+## width or cap and change both of these with it.
+const ZONE_WORK_MIN_WIDTH := 380.0
 ## The widest the WORK zone can use: Hud's board stops adding columns at `WORK_MAX_COLUMNS` (4) of
 ## `WORK_COLUMN_MIN_WIDTH` (380), so past this a wider zone only stretches the same rows. Kept here
 ## rather than read from Hud — the panel must not depend on its content's internals — but the two are
-## a PAIR: change the board's column cap and change this with it.
+## a PAIR: change the board's column cap and change this with it (and `ZONE_WORK_MIN_WIDTH` with it).
 const ZONE_WORK_MAX_WIDTH := 1520.0
 ## Hairline separator drawn between adjacent zones in the wide shell.
 const ZONE_SEPARATOR_THICKNESS := 1.0
 ## Gap either side of a zone separator, so the hairline is not flush against zone content.
 const ZONE_SEPARATION := 12
+## What the TWO separators + their gaps cost the wide shell's interior width. A `const` (not just
+## `_wide_separator_span()`) because `WIDE_SHELL_MIN_WIDTH` below is itself a const and cannot call a
+## function; the function returns this so the threshold, the content cap and `work_zone_size` can
+## never disagree about how much width the chrome eats.
+const WIDE_SEPARATOR_SPAN := 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
+## What the card's own horizontal chrome costs — the border plus the content margins the card draws
+## with, i.e. exactly what `_interior_size()` subtracts from `_panel_extent().x`. Named so the shell
+## threshold (which is tested against the panel's OUTER width) can add it back.
+const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDTH)
+## The panel switches to the wide (3-zones-side-by-side) shell once its own WIDTH reaches this;
+## below it the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a
+## resizable dock or a narrow window needs no special case. DERIVED, never hand-picked: the wide
+## shell is only worth choosing when it can still give the work zone one readable column, so this is
+## exactly what the three zones + the separators + the card chrome need (300 + 300 + 380 + 50 + 26 =
+## 1056). It is compared against the OUTER `_panel_extent().x`, hence the chrome term — below it the
+## narrow shell would hand the board the panel's whole interior, so flipping wide too early makes the
+## board several times NARROWER, degrading the very thing the wide shell exists to improve.
+const WIDE_SHELL_MIN_WIDTH := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH \
+	+ WIDE_SEPARATOR_SPAN + PANEL_CHROME_H
 ## Safety net so a short window can never let the T/B strip eat the screen: the reserved wide-dock
 ## height is `PANEL_HEIGHT_WIDE` clamped to this fraction of the window height.
 const MAX_WIDE_HEIGHT_FRACTION := 0.6
-## Card border thickness (`_panel_stylebox`), subtracted alongside the content margins when the
-## panel reports the interior box its Work zone may fill.
-const PANEL_BORDER_WIDTH := 1.0
 ## Header height used for the interior maths before the header has laid out once (it is pure chrome —
 ## two text rows beside `ICON_BUTTON_SIZE` controls — so this is a bootstrap value, not a guess about
 ## content).
@@ -665,10 +688,11 @@ func _relayout_body() -> void:
 func _wide_content_cap() -> float:
 	return ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MAX_WIDTH + _wide_separator_span()
 
-## What the two separators + their gaps cost. Shared by the cap and `work_zone_size`, so the two can
-## never disagree about how much width the chrome eats.
+## What the two separators + their gaps cost. The value lives in `WIDE_SEPARATOR_SPAN` (a `const`, so
+## `WIDE_SHELL_MIN_WIDTH` can use it too); this is the call-site form, shared by the cap and
+## `work_zone_size`, so the three can never disagree about how much width the chrome eats.
 func _wide_separator_span() -> float:
-	return 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
+	return WIDE_SEPARATOR_SPAN
 
 ## Centre the card's whole CONTENT COLUMN once the panel is wider than the zones can use, leaving equal
 ## margins either side; below the cap it fills as before. The header goes with it deliberately: capping
@@ -710,9 +734,8 @@ func _wide_panel_height() -> float:
 ## with (`_panel_stylebox`). Chrome only; never content.
 func _interior_size() -> Vector2:
 	var outer := _panel_extent()
-	var chrome_h := 2.0 * (PANEL_CONTENT_MARGIN_H + PANEL_BORDER_WIDTH)
 	var chrome_v := 2.0 * (PANEL_CONTENT_MARGIN_V + PANEL_BORDER_WIDTH)
-	return Vector2(maxf(outer.x - chrome_h, 0.0), maxf(outer.y - chrome_v, 0.0))
+	return Vector2(maxf(outer.x - PANEL_CHROME_H, 0.0), maxf(outer.y - chrome_v, 0.0))
 
 ## Height of the header row — pure chrome (two text rows beside the icon controls), so measuring it
 ## keeps the interior maths content-independent. Falls back before the first layout pass.

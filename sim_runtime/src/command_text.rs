@@ -196,7 +196,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
-        summary: "Clear a band's labor assignments: scope 'work' unassigns worked sources (forage/hunt), 'roles' clears standing roles (scout/warrior), 'all' clears both and stops movement. Defaults to 'all'; the narrow scopes leave travel running.",
+        summary: "Clear a band's labor assignments: scope 'work' unassigns worked sources (forage/hunt), 'roles' clears standing roles (scout/warrior), 'all' clears both and stops movement. Defaults to 'all'; the narrow scopes leave travel running. The two trailing tokens are optional and may be given in either order, but each may appear at most once — a repeated or extra token is rejected rather than guessed at.",
         usage: "cancel_order <faction_id> [band_entity_bits] [all|work|roles]",
     },
     CommandVerbHelp {
@@ -875,24 +875,35 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            // Both trailing tokens are optional, so the grammar is resolved by shape rather than
-            // position: a numeric token is the band, anything else must be a scope word. An
-            // unrecognised word fails closed — silently falling back to `all` would mass-unassign a
-            // band whose player asked only for `work`.
+            // Both trailing tokens are optional and order-free, so the grammar is resolved by shape
+            // rather than position: a numeric token fills the band slot, anything else must be a
+            // scope word. Each slot may be filled at most once and no other token is tolerated — a
+            // repeat or an extra is a typo, and this verb is destructive enough that guessing which
+            // of `42 43` the player meant would clear the wrong band's assignments. An unrecognised
+            // word fails closed for the same reason: silently falling back to `all` would
+            // mass-unassign a band whose player asked only for `work`.
             let mut band_entity_bits = None;
-            let mut scope = CancelScope::All;
-            for token in parts.by_ref().take(2) {
+            let mut scope = None;
+            for token in parts.by_ref() {
                 if token.chars().all(|c| c.is_ascii_digit()) {
+                    if band_entity_bits.is_some() {
+                        return Err(CommandParseError::UnexpectedToken(token.to_string()));
+                    }
                     band_entity_bits = Some(parse_u64(token, "cancel_order band_entity_bits")?);
                 } else {
-                    scope = CancelScope::parse(token)
-                        .ok_or_else(|| CommandParseError::UnexpectedToken(token.to_string()))?;
+                    if scope.is_some() {
+                        return Err(CommandParseError::UnexpectedToken(token.to_string()));
+                    }
+                    scope =
+                        Some(CancelScope::parse(token).ok_or_else(|| {
+                            CommandParseError::UnexpectedToken(token.to_string())
+                        })?);
                 }
             }
             Ok(CommandPayload::CancelOrder {
                 faction_id: parse_u32(faction_str, "cancel_order faction")?,
                 band_entity_bits,
-                scope,
+                scope: scope.unwrap_or(CancelScope::All),
             })
         }
         "assign_labor" => {
@@ -1632,6 +1643,38 @@ mod tests {
                 scope: CancelScope::Roles,
             }
         );
+        // Shape, not position: the two trailing tokens may arrive in either order.
+        assert_eq!(
+            parse_command_line("cancel_order 1 work 42").unwrap(),
+            CommandPayload::CancelOrder {
+                faction_id: 1,
+                band_entity_bits: Some(42),
+                scope: CancelScope::Work,
+            }
+        );
+    }
+
+    /// A slot filled twice is a typo, and this verb is destructive: a fat-fingered second band id
+    /// would otherwise silently clear a *different* band's assignments.
+    #[test]
+    fn parse_cancel_order_rejects_a_repeated_slot() {
+        assert!(matches!(
+            parse_command_line("cancel_order 1 42 43"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "43"
+        ));
+        assert!(matches!(
+            parse_command_line("cancel_order 1 work roles"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "roles"
+        ));
+    }
+
+    /// Trailing junk past a complete command is rejected rather than discarded.
+    #[test]
+    fn parse_cancel_order_rejects_trailing_tokens() {
+        assert!(matches!(
+            parse_command_line("cancel_order 1 42 work junk"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "junk"
+        ));
     }
 
     /// Fail closed: silently falling back to `all` would mass-unassign a band that asked for `work`.

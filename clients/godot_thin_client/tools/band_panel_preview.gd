@@ -36,6 +36,13 @@ const ZONE_BOUNDS_TOLERANCE := 1.0
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
+# The two shell-threshold probe windows. The panel is bottom-docked in both, so the window width IS
+# `_panel_extent().x`, the value `_shell_is_wide` tests — one pixel below the derived threshold (must
+# pick the NARROW tabbed shell) and exactly at it (the narrowest legitimate WIDE shell). Derived from
+# the panel's own const so they can never drift from the threshold they bracket.
+const SHELL_THRESHOLD_WIDTH := int(BandCityPanel.WIDE_SHELL_MIN_WIDTH)
+const SHELL_THRESHOLD_UNDERSHOOT := 1
+const SHELL_THRESHOLD_HEIGHT := 900
 # The window every state but the ultrawide one renders at.
 const PREVIEW_SIZE := Vector2i(1500, 900)
 # How many frames to keep re-asserting the window before giving up and warning.
@@ -43,6 +50,8 @@ const WINDOW_PIN_MAX_FRAMES := 30
 
 ## The size every state re-asserts before it renders — see `_pin_window`.
 var _pinned_size := PREVIEW_SIZE
+## The canvas size every state re-asserts, `ZERO` = leave the project's stretch alone — see `_pin_canvas`.
+var _pinned_canvas := Vector2i.ZERO
 var _hud: HudLayer
 var _panel: BandCityPanel
 
@@ -270,6 +279,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_people")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
 	# pager must appear and NOTHING may scroll.
@@ -280,12 +290,14 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_work_page")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 
 	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
 	await _save("band_panel_work_wide")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 
 	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
 	_panel.set_dock(SIDE_LEFT)
@@ -293,6 +305,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_inspector")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 	_hud._toggle_work_inspector(_hud._work_open_key)
 
 	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
@@ -311,6 +324,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_compose_hunt")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 	_hud._party_compose_open = false
 
 	# Zero idle workers: "Send a party…" stays VISIBLE and DISABLED, with its reason.
@@ -320,6 +334,7 @@ func _ready() -> void:
 
 	_assert_no_scroll_containers()
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 
 	# ULTRAWIDE: past the width the three zones can USE, the wide shell CENTRES at its content cap
 	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
@@ -331,10 +346,62 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_wide_ultrawide")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 	print("band_panel_preview: ultrawide — work zone %.0fpx of a %dpx panel (capped + centred)" % [
 		_panel.work_zone_size().x, ULTRAWIDE_WIDTH])
 
+	# THE SHELL THRESHOLD, bracketed. `WIDE_SHELL_MIN_WIDTH` is DERIVED from what the wide shell needs
+	# (both flanks + one readable work column + the separators + the card chrome), and nothing else in
+	# this harness renders anywhere near it — 1500 and 3440 are both comfortably past it, so a
+	# too-low threshold was invisible here. These two frames are the before/after of the flip.
+	# One pixel BELOW: the wide shell could not give the board a readable column, so the panel must
+	# choose the NARROW tabbed shell — which hands the board the panel's WHOLE interior.
+	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_shell_below_threshold")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_shell_is_wide(false, "band_panel_shell_below_threshold")
+
+	# Exactly AT it: the narrowest legitimate wide shell — three columns, the work zone at exactly
+	# `ZONE_WORK_MIN_WIDTH`, its rows still legible with un-clipped labels.
+	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_shell_at_threshold")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_shell_is_wide(true, "band_panel_shell_at_threshold")
+
 	get_tree().quit()
+
+## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
+## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
+## narrow for its own row labels, and the NARROW shell would have given the board strictly MORE room.
+## That is the invariant a hand-picked `WIDE_SHELL_MIN_WIDTH` violated across a whole band of widths,
+## and the recursive zone-bounds assertion cannot catch it: a CLIPPED label still sits inside its rect.
+func _assert_work_zone_readable() -> void:
+	if not _panel._shell_is_wide():
+		return
+	var work_width := _panel.work_zone_size().x
+	if work_width + ZONE_BOUNDS_TOLERANCE < BandCityPanel.ZONE_WORK_MIN_WIDTH:
+		push_error("band_panel_preview: wide shell with a %.0fpx work zone — under ZONE_WORK_MIN_WIDTH (%.0f)" % [
+			work_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
+	else:
+		print("band_panel_preview: assert OK — wide shell work zone %.0fpx >= %.0f" % [
+			work_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
+
+## GUARD: the two threshold-probe states exist to pin WHICH shell is chosen, so state it outright —
+## a frame that silently rendered the other shell would still pass every other assertion here.
+func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
+	var actual := _panel._shell_is_wide()
+	if actual != expected:
+		push_error("band_panel_preview: %s expected shell wide=%s but got %s" % [
+			state_name, expected, actual])
+	else:
+		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
 
 ## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
 ## silently reintroduce the content-dependent sizing the rework removed.
@@ -448,6 +515,17 @@ func _no_idle_band_fixture() -> Dictionary:
 	]
 	return band
 
+## Pin the CANVAS (`content_scale_size`) as well as the window, and keep the two equal so the stretch
+## factor is exactly 1 and the panel's canvas-space width IS `size.x`.
+##
+## Needed because `project.godot` stretches `canvas_items` with an `expand` aspect: the canvas is
+## never SMALLER than the project's base resolution on either axis, so `get_visible_rect().size.x`
+## floors at 1920 however narrow the window is — a plain `_pin_window(1055, 900)` still renders a
+## 1920-wide panel and silently proves nothing about a sub-1920 threshold.
+func _pin_canvas(size: Vector2i) -> void:
+	_pinned_canvas = size
+	await _pin_window(size)
+
 ## Force the window WINDOWED at `size` and wait for the WM to actually honour it, so a maximize
 ## cannot land between two states and render them at different resolutions.
 func _pin_window(size: Vector2i) -> void:
@@ -455,6 +533,8 @@ func _pin_window(size: Vector2i) -> void:
 	var window := get_window()
 	window.mode = Window.MODE_WINDOWED
 	window.size = size
+	if _pinned_canvas != Vector2i.ZERO:
+		window.content_scale_size = _pinned_canvas
 	for _i in range(WINDOW_PIN_MAX_FRAMES):
 		if window.size == size and window.mode == Window.MODE_WINDOWED:
 			break
