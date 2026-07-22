@@ -2111,15 +2111,30 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   after `share`'s 8): **`canCultivate`/`canSow`** (the species' `cultivation_ceiling`, so the client
   can grey out what is *impossible* without holding a roster) and **`cultivateYieldRatio`/
   `sowYieldRatio`** — what committing *this tile* to *this plant* pays **against just gathering it
-  wild**, per rung: `min(1, share × gain) × species_rate ÷ forage.provisions_per_biomass`
-  (`forage::commit_yield_ratio`). `> 1` beats gathering, `< 1` is a **loss the player stays free to
+  wild**, per rung — **plus `cultivatePayoff`/`sowPayoff`, the provisions/turn each rung would pay
+  committed to *that* plant** (slots 18/20), in `tendedYield`/`fieldYield`'s units so the client can
+  substitute one for the other. The ratio **is those payoffs divided** (`forage::commit_yield_ratio`
+  takes the two numbers, it does not re-derive them), and each payoff comes from `forage::rung_payoff`
+  — the *same* `tended_provisions`/`field_provisions`/Sustain-MSY functions the sim quotes and pays
+  with — against a hypothetical patch at this tile's own `K`, concentrated by the rung, at the
+  standing crop that rung settles at. `> 1` beats gathering, `< 1` is a **loss the player stays free to
   choose** — never clamped, never hidden, never refused; that choice *is* the decision. `0` means
   *cannot climb this rung* (distinct from a real ratio of 0, which cannot occur). **The raw
   `provisions_per_biomass` is deliberately NOT published**: `0.080` means nothing to a player, it is
   half the inputs (share is the other), and deriving the rest client-side would put the §4.3 formula
-  where it can drift. Both fields go through the **same** `concentration_for_share`/`concentration_gain`
-  seams `patch_concentration` uses, and `flora_commitment::the_published_commit_ratio_is_the_sims_own_payoff_ratio`
-  sweeps every biome × plant × rung asserting the quote equals the payout.
+  where it can drift.
+  > **The bug this shape exists to prevent (playtest, S1).** The first version divided
+  > `concentration × rate ÷ base_rate` — a *capacity* basis, in which the ecology's `r` cancels. But
+  > rungs 1–2 pay **MSY** (`r · K / 4`) and tending's payoff *is* that it scales `r` by
+  > `tended_regrowth_gain`, so every Cultivate ratio shipped at **exactly half** its true value and
+  > the tooltip told the player that tending a good delta crop *lost* (`0.9×`; real value `1.8×`).
+  > Its test compared the same wrong basis on both sides, so code and test agreed with each other.
+  > The rule that follows: **assert a published quote against the payoff functions, never against a
+  > re-derivation of their arithmetic.**
+  `flora_commitment::the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff`
+  sweeps every biome × plant × both rungs asserting exactly that, and
+  `the_cultivate_ratio_carries_the_tended_regrowth_gain` pins the dropped term by name. Both were
+  confirmed to **fail** against the old implementation before the fix.
 - **Rung 1 is untouched and tested from both sides** (`core_sim/tests/flora_commitment.rs`,
   `forage_cultivation::cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched`).
 - **S1 changes no rung payoff dial** — `tended_regrowth_gain` and `field_provisions_per_biomass` are

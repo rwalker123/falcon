@@ -234,14 +234,36 @@ an alluvial tile to Wild Emmer (share 0.56) at any concentration gain yields `�
 wild's `1.0 K`, and tending would be a strict **downgrade**. Concentration can only ever redistribute
 what wild already gave you. **Tending must pay in conversion, or it does not pay.**
 
-So the trade is exactly:
+So the trade is:
 
 ```
-tended pays   concentration × species_rate      vs.   wild pays   1.0 × base_rate
+tended pays   tended_regrowth_gain × concentration × species_rate    vs.   wild pays   1.0 × base_rate
 ```
 
-which is a real decision, and which makes committing to a **minor-share** species a structural loss
-rather than merely a smaller number. `forage.provisions_per_biomass` (0.05) stays the **wild**
+**The `tended_regrowth_gain` term is not decoration — it dominates, and omitting it was a real bug.**
+S1 first shipped this inequality *without* it (and a sweep test that "verified" the published ratio on
+a **capacity** basis, where `r` cancels — so the test shared the code's wrong assumption and passed
+vacuously). Every Cultivate ratio on screen was understated by exactly the gain (2.0): a delta tile
+showed `Sustain +0.64` / `Cultivate +1.28` in its policy chips while the crop row for the same tile
+claimed `0.9×`, i.e. that tending *loses*. Corrected, that crop is `1.8×`.
+
+The rule this produced, now in `core_sim/CLAUDE.md`: **assert a published quote against the payoff
+functions themselves, never against a re-derivation of their arithmetic** — and a test for a
+correctness bug must be shown to *fail* against the unfixed code before it is trusted.
+
+**What the corrected numbers say — and it is a finding for S2, not a crisis.** With the gain in,
+*almost everything is worth tending*: best-country ratios run 2.3–2.7×, and only two rows lose
+anywhere at all (berry_scrub 0.70 and wild_tubers 0.97, both on RollingHills). So the claim above —
+that a minor-share commitment is a **structural loss** — is **too strong as stated**: the gain swamps
+the concentration penalty. What survives is weaker but still real: *within one tile* the spread is
+large and the ranking matters (RollingHills offers hazel 1.35, wild_emmer 1.20, wild_tubers 0.97,
+berry_scrub 0.70 — best to worst is nearly 2×, and the bottom of the list does lose).
+
+This is precisely the double-count §4.3 predicted and handed to **S2**, now measured rather than
+suspected: `tended_regrowth_gain` 2.0 was carrying weight that concentration now carries explicitly.
+S2 decides whether the gain comes down until a marginal commitment genuinely loses again, or whether
+"every crop pays, but some pay far better" is the honest model. Do **not** settle that here — S1
+deliberately moves no payoff dial. `forage.provisions_per_biomass` (0.05) stays the **wild**
 rate — you gather the whole basket at the basket's average — so **rung 1 remains exactly as F1
 shipped it**, and the roster stays economy-neutral until you actually commit a patch.
 

@@ -61,9 +61,10 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle},
     food::FoodModuleTag,
     forage::{
-        commit_yield_ratio, field_provisions, forage_forecast, rung_site_refusal,
-        tile_flora_composition, tile_is_fresh_watered, ForagePatch, ForageRegistry,
-        CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        commit_payoff, commit_yield_ratio, field_provisions, forage_forecast, rung_site_refusal,
+        tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff,
+        ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+        SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},

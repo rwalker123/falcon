@@ -1090,12 +1090,37 @@ table FloraShareInfo {
   // concentration seam the sim's own committed-patch payoff uses, so the quote and the payout cannot
   // disagree.
   //
-  // TWO FIELDS because the two rungs have different concentration gains AND different legality, so a
-  // single number would be ambiguous about which rung it answers. 0 means "CANNOT CLIMB THIS RUNG"
-  // (mirroring canCultivate/canSow), which is distinct from a real ratio of 0 — that cannot occur,
-  // since a plant in a tile's basket has share > 0 and a validated-positive yield.
+  // TWO FIELDS PER QUANTITY because the two rungs differ in BOTH their concentration gain and their
+  // legality, so a single number would be ambiguous about which rung it answers. 0 means "CANNOT
+  // CLIMB THIS RUNG" (mirroring canCultivate/canSow).
+  //
+  // NOTE THE RATIO IS THE PAYOFF PAIR BELOW, DIVIDED — `cultivateYieldRatio == cultivatePayoff / the
+  // tile's wild payoff` — so the two can never disagree. In particular the Cultivate ratio carries
+  // `cultivation.tended_regrowth_gain`, because a tended patch rides a faster curve and THAT IS THE
+  // RUNG'S PAYOFF: rungs 1-2 pay MSY (r x K / 4), where r does not cancel between wild and tended.
+  // An earlier version divided concentration x rate instead — a capacity basis where r DOES cancel —
+  // and shipped every Cultivate ratio at exactly half its true value.
   cultivateYieldRatio:float = 0;
   sowYieldRatio:float = 0;
+  // --- WHAT IT WOULD ACTUALLY PAY (appended, flora roster S1) ---
+  // Provisions/turn this tile would pay once the rung is COMPLETE and committed to THIS plant — in
+  // the same units and at the same output-multiplier convention as `ForagePatchState.tendedYield` /
+  // `fieldYield`, so the client can substitute one for the other with no arithmetic of its own.
+  //
+  // WHY PER SPECIES: the shipped per-patch quotes are species-BLIND — they read whatever the patch is
+  // already committed to (usually nothing), so a player comparing crops in the compose sheet is shown
+  // the same number for every option and the "Preparing: ... -> then +X" line does not move when they
+  // change their pick. These do move.
+  //
+  // Produced by the same payoff functions the sim quotes and pays each rung with (tended_provisions /
+  // field_provisions), against the patch the sim would have: this tile's own capacity concentrated by
+  // the rung, at the standing crop THAT RUNG SETTLES AT (the MSY operating point for the drawn-down
+  // rungs, full capacity for a Field, which is never drawn down). It is therefore "what this ground
+  // pays once the crop is established", not a snapshot of one transient turn — which is the right
+  // question for a 25-turn investment, and for a rung already built it is the same number
+  // tendedYield/fieldYield read. 0 where the plant cannot climb the rung.
+  cultivatePayoff:float = 0;
+  sowPayoff:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

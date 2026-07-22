@@ -20,6 +20,13 @@ use sim_runtime::TerrainType;
 /// f32 slack on a product of two normalized-ish terms.
 const EPSILON: f32 = 1e-6;
 
+/// Relative slack for a ratio of two provisions/turn quotes (each a chain of ~4 multiplications).
+const RATIO_EPSILON: f32 = 1e-5;
+
+/// The quotes are captured at neutral productivity — the client scales by the acting band's
+/// `outputMultiplier`, exactly as the shipped per-patch forecast is.
+const QUOTE_MULTIPLIER: f32 = 1.0;
+
 fn labor() -> LaborConfig {
     LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG)
         .expect("builtin labor config should parse and validate")
@@ -175,33 +182,50 @@ fn committing_beats_wild_on_a_dominant_share_and_loses_on_a_marginal_one() {
     }
 }
 
-/// **The PUBLISHED ratio is the SIM's own payoff ratio** — the wire quote
-/// (`FloraShareInfo.cultivateYieldRatio` / `sowYieldRatio`, resolved through
-/// `forage::commit_yield_ratio`) must equal what a committed patch standing on that rung actually
-/// pays, relative to the same tile left wild. Swept over every biome × every plant in its basket ×
-/// both rungs, so no row can drift.
+/// **The PUBLISHED ratio IS the sim's own payoff, divided** — not a re-derivation that happens to
+/// agree. `commit_yield_ratio` must equal `rung_payoff` for a patch committed to that plant and
+/// worked up to that rung, over `rung_payoff` for the same tile left wild — both produced by the
+/// functions the sim itself quotes and pays with.
 ///
-/// It matters because the client renders this number to make the decision with: a quote that drifts
-/// from the payout is the *"a forecast promising what the sim won't pay"* failure the forage/hunt
-/// forecasts already have a shared-helper rule against.
+/// **This is the test the first version of this file got wrong**, and the bug it missed is worth
+/// naming: the old assertion compared `effective_capacity × conversion_rate` on both sides — a
+/// *capacity*-based basis, in which the ecology's `r` cancels. But rungs 1–2 pay **MSY** (`r · K / 4`)
+/// and tending's whole payoff is that it multiplies `r` by `cultivation.tended_regrowth_gain`. So `r`
+/// must **not** cancel, the old basis silently dropped it, and code and test shared the same wrong
+/// assumption and agreed with each other — publishing every Cultivate ratio at exactly half its true
+/// value. Asserting against the *payoff functions* rather than against their arithmetic is what
+/// closes that hole.
 #[test]
-fn the_published_commit_ratio_is_the_sims_own_payoff_ratio() {
+fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff() {
     let labor = labor();
     let flora = FloraConfig::builtin();
-    let wild_rate = labor.forage.provisions_per_biomass;
+    let forage = &labor.forage;
 
     for terrain in TerrainType::VALUES {
-        let capacity = labor.forage.capacity_for(terrain);
-        let wild = capacity * wild_rate;
+        let capacity = forage.capacity_for(terrain);
+        if capacity <= 0.0 {
+            continue;
+        }
+        let tile = bevy::math::UVec2::new(terrain as u32, 0);
+        let wild = core_sim::wild_payoff(tile, capacity, &flora, forage, QUOTE_MULTIPLIER);
+        assert!(
+            wild > 0.0,
+            "{terrain:?}: a forage-bearing tile pays something wild"
+        );
+
         for share in flora.composition(terrain) {
             for rung in [RungKey::PlantTended, RungKey::PlantField] {
-                let quoted = core_sim::commit_yield_ratio(
+                let payoff = core_sim::commit_payoff(
+                    tile,
+                    capacity,
                     &share.species,
                     share.share,
                     &flora,
-                    &labor.forage,
+                    forage,
+                    QUOTE_MULTIPLIER,
                     rung,
                 );
+                let ratio = core_sim::commit_yield_ratio(payoff, wild);
                 let climbs = match rung {
                     RungKey::PlantField => flora.species[&share.species]
                         .cultivation_ceiling
@@ -212,30 +236,76 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_ratio() {
                 };
                 if !climbs {
                     assert_eq!(
-                        quoted,
+                        ratio,
                         core_sim::CANNOT_CLIMB_RATIO,
-                        "{terrain:?}/{}: a plant that cannot climb {rung:?} must quote the \
-                         cannot-climb sentinel",
+                        "{terrain:?}/{}: a plant that cannot climb {rung:?} quotes the sentinel",
                         share.species
                     );
+                    assert_eq!(payoff, core_sim::CANNOT_CLIMB_RATIO);
                     continue;
                 }
-                // The patch the sim would actually have, standing on that rung.
-                let mut patch = tended_patch(terrain, Some(&share.species), capacity);
-                match rung {
-                    RungKey::PlantField => patch.field_progress = 1.0,
-                    _ => patch.cultivation_progress = 1.0,
-                }
-                let paid = commit_value(&patch, terrain);
+                let expected = payoff / wild;
                 assert!(
-                    (quoted - paid / wild).abs() <= EPSILON,
-                    "{terrain:?}/{} at {rung:?}: quoted {quoted} but the sim pays {} × wild",
-                    share.species,
-                    paid / wild
+                    (ratio - expected).abs() <= RATIO_EPSILON * expected.max(1.0),
+                    "{terrain:?}/{} at {rung:?}: published {ratio} but the sim pays {payoff}/turn \
+                     against the wild {wild}/turn = {expected}",
+                    share.species
                 );
             }
         }
     }
+}
+
+/// **Tending's payoff INCLUDES the regrowth gain** — stated as its own test because it is the exact
+/// term the first implementation dropped. A tended patch rides `tended_ecology`, so on a tile where
+/// concentration and conversion both come out neutral (`share × gain >= 1`, a plant at the wild
+/// rate) the ratio is the gain itself, not `1.0`.
+#[test]
+fn the_cultivate_ratio_carries_the_tended_regrowth_gain() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let forage = &labor.forage;
+
+    // Reeds are the whole basket on a river delta, so concentration saturates and the ratio is
+    // exactly `tended_regrowth_gain × the crop's conversion advantage`.
+    let terrain = TerrainType::RiverDelta;
+    let crop = "reed_and_root";
+    let share = flora
+        .composition(terrain)
+        .iter()
+        .find(|entry| entry.species == crop)
+        .expect("reeds are the delta's basket")
+        .share;
+    let expected = forage.cultivation.tended_regrowth_gain
+        * core_sim::concentration_for_share(
+            share,
+            core_sim::concentration_gain(forage, RungKey::PlantTended),
+        )
+        * flora.species[crop].yield_.provisions_per_biomass
+        / forage.provisions_per_biomass;
+    let capacity = forage.capacity_for(terrain);
+    let tile = bevy::math::UVec2::new(terrain as u32, 0);
+    let ratio = core_sim::commit_yield_ratio(
+        core_sim::commit_payoff(
+            tile,
+            capacity,
+            crop,
+            share,
+            &flora,
+            forage,
+            QUOTE_MULTIPLIER,
+            RungKey::PlantTended,
+        ),
+        core_sim::wild_payoff(tile, capacity, &flora, forage, QUOTE_MULTIPLIER),
+    );
+    assert!(
+        (ratio - expected).abs() <= RATIO_EPSILON * expected,
+        "the Cultivate ratio must carry tended_regrowth_gain: {ratio} vs {expected}"
+    );
+    assert!(
+        ratio > forage.cultivation.tended_regrowth_gain,
+        "on its own delta a committed crop must beat the bare regrowth gain: {ratio}"
+    );
 }
 
 /// **The legality rule, and what the auto-pick falls to.** A basket whose whole membership stops at

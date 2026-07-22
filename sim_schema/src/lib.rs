@@ -547,6 +547,26 @@ pub struct FloraShareInfo {
     /// Appended (append-only).
     #[serde(default)]
     pub sow_yield_ratio: f32,
+    /// **Provisions/turn this tile would pay once the tended rung is complete and committed to this
+    /// plant** — the same units and output-multiplier convention as
+    /// [`ForagePatchState::tended_yield`], so the client can substitute one for the other with no
+    /// arithmetic of its own.
+    ///
+    /// **Per species, because the shipped per-patch quotes are species-blind**: they read whatever
+    /// the patch is already committed to (usually nothing), so a player comparing crops sees one
+    /// number for every option. Produced by the same payoff function the sim pays the rung with,
+    /// against the patch the sim would have — this tile's own `K` concentrated by the rung, at the
+    /// standing crop that rung settles at — so it answers *"what does this ground pay once the crop
+    /// is established"* rather than pricing a 25-turn investment off one transient turn. `0` where
+    /// the plant cannot climb the rung.
+    /// [`Self::cultivate_yield_ratio`] is exactly this over the tile's wild payoff. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub cultivate_payoff: f32,
+    /// The Field-rung twin of [`Self::cultivate_payoff`] — the counterpart of
+    /// [`ForagePatchState::field_yield`]. Appended (append-only).
+    #[serde(default)]
+    pub sow_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -4330,6 +4350,9 @@ fn create_flora_shares<'a>(
                 // Is committing this tile to this plant worth it — appended last (append-only wire).
                 cultivateYieldRatio: share.cultivate_yield_ratio,
                 sowYieldRatio: share.sow_yield_ratio,
+                // What it would actually pay — appended last (append-only wire).
+                cultivatePayoff: share.cultivate_payoff,
+                sowPayoff: share.sow_payoff,
             },
         );
         entries.push(entry);
