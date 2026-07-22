@@ -36,12 +36,23 @@ const ZONE_BOUNDS_TOLERANCE := 1.0
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
+# The window every state but the ultrawide one renders at.
+const PREVIEW_SIZE := Vector2i(1500, 900)
+# How many frames to keep re-asserting the window before giving up and warning.
+const WINDOW_PIN_MAX_FRAMES := 30
 
+## The size every state re-asserts before it renders — see `_pin_window`.
+var _pinned_size := PREVIEW_SIZE
 var _hud: HudLayer
 var _panel: BandCityPanel
 
 func _ready() -> void:
-	get_window().size = Vector2i(1500, 900)
+	# PIN THE WINDOW. `project.godot` opens MAXIMIZED and macOS applies — and re-applies — that
+	# asynchronously, so a bare `size =` is a race the harness does not stay winning: every frame then
+	# renders at monitor size instead of PREVIEW_SIZE, silently changing what each state proves (a
+	# 3440-wide "bottom dock" frame is testing the ultrawide cap, not the ordinary wide shell). Same
+	# hazard `blend_probe._pin_canvas` exists for.
+	await _pin_window(PREVIEW_SIZE)
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	var bg_layer := CanvasLayer.new()
@@ -314,7 +325,7 @@ func _ready() -> void:
 	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
 	# across the whole monitor and the band zone sits a screen away from the parties zone. The frame to
 	# read is the equality of the two black margins — and that the board itself is unchanged.
-	get_window().size = Vector2i(ULTRAWIDE_WIDTH, ULTRAWIDE_HEIGHT)
+	await _pin_window(Vector2i(ULTRAWIDE_WIDTH, ULTRAWIDE_HEIGHT))
 	_panel.set_dock(SIDE_BOTTOM)
 	_hud.update_band_alerts([_many_sources_band_fixture()])
 	await _settle()
@@ -437,7 +448,26 @@ func _no_idle_band_fixture() -> Dictionary:
 	]
 	return band
 
+## Force the window WINDOWED at `size` and wait for the WM to actually honour it, so a maximize
+## cannot land between two states and render them at different resolutions.
+func _pin_window(size: Vector2i) -> void:
+	_pinned_size = size
+	var window := get_window()
+	window.mode = Window.MODE_WINDOWED
+	window.size = size
+	for _i in range(WINDOW_PIN_MAX_FRAMES):
+		if window.size == size and window.mode == Window.MODE_WINDOWED:
+			break
+		window.mode = Window.MODE_WINDOWED
+		window.size = size
+		await get_tree().process_frame
+	if window.size != size:
+		push_warning("band_panel_preview: window pinned to %s but reports %s" % [size, window.size])
+
 func _settle() -> void:
+	# Re-assert the window EVERY state: the WM's maximize lands asynchronously and can arrive between
+	# two states, rendering them at different resolutions (blend_probe hit the same thing).
+	await _pin_window(_pinned_size)
 	await get_tree().process_frame
 	RenderingServer.force_draw()
 	await get_tree().process_frame
@@ -539,9 +569,12 @@ func _band_fixture() -> Dictionary:
 		# PEOPLE bar of 99 working-age adults above a WORKFORCE bar of 16 workers, which reads as a
 		# bug in the very frame the two-bar design is judged on. These are the live game's own
 		# numbers (`Pop 30 👶9 🛠16 🧓5`), so dep = round((9 + 5) / 16 * 100) = 88 per 100 workers.
-		"age_children": 9,
-		"age_working": 16,
-		"age_elders": 5,
+		# FRACTIONAL, as the wire actually carries them (Scalar) — the panel apportions them to whole
+		# people. Rounding each on its own gives 9 + 17 + 5 = 31 for a band of 30, which is the
+		# off-by-one this fixture now guards: the frame must read 9 · 16 · 5.
+		"age_children": 9.2925,
+		"age_working": 16.5375,
+		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"hunt_reach": 16,

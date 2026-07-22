@@ -4126,22 +4126,58 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = _format_detail_bbcode(_unit_summary_lines(band))
     return detail_label
 
+## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
+## largest-remainder method: floor every part, then hand the leftover people out to the biggest
+## fractions, biggest first. `round()` per part does NOT preserve the total (9.29 + 16.54 + 4.64 =
+## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
+## people are in the band reads as a bug in both.
+func _apportion_people(parts: Array[float]) -> Array[int]:
+    var whole: Array[int] = []
+    var assigned := 0
+    var total := 0.0
+    for part in parts:
+        var floored: int = maxi(int(floor(part)), 0)
+        whole.append(floored)
+        assigned += floored
+        total += maxf(part, 0.0)
+    var leftover := roundi(total) - assigned
+    while leftover > 0:
+        var best := -1
+        var best_fraction := -1.0
+        for i in range(parts.size()):
+            var fraction: float = maxf(parts[i], 0.0) - float(whole[i])
+            if fraction > best_fraction:
+                best_fraction = fraction
+                best = i
+        if best < 0:
+            break
+        whole[best] += 1
+        leftover -= 1
+    return whole
+
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
 ## dependency ratio. Returns null when the snapshot carries no age structure at all, so the block is
 ## OMITTED rather than rendered from a fabricated split.
 ## The palette is deliberately MUTED against the Workforce bar below: the two bars share a shape but
 ## answer different questions (composition vs allocation) and must not read as the same chart twice.
 func _build_people_block(band: Dictionary) -> VBoxContainer:
-    # ROUND, never truncate: the sim's population is fractional (these arrive as Scalar), and a band
-    # of 4.64 elders has five of them. The block's header prints the SUM of these three rather than
-    # the cohort's `size`, so the rounded parts can never visibly contradict their own total.
-    var children := roundi(float(band.get("age_children", 0.0)))
-    var working := roundi(float(band.get("age_working", 0.0)))
-    var elders := roundi(float(band.get("age_elders", 0.0)))
+    # The brackets arrive FRACTIONAL (Scalar) — a real band is 9.29 children, 16.54 workers, 4.64
+    # elders — so they are APPORTIONED to whole people rather than rounded one at a time. Rounding
+    # each independently is what made this panel read 9 + 17 + 5 = 31 beside a top bar reading 30:
+    # the same band, counted twice, disagreeing by a person.
+    var raw: Array[float] = [
+        float(band.get("age_children", 0.0)),
+        float(band.get("age_working", 0.0)),
+        float(band.get("age_elders", 0.0)),
+    ]
     # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a different
     # quantity that happens to track it). Fall back to the latter when the cohort field is absent.
-    if working <= 0:
-        working = int(band.get("working_age", 0))
+    if raw[1] <= 0.0:
+        raw[1] = float(band.get("working_age", 0))
+    var whole := _apportion_people(raw)
+    var children: int = whole[0]
+    var working: int = whole[1]
+    var elders: int = whole[2]
     var total := children + working + elders
     if total <= 0:
         return null
