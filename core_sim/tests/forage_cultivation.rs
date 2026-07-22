@@ -15,13 +15,14 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory,
-    FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
+    advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
+    default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_world, tile_flora_composition, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
@@ -80,6 +81,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
@@ -92,13 +95,23 @@ fn spawn_world() -> App {
 /// with regrowth headroom) so the take is a clean MSY skim. Returns the tile entity + its coord.
 fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let coord = {
+        // The tile must also grow something the **tended** rung can commit to (Flora Roster S1):
+        // a basket whose whole `cultivation_ceiling` is `wild` — an open-water fishery, an alpine
+        // peak — is legitimately uncultivable, so a fixture that grabbed the first seeded patch
+        // would be testing the refusal rather than the rung.
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
         let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
         let registry = app.world.resource::<ForageRegistry>();
         query
             .iter(&app.world)
+            .filter(|(tile, _)| registry.patch(tile.position).is_some())
+            .find(|(tile, _)| {
+                let composition = tile_flora_composition(&flora, &labor.forage, tile);
+                default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+            })
             .map(|(tile, _)| tile.position)
-            .find(|pos| registry.patch(*pos).is_some())
-            .expect("a FoodModuleTag tile with a seeded patch")
+            .expect("a FoodModuleTag tile whose basket carries a cultivable plant")
     };
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -175,6 +188,7 @@ fn spawn_forager(
                     target: LaborTarget::Forage {
                         tile: patch,
                         policy,
+                        species: None,
                     },
                     workers: FORAGE_WORKERS,
                 }],
@@ -324,6 +338,67 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
             .ecology_phase,
         EcologyPhase::Thriving,
         "the preparing take is sustainable — the patch stays healthy"
+    );
+}
+
+/// **The first worked turn commits the ground to one named plant** (Flora Roster S1) — and, until
+/// the improvement completes, that commitment costs and buys nothing: the patch still carries the
+/// tile's full `K`. Rung 1's neutrality is the claim this asserts from the other side.
+#[test]
+fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let capacity_before = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .unwrap()
+        .carrying_capacity;
+
+    // A wild Sustain gather commits nothing — rung 1 never picks a crop.
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    run_turns_with_forage(&mut app, 1);
+    assert_eq!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .species,
+        None,
+        "gathering the wild basket is not a commitment"
+    );
+
+    set_forage_policy(&mut app, band, FollowPolicy::Cultivate);
+    run_turns_with_forage(&mut app, 1);
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .unwrap()
+        .clone();
+    let committed = patch
+        .species
+        .as_deref()
+        .expect("the first Cultivate turn commits the ground to a plant");
+    let (flora, labor) = (
+        app.world.resource::<core_sim::FloraConfigHandle>().get(),
+        app.world.resource::<LaborConfigHandle>().get(),
+    );
+    assert!(
+        flora.species[committed]
+            .cultivation_ceiling
+            .allows_cultivate(),
+        "the auto-pick must be a plant that can actually be tended"
+    );
+    assert_eq!(
+        patch.carrying_capacity, capacity_before,
+        "a patch still being prepared carries the tile's full K — nothing is displaced yet"
+    );
+    assert_eq!(
+        core_sim::patch_provisions_per_biomass(&patch, &flora, &labor.forage),
+        labor.forage.provisions_per_biomass,
+        "and it still converts at the wild basket average"
     );
 }
 

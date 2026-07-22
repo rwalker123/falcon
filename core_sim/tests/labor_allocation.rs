@@ -56,6 +56,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
@@ -111,7 +113,11 @@ fn forage_alloc(tile: UVec2, workers: u32) -> LaborAllocation {
 fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> LaborAllocation {
     LaborAllocation {
         assignments: vec![LaborAssignment {
-            target: LaborTarget::Forage { tile, policy },
+            target: LaborTarget::Forage {
+                tile,
+                policy,
+                species: None,
+            },
             workers,
         }],
         ..Default::default()
@@ -554,6 +560,7 @@ fn assignment_sum_clamps_to_working_age() {
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
             policy: FollowPolicy::Sustain,
+            species: None,
         },
         3,
         available,
@@ -570,6 +577,7 @@ fn assignment_sum_clamps_to_working_age() {
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
             policy: FollowPolicy::Sustain,
+            species: None,
         },
         0,
         available,

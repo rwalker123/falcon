@@ -1405,17 +1405,67 @@ pub fn capture_snapshot(
     // cannot disagree with the table. Patch tiles only, mirroring the `sow_site_refusals` sweep above.
     let flora_compositions: HashMap<UVec2, Vec<FloraShareInfo>> = tiles
         .iter()
-        .filter(|(_, tile, _)| forage_registry.patch(tile.position).is_some())
-        .map(|(_, tile, _)| {
+        .filter_map(|(_, tile, _)| {
+            forage_registry.patch(tile.position)?;
+            // The quotes below are taken against **this tile's own `K`** — never the live patch's,
+            // which may already be concentrated by an existing commitment — and at the standing crop
+            // each rung *settles* at, so they answer "what would this ground pay once this crop is
+            // established here" rather than pricing a 25-turn investment off one transient turn.
+            let tile_capacity = tile_forage_capacity(&labor_config.forage, tile);
+            // What this tile pays left wild — the denominator every ratio on this tile divides by,
+            // resolved once.
+            let wild = wild_payoff(
+                tile.position,
+                tile_capacity,
+                &flora_config,
+                &labor_config.forage,
+                FORECAST_OUTPUT_MULTIPLIER,
+            );
             let shares = tile_flora_composition(&flora_config, &labor_config.forage, tile)
                 .iter()
-                .map(|share| FloraShareInfo {
-                    species: share.species.clone(),
-                    display_name: flora_config.species[&share.species].display_name.clone(),
-                    share: share.share,
+                .map(|share| {
+                    let def = &flora_config.species[&share.species];
+                    // **What this tile would pay per turn once committed to THIS plant**, per rung —
+                    // through `forage::commit_payoff`, which builds the patch the sim would have and
+                    // asks the *same* payoff functions the sim quotes and pays each rung with
+                    // (`tended_provisions` / `field_provisions`). Nothing is re-derived here, which
+                    // is what stops the published number and the payout from drifting.
+                    let payoff = |rung| {
+                        commit_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                            rung,
+                        )
+                    };
+                    let cultivate = payoff(RungKey::PlantTended);
+                    let sow = payoff(RungKey::PlantField);
+                    FloraShareInfo {
+                        species: share.species.clone(),
+                        display_name: def.display_name.clone(),
+                        share: share.share,
+                        // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
+                        // `cultivation_ceiling`, straight off the roster, so the client's crop
+                        // picker can grey out what is impossible without holding a roster of its
+                        // own. Species-global: it says nothing about whether this tile is a good
+                        // place for it — the payoff/ratio below answer that, and a legal-but-marginal
+                        // crop is exactly the loss §4.3 leaves the player free to choose.
+                        can_cultivate: def.cultivation_ceiling.allows_cultivate(),
+                        can_sow: def.cultivation_ceiling.allows_sow(),
+                        cultivate_payoff: cultivate,
+                        sow_payoff: sow,
+                        // **Is it worth it?** — the same payoffs over the same wild payoff, so the
+                        // ratio can never disagree with the numbers it relates.
+                        cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
+                        sow_yield_ratio: commit_yield_ratio(sow, wild),
+                    }
                 })
                 .collect();
-            (tile.position, shares)
+            Some((tile.position, shares))
         })
         .collect();
     for site in food_sites.sites() {
@@ -1799,6 +1849,7 @@ pub fn capture_snapshot(
     let forage_patches_state = snapshot_forage_patches(
         &forage_registry,
         &labor_config.forage,
+        &flora_config,
         &ladder_config,
         &seasonal_weights,
         &sow_site_refusals,

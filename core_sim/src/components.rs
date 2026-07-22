@@ -701,7 +701,19 @@ pub enum LaborTarget {
     /// tile simply yields 0 that turn without dropping the assignment. The `policy`
     /// (Sustain/Surplus/Market/Eradicate) sizes the per-turn draw on the tile's depletable forage
     /// patch, the plant mirror of the Hunt policy (§0-iii, parity with hunting).
-    Forage { tile: UVec2, policy: FollowPolicy },
+    Forage {
+        tile: UVec2,
+        policy: FollowPolicy,
+        /// **Which named plant a `Cultivate`/`Sow` on this tile should commit the patch to** — a
+        /// `flora_config.json` species key, or `None` for *"pick the tile's dominant legal plant"*
+        /// (`docs/plan_flora_roster.md` §4.3). It rides the *target*, beside the policy, because it
+        /// is the same kind of thing: a mutable property of the same source, replaced rather than
+        /// duplicated by a re-assignment (see [`LaborTarget::same_source`]).
+        ///
+        /// Inert under every other policy — the patch records the commitment, so changing the
+        /// selection after the ground is committed does nothing until the patch goes feral.
+        species: Option<String>,
+    },
     /// Hunt a fauna group by id under a take policy. The band tracks a roaming herd up to
     /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
     Hunt {
@@ -1512,14 +1524,17 @@ mod tests {
         let sustain = LaborTarget::Forage {
             tile,
             policy: FollowPolicy::Sustain,
+            species: None,
         };
         let market = LaborTarget::Forage {
             tile,
             policy: FollowPolicy::Market,
+            species: None,
         };
         let other_tile = LaborTarget::Forage {
             tile: UVec2::new(5, 6),
             policy: FollowPolicy::Sustain,
+            species: None,
         };
         // Same tile, different policy → same source (policy is a mutable property).
         assert!(sustain.same_source(&market));

@@ -1,13 +1,13 @@
 {
-  "_comment": "THE FLORA ROSTER — NAMING DECOMPOSES, IT DOES NOT ADD (docs/plan_flora_roster.md §2, the ruling this whole file rests on). A roster entry says what a tile's EXISTING forage capacity IS MADE OF; it never adds capacity on top. MixedWoodland's 190 (labor_config.json -> forage.capacity_by_biome) becomes named shares — hazel + oak mast + berry — that still sum to 190. The shares are DERIVED, never authored per tile: share(species, biome) = weight(species, biome) / SUM of the weights of every species hosting that biome, and patch_capacity(species, tile) = share x forage.capacity_by_biome[tile.biome]. Because the shares are normalized they sum to 1 BY CONSTRUCTION, so a tile's total can never drift from capacity_by_biome and adding a species to a biome DILUTES the others rather than inflating the tile. This file therefore changes NO capacity, NO yield and NO behaviour on its own — F1 is provably economy-neutral, and the neutrality is structural (see _comment_host_biomes) rather than a tuning promise. Keyed on TerrainType (the 38 biomes), NOT on FoodModule (the 10 buckets): fauna keys host_biomes off FoodModule because an animal RANGES over a region, but a plant IS its tile, and the buckets are too coarse to say 'this wants floodplain silt, not any wetland'. FoodModule is untouched — it still decides what KIND of gathering a tile offers, and its seasonal_weight.",
+  "_comment": "THE FLORA ROSTER — NAMING DECOMPOSES, IT DOES NOT ADD (docs/plan_flora_roster.md §2, the ruling this whole file rests on). A roster entry says what a tile's EXISTING forage capacity IS MADE OF; it never adds capacity on top. MixedWoodland's 190 (labor_config.json -> forage.capacity_by_biome) becomes named shares — hazel + oak mast + berry — that still sum to 190. The shares are DERIVED, never authored per tile: share(species, biome) = weight(species, biome) / SUM of the weights of every species hosting that biome, and patch_capacity(species, tile) = share x forage.capacity_by_biome[tile.biome]. Because the shares are normalized they sum to 1 BY CONSTRUCTION, so a tile's total can never drift from capacity_by_biome and adding a species to a biome DILUTES the others rather than inflating the tile. This file changes NO capacity — the host_biomes normalization makes that structural (see _comment_host_biomes), not a tuning promise. It DOES now change yield, but only for a patch a Cultivate/Sow assignment has COMMITTED to one species: an uncommitted (wild) patch still gathers the whole basket at labor_config's flat forage.provisions_per_biomass, so rung 1 is bit-identical to pre-roster (see _comment_yield). Keyed on TerrainType (the 38 biomes), NOT on FoodModule (the 10 buckets): fauna keys host_biomes off FoodModule because an animal RANGES over a region, but a plant IS its tile, and the buckets are too coarse to say 'this wants floodplain silt, not any wetland'. FoodModule is untouched — it still decides what KIND of gathering a tile offers, and its seasonal_weight.",
 
   "_comment_coverage": "COVERAGE MUST BE TOTAL OVER THE NON-ZERO FORAGE BIOMES, and must touch none of the zeros. validate_against_forage() rejects (a) any biome with a NON-ZERO forage.capacity_by_biome that NO species hosts — a tile whose food has no name — and (b) any species hosting a biome whose capacity is ZERO — claiming ground that carries no forage. That strict pair is the same 'zero must be stated, never defaulted' discipline capacity_by_biome itself enforces, and it is what forces BREADTH BEFORE DEPTH: F1 cannot ship 'a couple of species', it must ship a complete-but-coarse roster (13 broad families, each hosting many biomes). A later slice refines it into a fine-grained one; a permissive 'unnamed remainder' would quietly become permanent. The 30 non-zero biomes are all named below (NavigableRiver by river_fish alone — see _comment_river_fish; its capacity_by_biome row is bypassed, so that host row means the FISHERY BONUS term, not the row); the 8 stated zeros (DeepOcean, HydrothermalVentField, SaltFlat, Glacier, ActiveVolcanoSlope, BasalticLavaField, AshPlain, FumaroleBasin) are named by nobody.",
 
   "_comment_host_biomes": "host_biomes IS A TABLE OF RELATIVE AFFINITY WEIGHTS, NOT CAPACITIES. A weight is meaningful only against the other weights on the SAME biome — 0.55 does not mean '0.55 of anything', it means 'more of this biome's basket than a species weighted 0.30 on it'. A species' best country carries its higher weight (date palm 0.55 on OasisBasin against 0.45 on HotDesertErg). NORMALIZATION IS WHAT MAKES NEUTRALITY STRUCTURAL: the engine divides each weight by the biome's total, so the shares sum to exactly 1 whatever anyone writes here. You cannot retune this table into a capacity change — the only thing a weight edit can do is move share BETWEEN the named plants of one biome. Retuning the human food web is a labor_config.json edit and must never ride in on a roster change.",
 
-  "_comment_yield": "THE YIELD VECTOR — three characteristic SHAPES of one per-species output vector, not three subsystems. A harvest of B biomass pays B x yield.* into three different accounts: provisions (human food, the shipped forage path), fodder (animal feed) and trade_goods (trade value, which differentiates today's single flat scalar). `role` survives only as a DISPLAY TAG derived from which component dominates — it is never branched on in the sim. IN F1 EVERY ROW CARRIES TODAY'S FLAT VALUES VERBATIM: provisions_per_biomass 0.05 is labor_config.json's forage.provisions_per_biomass, trade_goods_per_biomass 0.005 is its forage.market.trade_goods_per_biomass, and fodder_per_biomass is 0.0 because there is no hay in the model yet. So today's behaviour is the degenerate case — every existing patch behaves as a single implicit species with exactly this vector — and F1 cannot move the economy by construction. THE VECTOR IS PARSED AND VALIDATED ONLY IN F1: nothing reads it. Divergence (a fodder-dominant crop, a trade-dominant cash crop, a per-species provisions rate) is later slices, and each of those IS a balance change that must be measured in a live campaign.",
+  "_comment_yield": "THE YIELD VECTOR — three characteristic SHAPES of one per-species output vector, not three subsystems. A harvest of B biomass pays B x yield.* into three different accounts: provisions (human food, the shipped forage path), fodder (animal feed) and trade_goods (trade value, which differentiates today's single flat scalar). `role` survives only as a DISPLAY TAG derived from which component dominates — it is never branched on in the sim. PROVISIONS_PER_BIOMASS IS NOW HAND-TUNED PER SPECIES AND LIVE (S1, docs/plan_flora_roster.md §4.3) — it was flat 0.05 verbatim in F1, and that was correct for F1 and WRONG for S1: with identical rates, committing a patch would be a strict downgrade for every species whose share x concentration_gain < 1, so rung 2 would ship knowingly broken. IT IS THE CONVERSION HALF OF THE COMMIT TRADE, AND THE ONLY HALF THAT CAN PAY: labor_config.json -> forage.provisions_per_biomass (0.05) stays the WILD rate (you gather the whole basket at the basket's average), and a patch COMMITTED to one species converts at that species' rate instead. Tending is worth it if and only if concentration x species_rate > 1.0 x 0.05, where concentration = min(1, share x the rung's concentration_gain) — so the rates below are tuned so a good staple on its best country clears that bar by ~20-40% and a marginal-share commitment clearly does not. Grains and tubers on their best ground are the strongest (wild_emmer 0.080 on AlluvialPlain); the gathered wild things sit at or barely above the 0.05 baseline (shellfish and river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040) — they are what you GATHER, not what you farm, and every one of them carries cultivation_ceiling `wild` so it can never commit at all, which makes its rate inert by construction. fodder_per_biomass stays 0.0 (F3 owns it — there is no hay in the model yet) and trade_goods_per_biomass stays the flat 0.005 (F4 owns it), so those two are still parsed-and-validated only. PLAYTEST DIALS.",
 
-  "_comment_cultivation_ceiling": "HOW FAR UP THE PLANT LADDER A SPECIES CAN CLIMB — the exact twin of fauna_config.json's husbandry_ceiling, for the same reason. The ladder is a SEQUENCE (wild -> tended -> field), so a species' reach is a single ceiling and not two independent flags, which makes the incoherent 'sowable but not tendable' state unrepresentable (no validate() combination guard needed). `wild` is a gather-forever stand — an oak's mast is a wild harvest and you do not sow an oak forest on a five-turn horizon; `tended` reaches Cultivate but never Sow; `field` is the full ladder. Not every plant climbs, mirroring the manual's 'not every animal climbs'. The accessors exist and are unused in F1 — Cultivate/Sow start reading them in F2, exactly as HusbandryCeiling shipped its accessors ahead of its gates.",
+  "_comment_cultivation_ceiling": "HOW FAR UP THE PLANT LADDER A SPECIES CAN CLIMB — the exact twin of fauna_config.json's husbandry_ceiling, for the same reason. The ladder is a SEQUENCE (wild -> tended -> field), so a species' reach is a single ceiling and not two independent flags, which makes the incoherent 'sowable but not tendable' state unrepresentable (no validate() combination guard needed). `wild` is a gather-forever stand — an oak's mast is a wild harvest and you do not sow an oak forest on a five-turn horizon; `tended` reaches Cultivate but never Sow; `field` is the full ladder. Not every plant climbs, mirroring the manual's 'not every animal climbs'. LIVE SINCE S1: allows_cultivate()/allows_sow() gate which species a Cultivate/Sow assignment may COMMIT a patch to, and the auto-pick falls to the highest-share species the rung permits. A biome whose whole basket is `wild` therefore cannot be tended or sown at all (the open-water fisheries, the alpine peaks) — that is the ruling working, not a gap. reed_and_root is `field` rather than `tended` because it is the delta/marsh basket's only member: rice and taro on a river delta are the archetypal field crop, and leaving it at `tended` would have made the richest sowable ground in the game unsowable.",
 
   "_comment_regrowth_rate": "PER-SPECIES LOGISTIC REGROWTH — the plant twin of SpeciesDef.regrowth_rate. Every F1 row carries labor_config.json's forage.ecology.regrowth_rate (0.25) VERBATIM, so regrowth is unmoved along with everything else. Per-species divergence (a berry scrub that reseeds hot, a nut grove that does not) is a later slice.",
 
@@ -39,7 +39,7 @@
       "plural": "reeds and water roots",
       "adjective": "reed",
       "role": "staple",
-      "cultivation_ceiling": "tended",
+      "cultivation_ceiling": "field",
       "host_biomes": {
         "FreshwaterMarsh": 0.55,
         "RiverDelta": 0.5,
@@ -48,7 +48,7 @@
         "Floodplain": 0.3
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.062,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -68,7 +68,7 @@
         "RollingHills": 0.25
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.08,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -87,7 +87,7 @@
         "HighPlateau": 0.3
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.066,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -105,7 +105,7 @@
         "RollingHills": 0.3
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.075,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -121,7 +121,7 @@
         "MixedWoodland": 0.35
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.045,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -142,7 +142,7 @@
         "RollingHills": 0.2
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.058,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -162,7 +162,7 @@
         "SeasonalSnowfield": 0.25
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.048,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -184,7 +184,7 @@
         "RollingHills": 0.25
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.065,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -202,7 +202,7 @@
         "AquiferCeiling": 0.35
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.067,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -221,7 +221,7 @@
         "HotDesertErg": 0.35
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.062,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },
@@ -241,7 +241,7 @@
         "KarstCavernMouth": 0.2
       },
       "yield": {
-        "provisions_per_biomass": 0.05,
+        "provisions_per_biomass": 0.04,
         "fodder_per_biomass": 0.0,
         "trade_goods_per_biomass": 0.005
       },

@@ -1119,8 +1119,30 @@ before any config lands.
   no nameless food), the derived per-tile share table, `ForagePatch.species: Option<FloraSpeciesId>`
   (`None` = wild mix), tile-card readout. **Verification is that nothing moves**: map-wide and
   per-start food capacity identical to pre-arc.
-- [ ] **F2 — the rungs get a subject.** `Cultivate`/`Sow` select a species; the yield vector drives
-  the harvest; the displaced basket is the cost of committing. First balance-moving slice — playtest.
+**F2 split into S1–S3 during planning** (`docs/plan_flora_roster.md` §4.3). The original one-line
+sketch — "a committed patch's capacity becomes share × the rung's multiplier" — is **wrong**, and
+finding out why produced the plant-side statement of the principle the animal web already rests on:
+**the land owns `K`; rungs 1–3 redistribute it, only rung 4 (Worked Land) may raise it.** The error:
+concentration is capped at `K`, and a *wild* patch already yields the whole basket — so committing
+could only ever match wild, never beat it, and tending would have been a strict downgrade.
+**Tending must pay in conversion (biomass → food), not in concentration.** Also settled: rung 3's
+"currency change" is **correct, not a smell** (at rung 3 there is no wild stock to over-skim, so a
+flat managed rate is right and the `labor_config.rs` monotonicity guard is policing a legitimate
+difference — an earlier draft proposed unifying it; that is **withdrawn**).
+
+- [ ] **S1 — species commitment + concentration + conversion.** `ForagePatch.species` (persisted,
+  cleared on lapse), `Cultivate`/`Sow` carry the choice, `concentration = min(1, share × gain)`,
+  per-species conversion rates. **Rung payoff dials untouched** so any balance movement is
+  attributable to the roster alone. Playtest before S2.
+- [ ] **S2 — retune rung 2 now that competitor-removal is explicit.** `tended_regrowth_gain` (2.0)
+  down — it is *half* right, not fake: a stand freed from competitors genuinely does regrow faster,
+  but part of what the 2.0 stood in for is now double-counted. Restore a rung-2 conversion gain
+  **without** collapsing the drawdown axis — which is precisely why the retired
+  `tended_provisions_per_biomass` failed (it made rung 2 a flat *managed* rate a full rung before the
+  animal side). A conversion gain and a managed rate are separable. Measure against S1's numbers.
+- [ ] **S3 — a question, not a task.** Revisit rung 3's currency only if S1/S2 data says it is wrong.
+  Expectation after the withdrawal above: this slice never happens. Close it rather than carry it if
+  the data agrees.
 - [ ] **F3 — fodder, both halves.** Fodder store + fodder Field (plant side, no new plant knowledge —
   `Sow` already exists), then the animal rung 4: `Foddering` (discovery id **2007**, next free) and
   the `delivered_fodder_flow` term in `K_pen`. Measure: a fed pen on thin pasture is survivable but

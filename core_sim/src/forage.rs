@@ -160,6 +160,25 @@ pub struct ForagePatch {
     /// reveals whatever rung the tile still supports underneath (today: wild, since the same untended
     /// turn bleeds both meters).
     pub field_progress: f32,
+    /// **The named plant this patch is COMMITTED to** — a `flora_config.json` species key, or `None`
+    /// for the **wild mixed basket** (`docs/plan_flora_roster.md` §4.2/§4.3). Stored as the config
+    /// key rather than the display name because the key is what `FloraConfig::species` and
+    /// `FloraShare::species` are keyed by; the animal side stores a display name on `Herd::species`
+    /// only because *its* roster is looked up that way.
+    ///
+    /// **Set on the first turn a crew works this patch under `Cultivate` or `Sow`** (the assignment's
+    /// selection, or the highest-share species in this tile's basket that the rung's
+    /// `cultivation_ceiling` permits), and fixed from then on. **Cleared when both improvement meters
+    /// lapse to zero** ([`ForagePatch::reconcile_owner`]) — a patch that has gone fully feral is a
+    /// wild stand again, and a wild stand is the whole basket.
+    ///
+    /// What the commitment *does* is two things and only two ([`patch_concentration`] /
+    /// [`patch_provisions_per_biomass`]): it **redistributes** the tile's `K` toward this one plant
+    /// (concentration, capped at the tile's own `K` — the land owns `K`), and it changes how well
+    /// biomass **converts** to food (the species' `yield.provisions_per_biomass` instead of the
+    /// basket-average wild rate). Both take effect only once the improvement is *complete* — while a
+    /// crew is still preparing, the stand is still the mixed basket it started as.
+    pub species: Option<String>,
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
     /// Transient per-turn flag: a Forage assignment **worked this patch as an improvement** this turn
@@ -187,6 +206,7 @@ impl ForagePatch {
             ecology_phase: EcologyPhase::Thriving,
             cultivation_progress: 0.0,
             field_progress: 0.0,
+            species: None,
             owner: None,
             tended_this_turn: false,
         }
@@ -292,13 +312,30 @@ impl ForagePatch {
         self.reconcile_owner();
     }
 
+    /// **Commit this patch to one named plant** — the first turn a crew works it under
+    /// `Cultivate`/`Sow` (`docs/plan_flora_roster.md` §4.3). Idempotent and one-way: a patch already
+    /// committed keeps its plant, because *"which crop is this ground"* is exactly the decision the
+    /// rung exists to make and re-deciding it for free every turn would erase it. The commitment is
+    /// released only by going fully feral ([`Self::reconcile_owner`]).
+    pub(crate) fn commit_species(&mut self, species: &str) {
+        if self.species.is_none() {
+            self.species = Some(species.to_string());
+        }
+    }
+
     /// Hold the `owner is Some ⟺ some improvement remains` invariant: ownership lapses only once
     /// **both** meters are spent, so a decaying Field doesn't strand a stale owner (which would block
     /// another faction from ever working the tile) and doesn't drop its owner while its cultivation —
     /// or its own remaining progress — is still standing.
+    ///
+    /// **The species commitment lapses on exactly the same edge**, and for the same reason: once
+    /// nothing is left of either improvement the ground is a wild stand again, and a wild stand is
+    /// the tile's whole mixed basket rather than one plant somebody once chose. Re-committing then
+    /// costs the full build again, at whatever the tile now favours.
     fn reconcile_owner(&mut self) {
         if self.cultivation_progress <= 0.0 && self.field_progress <= 0.0 {
             self.owner = None;
+            self.species = None;
         }
     }
 }
@@ -376,6 +413,9 @@ fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         cultivation_progress: state.ecology.progress,
         field_progress: state.field_progress,
+        // `""` is the wire's "wild mixed basket" — the `Option::None` of the commitment, the same
+        // absent-means-none convention `fauna_id` uses on a labor row.
+        species: Some(state.species.clone()).filter(|key| !key.is_empty()),
         owner: state.ecology.owner.map(FactionId),
         // Transient (not persisted) — seeded `true` for a **one-turn grace**: the same signal the
         // Cultivate/Sow arm of `advance_labor_allocation` sets on any patch a band worked this turn,
@@ -496,6 +536,456 @@ pub fn tile_flora_composition<'a>(
     }
 }
 
+/// **The concentration a patch with NO commitment carries** — the identity. A wild patch holds the
+/// tile's whole basket, so its effective capacity is the tile's full `K`. Named because it is the
+/// baseline the entire commit trade is measured against (`docs/plan_flora_roster.md` §4.3).
+pub const NO_CONCENTRATION: f32 = 1.0;
+
+/// **The ceiling on concentration: THE LAND OWNS `K`.** A committed patch can push its plant toward
+/// monopolising the tile's human-edible capacity but never past it — raising `K` itself is clearing,
+/// irrigation and manuring, i.e. rung 4 (Worked Land). This cap is what makes *"concentration alone
+/// can never beat wild"* structural rather than a tuning accident, which is in turn why tending has
+/// to pay in **conversion** or not pay at all.
+pub const FULL_TILE_CONCENTRATION: f32 = 1.0;
+
+/// **The species-quality of the wild basket** — the dimensionless `1.0` an uncommitted patch converts
+/// at (see [`patch_species_quality`]). Named because "1.0" at a call site says nothing about which
+/// baseline it is one *of*.
+const WILD_SPECIES_QUALITY: f32 = 1.0;
+
+/// **The plant a patch is committed to, iff that commitment is IN EFFECT** — i.e. the patch names a
+/// species, the roster still knows it, **and** the improvement it was committed for is *complete*.
+///
+/// The last clause is the one worth stating: committing is recorded on the first worked turn, but a
+/// crew that is still clearing and planting has not yet displaced the rest of the basket, so a
+/// patch under construction is still gathered as the wild mixed stand it started as — at full tile
+/// `K` and the basket-average rate. Both halves of the commitment (concentration and conversion)
+/// switch on together the turn the rung completes, so there is never a state where one applies and
+/// the other does not.
+fn committed_species<'a>(
+    patch: &ForagePatch,
+    flora: &'a FloraConfig,
+) -> Option<&'a crate::flora_config::FloraDef> {
+    if !patch.is_managed() {
+        return None;
+    }
+    projected_species(patch, flora)
+}
+
+/// **The plant a patch is committed to, whether or not the improvement is finished yet** — what
+/// [`committed_species`] will resolve to *once the rung completes*. This is the reading a **forecast**
+/// wants: the "then Y" half of Cultivate's *"preparing X → then Y"* must quote the crop the crew is
+/// actually planting, not the basket they are still standing in.
+fn projected_species<'a>(
+    patch: &ForagePatch,
+    flora: &'a FloraConfig,
+) -> Option<&'a crate::flora_config::FloraDef> {
+    flora.species.get(patch.species.as_ref()?)
+}
+
+/// **THE conversion seam** — how well one unit of this patch's biomass turns into food
+/// (`docs/plan_flora_roster.md` §4.3). A **wild** (uncommitted, or still-building) patch converts at
+/// `forage.provisions_per_biomass`: you gather the whole basket, so you get the basket's average. A
+/// **committed** patch converts at its own plant's `yield.provisions_per_biomass`.
+///
+/// This is the *only* term that can make committing worth it — concentration is capped at the tile's
+/// own `K`, so it can never out-pay the whole basket a wild patch already hands over. Every
+/// biomass→provisions conversion on the plant web resolves the rate here; no call site may reach for
+/// `forage.provisions_per_biomass` on a patch directly, for the reason `patch_ecology` exists.
+pub fn patch_provisions_per_biomass(
+    patch: &ForagePatch,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    committed_species(patch, flora).map_or(forage.provisions_per_biomass, |def| {
+        def.yield_.provisions_per_biomass
+    })
+}
+
+/// The **projected** conversion rate — [`patch_provisions_per_biomass`] as it will read once the
+/// improvement under construction completes. Used by the managed-rung payoff quotes
+/// ([`tended_provisions`], [`field_provisions`]); for a source whose rung is already built the two
+/// are the same number.
+fn projected_provisions_per_biomass(
+    patch: &ForagePatch,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    projected_species(patch, flora).map_or(forage.provisions_per_biomass, |def| {
+        def.yield_.provisions_per_biomass
+    })
+}
+
+/// **The committed plant's conversion rate RELATIVE to the wild basket's** — dimensionless, `1.0` =
+/// exactly baseline. Rung 3's managed rate is a *rate on the standing crop*, so it scales by this
+/// rather than by the absolute rate: `field_payoff = biomass × field_provisions_per_biomass ×
+/// species_quality`.
+///
+/// **Derived, never a second config field.** A `field_provisions_multiplier` per species would be a
+/// redundant lever that could drift from the conversion rate it is supposed to express.
+pub fn patch_species_quality(
+    patch: &ForagePatch,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    if forage.provisions_per_biomass <= 0.0 {
+        return WILD_SPECIES_QUALITY; // `validate()` pins the wild rate positive; never divide by 0.
+    }
+    projected_provisions_per_biomass(patch, flora, forage) / forage.provisions_per_biomass
+}
+
+/// **THE concentration seam** — what fraction of the tile's human-edible `K` the patch's committed
+/// plant holds: `min(FULL_TILE_CONCENTRATION, share × the rung's concentration_gain)`, where `share`
+/// is that plant's share of *this tile's* basket ([`tile_flora_composition`]).
+///
+/// [`NO_CONCENTRATION`] (the identity) for an uncommitted patch, for a patch still under
+/// construction, and for a plant the tile's basket does not actually contain — in every one of those
+/// the stand is the whole basket and the tile's full `K` is the honest answer.
+///
+/// **It is bounded above by 1, deliberately and permanently.** Committing redistributes the land's
+/// `K`; it cannot add to it (§4.3). So this term can only ever *cost* — a marginal-share plant
+/// concentrates to less than the basket it displaced — and the commit trade is won or lost on
+/// [`patch_provisions_per_biomass`].
+pub fn patch_concentration(
+    patch: &ForagePatch,
+    composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+) -> f32 {
+    let Some(species) = patch.species.as_deref() else {
+        return NO_CONCENTRATION;
+    };
+    // Which rung's gain applies is the rung the patch actually *stands on*. Still preparing means
+    // nothing has been cleared yet, so the stand is still the mixed basket.
+    let rung = if patch.is_field() {
+        RungKey::PlantField
+    } else if patch.is_cultivated() {
+        RungKey::PlantTended
+    } else {
+        return NO_CONCENTRATION;
+    };
+    let Some(share) = composition
+        .iter()
+        .find(|entry| entry.species == species)
+        .map(|entry| entry.share)
+    else {
+        return NO_CONCENTRATION;
+    };
+    concentration_for_share(share, concentration_gain(forage, rung))
+}
+
+/// **The concentration gain a plant rung buys** — `plant:field`'s or `plant:tended`'s, off the one
+/// config block. Split out so [`patch_concentration`] (the live patch) and [`commit_yield_ratio`]
+/// (the pre-commit quote) read the *same* dial for the same rung.
+pub fn concentration_gain(forage: &ForageLaborConfig, rung: RungKey) -> f32 {
+    match rung {
+        RungKey::PlantField => forage.cultivation.field_concentration_gain,
+        _ => forage.cultivation.tended_concentration_gain,
+    }
+}
+
+/// **THE concentration arithmetic**, in one place: `min(FULL_TILE_CONCENTRATION, share × gain)`.
+/// Trivial by design — it is *stated once* precisely because the wire publishes a quote derived from
+/// it ([`commit_yield_ratio`]) and the sim pays a capacity derived from it, and those two may never
+/// disagree (`docs/plan_flora_roster.md` §4.3).
+pub fn concentration_for_share(share: f32, gain: f32) -> f32 {
+    (share * gain).min(FULL_TILE_CONCENTRATION)
+}
+
+/// **The wire quote `0` uses for "this plant cannot climb this rung".** Distinct from a real ratio of
+/// `0`, which cannot occur: a species that appears in a tile's basket has `share > 0`, and
+/// `FloraConfig::validate` pins every yield vector positive.
+pub const CANNOT_CLIMB_RATIO: f32 = 0.0;
+
+/// **The patch's effective carrying capacity** — the tile's own `K` redistributed by the commitment:
+/// `tile_forage_capacity × patch_concentration`. THE one write of `ForagePatch::carrying_capacity`
+/// after seeding, and the plant twin of `fauna::ecological_carrying_capacity`: recomputed fresh from
+/// the tile every turn (`advance_forage_regrowth`), so it is idempotent, never a compounding read,
+/// and a lapsed commitment or a retuned gain reaches patches already on the map.
+pub fn effective_forage_capacity(
+    patch: &ForagePatch,
+    tile_capacity: f32,
+    composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+) -> f32 {
+    tile_capacity * patch_concentration(patch, composition, forage)
+}
+
+/// **Which plant a `Cultivate`/`Sow` on this tile may commit to** — the legality rule, stated once
+/// (`docs/plan_flora_roster.md` §4.3) and read by both the `assign_labor` rejection and the labor
+/// arm's commit.
+///
+/// A selection is legal iff the roster knows it, the rung's `cultivation_ceiling` permits it
+/// (`allows_cultivate` for the tended rung, `allows_sow` for the Field), **and it is in this tile's
+/// basket** — resolved through [`tile_flora_composition`], never `FloraConfig::composition` on a raw
+/// terrain, so a navigable hex's two-term basket is judged the way it is actually made.
+pub fn species_is_legal_here(
+    species: &str,
+    composition: &[FloraShare],
+    flora: &FloraConfig,
+    rung: RungKey,
+) -> bool {
+    composition
+        .iter()
+        .any(|entry| entry.species == species && species_climbs(species, entry.share, flora, rung))
+}
+
+/// **The share a species must exceed to count as present in a tile's basket.** A zero-share entry is
+/// a plant that is named on the tile and takes none of it — nothing to commit to.
+const NO_SHARE: f32 = 0.0;
+
+/// **The plant a commitment falls to when the player named none** — the highest-share species in this
+/// tile's basket that the rung permits. The composition is already sorted share-DESC then key-ASC (a
+/// *total* order), so this is deterministic without a second sort.
+///
+/// `None` = **this ground grows nothing that can climb this rung** — an open-water fishery, an alpine
+/// peak, a MixedWoodland asked to be sown. That is the `cultivation_ceiling` ruling working ("not
+/// every plant climbs"), not a gap, and the caller turns it into a refusal.
+pub fn default_species_for_rung(
+    composition: &[FloraShare],
+    flora: &FloraConfig,
+    rung: RungKey,
+) -> Option<String> {
+    composition
+        .iter()
+        .find(|entry| species_is_legal_here(&entry.species, composition, flora, rung))
+        .map(|entry| entry.species.clone())
+}
+
+/// **Why a Cultivate/Sow may not commit this patch to this plant** — the species-side twin of
+/// [`SiteRefusal`], in the same style (a small enum with a stable string key, the live value staying
+/// serde-free). They are deliberately *separate* enums because they judge different things:
+/// `SiteRefusal` judges **the land** (and is therefore a property of the tile the wire can publish
+/// per-tile), while this judges **a selection against a rung** and only exists in the context of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeciesRefusal {
+    /// The named key is not in `flora_config.json` at all.
+    Unknown,
+    /// The species exists but its `cultivation_ceiling` stops below this rung — an oak's mast is a
+    /// wild harvest forever.
+    CeilingTooLow,
+    /// The species exists and climbs, but it does not grow on this tile.
+    NotHere,
+    /// **Nothing** in this tile's basket can climb this rung, so there is nothing to commit to.
+    NothingClimbsHere,
+}
+
+impl SpeciesRefusal {
+    /// Stable string key — the [`SiteRefusal::as_str`] convention.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpeciesRefusal::Unknown => "unknown_species",
+            SpeciesRefusal::CeilingTooLow => "species_ceiling_too_low",
+            SpeciesRefusal::NotHere => "species_not_here",
+            SpeciesRefusal::NothingClimbsHere => "nothing_climbs_here",
+        }
+    }
+}
+
+/// **Resolve what a Cultivate/Sow on this tile would commit to** — the one seam the `assign_labor`
+/// rejection and the labor arm's commit both read, so a selection the command accepted can never be
+/// one the turn then refuses.
+///
+/// `selection` is the assignment's species choice (`None` = "pick for me"). `Ok` carries the species
+/// key that will be committed; `Err` names why nothing can be.
+pub fn resolve_committed_species(
+    selection: Option<&str>,
+    composition: &[FloraShare],
+    flora: &FloraConfig,
+    rung: RungKey,
+) -> Result<String, SpeciesRefusal> {
+    match selection {
+        Some(species) => {
+            if species_is_legal_here(species, composition, flora, rung) {
+                return Ok(species.to_string());
+            }
+            let Some(def) = flora.species.get(species) else {
+                return Err(SpeciesRefusal::Unknown);
+            };
+            let climbs = match rung {
+                RungKey::PlantField => def.cultivation_ceiling.allows_sow(),
+                _ => def.cultivation_ceiling.allows_cultivate(),
+            };
+            Err(if climbs {
+                SpeciesRefusal::NotHere
+            } else {
+                SpeciesRefusal::CeilingTooLow
+            })
+        }
+        None => default_species_for_rung(composition, flora, rung)
+            .ok_or(SpeciesRefusal::NothingClimbsHere),
+    }
+}
+
+/// **What a patch pays, standing on `rung`** — in provisions/turn, through the *same* helpers the sim
+/// itself quotes and pays each rung with, never a re-derivation of their arithmetic:
+///
+/// - **wild / anything below rung 2** — its Sustain (MSY) ceiling on the patch's own wild ecology,
+///   the number `forage_policy_ceiling(Sustain, …)` produces, converted at the patch's rate;
+/// - **tended** — [`tended_provisions`], the rung-2 payoff quote (the wire's `tendedYield`), which
+///   rides `tended_ecology` and therefore **carries `cultivation.tended_regrowth_gain`**;
+/// - **field** — [`field_provisions`], the rung-3 managed rate the labor arm actually pays.
+///
+/// That third bullet is the whole reason this exists. The two drawn-down rungs are compared as MSY
+/// (`r · K / 4`), where `r` **does not cancel** between wild and tended — tending changes `r`, that is
+/// its payoff — so any comparison built on capacity alone silently drops the regrowth gain and
+/// understates rung 2 by exactly it. Rung 3 is not an MSY at all but a flat rate on the standing
+/// crop, so it is not even the same *shape* of number. One function, three arms, so a quote can never
+/// be assembled out of the wrong shape again.
+pub fn rung_payoff(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> f32 {
+    match rung {
+        RungKey::PlantField => field_provisions(patch, forage, flora, output_multiplier),
+        RungKey::PlantTended => tended_provisions(patch, forage, flora, output_multiplier),
+        _ => forage_provisions(
+            sustainable_yield(patch.biomass, patch.carrying_capacity, &forage.ecology)
+                .clamp(0.0, patch.biomass),
+            patch_provisions_per_biomass(patch, flora, forage),
+            output_multiplier,
+        ),
+    }
+}
+
+/// **The patch a tile WOULD carry, had this crop been committed and the rung finished** — the
+/// hypothetical every per-species quote is taken against: the rung's meter complete, its
+/// concentration applied to the tile's own `K`, and **the standing crop that rung settles at**.
+///
+/// `species = None` builds the **wild** counterfactual (no commitment, full tile `K`), which is the
+/// denominator of [`commit_yield_ratio`] and the reason both sides of that ratio come out of one
+/// construction rather than two.
+///
+/// **The standing crop is per-rung, and that is load-bearing.** A quote taken at some shared
+/// *literal* biomass would make rung 3 blind to the whole commitment: a Field pays a flat rate on
+/// its standing crop, so at a fixed biomass `field_provisions` cannot see concentration at all, and
+/// every crop on every tile would quote the identical Sow number — destroying exactly the
+/// information the crop picker exists to show. Each rung is therefore quoted where a *running* patch
+/// on it actually stands: the drawn-down rungs at their MSY operating point (Sustain settles a patch
+/// at `K/2`), and a Field at its capacity, because a Field is never drawn down and regrows to it. For
+/// a rung already built, that is the number the shipped `tendedYield`/`fieldYield` read too.
+fn hypothetical_patch(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: Option<(&str, f32)>,
+    forage: &ForageLaborConfig,
+    rung: RungKey,
+) -> ForagePatch {
+    let capacity = match species {
+        Some((_, share)) => {
+            tile_capacity * concentration_for_share(share, concentration_gain(forage, rung))
+        }
+        None => tile_capacity,
+    };
+    let mut patch = ForagePatch::new(tile, capacity);
+    patch.biomass = capacity * settled_biomass_fraction(rung);
+    if let Some((key, _)) = species {
+        patch.species = Some(key.to_string());
+        match rung {
+            RungKey::PlantField => patch.field_progress = RUNG_COMPLETE,
+            _ => patch.cultivation_progress = RUNG_COMPLETE,
+        }
+    }
+    patch
+}
+
+/// **The fraction of its own capacity a patch on `rung` settles at.** A drawn-down rung is gathered
+/// to its MSY operating point (`MSY_BIOMASS_FRACTION` — Sustain's escapement, the point a harvested
+/// stand *lives* at); a Field is never drawn down, so it stands at its capacity.
+fn settled_biomass_fraction(rung: RungKey) -> f32 {
+    match rung {
+        RungKey::PlantField => FULL_STANDING_CROP,
+        _ => crate::fauna::MSY_BIOMASS_FRACTION,
+    }
+}
+
+/// **A Field's standing crop is its whole capacity** — it is never drawn down, so it regrows to `K`
+/// and stays there. Named rather than a bare `1.0` because it states *which* stock the number is a
+/// fraction of.
+const FULL_STANDING_CROP: f32 = 1.0;
+
+/// **What this tile would pay per turn once committed to THIS plant and worked up to `rung`** —
+/// provisions/turn, in the same units and at the same `output_multiplier` convention as the shipped
+/// per-patch forecast quotes (`tendedYield`/`fieldYield`), so the client can substitute one for the
+/// other with no arithmetic of its own.
+///
+/// The point of it being *per species* is that the shipped quotes are species-**blind**: they read
+/// whatever the patch is already committed to (usually nothing), so a player choosing between crops
+/// in the compose sheet is shown one number for every option. [`CANNOT_CLIMB_RATIO`] when the plant
+/// cannot climb `rung` here.
+// A per-species quote needs the whole tile context (where, how much land, how much standing crop,
+// which plant, how much of the basket it is) plus both config tables and the rung — the same shape
+// `forage_source_yield_preview` already carries, and none of it is derivable from the rest.
+#[allow(clippy::too_many_arguments)]
+pub fn commit_payoff(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: &str,
+    share: f32,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> f32 {
+    if !species_climbs(species, share, flora, rung) {
+        return CANNOT_CLIMB_RATIO;
+    }
+    let patch = hypothetical_patch(tile, tile_capacity, Some((species, share)), forage, rung);
+    rung_payoff(&patch, forage, flora, output_multiplier, rung)
+}
+
+/// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
+/// same Sustain skim `rung_payoff` gives any uncommitted patch.
+pub fn wild_payoff(
+    tile: UVec2,
+    tile_capacity: f32,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    let patch = hypothetical_patch(tile, tile_capacity, None, forage, RungKey::PlantWild);
+    rung_payoff(&patch, forage, flora, output_multiplier, RungKey::PlantWild)
+}
+
+/// Can this plant climb `rung` on a tile where it holds `share` of the basket? The ceiling half of
+/// [`species_is_legal_here`], split out for the quote path, which already has the share in hand.
+fn species_climbs(species: &str, share: f32, flora: &FloraConfig, rung: RungKey) -> bool {
+    let Some(def) = flora.species.get(species) else {
+        return false;
+    };
+    let climbs = match rung {
+        RungKey::PlantField => def.cultivation_ceiling.allows_sow(),
+        _ => def.cultivation_ceiling.allows_cultivate(),
+    };
+    climbs && share > NO_SHARE
+}
+
+/// **What committing THIS tile to THIS plant is worth, against just gathering it wild** — the single
+/// number the crop-picker decision turns on (`docs/plan_flora_roster.md` §4.3).
+///
+/// **It is the two published payoffs, divided — not a formula that reproduces them.** Both arguments
+/// come from [`commit_payoff`] / [`wild_payoff`], i.e. from the functions the sim itself quotes and
+/// pays each rung with, so the ratio and the payoffs it relates are one computation and cannot
+/// disagree. Taking a ratio of *arithmetic* instead of a ratio of *payoffs* is exactly the bug this
+/// signature exists to make unrepresentable: the previous version divided
+/// `concentration × rate ÷ base_rate`, a **capacity**-based basis in which the ecology's `r` cancels
+/// — but rungs 1–2 pay **MSY** (`r · K / 4`) and tending's payoff *is* that it scales `r` by
+/// `cultivation.tended_regrowth_gain`, so every Cultivate ratio shipped at exactly half its true
+/// value and told the player that tending a good delta crop *lost*.
+///
+/// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a loss — **a legal one the
+/// player stays free to choose**, which is the whole decision, so this is never clamped and a sub-1
+/// crop is never refused. [`CANNOT_CLIMB_RATIO`] when the plant cannot climb the rung (`payoff` is
+/// then the same sentinel) or when the tile pays nothing wild.
+pub fn commit_yield_ratio(payoff: f32, wild: f32) -> f32 {
+    if wild <= 0.0 {
+        return CANNOT_CLIMB_RATIO;
+    }
+    payoff / wild
+}
+
 /// Seed a full patch on every `FoodModuleTag` tile at Startup (idempotent — a world that already
 /// carries patches, e.g. after a rollback restore, is skipped). Runs in the Startup chain after
 /// `spawn_initial_world` has stamped the food-module tags. Mirrors `spawn_initial_herds`.
@@ -533,10 +1023,35 @@ pub fn spawn_initial_forage(
 pub fn advance_forage_regrowth(
     mut registry: ResMut<ForageRegistry>,
     labor_config: Res<LaborConfigHandle>,
+    flora_config: Res<crate::flora_config::FloraConfigHandle>,
+    tile_registry: Res<crate::resources::TileRegistry>,
+    tiles: Query<&Tile>,
 ) {
     let labor = labor_config.get();
     let forage = &labor.forage;
+    let flora = flora_config.get();
     for patch in registry.patches.values_mut() {
+        // **Concentration, recomputed fresh from the tile every turn** — the plant twin of
+        // `fauna::ecological_carrying_capacity`'s one write. Idempotent (`tile_K × concentration`
+        // is never read back into itself), so a commitment that lapses, an improvement that
+        // completes, or a retuned gain all reach patches already on the map without a second write
+        // path. An **uncommitted** patch is skipped entirely, so rung 1 keeps whatever capacity it
+        // was seeded with — bit-identical to pre-roster, including on the synthetic patches test
+        // harnesses build on tiles that do not exist.
+        if patch.species.is_some() {
+            if let Some(tile) = tile_registry
+                .index(patch.tile.x, patch.tile.y)
+                .and_then(|entity| tiles.get(entity).ok())
+            {
+                let composition = tile_flora_composition(&flora, forage, tile);
+                patch.carrying_capacity = effective_forage_capacity(
+                    patch,
+                    tile_forage_capacity(forage, tile),
+                    &composition,
+                    forage,
+                );
+            }
+        }
         regrow_patch(patch, forage);
     }
 }
@@ -664,11 +1179,15 @@ pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &
     })
 }
 
+// The take now resolves the patch's **conversion rate** off the roster as well as its ecology, so
+// it carries the flora table alongside the forage config — one extra reference, not one extra model.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     workers: u32,
     policy: FollowPolicy,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     output_multiplier: f32,
     seasonal: f32,
@@ -692,9 +1211,13 @@ pub(crate) fn forage_take(
         .min(policy_ceiling)
         .max(0.0)
         .clamp(0.0, patch.biomass);
+    // The **conversion** half of the commit trade: a committed patch turns its biomass into food at
+    // its own plant's rate, a wild one at the basket average. Resolved before the take is applied so
+    // it reads the same patch state the ceiling did.
+    let rate = patch_provisions_per_biomass(patch, flora, forage);
     patch.biomass -= take;
     // FOOD income is fully fractional (a few foragers may gather < 1 provision/turn).
-    scalar_from_f32(forage_provisions(take, forage, output_multiplier))
+    scalar_from_f32(forage_provisions(take, rate, output_multiplier))
 }
 
 /// The per-policy **biomass** ceiling on a gather at the patch's current stock — the single source of
@@ -766,10 +1289,10 @@ pub(crate) fn forage_per_worker_biomass(forage: &ForageLaborConfig, seasonal: f3
 /// `fauna::hunt_provisions`.
 pub(crate) fn forage_provisions(
     biomass_take: f32,
-    forage: &ForageLaborConfig,
+    provisions_per_biomass: f32,
     output_multiplier: f32,
 ) -> f32 {
-    biomass_take * forage.provisions_per_biomass * output_multiplier
+    biomass_take * provisions_per_biomass * output_multiplier
 }
 
 /// **What a patch would pay its gatherers as a TENDED patch**, in provisions — its Sustain (MSY)
@@ -785,14 +1308,21 @@ pub(crate) fn forage_provisions(
 ///
 /// The rung-3 twin, [`field_provisions`], **stays** a managed rate: a Field is yours.
 pub(crate) fn tended_provisions(
-    biomass: f32,
-    carrying_capacity: f32,
+    patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        sustainable_yield(biomass, carrying_capacity, &tended_ecology(forage)).clamp(0.0, biomass),
-        forage,
+        sustainable_yield(
+            patch.biomass,
+            patch.carrying_capacity,
+            &tended_ecology(forage),
+        )
+        .clamp(0.0, patch.biomass),
+        // The rate this patch will convert at **once tended** — the projected reading, so a patch
+        // mid-Cultivate quotes the crop it is planting rather than the basket it is still in.
+        projected_provisions_per_biomass(patch, flora, forage),
         output_multiplier,
     )
 }
@@ -843,11 +1373,19 @@ fn tended_ecology(forage: &ForageLaborConfig) -> EcologyConfig {
 /// Shared by the Forage arm of `advance_labor_allocation` (the payout) and `forage_forecast`, so
 /// forecast == actual.
 pub(crate) fn field_provisions(
-    biomass: f32,
+    patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     output_multiplier: f32,
 ) -> f32 {
-    biomass * forage.cultivation.field_provisions_per_biomass * output_multiplier
+    // **Scaled by the committed crop's relative quality** (Flora Roster S1) — `field_provisions_per_biomass`
+    // stays the rung's one dial and `species_quality` is *derived* from the conversion rate, never a
+    // second per-species field that could drift from it. A patch with no commitment (or one whose
+    // plant sits exactly at the wild baseline) reads `1.0` and is unchanged.
+    patch.biomass
+        * forage.cultivation.field_provisions_per_biomass
+        * patch_species_quality(patch, flora, forage)
+        * output_multiplier
 }
 
 /// **The `plant:field` rung's investment dip**, resolved off the ladder — the fraction of what a
@@ -889,6 +1427,7 @@ const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
@@ -899,8 +1438,8 @@ pub(crate) fn forage_forecast(
     // and be paid, exactly nothing).
     if patch.is_field() {
         return SourceYieldForecast::managed(
-            field_provisions(patch.biomass, forage, output_multiplier),
-            managed_per_worker_yield(forage, output_multiplier),
+            field_provisions(patch, forage, flora, output_multiplier),
+            managed_per_worker_yield(patch, forage, flora, output_multiplier),
             // Plants never quantise — you harvest grain by the handful (slice 8; see
             // `SourceYieldForecast::body_mass_yield`). The whole-animal rule is animal-only because
             // *the products differ*, not by omission.
@@ -908,6 +1447,9 @@ pub(crate) fn forage_forecast(
         );
     }
     let ecology = patch_ecology(patch, forage);
+    // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
+    // below is the number the sim will hand over.
+    let rate = patch_provisions_per_biomass(patch, flora, forage);
     let ceiling = |policy| {
         forage_provisions(
             forage_policy_ceiling(
@@ -919,14 +1461,14 @@ pub(crate) fn forage_forecast(
                 ladder,
             )
             .clamp(0.0, patch.biomass),
-            forage,
+            rate,
             output_multiplier,
         )
     };
     SourceYieldForecast {
         per_worker_yield: forage_provisions(
             forage_per_worker_biomass(forage, seasonal),
-            forage,
+            rate,
             output_multiplier,
         ),
         body_mass_yield: PLANTS_DO_NOT_QUANTISE,
@@ -955,12 +1497,7 @@ pub(crate) fn forage_forecast(
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
         // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
         // one field doing both jobs.)
-        managed_yield: tended_provisions(
-            patch.biomass,
-            patch.carrying_capacity,
-            forage,
-            output_multiplier,
-        ),
+        managed_yield: tended_provisions(patch, forage, flora, output_multiplier),
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
@@ -977,10 +1514,15 @@ pub(crate) fn forage_forecast(
 /// `min(field_provisions, workers × this)` and the surplus it offered beyond that is wasted. Deliberately
 /// **not** a new lever: it is the same `per_worker_biomass_capacity` a wild gather is capped by, which
 /// is what keeps "a worker can carry X" one number for the whole plant web.
-pub(crate) fn managed_per_worker_yield(forage: &ForageLaborConfig, output_multiplier: f32) -> f32 {
+pub(crate) fn managed_per_worker_yield(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
     forage_provisions(
         forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
-        forage,
+        projected_provisions_per_biomass(patch, flora, forage),
         output_multiplier,
     )
 }
@@ -1018,6 +1560,7 @@ const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
 pub fn project_realized_forage(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
@@ -1042,8 +1585,9 @@ pub fn project_realized_forage(
         // Population: a Field is a managed harvest (no drawdown, policy axis collapsed, worker-capped);
         // every other patch is the drawn-down policy gather through the shared `forage_take` path.
         let take = if sim.is_field() {
-            let production = field_provisions(sim.biomass, forage, output_multiplier);
-            let collection = workers as f32 * managed_per_worker_yield(forage, output_multiplier);
+            let production = field_provisions(&sim, forage, flora, output_multiplier);
+            let collection =
+                workers as f32 * managed_per_worker_yield(&sim, forage, flora, output_multiplier);
             production.min(collection)
         } else {
             forage_take(
@@ -1051,6 +1595,7 @@ pub fn project_realized_forage(
                 workers,
                 policy,
                 forage,
+                flora,
                 ladder,
                 output_multiplier,
                 seasonal,
@@ -1090,6 +1635,7 @@ pub fn project_realized_forage(
 pub fn project_arrivals_forage(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
@@ -1109,8 +1655,9 @@ pub fn project_arrivals_forage(
         // Field is a managed harvest (no drawdown, policy axis collapsed, worker-capped); every other
         // patch is the drawn-down policy gather through the shared `forage_take` path.
         *slot = if sim.is_field() {
-            let production = field_provisions(sim.biomass, forage, output_multiplier);
-            let collection = workers as f32 * managed_per_worker_yield(forage, output_multiplier);
+            let production = field_provisions(&sim, forage, flora, output_multiplier);
+            let collection =
+                workers as f32 * managed_per_worker_yield(&sim, forage, flora, output_multiplier);
             production.min(collection)
         } else {
             forage_take(
@@ -1118,6 +1665,7 @@ pub fn project_arrivals_forage(
                 workers,
                 policy,
                 forage,
+                flora,
                 ladder,
                 output_multiplier,
                 seasonal,
@@ -1139,6 +1687,7 @@ pub fn project_arrivals_forage(
 pub fn forage_source_yield_preview(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal: f32,
     output_multiplier: f32,
@@ -1147,7 +1696,7 @@ pub fn forage_source_yield_preview(
     realized_horizon: u32,
     arrivals_horizon: u32,
 ) -> SourceYield {
-    let forecast = forage_forecast(patch, forage, ladder, seasonal, output_multiplier);
+    let forecast = forage_forecast(patch, forage, flora, ladder, seasonal, output_multiplier);
     // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
     // curve, so a Sustain gather of it reads no ⚠ while a Surplus gather of it does. Reading
     // `forage.ecology` here would flag every tended Sustain as an overdraw.
@@ -1157,7 +1706,7 @@ pub fn forage_source_yield_preview(
             patch.carrying_capacity,
             &patch_ecology(patch, forage),
         ),
-        forage,
+        patch_provisions_per_biomass(patch, flora, forage),
         output_multiplier,
     );
     // The steady headline is the forward projection from THIS patch state — the same computation the
@@ -1165,6 +1714,7 @@ pub fn forage_source_yield_preview(
     let realized = project_realized_forage(
         patch,
         forage,
+        flora,
         ladder,
         seasonal,
         output_multiplier,
@@ -1177,6 +1727,7 @@ pub fn forage_source_yield_preview(
     let arrivals = project_arrivals_forage(
         patch,
         forage,
+        flora,
         ladder,
         seasonal,
         output_multiplier,
@@ -1299,6 +1850,7 @@ mod tests {
             20,
             FollowPolicy::Sustain,
             &forage,
+            &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             1.0,
             1.0,
@@ -1328,6 +1880,7 @@ mod tests {
                 20,
                 FollowPolicy::Sustain,
                 &forage,
+                &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
                 1.0,
@@ -1379,6 +1932,7 @@ mod tests {
                 3,
                 FollowPolicy::Eradicate,
                 &forage,
+                &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
                 1.0,
@@ -1418,6 +1972,7 @@ mod tests {
                 workers,
                 policy,
                 &forage,
+                &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
                 1.0,
@@ -1541,6 +2096,7 @@ mod tests {
                 50,
                 FollowPolicy::Eradicate,
                 &forage,
+                &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
                 1.0,
@@ -1628,13 +2184,16 @@ mod tests {
 
     #[test]
     fn forage_state_roundtrip_is_identity() {
-        // A ForageState with non-default ecology AND **both** improvement meters, so biomass / cap /
-        // phase / cultivation / field / owner all round-trip (a rollback must rewind a half-sown
-        // Field, not lose the investment).
+        // A ForageState with non-default ecology, **both** improvement meters AND a committed
+        // species, so biomass / cap / phase / cultivation / field / owner / commitment all
+        // round-trip (a rollback must rewind a half-sown Field, not lose the investment — and it
+        // must restore the crop that Field is, since the commitment decides both the patch's
+        // effective capacity and its conversion rate).
         let original = ForageState {
             x: 7,
             y: 3,
             field_progress: 0.4,
+            species: "wild_emmer".to_string(),
             ecology: EcologyState {
                 biomass: 42.5,
                 carrying_capacity: 120.0,
@@ -1650,6 +2209,7 @@ mod tests {
             .expect("one patch restored");
         assert_eq!(patch.cultivation_progress, 0.6);
         assert_eq!(patch.field_progress, 0.4);
+        assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
         assert_eq!(patch.owner, Some(FactionId(3)));
         let restored = crate::snapshot::forage_state(patch);
         assert_eq!(restored, original);
@@ -1697,6 +2257,37 @@ mod tests {
             "an untended tended patch reverts to wild"
         );
         assert!((patch.cultivation_progress - 0.5).abs() < 1e-6);
+    }
+
+    /// **The commitment is recorded once and released only by going fully feral** (Flora Roster S1).
+    /// Re-deciding which crop a patch is every turn would erase the decision the rung exists to
+    /// make; keeping it after both meters lapse would leave a wild stand wearing one plant's name.
+    #[test]
+    fn a_species_commitment_is_one_way_and_lapses_only_when_the_patch_goes_fully_feral() {
+        let mut patch = ForagePatch::new(UVec2::new(3, 4), 120.0);
+        patch.commit_species("wild_emmer");
+        assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
+        // One-way while the ground is committed: a later assignment cannot re-crop it for free.
+        patch.commit_species("wild_tubers");
+        assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
+
+        // A patch with *either* meter still standing keeps its crop...
+        patch.accrue_cultivation(FactionId(0), RUNG_COMPLETE);
+        patch.accrue_field(FactionId(0), RUNG_COMPLETE);
+        patch.decay_field(RUNG_COMPLETE);
+        assert_eq!(
+            patch.species.as_deref(),
+            Some("wild_emmer"),
+            "a lapsed Field over a standing tended patch is still that crop"
+        );
+        // ...and lapses only when nothing is left of either.
+        patch.decay_cultivation(RUNG_COMPLETE);
+        assert_eq!(patch.cultivation_progress, 0.0);
+        assert_eq!(
+            patch.species, None,
+            "a fully feral patch is the wild basket again"
+        );
+        assert_eq!(patch.owner, None);
     }
 
     /// Rung 1a feral mechanic (`advance_cultivation` decay side, tested at the patch level): a

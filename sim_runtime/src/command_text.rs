@@ -919,7 +919,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .to_ascii_lowercase();
             let faction_id = parse_u32(faction_str, "assign_labor faction")?;
             let band = parse_u64(band_str, "assign_labor band_entity_bits")?;
-            let (workers, target_x, target_y, fauna_id, policy) = match role.as_str() {
+            let (workers, target_x, target_y, fauna_id, policy, species) = match role.as_str() {
                 "forage" => {
                     let x = parts
                         .next()
@@ -927,15 +927,20 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     let y = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("target_y"))?;
-                    // Optional policy token: `forage <x> <y> [policy] <workers>` (parity with the
-                    // hunt arm's policy). If a token follows the first, the first is the policy and
-                    // the second is the worker count; otherwise the lone token is the worker count.
-                    let first = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("workers"))?;
-                    let (policy_tok, workers_tok) = match parts.next() {
-                        Some(w) => (Some(first.to_string()), w),
-                        None => (None, first),
+                    // Two optional tokens, positionally:
+                    // `forage <x> <y> [policy] [species] <workers>`. The worker count is always
+                    // **last**, so the tail is read whole and the leading 0/1/2 tokens are the
+                    // policy and then the species (Flora Roster S1 — which crop a Cultivate/Sow
+                    // commits this ground to). Anything longer is a typo, not a longer form.
+                    let tail: Vec<&str> = parts.collect();
+                    let (workers_tok, policy_tok, species_tok) = match tail.as_slice() {
+                        [w] => (*w, None, None),
+                        [p, w] => (*w, Some(p.to_string()), None),
+                        [p, sp, w] => (*w, Some(p.to_string()), Some(sp.to_string())),
+                        [] => return Err(CommandParseError::MissingArgument("workers")),
+                        [_, _, _, extra, ..] => {
+                            return Err(CommandParseError::UnexpectedToken(extra.to_string()))
+                        }
                     };
                     (
                         parse_u32(workers_tok, "assign_labor workers")?,
@@ -943,6 +948,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         Some(parse_u32(y, "assign_labor target_y")?),
                         None,
                         policy_tok,
+                        species_tok,
                     )
                 }
                 "hunt" => {
@@ -961,6 +967,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                         Some(herd.to_string()),
                         Some(pol.to_string()),
+                        None,
                     )
                 }
                 "scout" | "warrior" => {
@@ -969,6 +976,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
                     (
                         parse_u32(w, "assign_labor workers")?,
+                        None,
                         None,
                         None,
                         None,
@@ -986,6 +994,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y,
                 fauna_id,
                 policy,
+                species,
             })
         }
         "move_band" => {
@@ -1413,8 +1422,34 @@ mod tests {
                 target_y: Some(5),
                 fauna_id: None,
                 policy: None,
+                species: None,
             }
         );
+    }
+
+    /// The **species selection** (Flora Roster S1) is the second optional token, and the worker count
+    /// is always last: `forage <x> <y> [policy] [species] <workers>`.
+    #[test]
+    fn parse_assign_labor_forage_with_policy_and_species() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 forage 3 5 cultivate wild_emmer 6").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_entity_bits: Some(904),
+                role: "forage".to_string(),
+                workers: 6,
+                target_x: Some(3),
+                target_y: Some(5),
+                fauna_id: None,
+                policy: Some("cultivate".to_string()),
+                species: Some("wild_emmer".to_string()),
+            }
+        );
+        // A fourth token is a typo, not a longer form — fail closed rather than silently drop it.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 forage 3 5 cultivate wild_emmer 6 7"),
+            Err(CommandParseError::UnexpectedToken(_))
+        ));
     }
 
     #[test]
@@ -1432,6 +1467,7 @@ mod tests {
                     target_y: Some(5),
                     fauna_id: None,
                     policy: Some(policy.to_string()),
+                    species: None,
                 },
                 "forage policy {policy} should round-trip"
             );
@@ -1453,6 +1489,7 @@ mod tests {
                     target_y: None,
                     fauna_id: Some("game_deer_07".to_string()),
                     policy: Some(policy.to_string()),
+                    species: None,
                 },
                 "policy {policy} should round-trip"
             );
@@ -1472,6 +1509,7 @@ mod tests {
                 target_y: None,
                 fauna_id: None,
                 policy: None,
+                species: None,
             }
         );
         assert_eq!(
@@ -1485,6 +1523,7 @@ mod tests {
                 target_y: None,
                 fauna_id: None,
                 policy: None,
+                species: None,
             }
         );
     }

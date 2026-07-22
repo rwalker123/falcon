@@ -559,6 +559,18 @@ const GATE_REASON_LINE_FORMAT := "%s — %s"
 # ("🌱 Cultivate needs:" / "   · <reason>").
 const GATE_REASON_HEADER_FORMAT := "%s needs:"
 const GATE_REASON_BULLET_FORMAT := "   · %s"
+# COLLAPSING ANOTHER RUNG'S REASONS — OPT-IN, and deliberately narrow. Three wrapped paragraphs
+# explaining why *Sow* is refused while the player composes a *Cultivate* answer a question they did
+# not ask and cost about a third of the compose card; the crop picker, the stepper and the commit
+# button are what paid. But spelled-out reasons are also how the ladder TEACHES — several frames exist
+# precisely to show a NON-composed rung's full prerequisites (`forage_cultivate_locked`,
+# `forage_sow_locked`, `herd_corral_locked*`, and `two_meter_split`, whose whole subject is the gated
+# Corral's reason line while Tame is composed). So this is NOT the shared default: `_build_policy_picker`
+# collapses only when its caller asks, and the only caller that asks is the forage compose while a
+# COMMITTING rung is selected — i.e. exactly when the crop picker is on the card competing for height.
+# Every other picker (hunt, expedition, work board) is byte-for-byte unchanged.
+const GATE_REASON_COLLAPSED_ONE_FORMAT := "%s — locked (1 requirement unmet)"
+const GATE_REASON_COLLAPSED_MANY_FORMAT := "%s — locked (%d requirements unmet)"
 # The disabled button's tooltip carries every reason, one per line.
 const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
 # Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
@@ -593,6 +605,78 @@ const FLORA_SHARE_FORMAT := "%s %d%%"
 # can land on 99 or 101, and the remainder is absorbed into the largest share (the first entry — the
 # wire list is share-descending), which is the one where a ±1 is least visible.
 const FLORA_SHARE_PERCENT_TOTAL := 100
+# Tile card "Crop" row (flora roster S1) — the row FLORA_COMPOSITION_ROW becomes once a band commits
+# the patch to one species under Cultivate/Sow. The basket is displaced (that is the cost of tending
+# — docs/plan_flora_roster.md §4.3), so the two rows are mutually exclusive: a committed tile is one
+# plant, and showing the wild mix beside it would state what no longer grows there. Kept well under
+# `_split_detail_kv`'s 16-char key limit so it aligns as a normal table row, like the row it replaces.
+const FLORA_CROP_ROW := "Crop"
+# THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of
+# a server default. It renders only under the two rungs that actually commit a patch to one plant; the
+# extractive rungs gather the whole basket and choose nothing, so a crop control there would be noise.
+const FLORA_COMMITTING_POLICIES := [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]
+const FLORA_CROP_PICKER_HEADER := "Crop to commit to"
+# An entry the SPECIES can never climb this rung with stays VISIBLE and disabled, never hidden: that a
+# tile carries Oak Mast you cannot farm is information about the LAND, and hiding it would make the
+# tile read poorer than it is. `can_cultivate` / `can_sow` are species-GLOBAL — "can this plant ever
+# climb this rung" — so the reason names the plant, not the ground.
+const FLORA_CROP_NO_CULTIVATE_FORMAT := "%s cannot be tended — it is a wild harvest only."
+const FLORA_CROP_NO_SOW_FORMAT := "%s cannot be sown — its seed is not yours to move."
+# A LEGAL BUT MARGINAL CROP IS NEVER DISABLED. A 20%-share plant is a bad choice, not an illegal one,
+# and being free to make it is the decision docs/plan_flora_roster.md §4.3 exists to create — only the
+# two species flags disable anything. The warning rides the ROW's own tooltip rather than a standing
+# hint line: a line under the list costs the sheet ~40px of height, and the commit button below it is
+# what pays (see FLORA_CROP_LIST_MAX_HEIGHT).
+# THE VERDICT IS RELATIVE TO 1.0, never to an impression of what the numbers "usually" look like.
+# Committing beats gathering wild on most good ground, so ratios above 1.0 are the NORM: "poor" is
+# reserved for a crop that genuinely loses to simply gathering the tile, and the tier between break-even
+# and FLORA_CROP_STRONG_RATIO is the honest middle — worth doing, not worth celebrating.
+const FLORA_CROP_STRONG_RATIO := 1.5
+const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — it loses to simply gathering here."
+const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — worth committing to."
+const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
+# THE PAYOFF, beside the share — `cultivate_yield_ratio` / `sow_yield_ratio`: what committing this tile
+# to this plant yields RELATIVE to gathering it wild. The sim folds the share AND the species'
+# conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
+# the decision is "better or worse than wild", not a second significant figure.
+const FLORA_CROP_ROW_FORMAT := "%s %d%% · %.1f×"
+# The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
+# the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea
+# and the ratio exists to stop that being invisible, not to prevent it.
+const FLORA_CROP_BREAK_EVEN_RATIO := 1.0
+# 0 is the "cannot climb this rung" SENTINEL, not a ratio (a real one is never 0), so a row greyed by
+# the climbability flags prints no number at all.
+const FLORA_CROP_RATIO_NONE := 0.0
+# THE LIST SCROLLS WITHIN ITSELF so a long basket can never push the commit button below the sheet's
+# fold. The sheet's own `CARD_MAX_HEIGHT` is deliberately NOT raised — that cap belongs to every
+# compose card, not just this one — so the picker has to live inside the room the sheet has left, and
+# the budget is TIGHT: a Cultivate compose already spends most of the card on the rung gates. Hence
+# the work-board's compact row idiom rather than default button chrome (which pads 9px top AND bottom,
+# making a row ~37px and the whole picker unaffordable), and hence a cap DERIVED from the rows it
+# shows rather than a picked pixel height: `rows × (row + separation)`, with a partial row deliberately
+# NOT budgeted for — the cut-off row is itself the "there is more below" affordance.
+const FLORA_CROP_ROW_HEIGHT := 22.0
+const FLORA_CROP_ROW_FONT_SIZE := WORK_ROW_FONT_SIZE
+const FLORA_CROP_ROW_PADDING_V := WORK_ROW_PADDING_V
+# MEASURED, not chosen — and set so that NO SHIPPED BASKET EVER HIDES A CROP. The longest a tile can
+# carry today is 5 (a navigable hex blends the valley's basket with the channel's fishery), so at 5 the
+# whole basket is on screen and the player compares it rather than peering at it through a slot: a
+# picker that hides the best crop behind a scroll is the guess the payoff ratio exists to remove. It was
+# 2 rows until the OTHER rung's gate reasons were collapsed (see GATE_REASON_COLLAPSED_ONE_FORMAT),
+# which is what bought the other three. The cap is still a real guard, not dead code — F5 refines this
+# coarse roster into a fine-grained one and baskets lengthen — and ui_preview's
+# `forage_crop_picker_overlong` (a synthetic 8-plant tile, longer than any real one) keeps the scroll
+# path RENDERED so it cannot rot unseen. `forage_crop_picker` ASSERTS the sheet has nothing left to
+# scroll, i.e. `Forage` is on screen; change this number and let that assertion answer, never assume.
+const FLORA_CROP_LIST_VISIBLE_ROWS := 5
+const FLORA_CROP_BLOCK_SEPARATION := 2
+const FLORA_CROP_LIST_MAX_HEIGHT := FLORA_CROP_ROW_HEIGHT * FLORA_CROP_LIST_VISIBLE_ROWS \
+    + float(FLORA_CROP_BLOCK_SEPARATION) * (FLORA_CROP_LIST_VISIBLE_ROWS - 1)
+const FLORA_CROP_NONE_LEGAL_HINT := "Nothing growing here can climb this rung."
+# A committed patch is one-way until it lapses, so the picker becomes a READ-ONLY readout: an editable
+# control here would imply a switch the sim will refuse.
+const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
+const FLORA_CROP_COMMITTED_HINT := "Already committed — this patch stays this crop until it lapses back to wild."
 const FIELD_PROGRESS_COMPLETE := 1.0
 const FIELD_SOWING_LABEL := "Sowing"
 const FIELD_BADGE_LABEL := "Field"
@@ -759,6 +843,9 @@ const WORKER_STEPPER_SEPARATION := 6
 # a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
 const POLICY_PICKER_COLUMNS := 3
 const POLICY_PICKER_MAX_SINGLE_ROW := 4
+# Passed for `columns` to keep `_build_policy_picker`'s width-driven default — a caller that only wants
+# to set a LATER argument must still name this one, and a bare 0 there reads as "no columns".
+const POLICY_PICKER_AUTO_COLUMNS := 0
 # Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
 # rows): the title + stepper ride line 1, the yield/policy/status/notes drop to an indented, smaller
 # secondary line 2 so the row reads narrow. `STATUS_LINE_INDENT` ≈ the leading resource-icon width, so
@@ -931,6 +1018,15 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # a zero payoff a net LOSS rather than merely a nothing.
 # (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
 # flow here", used by the band ledger's rows and by this row alike.)
+# AT ZERO WORKERS THERE IS NO "PREPARING" TO STATE. `Preparing` is staffing-scaled (workers ×
+# per_worker) while the `→ then` payoff is not, so an unstaffed forecast used to read
+# "Preparing: +0.00 /turn → then +1.22 /turn" — a sequence the player is emphatically NOT on track for,
+# since an unstaffed build meter never advances at all. The payoff itself stays on screen (it is how you
+# decide whether the source is worth staffing), but as a CONDITION rather than an imminent arrival.
+# Short on purpose: the moment ONE worker is on it the full "Preparing: … → then …" line renders, so a
+# long unstaffed sentence earns nothing. Crew-named, so a herd rung says hunters/herders.
+const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s — %s"
+const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s — %s − %s feed"
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
@@ -1078,6 +1174,13 @@ const SEND_HUNTING_EXPEDITION_BUTTON := "Send hunting party"
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
+# `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
+# player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
+# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a tile this band
+# already works it is a legitimate unassign and says so, and at 0 on a tile it does not work it is a
+# no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the unassign.
+const FORAGE_UNASSIGN_BUTTON := "Unassign"
+const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
 # ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
 # Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
 # in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
@@ -1641,6 +1744,10 @@ var _forage_assign_count: int = 0
 # `_hunt_assign_autofill` — cleared as soon as consumed, never set by a −/+ tick.
 var _forage_assign_autofill := false
 var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
+# The crop the composed Cultivate/Sow will commit this patch to (flora roster S1); "" = send nothing,
+# which is VALID and yields the sim's own default (`default_species_for_rung` — the highest-share legal
+# plant). Re-resolved every render, so it can never name a plant this tile/rung cannot take.
+var _forage_assign_species: String = ""
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
@@ -3193,7 +3300,10 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## Emit an assign_labor request for the given band, and record it as an OPTIMISTIC pending
 ## action so the panel + map reflect the change immediately (reconciled by the next
 ## newer-turn snapshot). Main formats the text command from the emitted payload.
-func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
+## `species` is the FORAGE-only crop selection (flora roster S1) — which named plant a Cultivate/Sow
+## should commit the patch to. Empty (the default, and what every non-forage caller sends) means "pick
+## the tile's dominant legal plant for me", the same absent-means-default convention `policy` has.
+func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String, species: String = "") -> void:
     var bits := int(band.get("entity", -1))
     if bits < 0:
         return
@@ -3207,6 +3317,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "y": y,
         "herd_id": herd_id,
         "policy": policy,
+        "species": species,
     })
     _record_pending_assign(bits, kind, clamped, x, y, herd_id, policy)
     _after_pending_change()
@@ -3847,7 +3958,8 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## projects for an un-penned herd too, on the same biomass basis). The feed is NEVER folded away, and
 ## a **zero payoff is rendered, loudly** (see INVESTMENT_FORECAST_DEPLETED_NOTE) — a depleted herd
 ## below the escapement point pays nothing, and that is the row's most important reading.
-func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
+func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary,
+        crew_label: String = FORAGE_CREW_LABEL) -> Label:
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
     var hex := HudStyle.HEALTHY
@@ -3855,7 +3967,16 @@ func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -
     var payoff := float(forecast.get("payoff", 0.0)) * output
     var feed := float(forecast.get("feed", 0.0)) * output
     var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
-    if has_feed:
+    # UNSTAFFED: state the payoff as a condition, never as a sequence already under way — see
+    # INVESTMENT_FORECAST_UNSTAFFED_FORMAT. The depleted-payoff note below still applies either way.
+    var crew := crew_label.to_lower()
+    if workers <= 0:
+        if has_feed:
+            row.text = INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT % [
+                crew, _format_yield(payoff), _format_magnitude(feed)]
+        else:
+            row.text = INVESTMENT_FORECAST_UNSTAFFED_FORMAT % [crew, _format_yield(payoff)]
+    elif has_feed:
         row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
             expected, _format_yield(payoff), _format_magnitude(feed)]
     else:
@@ -5743,7 +5864,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # promise the expedition player a payoff the sim never pays.
     if forecast_active:
         target.add_child(
-            _forecast_yield_row(forecast, _hunt_assign_count, band))
+            _forecast_yield_row(forecast, _hunt_assign_count, band, crew_label))
     if is_expedition:
         target.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -6148,7 +6269,8 @@ func _build_policy_picker(
     options: Array = LABOR_HUNT_POLICIES,
     gates: Dictionary = {},
     takes: Dictionary = {},
-    columns: int = 0) -> VBoxContainer:
+    columns: int = 0,
+    collapse_other_gates: bool = false) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -6199,7 +6321,9 @@ func _build_policy_picker(
         btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
         grid.add_child(btn)
     block.add_child(grid)
-    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
+    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach. A caller
+    # that is TIGHT ON HEIGHT may opt into collapsing the rungs it is not composing (see
+    # GATE_REASON_COLLAPSED_ONE_FORMAT); by default every gated rung still teaches in full.
     for policy in options:
         var policy_key := String(policy)
         var reasons := _gate_reasons(gates, policy_key)
@@ -6207,6 +6331,15 @@ func _build_policy_picker(
             continue
         var titled := "%s%s" % [
             _source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()]
+        if collapse_other_gates and policy_key != current:
+            # Collapsed: the count, plus every reason in the line's own tooltip. A Label ignores the
+            # mouse by default, so the filter must be set with the text or the tooltip never shows.
+            var collapsed := _alloc_hint_label(GATE_REASON_COLLAPSED_ONE_FORMAT % titled \
+                if reasons.size() == 1 \
+                else GATE_REASON_COLLAPSED_MANY_FORMAT % [titled, reasons.size()])
+            _set_label_tooltip(collapsed, GATE_REASON_TOOLTIP_SEPARATOR.join(reasons))
+            block.add_child(collapsed)
+            continue
         if reasons.size() == 1:
             block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
             continue
@@ -6226,6 +6359,154 @@ func _gate_reasons(gates: Dictionary, policy: String) -> Array:
 ## actually SEE (a workable patch is live state, redacted from a remembered tile like its occupants;
 ## MapView already strips `food_module*` there, and this holds the line if anything ever feeds a
 ## non-redacted dict).
+## May this basket entry be committed under `policy`? Species-GLOBAL legality ONLY (`can_cultivate` /
+## `can_sow` = "can this plant ever climb this rung"). `share` answers the other question — whether a
+## legal crop is a WISE one here — and it must never disable anything.
+func _flora_entry_allows(entry: Dictionary, policy: String) -> bool:
+    if policy == LABOR_POLICY_SOW:
+        return bool(entry.get("can_sow", false))
+    return bool(entry.get("can_cultivate", false))
+
+## What committing this entry under `policy` pays relative to gathering it wild. `FLORA_CROP_RATIO_NONE`
+## on a rung the species cannot climb — the sentinel, never printed as a number.
+func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
+    if policy == LABOR_POLICY_SOW:
+        return float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE))
+    return float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE))
+
+## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
+## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
+## substituted) on a rung the species cannot climb.
+func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
+    if policy == LABOR_POLICY_SOW:
+        return float(entry.get("sow_payoff", 0.0))
+    return float(entry.get("cultivate_payoff", 0.0))
+
+## The forecast, with its species-BLIND payoff replaced by the selected crop's own. Without this the
+## "→ then" term quotes one number no matter which crop is picked, so the picker appears to change
+## nothing above it — the player commits to Reeds and is shown Wild Emmer's payoff. A SUBSTITUTION,
+## not a calculation: the client does no arithmetic on the sim's figure. Returns the forecast untouched
+## when nothing is committed (no selection, a non-committing rung, or a species with no payoff on it).
+func _forecast_for_selected_crop(forecast: Dictionary, entries: Array[Dictionary], policy: String,
+        species: String) -> Dictionary:
+    if species == "" or not (policy in FLORA_COMMITTING_POLICIES):
+        return forecast
+    for entry in entries:
+        if String(entry["species"]) != species:
+            continue
+        var payoff := _flora_entry_payoff(entry, policy)
+        if payoff <= 0.0:
+            return forecast
+        var adjusted := forecast.duplicate()
+        adjusted["payoff"] = payoff
+        return adjusted
+    return forecast
+
+## The crop this compose will SEND: the player's pick while it is still legal on this tile+rung, else
+## the HIGHEST-SHARE legal entry — which is the sim's own `default_species_for_rung`, so picking
+## nothing and accepting the default behave identically. Returns "" (send nothing, still valid) for a
+## non-committing rung, an already-committed patch, or a basket with no legal plant.
+func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committed: bool, picked: String) -> String:
+    if committed or not (policy in FLORA_COMMITTING_POLICIES):
+        return ""
+    var default_species := ""
+    for entry in entries:
+        if not _flora_entry_allows(entry, policy):
+            continue
+        var species := String(entry["species"])
+        if species == picked:
+            return picked
+        if default_species == "":
+            # Wire order is share-DESC, so the FIRST legal entry is the highest-share legal one.
+            default_species = species
+    return default_species
+
+## The crop picker — one row per plant in the tile's basket, in wire order, `Wild Emmer 56%`. An
+## illegal entry is greyed WITH ITS REASON but never hidden (see FLORA_CROP_NO_CULTIVATE_FORMAT); a
+## legal-but-marginal one is fully pressable. A patch that has already committed gets a locked
+## READOUT instead, since the commitment is one-way until it lapses. Returns null when there is
+## nothing to render (a biome that carries no named forage), so no empty block appears.
+func _build_crop_picker(
+    entries: Array[Dictionary],
+    policy: String,
+    selected: String,
+    committed_name: String,
+    on_pick: Callable) -> Control:
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", FLORA_CROP_BLOCK_SEPARATION)
+    if committed_name != "":
+        block.add_child(_alloc_section_label(FLORA_CROP_COMMITTED_HEADER))
+        var committed_label := Label.new()
+        committed_label.text = committed_name
+        committed_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        block.add_child(committed_label)
+        block.add_child(_alloc_hint_label(FLORA_CROP_COMMITTED_HINT))
+        return block
+    if entries.is_empty():
+        return null
+    block.add_child(_alloc_section_label(FLORA_CROP_PICKER_HEADER))
+    var rows := VBoxContainer.new()
+    rows.add_theme_constant_override("separation", FLORA_CROP_BLOCK_SEPARATION)
+    rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var any_legal := false
+    for entry in entries:
+        var species := String(entry["species"])
+        var crop_name := String(entry["display_name"])
+        var percent := int(entry["percent"])
+        var legal := _flora_entry_allows(entry, policy)
+        var ratio := _flora_entry_ratio(entry, policy)
+        var btn := Button.new()
+        # The payoff rides the face ONLY where there is one: a row greyed by the climbability flags
+        # carries the 0 sentinel, and printing "0.0×" there would read as "a crop worth nothing"
+        # rather than "not a crop at this rung".
+        btn.text = FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio] if ratio > FLORA_CROP_RATIO_NONE \
+            else FLORA_SHARE_FORMAT % [crop_name, percent]
+        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        HudStyle.apply_button(btn, "primary" if legal and species == selected else "ghost")
+        # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
+        # wearing the default button chrome would silently break that maths (the work board's rule).
+        _compact_control(btn, FLORA_CROP_ROW_FONT_SIZE, FLORA_CROP_ROW_PADDING_V)
+        btn.custom_minimum_size = Vector2(0.0, FLORA_CROP_ROW_HEIGHT)
+        btn.disabled = not legal
+        if legal:
+            any_legal = true
+            # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
+            # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
+            if ratio > FLORA_CROP_RATIO_NONE and ratio < FLORA_CROP_BREAK_EVEN_RATIO:
+                btn.add_theme_color_override("font_color", HudStyle.WARN)
+                btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
+                btn.tooltip_text = FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio]
+            elif ratio >= FLORA_CROP_STRONG_RATIO:
+                btn.tooltip_text = FLORA_CROP_STRONG_TOOLTIP_FORMAT % [crop_name, ratio]
+            elif ratio > FLORA_CROP_RATIO_NONE:
+                btn.tooltip_text = FLORA_CROP_MODEST_TOOLTIP_FORMAT % [crop_name, ratio]
+            btn.pressed.connect(func() -> void: on_pick.call(species))
+        else:
+            var reason_format := FLORA_CROP_NO_SOW_FORMAT if policy == LABOR_POLICY_SOW \
+                else FLORA_CROP_NO_CULTIVATE_FORMAT
+            btn.tooltip_text = reason_format % crop_name
+        rows.add_child(btn)
+    # A basket longer than the sheet can spare scrolls WITHIN the picker, so the Forage button below
+    # stays on screen. Container configuration only — the ScrollContainer's own minimum height is 0,
+    # so the capped `custom_minimum_size` IS the height, and a short basket skips the wrapper entirely
+    # rather than padding out to the cap.
+    if entries.size() > FLORA_CROP_LIST_VISIBLE_ROWS:
+        var scroll := ScrollContainer.new()
+        scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+        scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        # A ScrollContainer's own minimum height is 0, so this IS its height; a basket short enough to
+        # fit skips the wrapper entirely rather than padding out to the cap.
+        scroll.custom_minimum_size = Vector2(0.0, FLORA_CROP_LIST_MAX_HEIGHT)
+        scroll.add_child(rows)
+        block.add_child(scroll)
+    else:
+        block.add_child(rows)
+    # The ONLY standing line under the list is the one that REPLACES content rather than adding to it:
+    # a basket with nothing this rung can take has no pressable row to carry the explanation.
+    if not any_legal:
+        block.add_child(_alloc_hint_label(FLORA_CROP_NONE_LEGAL_HINT))
+    return block
+
 func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
@@ -6252,6 +6533,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         var staffed := _workers_for_forage(band, x, y)
         _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
         _forage_assign_policy = _policy_for_forage(band, x, y)
+        # A crop pick belongs to the PATCH it was made on — a new tile has a different basket.
+        _forage_assign_species = ""
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_forage_workers(band, x, y)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_FORAGE, x, y, ""))
@@ -6284,14 +6567,42 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_assign_policy = policy
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
         _forage_assign_autofill = true
-        _build_forage_assign_controls(tile_info, target), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
+        _build_forage_assign_controls(tile_info, target), _forage_assign_policy, FORAGE_POLICY_OPTIONS,
+        forage_gates, forage_takes, POLICY_PICKER_AUTO_COLUMNS,
+        # Collapse the OTHER rungs' reasons only while a committing rung is composed — that is the one
+        # card that also carries the crop picker, and the only place the height is not there.
+        _forage_assign_policy in FLORA_COMMITTING_POLICIES))
     target.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
+    # WHICH CROP this rung commits the patch to (flora roster S1). Only the two COMMITTING rungs show
+    # it; the selection is re-resolved every render (a policy switch changes which plants are legal),
+    # so `_forage_assign_species` can never name a plant this tile+rung cannot take — and "" always
+    # remains valid, meaning "take the sim's default".
+    var basket := _flora_basket_entries(tile_info.get("patch_composition", []))
+    var committed_crop := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
+    var is_committed := String(tile_info.get("patch_committed_species", "")).strip_edges() != "" \
+        and committed_crop != ""
+    _forage_assign_species = _resolve_crop_selection(
+        basket, _forage_assign_policy, is_committed, _forage_assign_species)
+    if _forage_assign_policy in FLORA_COMMITTING_POLICIES:
+        var crop_picker := _build_crop_picker(basket, _forage_assign_policy, _forage_assign_species,
+            committed_crop if is_committed else "",
+            func(species: String) -> void:
+                _forage_assign_species = species
+                _build_forage_assign_controls(tile_info, target))
+        if crop_picker != null:
+            target.add_child(crop_picker)
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
     # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
     # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
     # switching policy moves the cap).
     var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    # THE "→ then" TERM FOLLOWS THE CROP. `_forecast_inputs` answers for the patch, which is species-
+    # blind; once a crop is committed the payoff is that crop's. `basket` and `_forage_assign_species`
+    # are resolved above, and the picker's own handler rebuilds these whole controls, so changing the
+    # selection moves this line on the same frame. Only `payoff` is substituted — the ceiling and the
+    # per-worker rate still describe the PATCH, which is what caps the stepper.
+    forecast = _forecast_for_selected_crop(forecast, basket, _forage_assign_policy, _forage_assign_species)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
@@ -6308,15 +6619,29 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(_alloc_hint_label(cap_note))
+    # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
+    # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
+    # forecast line and button TOGETHER — has to read coherently for each:
+    #   • 0 on a tile this band does NOT work → the command would do nothing. Dead button (still
+    #     "Forage"), and the forecast states the payoff as a CONDITION ("Assign foragers to begin…").
+    #   • 0 on a tile it DOES work → the sim's unassign (server.rs: "Unassigning (workers == 0) is
+    #     always allowed"). Live button, renamed, and NO "assign to begin" line — a panel whose button
+    #     says Unassign above a line reading "assign to begin" tells the player two opposite things.
+    # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
+    var is_unassign := _forage_assign_count <= 0 and current > 0
+    var is_noop := _forage_assign_count <= 0 and current <= 0
     # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
     # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
     # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
     # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
     # warning an Eradicate/Market forage used to render silently.
     if _forage_assign_policy in INVESTMENT_POLICIES:
-        if bool(forecast["known"]):
+        # Nothing is forecast for an unassign — see is_unassign above. What abandoning costs is already
+        # on the card in the rung's own policy hint ("It must stay staffed or it goes feral"), so a
+        # second warning here would state one fact twice.
+        if bool(forecast["known"]) and not is_unassign:
             target.add_child(
-                _forecast_yield_row(forecast, _forage_assign_count, band))
+                _forecast_yield_row(forecast, _forage_assign_count, band, FORAGE_CREW_LABEL))
     else:
         var yield_line := _local_forage_preview_bbcode(
             band, tile_info, _forage_assign_policy, _forage_assign_count)
@@ -6333,13 +6658,18 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if out_of_range:
         target.add_child(_alloc_hint_label(
             "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
+    # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
+    # the cap note has not already said it, so the panel never states one fact twice.
+    if is_noop and cap_note == "":
+        target.add_child(_alloc_hint_label(FORAGE_NOOP_HINT))
     var assign_btn := Button.new()
-    assign_btn.text = FORAGE_ASSIGN_BUTTON
+    assign_btn.text = FORAGE_UNASSIGN_BUTTON if is_unassign else FORAGE_ASSIGN_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
     # Out of range → disabled (no expedition fallback for stationary gathering).
-    assign_btn.disabled = out_of_range
+    assign_btn.disabled = out_of_range or is_noop
     assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", _forage_assign_policy)
+        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "",
+            _forage_assign_policy, _forage_assign_species)
         close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -7289,12 +7619,18 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
     # yield coefficient, meaningless to the player (it still drives the sim's yield math).
     lines.append(food_line)
-    # WHAT GROWS HERE — the named plants behind the Forage line above (flora roster F1). It reads
-    # directly under the module because it says what that module's basket IS; the stock/ecology rows
-    # below then say how much of it there is and how it is faring.
-    var composition_text := _flora_composition_text(tile_info.get("patch_composition", []))
-    if composition_text != "":
-        lines.append("%s: %s" % [FLORA_COMPOSITION_ROW, composition_text])
+    # WHAT GROWS HERE / CROP — the named plants behind the Forage line above (flora roster F1/S1).
+    # It reads directly under the module because it says what that module's basket IS; the
+    # stock/ecology rows below then say how much of it there is and how it is faring. ONE row, two
+    # states: an UNCOMMITTED patch names the whole wild basket, a COMMITTED one names the single crop
+    # it was tended to — never both, since committing displaces the rest of the basket.
+    var crop_name := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
+    if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
+        lines.append("%s: %s" % [FLORA_CROP_ROW, crop_name])
+    else:
+        var composition_text := _flora_composition_text(tile_info.get("patch_composition", []))
+        if composition_text != "":
+            lines.append("%s: %s" % [FLORA_COMPOSITION_ROW, composition_text])
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
     # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
@@ -8603,15 +8939,31 @@ func _field_label(progress: float, is_field: bool) -> String:
 ## share, i.e. the first entry, where a ±1 is proportionally smallest. Returns "" for a tile with no
 ## composition (a biome that carries no forage), so no empty row renders.
 func _flora_composition_text(composition: Variant) -> String:
+    var entries := _flora_basket_entries(composition)
+    if entries.is_empty():
+        return ""
+    var parts: Array[String] = []
+    for entry in entries:
+        parts.append(FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
+    return FLORA_SHARE_SEPARATOR.join(parts)
+
+## The tile's basket as display-ready rows — `{species, display_name, percent, can_cultivate, can_sow}`
+## in WIRE ORDER (share DESC, then species key ASC; never re-sorted here), with the rounding already
+## resolved. THE ONE decomposition of the composition list: the "What grows here" row and the crop
+## picker both read it, so the percentage a plant shows in the picker can never disagree with the
+## percentage the row shows for that same plant.
+##
+## THE PERCENTAGES ALWAYS SUM TO 100 — rounding each share independently can total 99 or 101 (a
+## decomposition that visibly fails to decompose), so the remainder is folded into the LARGEST share,
+## i.e. the first entry, where a ±1 is proportionally smallest. `can_cultivate` / `can_sow` are the
+## species-GLOBAL rung legality flags; a plant that is on this tile but carries neither still gets a
+## row, because its presence is a fact about the land.
+func _flora_basket_entries(composition: Variant) -> Array[Dictionary]:
+    var entries: Array[Dictionary] = []
     if not (composition is Array):
-        return ""
-    var shares: Array = composition
-    if shares.is_empty():
-        return ""
-    var names: Array[String] = []
-    var percents: Array[int] = []
+        return entries
     var total := 0
-    for entry_variant in shares:
+    for entry_variant in composition:
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
@@ -8619,16 +8971,24 @@ func _flora_composition_text(composition: Variant) -> String:
         if name == "":
             continue
         var percent := int(round(float(entry.get("share", 0.0)) * FLORA_SHARE_PERCENT_TOTAL))
-        names.append(name)
-        percents.append(percent)
         total += percent
-    if names.is_empty():
-        return ""
-    percents[0] += FLORA_SHARE_PERCENT_TOTAL - total
-    var parts: Array[String] = []
-    for i in names.size():
-        parts.append(FLORA_SHARE_FORMAT % [names[i], percents[i]])
-    return FLORA_SHARE_SEPARATOR.join(parts)
+        entries.append({
+            "species": String(entry.get("species", "")).strip_edges(),
+            "display_name": name,
+            "percent": percent,
+            "can_cultivate": bool(entry.get("can_cultivate", false)),
+            "can_sow": bool(entry.get("can_sow", false)),
+            "cultivate_yield_ratio": float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE)),
+            "sow_yield_ratio": float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE)),
+            # Carried through so the compose sheet's "→ then" term can quote the SELECTED crop's own
+            # payoff; without these the row renders a correct ratio above a forecast that ignores it.
+            "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
+            "sow_payoff": float(entry.get("sow_payoff", 0.0)),
+        })
+    if entries.is_empty():
+        return entries
+    entries[0]["percent"] = int(entries[0]["percent"]) + FLORA_SHARE_PERCENT_TOTAL - total
+    return entries
 
 ## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
 ## is still going in. Matched on the label from `_field_label`, mirroring `_cultivation_value_hex`.

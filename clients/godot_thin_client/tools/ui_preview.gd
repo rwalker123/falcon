@@ -451,6 +451,20 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
+	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow (flora roster S1).
+	# The "What grows here" basket row is REPLACED by a single `Crop: Wild Emmer` row: committing
+	# displaces the rest of the basket, so the tile is one plant now and stating both would name
+	# plants that no longer grow here. Compare side by side with `food_tile.png`, which is the
+	# uncommitted basket (and the 101%-rounding test) — the two frames differ in exactly that row.
+	_hud.show_tile_selection(_committed_crop_tile_fixture())
+	_compose_forage(_committed_crop_tile_fixture())
+	await _settle()
+	await _save("food_tile_crop")
+
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+
 	# State 2-forecast — the same food tile with the Foragers stepper parked AT the forecast cap
 	# (3 = the Sustain ceiling's max-useful workers, below the band's 10 idle): the `+` button is
 	# DISABLED, the "max 3 workers useful here — more would be idle" note explains why, and the
@@ -598,6 +612,152 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_cultivate")
 
+	# State 2-crop-picker — THE CROP PICKER (flora roster S1), on the longest basket the sim produces
+	# (5 named plants). Under 🌱 Cultivate the selection must land on the HIGHEST-SHARE LEGAL row —
+	# Wild Emmer 34%, which is also the sim's own default — while River Fish and Oak Mast stay VISIBLE
+	# and greyed (they climb no rung), and Ground Nut 14% stays fully pressable: a small share is a bad
+	# choice, not an illegal one. Judge legibility + fit here, not on the 3-entry reference tile.
+	_hud.show_tile_selection(_long_basket_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_species = ""
+	_compose_forage(_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker")
+
+	# THE COMMIT BUTTON MUST STAY ON SCREEN. A picker that pushes `Forage` below the sheet's fold is
+	# worse than the problem the picker solved, so the picker's list scrolls WITHIN itself
+	# (FLORA_CROP_LIST_MAX_HEIGHT) rather than growing the sheet. Asserted on the LONGEST basket, the
+	# only case that can trip it: the sheet's own ScrollContainer must have nothing left to scroll.
+	var sheet_scroll: ScrollContainer = _hud._compose_sheet._scroll
+	var sheet_overflow: float = sheet_scroll.get_v_scroll_bar().max_value - sheet_scroll.size.y
+	print("ui_preview: compose sheet overflow = %.1f (card %.1f)" % [
+		sheet_overflow, _hud._compose_sheet._card.size.y])
+	_assert_hud("a 5-plant crop picker leaves the Forage button on screen (sheet does not scroll)",
+		sheet_overflow <= 1.0)
+	# The height that bought those rows came from collapsing the OTHER rung's reasons — but ONLY while a
+	# COMMITTING rung is composed. Assert both halves here: Sow (not composed) is one short locked line,
+	# and its prerequisites are no longer spelled out on the card.
+	_assert_hud("composing Cultivate collapses the locked Sow rung to one line",
+		_has_label_containing(_hud._compose_sheet, "locked ("))
+	_assert_hud("…and that rung's full prerequisites leave the card",
+		not _has_label_containing(_hud._compose_sheet, "Seed Selection"))
+
+	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE FORECAST. The "→ then" term used to quote
+	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
+	# appeared to change nothing above it. These two frames are the SAME tile with a DIFFERENT crop
+	# selected; the assertion is that the forecast line differs between them, which is the only thing
+	# that proves the substitution is wired to the selection rather than rendered once.
+	_hud._forage_assign_count = 1
+	_hud._forage_assign_species = "wild_emmer"
+	# The ARROW, not the bare word: the Cultivate policy hint on the same card also says "then".
+	_compose_forage(_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_then_emmer")
+	var then_emmer := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+
+	_hud._forage_assign_species = "ground_nut"
+	_compose_forage(_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_then_groundnut")
+	var then_groundnut := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+	print("ui_preview: then-term  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
+	_assert_hud("the forecast's 'then' payoff tracks the SELECTED crop",
+		then_emmer != "" and then_groundnut != "" and then_emmer != then_groundnut)
+	_hud._forage_assign_species = ""
+
+	# State 2-crop-marginal — the ALL-MARGINAL tile (RollingHills' real ratios). Every legal crop is
+	# below 1.0×, so the whole list is warn-inked and the hint says why — and every row stays PRESSABLE.
+	# The ratio is here to stop a bad idea being invisible, never to forbid it.
+	_hud.show_tile_selection(_marginal_basket_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_species = ""
+	_compose_forage(_marginal_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_marginal")
+
+	# State 2-crop-overlong — THE SCROLL'S OWN FRAME. A SYNTHETIC 8-plant basket, longer than any tile
+	# the sim can produce, so the picker's internal list actually scrolls: the visible-row cap is set so
+	# every SHIPPED basket fits whole, which would otherwise leave this path rendered by nothing. The
+	# `Forage` button must still be on screen — that is what the cap protects, at any basket length.
+	_hud.show_tile_selection(_overlong_basket_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_species = ""
+	_compose_forage(_overlong_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker_overlong")
+	var overlong_scroll: ScrollContainer = _hud._compose_sheet._scroll
+	print("ui_preview: overlong-basket sheet overflow = %.1f (card %.1f)" % [
+		overlong_scroll.get_v_scroll_bar().max_value - overlong_scroll.size.y,
+		_hud._compose_sheet._card.size.y])
+	_assert_hud("an 8-plant crop picker still leaves the Forage button on screen",
+		overlong_scroll.get_v_scroll_bar().max_value - overlong_scroll.size.y <= 1.0)
+
+	# ---- THE TWO ZERO-WORKER SUBMITS (playtest defect) -------------------------------------------
+	# `workers == 0` means two different things depending on whether this band already works the tile,
+	# and the button + the forecast line have to agree in BOTH. These frames are judged as a PAIR.
+	#
+	# State 2-unstaffed (A) — 0 foragers on a tile this band does NOT work. Pressing Forage would send a
+	# command that changes nothing, so the button is DISABLED and still reads `Forage`; the forecast
+	# drops the "Preparing: +0.00 → then +1.20" promise (an unstaffed build meter never advances, so
+	# that sequence cannot arrive) and states the payoff as a condition instead. The payoff NUMBER stays
+	# — it is how the player decides the tile is worth staffing at all.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._forage_assign_key = ""
+	_hud.show_tile_selection(_food_tile_fixture())
+	# The FIRST compose settles the source key; the policy and count must be set after it, because a
+	# source change re-seeds both from the band's standing assignment and would overwrite them.
+	_compose_forage(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_count = 0
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("forage_unstaffed")
+	var unstaffed_btn := _find_button_by_text(_hud._compose_sheet, "Forage")
+	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
+		unstaffed_btn != null and unstaffed_btn.disabled)
+	_assert_hud("…and the forecast drops the 'then' promise it cannot keep",
+		not _has_label_containing(_hud._compose_sheet, "Preparing:"))
+	_assert_hud("…while still showing what the tile would pay once prepared",
+		_has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+
+	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
+	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
+	# gone — it would contradict the button. What abandoning costs is already on the card in the
+	# Cultivate policy hint ("It must stay staffed or it goes feral").
+	_hud._player_band = _cultivating_forage_band_fixture()
+	_hud._forage_assign_key = ""
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._forage_assign_count = 0
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("forage_unassign")
+	var unassign_btn := _find_button_by_text(_hud._compose_sheet, "Unassign")
+	_assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
+		unassign_btn != null and not unassign_btn.disabled)
+	_assert_hud("…and does not also tell the player to assign foragers",
+		not _has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+
+	# Restore the unassigned near band for the frames that follow.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_count = 1
+
+	# State 2-crop-committed — the patch has already committed, and commitment is one-way until it
+	# lapses: the picker is replaced by a locked READOUT naming the crop, so the UI cannot imply a
+	# switch the sim will refuse.
+	_hud.show_tile_selection(_committed_crop_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_compose_forage(_committed_crop_tile_fixture())
+	await _settle()
+	await _save("forage_crop_committed")
+
+	_hud._forage_assign_policy = "cultivate"
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+
 	# State 2-cultivate-stressed — knowledge known, but the patch is ⚠ Stressed: Cultivate stays visible
 	# and greyed with the OTHER reason — "Patch is Stressed — ease workers off and let it regrow to
 	# Thriving" (the ecology gate, not the knowledge one). The remedy is deliberately NOT "Sustain it":
@@ -620,6 +780,15 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_sow_locked")
+	# THE BLAST-RADIUS GUARD for the collapse. This frame exists to show a NON-composed rung's full
+	# prerequisites — two reasons a player must tell apart, one fixed by practice and one only by moving
+	# — while composing Sustain. Sustain commits nothing, so no crop picker competes for the height and
+	# the collapse must NOT fire here. If this ever reads "locked (2 requirements unmet)", the opt-in has
+	# leaked out of the committing rungs and this frame's whole subject is in a tooltip.
+	_assert_hud("a non-committing compose still spells out a locked rung's prerequisites",
+		_has_label_containing(_hud._compose_sheet, "Seed Selection"))
+	_assert_hud("…and does not collapse it to a one-liner",
+		not _has_label_containing(_hud._compose_sheet, "locked ("))
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").
@@ -655,6 +824,17 @@ func _ready() -> void:
 	_compose_forage(_sowable_tile_fixture())
 	await _settle()
 	await _save("forage_sow")
+
+	# State 6b-crop-picker-sow — THE SAME long basket as `forage_crop_picker`, one rung up, on ground
+	# that will take seed. `can_sow` is a DIFFERENT flag from `can_cultivate`, so only Wild Emmer stays
+	# legal here and Hazel/Ground Nut join the greyed rows: the two frames side by side are what prove
+	# the gate reads the composed rung's own flag rather than one "can be farmed" bit.
+	_hud.show_tile_selection(_sowable_long_basket_tile_fixture())
+	_hud._forage_assign_policy = "sow"
+	_hud._forage_assign_species = ""
+	_compose_forage(_sowable_long_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker_sow")
 
 	# State 6b-sowing — the rung-3 BUILD meter: the Field row reads "Sowing 45%", following the pen's
 	# "Building 40%" / the fence's "Fencing 60%" convention. It sits BESIDE the "Cultivation 🌾 Tended
@@ -987,6 +1167,14 @@ func _ready() -> void:
 	_compose_herd(_taming_herd_fixture())
 	await _settle()
 	await _save("two_meter_split")
+	# THE HERD-SIDE BLAST-RADIUS GUARD. `_build_policy_picker` is SHARED with the hunt/expedition pickers,
+	# and this frame's whole subject is the gated Corral's reason line — naming the knowledge, its live
+	# percent and the practice that fills it — while TAME is the composed rung. The collapse is opt-in and
+	# only the forage compose opts in, so the hunt picker must be byte-for-byte unchanged.
+	_assert_hud("the hunt picker still spells out the gated Corral's reason (collapse is forage-only)",
+		_has_label_containing(_hud._compose_sheet, "Penning"))
+	_assert_hud("…and collapses nothing on the herd side",
+		not _has_label_containing(_hud._compose_sheet, "locked ("))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Market/Eradicate/Corral, ENABLED (Herding is known) and selected on a
@@ -2419,6 +2607,38 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 			return found
 	return null
 
+## Does any Label under `root` contain this text? The gate-reason assertions' instrument: a reason that
+## has been COLLAPSED into a tooltip is no longer any label's text, so this tells a spelled-out
+## prerequisite from a one-line "locked (N requirements unmet)" summary.
+## The text of the first Label under `root` containing `needle` — "" when there is none. Lets a frame
+## assert on a value that must CHANGE (the forecast's "→ then" term) rather than merely be present.
+## The forecast's dip→payoff arrow. Deliberately NOT the bare word "then": the Cultivate policy hint
+## rendered on the same card ("…then a much higher tended yield") contains it too.
+const FORECAST_THEN_NEEDLE := "→ then"
+## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
+const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
+
+func _label_text_containing(root: Node, needle: String) -> String:
+	if root == null:
+		return ""
+	if root is Label and (root as Label).text.contains(needle):
+		return (root as Label).text
+	for child in root.get_children():
+		var found := _label_text_containing(child, needle)
+		if found != "":
+			return found
+	return ""
+
+func _has_label_containing(root: Node, text: String) -> bool:
+	if root == null:
+		return false
+	if root is Label and (root as Label).text.contains(text):
+		return true
+	for child in root.get_children():
+		if _has_label_containing(child, text):
+			return true
+	return false
+
 func _find_button_by_text(root: Node, text: String) -> Button:
 	if root == null:
 		return null
@@ -2769,6 +2989,20 @@ func _forage_range_bands() -> Array:
 ## INDEPENDENT flags the summary shares with a Band-panel Current-actions row: `overdraws` true (a
 ## Market patch drawing past regrowth — the ecological ⚠) AND 4 workers where 2 are needed (the labor
 ## "· only 2 of 4 working" note). `realized_yield` is the steady average the summary headlines.
+## The near band of `_forage_range_bands`, ALREADY WORKING the (66,10) food tile at a MODEST staffing —
+## the fixture behind the compose sheet's UNASSIGN state. Deliberately separate from
+## `_standing_forage_band_fixture`, whose assignment is tuned to trip the drawer summary's overdraw and
+## overstaff flags; this one is a plain, healthy Cultivate crew, so the unassign frame is judged on the
+## button/forecast pair and nothing else.
+func _cultivating_forage_band_fixture() -> Dictionary:
+	var band: Dictionary = _forage_range_bands()[0]
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": 1, "target_x": 66, "target_y": 10, "policy": "cultivate",
+		"actual_yield": 0.24, "sustainable_yield": 0.96, "realized_yield": 0.24,
+		"workers_needed": 1, "overdraws": false,
+	}]
+	return band
+
 func _standing_forage_band_fixture() -> Dictionary:
 	var band: Dictionary = _forage_range_bands()[0]
 	band["labor_assignments"] = [{
@@ -3171,10 +3405,28 @@ func _food_tile_fixture() -> Dictionary:
 		# into. Wire order (share DESC, then species key ASC) is preserved verbatim by the card.
 		# The shares are chosen so NAIVE rounding totals 101% (46 + 30 + 25): the card must absorb the
 		# remainder into the largest share and render 45 / 30 / 25 — this fixture IS the rounding test.
+		# `can_cultivate` / `can_sow` are SPECIES-GLOBAL rung legality (flora roster S1), deliberately
+		# mixed here so the crop picker has a greyed row in every frame: Oak Mast climbs nothing (a wild
+		# harvest forever) and Ground Nut tends but never sows. `*_yield_ratio` is what committing PAYS
+		# relative to gathering wild, on the CORRECTED scale (the sim's ratio omitted
+		# `tended_regrowth_gain`, understating every Cultivate figure by exactly 2×) — so above 1.0 is
+		# now the NORM and these read: a strong crop (2.40×), an honest middle one (1.70×) and the 0
+		# sentinel on the greyed rows. `*_payoff` is the same rung's provisions/turn committed to THAT
+		# species, and it is what the compose sheet's "→ then" term quotes once a crop is picked: the two
+		# rows differ (1.20 vs 0.85), which is what makes the selection visibly move the forecast.
 		"patch_composition": [
-			{"species": "wild_grain", "display_name": "Wild Grain", "share": 0.455},
-			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.295},
-			{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.25},
+			{"species": "wild_grain", "display_name": "Wild Grain", "share": 0.455,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
+				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
+			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.295,
+				"can_cultivate": true, "can_sow": false,
+				"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.85, "sow_payoff": 0.0},
+			{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.25,
+				"can_cultivate": false, "can_sow": false,
+				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		],
 		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
 		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
@@ -3196,6 +3448,127 @@ func _climate_tile_fixture(temperature: float, terrain_label: String) -> Diction
 	var tile := _food_tile_fixture()
 	tile["temperature"] = temperature
 	tile["terrain_label"] = terrain_label
+	return tile
+
+
+## A patch a band has COMMITTED to one crop (flora roster S1) — the `_food_tile_fixture` basket, plus
+## the two committed fields the sim sets when Cultivate/Sow takes. It deliberately KEEPS the
+## composition list: the wire still carries the biome's basket, and the card must choose the Crop row
+## over it rather than merely fall back to it when the basket is absent.
+func _committed_crop_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["patch_committed_species"] = "wild_emmer"
+	tile["patch_committed_display_name"] = "Wild Emmer"
+	return tile
+
+## The LONGEST basket the sim can produce — a navigable hex blends the valley's basket with the
+## channel's fishery, so five named plants can share one tile (RollingHills carries four). The crop
+## picker must fit and stay legible at that length, which is why the sizing case gets its own fixture
+## rather than being judged on the 3-entry reference tile.
+func _long_basket_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["patch_composition"] = [
+		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.34,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
+		{"species": "hazel", "display_name": "Hazel", "share": 0.24,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 1.34, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.67, "sow_payoff": 0.0},
+		{"species": "river_fish", "display_name": "River Fish", "share": 0.18,
+			"can_cultivate": false, "can_sow": false,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.14,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
+		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.10,
+			"can_cultivate": false, "can_sow": false,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+	]
+	return tile
+
+## THE ALL-MARGINAL TILE — RollingHills' real numbers: every crop it can grow yields LESS than simply
+## gathering the tile wild (Hazel 0.67, Wild Emmer 0.60, Wild Tubers 0.49, Berry Scrub 0.35). Nothing
+## is illegal and nothing is disabled — the whole list is warn-inked and every row is still pressable,
+## because "this land is not worth farming" is a verdict the player must be able to read AND overrule.
+## SYNTHETIC — NOT A REAL TILE. Eight named plants, longer than any basket the sim can produce today
+## (the longest real one is the 5-plant navigable-hex blend). Its ONLY job is to keep the crop picker's
+## internal scroll RENDERED: the visible-row cap is set so every SHIPPED basket fits without scrolling,
+## which would otherwise leave that path unexercised by any frame until F5 lengthens the roster and
+## someone discovers it rotted. Do not treat these species or shares as a balance reference.
+func _overlong_basket_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["terrain_label"] = "Rolling Hills"
+	tile["patch_composition"] = [
+		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.22,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
+		{"species": "hazel", "display_name": "Hazel", "share": 0.17,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 2.20, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 1.10, "sow_payoff": 0.0},
+		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.14,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.85, "sow_payoff": 0.0},
+		{"species": "river_fish", "display_name": "River Fish", "share": 0.13,
+			"can_cultivate": false, "can_sow": false,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.11,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 1.44, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.72, "sow_payoff": 0.0},
+		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.09,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
+		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.08,
+			"can_cultivate": false, "can_sow": false,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+		{"species": "marsh_reed", "display_name": "Marsh Reed", "share": 0.06,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.70, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.35, "sow_payoff": 0.0},
+	]
+	return tile
+
+
+func _marginal_basket_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["terrain_label"] = "Rolling Hills"
+	tile["patch_composition"] = [
+		{"species": "hazel", "display_name": "Hazel", "share": 0.34,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.94, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.47, "sow_payoff": 0.0},
+		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.28,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.84, "sow_yield_ratio": 1.26,
+			"cultivate_payoff": 0.42, "sow_payoff": 0.63},
+		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.22,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.68, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.34, "sow_payoff": 0.0},
+		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.16,
+			"can_cultivate": true, "can_sow": false,
+			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.25, "sow_payoff": 0.0},
+	]
+	return tile
+
+## The same long basket on ground that will actually take seed — `Sow` is gated on the site, so the
+## crop picker's rung-3 frame needs the sowable tile, not the reference one (a refused Sow falls back
+## to Sustain and the picker would not render at all).
+func _sowable_long_basket_tile_fixture() -> Dictionary:
+	var tile := _sowable_tile_fixture()
+	tile["patch_composition"] = _long_basket_tile_fixture()["patch_composition"]
 	return tile
 
 

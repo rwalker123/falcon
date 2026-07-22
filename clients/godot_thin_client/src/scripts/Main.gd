@@ -528,7 +528,15 @@ func _on_hud_assign_labor(payload: Dictionary) -> void:
             var fpolicy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
             if fpolicy == "":
                 fpolicy = "sustain"
-            line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_bits, fx, fy, fpolicy, workers]
+            # The crop selection (Flora Roster S1) is the SECOND optional token and the worker count is
+            # always last: `forage <x> <y> [policy] [species] <workers>`. It can only ride a line that
+            # already carries a policy (policy comes first), which the client always sends; an empty
+            # species is simply omitted, and the sim then commits to the tile's dominant legal plant.
+            var fspecies := String(payload.get("species", "")).strip_edges().to_lower()
+            if fspecies == "":
+                line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_bits, fx, fy, fpolicy, workers]
+            else:
+                line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_bits, fx, fy, fpolicy, fspecies, workers]
             message = "Assign %d forager%s to (%d, %d) (%s)." % [workers, "" if workers == 1 else "s", fx, fy, fpolicy]
         "hunt":
             var herd_id := String(payload.get("herd_id", "")).strip_edges()

@@ -481,6 +481,22 @@ pub struct ForagePatchState {
     /// species key ASC).
     #[serde(default)]
     pub composition: Vec<FloraShareInfo>,
+    /// **Which ONE named plant this patch has been committed to** (Flora Roster S1) — the stable
+    /// `flora_config.json` species key. **`""` means the wild mixed basket, not "unknown"**: it is a
+    /// positive statement that the patch is gathered as the whole [`Self::composition`] above.
+    ///
+    /// Set on the first turn a crew works the patch under `Cultivate`/`Sow`, and cleared when both
+    /// improvement meters lapse to zero (the patch goes fully feral). **Recorded before it takes
+    /// effect** — a patch still being prepared names its crop here while still carrying the tile's
+    /// full capacity and converting at the wild rate; both halves switch on when the rung completes
+    /// (`docs/plan_flora_roster.md` §4.3). Appended (append-only).
+    #[serde(default)]
+    pub committed_species: String,
+    /// The player-facing name of [`Self::committed_species`], resolved server-side because the client
+    /// holds no roster — exactly as [`FloraShareInfo::display_name`] is. `""` alongside an empty
+    /// species key. Appended (append-only).
+    #[serde(default)]
+    pub committed_display_name: String,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].
@@ -492,6 +508,65 @@ pub struct FloraShareInfo {
     pub display_name: String,
     /// This plant's fraction of the tile's basket, `0..1`.
     pub share: f32,
+    /// **May a `Cultivate` commit a patch to this plant** (rung 2) — the species' own
+    /// `cultivation_ceiling.allows_cultivate()`. Shipped for the reason [`Self::display_name`] is:
+    /// the client holds no roster, so it cannot tell that oak mast is a wild harvest forever.
+    ///
+    /// **Species-global, not tile-specific** — the ceiling is a property of the plant, so it reads
+    /// the same on every tile hosting it and cannot drift from a per-tile rule. The *other* half of
+    /// legality ("does it grow here") is this entry existing in the tile's composition at all.
+    ///
+    /// It answers *"can this plant ever climb this rung"*, **not** *"is this a good idea here"* —
+    /// [`Self::share`] answers that. Committing to a marginal-share plant is legal and is a real
+    /// loss, and that loss is the decision the rung exists to make
+    /// (`docs/plan_flora_roster.md` §4.3). Appended (append-only).
+    #[serde(default)]
+    pub can_cultivate: bool,
+    /// **May a `Sow` commit a patch to this plant** (rung 3) — `cultivation_ceiling.allows_sow()`.
+    /// The rung-3 twin of [`Self::can_cultivate`], same reading, same caveats. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub can_sow: bool,
+    /// **What committing this tile to this plant pays, against just gathering it wild, at the tended
+    /// rung** — `min(1, share × tended_concentration_gain) × species_rate ÷
+    /// forage.provisions_per_biomass` (`docs/plan_flora_roster.md` §4.3).
+    ///
+    /// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a **loss the player stays
+    /// free to choose**, which is the decision the rung exists to make — never clamped, never hidden.
+    /// A *ratio against the wild basket*, not an absolute yield: it folds in both the plant's share
+    /// of this tile and the plant's own conversion rate, which is why it is shipped instead of the
+    /// raw rate (half the answer, and the rest of the formula would drift client-side).
+    ///
+    /// `0` means **cannot climb this rung**, mirroring [`Self::can_cultivate`] — distinct from a real
+    /// ratio of `0`, which cannot occur. Appended (append-only).
+    #[serde(default)]
+    pub cultivate_yield_ratio: f32,
+    /// The Field-rung twin of [`Self::cultivate_yield_ratio`] — same reading, on
+    /// `field_concentration_gain` and `allows_sow`. Its own field because the two rungs differ in
+    /// *both* gain and legality, so one number would be ambiguous about which rung it answers.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub sow_yield_ratio: f32,
+    /// **Provisions/turn this tile would pay once the tended rung is complete and committed to this
+    /// plant** — the same units and output-multiplier convention as
+    /// [`ForagePatchState::tended_yield`], so the client can substitute one for the other with no
+    /// arithmetic of its own.
+    ///
+    /// **Per species, because the shipped per-patch quotes are species-blind**: they read whatever
+    /// the patch is already committed to (usually nothing), so a player comparing crops sees one
+    /// number for every option. Produced by the same payoff function the sim pays the rung with,
+    /// against the patch the sim would have — this tile's own `K` concentrated by the rung, at the
+    /// standing crop that rung settles at — so it answers *"what does this ground pay once the crop
+    /// is established"* rather than pricing a 25-turn investment off one transient turn. `0` where
+    /// the plant cannot climb the rung.
+    /// [`Self::cultivate_yield_ratio`] is exactly this over the tile's wild payoff. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub cultivate_payoff: f32,
+    /// The Field-rung twin of [`Self::cultivate_payoff`] — the counterpart of
+    /// [`ForagePatchState::field_yield`]. Appended (append-only).
+    #[serde(default)]
+    pub sow_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -661,6 +736,17 @@ pub struct ForageState {
     /// rewinds a half-sown field rather than losing the investment.
     #[serde(default)]
     pub field_progress: f32,
+    /// **The named plant this patch is COMMITTED to** (Flora Roster S1) — a `flora_config.json`
+    /// species key, or `""` for the wild mixed basket. Set on the first turn a crew works the patch
+    /// under `Cultivate`/`Sow`, cleared when both improvement meters lapse to zero (the patch goes
+    /// fully feral and the tile returns to its wild basket).
+    ///
+    /// **Persisted because it is authoritative state, not a derivation**: the commitment decides
+    /// both the patch's effective carrying capacity (concentration) and its biomass→provisions rate
+    /// (conversion), so a rollback that lost it would rewind a farm into a differently-shaped one.
+    /// `""` rather than an `Option` for the same reason `fauna_id` is a bare `String` here.
+    #[serde(default)]
+    pub species: String,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -1928,6 +2014,13 @@ pub struct LaborAssignmentState {
     pub fauna_id: String,
     #[serde(default)]
     pub policy: String,
+    /// **Which named plant a Forage assignment asks a `Cultivate`/`Sow` to commit its patch to**
+    /// (Flora Roster S1) — a `flora_config.json` species key, or `""` for *"pick the tile's
+    /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::policy`]: it rides the
+    /// rollback record so a rewind restores the selection the player made, not a re-picked one.
+    /// Empty on every non-Forage row. Appended (append-only).
+    #[serde(default)]
+    pub species: String,
     /// Provisions this source actually produced this turn (per-source food-income breakdown). Derived
     /// per-turn at capture (0.0 on a rehydrated save before the next tick). Appended (append-only).
     #[serde(default)]
@@ -4197,6 +4290,9 @@ fn create_forage_patches<'a>(
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         let composition = create_flora_shares(builder, &patch.composition);
+        // The committed crop (S1) — both empty when the patch is the wild mixed basket.
+        let committed_species = builder.create_string(patch.committed_species.as_str());
+        let committed_display_name = builder.create_string(patch.committed_display_name.as_str());
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -4222,6 +4318,9 @@ fn create_forage_patches<'a>(
                 fieldYield: patch.field_yield,
                 sowSiteRefusal: Some(sow_site_refusal),
                 composition: Some(composition),
+                // The committed crop — appended last (append-only wire).
+                committedSpecies: Some(committed_species),
+                committedDisplayName: Some(committed_display_name),
             },
         );
         entries.push(entry);
@@ -4245,6 +4344,15 @@ fn create_flora_shares<'a>(
                 species: Some(species),
                 displayName: Some(display_name),
                 share: share.share,
+                // Which rungs this plant can climb — appended last (append-only wire).
+                canCultivate: share.can_cultivate,
+                canSow: share.can_sow,
+                // Is committing this tile to this plant worth it — appended last (append-only wire).
+                cultivateYieldRatio: share.cultivate_yield_ratio,
+                sowYieldRatio: share.sow_yield_ratio,
+                // What it would actually pay — appended last (append-only wire).
+                cultivatePayoff: share.cultivate_payoff,
+                sowPayoff: share.sow_payoff,
             },
         );
         entries.push(entry);

@@ -186,10 +186,11 @@ terrain.
 - **rung 1 — a mix.** The wild patch holds the tile's basket: `Vec<(species, biomass, capacity)>`,
   or (cheaper) one biomass scalar plus the derived share table, since nothing draws the components
   down independently at rung 1.
-- **rung 2+ — a single species.** `Cultivate`/`Sow` commit the patch to one `species_id`; its
-  capacity becomes that species' share **times the rung's multiplier**. The rest of the basket is
-  displaced — *that is the cost of tending*, and it is why committing a rich mixed tile to one crop
-  is a real trade rather than a free upgrade.
+- **rung 2+ — a single species.** `Cultivate`/`Sow` commit the patch to one `species_id`. The rest
+  of the basket is displaced — *that is the cost of tending*, and it is why committing a rich mixed
+  tile to one crop is a real trade rather than a free upgrade. **How** it is priced is §4.3, which
+  corrects the sketch this bullet originally carried ("capacity becomes share × the rung's
+  multiplier" — that model is wrong, and §4.3 shows why).
 
 **Recommendation: the cheap shape.** Store one `Option<FloraSpeciesId>` on `ForagePatch` (`None` =
 wild mix) and derive the mix for display from the affinity table. A wild patch's biomass stays one
@@ -201,6 +202,96 @@ a **deferred** enrichment, noted in §9.
 patch is `None` — so shipping it early would be dead snapshot plumbing with a rollback path no test
 can exercise. F1 derives composition from the biome alone and adds no per-patch state; `Cultivate`/
 `Sow` introduce the field in F2, in the same slice that first sets it.
+
+---
+
+### 4.3 What committing costs and what it buys — **K belongs to the land**
+
+Settled during F2 planning, after the §4.2 sketch was worked through and found wrong. This is the
+plant-side statement of the principle the animal side already rests on
+(`plan_grazing_foundation.md` §2: *"K is not a property of the species. It is a property of the
+range."*), which the plant ladder never had:
+
+> **The land owns `K`. Rungs 1–3 redistribute it; only rung 4 (Worked Land) may raise it.**
+
+Farming does not make ground more productive — clearing, weeding and sowing *point the ground's
+existing productivity at you*. Raising `K` itself is irrigation, terracing, manuring: rung 4, by
+definition. This finally gives rung 4 a mechanical identity instead of "a later, bigger step".
+
+**Two terms, and only the second can pay.**
+
+- **Concentration** — committing pushes one species toward monopolising the tile's human-edible `K`,
+  bounded by how suited it is: `concentration = min(1.0, share × concentration_gain(rung))`.
+  A plant that is already most of the basket can fill the tile; a marginal one cannot without
+  inputs — which is, again, rung 4.
+- **Conversion** — the rung's *real* payoff. A tended stand of one known plant is more edible and
+  more harvestable per unit biomass: `provisions_per_biomass` rises. This is the yield vector §3
+  already ships.
+
+**Why concentration alone cannot be a rung payoff** (the error §4.2 originally encoded): it is
+capped at `K`, and a *wild* patch already yields the **whole basket** — the full `K`. So committing
+an alluvial tile to Wild Emmer (share 0.56) at any concentration gain yields `≤ 1.0 K` against
+wild's `1.0 K`, and tending would be a strict **downgrade**. Concentration can only ever redistribute
+what wild already gave you. **Tending must pay in conversion, or it does not pay.**
+
+So the trade is:
+
+```
+tended pays   tended_regrowth_gain × concentration × species_rate    vs.   wild pays   1.0 × base_rate
+```
+
+**The `tended_regrowth_gain` term is not decoration — it dominates, and omitting it was a real bug.**
+S1 first shipped this inequality *without* it (and a sweep test that "verified" the published ratio on
+a **capacity** basis, where `r` cancels — so the test shared the code's wrong assumption and passed
+vacuously). Every Cultivate ratio on screen was understated by exactly the gain (2.0): a delta tile
+showed `Sustain +0.64` / `Cultivate +1.28` in its policy chips while the crop row for the same tile
+claimed `0.9×`, i.e. that tending *loses*. Corrected, that crop is `1.8×`.
+
+The rule this produced, now in `core_sim/CLAUDE.md`: **assert a published quote against the payoff
+functions themselves, never against a re-derivation of their arithmetic** — and a test for a
+correctness bug must be shown to *fail* against the unfixed code before it is trusted.
+
+**What the corrected numbers say — and it is a finding for S2, not a crisis.** With the gain in,
+*almost everything is worth tending*: best-country ratios run 2.3–2.7×, and only two rows lose
+anywhere at all (berry_scrub 0.70 and wild_tubers 0.97, both on RollingHills). So the claim above —
+that a minor-share commitment is a **structural loss** — is **too strong as stated**: the gain swamps
+the concentration penalty. What survives is weaker but still real: *within one tile* the spread is
+large and the ranking matters (RollingHills offers hazel 1.35, wild_emmer 1.20, wild_tubers 0.97,
+berry_scrub 0.70 — best to worst is nearly 2×, and the bottom of the list does lose).
+
+This is precisely the double-count §4.3 predicted and handed to **S2**, now measured rather than
+suspected: `tended_regrowth_gain` 2.0 was carrying weight that concentration now carries explicitly.
+S2 decides whether the gain comes down until a marginal commitment genuinely loses again, or whether
+"every crop pays, but some pay far better" is the honest model. Do **not** settle that here — S1
+deliberately moves no payoff dial. `forage.provisions_per_biomass` (0.05) stays the **wild**
+rate — you gather the whole basket at the basket's average — so **rung 1 remains exactly as F1
+shipped it**, and the roster stays economy-neutral until you actually commit a patch.
+
+**Two corrections to the shipped payoff model, both settled here rather than deferred:**
+
+1. **`field_provisions_per_biomass` (0.02) was the right-shaped lever all along** — it is a
+   *conversion* rate. An earlier F2 draft called rung 3's "currency change" a smell and proposed
+   unifying it; **that was wrong and is withdrawn.** At rung 3 you control reproduction, so there is
+   no wild stock left to over-skim, the policy axis honestly collapses, and a flat managed rate on
+   the standing crop is correct. The `labor_config.rs` monotonicity guard is therefore policing a
+   *legitimate* difference between two currencies, not an inconsistency — it stays.
+2. **`tended_regrowth_gain` (2.0) is half right and needs a retune, not a deletion.** Freed from
+   competitors a stand genuinely does regrow faster toward its own ceiling, so the lever is not
+   fake — but once concentration is modelled *explicitly*, part of what the 2.0 was silently
+   standing in for is double-counted. **S2** retunes it, and restores a rung-2 conversion gain.
+   Note `tended_provisions_per_biomass` was tried and retired before, for a reason that does **not**
+   apply here: it turned rung 2 into a flat *managed rate*, collapsing the policy axis a rung before
+   the animal side does. A conversion gain and a managed rate are separable — rung 2 can pay a
+   better rate while still drawing its stock down and still being over-farmable.
+
+**Staging** (each slice measured before the next):
+
+- **S1** — species commitment + concentration + the yield vector as the conversion rate. Rung payoff
+  dials **untouched**, so any balance movement is attributable to the roster alone.
+- **S2** — retune rung 2 with competitor-removal now explicit (`tended_regrowth_gain` down; restore
+  a conversion gain without collapsing the drawdown axis).
+- **S3** — *a question, not a task.* Revisit rung 3's currency only if S1/S2 data says it is wrong;
+  the expectation after correction 1 is that this slice never happens.
 
 ---
 

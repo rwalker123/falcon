@@ -2547,6 +2547,140 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   covered by the `unexplored` redaction, and nothing on the patch can change it). ui_preview:
   `food_tile` / `tile_panel_land` (the fixture's shares naively round to 101%, so those frames ARE
   the rounding test) and `tile_panel_no_forage` (no list → no row).
+  **ONE ROW, TWO STATES — the COMMITTED crop** (Flora Roster S1, `docs/plan_flora_roster.md` §4.3;
+  `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
+  `forage_patches_to_array` as `committed_species` / `committed_display_name`, cross-refed by
+  `_tile_info_at` as `patch_committed_species` / `patch_committed_display_name`). Once a band works
+  the patch under `Cultivate`/`Sow` it **commits to a single crop and the rest of the basket is
+  displaced** — so the same row slot renders `Crop: Wild Emmer` (`FLORA_CROP_ROW`) **instead of** the
+  basket, never beside it: the tile is one plant now, and listing the wild mix would name plants that
+  no longer grow there. `committedSpecies == ""` means **the wild mixed basket**, not "unknown", so
+  the row switches on it rather than treating it as missing data. `Crop` is well under
+  `_split_detail_kv`'s 16-char key limit, so it aligns as a table row exactly like the key it
+  replaces. The composition list stays on the wire either way — the card CHOOSES, it does not fall
+  back. Committed-ness is patch STATE (unlike the biome-derived basket), but it needs no
+  `FOW_DISCOVERED_HIDDEN_KEYS` entry: the row sits under `Forage:`, past the discovered early-return,
+  so a remembered tile never reaches it. ui_preview: `food_tile_crop` (the committed twin of
+  `food_tile` — the two frames differ in exactly that row).
+- **The CROP PICKER — committing is a DECISION, not a server default** (Flora Roster S1,
+  `Hud._build_crop_picker` inside `_build_forage_assign_controls`; `FloraShareInfo.canCultivate` /
+  `canSow` → decoded beside `share` as `can_cultivate` / `can_sow`). It renders **only under the two
+  COMMITTING rungs** (`FLORA_COMMITTING_POLICIES` = Cultivate + Sow) — the extractive rungs gather the
+  whole basket and choose nothing, so a crop control there would be noise. One row per basket entry in
+  **wire order** (`Wild Emmer 34%`), sharing the F1 percentages through the extracted
+  `_flora_basket_entries` (the ONE decomposition of the composition list, rounding already resolved),
+  so the picker and the "What grows here" row can never quote different numbers for one plant.
+  **THE TWO FLAGS ARE SPECIES-GLOBAL** — "can this plant *ever* climb this rung", not "is this a good
+  idea here" — and the gate reads **the composed rung's own flag** (`_flora_entry_allows`), which is
+  why Hazel is pressable under Cultivate and greyed under Sow. An illegal entry stays **visible and
+  disabled with its reason in the tooltip, never hidden**: that a tile carries Oak Mast you cannot farm
+  is information about the LAND, and hiding it would make the tile read poorer than it is. **A
+  legal-but-marginal crop is NEVER disabled** — a 20%-share plant is a bad choice, not an illegal one,
+  and being free to make it is the decision §4.3 exists to create; only the two flags disable anything.
+  The selection (`_forage_assign_species`) is re-resolved **every render** by `_resolve_crop_selection`
+  — the player's pick while it is still legal on this tile+rung, else the **highest-share legal** entry,
+  which is the sim's own `default_species_for_rung`, so picking nothing and accepting the default behave
+  identically. `""` is always a valid thing to send (non-committing rung, nothing legal, or an
+  **already-committed** patch, which gets a locked read-only readout instead of an editable picker, since
+  the commitment is one-way until it lapses). It rides the existing emit path: `_emit_assign_labor` gained
+  a trailing `species` (defaulted `""`, so no other caller changed) → the payload → `Main` →
+  `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>` — the **second** optional token,
+  worker count always last, omitted entirely when empty.
+  **THE PAYOFF, BESIDE THE SHARE** (`cultivateYieldRatio` / `sowYieldRatio` → `cultivate_yield_ratio` /
+  `sow_yield_ratio`, read per rung by `_flora_entry_ratio`): a row reads `Wild Emmer 34% · 2.7×` —
+  what committing this tile to this plant yields **relative to gathering it wild**. The sim folds the
+  share AND the species' conversion rate into it through the same seams the real payout uses, so the
+  client only **formats** it (`FLORA_CROP_ROW_FORMAT`, one decimal — the question is "better or worse
+  than wild", not a second significant figure); **never do arithmetic on it here**, and note the raw
+  per-species rate is deliberately unpublished (meaningless alone, and it would put the payoff formula
+  in two places). Below `FLORA_CROP_BREAK_EVEN_RATIO` the row is **WARN-inked and fully pressable** —
+  the ratio exists to stop a bad idea being invisible, never to forbid it, so nothing is hidden,
+  clamped, sorted by or disabled on it. **`0` is the "cannot climb this rung" SENTINEL, not a number**
+  (a real ratio is never 0), so a row greyed by the climbability flags prints no ratio at all.
+  **ABOVE 1.0 IS THE NORM, so the verdict wording is keyed to 1.0 and never to an impression of the
+  numbers.** The sim's ratio once omitted `tended_regrowth_gain` and understated every Cultivate figure
+  by exactly 2× — a genuinely strong crop rendered `0.9×` over a tooltip calling it poor. Fixed sim-side;
+  best-country ratios now run 2.3–2.7×. The tooltip therefore has **three tiers**, all relative to
+  `FLORA_CROP_BREAK_EVEN_RATIO`: below it *"it loses to simply gathering here"*, at/above
+  `FLORA_CROP_STRONG_RATIO` *"strong ground for it"*, and the honest middle *"worth committing to"*.
+  Amber is now the exception rather than the rule on good ground, which is the intended read.
+  **AND THE `→ then` TERM FOLLOWS THE SELECTED CROP** (`cultivatePayoff` / `sowPayoff` →
+  `cultivate_payoff` / `sow_payoff`, carried through `_flora_basket_entries` and substituted by
+  `_forecast_for_selected_crop`). Without it the forecast quoted a species-BLIND patch, so committing to
+  Ground Nut displayed Wild Emmer's payoff and **the picker appeared to change nothing above it**. Same
+  units and output-multiplier convention as the forecast `payoff` it replaces, so this is a
+  **SUBSTITUTION, not a calculation** — do no arithmetic on it here. Only `payoff` is substituted; the
+  ceiling and per-worker rate still describe the PATCH, which is what caps the stepper. The picker's own
+  handler rebuilds the whole controls, so changing the crop moves the line on the same frame — pinned by
+  the `forage_crop_then_emmer` / `forage_crop_then_groundnut` pair, whose assertion is that the two
+  frames' forecast lines **differ** (`+1.35` vs `+0.45`); asserting the line merely *exists* would pass
+  against a hardcoded one. **Carrying the payoff through `_flora_basket_entries` is the load-bearing
+  half** — the substitution silently no-ops if the basket entry drops the field, which is exactly how it
+  first failed.
+  **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
+  (`FLORA_CROP_LIST_MAX_HEIGHT`, derived as `FLORA_CROP_LIST_VISIBLE_ROWS × row + separations`, with the
+  rows on the work board's compact idiom via `_compact_control` — default button chrome pads 9px top AND
+  bottom and makes the whole picker unaffordable). The ComposeSheet's `CARD_MAX_HEIGHT` is deliberately
+  NOT raised (that cap belongs to every compose card), so the picker lives in the room the sheet has
+  left. **Five rows, so NO SHIPPED BASKET EVER HIDES A CROP** — the longest a tile can carry today is 5
+  (the navigable-hex valley+fishery blend), and a picker that hides the best crop behind a scroll is the
+  guess the payoff ratio exists to remove. Measured: the worst realistic compose (5 plants under
+  Cultivate, Sow locked) lands the sheet at **528 of its 560 cap**. The cap is still a live guard, not
+  dead code — F5 refines this coarse roster into a fine-grained one and baskets lengthen — and
+  `forage_crop_picker_overlong` (a **synthetic 8-plant** tile, longer than any real one, labelled as such
+  in the fixture) keeps the scroll path RENDERED so it cannot rot unseen. The marginal-crop warning rides
+  each row's TOOLTIP rather than a standing hint line for the same budget reason (a line under the list
+  costs ~40px, and the commit button is what pays). **What bought the rows was collapsing the OTHER
+  rung's gate reasons — and that collapse is OPT-IN, deliberately narrow** (`_build_policy_picker`'s
+  trailing `collapse_other_gates`, default **false**): three wrapped paragraphs explaining why *Sow* is
+  refused while the player composes a *Cultivate* answer a question they did not ask and cost about a
+  third of the card, so the forage compose asks for the collapse **only while a COMMITTING rung is
+  selected** — i.e. exactly when the crop picker is on the card competing for height. **Every other
+  picker (hunt, expedition, work board) and every non-committing forage compose is unchanged**, because
+  spelled-out reasons are also how the ladder TEACHES: `forage_cultivate_locked`, `forage_sow_locked`,
+  `herd_corral_locked*` and `two_meter_split` all exist precisely to show a NON-composed rung's full
+  prerequisites, and a blanket collapse would put each of those frames' whole subject in a tooltip. When
+  it does fire, the other rung reads `▦ Sow — locked (2 requirements unmet)` with the full list in the
+  line's own tooltip (via `_set_label_tooltip` — a `Label` ignores the mouse by default, so a bare
+  `tooltip_text` there is a silent no-op). **Four ui_preview ASSERTIONS pin all of this** and must stay
+  green: `forage_crop_picker` asserts the sheet has nothing left to scroll (i.e. `Forage` is on screen —
+  it caught a 124px regression eyeballing would have shipped) **and** that the collapse fired where it
+  was bought; `forage_crop_picker_overlong` asserts the same at 8 plants; and `forage_sow_locked` +
+  `two_meter_split` assert the collapse did **not** leak — the blast-radius guard for the shared picker.
+  Change the row count and let the assertions answer, never assume. (Byte-diffing frames is **not** a
+  valid instrument here — the harness has time-based pulses, so most frames differ run to run.) ui_preview: `forage_crop_picker` (Cultivate, the 5-plant navigable-hex basket —
+  default lands on the highest-share legal row `1.4×`, a WARN `0.7×` still pressable, greyed rows with no
+  ratio, the list scrolling internally + the assertion) / `forage_crop_marginal` (the all-marginal
+  RollingHills tile — every legal crop below `1.0×`, all warn-inked, all pressable, the default still the
+  highest-share one) / `forage_crop_picker_overlong` (the SYNTHETIC 8-plant tile — the internal scroll's
+  only frame, plus its own on-screen-button assertion) / `forage_crop_picker_sow` (the SAME basket one rung up — only Wild Emmer survives
+  and reads `4.2×`, which is what proves both the gate and the ratio are per-rung) /
+  `forage_crop_committed` (the locked readout) / `forage_cultivate` (the 3-entry reference tile) /
+  `forage_crop_then_emmer` + `forage_crop_then_groundnut` (the selection-tracking PAIR).
+- **The forage compose's TWO ZERO-WORKER SUBMITS** (`_build_forage_assign_controls`; playtest defect,
+  pre-existing). `workers == 0` is the **sim's unassign** (`server.rs`: *"Unassigning (`workers == 0`) is
+  always allowed"*) and the Work zone's unassign paths depend on it, so the submit is gated on **"would
+  this change anything"**, never on a raw count — a client-side floor of 1 would fix the no-op and break
+  the unassign. `current` (pending-aware standing staffing on this tile for THIS band) splits the two,
+  and **the button and the forecast line must agree in each**:
+  - **0 and NOT currently assigned** → the command would do nothing: button **disabled**, still reading
+    `Forage`, and the forecast drops its `→ then` promise. `Preparing` is staffing-scaled while the
+    payoff is not, so an unstaffed row used to read `Preparing: +0.00 /turn → then +1.20 /turn` — a
+    sequence the player is explicitly NOT on track for, since an unstaffed build meter never advances.
+    It now states the payoff as a CONDITION (`INVESTMENT_FORECAST_UNSTAFFED_FORMAT` — *"Assign foragers
+    to begin — prepared, this pays +1.20 /turn"*), keeping the number, which is how you decide the tile
+    is worth staffing at all. The copy is deliberately SHORT — `Assign foragers — +1.20 /turn` — because
+    the moment one worker is on it the full `Preparing: … → then …` line renders anyway. It doubles as
+    the dead button's explanation, per the `_forecast_worker_cap` "a dead button is always explained"
+    precedent.
+  - **0 and currently assigned** → a real unassign: button **enabled**, renamed `Unassign`, and the
+    forecast row is **suppressed entirely** — "assign foragers to begin" above an `Unassign` button
+    tells the player two opposite things. No new warning was invented for it: what abandoning costs is
+    already on the card in the rung's own policy hint (*"It must stay staffed or it goes feral"*).
+  The unstaffed copy lives in the SHARED `_forecast_yield_row`, so the hunt/herd investment rungs get the
+  same fix; it takes a `crew_label` so the sentence names hunters/herders/foragers correctly. ui_preview:
+  `forage_unstaffed` / `forage_unassign`, each with assertions on the button state AND on the copy, so
+  the pair cannot drift back into contradicting itself.
 - **Tile-card Pasture rows — the ANIMAL-edible twin of Forage biomass** (`Hud._tile_terrain_lines`;
   Grazing Phase 2a, `docs/plan_grazing_foundation.md`). `TileState.grazeBiomass` / `grazeCapacity` /
   `grazeEcologyPhase` are decoded in `native/src/lib.rs tile_to_dict` (plain floats, not fixed-point;

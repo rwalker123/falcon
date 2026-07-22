@@ -21,18 +21,18 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, generate_hydrology,
-    rung_site_refusal, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_world, tile_forage_capacity, tile_is_fresh_watered, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory,
-    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig,
-    SimulationTick, SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
-    TileRegistry, WellbeingConfigHandle, FOOD, RUNG_TIMESCALE_UNSCALED,
-    SEED_SELECTION_DISCOVERY_ID,
+    advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
+    default_species_for_rung, generate_hydrology, rung_site_refusal, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_forage, spawn_initial_world, tile_flora_composition,
+    tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
+    RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -127,6 +127,8 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
@@ -226,6 +228,20 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
+/// The plant a `Sow` on this tile would commit to — the same `default_species_for_rung` answer the
+/// labor arm reaches, so a fixture can put a baseline patch on the *same* crop.
+fn default_sowable_species(app: &App, coord: UVec2) -> Option<String> {
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(coord.x, coord.y)?;
+    let ground = app.world.get::<Tile>(entity)?;
+    let composition = tile_flora_composition(&flora, &labor.forage, ground);
+    default_species_for_rung(&composition, &flora, RungKey::PlantField)
+}
+
 /// **Sowable ground with NO forage site** — the create-from-nothing target, *constructed*.
 ///
 /// **Read this before using it.** `Sow`'s headline case is qualifying ground carrying no forage site
@@ -284,6 +300,7 @@ fn spawn_forager(
                     target: LaborTarget::Forage {
                         tile: patch,
                         policy,
+                        species: None,
                     },
                     workers: FORAGE_WORKERS,
                 }],
@@ -586,15 +603,20 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
             .expect("the field rung is an investment")
     };
 
-    // The tended harvest this patch would pay if nobody were upgrading it.
+    // The tended harvest this patch would pay if nobody were upgrading it. **Committed to the same
+    // crop**: a Sow commits the ground to one named plant (Flora Roster S1), which changes its
+    // conversion rate, so an uncommitted baseline would be measuring the commitment rather than the
+    // rung's dip.
     let tended_yield = {
         let mut baseline = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut baseline);
+        let crop = default_sowable_species(&baseline, coord);
         {
             let mut registry = baseline.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
             patch.cultivation_progress = 1.0;
             patch.owner = Some(FactionId(0));
+            patch.species = crop;
         }
         spawn_forager(&mut baseline, tile, coord, FollowPolicy::Sustain);
         baseline.world.run_system_once(advance_labor_allocation);

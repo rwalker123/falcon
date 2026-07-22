@@ -33,6 +33,7 @@ pub fn advance_labor_allocation(
     sim_config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
+    flora_config: Res<FloraConfigHandle>,
     ladder_config: Res<LadderConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
@@ -41,6 +42,7 @@ pub fn advance_labor_allocation(
 ) {
     let fauna = fauna_config.get();
     let labor = labor_config.get();
+    let flora = flora_config.get();
     let ladder = ladder_config.get();
     let wellbeing = wellbeing_config.get();
     let hunt = &fauna.hunt;
@@ -121,7 +123,11 @@ pub fn advance_labor_allocation(
                 continue;
             }
             match &assignment.target {
-                LaborTarget::Forage { tile, policy } => {
+                LaborTarget::Forage {
+                    tile,
+                    policy,
+                    species,
+                } => {
                     // Out of range this turn → no yield, but keep the assignment (the band may
                     // move back into range).
                     if crate::grid_utils::hex_distance_wrapped(
@@ -175,6 +181,40 @@ pub fn advance_labor_allocation(
                             rung_site_refusal(field_rung, ground, &labor.forage, fresh_water)
                                 .is_none()
                         });
+                    // **WHICH NAMED PLANT this ground would be committed to** (Flora Roster S1,
+                    // `docs/plan_flora_roster.md` §4.3). Resolved through the *same*
+                    // `resolve_committed_species` seam the `assign_labor` rejection reads, so a
+                    // selection the command accepted can never be one the turn then refuses — and
+                    // through `tile_flora_composition`, never `FloraConfig::composition` on a raw
+                    // terrain, so a navigable hex is judged on the basket it actually has.
+                    //
+                    // `None` means **there is nothing here this rung can commit to**: either the
+                    // player's pick is illegal, or the whole basket's `cultivation_ceiling` stops
+                    // below this rung (an open-water fishery, an alpine peak). Either way the
+                    // investment simply does not accrue — you cannot farm what will not climb.
+                    let committing = matches!(policy, FollowPolicy::Cultivate | FollowPolicy::Sow)
+                        .then(|| {
+                            let rung = if matches!(policy, FollowPolicy::Sow) {
+                                RungKey::PlantField
+                            } else {
+                                RungKey::PlantTended
+                            };
+                            tiles.get(tile_entity).ok().and_then(|ground| {
+                                let composition =
+                                    tile_flora_composition(&flora, &labor.forage, ground);
+                                resolve_committed_species(
+                                    species.as_deref(),
+                                    &composition,
+                                    &flora,
+                                    rung,
+                                )
+                                .ok()
+                            })
+                        })
+                        .flatten();
+                    // A Field may only be placed on ground that grows something sowable — the
+                    // species half of "the land must take seed", beside the site half above.
+                    let sow_permitted = sow_permitted && committing.is_some();
                     // **`Sow` PLACES the source** (§2 — the one rung that needs no source below it:
                     // seed travels, unlike a herd you never tamed). The first turn a crew works
                     // sowable ground, the seed goes in and the patch exists from here on — at the
@@ -200,6 +240,14 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    // **The commitment, recorded once and fixed until the patch goes feral.** This is
+                    // the first turn a crew works this ground under Cultivate/Sow, so this is where
+                    // the tile stops being a mixed basket and becomes one named crop. It takes effect
+                    // (concentration + conversion) when the improvement *completes* — while the crew
+                    // is still clearing, the stand is still the basket it started as.
+                    if let Some(chosen) = committing.as_deref() {
+                        patch.commit_species(chosen);
+                    }
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung N+1.**
                     // One call, driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -224,6 +272,7 @@ pub fn advance_labor_allocation(
                     let forage_realized = crate::forage::project_realized_forage(
                         patch,
                         &labor.forage,
+                        &flora,
                         &ladder,
                         seasonal,
                         mult_f,
@@ -259,14 +308,14 @@ pub fn advance_labor_allocation(
                         // **Production**: what the Field offers this turn. Shared with the pre-commit
                         // forecast (`forage::forage_forecast`), so the client's "expected yield" is
                         // exactly what it is paid.
-                        let production = field_provisions(patch.biomass, &labor.forage, mult_f);
+                        let production = field_provisions(patch, &labor.forage, &flora, mult_f);
                         // **Collection**: what the crew can carry home — the *same* per-worker
                         // throughput a wild gather is capped by, at the seasonless managed weight (a
                         // Field's crop stands where you planted it). Rung 3 collapses the policy axis;
                         // it does NOT excuse you from the harvest. One worker used to collect the
                         // whole Field however rich it was.
-                        let collection =
-                            workers as f32 * managed_per_worker_yield(&labor.forage, mult_f);
+                        let collection = workers as f32
+                            * managed_per_worker_yield(patch, &labor.forage, &flora, mult_f);
                         let provisions = scalar_from_f32(production.min(collection));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
@@ -280,6 +329,7 @@ pub fn advance_labor_allocation(
                         let arrivals = crate::forage::project_arrivals_forage(
                             patch,
                             &labor.forage,
+                            &flora,
                             &ladder,
                             seasonal,
                             mult_f,
@@ -300,7 +350,7 @@ pub fn advance_labor_allocation(
                             wasted: (production - paid).max(0.0),
                             workers_needed: workers_needed_for_take(
                                 paid,
-                                managed_per_worker_yield(&labor.forage, mult_f),
+                                managed_per_worker_yield(patch, &labor.forage, &flora, mult_f),
                                 workers,
                             ),
                             // A managed rung-3 harvest cannot overdraw — no ⚠, whatever the policy.
@@ -314,6 +364,7 @@ pub fn advance_labor_allocation(
                         workers,
                         *policy,
                         &labor.forage,
+                        &flora,
                         &ladder,
                         mult_f,
                         seasonal,
@@ -344,7 +395,12 @@ pub fn advance_labor_allocation(
                         // rung's unlock knowledge (Cultivation) and the patch must be Thriving.
                         let eligible = tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
                             knows(&discovery, faction, knowledge, knowledge_threshold)
-                        }) && patch.ecology_phase == EcologyPhase::Thriving;
+                        }) && patch.ecology_phase == EcologyPhase::Thriving
+                            // **Nothing to tend if nothing here climbs.** A patch with no committed
+                            // plant is one whose basket the tended rung's `cultivation_ceiling`
+                            // refuses outright — the "not every plant climbs" ruling reaching the
+                            // build meter.
+                            && patch.species.is_some();
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
                         // side-effects of completing it.
@@ -445,6 +501,7 @@ pub fn advance_labor_allocation(
                     let arrivals = crate::forage::project_arrivals_forage(
                         patch,
                         &labor.forage,
+                        &flora,
                         &ladder,
                         seasonal,
                         mult_f,
@@ -460,7 +517,7 @@ pub fn advance_labor_allocation(
                         arrivals,
                         wasted: forage_provisions(
                             (production - take).max(0.0),
-                            &labor.forage,
+                            patch_provisions_per_biomass(patch, &flora, &labor.forage),
                             mult_f,
                         ),
                         workers_needed,
@@ -1250,6 +1307,7 @@ mod labor_yield_tests {
         SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
     };
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
+    use crate::flora_config::FloraConfig;
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
     use crate::forage::patch_ecology;
     use crate::forage::{
@@ -1301,6 +1359,7 @@ mod labor_yield_tests {
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::flora_config::FloraConfigHandle::default());
         world.insert_resource(LadderConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(FactionInventory::default());
@@ -1426,6 +1485,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         policy: FollowPolicy::Sustain,
+                        species: None,
                     },
                     workers: WORKERS,
                 },
@@ -1689,6 +1749,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -1772,6 +1833,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy: FollowPolicy::Eradicate,
+                    species: None,
                 },
                 workers: assigned,
             }],
@@ -1843,6 +1905,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2279,6 +2342,7 @@ mod labor_yield_tests {
                 let forecast = forage_forecast(
                     &patch,
                     &labor.forage,
+                    &FloraConfig::builtin(),
                     &LadderConfig::builtin(),
                     SEASONAL_WEIGHT,
                     NEUTRAL_OUTPUT_MULT,
@@ -2292,6 +2356,7 @@ mod labor_yield_tests {
                         target: LaborTarget::Forage {
                             tile: SOURCE,
                             policy,
+                            species: None,
                         },
                         workers,
                     }],
@@ -2439,6 +2504,7 @@ mod labor_yield_tests {
         let patch_forecast = forage_forecast(
             &patch,
             &labor.forage,
+            &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             SEASONAL_WEIGHT,
             NEUTRAL_OUTPUT_MULT,
@@ -2501,6 +2567,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: field_workers_needed,
             }],
@@ -2586,6 +2653,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2669,6 +2737,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         policy,
+                        species: None,
                     },
                     workers: WORKERS,
                 }],
@@ -2741,6 +2810,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2755,6 +2825,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2798,6 +2869,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2874,6 +2946,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -2895,6 +2968,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy: FollowPolicy::Cultivate,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -3111,6 +3185,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy: FollowPolicy::Cultivate,
+                    species: None,
                 },
                 workers: WORKERS,
             }],
@@ -3216,6 +3291,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     policy,
+                    species: None,
                 },
                 workers: WORKERS,
             }],

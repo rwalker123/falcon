@@ -48,6 +48,11 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
         x: patch.tile.x,
         y: patch.tile.y,
         field_progress: patch.field_progress,
+        // The species commitment (Flora Roster S1) — `""` is the wild mixed basket, the wire's
+        // `Option::None`. Persisted alongside the two improvement meters it belongs to: it decides
+        // both the patch's effective capacity and its conversion rate, so a rollback that lost it
+        // would rewind a farm into a differently-shaped one.
+        species: patch.species.clone().unwrap_or_default(),
         ecology: EcologyState {
             biomass: patch.biomass,
             carrying_capacity: patch.carrying_capacity,
@@ -346,6 +351,7 @@ pub(crate) fn herd_snapshot_entries(
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
+    flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
@@ -359,8 +365,14 @@ pub(crate) fn snapshot_forage_patches(
                 .get(&patch.tile)
                 .copied()
                 .unwrap_or(NO_FORAGE_SEASON);
-            let forecast =
-                forage_forecast(patch, forage, ladder, seasonal, FORECAST_OUTPUT_MULTIPLIER);
+            let forecast = forage_forecast(
+                patch,
+                forage,
+                flora,
+                ladder,
+                seasonal,
+                FORECAST_OUTPUT_MULTIPLIER,
+            );
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
@@ -385,7 +397,7 @@ pub(crate) fn snapshot_forage_patches(
                 field_progress: patch.field_progress,
                 is_field: patch.is_field(),
                 ceiling_sow: forecast.ceiling_sow,
-                field_yield: field_provisions(patch.biomass, forage, FORECAST_OUTPUT_MULTIPLIER),
+                field_yield: field_provisions(patch, forage, flora, FORECAST_OUTPUT_MULTIPLIER),
                 // **Why this ground will not take seed** — resolved by the caller through the *same*
                 // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
                 // the wire cannot disagree with the gate. Absent from the map = the land takes seed
@@ -401,6 +413,18 @@ pub(crate) fn snapshot_forage_patches(
                 composition: tile_compositions
                     .get(&patch.tile)
                     .cloned()
+                    .unwrap_or_default(),
+                // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
+                // wild mixed basket, a positive statement rather than "unknown". The display name is
+                // resolved here because the client holds no roster (the `FloraShareInfo::display_name`
+                // convention); a key the roster no longer knows ships an empty name rather than a
+                // fabricated one.
+                committed_species: patch.species.clone().unwrap_or_default(),
+                committed_display_name: patch
+                    .species
+                    .as_ref()
+                    .and_then(|key| flora.species.get(key))
+                    .map(|def| def.display_name.clone())
                     .unwrap_or_default(),
             }
         })
