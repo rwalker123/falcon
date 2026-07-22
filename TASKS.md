@@ -888,17 +888,42 @@ to add an animal whose fields fit the existing enums.**
     lot of with almost no labor**. That's a genuinely different answer to "how do I feed people", and it's
     the clearest test of whether the herder mechanic added in slice 8 earns its keep. **Deps: slice 8**
     (the lever must exist first). Verify it spawns (live `host_biomes` key + non-zero `abundance.per_biome`).
-- [~] **Fill out the rest of the start-game roster (config).** SHIPPED so far (worktree `fauna-roster`):
-  **Wild Reindeer** (boreal_arctic/montane_highland, `pastoral` — the northern migrator, grows the
-  herd-but-never-fence tier), **Wild Horse** (savanna_grassland/semi_arid_scrub, `pastoral` — the
-  dry-steppe migrator, distinct from grassland-only Steppe Runners), and **Grey Seals** (coastal_littoral,
-  `wild` — the first marine species, a non-grazing constant-K haul-out colony). STILL OPEN: more
-  **regional game** to give each biome a distinct fauna signature (many biomes still share a short game
-  list — scrub/highland/forest each want a signature short-range species, which needs an
-  `abundance.per_biome` entry). Manual-first (new gameplay content →
-  `shadow_scale_strategy_game_concept_technical_plan_v_0.md`), then the config entries. Verify each
-  actually spawns (live `host_biomes` key + non-zero `abundance.per_biome`) — an unmatched key silently
-  never spawns.
+- [x] **Fill out the rest of the start-game roster (config). DONE** — roster now **19 rows**. Earlier
+  (worktree `fauna-roster`): **Wild Reindeer** (boreal_arctic/montane_highland, `pastoral` — the northern
+  migrator, grows the herd-but-never-fence tier), **Wild Horse** (savanna_grassland/semi_arid_scrub,
+  `pastoral` — the dry-steppe migrator, distinct from grassland-only Steppe Runners), **Grey Seals**
+  (coastal_littoral, `wild` — the first marine species, a non-grazing constant-K haul-out colony), and the
+  dry-biome signature pass (Wild Elk, Alpine Ibex, Desert Gazelle, Forest Grouse). Closed by the
+  **wet-biome pass** (worktree `fauna-wet-biomes`), which a fresh sweep showed was what actually remained
+  — every dry biome had its resident, the three *water-adjacent* ones did not, and one gap was structural
+  rather than cosmetic:
+  - **`river_fish` ("Silt Catfish")** — riverine_delta/wetland_swamp/coastal_littoral, `wild`,
+    `requires_adjacent_water`, `route_len [1,1]`. Structurally the `seal` row, so **pure config**. Gives
+    the delta and the littoral a resident that isn't the 0.25 kg fowl they shared with the swamp.
+  - **`snow_hare` ("Snow Hare Warren")** — boreal_arctic/montane_highland at a **`pen`** ceiling.
+    `boreal_arctic` was the **only land biome with no `pen`-ceiling species at all** (mammoth/elk `wild`,
+    reindeer `pastoral`), so the intensification ladder's pen rung was unreachable from a northern start.
+    A warren, not fenced big livestock — the north stays harsh.
+  - **`boar` gained `riverine_delta`** — one key; the delta gets a resident big pennable animal.
+  Verified over `SWEEP_SEEDS` on 80×52: **22 catfish** (all water-adjacent), **66 warrens**, **53 delta
+  boars** — each **0** before. Guard: `core_sim/tests/fauna_wet_biome_roster.rs` (floors ~3× under
+  measured, each tripped by a `0`), which also asserts the *gameplay* invariant "`boreal_arctic` offers a
+  pen-capable species" so a future roster shuffle can't quietly undo it. Icons: `catfish.png` shipped;
+  `hare` aliases `rabbit.png`. NOTE the manual names no individual species — the roster's authoritative
+  prose lives in `core_sim/CLAUDE.md` → Fauna & Wild Game, so "manual-first" did not apply here.
+- [ ] **Decide whether `abundance.max_total_game` should rise — the roster cap is SATURATED, so new
+  species DISPLACE rather than add.** Measured during the wet-biome pass: **122 herds per map on every
+  seed** (`max_total_game` 120 short-range + 2 migratory) — and re-running the identical probe against the
+  *pre-change* config gives **122 per map / 732 over the sweep, byte-identical**. So the three additions
+  changed the roster's **composition** and not its **density**: ~141 new herds over the sweep pushed ~141
+  others off the map, most visibly **Wild Boar 61 → 112** (essentially all of it delta boars winning rolls
+  that used to go elsewhere). That is arguably correct — a *signature* pass is a composition change, and
+  this repo rejects repainting outputs to hit a target (see *emergent-not-quota*) — but it means the last
+  few roster passes have been redistributing a fixed pool, and nobody decided that on purpose. **Decide
+  deliberately, from a playtest, and as its own change**: raising the cap lifts total game availability
+  economy-wide, which is a food-economy edit that must not ride in on a roster PR. If it does rise, re-run
+  `fauna_wet_biome_roster.rs`'s measurement probe — its floors were measured under the saturated cap.
+  (Owner: TBD, Estimate: 0.5d + playtest; Deps: none.)
 - [x] **Migratory placement now respects `host_biomes`. SHIPPED** (worktree `fauna-roster`). Was a real
   bug found during this arc: `spawn_migratory_herds` picked a random migratory species and spiralled its
   route around the *player start*, never reading `host_biomes` — so a migratory species' range was dead

@@ -24,6 +24,8 @@ class_name FaunaSprites
 const SPRITE_DIR := "res://assets/icons/fauna/"
 const SPRITE_PATHS := {
 	"rabbit": SPRITE_DIR + "rabbit.png",
+	"hare": SPRITE_DIR + "rabbit.png",
+	"catfish": SPRITE_DIR + "catfish.png",
 	"deer": SPRITE_DIR + "deer.png",
 	"reindeer": SPRITE_DIR + "deer.png",
 	"caribou": SPRITE_DIR + "deer.png",

@@ -945,13 +945,47 @@ former hard-coded `HerdSpecies` enum is now a data-driven table. Each row has a
 keyword, e.g. "Red Deer" → 🦌), `size_class` (`migratory`/`big`/`small`),
 `migratory` flag, `route_len` `[min,max]` (= roaming range), `biomass` `[min,max]`
 (group size), and `host_biomes` (a list of **`FoodModule` keys**, reusing
-`classify_food_module`). Shipped species: migratory mammoth/steppe_runner/
-marsh_grazer (long routes); big game deer/boar/**aurochs** (2–3 tiles); small game
-rabbit/fowl/**crag_goat** (~1 tile, stationary). The two **pennable grazer livestock**
-(Grazing 2d) are `pen`-ceiling: **Wild Aurochs** (🦬, wild r 0.09 → slow ranch cattle) on
-grass + woodland edge (`savanna_grassland`/`temperate_forest`/`mixed_woodland`), **Crag
-Goats** (🐐, wild r 0.22 → fast hardy hill stock) on highland/dry-upland
-(`montane_highland`/`semi_arid_scrub`).
+`classify_food_module`). Shipped roster (19 rows): **migratory** mammoth/steppe_runner/
+marsh_grazer/reindeer/wild_horse (long routes); **big game** deer/boar/aurochs/seal/wild_elk
+(2–3 tiles); **small game** rabbit/fowl/crag_goat/wild_sheep/alpine_ibex/gazelle/forest_grouse/
+**river_fish**/**snow_hare** (~1 tile, stationary). The `pen`-ceiling **livestock** are
+aurochs (🦬, wild r 0.09 → slow ranch cattle) on grass + woodland edge, **Crag Goats** (🐐,
+wild r 0.22 → fast hardy hill stock) on highland/dry-upland, plus boar, rabbit, fowl,
+wild_sheep and snow_hare.
+
+**Regional signature — every biome offers distinct game, and every land biome offers a pen.**
+Three roster rows close the last gaps:
+- **`river_fish` ("Silt Catfish")** — the wet biomes' own game, hosting
+  `riverine_delta`/`wetland_swamp`/`coastal_littoral`. Structurally the `seal` row: a
+  non-grazing, non-migratory colony with `route_len [1,1]`, pinned to the shore by
+  **`requires_adjacent_water`**, so it needs no new Rust. A catfish inland is a bug.
+- **`snow_hare` ("Snow Hare Warren")** — hosts **`boreal_arctic` alone** at a **`pen`** ceiling.
+  Before it, `boreal_arctic` was the **only land biome with no `pen`-ceiling species at all**: the
+  mammoth and elk there are `wild`, the reindeer only `pastoral`, so the intensification ladder's
+  pen rung was flat unreachable from a northern start. The hare is what makes it reachable.
+
+> **`host_biomes` names a MODULE, not a terrain — and `montane_highland` is the leaky one.**
+> `CanyonBadlands` (an arid desert canyon) carries `ARID | HIGHLAND` and reaches the **fallback**
+> arm of `classify_food_module_from_traits`, where the `HIGHLAND` test runs **before** the `ARID`
+> test — so arid badlands classify as `montane_highland`. A live playtest duly found snow hares
+> warrening in a desert canyon. There is no way to target one exact `TerrainType`, so the fix is to
+> drop the module: `boreal_arctic` is an **explicit** arm (BorealTaiga | Tundra | PeriglacialSteppe
+> | SeasonalSnowfield) and is exactly the hare's range. Nothing is lost but the occasional alpine
+> warren, and no gameplay gap opens — `montane_highland` already has `crag_goat` at a `pen` ceiling.
+> **The next cold-climate species pointed at `montane_highland` will hit this same trap.** Guarded
+> by `fauna_wet_biome_roster::snow_hares_never_warren_the_highlands`, which asserts on the *spawned
+> tile's module* — a count floor would not catch it, since re-adding the host raises the count.
+- **`boar` gained `riverine_delta`**, giving the delta a big-game row beside the migratory marsh
+  grazer and the small fowl/catfish.
+
+Measured over `SWEEP_SEEDS` on the standard 80×52 earthlike map
+(`core_sim/tests/fauna_wet_biome_roster.rs`, the guard against the silent never-spawn of an
+unmatched `host_biomes` key): **20 catfish colonies** (1–6 per map, all water-adjacent), **37
+snow-hare warrens** (4–8), **54 boar groups on delta tiles** (5–15) — each **0** before the
+change. **The map-wide game cap is saturated** (122 herds per map against
+`abundance.max_total_game` 120 + 2 migratory, identical pre- and post-change), so these three are
+**displacing** other short-range game rather than adding to it — the roster shifts composition,
+never density. Raise `max_total_game` if the intent is more game, not different game.
 
 **Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
 `HerdRegistry`.

@@ -113,13 +113,69 @@
 # ============================================================================
 #
 # The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
-# alias onto one file (see the notes). Coverage is complete: 11 files, 11 prompts.
+# alias onto one file (see the notes). Coverage is complete: 12 files, 12 prompts.
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
 aurochs: Flat vector game icon of a wild aurochs, a massive shaggy wild ox with a high shoulder hump and long forward-curving horns, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in deep warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 boar: Flat vector game icon of a wild boar standing in a calm neutral pose, with humped bristly shoulders, a short thick snout and two prominent curved white tusks, short sturdy legs, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in medium warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, the back bristles drawn as a few chunky simple spikes rather than many fine hairs, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the boar floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# catfish.png — Silt Catfish (the delta/littoral resident shoal)
+# MUST NOT LOOK LIKE sites/fish.png, which is a plump COOL BLUE-GREY river fish standing for the
+# riverine_delta gathering site — the two can appear on the SAME hex (a delta tile with a shoal on
+# it), so this is the fauna/seal.png vs sites/seal.png situation again: two files, deliberately
+# different art, neither a stale copy of the other. Separated on THREE axes, all of which survive
+# downscaling: WARM dark olive-brown vs the site fish's cool silver; a broad FLATTENED head with a
+# wide downturned mouth vs a rounded snout; and the barbels, which the site fish does not have.
+# THE BARBELS ARE THE HAZARD. Fine whiskers are exactly what `icon_key.py`'s alpha ramp eats (see
+# the --lo/--hi note in the pipeline) and what dissolves at 24px, so the prompt asks for a FEW THICK
+# ones — the same "chunky forms over fine detail" dodge the mammoth's fur and the boar's bristles use.
+# If they still key out, narrow --hi rather than thinning them further.
+#
+# ---------------------------------------------------------------------------------------------
+# V1 SHIPPED AND FAILED IN PLAY: "it blends in a lot with the background tile, almost invisible."
+# The lesson generalizes past this icon, so it is recorded here rather than in a commit message.
+#
+# V1 asked for "warm dark olive-brown and muddy ochre" — which is, near enough, THE COLOUR OF THE
+# GROUND IT SPAWNS ON. Measured (Rec.709 mean luma of the opaque fill vs the base textures of the
+# terrains this species actually sits on): catfish fill **97**, against alluvial_plain 53,
+# floodplain 59, rocky_reg **80**, navigable_river 89. A ~17-point gap against rocky ground is not
+# a marker, it is camouflage. Ranked against the whole fauna set by mean |sprite − its terrains|,
+# v1 came third from the BOTTOM (33.8, vs seal 77, sheep 99, cattle 112).
+#
+# TWO RULES FALL OUT OF THAT, and they apply to every future species:
+#   1. THE HOUSE STYLE'S "lighter than the outline" IS NOT THE TEST THAT MATTERS. V1 passed it
+#      comfortably (fill/outline separation 63, mid-pack — better than aurochs' 30). The test that
+#      matters is contrast against the GROUND, and nothing in the style skeleton enforces it.
+#      Before generating, look up what the species' `host_biomes` terrains actually look like.
+#   2. HUE COLLISION COMPOUNDS IT. Brown-on-brown reads worse than the luma gap predicts, and this
+#      subject has no protruding features to carry a silhouette the way antlers, ears or a comb do
+#      — a fish is a smooth lozenge, so tone is doing ALL the work.
+# The fix is NOT "add an outline" (it already has a thick one) — it is to move the BODY into a
+# different tonal register from the earth: pale sandy flanks, cream belly, dark back for the
+# two-tone read. Target fill luma ~140, i.e. the goat/seal band. The dark dorsal is what keeps it
+# from collapsing into sites/fish.png's cool silver, so it must stay.
+#
+# V2 (the prompt below) SHIPPED and measures: fill luma **160**, mean |fill − host ground| **93.0**
+# (worst case 48.4) — against v1's 97 / 34.8 / **8.3**, and comfortably past the seal's 90.8 / 46.2.
+# Confirmed at 24/32/41px over all four real host grounds before shipping.
+#
+# KEYED AT `--lo 85 --hi 240`, NOT the pipeline's JPEG default of `--lo 55 --hi 170`:
+#   python3 scripts/texture/icon_key.py in.jpg out.png --size 256 --lo 85 --hi 240
+# THE PALE BODY IS EXACTLY WHY. This is the **white-species hazard** (see the sheep/fowl note in
+# the fauna header) showing up in the KEYER rather than on the terrain: `icon_key.py` decides alpha
+# by RGB DISTANCE FROM THE BACKGROUND, and a cream/buff subject sits far closer to magenta than a
+# dark olive one, so the same ramp that was clean for v1 left a visible VIOLET FRINGE along the jaw
+# and barbels of v2. Measured residual magenta fell 258 → 224 → 104 across the ramp; opaque pixels
+# dropped only ~2% (11933 → 11678), i.e. the barbels survived — which is the trade to check, since
+# widening the ramp is exactly what eats thin features. **Judge the fringe at 4x magnification over
+# a MID-GREY field**, not on the magenta plate and not at 1:1: at 1:1 the violet edge is invisible,
+# and against magenta it is invisible by definition.
+# GENERAL RULE: the paler the subject, the wider the keying ramp it needs. Re-tune --lo/--hi per
+# icon rather than trusting the header's default, and always count the residual before shipping.
+# ---------------------------------------------------------------------------------------------
+catfish: Flat vector game icon of a river catfish with a broad flattened head, a wide downturned mouth and four thick barbels sweeping back from its snout, a long tapering body with low-set fins and a rounded tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette with pale sandy-buff flanks and a bright cream underside beneath a narrow dark olive back, the body reading clearly PALE and light overall so it stands out sharply against dark brown earth and muddy riverbank ground, strong two-tone contrast between the light flanks and the dark dorsal stripe, the barbels drawn as a few chunky simple tapering strokes in the same pale tone rather than fine whiskers, calm neutral expression, crisp clean edges, centered with even padding on a plain solid magenta background, the fish floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # cattle.png — the domestic ox; keyword aliases `cattle` + `oxen`
 cattle: Flat vector game icon of a domestic ox, a stocky heavy-bodied cow with short blunt horns and a straight back, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in light tan and cream earth tones with simple two-tone shading, clearly lighter overall than a dark wild ox, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
