@@ -37,6 +37,20 @@ fn compare_food_site(a: &FoodSiteCandidate, b: &FoodSiteCandidate) -> Ordering {
 }
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
+///
+/// **Idempotent**, mirroring its three Startup siblings (`spawn_initial_herds`,
+/// `spawn_initial_forage`, `spawn_initial_graze`): a second pass over an already-built world
+/// early-returns instead of laying down a duplicate `width × height` tile set, a second batch of
+/// starting cohorts, and a second helping of the start profile's inventory.
+///
+/// `tile_registry` is `Option<Res<..>>` and **must stay that way** — `TileRegistry` is inserted by
+/// this system (via `Commands`), not `init_resource`'d by the plugin, so on the legitimate first
+/// run (and on the shipped server, which boots idle) the resource does not exist at all and a bare
+/// `Res<TileRegistry>` would panic.
+///
+/// The guard cannot collide with map regeneration: `rebuild_world_from_config` — the shared path
+/// for both `new_game` and `ResetMap` — starts from `build_headless_app()`, i.e. a brand-new
+/// `World` with no `TileRegistry`, rather than re-running Startup on the existing one.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_world(
     mut commands: Commands,
@@ -49,7 +63,20 @@ pub fn spawn_initial_world(
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut faction_inventory: ResMut<FactionInventory>,
     snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
+    tile_registry: Option<Res<TileRegistry>>,
 ) {
+    // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
+    // tile work, so a guard placed lower would still double the start profile's grants. Unlike the
+    // silent siblings this warns — a second Startup pass is never intentional, it is the test trap
+    // this guard exists to close, so it should leave a trace rather than no-op invisibly.
+    if tile_registry.is_some_and(|registry| !registry.tiles.is_empty()) {
+        tracing::warn!(
+            target: "shadow_scale::worldgen",
+            "worldgen.spawn_initial_world.skipped=already_built"
+        );
+        return;
+    }
+
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
     let mut prototypes: Vec<TilePrototype> = Vec::with_capacity(width * height);
