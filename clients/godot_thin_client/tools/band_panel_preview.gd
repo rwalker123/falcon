@@ -27,6 +27,10 @@ const ARRIVAL_PREVIEW_TURN := 40
 const MANY_SOURCE_COUNT := 34
 const MANY_SOURCE_ORIGIN_X := 40
 const MANY_SOURCE_ORIGIN_Y := 20
+# Dependants per working-age adult in the big-band fixture, held near the base band's own shape
+# (9 children + 5 elders to 16 workers) so its PEOPLE bar reads like a real band, not a scaled prop.
+const MANY_SOURCE_CHILD_RATIO := 0.56
+const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
 
@@ -386,6 +390,14 @@ func _many_sources_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["working_age"] = MANY_SOURCE_COUNT * 2
 	band["idle_workers"] = MANY_SOURCE_COUNT
+	# Keep the age split in step with the enlarged workforce — `age_working` IS `working_age`, and the
+	# three sum to `size` (see `_band_fixture`). Derived, not retyped, so raising MANY_SOURCE_COUNT
+	# cannot silently desync the PEOPLE bar from the WORKFORCE bar beneath it.
+	var workers: int = int(band["working_age"])
+	band["age_working"] = workers
+	band["age_children"] = int(round(workers * MANY_SOURCE_CHILD_RATIO))
+	band["age_elders"] = int(round(workers * MANY_SOURCE_ELDER_RATIO))
+	band["size"] = workers + int(band["age_children"]) + int(band["age_elders"])
 	var assignments: Array = []
 	for i in range(MANY_SOURCE_COUNT):
 		assignments.append({
@@ -489,7 +501,7 @@ func _band_fixture() -> Dictionary:
 		"id": "Band 2",
 		"entity": 904,
 		"faction": 0,
-		"size": 148,
+		"size": 30,
 		"pos": [71, 18],
 		"current_x": 71,
 		"current_y": 18,
@@ -506,10 +518,14 @@ func _band_fixture() -> Dictionary:
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
-		# dep = round((34 + 15) / 99 * 100) = 49 per 100 workers, i.e. a healthy (un-WARNed) band.
-		"age_children": 34,
-		"age_working": 99,
-		"age_elders": 15,
+		# **`age_working` MUST equal `working_age`, and the three MUST sum to `size`.** They are one
+		# band counted two ways, and the sim keeps them in step; a fixture that disagrees renders a
+		# PEOPLE bar of 99 working-age adults above a WORKFORCE bar of 16 workers, which reads as a
+		# bug in the very frame the two-bar design is judged on. These are the live game's own
+		# numbers (`Pop 30 👶9 🛠16 🧓5`), so dep = round((9 + 5) / 16 * 100) = 88 per 100 workers.
+		"age_children": 9,
+		"age_working": 16,
+		"age_elders": 5,
 		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"hunt_reach": 16,

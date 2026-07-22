@@ -1046,7 +1046,11 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
 const WORK_ROW_HEIGHT := 28.0
-const WORK_COLUMN_MIN_WIDTH := 300.0
+## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
+## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate
+## (`Forage (73, 20`), which costs the row the one thing it is for: naming WHICH source. Three
+## readable columns beat four unreadable ones — the page loses ~7 rows, the row keeps its identity.
+const WORK_COLUMN_MIN_WIDTH := 380.0
 const WORK_MAX_COLUMNS := 4
 const WORK_CHIPS_HEIGHT := 26.0
 const WORK_PAGER_HEIGHT := 24.0
@@ -1059,8 +1063,9 @@ const WORK_COLUMN_RULE_WIDTH := 1.0
 const WORK_COLUMN_SEPARATION := 10
 const WORK_ROW_STRIPE_WIDTH := 2.0
 ## The row is a fixed budget: everything but the label is fixed-width, so the label gets whatever a
-## `WORK_COLUMN_MIN_WIDTH` column has left (~95px). It clips by design — the inspector strip spells
-## a row out in full — but these are trimmed to the smallest legible size so it clips as late as possible.
+## `WORK_COLUMN_MIN_WIDTH` column has left. These are trimmed to the smallest legible size so the
+## label's share stays as wide as possible; past it the label ellipsises and the inspector strip
+## spells the row out in full.
 const WORK_ROW_SEPARATION := 4
 const WORK_ROW_ICON_WIDTH := 16.0
 const WORK_ROW_RATE_WIDTH := 46.0
@@ -4310,6 +4315,8 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     for m in models:
         income += float((m as Dictionary).get("rate", 0.0))
     col.add_child(_build_work_head(band, models, income))
+    # BEFORE the chips are built, so the pressed chip is always one that actually renders.
+    _reconcile_work_filter(models)
     col.add_child(_build_work_chips(models))
     var filtered := _filter_work_models(models)
     _sort_work_models(filtered)
@@ -4403,7 +4410,9 @@ func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxCon
     return head
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
-## The `⚠` chip is hidden when nothing needs attention (an always-present zero reads as an alarm).
+## **A chip for an EMPTY set never renders** — a kind the band works none of is dead weight in a row
+## that is otherwise live summary, and an always-present `⚠ 0` reads as an alarm. `All` always shows
+## (it is the reset), so the row is never empty.
 func _build_work_chips(models: Array) -> HFlowContainer:
     var chips := HFlowContainer.new()
     chips.custom_minimum_size = Vector2(0.0, WORK_CHIPS_HEIGHT)
@@ -4412,10 +4421,12 @@ func _build_work_chips(models: Array) -> HFlowContainer:
     var hunt: Array = models.filter(func(m): return String(m["kind"]) == LABOR_KIND_HUNT)
     var attention: Array = models.filter(func(m): return bool(m["attention"]))
     chips.add_child(_build_work_chip(WORK_FILTER_ALL, WORK_CHIP_ALL_FORMAT % models.size(), false))
-    chips.add_child(_build_work_chip(WORK_FILTER_FORAGE, WORK_CHIP_KIND_FORMAT % [
-        FoodIcons.DEFAULT, forage.size(), _format_magnitude(_work_rate_sum(forage))], false))
-    chips.add_child(_build_work_chip(WORK_FILTER_HUNT, WORK_CHIP_KIND_FORMAT % [
-        FoodIcons.HUNT, hunt.size(), _format_magnitude(_work_rate_sum(hunt))], false))
+    if not forage.is_empty():
+        chips.add_child(_build_work_chip(WORK_FILTER_FORAGE, WORK_CHIP_KIND_FORMAT % [
+            FoodIcons.DEFAULT, forage.size(), _format_magnitude(_work_rate_sum(forage))], false))
+    if not hunt.is_empty():
+        chips.add_child(_build_work_chip(WORK_FILTER_HUNT, WORK_CHIP_KIND_FORMAT % [
+            FoodIcons.HUNT, hunt.size(), _format_magnitude(_work_rate_sum(hunt))], false))
     if not attention.is_empty():
         chips.add_child(_build_work_chip(WORK_FILTER_ATTENTION,
             WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
@@ -4474,6 +4485,9 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var label := Label.new()
     label.text = String(model.get("label", ""))
     label.clip_text = true
+    # A label too long even for the widened column ELLIPSISES rather than hard-cutting: `Hunt Woolly
+    # Mamm…` reads as a truncation, `Forage (73, 20` reads as a wrong coordinate.
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     label.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("pending", false)) else HudStyle.INK)
@@ -4712,8 +4726,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         })
     return models
 
+## Reset a filter that now selects nothing back to `All`. A kind/attention chip is hidden once its set
+## empties (the last herd is unassigned, the last ⚠ clears), so a standing filter would otherwise
+## strand the player on an empty board with no chip left to press to get back out of it.
+func _reconcile_work_filter(models: Array) -> void:
+    if _work_filter == WORK_FILTER_ALL:
+        return
+    if _work_models_matching(_work_filter, models).is_empty():
+        _work_filter = WORK_FILTER_ALL
+
 func _filter_work_models(models: Array) -> Array:
-    match _work_filter:
+    return _work_models_matching(_work_filter, models)
+
+func _work_models_matching(filter: StringName, models: Array) -> Array:
+    match filter:
         WORK_FILTER_FORAGE:
             return models.filter(func(m): return String(m["kind"]) == LABOR_KIND_FORAGE)
         WORK_FILTER_HUNT:
