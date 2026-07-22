@@ -172,6 +172,11 @@ const CONFIG_KEY_EDGE := "edge"
 const CONFIG_KEY_COLLAPSED := "collapsed"
 ## The narrow shell's selected tab, so a reopened session lands where the player left it.
 const CONFIG_KEY_TAB := "tab"
+## Preview harnesses point this at a scratch file so a render can neither READ nor WRITE the
+## player's real dock prefs — the same isolation `NarrativeForkPanel.config_path_override` gives the
+## HUD-panel prefs, and for the same reason: without it a harness renders whatever tab the LAST run
+## happened to leave selected, and then saves its own tab walk back over the player's.
+static var config_path_override: String = ""
 
 ## The four dock edges, in the prototype's 2×2 chooser order (row-major:
 ## left/top on the first row, bottom/right on the second).
@@ -1150,7 +1155,7 @@ func _dock_cell_stylebox(edge: int, active: bool, hovered: bool = false) -> Styl
 
 func _load_prefs() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(CONFIG_PATH) != OK:
+	if cfg.load(_config_path()) != OK:
 		return
 	var edge := int(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_EDGE, SIDE_LEFT))
 	if DOCK_EDGES.has(edge):
@@ -1162,8 +1167,12 @@ func _load_prefs() -> void:
 
 func _save_prefs() -> void:
 	var cfg := ConfigFile.new()
-	cfg.load(CONFIG_PATH)   # preserve any other sections; ignore load errors
+	cfg.load(_config_path())   # preserve any other sections; ignore load errors
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_EDGE, _dock_edge)
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_COLLAPSED, _collapsed)
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(_active_tab))
-	cfg.save(CONFIG_PATH)
+	cfg.save(_config_path())
+
+## The prefs file actually used — the scratch override when a harness set one, else the player's.
+static func _config_path() -> String:
+	return config_path_override if config_path_override != "" else CONFIG_PATH

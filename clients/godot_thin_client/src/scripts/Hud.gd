@@ -411,11 +411,20 @@ var _selected_band_food_turns: float = NAN
 # clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
 var _food_flow_present: bool = false
 # Disclosure context for the Food + Morale summary rows, rebuilt each render in `_unit_summary_lines`:
-# row-label → {kind, open}. `_format_detail_bbcode` reads it to render the caret + clickable meta.
+# row-label → {key, open, concerning}. `_format_detail_bbcode` reads it to render the caret + meta.
 var _disclosure_state: Dictionary = {}
-# Per-row per-band expand override, keyed `"<kind>:<entity>"` → bool. Absent = follow the row's
-# concerning default (food: net-negative / low runway; morale: below-warn / falling); a click stores one.
-var _breakdown_expanded: Dictionary = {}
+# The breakdown rows each disclosure would show, keyed `"<kind>:<entity>"` → Array[String]. Written
+# every render by `_register_disclosure` and read by the popover, so the popover never recomputes a
+# number and a click needs no band lookup — the meta carries the key. Deliberately NOT cleared with
+# `_disclosure_state`: that one is per-render and per-host, and the other host's render must not be
+# able to empty the payload behind an open popover.
+var _breakdown_payloads: Dictionary = {}
+# The disclosure key whose popover is currently up, `""` = none. It is what "open" means now, so it
+# is also what flips the row's caret.
+var _breakdown_popover_key: String = ""
+# The one popover both hosts share, built lazily on the first disclosure click.
+var _breakdown_popover: PopupPanel = null
+var _breakdown_popover_label: RichTextLabel = null
 # Morale (0–1) of the currently-selected player band, so the detail formatter can
 # threshold-tint the Morale row. NAN when no player band is selected.
 var _selected_band_morale: float = NAN
@@ -955,9 +964,17 @@ const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
 const FOOD_FLOW_MIN := 0.001
-# Click-to-expand disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label,
-# a clickable `[url]` meta = `<prefix><kind>` dispatched by `_on_detail_meta_clicked`, and a per-row
-# per-band expand override in `_breakdown_expanded` (absent → the row's concerning default).
+# Click-to-open disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label and
+# a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `_on_detail_meta_clicked`.
+#
+# THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE. Expanding it in place grew the vitals label — a
+# `fit_content` RichTextLabel — by several lines AFTER `_build_band_zone_content` had already chosen
+# its height tier from the zone box, and the zone box is fixed by design with `clip_contents` hosts,
+# so the extra lines silently sliced the WORKFORCE row and ate the role cards. A Window cannot change
+# a zone's height, which is the same reason the section `⋯` menus are `MenuButton`s and the
+# destructive confirms are `ConfirmationDialog`s. The work board's budgeted inline inspector strip is
+# the other idiom and does not apply here: in the SHORT tier the chart is already dropped and the role
+# cards are already hint-less, so there is nothing left to spend but PEOPLE/WORKFORCE — the content.
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
@@ -966,6 +983,13 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
 const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
+# The breakdown popover's card: wide enough for the longest breakdown row (`▼ −1.74  🐄 Pen feed
+# (animals)` / `▲ +1.0%  harsh terrain (Karst Cavern Mouth)`) without wrapping every line, and
+# padded like the cards it borrows its stylebox from.
+const BREAKDOWN_POPOVER_WIDTH := 300.0
+const BREAKDOWN_POPOVER_PADDING := 10
+# The gap between the clicked row and the popover's top edge, so the caret stays readable under it.
+const BREAKDOWN_POPOVER_GAP := 4.0
 # ---- Band/City panel identity grid ---------------------------------------------------------------
 # The panel's own header already states the band's name + settlement stage, so the summary rows there
 # drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
@@ -1672,7 +1696,7 @@ func _ready() -> void:
     _setup_build_overlay()
     # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
     if occupant_detail != null:
-        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(false))
+        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(occupant_detail))
     # Re-cap the drawer whenever its content changes SIZE, whoever changed it — a stepper tick, a
     # policy click, a per-snapshot rebuild. One hookup instead of a refit call sprinkled through
     # every early-return in the three compose builders. No feedback loop: the fit writes the
@@ -3883,33 +3907,35 @@ func _sum_realized_yield(band: Dictionary, kind: String) -> float:
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
 
-## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
-## below the warn threshold — mirroring `_morale_is_concerning`'s below-warn / falling gate.
+## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
+## mirroring `_morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything
+## (a popover that pops itself open on a snapshot would be worse than the clipping it replaced); it
+## marks the row's caret WARN, so a row with something worth reading still says so at a glance.
 func _food_is_concerning(band: Dictionary) -> bool:
     var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return _band_net_food(band) < 0.0 \
         or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
-## Per-row-per-band expand-override key.
+## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 func _breakdown_key(kind: String, band: Dictionary) -> String:
     return "%s:%d" % [kind, int(band.get("entity", -1))]
 
-## Effective expand state of a band's Food/Morale breakdown: the user's per-band override if set,
-## else that row's concerning default (auto-open when concerning, closed when healthy). Shared by
-## both disclosure rows — the only per-kind bit is which "concerning" gate to consult.
-func _breakdown_open_for(kind: String, band: Dictionary) -> bool:
+## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-open disclosure: stash the
+## rows its popover will show and record the caret state for `_format_detail_bbcode`. Returns whether
+## the affordance is offered at all — a row with nothing to show gets no caret. Shared by both
+## disclosure rows and by BOTH hosts (the panel's vitals label and the Occupants-card drawer), which
+## is the point: one click behaviour, no `is_panel` fork.
+func _register_disclosure(row_label: String, kind: String, band: Dictionary, lines: Array[String]) -> bool:
+    if lines.is_empty():
+        return false
     var key := _breakdown_key(kind, band)
-    if _breakdown_expanded.has(key):
-        return bool(_breakdown_expanded[key])
-    return _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
-
-## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-expand disclosure so
-## `_format_detail_bbcode` renders its caret + clickable meta; returns whether it's currently open
-## (so the caller appends the breakdown sub-lines). Shared by both disclosure rows.
-func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> bool:
-    var open := _breakdown_open_for(kind, band)
-    _disclosure_state[row_label] = {"kind": kind, "open": open}
-    return open
+    _breakdown_payloads[key] = lines
+    var concerning := _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
+    _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
+    # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
+    if _breakdown_popover_key == key:
+        _refresh_breakdown_popover_text()
+    return true
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
 ## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
@@ -3939,22 +3965,105 @@ func _food_breakdown_row(value: float, label: String) -> String:
     var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else MORALE_CONTRIB_NEGATIVE_GLYPH
     return "%s%s %s  %s" % [MORALE_BREAKDOWN_INDENT, glyph, _format_signed(value), label]
 
-## Meta dispatcher for the summary-row disclosures (Food/Morale): parses the clicked row kind from
-## the `[url]` meta and toggles that row's per-band expand override, then re-renders. `is_panel`
-## routes the re-render to the dockable Band/City panel vs the Occupants-card drawer.
-func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
+## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure
+## key, so the handler needs no band lookup and no host flag — the SAME click behaviour wherever the
+## row renders. `anchor` is the label that emitted the click, bound at wire time; it is what the
+## popover positions under.
+func _on_detail_meta_clicked(meta: Variant, anchor: Control) -> void:
     var payload := String(meta)
     if not payload.begins_with(BREAKDOWN_TOGGLE_META_PREFIX):
         return
-    var kind := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
-    var band: Dictionary = _panel_band if is_panel else _selected_unit
-    if band.is_empty():
+    var key := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
+    if _breakdown_popover_key == key:
+        _close_breakdown_popover()
         return
-    _breakdown_expanded[_breakdown_key(kind, band)] = not _breakdown_open_for(kind, band)
-    if is_panel:
+    _open_breakdown_popover(key, anchor)
+
+## Open a disclosure's breakdown in the popover, anchored under the clicked row. The anchor rect is
+## captured BEFORE the hosts re-render, because that render frees the very label we are anchoring to
+## (the panel builds a fresh vitals label each time).
+func _open_breakdown_popover(key: String, anchor: Control) -> void:
+    var lines := _breakdown_lines_for(key)
+    if lines.is_empty():
+        return
+    var anchor_rect := _breakdown_anchor_rect(anchor)
+    _breakdown_popover_key = key
+    _refresh_disclosure_hosts()
+    var popover := _ensure_breakdown_popover()
+    _refresh_breakdown_popover_text()
+    popover.popup(anchor_rect)
+
+## Dismiss the breakdown popover, if any. Idempotent — `popup_hide` runs the same teardown, so a
+## click-away / Esc and an explicit close converge on one path.
+func _close_breakdown_popover() -> void:
+    if _breakdown_popover != null and _breakdown_popover.visible:
+        _breakdown_popover.hide()
+        return
+    _on_breakdown_popover_hidden()
+
+func _on_breakdown_popover_hidden() -> void:
+    if _breakdown_popover_key == "":
+        return
+    _breakdown_popover_key = ""
+    _refresh_disclosure_hosts()
+
+## The rows a disclosure key's popover shows — stashed by `_register_disclosure`, never recomputed.
+func _breakdown_lines_for(key: String) -> Array[String]:
+    var stored: Variant = _breakdown_payloads.get(key, null)
+    var lines: Array[String] = []
+    if stored is Array:
+        for line in (stored as Array):
+            lines.append(String(line))
+    return lines
+
+## Where the popover sits: a zero-height rect at the bottom-left of the clicked row, in SCREEN space
+## (what `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas
+## stretch, both of which this HUD has.
+func _breakdown_anchor_rect(anchor: Control) -> Rect2i:
+    if anchor == null or not is_instance_valid(anchor):
+        return Rect2i()
+    var xform := anchor.get_screen_transform()
+    var below := xform * Vector2(0.0, anchor.size.y + BREAKDOWN_POPOVER_GAP)
+    return Rect2i(Vector2i(below), Vector2i.ZERO)
+
+## The popover itself: a `PopupPanel`, so it is a WINDOW — it cannot change any zone's height, which
+## is the whole reason the breakdown moved here. Styled through `HudStyle` like every other card.
+func _ensure_breakdown_popover() -> PopupPanel:
+    if _breakdown_popover != null and is_instance_valid(_breakdown_popover):
+        return _breakdown_popover
+    var popover := PopupPanel.new()
+    popover.name = "BreakdownPopover"
+    popover.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    var margin := MarginContainer.new()
+    for side in ["left", "top", "right", "bottom"]:
+        margin.add_theme_constant_override("margin_%s" % side, BREAKDOWN_POPOVER_PADDING)
+    popover.add_child(margin)
+    var label := RichTextLabel.new()
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD
+    label.custom_minimum_size = Vector2(BREAKDOWN_POPOVER_WIDTH, 0.0)
+    margin.add_child(label)
+    popover.popup_hide.connect(_on_breakdown_popover_hidden)
+    add_child(popover)
+    _breakdown_popover = popover
+    _breakdown_popover_label = label
+    return popover
+
+## Restate the open popover from the current payload — the breakdown CONTENT is unchanged from the
+## inline form: the same indented ▲/▼ rows through the same shared two-tone tint path.
+func _refresh_breakdown_popover_text() -> void:
+    if _breakdown_popover_label == null or not is_instance_valid(_breakdown_popover_label):
+        return
+    _breakdown_popover_label.text = _format_detail_bbcode(_breakdown_lines_for(_breakdown_popover_key))
+
+## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
+## hosts, unconditionally — that is the `is_panel` fork this change exists to remove.
+func _refresh_disclosure_hosts() -> void:
+    if _band_city_panel != null and not _panel_band.is_empty():
         _render_band_into_panel(_panel_band)
-    else:
-        _render_subject_drawer()
+    _render_subject_drawer()
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there).
@@ -4031,6 +4140,9 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     container.add_child(_build_band_zone_content(band, false))
     container.add_child(_build_work_zone_content(band))
     container.add_child(_build_parties_zone_content(band))
+    # The docked path offers Move from `_build_band_move_actions`; this host must offer it too, or a
+    # selected player band has no way to be moved at all here (see `_make_band_move_actions`).
+    container.add_child(_make_band_move_actions())
 
 ## Per-SOURCE `+`-gate for a Current-actions Forage/Hunt row: the compose controls cap the stepper at
 ## max-useful (`_forecast_worker_cap`), and a confirmed row must cap the same way — a source's `+` may
@@ -4246,7 +4358,7 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.scroll_active = false
     detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(true))
+    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(detail_label))
     detail_label.text = _format_detail_bbcode(_unit_summary_lines(band))
     return detail_label
 
@@ -5236,6 +5348,15 @@ func _build_band_move_actions() -> void:
     for child in allocation_panel.get_children():
         child.queue_free()
     allocation_panel.visible = true
+    allocation_panel.add_child(_make_band_move_actions())
+
+## The Move row itself, so the two hosts that offer it build the SAME control rather than two that
+## can drift. **Both hosts must offer it**: the docked path adds it beside the panel pointer, and the
+## NO-PANEL fallback appends it under the band content — the fallback used to inherit a Move from the
+## allocation stack's Orders block, and when the Band panel rework deleted that block the fallback
+## silently offered no way to move a band at all. `ui_preview`'s "exactly ONE Move button" assertion
+## is what catches either half of that going wrong (none offered, or one offered twice).
+func _make_band_move_actions() -> HBoxContainer:
     var actions := HBoxContainer.new()
     actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var move_btn := Button.new()
@@ -5244,7 +5365,7 @@ func _build_band_move_actions() -> void:
     move_btn.tooltip_text = MOVE_BAND_BUTTON_TOOLTIP
     move_btn.pressed.connect(_on_move_band_pressed)
     actions.add_child(move_btn)
-    allocation_panel.add_child(actions)
+    return actions
 
 ## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
 ## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
@@ -7725,11 +7846,13 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     # how many (its roster row's size).
     if _is_player_unit(unit_data):
         lines.append(_band_food_line(unit_data))
-        # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown
-        # when concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure`
-        # records the row so `_format_detail_bbcode` draws the caret + clickable meta.
-        if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
-            lines.append_array(_food_breakdown_lines(unit_data))
+        # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
+        # set `_food_flow_present`; `_register_disclosure` stashes the rows for the popover and records
+        # the row so `_format_detail_bbcode` draws the caret + clickable meta. The rows are NEVER
+        # appended here — inline growth is what clipped the zone.
+        if _food_flow_present:
+            _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
+                _food_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -7740,13 +7863,11 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
         var output_line := _band_output_line(unit_data)
         if output_line != "":
             lines.append(output_line)
-        # Itemized morale breakdown: the SAME click-to-expand disclosure as Food (auto-shown when
-        # concerning). Only offered when there's actually a breakdown to show (a contribution above
-        # the epsilon, or the concerning recovery line).
-        var morale_breakdown := _morale_breakdown_lines(unit_data)
-        if not morale_breakdown.is_empty() \
-                and _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data):
-            lines.append_array(morale_breakdown)
+        # Itemized morale breakdown: the SAME click-to-open disclosure as Food, in the same popover.
+        # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
+        # the concerning recovery line) — `_register_disclosure` declines an empty payload.
+        _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data,
+            _morale_breakdown_lines(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -8405,16 +8526,19 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == PEN_FEED_ROW:
                 # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
                 value_hex = _pen_feed_value_hex(String(kv[1]))
-            # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
-            # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
-            # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.
+            # A disclosure row (Food/Morale) renders its key as a clickable `[url]` + ▸/▾ caret, which
+            # opens its breakdown in the shared POPOVER via `meta_clicked` → `_on_detail_meta_clicked`
+            # (never inline — see the BREAKDOWN_* consts). The caret is ▾ only while THIS row's
+            # popover is up. A CONCERNING row wears the caret in WARN rather than SIGNAL: the
+            # breakdown no longer opens itself, so the invitation to read it has to be visible.
             var key_cell := "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, kv[0]]
             if _disclosure_state.has(kv[0]):
                 var st: Dictionary = _disclosure_state[kv[0]]
                 var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
+                var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
                 key_cell = "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
-                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("kind", "")),
-                    HudStyle.SIGNAL_HEX, kv[0], caret,
+                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
+                    caret_hex, kv[0], caret,
                 ]
             out += "[cell]%s[/cell][cell][color=#%s]%s[/color][/cell]" % [
                 key_cell, value_hex, kv[1],

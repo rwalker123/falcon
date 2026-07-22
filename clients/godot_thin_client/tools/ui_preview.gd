@@ -87,9 +87,13 @@ const FORK_REGISTER_WARM := "warm"
 const TELLING_MEDIUM_ORAL := "oral"
 const TELLING_MEDIUM_PAINTED := "painted"
 const TELLING_MEDIUM_WRITTEN := "written"
-# The pen-keeping band's entity id — its own, so the force-expanded Food breakdown override
-# (`_breakdown_expanded` is keyed `food:<entity>`) doesn't collide with the reference band's.
+# The pen-keeping band's entity id — its own, so its Food disclosure key (`food:<entity>`) doesn't
+# collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
+# The reference band (`_band_fixture()`, entity 904) disclosure keys — the `[url]` meta its Food /
+# Morale rows carry, i.e. what `Hud._breakdown_key` builds for it.
+const BAND_DISCLOSURE_FOOD := "food:904"
+const BAND_DISCLOSURE_MORALE := "morale:904"
 # The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
 # feed the herd demands per turn, and the share of it a broke keeper managed to pay in the starving
 # state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
@@ -242,26 +246,30 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_policy")
 
-	# State 1-food-a — GOOD food, breakdown force-EXPANDED. The good band's breakdown is hidden by
-	# default (net positive, long runway); the static harness can't click the Food disclosure, so we
-	# force the per-band expand override to confirm the click-expanded layout renders (indented
-	# `Gathered · Hunted · Eaten` sub-line under Food) without clipping.
-	_hud._breakdown_expanded = {"food:904": true}
+	# State 1-food-a — GOOD food, breakdown OPEN. The breakdown renders in a POPOVER, never inline
+	# (growing the row in place is what clipped the Band panel's fixed-height band zone), so the frame
+	# shows the indented `Gathered · Hunted · Eaten` rows in a small card under the row. Driven through
+	# the REAL path — `meta_clicked` on the live drawer label, the exact signal a click emits.
 	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	_click_disclosure(BAND_DISCLOSURE_FOOD)
 	await _settle()
 	await _save("band_food_expanded")
-	_hud._breakdown_expanded = {}
+	_click_disclosure(BAND_DISCLOSURE_FOOD)
 
-	# State 1-morale-a — GOOD morale, breakdown force-EXPANDED (same disclosure as Food): forcing the
-	# per-band morale override opens the collapsed-by-default morale contribution sub-lines.
-	_hud._breakdown_expanded = {"morale:904": true}
+	# State 1-morale-a — GOOD morale, breakdown OPEN (same disclosure, same popover): the morale
+	# contribution rows.
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE)
+	await _settle()
 	await _save("band_morale_expanded")
-	_hud._breakdown_expanded = {}
+	_click_disclosure(BAND_DISCLOSURE_MORALE)
 
 	# State 1-food-b — CONCERNING food (net negative + low runway): the Food line net reads red and
-	# the category breakdown is AUTO-shown (no click needed), mirroring the morale breakdown.
+	# its caret wears WARN rather than SIGNAL — the breakdown no longer opens itself (a popover that
+	# popped on a snapshot would be worse than the clipping it replaced), so the invitation to read it
+	# has to be visible on the row.
 	_hud.show_unit_selection(_concerning_food_band_fixture())
 	await _settle()
 	await _save("band_food_concerning")
@@ -270,21 +278,24 @@ func _ready() -> void:
 	# THREE terms, not two: the corral grosses 5.40, the people eat 1.15, and the penned animals eat
 	# 1.74 off the same larder (`pen_feed_upkeep`, the sim's own figure — the client never sums the
 	# herds' upkeep itself). Net = 5.88 − 1.15 − 1.74 = +2.99, NOT the +4.73 the old two-term ledger
-	# would have advertised. Breakdown force-expanded to show all four rows at once.
-	_hud._breakdown_expanded = {"food:%d" % PEN_KEEPER_BAND_ENTITY: true}
+	# would have advertised. Breakdown popover open to show all four rows at once.
 	_hud.show_unit_selection(_pen_keeper_band_fixture())
 	await _settle()
+	_click_disclosure("food:%d" % PEN_KEEPER_BAND_ENTITY)
+	await _settle()
 	await _save("band_pen_feed")
+	_click_disclosure("food:%d" % PEN_KEEPER_BAND_ENTITY)
 
 	# State 1-food-d — the same pen, STARVING: the band could pay only 0.70 of the 1.74 the herd
 	# demands, so the pen feed row shrinks to what was actually paid while the herd wastes away (the
 	# herd drawer carries the alarm — see `herd_corral_starving`). Income has fallen with the herd,
 	# and the net has gone red.
-	_hud._breakdown_expanded = {"food:%d" % PEN_KEEPER_BAND_ENTITY: true}
 	_hud.show_unit_selection(_starving_pen_band_fixture())
 	await _settle()
+	_click_disclosure("food:%d" % PEN_KEEPER_BAND_ENTITY)
+	await _settle()
 	await _save("band_pen_starving")
-	_hud._breakdown_expanded = {}
+	_click_disclosure("food:%d" % PEN_KEEPER_BAND_ENTITY)
 
 	# State 1b — an all-idle band: no assignments, every worker idle. The allocation panel
 	# shows just the Scout + Warrior rows (both at 0) under the Working/Idle header.
@@ -2370,6 +2381,26 @@ func _mouse_button_event(button_index: int) -> InputEventMouseButton:
 
 ## Find a Button by its face anywhere under `root` — the harness presses the REAL control the player
 ## presses, so an assertion covers the wiring and not just the handler it would have called.
+## Drive a Food/Morale disclosure the way a CLICK does: emit `meta_clicked` on the live drawer label
+## with the very `[url]` meta its own text carries, so the bound handler + anchor run exactly as they
+## do in the game. Toggling: a second call on the same key dismisses the popover.
+func _click_disclosure(key: String) -> void:
+	var meta := HudLayer.BREAKDOWN_TOGGLE_META_PREFIX + key
+	var label := _find_meta_label(_hud, meta)
+	if label == null:
+		push_warning("ui_preview: no detail label offering '%s' — disclosure not rendered?" % meta)
+		return
+	label.meta_clicked.emit(meta)
+
+func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
+	if node is RichTextLabel and (node as RichTextLabel).text.contains("[url=%s]" % meta):
+		return node
+	for child in node.get_children():
+		var found := _find_meta_label(child, meta)
+		if found != null:
+			return found
+	return null
+
 func _find_button_by_text(root: Node, text: String) -> Button:
 	if root == null:
 		return null
