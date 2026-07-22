@@ -337,7 +337,7 @@
       "biomass": [80, 200],
       "body_mass": 0.4,
       "animals_per_herder": 200,
-      "host_biomes": ["boreal_arctic", "montane_highland"],
+      "host_biomes": ["boreal_arctic"],
       "dwell_turns": 1,
       "fodder_per_biomass": 0.10,
       "regrowth_rate": 0.30,

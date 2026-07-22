@@ -17,7 +17,9 @@
 //! - **Snow Hare Warren** (`snow_hare`) — the first `pen`-ceiling species hosting `boreal_arctic`.
 //!   Before it, a northern start could reach no pen at all: the intensification ladder's middle rung
 //!   was unreachable from a whole class of map positions. That is a *gameplay* invariant, so the
-//!   ceiling is asserted against the roster, not just the spawn count.
+//!   ceiling is asserted against the roster, not just the spawn count. It hosts `boreal_arctic`
+//!   **alone**, and the assertion that it never spawns on `montane_highland` is the second failure
+//!   mode this file guards — see [`snow_hares_never_warren_the_highlands`].
 //! - **Wild Boar** on `riverine_delta` — a newly added host on an existing species. The count is the
 //!   only evidence the added key actually joined; boars spawn plentifully in their three older
 //!   hosts, so a total-boar assertion would pass with the new key silently dead.
@@ -45,7 +47,7 @@ const CATFISH_SPECIES: &str = "Silt Catfish";
 const HARE_SPECIES: &str = "Snow Hare Warren";
 const BOAR_SPECIES: &str = "Wild Boar";
 
-/// Measured floor for Silt Catfish colonies across [`SWEEP_SEEDS`]. The sweep measures **22**
+/// Measured floor for Silt Catfish colonies across [`SWEEP_SEEDS`]. The sweep measures **20**
 /// (1–6 per map) against **0** pre-change; the bound sits well under that so an ordinary abundance
 /// retune doesn't trip it, while an unmatched host key (0, always, on every seed) fails loudly.
 /// Catfish are the thinnest of the three — their hosts are the map's thinnest biomes and the
@@ -53,12 +55,17 @@ const BOAR_SPECIES: &str = "Wild Boar";
 /// deliberately. Re-measure with `wet_biome_roster_report` before moving it.
 const MIN_CATFISH_OVER_SWEEP: usize = 6;
 
-/// Measured floor for Snow Hare warrens across [`SWEEP_SEEDS`]. The sweep measures **66** (6–15 per
+/// Measured floor for Snow Hare warrens across [`SWEEP_SEEDS`]. The sweep measures **37** (4–8 per
 /// map) against **0** pre-change. Same convention as [`MIN_CATFISH_OVER_SWEEP`].
-const MIN_HARES_OVER_SWEEP: usize = 20;
+///
+/// **The figure dropped from 66 when the host narrowed** — the hare used to also host
+/// `montane_highland`, which is why git history shows a higher number and a floor of 20. That host
+/// was removed because it put warrens on arid `CanyonBadlands`; see
+/// [`snow_hares_never_warren_the_highlands`], which is the *real* guard here.
+const MIN_HARES_OVER_SWEEP: usize = 12;
 
 /// Measured floor for Wild Boar groups sitting on a `riverine_delta` tile — the newly added host —
-/// across [`SWEEP_SEEDS`]. The sweep measures **53** (6–12 per map) against **0** pre-change (the
+/// across [`SWEEP_SEEDS`]. The sweep measures **54** (5–15 per map) against **0** pre-change (the
 /// key did not exist, so *no* boar could stand on a delta). Same convention as
 /// [`MIN_CATFISH_OVER_SWEEP`].
 const MIN_DELTA_BOARS_OVER_SWEEP: usize = 15;
@@ -200,6 +207,11 @@ fn the_wet_and_cold_rows_declare_reachable_hosts() {
         "without boreal_arctic the hare gives the north nothing"
     );
     assert!(
+        !hare.hosts_biome("montane_highland"),
+        "montane_highland admits arid CanyonBadlands through the classifier fallback — a snow hare \
+         must not host it (see snow_hares_never_warren_the_highlands)"
+    );
+    assert!(
         fauna
             .species
             .values()
@@ -219,7 +231,6 @@ fn the_wet_and_cold_rows_declare_reachable_hosts() {
         ("river_fish", "wetland_swamp"),
         ("river_fish", "coastal_littoral"),
         ("snow_hare", "boreal_arctic"),
-        ("snow_hare", "montane_highland"),
         ("boar", "riverine_delta"),
     ] {
         assert!(
@@ -275,6 +286,39 @@ fn snow_hares_warren_the_cold_biomes() {
          start has no pennable species",
         SWEEP_SEEDS.len()
     );
+}
+
+/// **No snow hare on an arid desert canyon** — the bug a live playtest found, and the reason
+/// `snow_hare` hosts `boreal_arctic` **alone**.
+///
+/// `host_biomes` names a `FoodModule`, and a module is a *bucket* of terrains, not one terrain — so
+/// a species cannot target a single `TerrainType`. `montane_highland` is the bucket that bites:
+/// `CanyonBadlands` carries `ARID | HIGHLAND` and falls through to the fallback arm of
+/// `classify_food_module_from_traits`, where the `HIGHLAND` test is evaluated **before** the `ARID`
+/// one — so an arid badland classifies as `montane_highland` and a *snow* hare warrens in a desert
+/// canyon. `boreal_arctic`, by contrast, is an **explicit** arm (BorealTaiga | Tundra |
+/// PeriglacialSteppe | SeasonalSnowfield) and is exactly the hare's range.
+///
+/// Dropping the module costs the occasional alpine warren and no gameplay: `montane_highland`
+/// already carries `crag_goat` at a `pen` ceiling, so the pen-rung gap this species closes was
+/// `boreal_arctic`'s alone.
+///
+/// **This assertion, not the count, is the guard** — a re-added `montane_highland` would raise the
+/// sweep total and sail past [`MIN_HARES_OVER_SWEEP`] while putting hares back in the canyons. The
+/// same trap waits for the next cold-climate species pointed at `montane_highland`.
+#[test]
+fn snow_hares_never_warren_the_highlands() {
+    for (seed, survey) in sweep() {
+        for site in survey.sites(HARE_SPECIES) {
+            assert_ne!(
+                site.biome,
+                Some(FoodModule::MontaneHighland),
+                "seed {seed}: a snow hare warren at {:?} sits on montane_highland — which admits \
+                 arid CanyonBadlands through the classifier's HIGHLAND-before-ARID fallback",
+                site.position
+            );
+        }
+    }
 }
 
 /// **The boar's new host joined.** Asserted on delta tiles specifically: boars are plentiful in
