@@ -1,5 +1,5 @@
 {
-  "food_days": {
+  "food_turns": {
     "warn": 10.0,
     "critical": 5.0
   },

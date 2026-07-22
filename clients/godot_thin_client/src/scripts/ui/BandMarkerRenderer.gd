@@ -3,7 +3,7 @@ extends RefCounted
 
 ## Renders the PRIMARY player-band map markers for MapView: the offset card-stack
 ## of settlement-stage tokens / expedition flag-discs, the faction nameplate
-## banner, the food-days dot, the travel/task arrow, and the ×N over-cap count
+## banner, the food-runway dot, the travel/task arrow, and the ×N over-cap count
 ## pill. Extracted from MapView (composition — MapView owns one and calls
 ## draw_primary_bands() during its _draw pass). Every draw command routes through
 ## the MapView canvas item via the `_view` back-ref, and all shared geometry/glyph/
@@ -243,11 +243,11 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 		var ring_color := Color(HudStyle.WARN.r, HudStyle.WARN.g, HudStyle.WARN.b, 0.45 + 0.4 * pulse)
 		_view.draw_arc(center, ring_radius, 0, TAU, 28, ring_color, _view.EXPEDITION_AWAITING_RING_WIDTH)
 
-## One decoration on a player band marker: a food-days dot (green/amber/red by
+## One decoration on a player band marker: a food-runway dot (green/amber/red by
 ## the shared BandFoodStatus thresholds) up-and-right of the marker.
 func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
-	var days: float = float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-	var dot_color := BandFoodStatus.color_for_days(days)
+	var turns: float = float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+	var dot_color := BandFoodStatus.color_for_turns(turns)
 	var dot_radius: float = marker_radius * _view.BAND_FOOD_DOT_RADIUS_FACTOR
 	var dot_center := center + Vector2(marker_radius, -marker_radius) * _view.BAND_FOOD_DOT_OFFSET_FACTOR
 	_view.draw_circle(dot_center, dot_radius, dot_color)

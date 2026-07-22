@@ -276,13 +276,16 @@ func _herd_fixtures() -> Array:
 		{"id": "game_deer_79", "species": "Roe Deer", "x": 64, "y": 11, "population": 90, "ecology_phase": "thriving"},
 	]
 
-## Herds for the per-source-cap verify state: game_deer_07 carries the BARE pre-commit forecast fields
-## (per_worker_yield / ceiling_sustain) the Current-actions Hunt row reads via `_find_world_herd` +
-## `_forecast_inputs`. max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
+## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
+## Current-actions Hunt row reads via `_find_world_herd` + `_forecast_inputs` — `per_worker_yield`
+## plus the herd's ONLY ceiling representation, the `hunt_policy_ceilings` table (a herd has no flat
+## `ceiling_*` scalars; the forage patches below still do).
+## max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
 func _cap_demo_herd_fixtures() -> Array:
 	return [
 		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120,
-			"ecology_phase": "thriving", "per_worker_yield": 0.10, "ceiling_sustain": 0.20},
+			"ecology_phase": "thriving", "per_worker_yield": 0.10,
+			"hunt_policy_ceilings": {"sustain": 0.20}},
 	]
 
 ## Forage patches for the per-source-cap verify state (shape `update_forage_patches` consumes — the RAW
@@ -325,7 +328,7 @@ func _band_fixture() -> Dictionary:
 		"current_y": 18,
 		# Good food state: long larder runway (≥ warn) + positive net (0.94 − 0.68 = +0.26) → the Food
 		# line reads "… · +0.26 /turn" (green) with the category breakdown collapsed (clickable open).
-		"days_of_food": 22.0,
+		"turns_of_food": 22.0,
 		# Good morale (collapsed ▸ disclosure); the signed Layer-1 contributions give the morale
 		# breakdown real content when expanded.
 		"morale": 0.82,
@@ -367,7 +370,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 906
 	band["id"] = "Band 4"
-	band["days_of_food"] = 4.0
+	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
 	band["labor_assignments"] = [
@@ -382,7 +385,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 ## summary column runs well past the old fixed T/B PANEL_HEIGHT — the case that used to clip.
 func _starving_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["days_of_food"] = 1.5
+	band["turns_of_food"] = 1.5
 	band["morale"] = 0.22
 	band["morale_delta"] = -0.055
 	band["morale_cause"] = 1   # Terrain
@@ -403,7 +406,7 @@ func _scout_expedition_fixture() -> Dictionary:
 		"size": 4,
 		"current_x": 39,
 		"current_y": 26,
-		"days_of_food": 9.0,
+		"turns_of_food": 9.0,
 		"is_expedition": true,
 		"expedition_mission": "scout",
 		"expedition_phase": "outbound",
@@ -467,7 +470,7 @@ func _arrivals_band_fixture() -> Dictionary:
 	# NET-POSITIVE (income 3.6 vs drain 2.0), so the runway is the not-food-limited sentinel and the
 	# Food line reads ∞ — the sim reports 999 whenever net drain <= 0. A finite countdown here would
 	# contradict the upward-sawtoothing chart directly beneath it.
-	band["days_of_food"] = BandFoodStatus.UNLIMITED_DAYS
+	band["turns_of_food"] = BandFoodStatus.UNLIMITED_TURNS
 	band["stores"] = {"provisions": 30.0}
 	band["food_income"] = 3.6
 	band["food_consumption"] = 2.0
@@ -491,7 +494,7 @@ func _arrivals_starving_band_fixture() -> Dictionary:
 	# The runway is the HONEST one — larder walked with income counted (12 food, net drain ~1.6/turn),
 	# so it lands on the same turn the chart's dashed "empty ~turn N" marker does. The old
 	# larder/consumption reading would have said 4 here and visibly contradicted the chart below it.
-	band["days_of_food"] = 9.0
+	band["turns_of_food"] = 9.0
 	band["stores"] = {"provisions": 12.0}
 	band["food_income"] = 0.9
 	band["food_consumption"] = 2.5
@@ -515,7 +518,7 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"size": 6,
 		"current_x": 66,
 		"current_y": 12,
-		"days_of_food": 5.0,
+		"turns_of_food": 5.0,
 		"is_expedition": true,
 		"expedition_mission": "hunt",
 		"expedition_phase": "hunting",

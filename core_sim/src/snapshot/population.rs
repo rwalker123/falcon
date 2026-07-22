@@ -90,13 +90,13 @@ pub(crate) fn labor_assignment_to_state(
     state
 }
 
-/// `days_of_food` sentinel for a cohort that is **not food-limited** — no food demand at all (a
+/// `turns_of_food` sentinel for a cohort that is **not food-limited** — no food demand at all (a
 /// zero-population cohort), or income that meets or beats the drain so the larder never empties.
 /// The client reads it as ∞.
-pub(crate) const NOT_FOOD_LIMITED_DAYS: f32 = 999.0;
+pub(crate) const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 
-/// The larder runway, in **TURNS until the larder is empty** — the value the wire's (misnamed)
-/// `daysOfFood` carries.
+/// The larder runway, in **TURNS until the larder is empty** — the value the wire's `turnsOfFood`
+/// carries.
 ///
 /// **One formula, both actors.** `runway = larder / net drain`, `net drain = consumption +
 /// pen_feed − income`. An **expedition** has no labor income and keeps no pens, so it reduces to
@@ -112,7 +112,7 @@ pub(crate) const NOT_FOOD_LIMITED_DAYS: f32 = 999.0;
 /// 2. It never empties within the horizon (or no source was projected at all — an empty schedule
 ///    is "no data", never a famine): fall back to the smooth `larder / net_drain` on the **steady**
 ///    `realized` income, capped at the sentinel.
-/// 3. `net_drain <= 0` (net-positive, not food-limited): the [`NOT_FOOD_LIMITED_DAYS`] sentinel.
+/// 3. `net_drain <= 0` (net-positive, not food-limited): the [`NOT_FOOD_LIMITED_TURNS`] sentinel.
 pub(crate) fn larder_runway_turns(
     larder: f32,
     consumption: f32,
@@ -133,9 +133,9 @@ pub(crate) fn larder_runway_turns(
     }
     let net_drain = drain - steady_income;
     if net_drain <= 0.0 {
-        return NOT_FOOD_LIMITED_DAYS;
+        return NOT_FOOD_LIMITED_TURNS;
     }
-    (larder / net_drain).min(NOT_FOOD_LIMITED_DAYS)
+    (larder / net_drain).min(NOT_FOOD_LIMITED_TURNS)
 }
 
 /// The band-wide merged arrival schedule: element-wise sum of every source's `arrivals`, so slot
@@ -253,14 +253,14 @@ pub(crate) fn population_state(
     // ACTUALLY ate this turn (`cohort.last_food_consumption`, the real `stores` debit at the turn's
     // opening brackets), NOT a `food_demand` re-derived here on the post-turn brackets — the same
     // turn's births would inflate that and break the larder ledger identity by exactly the growth.
-    // (`demand` above stays post-turn for `days_of_food`, which is a forward "turns I can last".)
+    // (`demand` above stays post-turn for `turns_of_food`, which is a forward "turns I can last".)
     let food_income = allocation
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
     // The **steady** income = Σ per-source `realized` (the honest long-run average of the lumpy
     // `actual`). Distinct from `food_income` above precisely on whole-animal sources, where `actual`
     // pulses (0 on wait turns, spikes on kills) while `realized` holds steady, so it is the right
-    // income term for the forward-looking runway below — `days_of_food` must not swing with the
+    // income term for the forward-looking runway below — `turns_of_food` must not swing with the
     // pulses. Purely local: it is no longer exported, because the client sums the same quantity from
     // the per-source `realized_yield` of the breakdown rows so its headline cannot disagree with the
     // rows it sits above (see `core_sim/CLAUDE.md`).
@@ -276,11 +276,11 @@ pub(crate) fn population_state(
     // rehydrated save until the next tick.
     let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
     // The honest larder runway — turns until the larder empties, INCOME INCLUDED (the wire calls it
-    // `days_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
+    // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
     // where the actual debit is `0` on a rehydrated save and short of demand in a famine.
-    let days_of_food = if demand.raw() <= 0 {
-        NOT_FOOD_LIMITED_DAYS
+    let turns_of_food = if demand.raw() <= 0 {
+        NOT_FOOD_LIMITED_TURNS
     } else {
         larder_runway_turns(
             cohort.stores.get(FOOD).to_f32(),
@@ -366,7 +366,7 @@ pub(crate) fn population_state(
             })
             .collect(),
         age_turns: cohort.age_turns,
-        days_of_food,
+        turns_of_food,
         activity,
         hunt_mode,
         labor_assignments,
@@ -576,7 +576,7 @@ mod tests {
         }
     }
 
-    /// Capture one cohort exactly as the snapshot does, and return its `days_of_food`.
+    /// Capture one cohort exactly as the snapshot does, and return its `turns_of_food`.
     fn captured_runway(
         cohort: &PopulationCohort,
         allocation: Option<&LaborAllocation>,
@@ -603,7 +603,7 @@ mod tests {
             None,
             0,
         )
-        .days_of_food
+        .turns_of_food
     }
 
     /// The one-turn demand the runway divides by — the same helper the capture uses.
@@ -697,7 +697,7 @@ mod tests {
         let per_turn = demand * 1.5;
         let allocation = allocation_with(vec![per_turn; 20], per_turn);
         let runway = captured_runway(&cohort, Some(&allocation), None);
-        assert_eq!(runway, NOT_FOOD_LIMITED_DAYS);
+        assert_eq!(runway, NOT_FOOD_LIMITED_TURNS);
     }
 
     /// **An empty schedule is "no data", never a famine.** A cohort whose sources were not projected
@@ -730,6 +730,6 @@ mod tests {
         let mut empty = cohort(TEST_LARDER);
         empty.working = scalar_zero();
         empty.size = 0;
-        assert_eq!(captured_runway(&empty, None, None), NOT_FOOD_LIMITED_DAYS);
+        assert_eq!(captured_runway(&empty, None, None), NOT_FOOD_LIMITED_TURNS);
     }
 }

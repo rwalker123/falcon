@@ -1,6 +1,6 @@
 //! **The band's exported larder runway must be the turn the larder actually empties.**
 //!
-//! `PopulationCohortState.daysOfFood` used to be `larder / food_demand` — i.e. it assumed the band
+//! `PopulationCohortState.turnsOfFood` used to be `larder / food_demand` — i.e. it assumed the band
 //! **stops gathering and hunting**. For a resident band with real income that is badly pessimistic,
 //! and it visibly contradicted the FOOD OUTLOOK chart drawn directly beneath it (header "4" over a
 //! chart showing ~9). It is now the honest runway `larder / (consumption + pen feed − income)`,
@@ -45,7 +45,7 @@ fn larder(app: &bevy::app::App, band: Entity) -> f32 {
         .to_f32()
 }
 
-/// `(days_of_food, food_consumption)` off the **exported** snapshot — the numbers the client reads.
+/// `(turns_of_food, food_consumption)` off the **exported** snapshot — the numbers the client reads.
 fn exported(app: &bevy::app::App) -> (f32, f32) {
     let snapshot = app
         .world
@@ -58,7 +58,7 @@ fn exported(app: &bevy::app::App) -> (f32, f32) {
         .iter()
         .find(|c| !c.is_expedition)
         .expect("the resident band is exported");
-    (cohort.days_of_food, cohort.food_consumption)
+    (cohort.turns_of_food, cohort.food_consumption)
 }
 
 #[test]

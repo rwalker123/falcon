@@ -230,31 +230,22 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_progress: f32,
     /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier = 1`).
-    /// See `ForagePatchState`'s forecast fields — this is the herd-side twin.
+    /// The per-worker **rate**; the per-policy ceilings that clamp it live in
+    /// [`Self::hunt_policy_ceilings`].
     #[serde(default)]
     pub per_worker_yield: f32,
-    #[serde(default)]
-    pub ceiling_sustain: f32,
-    #[serde(default)]
-    pub ceiling_surplus: f32,
-    #[serde(default)]
-    pub ceiling_market: f32,
-    #[serde(default)]
-    pub ceiling_eradicate: f32,
-    /// Food/turn under the **Corral** policy — what the herd pays *while the pen is being built*
-    /// (`corralling_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
-    #[serde(default)]
-    pub ceiling_corral: f32,
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
-    /// biomass). With `ceiling_corral`, lets the client show "preparing X → then Y" pre-commit.
+    /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
+    /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
     /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
     /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
     /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
     /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
-    /// rows all read its corral yield. The same numbers as the `ceiling_*` scalars above, projected
-    /// as a list; with the cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
+    /// rows all read its corral yield. The **only** wire representation of a herd's per-policy
+    /// ceilings — a free-form `policy` string means a new policy needs no schema change. With the
+    /// cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
     /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
     /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
     #[serde(default)]
@@ -382,11 +373,6 @@ impl Default for HerdTelemetryState {
             corralled: false,
             corral_progress: 0.0,
             per_worker_yield: 0.0,
-            ceiling_sustain: 0.0,
-            ceiling_surplus: 0.0,
-            ceiling_market: 0.0,
-            ceiling_eradicate: 0.0,
-            ceiling_corral: 0.0,
             corral_yield: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
@@ -2013,12 +1999,8 @@ pub struct PopulationCohortState {
     /// food-limited" (no demand at all, or income that meets the drain). An expedition has no
     /// income, so it reduces to `provisions / consumption`. Computed at capture; see
     /// `core_sim::snapshot::population::larder_runway_turns`.
-    ///
-    /// **The `days` in the name is a MISNOMER pending a rename** — the sim has no days, only
-    /// turns, and the client already renders it as "turns". Renaming the field across
-    /// schema/native/client is a mechanical sweep held out of the arc that made it honest.
     #[serde(default)]
-    pub days_of_food: f32,
+    pub turns_of_food: f32,
     /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
     #[serde(default)]
     pub activity: String,
@@ -2175,7 +2157,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub food_income: f32,
     /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `days_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
+    /// one-turn demand `turns_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
     /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
@@ -4152,11 +4134,6 @@ fn create_herds<'a>(
                 corralled: herd.corralled,
                 corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
-                ceilingSustain: herd.ceiling_sustain,
-                ceilingSurplus: herd.ceiling_surplus,
-                ceilingMarket: herd.ceiling_market,
-                ceilingEradicate: herd.ceiling_eradicate,
-                ceilingCorral: herd.ceiling_corral,
                 corralYield: herd.corral_yield,
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
@@ -4664,7 +4641,7 @@ fn create_populations<'a>(
                     elders: cohort.elders,
                     stores,
                     ageTurns: cohort.age_turns,
-                    daysOfFood: cohort.days_of_food,
+                    turnsOfFood: cohort.turns_of_food,
                     activity,
                     huntMode: hunt_mode,
                     laborAssignments: labor_assignments,

@@ -2761,7 +2761,8 @@ pub struct SourceYieldForecast {
     /// Food/turn cap under the source's **top investment** policy — `Cultivate` for a forage patch,
     /// `Corral` for a herd. This is the **preparing** yield: `yield_fraction_while_building × the
     /// Sustain (MSY) ceiling`, the up-front cost of the improvement. Crosses the wire as
-    /// `ForagePatchState.ceilingCultivate` / `HerdTelemetryState.ceilingCorral`.
+    /// `ForagePatchState.ceilingCultivate` / the `corral` row of
+    /// `HerdTelemetryState.huntPolicyCeilings`.
     pub ceiling_prepare: f32,
     /// Food/turn cap under **`Tame`** — the animal rung-2 dip (the `animal:pastoral` rung's
     /// `yield_fraction_while_building × MSY`). `0` on a forage patch, where `Tame` is not a legal
@@ -2861,10 +2862,11 @@ impl SourceYieldForecast {
     }
 
     /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
-    /// exposed ceilings (wire: `ceilingSustain`/…). While an improvement is being prepared the source
+    /// exposed ceilings (wire: `ForagePatchState.ceilingSustain`/…, or a herd's `huntPolicyCeilings`
+    /// row). While an improvement is being prepared the source
     /// pays that rung's reduced `yield_fraction_while_building` bite, and **every investment rung has
     /// its own field**: `ceiling_prepare` is the one each branch already puts on the wire
-    /// (`Cultivate` → `ceilingCultivate` on a patch, `Corral` → `ceilingCorral` on a herd — the two
+    /// (`Cultivate` → `ceilingCultivate` on a patch, `Corral` → the `corral` ceiling row on a herd — the two
     /// are kind-exclusive, so one field serves both), while each branch's *other* investment rung
     /// carries its own (`ceiling_tame`, `ceiling_sow`). Two rungs never share a field just because
     /// today's levers agree — that coincidence is how a preview starts lying under a retune. Once an

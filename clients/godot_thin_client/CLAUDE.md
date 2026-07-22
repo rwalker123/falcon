@@ -1469,8 +1469,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView.select_occupant`, which moves the map selection ring** (sets
   `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
   auto-selects the first occupant through the same path. The **vitality dot is
-  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_days`
-  (`days_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
+  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_turns`
+  (`turns_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
   (`ecology_phase` → thriving green / stressed amber / collapsing red), sharing the
   exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
   dot and no allocation panel (their larder/orders aren't ours to see). (The Tile card
@@ -1974,11 +1974,20 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
       misled. ui_preview `herd_corral_depleted`.
-    - **TAME's dip has no scalar ceiling field — its DIP rides the list, its PAYOFF is a scalar.** There
-      is no flat `ceilingTame` on the wire (the Tame dip rides the `huntPolicyCeilings` LIST, so `tame`
-      has **no** `FORECAST_CEILING_KEYS` entry — adding one would silently fall back to Sustain's ceiling
-      and quote the wrong dip); `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
-      instead. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+    - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
+      wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
+      `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
+      `_forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
+      (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
+      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
+      list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**:
+      `HERD_FORECAST_PREFIX` and `WIRE_FORAGE_PATCH_PREFIX` are BOTH `""` (a herd dict and a raw wire
+      forage-patch dict both carry the forecast fields bare), so `prefix == HERD_FORECAST_PREFIX` is true
+      for a forage patch too — that test sent the Current-actions Forage row down the herd branch, where
+      no `hunt_policy_ceilings` key exists, collapsing its ceiling to 0 and leaving the row's `+` button
+      permanently dead. Nor may it infer the kind from the dict's shape (`has("hunt_policy_ceilings")`
+      would misread a herd whose snapshot omitted the list). The `prefix` parameter survives for the
+      FORAGE scalar key lookup only. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
@@ -2012,8 +2021,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `patch_field_progress` / `patch_is_field` / `patch_ceiling_sow` / `patch_field_yield` /
       `patch_sow_site_refusal` (MapView cross-refs all onto `tile_info` with the `patch_` prefix; ALL
       are in `FOW_DISCOVERED_HIDDEN_KEYS`, mirroring their rung-2 twins). `HerdTelemetryState`:
-      `ceilingCorral` / `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
-      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
+      `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
+      (the herd's SOLE ceiling representation — the sim exports one row per
+      `FollowPolicy::HUNT_POLICIES`, i.e. the four extractive rungs **plus `tame` and `corral`**, so
+      the investment DIPS ride it too; the old per-policy scalars `ceilingSustain` / `ceilingSurplus` /
+      `ceilingMarket` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
+      are no longer decoded) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
@@ -2087,10 +2100,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
-    were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
-    `HerdTelemetryState` (`perWorkerYield` / `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` /
-    `ceilingEradicate` — all food/turn at the source's **current biomass**, exported at
-    `output_multiplier = 1.0`), enough to compute the take *while composing*:
+    were wasted. The sim now streams, on `ForagePatchState` and `HerdTelemetryState` alike, a
+    `perWorkerYield` plus one take ceiling per policy — all food/turn at the source's **current
+    biomass**, exported at `output_multiplier = 1.0` — enough to compute the take *while composing*.
+    **The two source kinds carry the ceilings differently, and that asymmetry is load-bearing:** the
+    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+    plus `ceilingCultivate` / `ceilingSow`) because it has no policy list; the HERD has ONLY the
+    `huntPolicyCeilings` list (its identically-named scalars are deprecated slots — a new policy costs
+    the herd no schema change).
     `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
     already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
     ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`
@@ -2503,35 +2520,41 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   it's known knowledge. The server also pushes a `SiteDiscovered` command-feed entry, which renders
   generically via the server-provided `kind`/`label` (no client kind→label map needed). See
   `core_sim` — Wondrous Sites.
-- **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
-  `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
+- **Band food status** (snapshot `PopulationCohortState.turnsOfFood` / `activity` / `supplyNetworkId` /
+  `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `turns_of_food` / `activity` /
   `supply_network_id` / `stores{item:qty}`).
-  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME IS A MISNOMER PENDING A RENAME.** It is the
+  > **THE FIELD IS A COUNT OF TURNS, AND ITS NAME NOW SAYS SO** (it was `daysOfFood`; renamed
+  > end-to-end — wire, decoder, config key `food_turns.{warn,critical}`, and every client helper).
+  > It is the
   > **larder runway — turns until the larder empties, WITH income counted** — resolved sim-side by
   > walking the per-source `arrivalSchedule`s (falling back to `larder / net_drain`, and to the
   > `999` not-food-limited sentinel when the band is net-positive). It used to be
   > `larder / consumption`, i.e. *"how long if you stop hunting"*, which read badly pessimistic for
   > any band with real income and visibly contradicted the FOOD OUTLOOK chart beneath it. Because
   > it walks the same schedules the chart does, the header and the chart now agree. **This game
-  > counts turns, never days** — `Hud._food_days_text` is the single place the unit is spelled, and
-  > it renders "turns". One consequence to keep in mind: the runway assumes income *holds*, so a
+  > counts turns, never days** — `Hud._food_turns_text` is the single place the unit is spelled, and
+  > it spells it from the shared `Hud.FOOD_RUNWAY_UNIT` const. **The Food-row threshold tint in
+  > `_format_detail_bbcode` keys on that SAME const**, because it recognizes the row by finding the
+  > unit word in the rendered value — the guard tested a bare `"day"` literal after the renderer had
+  > moved to turns, so a starving band's Food row rendered in neutral ink and only the `∞` case
+  > tinted. Never spell the unit at either site with a literal. One consequence to keep in mind: the runway assumes income *holds*, so a
   > band whose income nearly covers its drain reports a very long runway and reads green until that
   > income lapses. The old figure warned earlier by assuming the worst.
   The green/amber/red warn·critical thresholds and the
   runway→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
-  key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
+  key `food_turns.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
   (1) `MapView._draw_band_status` draws a food-runway dot on each **player** band
   (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> turns)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
   — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
   reason: **a rival's larder is not ours to see**). A foreign cohort carries no
-  `days_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
+  `turns_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
   — a healthy-green `Food 0 (∞)`, the UI claiming we'd counted a larder we cannot observe.
   A foreign band's drawer now shows only what is honestly observable from outside: its
   **Position**, plus the name/size on its roster row. The reset of the disclosure context
-  (`_food_flow_present` / `_selected_band_food_days` / `_disclosure_state`) lives at the top
+  (`_food_flow_present` / `_selected_band_food_turns` / `_disclosure_state`) lives at the top
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
-  previous render's caret or food-days tint behind;
+  previous render's caret or food-runway tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
@@ -2693,7 +2716,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   producers** (all in `Hud.update_band_alerts`, each pushed with the tile `current_x`/`current_y` so
   Jump locates it) — the folded-in Alerts panel, plus the expedition one. The first three run in one
   loop over the player faction's BANDS:
-  - **`starving`** (critical) — `BandFoodStatus.is_critical(days)`; label `"<band> starving"`, detail = `_food_days_text(days)`.
+  - **`starving`** (critical) — `BandFoodStatus.is_critical(turns)`; label `"<band> starving"`, detail = `_food_turns_text(turns)`.
   - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
   - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
 
@@ -2786,7 +2809,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   at marker-rebuild). Resident-band rendering is untouched.
   (2) **Expedition drawer panel** (`Hud._render_occupant_drawer` → `_build_expedition_panel`):
   replaces the labor-allocation panel for a selected expedition (no labor in v1). Drawer text
-  (`_expedition_summary_lines`) shows Mission / humanized Phase / Party / Provisions (`daysOfFood`);
+  (`_expedition_summary_lines`) shows Mission / humanized Phase / Party / Provisions (`turnsOfFood`);
   the panel hosts **Recall** (→ `recall_expedition_requested` → `Main._on_hud_recall_expedition` →
   `recall_expedition …`) + **Move** (reuses `_on_move_band_pressed`; `_resolve_assign_band` returns
   the selected expedition since it's a player unit — Move retargets it via `move_band` unchanged, no
@@ -2813,7 +2836,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   expedition", **Target** herd (`expedition_target_herd`, species via `_herd_label_for_id` → raw id
   fallback), **Policy** (`expedition_hunt_policy`, capitalized), humanized **Phase**
   (Hunting/Delivering/Returning), Party, and **Carried X / cap** (`stores` total vs
-  `expedition_carry_cap`, days from `daysOfFood`) with a **· FULL** badge at the ceiling. Reuses
+  `expedition_carry_cap`, turns from `turnsOfFood`) with a **· FULL** badge at the ceiling. Reuses
   `_build_expedition_panel` (Recall + Move, "Returning"-when-returning treatment — mission-agnostic,
   so hunt parties get it too).
   (3) **Outfit UI** (`Hud._build_send_expedition_controls`): under the shared "Send expedition"
