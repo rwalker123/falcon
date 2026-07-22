@@ -1085,19 +1085,34 @@ scarcity + the intensification ladder, so *which* crop and *whether it's worth t
 choices — not a tech-tree checklist you fill regardless of terrain. The design doc has to show this
 before any config lands.
 
-- [ ] **Design doc first (manual-first, then config).** Author `docs/plan_flora_roster.md`: the flora
-  schema (mirror the `fauna_config.json` / `SpeciesDef` data-driven pattern — likely a
-  `flora_config.json` + loader, so adding a plant is config, not code), the three roles above, biome
-  affinity (reuse the `FoodModule` buckets or a terrain-keyed table — decide), how fodder interlocks
-  with `GrazePatch`/pen upkeep, and how cash crops feed the yield-vector + Market. New gameplay content
-  → add to `shadow_scale_strategy_game_concept_technical_plan_v_0.md` first, then the config. Cross-link
-  `docs/plan_grazing_foundation.md` (the two food webs), `docs/plan_intensification_ladder.md` (the
-  rung grammar), and this fauna section (the roster pattern it parallels).
-- [ ] **Then phased impl** — seed a starter roster per role, wire fodder into the pen economy, wire
-  cash crops into trade. Scope the phases in the design doc.
-
-**Deferred — fauna is the active arc.** The current work continues on the Fauna Roster above (sheep →
-horse → regional game); flora is the *next* content arc, not this one.
+- [x] **Design doc + manual section. DONE** (worktree `flora-roster`). `docs/plan_flora_roster.md`
+  plus the manual's §2a *"What Grows There — Named Plants"*. The rulings it settles:
+  **(1) naming decomposes, it never adds** — a species' share of `forage.capacity_by_biome`, normalized
+  per tile, so the roster is provably economy-neutral at the wild rung and the crop choice only becomes
+  a decision at rungs 2–3; **(2) affinity is terrain-keyed** (the 38 biomes), *not* the 10 `FoodModule`
+  buckets — a plant *is* its tile where an animal *ranges*, and the buckets can't say "floodplain silt,
+  not any wetland"; **(3) the three roles are one yield vector**
+  (`provisions`/`fodder`/`trade_goods` per biomass), with `role` demoted to a display tag — which is
+  what gives the future Market/yield-vector arc a data surface instead of a fourth thing to invent;
+  **(4) `cultivation_ceiling`** (wild|tended|field), the `husbandry_ceiling` twin — not every plant
+  climbs; **(5) fodder is a coupling, not a lever** — a fodder Field fills a *separate* feed store that
+  adds a term to `K_pen`, keeping the deliberately-lossy human-larder path intact (grazing foundation
+  §2.1, "the larder can never be the strategy").
+- [ ] **F1 — schema + loader + decomposition, economy-neutral.** `flora_config.json` + `FloraDef`
+  (mirror the `fauna_config.rs` loader), `validate()` (every non-zero-capacity biome must be hosted;
+  no nameless food), the derived per-tile share table, `ForagePatch.species: Option<FloraSpeciesId>`
+  (`None` = wild mix), tile-card readout. **Verification is that nothing moves**: map-wide and
+  per-start food capacity identical to pre-arc.
+- [ ] **F2 — the rungs get a subject.** `Cultivate`/`Sow` select a species; the yield vector drives
+  the harvest; the displaced basket is the cost of committing. First balance-moving slice — playtest.
+- [ ] **F3 — fodder, both halves.** Fodder store + fodder Field (plant side, no new plant knowledge —
+  `Sow` already exists), then the animal rung 4: `Foddering` (discovery id **2007**, next free) and
+  the `delivered_fodder_flow` term in `K_pen`. Measure: a fed pen on thin pasture is survivable but
+  *expensive*, never free.
+- [ ] **F4 — cash crops.** Trade-dominant vectors replacing the flat `trade_goods_per_biomass`; the
+  calories-or-cash tension on rung 3's already-scarce good ground.
+- [ ] **F5 — mass-fill + client.** Full roster across all non-zero biomes, icons, labels, composition
+  readout.
 
 ### Exploration & Wondrous Sites
 
