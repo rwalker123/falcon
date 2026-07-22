@@ -27,6 +27,11 @@ const TRAVEL_SEAM_BAND_X := 1      # band column near the left edge for the seam
 const TRAVEL_SEAM_TARGET_X := 14   # target near the right edge → short path wraps LEFT across seam
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
+# Quarry-targeting state: the band's hunt reach and the two herd offsets that straddle it (one inside
+# → a local hunt, no glow; one beyond → a valid quarry, glowed).
+const QUARRY_HUNT_REACH := 3
+const QUARRY_NEAR_OFFSET := 2
+const QUARRY_FAR_OFFSET := 6
 # First worked forage tile of the work fixture — named because the draw-order guard (State A-overlap)
 # parks a herd on exactly this tile so its glyph collides with that tile's yield label.
 const FORAGE_A_X := 7
@@ -542,6 +547,25 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_hunt_expeditions")
+
+	# State M2 — QUARRY targeting: the party compose sheet asks for a herd, and the map glows the
+	# VALID ones. A hunting party is for game the band cannot work from home, so only a herd strictly
+	# beyond the band's `hunt_reach` qualifies — carried on the targeting info as `min_distance`, the
+	# render-side mirror of `Hud._is_expedition_quarry`. Both herds here are huntable and visible;
+	# ONLY the far one may wear the pulsing ring. A ring on the near herd would promise a target the
+	# pick refuses.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_quarry_targeting())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	_map.set_targeting({
+		"active": true, "command": "quarry", "need": "herd",
+		"origin_x": BAND_X, "origin_y": BAND_Y,
+		"min_distance": QUARRY_HUNT_REACH, "context_label": "Band 1",
+	})
+	await _settle()
+	await _save("map_quarry_targeting")
+	_map.set_targeting({})
 
 	# State N — selected TRAVELLING band destination (non-wrapping map): the band reports
 	# `is_traveling` + a `travel_target` a few hexes away → a thin cyan line from its tile to the
@@ -1541,6 +1565,17 @@ func _hunt_expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
 	party["expedition_mission"] = "hunt"
 	party["expedition_target_herd"] = "game_deer_07"
 	return party
+
+## Two huntable, visible herds straddling the band's hunt reach: the Roe Deer sits INSIDE it (a local
+## hunt — no glow) and the Wild Boar well beyond (a party's job — glow). The frame is judged on the
+## ring appearing on exactly one of them.
+func _snapshot_quarry_targeting() -> Dictionary:
+	return _base_snapshot(_band([], 2, 2), [
+		{"id": "game_deer_79", "label": "Roe Deer (game_deer_79)",
+			"x": BAND_X + QUARRY_NEAR_OFFSET, "y": BAND_Y, "biomass": 500.0, "huntable": true},
+		{"id": "game_boar_04", "label": "Wild Boar (game_boar_04)",
+			"x": BAND_X + QUARRY_FAR_OFFSET, "y": BAND_Y, "biomass": 800.0, "huntable": true},
+	])
 
 func _snapshot_hunt_expeditions() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])

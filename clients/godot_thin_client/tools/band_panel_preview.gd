@@ -45,6 +45,18 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
+## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
+## fixture's delivered food is animals × this, so the sheet's forecast quotes a real food total.
+const QUARRY_FOOD_PER_ANIMAL := 4.0
+## The quarry fixtures straddle the band's hunt reach: the Wild Boar is a party's job, the Roe Deer
+## one tile out is a local hunt the picker must refuse.
+const QUARRY_BAND_HUNT_REACH := 2
+const QUARRY_FAR_HERD_ID := "game_boar_04"
+const QUARRY_FAR_X := 75
+const QUARRY_FAR_Y := 18
+const QUARRY_NEAR_HERD_ID := "game_deer_79"
+const QUARRY_NEAR_X := 72
+const QUARRY_NEAR_Y := 18
 # The two disclosure keys of `_band_fixture()` (entity 904) — the `[url]` meta payload its Food /
 # Morale rows carry, i.e. what `Hud._breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
@@ -361,21 +373,51 @@ func _ready() -> void:
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
 
-	# The parties COMPOSE sheet, mission-first: Hunt picked → party stepper, policy picker, forecast.
+	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
+	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
+	# max-useful plateau, the trip forecast reads, and the Send button takes its verdict.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_herds(_quarry_herd_fixtures())
 	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_assert_quarry_eligibility()
 	_panel.set_active_tab(&"parties")
 	_hud._party_compose_open = true
 	_hud._party_compose_mission = "hunt"
+	_hud._send_party_quarry_id = QUARRY_FAR_HERD_ID
+	# Picking a quarry fills the party to its max-useful cap (the one-shot `_try_pick_quarry` sets);
+	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
+	_hud._send_party_autofill = true
 	_hud._rerender_panel_allocation()
 	await _settle()
 	await _save("band_panel_compose_hunt")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._party_compose_open = false
 
-	# Zero idle workers: "Send a party…" stays VISIBLE and DISABLED, with its reason.
+	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
+	# below it, since policy/party/forecast are all unanswerable without a herd.
+	_hud._send_party_quarry_id = ""
+	_hud._rerender_panel_allocation()
+	await _settle()
+	await _save("band_panel_compose_hunt_no_quarry")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# Same sheet under Scout: scouting title, NO quarry row, NO policy picker, "Send scouting party…".
+	_hud._party_compose_mission = "scout"
+	_hud._rerender_panel_allocation()
+	await _settle()
+	await _save("band_panel_compose_scout")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._party_compose_open = false
+	_hud._party_compose_mission = ""
+	_hud._send_party_quarry_id = ""
+
+	# Zero idle workers: BOTH mission buttons (Scout / Hunt) stay VISIBLE and DISABLED, with the
+	# shared reason line beneath them.
 	_hud.update_band_alerts([_no_idle_band_fixture()])
 	await _settle()
 	await _save("band_panel_no_idle")
@@ -706,6 +748,88 @@ func _herd_fixtures() -> Array:
 		{"id": "game_deer_79", "species": "Roe Deer", "x": 64, "y": 11, "population": 90, "ecology_phase": "thriving"},
 	]
 
+## The QUARRY herd for the party compose sheet: a Wild Boar carrying BOTH sim-exported tables — the
+## band FLOW ceilings and, decisively, the forward-simulated `hunt_trip_estimates` the sheet's policy
+## metrics / max-useful party cap / trip forecast are all pure lookups into. Without the trip table the
+## sheet renders bare rungs and no forecast, i.e. exactly the state the quarry-first flow exists to fix.
+## It sits 4 tiles from the band at (71,18), so the round-trip travel term is exercised too.
+func _quarry_herd_fixtures() -> Array:
+	var herd := {
+		"id": QUARRY_FAR_HERD_ID, "species": "Wild Boar", "x": QUARRY_FAR_X, "y": QUARRY_FAR_Y,
+		"population": 140, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.8, "food_per_animal": QUARRY_FOOD_PER_ANIMAL,
+		"hunt_policy_ceilings": {
+			"sustain": 0.30, "surplus": 1.20, "market": 0.60, "eradicate": 0.0,
+		},
+	}
+	# The server's measured boar raid: 1 hunter → 5 animals / 7 turns, 2 → 8 / 8, 3+ → 8 / 4. Delivered
+	# food plateaus at party 2, so the sheet's stepper must cap there with its "max 2 useful" note.
+	var turns_row := [7, 8, 4, 4, 4, 4, 4, 4]
+	var animals_row := [5, 8, 8, 8, 8, 8, 8, 8]
+	var table := {}
+	for i in animals_row.size():
+		var w := i + 1
+		var turns := int(turns_row[i])
+		var base := int(animals_row[i])
+		# A CLEAN raid — the party hauls its whole kill home, so delivered = animals × fpa, waste 0.
+		# The deeper policies raid to a lower floor and so take MORE (Surplus < Market), which is the
+		# ASCENDING per-policy metric the picker buttons must read.
+		table["sustain:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
+			"animals_taken": base, "delivered_food": float(base) * QUARRY_FOOD_PER_ANIMAL,
+			"wasted_food": 0.0}
+		table["surplus:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
+			"animals_taken": base + 2, "delivered_food": float(base + 2) * QUARRY_FOOD_PER_ANIMAL,
+			"wasted_food": 0.0}
+		table["market:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
+			"animals_taken": base + 3, "delivered_food": float(base + 3) * QUARRY_FOOD_PER_ANIMAL,
+			"wasted_food": 0.0}
+		# Eradicate is a DENIAL rung: the SIM says so via `delivers_food`, never the policy string.
+		table["eradicate:%d" % w] = {"turns_to_fill": turns, "delivers_food": false,
+			"animals_taken": base + 5, "delivered_food": 0.0, "wasted_food": 0.0}
+	herd["hunt_trip_estimates"] = table
+	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
+	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
+	var near := {
+		"id": QUARRY_NEAR_HERD_ID, "species": "Roe Deer", "x": QUARRY_NEAR_X, "y": QUARRY_NEAR_Y,
+		"population": 90, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.8,
+		"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.80, "market": 0.40, "eradicate": 0.0},
+		"hunt_trip_estimates": table.duplicate(true),
+	}
+	return [herd, near]
+
+## The tile_info a map click on a herd's hex delivers (`Hud._huntable_herd_on_tile` reads `herds`).
+func _quarry_tile_info(herd: Dictionary) -> Dictionary:
+	return {"x": int(herd["x"]), "y": int(herd["y"]), "herds": [herd]}
+
+## A hunting PARTY is for game the band cannot work from home, so the quarry picker must refuse a herd
+## inside the band's `hunt_reach` (`Hud._is_expedition_quarry`) — the near herd is a LOCAL hunt. This
+## is behavioural, not pictorial: the refusal happens at the click, which no frame can show. Verified
+## to FAIL (the near herd is accepted, `_send_party_quarry_id` = the near id) with the eligibility test
+## removed from `_try_pick_quarry`.
+func _assert_quarry_eligibility() -> void:
+	var herds := _quarry_herd_fixtures()
+	var far: Dictionary = herds[0]
+	var near: Dictionary = herds[1]
+	_hud.update_herds(herds)
+	# NEAR — inside hunt reach: refused, and targeting stays armed so the player can pick again.
+	_hud._send_party_quarry_id = ""
+	_hud._pending_pick_quarry = {"band": _band_fixture()}
+	_hud._try_pick_quarry(_quarry_tile_info(near))
+	assert(_hud._send_party_quarry_id == "",
+		"band_panel_preview: a herd INSIDE hunt reach was accepted as a quarry (%s)" \
+		% _hud._send_party_quarry_id)
+	assert(not _hud._pending_pick_quarry.is_empty(),
+		"band_panel_preview: the refused pick dropped out of targeting instead of staying armed")
+	# FAR — beyond hunt reach: accepted, and the pick ends targeting.
+	_hud._try_pick_quarry(_quarry_tile_info(far))
+	assert(_hud._send_party_quarry_id == QUARRY_FAR_HERD_ID,
+		"band_panel_preview: a herd BEYOND hunt reach was refused as a quarry (%s)" \
+		% _hud._send_party_quarry_id)
+	_hud._pending_pick_quarry = {}
+	_hud._send_party_quarry_id = ""
+	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
+
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
 ## Current-actions Hunt row reads via `_find_world_herd` + `_forecast_inputs` — `per_worker_yield`
 ## plus the herd's ONLY ceiling representation, the `hunt_policy_ceilings` table (a herd has no flat
@@ -794,8 +918,16 @@ func _band_fixture() -> Dictionary:
 		"age_working": 16.5375,
 		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
+		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
+		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
+		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.
+		"expedition_viability_warn_turns": 20,
+		"band_move_tiles_per_turn": 2.0,
 		"work_range": 2,
-		"hunt_reach": 16,
+		# Deliberately SHORT: the quarry fixtures straddle it (Wild Boar 4 tiles out = a party's job,
+		# Roe Deer 1 tile out = a local hunt), which is what the quarry-eligibility assertion below
+		# tests. Only the herd drawer and `_is_expedition_quarry` read it, so no other state moves.
+		"hunt_reach": QUARRY_BAND_HUNT_REACH,
 		# `settlement_stage_id` is the panel header's SPRITE key (the icon is only the emoji
 		# fallback for a stage with no bundled art) — see `StageSprites`.
 		"settlement_stage_id": "camp",
