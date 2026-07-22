@@ -296,7 +296,7 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Provide serde-compatible adapters for early testing.
 - [x] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
-- [ ] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
+- [x] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
   per-policy band hunt ceiling **twice**: the flat scalars (`ceilingSustain`/`ceilingSurplus`/
   `ceilingMarket`/`ceilingEradicate`/`ceilingCorral` + `corralYield`/`perWorkerYield`) and the
   `huntPolicyCeilings:[{policy, provisionsPerTurn}]` list. They are the **same numbers** — the list is a
@@ -307,6 +307,57 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
   repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
   source.
+  _Status_: **Done — with two corrections to the scope above, both forced by reading the code.**
+  1. **The five ceiling scalars are marked `(deprecated)` in `snapshot.fbs`, NOT deleted.** They sit
+     **mid-table** in `HerdTelemetryState`, with a long appended tail after them (`huntPolicyCeilings`,
+     `huntTripEstimates`, `penUpkeep`, `penFedFraction`, `bodyMass`, `foodPerAnimal`, `pastoralYield`,
+     …). A FlatBuffers field's vtable slot is **positional**, so deleting a line silently renumbers
+     every field below it and corrupts the wire for all of them. `(deprecated)` retains the slot and
+     drops the accessors, which is what "retire" has to mean here. Verified post-change: order
+     unchanged, and the regenerated bindings emit no herd accessors while `ForagePatchState`'s still
+     resolve.
+  2. **Only FIVE of the seven named fields were retired.** `perWorkerYield` and `corralYield` are
+     **kept** — they are not ceilings, and `huntPolicyCeilings` (`[{policy, provisionsPerTurn}]`)
+     structurally cannot carry them: `perWorkerYield` is the per-worker RATE (the divisor in
+     `maxUsefulWorkers = ceil(ceiling / perWorkerYield)`, which drives the worker-stepper cap) and
+     `corralYield` is the post-pen PAYOFF (`FORECAST_PAYOFF_KEYS`, rendered as Corral's `→ +5.40/turn`).
+     Retiring them would have deleted information, not a duplicate.
+
+  **`ForagePatchState` keeps its identical-looking scalar block** (`perWorkerYield` + the four
+  extractive ceilings) on the wire, in the decoder, and behind `MapView`'s `patch_`-prefixed
+  cross-refs: a patch has **no** `huntPolicyCeilings` list, so for a patch the scalars are the only
+  representation. The herd↔patch asymmetry is now the documented rule in both CLAUDE.mds.
+
+  Client: `_forecast_inputs` branches on `prefix == HERD_FORECAST_PREFIX` → `_hunt_policy_ceiling`
+  (the list) for **every** herd rung, else the unchanged scalar lookup — a generalization of the
+  branch that already existed for `tame`, whose dip never had a scalar. `FORECAST_CEILING_KEYS` is
+  now the FORAGE-only map (lost its hunt-only `corral` entry). The "not known" contract is unchanged
+  and was checked, not assumed: `known` is `per_worker >= FORECAST_MIN_PER_WORKER` and never
+  consulted the ceiling, so a herd with no forecast data still renders no row and applies no cap —
+  the clamped `0.0` cannot manufacture a `+0.00`.
+
+  Verified: `cargo fmt`/`clippy -D warnings` clean, 491 core_sim + 46 sim_schema + every
+  integration-test binary green, `cargo build --workspace` clean, `cargo xtask godot-build` OK,
+  `marker_field_guard` PASS. **8 of the 9 herd-forecast ui_preview frames are byte-identical** to the
+  pre-change baseline (this is a representation change, so identical pixels is the contract):
+  `herd_hunt_delivered_clean`, `herd_hunt_delivered_waste`, `hunt_picker_ascending`, `herd_corral`,
+  `herd_tame`, `two_meter_split`, `herd_hunt_local_sustain`, `herd_hunt_local_overdraw`.
+
+  **The 9th frame changed, and it is the best argument for this task.** `herd_corral_depleted`'s
+  fixture was internally contradictory in a way only the duplicate representation allowed: it
+  overrode `ceiling_sustain 0.10` / `ceiling_corral 0.05` (read by the forecast) while leaving the
+  inherited `huntPolicyCeilings` at `sustain 0.90 / corral 0.23` (read by the picker), so the frame
+  rendered `Preparing: +0.05` beside a `♻ +0.90` Sustain button — **two different numbers for one
+  herd, a state the wire can no longer express.** With one representation the button reads `♻ +0.10`,
+  consistent with `per_worker_yield 0.10`. Everything the frame exists to prove is pixel-identical
+  (`Preparing: +0.05 → then +0.00 − 0.14 feed`, and the amber `⚠ Too depleted to pen…` note).
+
+  **Note the claim this task rested on was never test-pinned.** "They cannot drift" held only because
+  both views were built from one `SourceYieldForecast` — no test asserted the scalars and the list
+  agree (checked; there wasn't one, so nothing was silently weakened by the removal). Collapsing to
+  one representation makes non-divergence **structural** rather than incidental, which is the durable
+  win — and the `herd_corral_depleted` fixture is proof the two views could and did disagree in
+  practice, at least in a harness.
 - [x] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
   no longer means `larder / consumption`: since the food-arrivals arc (PR #150) it is the **larder
   runway — turns until the larder empties, with income counted**, resolved by walking the per-source

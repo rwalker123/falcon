@@ -382,9 +382,9 @@ const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 const LABOR_POLICY_SUSTAIN := "sustain"
 const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
 # INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
-# cost — the source pays only its dip ceiling (`ceiling_cultivate` / `ceiling_sow` / `ceiling_tame`'s
-# equivalent / `ceiling_corral`) while the workers prepare it, then flips to the much higher managed
-# yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
+# cost — the source pays only its dip ceiling (the patch's `ceiling_cultivate` / `ceiling_sow`
+# scalars; for a herd, the `tame` / `corral` rows of its `hunt_policy_ceilings` list) while the
+# workers prepare it, then flips to the much higher managed yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
 # + Corral are hunt-only. Each ladder now runs its verb TWICE — one verb per rung-transition:
 #   plants:  wild --cultivate--> Tended Patch --sow--> Field
 #   animals: wild --tame------> Pastoral herd --corral--> Pen
@@ -765,9 +765,10 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # raid-animals face any more — the three pickers read identically.
 # PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
 # The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
-# forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
-# both the forage patch and the herd, a `per_worker_yield` plus one take ceiling per policy — all
-# food/turn at the source's CURRENT biomass and at output_multiplier 1.0:
+# forecast is the same truth shown WHILE COMPOSING: the sim exports, for the forage patch and the
+# herd alike, a `per_worker_yield` plus one take ceiling per policy (the patch as scalar fields, the
+# herd as its `hunt_policy_ceilings` list) — all food/turn at the source's CURRENT biomass and at
+# output_multiplier 1.0:
 #     expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy]) × band output
 #     max_useful_workers(policy) = ceil(ceiling[policy] / per_worker_yield)
 # The ceilings are already biomass-clamped, so that `min` IS the take. The worker stepper caps at
@@ -780,18 +781,20 @@ const FORECAST_CEILING_KEYS := {
     "surplus": "ceiling_surplus",
     "market": "ceiling_market",
     "eradicate": "ceiling_eradicate",
-    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch/pen is being prepared —
-    # so the same expected(workers, policy) math shows the cost of the investment while composing.
+    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
+    # same expected(workers, policy) math shows the cost of the investment while composing.
     "cultivate": "ceiling_cultivate",
-    "corral": "ceiling_corral",
     # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
     # are independently tunable, and folding them onto one number would pass every forecast==actual
     # test by coincidence and lie the moment either rung is retuned.
     "sow": "ceiling_sow",
-    # NOTE — `tame` is deliberately ABSENT. There is no flat `ceilingTame` scalar on the wire; the
-    # Tame dip rides the `hunt_policy_ceilings` LIST instead, so `_forecast_inputs` reads it via
-    # `_hunt_policy_ceiling` (its payoff, `pastoral_yield`, is a real scalar in FORECAST_PAYOFF_KEYS).
-    # Adding a key here would silently fall back to Sustain's ceiling and quote the wrong dip.
+    # NOTE — this dict is the FORAGE PATCH's ceiling map, and ONLY that. A patch carries no policy
+    # list, so a scalar field per rung is its whole representation. Every HERD policy — the four
+    # extractive rungs plus `tame` and `corral` — resolves instead through the `hunt_policy_ceilings`
+    # LIST via `_hunt_policy_ceiling`; the herd's matching scalars are deprecated schema slots and are
+    # no longer decoded. That's why `tame` and `corral` are absent here (their payoffs, `pastoral_yield`
+    # / `corral_yield`, ARE real scalars and live in FORECAST_PAYOFF_KEYS). Adding a herd rung here
+    # would read a field the wire no longer carries and quote a 0 dip.
 }
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
@@ -3332,14 +3335,24 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
 func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
-    # The DIP ceiling paid while the source is prepared. Every rung reads a scalar ceiling field EXCEPT
-    # `tame`, whose dip has no scalar on the wire (there is no `ceilingTame`) — it rides the
-    # `hunt_policy_ceilings` LIST, so resolve it through `_hunt_policy_ceiling` (< 0 unavailable → 0).
+    # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
+    # branch on which kind `prefix` names — never on the prefix's spelling:
+    #   HERD  → the `hunt_policy_ceilings` LIST is the herd's ONLY wire representation (the old
+    #           per-policy `ceilingSustain`/… scalars are deprecated schema slots), so every herd rung
+    #           — Sustain/Surplus/Market/Eradicate, Tame, Corral — resolves through it.
+    #   FORAGE→ a patch has no such list; its per-policy scalars are its only representation.
+    # `_hunt_policy_ceiling` returns HUNT_RATE_UNAVAILABLE (< 0) for a herd with no row, which falls
+    # back to Sustain's row exactly as the old scalar lookup did, then clamps to 0. That 0 never
+    # manufactures a row: `known` is decided by `per_worker` alone, so a herd with no forecast data
+    # still reads "not known" and callers show no row and apply no cap.
     var ceiling := 0.0
-    if policy in FORECAST_CEILING_KEYS:
+    if prefix == HERD_FORECAST_PREFIX:
+        ceiling = _hunt_policy_ceiling(src, policy)
+        if ceiling < 0.0:
+            ceiling = _hunt_policy_ceiling(src, DEFAULT_HUNT_POLICY)
+        ceiling = maxf(ceiling, 0.0)
+    elif policy in FORECAST_CEILING_KEYS:
         ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy]), 0.0))
-    elif policy == LABOR_POLICY_TAME:
-        ceiling = maxf(_hunt_policy_ceiling(src, LABOR_POLICY_TAME), 0.0)
     else:
         ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[DEFAULT_HUNT_POLICY]), 0.0))
     # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —

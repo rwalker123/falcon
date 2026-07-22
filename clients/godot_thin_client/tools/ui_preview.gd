@@ -879,7 +879,7 @@ func _ready() -> void:
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
-	# − 0.34 feed", ceiling_corral → corral_yield minus the projected pen_upkeep, stepper capped at the
+	# − 0.34 feed", the `corral` ceiling row → corral_yield minus the projected pen_upkeep, stepper capped at the
 	# 1 keeper a managed source needs), and the drawer carries the "Corral: Building 40%" row — the
 	# herd twin of the tile's "Cultivation N%". The picker's 🐄 Corral button wears the `→ +1.50/turn`
 	# PAYOFF (corral_yield), above ◎ Tame's `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
@@ -2663,8 +2663,6 @@ func _delivered_oracle_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 1.23,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.33, "ceiling_surplus": 3.5,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.33, "surplus": 3.5, "market": 5.0, "eradicate": 7.0,
 		},
@@ -2684,8 +2682,6 @@ func _big_game_window_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 16.0,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.4, "ceiling_surplus": 3.6,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.4, "surplus": 3.6, "market": 5.0, "eradicate": 7.0,
 		},
@@ -2868,17 +2864,12 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"food_per_animal": fpa,
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
-		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
+		#   • `per_worker_yield` + the `hunt_policy_ceilings` table, which drive the shared
 		#     `_forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
-		#   • `hunt_policy_ceilings` / `hunt_trip_estimates` below (the BAND flow ceiling and the
-		#     sim's forward-simulated EXPEDITION trip answers).
-		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings match the
+		#   • `hunt_trip_estimates` below (the sim's forward-simulated EXPEDITION trip answers).
+		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings ARE the
 		# band ceilings, because the sim exports one hunt model — the two paths must agree.
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": sustain_ceiling,
-		"ceiling_surplus": sustain_ceiling * 4.0,
-		"ceiling_market": sustain_ceiling * 2.0,
-		"ceiling_eradicate": 0.0,
 		"hunt_policy_ceilings": {
 			"sustain": sustain_ceiling,
 			"surplus": sustain_ceiling * 4.0,
@@ -3110,28 +3101,22 @@ func _herd_fixture() -> Dictionary:
 		# decoder now emits. The kill-rhythm divides it by the food rate (both provisions): 2.0
 		# food/animal vs a 0.90/turn Sustain take reads "≈1 Red Deer / 3 turns".
 		"food_per_animal": 2.0,
-		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
-		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
-		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this
-		# herd), so the Hunters stepper caps at 3 with the "max 3 workers useful here" note.
+		# Pre-commit yield forecast (food/turn at this herd's biomass, at output_multiplier 1.0).
+		# Sustain admits ceil(0.90 / 0.30) = 3 useful hunters, below the reference band's 7 assignable
+		# (3 idle + the 4 it already has on this herd), so the Hunters stepper caps at 3 with the
+		# "max 3 workers useful here" note.
 		"per_worker_yield": 0.30,
-		"ceiling_sustain": 0.90,
-		"ceiling_surplus": 1.80,
-		"ceiling_market": 2.70,
-		"ceiling_eradicate": 4.50,
 		# The two INVESTMENT rungs' PAYOFFS — the food/turn each rung pays ONCE prepared (the pastoral
 		# MSY after taming, the pen's sustained rate once built), NOT the during-build dip. Ordered
 		# Sustain (0.90) < Tame (1.20) < Corral (1.50) so the picker's `→ +Y/turn` payoff buttons read
 		# as an ascending ladder, both clearly above Sustain's `up to +0.90/turn` cap.
-		"ceiling_corral": 0.23,
 		"corral_yield": 1.50,
 		"pastoral_yield": 1.20,
 		"corral_progress": 0.0,
-		# The TAME/Corral DIPS. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
-		# rides the `hunt_policy_ceilings` LIST (the sim exports a row for every one of the six
-		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder produces and where
-		# `_forecast_inputs` reads Tame's dip. The extractive rows match the flat ceilings above,
-		# because the sim exports ONE hunt model and the two views must agree.
+		# EVERY ceiling — the four extractive rungs plus the Tame/Corral DIPS — rides this ONE list;
+		# the herd has no flat `ceiling*` scalars on the wire any more (deprecated schema slots). The
+		# sim exports a row for every one of the six `FollowPolicy::HUNT_POLICIES`, so this is the
+		# shape the decoder produces and where `_forecast_inputs` reads every herd ceiling.
 		"hunt_policy_ceilings": {
 			"sustain": 0.90,
 			"surplus": 1.80,
@@ -3168,10 +3153,6 @@ func _aurochs_big_game_fixture() -> Dictionary:
 	fixture["husbandry_ceiling"] = "wild"
 	fixture["food_per_animal"] = 1.6
 	fixture["per_worker_yield"] = 0.80
-	fixture["ceiling_sustain"] = 0.74
-	fixture["ceiling_surplus"] = 1.20
-	fixture["ceiling_market"] = 1.86
-	fixture["ceiling_eradicate"] = 2.60
 	fixture["hunt_policy_ceilings"] = {
 		"sustain": 0.74, "surplus": 1.20, "market": 1.86, "eradicate": 2.60,
 	}
@@ -3392,8 +3373,13 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	fixture["corral_progress"] = 0.0
 	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
 	fixture["per_worker_yield"] = 0.10
-	fixture["ceiling_sustain"] = 0.10
-	fixture["ceiling_corral"] = 0.05
+	# Override the inherited ceiling table's two rows this frame reads — Sustain (the extractive
+	# baseline) and the Corral DIP. The herd's ceilings live only in `hunt_policy_ceilings` now, so
+	# a depleted variant must restate them here rather than shadowing them with flat scalars.
+	var depleted_ceilings: Dictionary = (fixture["hunt_policy_ceilings"] as Dictionary).duplicate()
+	depleted_ceilings["sustain"] = 0.10
+	depleted_ceilings["corral"] = 0.05
+	fixture["hunt_policy_ceilings"] = depleted_ceilings
 	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
 	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture

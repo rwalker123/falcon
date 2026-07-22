@@ -1974,11 +1974,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
       misled. ui_preview `herd_corral_depleted`.
-    - **TAME's dip has no scalar ceiling field — its DIP rides the list, its PAYOFF is a scalar.** There
-      is no flat `ceilingTame` on the wire (the Tame dip rides the `huntPolicyCeilings` LIST, so `tame`
-      has **no** `FORECAST_CEILING_KEYS` entry — adding one would silently fall back to Sustain's ceiling
-      and quote the wrong dip); `_forecast_inputs` resolves Tame's dip through `_hunt_policy_ceiling`
-      instead. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+    - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
+      wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
+      `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
+      `_forecast_inputs` branches on `prefix == HERD_FORECAST_PREFIX` and resolves every herd policy —
+      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
+      list's Sustain row for an unrecognized policy. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
@@ -2012,8 +2013,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `patch_field_progress` / `patch_is_field` / `patch_ceiling_sow` / `patch_field_yield` /
       `patch_sow_site_refusal` (MapView cross-refs all onto `tile_info` with the `patch_` prefix; ALL
       are in `FOW_DISCOVERED_HIDDEN_KEYS`, mirroring their rung-2 twins). `HerdTelemetryState`:
-      `ceilingCorral` / `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
-      (which carries a **6th `tame` row** — the sim exports one per `FollowPolicy::HUNT_POLICIES`) +
+      `corralYield` / `corralProgress` / `domestication` / `huntPolicyCeilings`
+      (the herd's SOLE ceiling representation — the sim exports one row per
+      `FollowPolicy::HUNT_POLICIES`, i.e. the four extractive rungs **plus `tame` and `corral`**, so
+      the investment DIPS ride it too; the old per-policy scalars `ceilingSustain` / `ceilingSurplus` /
+      `ceilingMarket` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
+      are no longer decoded) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
@@ -2087,10 +2092,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `forage_sow_done` (a completed Field: ▦ Sow greys "Already a Field …" the same way, one rung up).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
-    were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
-    `HerdTelemetryState` (`perWorkerYield` / `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` /
-    `ceilingEradicate` — all food/turn at the source's **current biomass**, exported at
-    `output_multiplier = 1.0`), enough to compute the take *while composing*:
+    were wasted. The sim now streams, on `ForagePatchState` and `HerdTelemetryState` alike, a
+    `perWorkerYield` plus one take ceiling per policy — all food/turn at the source's **current
+    biomass**, exported at `output_multiplier = 1.0` — enough to compute the take *while composing*.
+    **The two source kinds carry the ceilings differently, and that asymmetry is load-bearing:** the
+    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+    plus `ceilingCultivate` / `ceilingSow`) because it has no policy list; the HERD has ONLY the
+    `huntPolicyCeilings` list (its identically-named scalars are deprecated slots — a new policy costs
+    the herd no schema change).
     `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
     already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
     ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`

@@ -276,13 +276,16 @@ func _herd_fixtures() -> Array:
 		{"id": "game_deer_79", "species": "Roe Deer", "x": 64, "y": 11, "population": 90, "ecology_phase": "thriving"},
 	]
 
-## Herds for the per-source-cap verify state: game_deer_07 carries the BARE pre-commit forecast fields
-## (per_worker_yield / ceiling_sustain) the Current-actions Hunt row reads via `_find_world_herd` +
-## `_forecast_inputs`. max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
+## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
+## Current-actions Hunt row reads via `_find_world_herd` + `_forecast_inputs` — `per_worker_yield`
+## plus the herd's ONLY ceiling representation, the `hunt_policy_ceilings` table (a herd has no flat
+## `ceiling_*` scalars; the forage patches below still do).
+## max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
 func _cap_demo_herd_fixtures() -> Array:
 	return [
 		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120,
-			"ecology_phase": "thriving", "per_worker_yield": 0.10, "ceiling_sustain": 0.20},
+			"ecology_phase": "thriving", "per_worker_yield": 0.10,
+			"hunt_policy_ceilings": {"sustain": 0.20}},
 	]
 
 ## Forage patches for the per-source-cap verify state (shape `update_forage_patches` consumes — the RAW

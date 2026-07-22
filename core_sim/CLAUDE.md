@@ -1701,7 +1701,7 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     **that**, never `penUpkeep`. So no consumer needs a "0 when unpenned" reading, and one field with
     one meaning beats two that must be kept in lockstep.
 
-  Plus the forecast pair `ceilingCorral` / `corralYield` (see
+  Plus the forecast pair `huntPolicyCeilings`' **corral** row / `corralYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.
 - **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
@@ -2602,10 +2602,13 @@ forecast is its pre-commit twin: per in-range source, the snapshot exposes enoug
 show a live **"Expected yield: +X.XX /turn"** and **cap its worker stepper at the max-useful count
 while the player is composing an assignment**.
 
-**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`) — the same shape on
-`ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
-`perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
-(all `float`, **food/turn**, at the source's CURRENT biomass), **plus the investment rung**:
+**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`): `perWorkerYield:float` on
+both `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd), plus the per-policy ceilings
+(**food/turn**, at the source's CURRENT biomass) — which are carried **differently on the two sides**:
+a patch keeps the scalars `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+while a **herd carries them only as the `huntPolicyCeilings` list** (its scalar twins are retired
+`(deprecated)` slots — a free-form `policy` string means a new policy needs no schema change, and the
+list and the scalars were provably the same numbers). **Plus the investment rung**:
 
 > **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
 > TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
@@ -2623,9 +2626,9 @@ while the player is composing an assignment**.
 > herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
 > continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
 
-`ForagePatchState.ceilingCultivate` + `tendedYield` and `HerdTelemetryState.ceilingCorral` +
-`corralYield`. The investment policy's `ceiling*` is the **preparing** yield
-(`fraction × ceilingSustain` — the dip); `tendedYield`/`corralYield` is what the source will pay
+`ForagePatchState.ceilingCultivate` + `tendedYield` and, on a herd, `huntPolicyCeilings`' **corral**
+row + `corralYield`. The investment policy's ceiling is the **preparing** yield
+(`fraction × the Sustain/MSY ceiling` — the dip); `tendedYield`/`corralYield` is what the source will pay
 **once the improvement completes**, so the client can show **"preparing X → then Y"** *before* the
 player commits to the cost. (Sim-side both live on the shared `SourceYieldForecast` as
 `ceiling_prepare` / `managed_yield` — the two investment policies are kind-exclusive, so one field
@@ -3472,8 +3475,9 @@ lookup**:
   is `≥ 0`, so `B − floor ≤ B`), kept as belt-and-braces against a hot-reloaded floor above `1`. A herd
   below a policy's floor exports `0` for it (a herd at the brink spares nothing to Sustain *or* Surplus).
   **Sourced by projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
-  the *same* object the scalar `ceilingSustain`/…/`ceilingCorral` fields export, so the list and the
-  scalars are literally the same numbers and cannot drift, and the take path pays exactly them
+  the **only** wire representation of a herd's per-policy ceilings (the scalar
+  `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
+  `(deprecated)` slots), and the take path pays exactly them
   (forecast == actual). That also makes `Corral` **phase-correct for free**: the
   the `animal:pen` rung's `yield_fraction_while_building × MSY` dip while the pen is being built, and the **full corral yield**
   once `is_corralled()` (a penned herd forecasts as `SourceYieldForecast::tended` — every ceiling is
