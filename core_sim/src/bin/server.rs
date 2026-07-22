@@ -24,12 +24,13 @@ use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer}
 use core_sim::port_base_override;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
-    knows, output_multiplier, resolve_active_profile, rung_site_refusal, tile_is_fresh_watered,
-    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FoodModuleTag,
+    knows, output_multiplier, resolve_active_profile, resolve_committed_species, rung_site_refusal,
+    tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile, BandTravel,
+    BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, Expedition,
+    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag,
     ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand,
-    RungKey, SiteRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
-    NO_FORAGE_SEASON,
+    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
+    WellbeingConfigHandle, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -496,6 +497,7 @@ fn main() {
                 target_y,
                 fauna_id,
                 policy,
+                species,
             } => {
                 handle_assign_labor(
                     &mut app,
@@ -507,6 +509,7 @@ fn main() {
                     target_y,
                     fauna_id,
                     policy,
+                    species,
                 );
             }
             Command::MoveBand {
@@ -706,6 +709,9 @@ enum Command {
         target_y: Option<u32>,
         fauna_id: Option<String>,
         policy: Option<String>,
+        /// Which named plant a forage `Cultivate`/`Sow` should commit the patch to (a
+        /// `flora_config.json` species key); `None` = auto-pick the tile's dominant legal plant.
+        species: Option<String>,
     },
     MoveBand {
         faction: FactionId,
@@ -1784,7 +1790,7 @@ fn seed_source_yield(
     let labor = app.world.resource::<LaborConfigHandle>().get();
 
     let seeded = match target {
-        LaborTarget::Forage { tile, policy } => {
+        LaborTarget::Forage { tile, policy, .. } => {
             // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
             if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
                 > labor.band_work_range
@@ -1808,9 +1814,11 @@ fn seed_source_yield(
                 return; // unseeded patch → the turn pays 0 (a bare-ground sow's honest opening row).
             };
             let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let flora = app.world.resource::<FloraConfigHandle>().get();
             forage_source_yield_preview(
                 patch,
                 &labor.forage,
+                &flora,
                 &ladder,
                 seasonal,
                 output_mult,
@@ -1869,7 +1877,11 @@ fn validate_labor_policy(
     target: &LaborTarget,
 ) -> Result<(), String> {
     match target {
-        LaborTarget::Forage { tile, policy } => {
+        LaborTarget::Forage {
+            tile,
+            policy,
+            species,
+        } => {
             if !policy.valid_for_forage() {
                 return Err(format!(
                     "'{}' is not a foraging policy — it applies to herds.",
@@ -1877,7 +1889,7 @@ fn validate_labor_policy(
                 ));
             }
             if matches!(policy, FollowPolicy::Sow) {
-                return validate_sow(app, faction, *tile);
+                return validate_sow(app, faction, *tile, species.as_deref());
             }
             if !matches!(policy, FollowPolicy::Cultivate) {
                 return Ok(());
@@ -1923,7 +1935,10 @@ fn validate_labor_policy(
                     tile.x, tile.y
                 ));
             }
-            Ok(())
+            // **Which plant would this commit the ground to?** (Flora Roster S1.) The last gate,
+            // because it is the most specific: the land and the knowledge decide whether the verb is
+            // available at all, and this decides whether the *selection* is one this ground can grow.
+            validate_species_selection(app, *tile, species.as_deref(), RungKey::PlantTended)
         }
         LaborTarget::Hunt { fauna_id, policy } => {
             if !policy.valid_for_hunt() {
@@ -2013,7 +2028,12 @@ fn validate_labor_policy(
 /// indeed the interesting — target (§2, "where the two webs legitimately differ": `Corral` needs a
 /// herd you already tamed, `Sow` needs nothing), and freshly sown ground starts at the reseed floor,
 /// i.e. Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
-fn validate_sow(app: &bevy::prelude::App, faction: FactionId, tile: UVec2) -> Result<(), String> {
+fn validate_sow(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    species: Option<&str>,
+) -> Result<(), String> {
     let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y) else {
         return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
     };
@@ -2093,7 +2113,71 @@ fn validate_sow(app: &bevy::prelude::App, faction: FactionId, tile: UVec2) -> Re
             ));
         }
     }
-    Ok(())
+    // **Which crop?** — the species half of "will this ground take seed", after the land half above.
+    validate_species_selection(app, tile, species, RungKey::PlantField)
+}
+
+/// **May a `Cultivate`/`Sow` on this tile commit to this plant?** — the species-side gate
+/// (`docs/plan_flora_roster.md` §4.3), phrased for the player.
+///
+/// It resolves through the *same* `forage::resolve_committed_species` seam the labor arm commits
+/// with, so a selection this accepts can never be one the turn then refuses (the `rung_site_refusal`
+/// discipline). The composition comes from `forage::tile_flora_composition` — the one seam — so a
+/// navigable hex is judged on the two-term basket it actually has.
+fn validate_species_selection(
+    app: &bevy::prelude::App,
+    tile: UVec2,
+    species: Option<&str>,
+    rung: RungKey,
+) -> Result<(), String> {
+    // **No map, nothing to judge.** A world that has not been generated yet (the idle boot, and the
+    // command-unit harnesses) carries no `TileRegistry` at all, so there is no basket to read; the
+    // labor arm, which always has the real tiles, remains the authority and simply accrues nothing
+    // if the ground grows nothing that climbs.
+    let Some(registry) = app.world.get_resource::<TileRegistry>() else {
+        return Ok(());
+    };
+    let Some(ground) = registry
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+    else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let flora = app.world.resource::<FloraConfigHandle>().get();
+    let composition = tile_flora_composition(&flora, &labor.forage, ground);
+    let verb = match rung {
+        RungKey::PlantField => "sown",
+        _ => "tended",
+    };
+    match resolve_committed_species(species, &composition, &flora, rung) {
+        Ok(_) => Ok(()),
+        Err(SpeciesRefusal::Unknown) => Err(format!(
+            "Your people know no plant called '{}'.",
+            species.unwrap_or_default()
+        )),
+        Err(SpeciesRefusal::CeilingTooLow) => Err(format!(
+            "{} cannot be {verb} — it is a wild harvest, gathered where it grows.",
+            flora.species.get(species.unwrap_or_default()).map_or_else(
+                || species.unwrap_or_default().to_string(),
+                |def| def.display_name.clone()
+            )
+        )),
+        Err(SpeciesRefusal::NotHere) => Err(format!(
+            "{} does not grow at ({}, {}).",
+            flora.species.get(species.unwrap_or_default()).map_or_else(
+                || species.unwrap_or_default().to_string(),
+                |def| def.display_name.clone()
+            ),
+            tile.x,
+            tile.y
+        )),
+        Err(SpeciesRefusal::NothingClimbsHere) => Err(format!(
+            "Nothing that grows at ({}, {}) can be {verb} — what the ground offers there is a wild \
+             harvest.",
+            tile.x, tile.y
+        )),
+    }
 }
 
 /// The **`Tame`** policy's gates — the animal rung-2 twin of the `Cultivate` arm above, in the same
@@ -2183,12 +2267,21 @@ fn handle_assign_labor(
     target_y: Option<u32>,
     fauna_id: Option<String>,
     policy: Option<String>,
+    species: Option<String>,
 ) {
     let target = match role.to_ascii_lowercase().as_str() {
         "forage" => match (target_x, target_y) {
             (Some(x), Some(y)) => LaborTarget::Forage {
                 tile: UVec2::new(x, y),
                 policy: parse_follow_policy(policy.as_deref()),
+                // The optional species selection (Flora Roster S1): which named plant a
+                // `Cultivate`/`Sow` here should commit the patch to. Absent/blank = "pick the tile's
+                // dominant legal plant for me", the same absent-means-none convention `policy` has.
+                species: species
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_string),
             },
             _ => {
                 emit_command_failure(
@@ -3164,6 +3257,9 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
     let target = LaborTarget::Forage {
         tile,
         policy: FollowPolicy::Cultivate,
+        // The command form names no crop — `set_policy_on_working_bands` carries over whatever the
+        // band's existing assignment selected, and an assignment that selected nothing auto-picks.
+        species: None,
     };
     if let Err(reason) = validate_labor_policy(app, faction, &target) {
         warn!(
@@ -3243,6 +3339,9 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     let target = LaborTarget::Forage {
         tile,
         policy: FollowPolicy::Sow,
+        // As in `handle_cultivate`: the command sets the *policy*, and any crop the band already
+        // selected on this tile is carried over rather than silently cleared.
+        species: None,
     };
     if let Err(reason) = validate_labor_policy(app, faction, &target) {
         warn!(
@@ -3584,17 +3683,25 @@ fn set_policy_on_working_bands(
     faction: FactionId,
     target: &LaborTarget,
 ) -> usize {
-    let bands: Vec<(Entity, u32, u32)> = app
+    // Each band's own target, because a policy switch must **preserve the crop the band already
+    // selected** on this source (Flora Roster S1): `set_assignment` replaces the whole target, so
+    // handing it the command's species-less one would silently clear a player's choice.
+    let bands: Vec<(Entity, u32, u32, LaborTarget)> = app
         .world
         .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
         .iter(&app.world)
         .filter(|(_, cohort, _)| cohort.faction == faction)
         .filter_map(|(entity, cohort, allocation)| {
             let workers = allocation.workers_on(target);
-            (workers > 0).then(|| (entity, workers, available_workers(cohort.working)))
+            let merged = allocation
+                .assignments
+                .iter()
+                .find(|assignment| assignment.target.same_source(target))
+                .map_or_else(|| target.clone(), |existing| merge_target(target, existing));
+            (workers > 0).then(|| (entity, workers, available_workers(cohort.working), merged))
         })
         .collect();
-    for (entity, workers, available) in &bands {
+    for (entity, workers, available, target) in &bands {
         let applied = {
             let mut allocation = band_allocation_mut(app, *entity);
             allocation.set_assignment(target.clone(), *workers, *available)
@@ -3605,6 +3712,29 @@ fn set_policy_on_working_bands(
         seed_source_yield(app, *entity, target, applied);
     }
     bands.len()
+}
+
+/// The policy-switch target for one band: `incoming`'s policy, but keeping any **species selection**
+/// the band's `existing` assignment on the same source already carries. Only the Forage kind has one;
+/// every other target is the incoming one unchanged.
+fn merge_target(incoming: &LaborTarget, existing: &core_sim::LaborAssignment) -> LaborTarget {
+    match (incoming, &existing.target) {
+        (
+            LaborTarget::Forage {
+                tile,
+                policy,
+                species: None,
+            },
+            LaborTarget::Forage {
+                species: selected, ..
+            },
+        ) => LaborTarget::Forage {
+            tile: *tile,
+            policy: *policy,
+            species: selected.clone(),
+        },
+        _ => incoming.clone(),
+    }
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -4233,6 +4363,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_y,
             fauna_id,
             policy,
+            species,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
             band_entity_bits,
@@ -4242,6 +4373,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_y,
             fauna_id,
             policy,
+            species,
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
@@ -5779,6 +5911,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -5814,6 +5947,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -5842,6 +5976,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6001,6 +6136,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6037,6 +6173,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6070,6 +6207,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6112,6 +6250,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6161,6 +6300,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6189,6 +6329,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6231,6 +6372,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
         );
 
@@ -6281,6 +6423,7 @@ mod tests {
                 LaborTarget::Forage {
                     tile: coord,
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
             );
 
@@ -7056,6 +7199,7 @@ mod tests {
             &LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Corral,
+                species: None,
             },
         );
         assert!(
@@ -7192,6 +7336,7 @@ mod tests {
             Some(coord.y),
             None,
             Some(policy.to_string()),
+            None,
         );
     }
 
@@ -7212,6 +7357,7 @@ mod tests {
             None,
             Some(fauna_id.to_string()),
             Some(policy.to_string()),
+            None,
         );
     }
 
@@ -7267,9 +7413,11 @@ mod tests {
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let flora = app.world.resource::<FloraConfigHandle>().get();
         let expected = forage_source_yield_preview(
             patch,
             &labor.forage,
+            &flora,
             &ladder,
             1.0,
             1.0,
@@ -7518,6 +7666,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
             CANCEL_FORAGE_WORKERS,
             available,
@@ -7678,6 +7827,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
             CANCEL_FORAGE_WORKERS,
             available,

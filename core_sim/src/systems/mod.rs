@@ -33,10 +33,12 @@ use crate::{
         EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
     },
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle},
+    flora_config::FloraConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
         field_provisions, forage_per_worker_biomass, forage_policy_ceiling, forage_provisions,
-        forage_take, managed_per_worker_yield, patch_ecology, patch_rung, rung_site_refusal,
+        forage_take, managed_per_worker_yield, patch_ecology, patch_provisions_per_biomass,
+        patch_rung, resolve_committed_species, rung_site_refusal, tile_flora_composition,
         tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,

@@ -286,6 +286,9 @@ message AssignLaborCommand {
   optional uint32 target_y = 6;
   optional string fauna_id = 7; // hunt target herd
   optional string policy = 8;   // hunt take policy (sustain|surplus|market|eradicate)
+  // Which named plant a forage Cultivate/Sow should commit the patch to (a flora_config.json
+  // species key). Absent = "pick the tile's dominant legal plant". Appended (append-only).
+  optional string species = 9;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.

@@ -1409,10 +1409,40 @@ pub fn capture_snapshot(
         .map(|(_, tile, _)| {
             let shares = tile_flora_composition(&flora_config, &labor_config.forage, tile)
                 .iter()
-                .map(|share| FloraShareInfo {
-                    species: share.species.clone(),
-                    display_name: flora_config.species[&share.species].display_name.clone(),
-                    share: share.share,
+                .map(|share| {
+                    let def = &flora_config.species[&share.species];
+                    FloraShareInfo {
+                        species: share.species.clone(),
+                        display_name: def.display_name.clone(),
+                        share: share.share,
+                        // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
+                        // `cultivation_ceiling`, straight off the roster, so the client's crop
+                        // picker can grey out what is impossible without holding a roster of its
+                        // own. Species-global: it says nothing about whether this tile is a good
+                        // place for it — `share` answers that, and a legal-but-marginal crop is
+                        // exactly the loss §4.3 leaves the player free to choose.
+                        can_cultivate: def.cultivation_ceiling.allows_cultivate(),
+                        can_sow: def.cultivation_ceiling.allows_sow(),
+                        // **Is committing THIS tile to THIS plant worth it?** — the one number the
+                        // crop-picker decision turns on, per rung. Resolved through
+                        // `forage::commit_yield_ratio`, the same concentration seam the sim's own
+                        // committed-patch payoff reads, so the quote and the payout cannot disagree
+                        // (`docs/plan_flora_roster.md` §4.3). `0` = cannot climb that rung.
+                        cultivate_yield_ratio: commit_yield_ratio(
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            RungKey::PlantTended,
+                        ),
+                        sow_yield_ratio: commit_yield_ratio(
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            RungKey::PlantField,
+                        ),
+                    }
                 })
                 .collect();
             (tile.position, shares)
@@ -1799,6 +1829,7 @@ pub fn capture_snapshot(
     let forage_patches_state = snapshot_forage_patches(
         &forage_registry,
         &labor_config.forage,
+        &flora_config,
         &ladder_config,
         &seasonal_weights,
         &sow_site_refusals,

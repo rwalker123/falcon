@@ -1167,6 +1167,7 @@ mod tests {
             LaborTarget::Forage {
                 tile: FORAGE,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
             2,
             4,

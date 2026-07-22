@@ -112,6 +112,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
                 LaborTarget::Forage {
                     tile: field_tile,
                     policy: FollowPolicy::Sustain,
+                    species: None,
                 },
                 1,
                 available,

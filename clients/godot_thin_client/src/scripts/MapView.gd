@@ -3116,6 +3116,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# tile still knows what grows there. Never-seen tiles are covered by the `unexplored`
 		# redaction, and nothing on the patch can change it.
 		info["patch_composition"] = patch.get("composition", [])
+		# THE COMMITTED CROP — "" while the patch is the wild mixed basket above, else the single
+		# species this patch was committed to by Cultivate/Sow. Unlike the composition it IS patch
+		# state (a band's doing), but it rides beside it because the tile card renders exactly one of
+		# the two rows; the Forage line it sits under is already past the discovered early-return, so
+		# a remembered tile never reports it and it needs no FOW_DISCOVERED_HIDDEN_KEYS entry.
+		info["patch_committed_species"] = String(patch.get("committed_species", ""))
+		info["patch_committed_display_name"] = String(patch.get("committed_display_name", ""))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

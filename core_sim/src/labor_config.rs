@@ -110,6 +110,31 @@ const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.5;
 /// hands, and understaffing it wastes the difference. A **playtest dial**.
 const DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS: f32 = 0.02;
 
+/// **How hard the TENDED rung concentrates a committed species into the tile's basket**
+/// (Flora Roster S1, `docs/plan_flora_roster.md` §4.3). Committing a patch to one plant does not add
+/// capacity — **the land owns `K`** — it *redistributes* it: `concentration = min(1.0, share ×
+/// gain)`, and the patch's effective capacity is `tile_K × concentration`.
+///
+/// **The cap at 1.0 is the model, not a safety rail.** Rungs 1–3 may only redistribute the `K` the
+/// land already carries; raising `K` itself is clearing, irrigation and manuring — rung 4 (Worked
+/// Land), by definition. So a wild patch already yields the *whole* basket (`1.0 K`) and no
+/// concentration gain can ever beat that: **concentration alone can never make tending worth it.**
+/// Tending pays in **conversion** (the committed species' `yield.provisions_per_biomass`, which is
+/// the roster's job) or it does not pay at all.
+///
+/// Shipped at **1.5** — a plant that is already about two-thirds of its biome's basket can fill the
+/// tile once tended; a marginal one cannot without inputs, which is again rung 4. A **playtest dial**.
+const DEFAULT_CULTIVATION_TENDED_CONCENTRATION_GAIN: f32 = 1.5;
+
+/// **The FIELD rung's concentration gain** — the rung-3 twin of
+/// [`DEFAULT_CULTIVATION_TENDED_CONCENTRATION_GAIN`], and higher for the obvious reason: at rung 3
+/// you control the crop's reproduction, so you can push it much further toward monopolising the
+/// tile's human-edible `K`. Still capped at `1.0` — the land still owns `K`.
+///
+/// Shipped at **2.5**, which fills the tile (`concentration = 1.0`) for any species holding ≥ 40% of
+/// its biome's basket. A **playtest dial**.
+const DEFAULT_CULTIVATION_FIELD_CONCENTRATION_GAIN: f32 = 2.5;
+
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
 /// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
 /// investment dip it pays while preparing) moved to the shared ladder,
@@ -149,6 +174,14 @@ pub struct CultivationConfig {
     /// because at rung 3 the source is yours. Must out-produce the tended rung's boosted MSY (see
     /// [`DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS`]), or climbing to rung 3 would buy nothing.
     pub field_provisions_per_biomass: f32,
+    /// **The tended rung's CONCENTRATION gain** — how far committing a patch to one species pushes
+    /// that species toward monopolising the tile's basket. See
+    /// [`DEFAULT_CULTIVATION_TENDED_CONCENTRATION_GAIN`]: the result is capped at `1.0` because the
+    /// **land owns `K`**, so this can only ever redistribute capacity, never add it.
+    pub tended_concentration_gain: f32,
+    /// **The Field rung's CONCENTRATION gain** — see
+    /// [`DEFAULT_CULTIVATION_FIELD_CONCENTRATION_GAIN`]. Same cap, same reason.
+    pub field_concentration_gain: f32,
 }
 
 impl Default for CultivationConfig {
@@ -156,6 +189,8 @@ impl Default for CultivationConfig {
         Self {
             tended_regrowth_gain: DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN,
             field_provisions_per_biomass: DEFAULT_CULTIVATION_FIELD_PROVISIONS_PER_BIOMASS,
+            tended_concentration_gain: DEFAULT_CULTIVATION_TENDED_CONCENTRATION_GAIN,
+            field_concentration_gain: DEFAULT_CULTIVATION_FIELD_CONCENTRATION_GAIN,
         }
     }
 }
@@ -567,8 +602,40 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
             value: cultivation.field_provisions_per_biomass.to_string(),
         });
     }
+    // **The two concentration gains** (Flora Roster S1). A gain below `1.0` would make committing a
+    // patch strictly worse than the species' bare share of the basket — the rung would *dilute* the
+    // plant it just committed to, which is incoherent. The upper end needs no bound: the result is
+    // capped at `FULL_TILE_CONCENTRATION` because **the land owns `K`**, so an absurdly high gain
+    // saturates rather than inflating a tile.
+    for (field, gain) in [
+        (
+            "forage.cultivation.tended_concentration_gain",
+            cultivation.tended_concentration_gain,
+        ),
+        (
+            "forage.cultivation.field_concentration_gain",
+            cultivation.field_concentration_gain,
+        ),
+    ] {
+        if !gain.is_finite() || gain < NO_CONCENTRATION_GAIN {
+            return Err(LaborConfigError::Invalid {
+                field,
+                constraint: format!(
+                    "be finite and at least {NO_CONCENTRATION_GAIN} — below it, committing a patch \
+                     to a species would concentrate it *less* than its own share of the wild \
+                     basket, which is incoherent"
+                ),
+                value: gain.to_string(),
+            });
+        }
+    }
     Ok(())
 }
+
+/// **The concentration gain that changes nothing** — a committed patch would hold exactly the
+/// species' own share of the tile's basket. The floor both concentration gains must clear, named
+/// rather than a bare `1.0` because it states *what* the number means.
+const NO_CONCENTRATION_GAIN: f32 = 1.0;
 
 /// One turn's **peak (MSY) regrowth per unit of carrying capacity** — `r/4` — read off the *shared*
 /// logistic curve at unit capacity rather than re-spelled as a formula, so the plant ladder's tuning

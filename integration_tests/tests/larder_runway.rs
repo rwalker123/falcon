@@ -95,6 +95,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
             target: LaborTarget::Forage {
                 tile: patch,
                 policy: FollowPolicy::Sustain,
+                species: None,
             },
             workers: GATHERERS,
         }],

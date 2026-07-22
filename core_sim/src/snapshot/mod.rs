@@ -58,12 +58,12 @@ use crate::{
         PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
-    flora_config::FloraConfigHandle,
+    flora_config::{FloraConfig, FloraConfigHandle},
     food::FoodModuleTag,
     forage::{
-        field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
-        tile_is_fresh_watered, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
-        NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        commit_yield_ratio, field_provisions, forage_forecast, rung_site_refusal,
+        tile_flora_composition, tile_is_fresh_watered, ForagePatch, ForageRegistry,
+        CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -667,6 +667,7 @@ mod tests {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         policy: crate::components::FollowPolicy::Sustain,
+                        species: None,
                     },
                     workers: 10,
                 },
@@ -754,6 +755,7 @@ mod tests {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     policy: crate::components::FollowPolicy::Sustain,
+                    species: None,
                 },
                 workers: 10,
             }],
@@ -784,6 +786,7 @@ mod tests {
         let target = LaborTarget::Forage {
             tile: UVec2::new(7, 9),
             policy: FollowPolicy::Market,
+            species: None,
         };
         let assignment = LaborAssignment { target, workers: 6 };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
@@ -1424,6 +1427,7 @@ mod tests {
         let patches = snapshot_forage_patches(
             &registry,
             &labor.forage,
+            &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             &HashMap::new(),
             &HashMap::new(),

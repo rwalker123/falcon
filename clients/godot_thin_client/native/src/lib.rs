@@ -3596,9 +3596,35 @@ fn forage_patches_to_array(
                     let _ = share_dict.insert("display_name", display_name);
                 }
                 let _ = share_dict.insert("share", share.share());
+                // CAN THIS PLANT EVER CLIMB THIS RUNG (flora roster S1) — species-GLOBAL legality,
+                // not "is this a good idea here". An oak's mast is a wild harvest forever, so it is
+                // shown in the crop picker and greyed; `share` is what says whether a LEGAL crop is
+                // a wise one, and a marginal share must never disable anything.
+                let _ = share_dict.insert("can_cultivate", share.canCultivate());
+                let _ = share_dict.insert("can_sow", share.canSow());
+                // WHAT COMMITTING PAYS — this rung's yield RELATIVE to gathering the plant wild.
+                // Already folds in the tile's share AND the species' conversion rate, computed
+                // sim-side through the same seams the real payout uses, so the client only ever
+                // FORMATS it: >1 committing beats gathering, <1 it is a loss, and 0 is the
+                // "cannot climb this rung" sentinel (a real ratio is never 0), never a number to
+                // print. The raw per-species rate is deliberately NOT published — it is meaningless
+                // alone and would put the payoff formula in two places.
+                let _ = share_dict.insert("cultivate_yield_ratio", share.cultivateYieldRatio());
+                let _ = share_dict.insert("sow_yield_ratio", share.sowYieldRatio());
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);
+        }
+        // THE COMMITTED CROP (flora roster S1) — "" when the patch is still the wild MIXED basket
+        // above, else the one species `Cultivate`/`Sow` committed this patch to (the rest of the
+        // basket is displaced — docs/plan_flora_roster.md §4.3). Empty means WILD, never "unknown",
+        // so the tile card switches rows on it rather than treating it as missing data. The display
+        // name is resolved server-side (same convention as `species` / `sow_site_refusal`).
+        if let Some(committed_species) = patch.committedSpecies() {
+            let _ = dict.insert("committed_species", committed_species);
+        }
+        if let Some(committed_display_name) = patch.committedDisplayName() {
+            let _ = dict.insert("committed_display_name", committed_display_name);
         }
         array.push(&dict.to_variant());
     }

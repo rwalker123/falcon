@@ -29,6 +29,9 @@ pub(crate) fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> La
                 "forage" => LaborTarget::Forage {
                     tile: UVec2::new(state.target_x, state.target_y),
                     policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
+                    // `""` = "pick the tile's dominant legal plant" — the wire's `Option::None`,
+                    // the same absent-means-none convention `fauna_id` uses on this row.
+                    species: Some(state.species.clone()).filter(|key| !key.is_empty()),
                 },
                 "hunt" => LaborTarget::Hunt {
                     fauna_id: state.fauna_id.clone(),
@@ -76,10 +79,15 @@ pub(crate) fn labor_assignment_to_state(
         ..Default::default()
     };
     match &assignment.target {
-        LaborTarget::Forage { tile, policy } => {
+        LaborTarget::Forage {
+            tile,
+            policy,
+            species,
+        } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
             state.policy = policy.as_str().to_string();
+            state.species = species.clone().unwrap_or_default();
         }
         LaborTarget::Hunt { fauna_id, policy } => {
             state.fauna_id = fauna_id.clone();

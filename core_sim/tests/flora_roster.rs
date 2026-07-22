@@ -146,28 +146,114 @@ fn a_navigable_hex_names_both_its_valley_and_its_fishery() {
     }
 }
 
+/// **The S1 conversion rates are per-species and live** — the F1 "everything is 0.05 verbatim" rule
+/// is deliberately gone (`docs/plan_flora_roster.md` §4.3): with identical rates, committing a patch
+/// would be a strict downgrade for every species whose `share × concentration_gain < 1`, so rung 2
+/// would ship knowingly broken. What *is* still verbatim is everything F3/F4 own.
 #[test]
-fn every_f1_species_carries_todays_flat_yield_verbatim() {
+fn only_the_conversion_rate_diverged_the_rest_of_the_vector_is_still_flat() {
     let flora = FloraConfig::builtin();
     let forage = labor().forage;
 
     for (key, def) in &flora.species {
-        assert_eq!(
-            def.yield_.provisions_per_biomass, forage.provisions_per_biomass,
-            "`{key}` must carry forage.provisions_per_biomass verbatim — F1 moves no yield"
+        assert!(
+            def.yield_.provisions_per_biomass > 0.0,
+            "`{key}` must convert biomass into food at some positive rate"
         );
         assert_eq!(
             def.yield_.trade_goods_per_biomass, forage.market.trade_goods_per_biomass,
-            "`{key}` must carry forage.market.trade_goods_per_biomass verbatim — F1 moves no yield"
+            "`{key}` must still carry the flat trade rate verbatim — F4 owns cash crops"
         );
         // There is no hay in the model yet; a non-zero fodder rate would be F3 arriving early.
         assert_eq!(
             def.yield_.fodder_per_biomass, 0.0,
-            "`{key}` must pay no fodder in F1 — the fodder store does not exist yet"
+            "`{key}` must pay no fodder — the fodder store does not exist yet"
         );
         assert_eq!(
             def.regrowth_rate, forage.ecology.regrowth_rate,
-            "`{key}` must regrow at forage.ecology.regrowth_rate — F1 moves no regrowth either"
+            "`{key}` must regrow at forage.ecology.regrowth_rate — S1 moves no regrowth"
+        );
+    }
+    assert!(
+        flora
+            .species
+            .values()
+            .any(|def| def.yield_.provisions_per_biomass != forage.provisions_per_biomass),
+        "the roster must actually differentiate — a flat table makes rung 2 a strict downgrade"
+    );
+}
+
+/// **What you GATHER sits at or below the wild baseline.** Every `wild`-ceiling species can never be
+/// committed at all, so its rate is inert by construction — and it must read as inert: an oak's mast
+/// or a bed of shellfish is what the basket already averages, not a crop.
+#[test]
+fn the_gathered_wild_things_never_beat_the_basket_average() {
+    let flora = FloraConfig::builtin();
+    let forage = labor().forage;
+
+    for (key, def) in &flora.species {
+        if def.cultivation_ceiling.allows_cultivate() {
+            continue;
+        }
+        assert!(
+            def.yield_.provisions_per_biomass <= forage.provisions_per_biomass,
+            "`{key}` is a wild harvest — it must not convert better than the basket average \
+             ({} vs {})",
+            def.yield_.provisions_per_biomass,
+            forage.provisions_per_biomass
+        );
+    }
+}
+
+/// **THE commit trade, asserted as the design states it** (§4.3):
+///
+/// ```text
+/// tending is worth it  ⟺  concentration × species_rate  >  1.0 × wild_rate
+/// ```
+///
+/// For every species that *can* climb, the roster must make that true **somewhere** — on its best
+/// country — and false on its worst hosted ground. A species that clears the bar everywhere it grows
+/// is a free lunch; one that clears it nowhere is a rung nobody would ever climb.
+#[test]
+fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its_worst() {
+    let flora = FloraConfig::builtin();
+    let labor = labor();
+    let forage = &labor.forage;
+    let tended_gain = forage.cultivation.tended_concentration_gain;
+
+    for (key, def) in &flora.species {
+        if !def.cultivation_ceiling.allows_cultivate() {
+            continue;
+        }
+        // The commit value on each biome this species hosts: `min(1, share × gain) × rate`, against
+        // the wild basket's `1.0 × forage.provisions_per_biomass`.
+        let mut values: Vec<(TerrainType, f32)> = def
+            .host_biomes
+            .keys()
+            .map(|terrain| {
+                let share = flora
+                    .composition(*terrain)
+                    .iter()
+                    .find(|entry| entry.species == *key)
+                    .map(|entry| entry.share)
+                    .expect("a hosted biome names its host");
+                let concentration = (share * tended_gain).min(1.0);
+                (*terrain, concentration * def.yield_.provisions_per_biomass)
+            })
+            .collect();
+        values.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let wild = forage.provisions_per_biomass;
+        let (best_biome, best) = values[0];
+        let (worst_biome, worst) = *values.last().expect("a species hosts at least one biome");
+        assert!(
+            best > wild,
+            "`{key}` is never worth tending — best country {best_biome:?} pays {best} against the \
+             wild basket's {wild}"
+        );
+        assert!(
+            worst < wild,
+            "`{key}` is worth tending even on {worst_biome:?}, where it is marginal ({worst} vs \
+             {wild}) — a commitment that is right everywhere is not a decision"
         );
     }
 }

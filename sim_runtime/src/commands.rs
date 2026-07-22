@@ -184,6 +184,10 @@ pub enum CommandPayload {
         target_y: Option<u32>,
         fauna_id: Option<String>,
         policy: Option<String>,
+        /// Which named plant a **forage** `Cultivate`/`Sow` should commit the patch to — a
+        /// `flora_config.json` species key. `None` = *"pick the tile's dominant legal plant"*
+        /// (`docs/plan_flora_roster.md` §4.3). Ignored for every other role and policy.
+        species: Option<String>,
     },
     MoveBand {
         faction_id: u32,
@@ -635,6 +639,7 @@ impl CommandEnvelope {
                 target_y,
                 fauna_id,
                 policy,
+                species,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
                 band_entity_bits: *band_entity_bits,
@@ -644,6 +649,7 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 fauna_id: fauna_id.clone(),
                 policy: policy.clone(),
+                species: species.clone(),
             }),
             CommandPayload::MoveBand {
                 faction_id,
@@ -961,6 +967,7 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 fauna_id: cmd.fauna_id,
                 policy: cmd.policy,
+                species: cmd.species,
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,

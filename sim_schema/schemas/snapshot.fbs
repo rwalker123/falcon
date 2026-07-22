@@ -1020,14 +1020,32 @@ table ForagePatchState {
   //
   // DERIVED FROM THE BIOME, NOT PER-PATCH STATE: it is a pure function of the tile's terrain and the
   // roster's affinity weights — every tile of a biome reads the same composition, and nothing on the
-  // patch can change it. (A patch committed to one species by Cultivate/Sow is a later slice, and
-  // will carry its own field.)
+  // patch can change it. What this PARTICULAR patch has been committed to is a separate pair of
+  // fields (`committedSpecies`/`committedDisplayName`, appended below).
   //
   // THE SHARES SUM TO 1 for any tile that bears forage at all — the decomposition ruling made
   // structural, so `share × the tile's forageCapacity` is the plant's own capacity and the parts
   // always re-sum to the whole. EMPTY on a biome that carries no forage. Sorted deterministically
   // (share DESC, then species key ASC), so the wire is identical run to run.
   composition:[FloraShareInfo];
+  // --- THE COMMITTED CROP (appended, flora roster S1) ---
+  // WHICH ONE named plant this patch has been committed to — the stable config key
+  // (flora_config.json -> species) and its player-facing display name. The client holds no roster, so
+  // the name is server-resolved and shipped beside the key, exactly as `FloraShareInfo.displayName`
+  // is (F1).
+  //
+  // EMPTY MEANS "THE WILD MIXED BASKET", NOT "UNKNOWN". A patch is committed on the first turn a crew
+  // works it under Cultivate/Sow, and the commitment lapses back to empty when both improvement
+  // meters decay to zero (the patch goes fully feral and the ground is a wild stand again). So an
+  // empty string is a positive statement about the patch: it is gathered as the whole basket
+  // `composition` above describes.
+  //
+  // NOTE the commitment is RECORDED before it TAKES EFFECT: a patch still being prepared names its
+  // crop here while still carrying the tile's full capacity and converting at the wild basket rate —
+  // both halves of the commitment (concentration and conversion) switch on when the rung completes
+  // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
+  committedSpecies:string;
+  committedDisplayName:string;
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
@@ -1040,6 +1058,44 @@ table FloraShareInfo {
   displayName:string;
   // This plant's fraction of the tile's basket, 0..1. The shares on a forage-bearing tile sum to 1.
   share:float;
+  // --- CAN THIS PLANT EVER CLIMB? (appended, flora roster S1) ---
+  // The two readings of this species' `cultivation_ceiling` (flora_config.json): may a `Cultivate`
+  // commit a patch to it (rung 2), and may a `Sow` (rung 3). Shipped for the same reason
+  // `displayName` is — the client holds no roster, so it cannot tell that oak mast is a wild harvest
+  // forever.
+  //
+  // SPECIES-GLOBAL, NOT TILE-SPECIFIC: the ceiling is a property of the plant, so these read the same
+  // on every tile that hosts it and can never drift from a per-tile rule. (The other half of
+  // legality — "does it grow HERE" — is this entry EXISTING in the tile's composition at all.)
+  //
+  // THEY ANSWER "CAN THIS PLANT EVER CLIMB THIS RUNG", NOT "IS THIS A GOOD IDEA HERE". `share` above
+  // answers the latter: committing to a marginal-share plant is legal and is a real loss, and that
+  // loss is precisely the decision the rung exists to make (docs/plan_flora_roster.md §4.3). So grey
+  // out what is impossible, and leave what is merely unwise on offer.
+  canCultivate:bool = false;
+  canSow:bool = false;
+  // --- IS COMMITTING THIS TILE TO THIS PLANT WORTH IT? (appended, flora roster S1) ---
+  // What committing THIS tile to THIS plant pays, AGAINST JUST GATHERING IT WILD, at each rung:
+  //
+  //   ratio(rung) = min(1, share x concentration_gain(rung)) x species_rate / forage.provisions_per_biomass
+  //
+  // > 1.0 committing beats gathering the whole basket; < 1.0 it is a LOSS — a legal one the player
+  // stays free to choose, which is the entire decision the rung exists to make. Never clamped, never
+  // hidden, and a sub-1 crop is never refused (docs/plan_flora_roster.md §4.3).
+  //
+  // A RATIO AGAINST THE WILD BASKET, NOT AN ABSOLUTE YIELD. It folds in BOTH inputs — the plant's
+  // share of this tile and the plant's own conversion rate — which is why it is shipped instead of
+  // the raw per-biomass rate: the rate alone is half the answer, and deriving the rest client-side
+  // would put the §4.3 formula somewhere it can drift from the sim's. Computed through the same
+  // concentration seam the sim's own committed-patch payoff uses, so the quote and the payout cannot
+  // disagree.
+  //
+  // TWO FIELDS because the two rungs have different concentration gains AND different legality, so a
+  // single number would be ambiguous about which rung it answers. 0 means "CANNOT CLIMB THIS RUNG"
+  // (mirroring canCultivate/canSow), which is distinct from a real ratio of 0 — that cannot occur,
+  // since a plant in a tile's basket has share > 0 and a validated-positive yield.
+  cultivateYieldRatio:float = 0;
+  sowYieldRatio:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
