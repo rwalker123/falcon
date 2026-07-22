@@ -300,6 +300,11 @@ const ACTIVITY_GLYPHS := {
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 const FOOD_UNLIMITED_GLYPH := "∞"
+# The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the
+# ONE reader (`_format_detail_bbcode`'s Food/Provisions/Carried threshold tint, which recognizes the
+# row by looking for this word). They must never drift: the tint went dead once already because the
+# renderer switched from "days" to "turns" while the guard kept testing for the old literal.
+const FOOD_RUNWAY_UNIT := "turn"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 # Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
 # register into — one prefs file, its own section; the path/section constants are borrowed.
@@ -344,7 +349,7 @@ var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
 # can threshold-tint the Food row. NAN when no band is selected.
-var _selected_band_food_days: float = NAN
+var _selected_band_food_turns: float = NAN
 # Set by `_band_food_line`: the current player band carries real food flow, so the Food row becomes a
 # clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
 var _food_flow_present: bool = false
@@ -875,7 +880,7 @@ const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to se
 # The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
 # (idle >= max party), so the advice is wrong — say we're at the party limit instead.
 const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
-# Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
+# Band food flow lives on the Food summary line: `Food 15 (19 turns) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
@@ -3517,9 +3522,9 @@ func _sum_realized_yield(band: Dictionary, kind: String) -> float:
 ## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
 ## below the warn threshold — mirroring `_morale_is_concerning`'s below-warn / falling gate.
 func _food_is_concerning(band: Dictionary) -> bool:
-    var days := float(band.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+    var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return _band_net_food(band) < 0.0 \
-        or (BandFoodStatus.is_limited(days) and days < BandFoodStatus.warn_days())
+        or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
 ## Per-row-per-band expand-override key.
 func _breakdown_key(kind: String, band: Dictionary) -> String:
@@ -5070,7 +5075,7 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
         return
     # Reset the band-food/morale/output tint context; `_unit_summary_lines` re-sets it if
     # a band is being rendered into the drawer.
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     _assemble_roster(_selected_tile_info)
@@ -5366,7 +5371,7 @@ func _build_band_row(unit: Dictionary) -> Button:
     var dot_color := HudStyle.INK_FAINT
     var glyph := ""
     if is_player:
-        dot_color = BandFoodStatus.color_for_days(float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)))
+        dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
         glyph = _activity_glyph(String(unit.get("activity", "")))
     var button := _make_roster_button(selected)
     var row := _make_roster_row(selected, dot_color)
@@ -5502,7 +5507,7 @@ func _select_roster_occupant(kind: String, id: Variant) -> void:
     else:
         _selected_herd = _find_roster_herd(String(id)).duplicate(true)
         _selected_unit = {}
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     _rebuild_roster()
@@ -5512,7 +5517,7 @@ func _select_roster_occupant(kind: String, id: Variant) -> void:
 func _render_occupant_drawer() -> void:
     if occupant_detail == null:
         return
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     var is_band := not _selected_unit.is_empty()
@@ -5570,7 +5575,7 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # column-flow). Ownership passes to the panel, which frees the previous render's blocks. Order
     # per docs/plan_band_panel_wide_flow.md: Summary, Active expeditions, then the allocation sections
     # (Workers / Current actions / Band roles / Orders / Send expedition).
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     var blocks: Array = []
@@ -5970,10 +5975,10 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     var lines: Array[String] = []
     # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
     # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
-    # must not inherit the previous render's caret or its food-days tint.
+    # must not inherit the previous render's caret or its food-turns tint.
     _disclosure_state = {}
     _food_flow_present = false
-    _selected_band_food_days = NAN
+    _selected_band_food_turns = NAN
     if in_panel:
         # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
         # calculation is moved here, never forked.
@@ -5981,7 +5986,7 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
             int(unit_data.get("size", 0)), int(unit_data.get("working_age", 0)),
             _effective_idle(unit_data)]])
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
-    # `days_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
+    # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
     # band shows only what we can honestly observe from outside: where it is (Position) and roughly
     # how many (its roster row's size).
@@ -6023,7 +6028,7 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     return lines
 
 ## Drawer readout for a selected expedition (docs/plan_exploration_and_sites.md §2 / §2b):
-## mission, humanized phase, party size, and carried food (from stores/daysOfFood). A hunt
+## mission, humanized phase, party size, and carried food (from stores/turnsOfFood). A hunt
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
 ## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
@@ -6051,10 +6056,10 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
-    # days from daysOfFood. Reuse the food-days tint context (`_selected_band_food_days`, read
+    # turns from turnsOfFood. Reuse the food-turns tint context (`_selected_band_food_turns`, read
     # back in `_format_detail_bbcode`).
-    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-    _selected_band_food_days = days
+    var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+    _selected_band_food_turns = turns
     var carried := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
@@ -6069,11 +6074,11 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
-            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_days_text(days), full_badge])
+            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_turns_text(turns), full_badge])
         else:
-            lines.append("Carried: %d  (%s)" % [carried, _food_days_text(days)])
+            lines.append("Carried: %d  (%s)" % [carried, _food_turns_text(turns)])
     else:
-        lines.append("Provisions: %d  (%s)" % [carried, _food_days_text(days)])
+        lines.append("Provisions: %d  (%s)" % [carried, _food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -6094,18 +6099,18 @@ func _expedition_phase_label(phase: String) -> String:
         return EXPEDITION_PHASE_LABELS[key]
     return key.capitalize()
 
-## Selection-panel band food row: "Food  <provisions>  (<days>)" — provisions from
-## the band's larder stores, days from `days_of_food` (∞ when not food-limited).
-## Stashes the days on `_selected_band_food_days` so `_format_detail_bbcode` can
+## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
+## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
+## Stashes the turns on `_selected_band_food_turns` so `_format_detail_bbcode` can
 ## tint the value by the shared warn/critical thresholds.
 func _band_food_line(unit_data: Dictionary) -> String:
-    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
-    _selected_band_food_days = days
+    var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+    _selected_band_food_turns = turns
     var provisions := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
-    var line := "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+    var line := "Food: %d  (%s)" % [provisions, _food_turns_text(turns)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
     # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
     # An enemy band shows the bare larder line, exactly as before.
@@ -6216,15 +6221,17 @@ func _morale_cause_label(cause: int) -> String:
             return ""
 
 ## Human-readable food runway: the ∞ glyph when the source is not food-limited, otherwise a
-## whole count of TURNS. **The unit is turns, never "days"** — this game counts turns, and the
-## underlying figure is a turn count that was only ever labelled in days. One helper feeds every
-## surface that shows it (the band Food line, the expedition Carried/Provisions rows, and the
-## turn-orb starving alert), so the unit is stated in exactly one place.
-func _food_days_text(days: float) -> String:
-    if not BandFoodStatus.is_limited(days):
+## whole count of TURNS — spelled from the shared `FOOD_RUNWAY_UNIT`, which the Food-row tint guard
+## in `_format_detail_bbcode` also keys on, so the two can never disagree about the unit. One helper
+## feeds every surface that shows it (the band Food line, the expedition Carried/Provisions rows,
+## and the turn-orb starving alert), so the unit is stated in exactly one place.
+func _food_turns_text(runway: float) -> String:
+    if not BandFoodStatus.is_limited(runway):
         return FOOD_UNLIMITED_GLYPH
-    var turns := int(round(days))
-    return "%d turn" % turns if turns == 1 else "%d turns" % turns
+    var turns := int(round(runway))
+    if turns == 1:
+        return "%d %s" % [turns, FOOD_RUNWAY_UNIT]
+    return "%d %ss" % [turns, FOOD_RUNWAY_UNIT]
 
 func _format_food_module_label(module_key: String) -> String:
     if module_key == "":
@@ -6618,10 +6625,13 @@ func _format_detail_bbcode(lines: Array) -> String:
             var value_hex := HudStyle.INK_HEX
             if String(kv[0]) == "Food" or String(kv[0]) == "Provisions" or String(kv[0]) == "Carried":
                 # The band larder / expedition provisions / hunt-party carried-food row tints by the
-                # food-days thresholds; its value carries a day count or the ∞ glyph.
+                # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT`
+                # the one renderer (`_food_turns_text`) spells the runway with — never a bare
+                # literal, which is how this guard silently went dead when the unit changed — or by
+                # the ∞ glyph for a band that is not food-limited.
                 var food_value := String(kv[1])
-                if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):
-                    value_hex = BandFoodStatus.hex_for_days(_selected_band_food_days)
+                if not is_nan(_selected_band_food_turns) and (food_value.contains(FOOD_RUNWAY_UNIT) or food_value.contains(FOOD_UNLIMITED_GLYPH)):
+                    value_hex = BandFoodStatus.hex_for_turns(_selected_band_food_turns)
             elif String(kv[0]) == "Morale":
                 # The player band's morale row tints by the morale thresholds.
                 if not is_nan(_selected_band_morale):
@@ -6814,7 +6824,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         band_number += 1
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
-        var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+        var turns := float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
         var morale := float(entry.get("morale", 1.0))
         var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
         var last_emigrated := int(entry.get("last_emigrated", 0))
@@ -6823,12 +6833,12 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var band_name := _band_display_name(entry, band_number)
         new_sizes[entity] = size
         # Producer 1 — starving: larder below the critical threshold (red/critical).
-        if BandFoodStatus.is_critical(days):
+        if BandFoodStatus.is_critical(turns):
             attention.append({
                 "kind": ATTENTION_KIND_STARVING,
                 "severity": ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
-                "detail": _food_days_text(days),
+                "detail": _food_turns_text(turns),
                 "x": x, "y": y,
             })
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
@@ -6837,7 +6847,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "kind": ATTENTION_KIND_LOSING_POPULATION,
                 "severity": ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
-                "detail": _decline_reason(days, morale, morale_cause, last_emigrated),
+                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
                 "x": x, "y": y,
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
@@ -6890,8 +6900,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
 ## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
 ## only say "low morale" if morale is actually low, else leave it plain rather than
 ## asserting a false reason.
-func _decline_reason(days: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
-    if BandFoodStatus.is_limited(days) and days < BandFoodStatus.critical_days():
+func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
+    if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
         return DECLINE_REASON_STARVING
     if last_emigrated > 0:
         return DECLINE_REASON_PEOPLE_LEAVING

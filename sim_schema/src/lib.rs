@@ -2013,12 +2013,8 @@ pub struct PopulationCohortState {
     /// food-limited" (no demand at all, or income that meets the drain). An expedition has no
     /// income, so it reduces to `provisions / consumption`. Computed at capture; see
     /// `core_sim::snapshot::population::larder_runway_turns`.
-    ///
-    /// **The `days` in the name is a MISNOMER pending a rename** — the sim has no days, only
-    /// turns, and the client already renders it as "turns". Renaming the field across
-    /// schema/native/client is a mechanical sweep held out of the arc that made it honest.
     #[serde(default)]
-    pub days_of_food: f32,
+    pub turns_of_food: f32,
     /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
     #[serde(default)]
     pub activity: String,
@@ -2175,7 +2171,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub food_income: f32,
     /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `days_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
+    /// one-turn demand `turns_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
     /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
@@ -4664,7 +4660,7 @@ fn create_populations<'a>(
                     elders: cohort.elders,
                     stores,
                     ageTurns: cohort.age_turns,
-                    daysOfFood: cohort.days_of_food,
+                    turnsOfFood: cohort.turns_of_food,
                     activity,
                     huntMode: hunt_mode,
                     laborAssignments: labor_assignments,

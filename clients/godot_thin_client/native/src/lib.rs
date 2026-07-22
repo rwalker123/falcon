@@ -4193,7 +4193,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_unrest", fixed64_to_f64(cohort.moraleUnrest()));
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
-    let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
+    let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
     // Band food ledger (food/turn): total realized income across all worked sources and total
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);

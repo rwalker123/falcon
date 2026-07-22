@@ -3621,12 +3621,12 @@ network, `>= 1` = shared id) so the client can draw supply links between co-netw
 derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
-`daysOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
+`turnsOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
 included** — and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
 with the most workers in the band's `LaborAllocation`). Both are computed at capture in
 `population_state`.
 
-> #### `daysOfFood` is `larder / net drain` — ONE formula for a band and an expedition
+> #### `turnsOfFood` is `larder / net drain` — ONE formula for a band and an expedition
 >
 > **`runway = larder / (consumption + penFeedUpkeep − income)`.** An expedition has no labor income
 > and keeps no pens, so it reduces to `provisions / consumption` — **exactly** the historical
@@ -3658,9 +3658,6 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > UI thresholds (`band_status_config.json` warn 10 / critical 5) are now measured against a runway
 > that is *income-inclusive*, so they fire later by construction — retune there if red arrives too
 > late to act on.
->
-> **The `days` in the name is a MISNOMER pending a rename** (the sim counts turns; the client already
-> renders "turns"). Renaming it across schema/native/client is a mechanical sweep held out of this arc.
 
 Alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
@@ -3715,7 +3712,7 @@ each `PopulationCohortState` carries band-level
 `foodIncome` (Σ per-source `actual`) + `foodConsumption` (the food the people **actually ate** this
 turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at the turn's *opening*
 brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
-births would inflate that and break the larder ledger identity by exactly the growth. `daysOfFood`
+births would inflate that and break the larder ledger identity by exactly the growth. `turnsOfFood`
 drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
 see the runway callout above).
 All derived at capture (0 on a rehydrated save before the next tick). **The client

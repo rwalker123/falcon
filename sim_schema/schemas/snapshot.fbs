@@ -520,9 +520,8 @@ table PopulationCohortState {
   // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
   // walked off the sources' arrival schedules so it agrees with the client's food-outlook chart.
   // 999.0 = not food-limited (no demand, or income meets the drain). An expedition has no income,
-  // so it reduces to provisions / consumption. The "days" in the name is a MISNOMER pending a
-  // rename — the sim counts turns, and the client already renders "turns".
-  daysOfFood:float = 0;
+  // so it reduces to provisions / consumption.
+  turnsOfFood:float = 0;
   activity:string;
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
@@ -591,7 +590,7 @@ table PopulationCohortState {
   settlementStage:SettlementStageView;
   // Hunt expedition only: carry cap = party_workers × expedition_config.hunt.per_worker_carry (the
   // provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for scouts +
-  // normal bands. The client shows carried/cap (carried = stores/daysOfFood) + a FULL state.
+  // normal bands. The client shows carried/cap (carried = stores/turnsOfFood) + a FULL state.
   expeditionCarryCap:float = 0;
   // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
   // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
@@ -613,7 +612,7 @@ table PopulationCohortState {
   huntReach:uint = 0;
   // Band-level per-turn food flow (derived at capture). foodIncome = Σ of every worked source's
   // actualYield (the per-source breakdown summed); foodConsumption = food_demand(children, working,
-  // elders) (the one-turn demand daysOfFood divides by). Client draws a food-ledger footer from these
+  // elders) (the one-turn demand turnsOfFood divides by). Client draws a food-ledger footer from these
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;

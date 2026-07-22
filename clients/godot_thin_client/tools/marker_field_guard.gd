@@ -35,7 +35,7 @@ const PANEL_CONSUMED_KEYS := [
 	"id",                  # Occupants-drawer "Unit:" label (the band panel names the band in its header)
 	"pos",                 # drawer "Position:" line
 	"size",                # band panel "Population:" row / Occupants-drawer "Size:" row
-	"days_of_food",        # _band_food_line
+	"turns_of_food",        # _band_food_line
 	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
 	"food_consumption",    # Food summary line net rate + Eaten (people) breakdown
 	"pen_feed_upkeep",     # Food summary line net rate + Pen feed (animals) breakdown
@@ -87,7 +87,7 @@ const FIXTURE_ENTRY := {
 	"current_y": 6,
 	"size": 30,
 	"label": "River Band",
-	"days_of_food": 12.0,
+	"turns_of_food": 12.0,
 	"food_income": 0.83,
 	"food_consumption": 0.60,
 	"pen_feed_upkeep": 1.74,
@@ -185,7 +185,7 @@ func _ready() -> void:
 		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)
 	_expect_float(marker, "output_multiplier", 0.72)
-	_expect_float(marker, "days_of_food", 12.0)
+	_expect_float(marker, "turns_of_food", 12.0)
 	_expect_float(marker, "food_income", 0.83)
 	_expect_float(marker, "food_consumption", 0.60)
 	_expect_float(marker, "pen_feed_upkeep", 1.74)

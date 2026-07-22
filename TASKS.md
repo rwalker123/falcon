@@ -307,7 +307,7 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
   repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
   source.
-- [ ] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
+- [x] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
   no longer means `larder / consumption`: since the food-arrivals arc (PR #150) it is the **larder
   runway — turns until the larder empties, with income counted**, resolved by walking the per-source
   `arrivalSchedule`s. The unit was fixed at the display layer (`Hud._food_days_text` renders "turns",
@@ -318,6 +318,34 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   `native/src/lib.rs`'s `days_of_food` key, and the client's `days_of_food` / `UNLIMITED_DAYS` /
   `warn_days` / `color_for_days` / `food_days.{warn,critical}` config key. No back-compat needed
   (no shipped saves), so it can be a straight rename rather than a deprecation.
+  _Status_: **Done.** Straight rename end-to-end, zero behaviour change (the `999.0` not-food-limited
+  sentinel is untouched). Wire: `daysOfFood` → **`turnsOfFood`**, renamed **in place** on its original
+  line in `PopulationCohortState` — a FlatBuffers field's slot is positional, so it was NOT moved,
+  reordered, or delete-and-appended. Sim: `sim_schema`'s `days_of_food` → `turns_of_food`,
+  `core_sim`'s `NOT_FOOD_LIMITED_DAYS` → `NOT_FOOD_LIMITED_TURNS`, plus `snapshot/population.rs`,
+  `snapshot/mod.rs` and `integration_tests/tests/larder_runway.rs`. Client: the decoder key
+  (`native/src/lib.rs`), the whole `BandFoodStatus` vocabulary (`UNLIMITED_TURNS`, `warn_turns()`,
+  `color_for_turns`, `hex_for_turns`, …), the config key **`food_turns.{warn,critical}`** (values
+  unchanged), `Hud._food_turns_text` / `_selected_band_food_turns`, `MapView`, `BandMarkerRenderer`,
+  and all three preview harnesses — including `marker_field_guard`'s `PANEL_CONSUMED_KEYS`, whose
+  fixture + assertion moved with it so the guard keeps guarding the field. The "misnomer pending a
+  rename" caveats are deleted from `snapshot.fbs`, `sim_schema`, `core_sim/CLAUDE.md` and the client
+  `CLAUDE.md`. Verified: `cargo fmt` clean, `clippy -D warnings` clean, **491 core_sim + 46 sim_schema
+  + every integration-test binary green**, `cargo xtask godot-build` OK, `marker_field_guard` PASS.
+
+  **A live defect was found and fixed on the way — the Food row's threshold tint was dead.**
+  `Hud._format_detail_bbcode` recognized the runway row by sniffing the rendered string for `"day"`,
+  but PR #150 had changed `_food_days_text` to render `"%d turns"` — so `contains("day")` was **always
+  false** for a finite runway and the value rendered in neutral ink instead of WARN/DANGER. Only the
+  `∞` case still tinted, and that one tints healthy-green, so **a starving band's `Food: 3 (2 turns)`
+  row showed no warning colour at all**; the same guard covers the expedition `Provisions`/`Carried`
+  rows. (The map dot and the turn-orb `starving` producer were unaffected — they call the colour
+  helper directly.) Fixed at the root rather than by patching the literal: a shared
+  **`Hud.FOOD_RUNWAY_UNIT`** const is now the ONE place the unit word is spelled, consumed by both the
+  renderer and the guard, so they cannot drift apart again. Confirmed on rendered frames, not by
+  inspection: `band_food_concerning.png` (4 turns → **red**), `band.png` (22 turns → **green**),
+  `expedition_panel.png` (9 turns → **amber**), `band_panel_food_concerning_top.png` (the Band/City
+  panel's row, red).
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -1353,12 +1381,17 @@ fires**" edge), and `clients/godot_thin_client/CLAUDE.md` → *TellingPanel* (th
 ## HUD Discoverability
 
 - [ ] **Retune the food-starvation thresholds against the honest runway — they may now warn too
-      late.** The food-arrivals arc (PR #150) corrected `daysOfFood` from `larder / consumption`
+      late.** The food-arrivals arc (PR #150) corrected `turnsOfFood` (then still named `daysOfFood`)
+      from `larder / consumption`
       ("how long if you stop hunting") to the real runway with income counted. That is the right
       number, but the warn/critical thresholds in `clients/godot_thin_client/src/config/band_status_config.json`
-      (`food_days.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and three
-      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_days`), the turn-orb
-      `starving` attention producer, and `Hud._food_is_concerning`'s auto-expand. Measured on a real
+      (`food_turns.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and **four**
+      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_turns`), the turn-orb
+      `starving` attention producer, `Hud._food_is_concerning`'s auto-expand, and — **newly live, so
+      it has never been playtested against these numbers** — the selection-panel Food row's own
+      threshold tint, which was dead from PR #150 until the `turnsOfFood` rename fixed it (see that
+      entry). Retuning must account for the fact that the row's colour is now visible at all.
+      Measured on a real
       turn (seed 119304647): a well-fed band moves **9.39 → 52.89** (amber → green, correct), a
       genuinely starving band stays **0.43** (unchanged, correct — with no income the formula degrades
       to the old one). **The gap is the band in between:** one whose income *nearly* covers its drain
