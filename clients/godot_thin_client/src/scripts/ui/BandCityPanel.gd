@@ -88,6 +88,11 @@ const WIDE_SHELL_MIN_WIDTH := 900.0
 ## Fixed widths of the two flanking zones in the wide shell; Work takes whatever is left.
 const ZONE_BAND_WIDTH := 300.0
 const ZONE_PARTY_WIDTH := 300.0
+## The widest the WORK zone can use: Hud's board stops adding columns at `WORK_MAX_COLUMNS` (4) of
+## `WORK_COLUMN_MIN_WIDTH` (380), so past this a wider zone only stretches the same rows. Kept here
+## rather than read from Hud — the panel must not depend on its content's internals — but the two are
+## a PAIR: change the board's column cap and change this with it.
+const ZONE_WORK_MAX_WIDTH := 1520.0
 ## Hairline separator drawn between adjacent zones in the wide shell.
 const ZONE_SEPARATOR_THICKNESS := 1.0
 ## Gap either side of a zone separator, so the hairline is not flush against zone content.
@@ -190,6 +195,9 @@ var _rail_expand_button: Button
 # zone host. `_zones` holds the three Hud-built zone Controls the panel OWNS (freed on the next
 # `set_zones`); `_reparent_zones` homes them into whichever hosts are active, so a shell flip needs no
 # Hud re-render. Nothing here measures content — the shells fill a card whose size is fixed per dock.
+## The card's whole content column (header + body). It is what CENTRES on an ultrawide — the card
+## fill and the accent seam stay full-bleed, since the panel still reserves the entire edge.
+var _panel_column: VBoxContainer
 var _body_host: VBoxContainer
 var _wide_shell: HBoxContainer
 var _wide_zone_hosts: Dictionary = {}   # zone:StringName -> Control (a plain, clipping zone host)
@@ -277,8 +285,10 @@ func work_zone_size() -> Vector2:
 	var body_height: float = maxf(interior.y - _header_height(), 0.0)
 	if _shell_is_wide():
 		var flanks := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH
-		var separators := 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
-		return Vector2(maxf(interior.x - flanks - separators, 0.0), body_height)
+		# The shell is CENTRED at `_wide_content_cap()` once the panel exceeds it, so the work zone stops
+		# growing there too — measure the capped width, not the panel's.
+		var usable: float = minf(interior.x, _wide_content_cap())
+		return Vector2(maxf(usable - flanks - _wide_separator_span(), 0.0), body_height)
 	return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
 
 ## Push a tab's badge (narrow shell only; ignored in the wide shell, which has no tab bar).
@@ -388,6 +398,7 @@ func _build() -> void:
 	column.name = "PanelColumn"
 	column.add_theme_constant_override("separation", COLUMN_SEPARATION)
 	_panel.add_child(column)
+	_panel_column = column
 
 	_header_full = _build_header_full()
 	column.add_child(_header_full)
@@ -643,8 +654,40 @@ func _relayout_body() -> void:
 	_body_is_wide = _shell_is_wide()
 	if _body_is_wide != was_wide:
 		_rebuild_tab_bar()
+	_apply_wide_content_cap()
 	_reparent_zones()
 	_update_body_visibility()
+
+## The widest the three zones can USE: both flanks, the work board at its column cap, and the
+## separators between them. Past this the board cannot grow another column, so every extra pixel would
+## only stretch the zones — which on an ultrawide leaves one row of work strung across two feet of
+## screen and pushes the band zone and the parties zone so far apart that reading one loses the other.
+func _wide_content_cap() -> float:
+	return ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MAX_WIDTH + _wide_separator_span()
+
+## What the two separators + their gaps cost. Shared by the cap and `work_zone_size`, so the two can
+## never disagree about how much width the chrome eats.
+func _wide_separator_span() -> float:
+	return 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
+
+## Centre the card's whole CONTENT COLUMN once the panel is wider than the zones can use, leaving equal
+## margins either side; below the cap it fills as before. The header goes with it deliberately: capping
+## the body alone left the band's name at the far left of the monitor and its cycler at the far right,
+## a screen apart, straddling a centred island of content. The card fill and the seam are untouched —
+## the panel still reserves the whole edge, it just stops STRETCHING into all of it.
+## `SHRINK_CENTER` takes the container's MINIMUM size, so the cap is applied as that minimum — and it
+## MUST be cleared when filling, or the column would refuse to shrink below the cap on a narrower
+## window and would overflow the card.
+func _apply_wide_content_cap() -> void:
+	if _panel_column == null:
+		return
+	var cap := _wide_content_cap()
+	if _body_is_wide and _interior_size().x > cap:
+		_panel_column.custom_minimum_size.x = cap
+		_panel_column.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	else:
+		_panel_column.custom_minimum_size.x = 0.0
+		_panel_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 ## True when the panel is wide enough for the three zones side by side. A WIDTH test, never a
 ## dock-edge test — see `WIDE_SHELL_MIN_WIDTH`.

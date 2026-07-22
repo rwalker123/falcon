@@ -4132,9 +4132,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
 ## The palette is deliberately MUTED against the Workforce bar below: the two bars share a shape but
 ## answer different questions (composition vs allocation) and must not read as the same chart twice.
 func _build_people_block(band: Dictionary) -> VBoxContainer:
-    var children := int(band.get("age_children", 0))
-    var working := int(band.get("age_working", 0))
-    var elders := int(band.get("age_elders", 0))
+    # ROUND, never truncate: the sim's population is fractional (these arrive as Scalar), and a band
+    # of 4.64 elders has five of them. The block's header prints the SUM of these three rather than
+    # the cohort's `size`, so the rounded parts can never visibly contradict their own total.
+    var children := roundi(float(band.get("age_children", 0.0)))
+    var working := roundi(float(band.get("age_working", 0.0)))
+    var elders := roundi(float(band.get("age_elders", 0.0)))
     # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a different
     # quantity that happens to track it). Fall back to the latter when the cohort field is absent.
     if working <= 0:

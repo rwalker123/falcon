@@ -4341,9 +4341,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Age cohorts (children / working / elders head-counts). Deliberately prefixed `age_*` and NOT
     // named `working`/`working_age`: `workingAge` above is the count of ASSIGNABLE workers, a
     // different quantity, and a key collision between the two would be silent and awful.
-    let _ = dict.insert("age_children", cohort.children());
-    let _ = dict.insert("age_working", cohort.working());
-    let _ = dict.insert("age_elders", cohort.elders());
+    //
+    // **These are SCALAR fixed-point (`PopulationCohort.children: Scalar`), not raw counts** — the
+    // population is fractional in the sim — so they take `fixed64_to_f64` like `morale` above.
+    // Reading the `long` raw renders a 30-person band as "9292500 children"; the ×1e6 is big enough
+    // that it can only ever be a wire-scale mistake, never a plausible head-count.
+    // NOTE the neighbouring `PopulationDemographicsState` children/working/elders are `uint` PLAIN
+    // COUNTS (the faction-wide top-bar strip) — same three words, two different wire encodings.
+    let _ = dict.insert("age_children", fixed64_to_f64(cohort.children()));
+    let _ = dict.insert("age_working", fixed64_to_f64(cohort.working()));
+    let _ = dict.insert("age_elders", fixed64_to_f64(cohort.elders()));
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
     // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.

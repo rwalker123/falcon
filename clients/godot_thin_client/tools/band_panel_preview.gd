@@ -33,6 +33,9 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
+# A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
+const ULTRAWIDE_WIDTH := 3440
+const ULTRAWIDE_HEIGHT := 900
 
 var _hud: HudLayer
 var _panel: BandCityPanel
@@ -306,6 +309,19 @@ func _ready() -> void:
 
 	_assert_no_scroll_containers()
 	_assert_zones_within_bounds()
+
+	# ULTRAWIDE: past the width the three zones can USE, the wide shell CENTRES at its content cap
+	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
+	# across the whole monitor and the band zone sits a screen away from the parties zone. The frame to
+	# read is the equality of the two black margins — and that the board itself is unchanged.
+	get_window().size = Vector2i(ULTRAWIDE_WIDTH, ULTRAWIDE_HEIGHT)
+	_panel.set_dock(SIDE_BOTTOM)
+	_hud.update_band_alerts([_many_sources_band_fixture()])
+	await _settle()
+	await _save("band_panel_wide_ultrawide")
+	_assert_zones_within_bounds()
+	print("band_panel_preview: ultrawide — work zone %.0fpx of a %dpx panel (capped + centred)" % [
+		_panel.work_zone_size().x, ULTRAWIDE_WIDTH])
 
 	get_tree().quit()
 
