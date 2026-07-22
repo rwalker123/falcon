@@ -5436,10 +5436,15 @@ func _scout_party_max(band: Dictionary, idle: int) -> int:
     return mini(idle, cap) if cap > 0 else idle
 
 ## Leave the compose sheet — every flag together, so `open` / `mission` / `quarry` can never disagree.
+## Also disarms any in-flight quarry pick: the ✕ can be pressed while a docked-sheet quarry pick is
+## armed (the pick leaves this sheet open, unlike the floating one), so closing must tear down the
+## targeting banner + herd glow too, else they persist over no sheet and a later click still fills a
+## closed sheet. The call no-ops when no pick is armed.
 func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
     _send_party_quarry_id = ""
+    _cancel_pending_pick_quarry()
     _rerender_panel_allocation()
 
 # ---- badges -----------------------------------------------------------------

@@ -4504,16 +4504,20 @@ func _hex_distance(a_col: int, a_row: int, b_col: int, b_row: int) -> int:
 	var dr: int = a.y - b.y
 	return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
+## Wrap-aware hex distance from the targeting ORIGIN to (col,row), the render-side mirror of
+## Hud._hex_distance_wrapped (which Hud._is_expedition_quarry — the authoritative quarry pick —
+## routes through). Bring the target into the origin's column frame via _wrapped_col_delta BEFORE
+## the row-parity-sensitive offset→axial conversion (the same pre-wrap the work-range rings use), so
+## a herd across the horizontal wrap seam measures the SHORT way round. Without this the herd-glow
+## filter could halo a herd the pick refuses (or hide one it accepts) near the seam. Returns -1 when
+## the origin (or the target) is unknown, matching the Hud helper.
 func _targeting_distance(col: int, row: int) -> int:
 	var ox := int(_targeting.get("origin_x", -1))
 	var oy := int(_targeting.get("origin_y", -1))
-	if ox < 0 or oy < 0:
+	if ox < 0 or oy < 0 or col < 0 or row < 0:
 		return -1
-	var a := _offset_to_axial(col, row)
-	var b := _offset_to_axial(ox, oy)
-	var dq: int = a.x - b.x
-	var dr: int = a.y - b.y
-	return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
+	var eff_col := ox + _wrapped_col_delta(ox, col)
+	return _hex_distance(ox, oy, eff_col, row)
 
 func _apply_pan(delta: Vector2) -> void:
 	if delta == Vector2.ZERO:
