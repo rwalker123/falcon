@@ -1977,9 +1977,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
       wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
       `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
-      `_forecast_inputs` branches on `prefix == HERD_FORECAST_PREFIX` and resolves every herd policy —
+      `_forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
+      (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
       Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
-      list's Sustain row for an unrecognized policy. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+      list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**:
+      `HERD_FORECAST_PREFIX` and `WIRE_FORAGE_PATCH_PREFIX` are BOTH `""` (a herd dict and a raw wire
+      forage-patch dict both carry the forecast fields bare), so `prefix == HERD_FORECAST_PREFIX` is true
+      for a forage patch too — that test sent the Current-actions Forage row down the herd branch, where
+      no `hunt_policy_ceilings` key exists, collapsing its ceiling to 0 and leaving the row's `+` button
+      permanently dead. Nor may it infer the kind from the dict's shape (`has("hunt_policy_ceilings")`
+      would misread a herd whose snapshot omitted the list). The `prefix` parameter survives for the
+      FORAGE scalar key lookup only. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`

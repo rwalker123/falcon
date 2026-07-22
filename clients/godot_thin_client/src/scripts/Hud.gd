@@ -851,6 +851,14 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 # A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
+#
+# ⚠ THESE PREFIXES DO NOT IDENTIFY A SOURCE KIND. `HERD_FORECAST_PREFIX` and
+# `WIRE_FORAGE_PATCH_PREFIX` are BOTH the empty string — a herd dict and a raw wire forage-patch
+# dict both carry their forecast fields bare — so `prefix == HERD_FORECAST_PREFIX` is true for a
+# forage patch too. Comparing a prefix to decide "is this a herd?" silently routes forage patches
+# down the herd branch; that exact mistake once left the `+` button dead on every Current-actions
+# Forage row. A prefix is a KEY SPELLING and nothing else: pass `SOURCE_KIND_*` when you need the
+# kind.
 const HERD_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
 # The RAW wire forage-patch dict (as decoded in native `forage_patches_to_array` and stored in
@@ -858,6 +866,12 @@ const FORAGE_FORECAST_PREFIX := "patch_"
 # cross-ref MapView stamps onto `tile_info`. The Current-actions Forage row reads the raw dict, so it
 # forecasts with the bare prefix.
 const WIRE_FORAGE_PATCH_PREFIX := ""
+# WHICH KIND OF SOURCE a forecast dict describes. Stated explicitly by every `_forecast_inputs`
+# caller because it CANNOT be recovered from the dict: the two kinds share a key prefix (see the
+# warning above), and a shape test (`has("hunt_policy_ceilings")`) would misread a herd whose
+# snapshot omitted the list as a forage patch. The caller knows what it fetched; it says so.
+const SOURCE_KIND_HERD := "herd"
+const SOURCE_KIND_FORAGE := "forage"
 # Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
 # Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
 # and the stepper keeps its plain idle-worker cap.
@@ -1781,7 +1795,7 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
             continue
         takes[String(policy)] = _extractive_take(rate)
     for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
-        var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, policy)
+        var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
@@ -1857,10 +1871,10 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
 func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
     # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
     # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
-    var sustain := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
+    var sustain := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, DEFAULT_HUNT_POLICY)
     if not bool(sustain["known"]):
         return ""
-    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, policy)
     if not bool(forecast["known"]):
         return ""
     var output := float(band.get("output_multiplier", OUTPUT_FULL))
@@ -3333,10 +3347,13 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
 ## An INVESTMENT policy additionally carries `payoff` (the tended/corral yield the preparation buys)
 ## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
-func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
+## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the scalar keys (the two are
+## independent — a forage patch reaches here under either forage prefix).
+func _forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
-    # branch on which kind `prefix` names — never on the prefix's spelling:
+    # branch on the kind the CALLER STATED — the prefix cannot answer this (a herd and a raw wire
+    # forage patch share the empty prefix), and neither can the dict's shape:
     #   HERD  → the `hunt_policy_ceilings` LIST is the herd's ONLY wire representation (the old
     #           per-policy `ceilingSustain`/… scalars are deprecated schema slots), so every herd rung
     #           — Sustain/Surplus/Market/Eradicate, Tame, Corral — resolves through it.
@@ -3346,7 +3363,7 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
     # manufactures a row: `known` is decided by `per_worker` alone, so a herd with no forecast data
     # still reads "not known" and callers show no row and apply no cap.
     var ceiling := 0.0
-    if prefix == HERD_FORECAST_PREFIX:
+    if kind == SOURCE_KIND_HERD:
         ceiling = _hunt_policy_ceiling(src, policy)
         if ceiling < 0.0:
             ceiling = _hunt_policy_ceiling(src, DEFAULT_HUNT_POLICY)
@@ -3773,7 +3790,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # dict carries the forecast fields BARE (WIRE_FORAGE_PATCH_PREFIX), unlike the `patch_`-prefixed
             # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
             var forage_forecast := _forecast_inputs(
-                _forage_patch_lookup.get(Vector2i(fx, fy), {}), WIRE_FORAGE_PATCH_PREFIX, forage_emit_policy)
+                _forage_patch_lookup.get(Vector2i(fx, fy), {}), SOURCE_KIND_FORAGE, WIRE_FORAGE_PATCH_PREFIX,
+                forage_emit_policy)
             var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sForage (%d, %d)" % [forage_icon, fx, fy],
@@ -3807,7 +3825,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             # row) so a single source can't absorb workers past the point they help. Herds carry the
             # forecast fields BARE (HERD_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
             # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
-            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), HERD_FORECAST_PREFIX, policy)
+            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, policy)
             var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sHunt %s" % [hunt_icon, herd_label],
@@ -4091,7 +4109,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
-    var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, _hunt_assign_policy)
+    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, _hunt_assign_policy)
     # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
     #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
     #       what you give up, for how long, to get what. That IS the Corral decision, and the local
@@ -4392,7 +4410,7 @@ func _expedition_policy_takes(band: Dictionary, herd: Dictionary) -> Dictionary:
 func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
     var takes := {}
     for policy in LABOR_HUNT_POLICIES:
-        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, String(policy))
+        var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, String(policy))
         if not bool(forecast["known"]):
             continue
         takes[String(policy)] = _extractive_take(float(forecast["ceiling"]))
@@ -4401,7 +4419,7 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
     # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
     # the picker already explains the lock. Absent/zero payoff → no entry, so the button stays bare.
     for policy in [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]:
-        var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, policy)
+        var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
@@ -4697,7 +4715,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
     # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
     # switching policy moves the cap).
-    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
