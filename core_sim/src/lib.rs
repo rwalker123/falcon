@@ -27,6 +27,7 @@ mod espionage;
 mod expedition_config;
 mod fauna;
 mod fauna_config;
+mod flora_config;
 mod food;
 mod forage;
 mod generations;
@@ -135,6 +136,10 @@ pub use fauna_config::{
     load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
     GrazeConfig, HusbandryCeiling, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
+pub use flora_config::{
+    load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,
+    FloraConfigMetadata, FloraDef, FloraRole, FloraShare, YieldVector, BUILTIN_FLORA_CONFIG,
+};
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
@@ -142,8 +147,8 @@ pub use food::{
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
     project_arrivals_forage, project_realized_forage, rung_site_refusal, spawn_initial_forage,
-    tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry,
-    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, ForagePatch,
+    ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -397,6 +402,13 @@ pub fn build_headless_app() -> App {
     let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
+    // The flora roster is validated AGAINST the human food web's own capacity table — every
+    // food-bearing biome must be named, and no named plant may claim barren ground
+    // (`FloraConfig::validate_against_forage`). The table is passed in rather than re-read so it
+    // keeps exactly one copy.
+    let (flora_config, flora_metadata) =
+        flora_config::load_flora_config_from_env(&labor_config.forage.capacity_by_biome);
+    let flora_handle = flora_config::FloraConfigHandle::new(flora_config);
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
     let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
     let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
@@ -479,6 +491,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
+        .insert_resource(flora_handle)
+        .insert_resource(flora_metadata)
         .insert_resource(labor_handle)
         .insert_resource(labor_metadata)
         .insert_resource(ladder_handle)

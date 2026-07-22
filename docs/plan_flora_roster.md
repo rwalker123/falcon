@@ -163,6 +163,22 @@ inflate the tile.
 tile whose food has no name), a species with an empty `host_biomes`, a non-positive weight, and an
 all-zero `yield` vector.
 
+**A navigable hex has TWO capacity terms, so it has two baskets** (found during F1 — it silently
+broke the sum on a whole class of tiles). A navigable river's forage capacity is *not* its
+`capacity_by_biome` row — that row is **vestigial and bypassed** (`labor_config.json`'s own
+`_comment_navigable_river`). It is `capacity_for(underlying) + navigable_river_forage_bonus`: the
+valley the channel cut, **plus** a fishery. Composition must mirror that structure exactly —
+weight the underlying biome's basket by `capacity_for(underlying)`, weight the `NavigableRiver`
+basket by the bonus, merge duplicate species, renormalize. Decomposing only the underlying term
+leaves the fishery **unnamed**, which is precisely the nameless food the coverage validator forbids,
+arriving through a path the validator cannot see.
+
+This is what makes the `NavigableRiver` host row *mean* something rather than being dead metadata:
+it is **what the channel itself yields**, as distinct from the ground it flows over — which is why
+`river_fish` hosts it alone. `forage::tile_flora_composition` is **the** seam (the twin of
+`tile_forage_capacity`); no sim or snapshot path may call `FloraConfig::composition` on a raw
+terrain.
+
 ### 4.2 What the patch carries
 
 `ForagePatch` gains a composition. Two shapes were considered:
@@ -177,9 +193,14 @@ all-zero `yield` vector.
 
 **Recommendation: the cheap shape.** Store one `Option<FloraSpeciesId>` on `ForagePatch` (`None` =
 wild mix) and derive the mix for display from the affinity table. A wild patch's biomass stays one
-scalar, so slice 1 touches no ecology math and the rollback snapshot grows by one optional id.
+scalar, so the roster touches no ecology math and the rollback snapshot grows by one optional id.
 Per-component wild stocks (differential depletion — gather the berries out and leave the acorns) is
 a **deferred** enrichment, noted in §9.
+
+**That field lands in F2, not F1** (corrected during F1 planning). In F1 nothing writes it — every
+patch is `None` — so shipping it early would be dead snapshot plumbing with a rollback path no test
+can exercise. F1 derives composition from the biome alone and adds no per-patch state; `Cultivate`/
+`Sow` introduce the field in F2, in the same slice that first sets it.
 
 ---
 
@@ -269,11 +290,20 @@ Per the arc plan: **spec the whole roster in this doc, hand-implement a couple t
 block carries its weight, then mass-fill.**
 
 - **F1 — Schema + loader + decomposition (no economic change).** `flora_config.json`, `FloraDef`,
-  `validate()`, the derived share table, `ForagePatch.species`. A handful of species only.
-  *Verification: the economy is provably unmoved* — a live campaign's food numbers must match
-  pre-arc, since the shares sum to the same capacity. Wire the tile card so you can *see* what grows
-  where before anything depends on it. (Same discipline as graze 2a: ship the layer, look at a real
-  map, then bet on it.)
+  `validate()`, the derived share table, and the wire/tile-card readout. No per-patch state (see
+  §4.2). *Verification: the economy is provably unmoved* — every F1 species carries **today's flat
+  yield values verbatim** (`provisions_per_biomass` 0.05, `trade_goods_per_biomass` 0.005), and the
+  shares sum to the same capacity, so nothing can move by construction. The vector is *parsed and
+  validated only* in F1 — the same "ship the shape, read it later" discipline the ladder's
+  `feeding`/`harvest` primitives used. Wire the tile card so you can *see* what grows where before
+  anything depends on it (graze 2a's discipline: ship the layer, look at a real map, then bet on it).
+
+  **Coverage forces breadth before depth.** `validate()` rejecting an unnamed non-zero biome means
+  F1 cannot ship "a couple of species" — it must cover all 32 non-zero biomes or the game has
+  nameless food. So F1 ships a **complete but coarse** roster (~12 broad families, each hosting many
+  biomes); F5 refines it into the fine-grained one. The strict validator is the right trade: it is
+  the same "zero must be stated" discipline `capacity_by_biome` already enforces, and a permissive
+  "unnamed remainder" would quietly become permanent.
 - **F2 — The rungs get a subject.** `Cultivate`/`Sow` select a species; the yield vector drives the
   harvest; the displaced basket is the cost of committing. *This is the first slice that moves
   balance* — measure it in a live campaign.

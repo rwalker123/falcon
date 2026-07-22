@@ -56,7 +56,7 @@
 //! standard map — the river valleys. Thin or dry ground waits for rung 4 (Worked Land). Design:
 //! `docs/plan_intensification_ladder.md` §2.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use bevy::prelude::*;
 use sim_schema::ForageState;
@@ -68,6 +68,7 @@ use crate::{
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
     fauna_config::EcologyConfig,
+    flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
         LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, RUNG_COMPLETE,
@@ -467,6 +468,31 @@ pub fn tile_forage_capacity(forage: &ForageLaborConfig, tile: &Tile) -> f32 {
         forage.navigable_forage_capacity(tile.resource_terrain())
     } else {
         forage.capacity_for(tile.resource_terrain())
+    }
+}
+
+/// THE named plants a tile's forage capacity is made of — the **flora twin of
+/// [`tile_forage_capacity`]**, branching on exactly the same condition so the composition and the
+/// capacity it decomposes can never disagree about a tile's shape.
+///
+/// A `NavigableRiver` hex has a **two-term** capacity (the valley it cut **plus** the fishery the
+/// channel is), so it gets the blended basket ([`FloraConfig::navigable_composition`]); every other
+/// tile reads its own biome's basket directly. Borrowed for the common case, owned only for the
+/// navigable blend — the blend is the only shape that has to be built.
+///
+/// Every caller (today: the snapshot capture) must go through this, never
+/// [`FloraConfig::composition`] on a raw terrain: reading the underlying biome alone on a navigable
+/// hex leaves that hex's fishery bonus **unnamed**, which breaks the decomposition ruling on a whole
+/// class of tiles and is invisible to `validate_against_forage`.
+pub fn tile_flora_composition<'a>(
+    flora: &'a FloraConfig,
+    forage: &ForageLaborConfig,
+    tile: &Tile,
+) -> Cow<'a, [FloraShare]> {
+    if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
+        Cow::Owned(flora.navigable_composition(tile.resource_terrain(), forage))
+    } else {
+        Cow::Borrowed(flora.composition(tile.resource_terrain()))
     }
 }
 

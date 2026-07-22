@@ -3118,6 +3118,15 @@ func _food_tile_fixture() -> Dictionary:
 		"patch_ceiling_sow": 0.0,
 		"patch_field_yield": 0.0,
 		"patch_sow_site_refusal": "too_dry",
+		# WHAT GROWS HERE (flora roster F1) — the named plants this tile's forage capacity decomposes
+		# into. Wire order (share DESC, then species key ASC) is preserved verbatim by the card.
+		# The shares are chosen so NAIVE rounding totals 101% (46 + 30 + 25): the card must absorb the
+		# remainder into the largest share and render 45 / 30 / 25 — this fixture IS the rounding test.
+		"patch_composition": [
+			{"species": "wild_grain", "display_name": "Wild Grain", "share": 0.455},
+			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.295},
+			{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.25},
+		],
 		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
 		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
 		# Rendered as the `Pasture` / `Pasture ecology` rows right under `Forage biomass`, so the card

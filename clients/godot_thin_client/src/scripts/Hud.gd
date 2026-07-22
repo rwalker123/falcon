@@ -571,6 +571,16 @@ const CORRAL_GLYPH := "🐄"
 # "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
 # and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
 const FIELD_ROW := "Field"
+# Tile card "What grows here" row (flora roster F1) — the named plants this tile's forage capacity is
+# MADE OF. Naming DECOMPOSES, it never adds: the shares sum to 1, so this says what the Forage number
+# already on the card consists of. Derived from the biome, so it is descriptive, not a state.
+const FLORA_COMPOSITION_ROW := "What grows here"
+const FLORA_SHARE_SEPARATOR := " · "
+const FLORA_SHARE_FORMAT := "%s %d%%"
+# Whole-percent scale for a 0..1 share. The displayed numbers must ALWAYS sum to this: naive rounding
+# can land on 99 or 101, and the remainder is absorbed into the largest share (the first entry — the
+# wire list is share-descending), which is the one where a ±1 is least visible.
+const FLORA_SHARE_PERCENT_TOTAL := 100
 const FIELD_PROGRESS_COMPLETE := 1.0
 const FIELD_SOWING_LABEL := "Sowing"
 const FIELD_BADGE_LABEL := "Field"
@@ -5805,6 +5815,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
     # yield coefficient, meaningless to the player (it still drives the sim's yield math).
     lines.append(food_line)
+    # WHAT GROWS HERE — the named plants behind the Forage line above (flora roster F1). It reads
+    # directly under the module because it says what that module's basket IS; the stock/ecology rows
+    # below then say how much of it there is and how it is faring.
+    var composition_text := _flora_composition_text(tile_info.get("patch_composition", []))
+    if composition_text != "":
+        lines.append("%s: %s" % [FLORA_COMPOSITION_ROW, composition_text])
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
     # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
@@ -7139,6 +7155,43 @@ func _field_label(progress: float, is_field: bool) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
         return "%s %s" % [FoodIcons.for_policy(LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
     return "%s %d%%" % [FIELD_SOWING_LABEL, _progress_percent(progress)]
+
+## The tile's plant composition as one compact line — `Hazel 45% · Oak Mast 30% · Berry Scrub 25%`.
+##
+## The wire list is ALREADY sorted (share descending, then species key ascending) and its shares sum
+## to 1, so this only formats: the order is the sim's and is never re-derived here.
+##
+## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. Rounding each share independently can total 99 or 101
+## — a decomposition that visibly fails to decompose — so the remainder is folded into the LARGEST
+## share, i.e. the first entry, where a ±1 is proportionally smallest. Returns "" for a tile with no
+## composition (a biome that carries no forage), so no empty row renders.
+func _flora_composition_text(composition: Variant) -> String:
+    if not (composition is Array):
+        return ""
+    var shares: Array = composition
+    if shares.is_empty():
+        return ""
+    var names: Array[String] = []
+    var percents: Array[int] = []
+    var total := 0
+    for entry_variant in shares:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var name := String(entry.get("display_name", "")).strip_edges()
+        if name == "":
+            continue
+        var percent := int(round(float(entry.get("share", 0.0)) * FLORA_SHARE_PERCENT_TOTAL))
+        names.append(name)
+        percents.append(percent)
+        total += percent
+    if names.is_empty():
+        return ""
+    percents[0] += FLORA_SHARE_PERCENT_TOTAL - total
+    var parts: Array[String] = []
+    for i in names.size():
+        parts.append(FLORA_SHARE_FORMAT % [names[i], percents[i]])
+    return FLORA_SHARE_SEPARATOR.join(parts)
 
 ## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
 ## is still going in. Matched on the label from `_field_label`, mirroring `_cultivation_value_hex`.

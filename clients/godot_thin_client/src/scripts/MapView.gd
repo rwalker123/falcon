@@ -3102,6 +3102,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
 		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
+		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
+		# server-side; never re-sorted here). Deliberately NOT in FOW_DISCOVERED_HIDDEN_KEYS: it is
+		# a pure function of the BIOME, like the terrain label or the river edges, so a remembered
+		# tile still knows what grows there. Never-seen tiles are covered by the `unexplored`
+		# redaction, and nothing on the patch can change it.
+		info["patch_composition"] = patch.get("composition", [])
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

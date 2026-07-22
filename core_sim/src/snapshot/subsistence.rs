@@ -336,12 +336,20 @@ pub(crate) fn herd_snapshot_entries(
 /// places a Field on any ground the `plant:field` rung's `site_requirement` accepts — module or not —
 /// and a Field's managed harvest is biomass-based and seasonless, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
+///
+/// `tile_compositions` maps tile coord → **what grows there** — the named plants the tile's forage
+/// capacity is made of, resolved by the caller (which has the tiles) through the one
+/// `forage::tile_flora_composition` seam, so the composition and `tile_forage_capacity` agree about a
+/// tile's shape (in particular about a navigable hex's **two** capacity terms). A patch whose tile is
+/// absent from the map ships an **empty** composition — "no named plants here", never a fabricated
+/// one.
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
+    tile_compositions: &HashMap<UVec2, Vec<FloraShareInfo>>,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
@@ -386,6 +394,14 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
+                // **What grows here** — the tile's forage capacity, decomposed into named plants
+                // (`docs/plan_flora_roster.md` §2). Read straight off the roster's precomputed,
+                // deterministically-ordered per-biome table: it is a function of the BIOME, so no
+                // per-patch state feeds it and every tile of a biome reads the same basket.
+                composition: tile_compositions
+                    .get(&patch.tile)
+                    .cloned()
+                    .unwrap_or_default(),
             }
         })
         .collect();

@@ -18,11 +18,11 @@ use sim_runtime::{
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
-    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForagePatchState, ForageState, ForkChoiceState, GenerationState, GlossEntryState, GrazeState,
-    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
-    GreatDiscoveryTelemetryState, HerdRoamState, HerdState, HerdTelemetryState,
-    HuntPolicyCeilingState, HuntTripEstimateState, InfluentialIndividualState,
+    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
+    FoodModuleState, ForagePatchState, ForageState, ForkChoiceState, GenerationState,
+    GlossEntryState, GrazeState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
+    HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState, InfluentialIndividualState,
     IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
     KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
     PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
@@ -58,10 +58,12 @@ use crate::{
         PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
+    flora_config::FloraConfigHandle,
     food::FoodModuleTag,
     forage::{
-        field_provisions, forage_forecast, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
-        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
+        tile_is_fresh_watered, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+        NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -1424,6 +1426,9 @@ mod tests {
             &labor.forage,
             &LadderConfig::builtin(),
             &HashMap::new(),
+            &HashMap::new(),
+            // No tiles behind these fixture patches, so no composition is published — "unknown
+            // ground names no plants", never a fabricated basket.
             &HashMap::new(),
         );
         assert_eq!(patches.len(), 2);

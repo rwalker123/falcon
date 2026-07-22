@@ -1012,6 +1012,34 @@ table ForagePatchState {
   // server resolves it through the SAME seam (`RungSiteRequirement::refusal`) that the `sow` command
   // and the labor arm gate on, so the wire, the rejection and the sim cannot disagree.
   sowSiteRefusal:string;
+  // --- WHAT GROWS HERE (appended, flora roster F1) ---
+  // The named plants this tile's forage capacity is MADE OF, as normalized shares
+  // (docs/plan_flora_roster.md §2, "naming decomposes, it does not add"). `species` is the stable
+  // config key (flora_config.json), `displayName` the player-facing name, `share` this plant's
+  // fraction of the tile's basket.
+  //
+  // DERIVED FROM THE BIOME, NOT PER-PATCH STATE: it is a pure function of the tile's terrain and the
+  // roster's affinity weights — every tile of a biome reads the same composition, and nothing on the
+  // patch can change it. (A patch committed to one species by Cultivate/Sow is a later slice, and
+  // will carry its own field.)
+  //
+  // THE SHARES SUM TO 1 for any tile that bears forage at all — the decomposition ruling made
+  // structural, so `share × the tile's forageCapacity` is the plant's own capacity and the parts
+  // always re-sum to the whole. EMPTY on a biome that carries no forage. Sorted deterministically
+  // (share DESC, then species key ASC), so the wire is identical run to run.
+  composition:[FloraShareInfo];
+}
+
+// One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
+table FloraShareInfo {
+  // The stable config key (`flora_config.json` -> species), e.g. "hazel". Free-form string (the
+  // `species`/`policy` convention), so adding a plant needs no schema change.
+  species:string;
+  // The player-facing name, e.g. "Hazel". Shipped rather than left to a client-side table: the
+  // client holds no roster.
+  displayName:string;
+  // This plant's fraction of the tile's basket, 0..1. The shares on a forage-bearing tile sum to 1.
+  share:float;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

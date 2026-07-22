@@ -470,6 +470,28 @@ pub struct ForagePatchState {
     /// nothing: it holds neither the per-biome capacity table nor the hydrology.
     #[serde(default)]
     pub sow_site_refusal: String,
+    /// **What grows here** — the named plants this tile's forage capacity is *made of*, as
+    /// normalized shares (`docs/plan_flora_roster.md` §2: naming decomposes, it does not add).
+    ///
+    /// **Derived from the biome, not per-patch state**: a pure function of the tile's terrain and
+    /// the roster's affinity weights, so every tile of a biome reads the same composition and
+    /// nothing on the patch can change it. The shares sum to `1.0` on any forage-bearing tile, so
+    /// `share × forage_capacity` is that plant's own capacity and the parts always re-sum to the
+    /// whole. Empty on a biome that carries no forage. Deterministically sorted (share DESC, then
+    /// species key ASC).
+    #[serde(default)]
+    pub composition: Vec<FloraShareInfo>,
+}
+
+/// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct FloraShareInfo {
+    /// The stable config key (`flora_config.json` → `species`), e.g. `"hazel"`.
+    pub species: String,
+    /// The player-facing name, e.g. `"Hazel"` — shipped because the client holds no roster.
+    pub display_name: String,
+    /// This plant's fraction of the tile's basket, `0..1`.
+    pub share: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -4174,6 +4196,7 @@ fn create_forage_patches<'a>(
     for patch in patches {
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
+        let composition = create_flora_shares(builder, &patch.composition);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -4198,6 +4221,30 @@ fn create_forage_patches<'a>(
                 ceilingSow: patch.ceiling_sow,
                 fieldYield: patch.field_yield,
                 sowSiteRefusal: Some(sow_site_refusal),
+                composition: Some(composition),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// The per-tile flora composition (`ForagePatchState.composition`). Emitted in the order the sim
+/// hands it over — already deterministic (share DESC, then species key ASC).
+fn create_flora_shares<'a>(
+    builder: &mut FbBuilder<'a>,
+    shares: &[FloraShareInfo],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::FloraShareInfo<'a>>>> {
+    let mut entries = Vec::with_capacity(shares.len());
+    for share in shares {
+        let species = builder.create_string(share.species.as_str());
+        let display_name = builder.create_string(share.display_name.as_str());
+        let entry = fb::FloraShareInfo::create(
+            builder,
+            &fb::FloraShareInfoArgs {
+                species: Some(species),
+                displayName: Some(display_name),
+                share: share.share,
             },
         );
         entries.push(entry);

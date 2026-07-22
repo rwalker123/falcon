@@ -59,6 +59,10 @@ pub struct SnapshotContext<'w> {
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
+    /// The flora roster. Read at capture so each forage patch can publish the **named plants its
+    /// biome's capacity is made of** (`ForagePatchState::composition`) — derived from the roster's
+    /// precomputed per-biome share table, never from per-patch state.
+    pub flora: Res<'w, FloraConfigHandle>,
     /// The intensification ladder. Read at capture because both food webs' **pre-commit yield
     /// forecasts** quote the investment rungs' dipped ceiling (`Cultivate` / `Corral`) off the
     /// rung's `yield_fraction_while_building` — the same seam the take pays with, so forecast ==
@@ -1314,6 +1318,7 @@ pub fn capture_snapshot(
         demographics,
         wellbeing,
         labor,
+        flora,
         ladder,
         fauna,
         expedition,
@@ -1338,6 +1343,7 @@ pub fn capture_snapshot(
     // Forage potential (per-tile) is read from the biome table here, so the labor config is resolved
     // ahead of the tile loop (it is reused for the labor/expedition readouts further down).
     let labor_config = labor.get();
+    let flora_config = flora.get();
     let ladder_config = ladder.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
@@ -1393,6 +1399,25 @@ pub fn capture_snapshot(
             })
             .collect()
     };
+    // **What grows on each patch tile** — the named plants its forage capacity decomposes into,
+    // resolved through the ONE `forage::tile_flora_composition` seam (the twin of
+    // `tile_forage_capacity`), so a navigable hex's *two* capacity terms are both named and the wire
+    // cannot disagree with the table. Patch tiles only, mirroring the `sow_site_refusals` sweep above.
+    let flora_compositions: HashMap<UVec2, Vec<FloraShareInfo>> = tiles
+        .iter()
+        .filter(|(_, tile, _)| forage_registry.patch(tile.position).is_some())
+        .map(|(_, tile, _)| {
+            let shares = tile_flora_composition(&flora_config, &labor_config.forage, tile)
+                .iter()
+                .map(|share| FloraShareInfo {
+                    species: share.species.clone(),
+                    display_name: flora_config.species[&share.species].display_name.clone(),
+                    share: share.share,
+                })
+                .collect();
+            (tile.position, shares)
+        })
+        .collect();
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
             x: site.position.x,
@@ -1777,6 +1802,7 @@ pub fn capture_snapshot(
         &ladder_config,
         &seasonal_weights,
         &sow_site_refusals,
+        &flora_compositions,
     );
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
