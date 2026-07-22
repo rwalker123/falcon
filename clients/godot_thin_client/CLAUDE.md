@@ -1584,11 +1584,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Current-actions rows are PER-SOURCE max-useful capped** (mirroring the compose controls' cap): each
     row's `+` is gated on `idle > 0 AND workers < max_useful` via `_source_worker_cap_state` +
     `_max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
-    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `HERD_FORECAST_PREFIX`); the
+    row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `BARE_FORECAST_PREFIX`); the
     Forage row reads its patch from the new `_forage_patch_lookup` (Main pushes the snapshot
-    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the bare
-    `WIRE_FORAGE_PATCH_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
-    the `patch_`-prefixed tile_info cross-ref the compose control reads). An unknown forecast
+    `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the SAME
+    `BARE_FORECAST_PREFIX` (the raw wire patch dict carries the forecast fields un-prefixed, unlike
+    the `patch_`-prefixed tile_info cross-ref the compose control reads) — the two rows are told apart
+    by their `SOURCE_KIND_*`, never by the prefix they share. An unknown forecast
     (`MAX_USEFUL_UNBOUNDED`) falls back to the plain `idle > 0` gate; a source capped at max-useful with
     idle still available spells the reason in the row tooltip (`MAX_USEFUL_CAPPED_TOOLTIP`). **Scout /
     Warrior are band-wide roles with no ceiling — they keep the plain `idle > 0` gate.** Verified by
@@ -1980,14 +1981,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `_forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
       (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
       Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
-      list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**:
-      `HERD_FORECAST_PREFIX` and `WIRE_FORAGE_PATCH_PREFIX` are BOTH `""` (a herd dict and a raw wire
-      forage-patch dict both carry the forecast fields bare), so `prefix == HERD_FORECAST_PREFIX` is true
-      for a forage patch too — that test sent the Current-actions Forage row down the herd branch, where
-      no `hunt_policy_ceilings` key exists, collapsing its ceiling to 0 and leaving the row's `+` button
-      permanently dead. Nor may it infer the kind from the dict's shape (`has("hunt_policy_ceilings")`
-      would misread a herd whose snapshot omitted the list). The `prefix` parameter survives for the
-      FORAGE scalar key lookup only. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
+      list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**: a herd dict
+      and a raw wire forage-patch dict both carry the forecast fields bare, so they share the ONE
+      `BARE_FORECAST_PREFIX` and a prefix test cannot separate them. That is not merely a convention —
+      the bare case was deliberately collapsed from two same-valued consts (`HERD_FORECAST_PREFIX` /
+      `WIRE_FORAGE_PATCH_PREFIX`, both `""`) into one **because** a herd-sounding name for the empty
+      string invited exactly that test: `prefix == HERD_…` read as discriminating, was not, and sent the
+      Current-actions Forage row down the herd branch, where no `hunt_policy_ceilings` key exists —
+      collapsing its ceiling to 0 and leaving the row's `+` button permanently dead. Nor may it infer the
+      kind from the dict's shape (`has("hunt_policy_ceilings")` would misread a herd whose snapshot
+      omitted the list). The `prefix` parameter survives for the FORAGE scalar key lookup only. The PAYOFF, by contrast, IS a real scalar: `HerdTelemetryState.pastoralYield` (the
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`

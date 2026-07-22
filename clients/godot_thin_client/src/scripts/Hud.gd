@@ -849,23 +849,21 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
 # flow here", used by the band ledger's rows and by this row alike.)
 const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
-# A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
-# `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
+# How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
-# ⚠ THESE PREFIXES DO NOT IDENTIFY A SOURCE KIND. `HERD_FORECAST_PREFIX` and
-# `WIRE_FORAGE_PATCH_PREFIX` are BOTH the empty string — a herd dict and a raw wire forage-patch
-# dict both carry their forecast fields bare — so `prefix == HERD_FORECAST_PREFIX` is true for a
-# forage patch too. Comparing a prefix to decide "is this a herd?" silently routes forage patches
-# down the herd branch; that exact mistake once left the `+` button dead on every Current-actions
-# Forage row. A prefix is a KEY SPELLING and nothing else: pass `SOURCE_KIND_*` when you need the
-# kind.
-const HERD_FORECAST_PREFIX := ""
+# Two dict shapes carry them BARE and so share one prefix: a herd dict, and the RAW wire
+# forage-patch dict (decoded in native `forage_patches_to_array`, stored in `_forage_patch_lookup`,
+# and read by the Current-actions Forage row). Only `tile_info` carries the patch's fields under a
+# `patch_` prefix, because that is a cross-ref MapView stamps on in `_tile_info_at`.
+#
+# ⚠ A PREFIX CANNOT IDENTIFY A SOURCE KIND — that is why the bare case is ONE const and not two
+# same-valued ones. It used to be two (a `HERD_*` and a `WIRE_FORAGE_PATCH_*`, both `""`), and
+# having a herd-sounding name for the empty string invited `prefix == HERD_…` as an "is this a
+# herd?" test; it read as discriminating and was not, so it silently routed forage patches down the
+# herd branch and left the `+` button dead on every Current-actions Forage row. Pass `SOURCE_KIND_*`
+# when you need the kind; a prefix only ever tells you how to spell a key.
+const BARE_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
-# The RAW wire forage-patch dict (as decoded in native `forage_patches_to_array` and stored in
-# `_forage_patch_lookup`) carries the forecast fields BARE — the `patch_` prefix above is only the
-# cross-ref MapView stamps onto `tile_info`. The Current-actions Forage row reads the raw dict, so it
-# forecasts with the bare prefix.
-const WIRE_FORAGE_PATCH_PREFIX := ""
 # WHICH KIND OF SOURCE a forecast dict describes. Stated explicitly by every `_forecast_inputs`
 # caller because it CANNOT be recovered from the dict: the two kinds share a key prefix (see the
 # warning above), and a shape test (`has("hunt_policy_ceilings")`) would misread a herd whose
@@ -1795,7 +1793,7 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
             continue
         takes[String(policy)] = _extractive_take(rate)
     for policy in [LABOR_POLICY_TAME, LABOR_POLICY_CORRAL]:
-        var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, policy)
+        var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
@@ -2626,7 +2624,7 @@ func update_food_modules(modules_variant: Variant) -> void:
 ## array — the same dicts in `MapView.forage_patch_lookup`), keyed by tile. A Current-actions Forage
 ## row reads the patch here to forecast its max-useful worker cap (the compose control gets the same
 ## forecast off `tile_info`'s `patch_`-prefixed cross-ref; the RAW wire dict here carries the fields
-## BARE — see `WIRE_FORAGE_PATCH_PREFIX`).
+## BARE — see `BARE_FORECAST_PREFIX`).
 var _forage_patch_lookup: Dictionary = {}
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
@@ -3787,10 +3785,10 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
             # Cap the `+` at this patch's max-useful (the compose control's cap, applied to the confirmed
             # row) so a single source can't absorb workers past the point they help. The raw wire patch
-            # dict carries the forecast fields BARE (WIRE_FORAGE_PATCH_PREFIX), unlike the `patch_`-prefixed
+            # dict carries the forecast fields BARE (BARE_FORECAST_PREFIX), unlike the `patch_`-prefixed
             # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
             var forage_forecast := _forecast_inputs(
-                _forage_patch_lookup.get(Vector2i(fx, fy), {}), SOURCE_KIND_FORAGE, WIRE_FORAGE_PATCH_PREFIX,
+                _forage_patch_lookup.get(Vector2i(fx, fy), {}), SOURCE_KIND_FORAGE, BARE_FORECAST_PREFIX,
                 forage_emit_policy)
             var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
@@ -3823,9 +3821,9 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_popula
             var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
             # Cap the `+` at this herd's max-useful (the compose control's cap, applied to the confirmed
             # row) so a single source can't absorb workers past the point they help. Herds carry the
-            # forecast fields BARE (HERD_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
+            # forecast fields BARE (BARE_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
             # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
-            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, policy)
+            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, policy)
             var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
             actions_block.add_child(_build_worker_stepper(
                 "%sHunt %s" % [hunt_icon, herd_label],
@@ -4109,7 +4107,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
-    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, HERD_FORECAST_PREFIX, _hunt_assign_policy)
+    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, _hunt_assign_policy)
     # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
     #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
     #       what you give up, for how long, to get what. That IS the Corral decision, and the local
