@@ -113,9 +113,7 @@
 # ============================================================================
 #
 # The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
-# alias onto one file (see the notes). Coverage: 11 files, 12 prompts — `catfish` is the one prompt
-# with no art yet (Silt Catfish, the wet-biome roster pass); until its PNG lands that species falls
-# through to its emoji, which is the documented fallback, not a break.
+# alias onto one file (see the notes). Coverage is complete: 12 files, 12 prompts.
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
