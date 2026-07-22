@@ -6,10 +6,7 @@ use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use crate::{
     grid_utils::{hex_neighbors_wrapped, neighbors4_wrapped},
     heightfield::ElevationField,
-    map_preset::{
-        BiomeTransitionConfig, InlandSeaConfig, IslandConfig, MacroLandConfig, OceanConfig,
-        ShelfConfig,
-    },
+    map_preset::{BiomeTransitionConfig, IslandConfig, MacroLandConfig, OceanConfig, ShelfConfig},
 };
 
 #[derive(Resource, Debug, Clone, Copy)]
@@ -219,7 +216,6 @@ pub fn build_bands(
     macro_cfg: &MacroLandConfig,
     shelf: &ShelfConfig,
     islands: &IslandConfig,
-    inland: &InlandSeaConfig,
     ocean_cfg: &OceanConfig,
     moisture_scale: f32,
     biome_cfg: &BiomeTransitionConfig,
@@ -249,13 +245,6 @@ pub fn build_bands(
     );
 
     let mut is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
-
-    // Optionally connect inland seas to ocean via simple strait rule
-    if inland.merge_strait_width > 0 {
-        connect_inland_seas_via_straits(&mut field, &land, &is_ocean, inland, sea_level, w, h);
-        land = generate_land_mask(&field, sea_level).mask;
-        is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
-    }
 
     // Place islands before classifying so shelves wrap correctly.
     place_islands(&mut field, &is_ocean, islands, shelf, sea_level, w, h, seed);
@@ -383,101 +372,6 @@ fn neighbor_dirs() -> [(i32, i32); 8] {
         (0, -1),
         (1, -1),
     ]
-}
-
-/// Connect landlocked water bodies to the open ocean by **lowering a corridor of land below sea
-/// level**, then re-deriving the mask. It used to flip `land`/`is_ocean` along the corridor, which
-/// left the strait's tiles sitting above sea level in the published field — a channel you could see
-/// on the map and not in the bathymetry.
-fn connect_inland_seas_via_straits(
-    field: &mut ElevationField,
-    land: &[bool],
-    is_ocean: &[bool],
-    inland: &InlandSeaConfig,
-    sea_level: f32,
-    w: usize,
-    h: usize,
-) {
-    let max_width = inland.merge_strait_width as usize;
-    // The corridor floor: unambiguously below sea level, so the re-derived mask reads it as water.
-    let strait_floor = sea_level - inland.strait_depth_margin.max(0.0);
-    // For each inland water tile near ocean within max_width, carve shortest corridor through land.
-    let idx = |x: usize, y: usize| -> usize { y * w + x };
-    // Collect inland edge tiles
-    let mut inland_edges: Vec<(usize, usize)> = Vec::new();
-    for y in 0..h {
-        for x in 0..w {
-            let i = idx(x, y);
-            if land[i] || is_ocean[i] {
-                continue;
-            }
-            // water and not ocean -> inland; check if adjacent to land
-            for (nx, ny) in neighbors4(x, y, w, h) {
-                if land[idx(nx, ny)] {
-                    inland_edges.push((x, y));
-                    break;
-                }
-            }
-        }
-    }
-    // Simple BFS from each inland edge to nearest ocean tile through land only, bounded by max_width
-    for &(sx, sy) in &inland_edges {
-        let mut q = VecDeque::new();
-        let mut dist = vec![u16::MAX; w * h];
-        q.push_back((sx, sy));
-        dist[idx(sx, sy)] = 0;
-        let mut found: Option<(usize, usize)> = None;
-        while let Some((x, y)) = q.pop_front() {
-            let d = dist[idx(x, y)] as usize;
-            if d > max_width {
-                continue;
-            }
-            for (nx, ny) in neighbors4(x, y, w, h) {
-                let ni = idx(nx, ny);
-                // We allow crossing land to reach ocean
-                if is_ocean[ni] {
-                    found = Some((nx, ny));
-                    break;
-                }
-                if land[ni] && dist[ni] == u16::MAX {
-                    dist[ni] = (d + 1) as u16;
-                    q.push_back((nx, ny));
-                }
-            }
-            if found.is_some() {
-                break;
-            }
-        }
-        if let Some((tx, ty)) = found {
-            // Carve corridor along greedy backtrack by choosing neighbor with decreasing dist
-            let mut cx = tx;
-            let mut cy = ty;
-            loop {
-                let i = idx(cx, cy);
-                if dist[i] == 0 {
-                    break;
-                }
-                // The one edit: sink the tile. `min` so an already-deeper cell is left alone.
-                let values = field.values_mut();
-                values[i] = values[i].min(strait_floor).clamp(0.0, 1.0);
-                // pick next with minimal distance
-                let mut best: Option<(usize, usize, u16)> = None;
-                for (nx, ny) in neighbors4(cx, cy, w, h) {
-                    let ni = idx(nx, ny);
-                    let dv = dist[ni];
-                    if dv < u16::MAX && best.map(|b| dv < b.2).unwrap_or(true) {
-                        best = Some((nx, ny, dv));
-                    }
-                }
-                if let Some((nx, ny, _)) = best {
-                    cx = nx;
-                    cy = ny;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
 }
 
 /// Island size levers. The old boolean `carve_blob_into` painted a disc of `land` at these radii;
@@ -2665,7 +2559,6 @@ mod tests {
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,
@@ -2942,7 +2835,6 @@ mod tests {
                     &preset.macro_land,
                     &preset.shelf,
                     &preset.islands,
-                    &preset.inland_sea,
                     &preset.ocean,
                     preset.moisture_scale,
                     &preset.biomes,
@@ -3030,7 +2922,6 @@ mod tests {
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,
@@ -3147,7 +3038,6 @@ mod tests {
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,
@@ -3496,7 +3386,6 @@ mod tests {
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,
@@ -3529,51 +3418,56 @@ mod tests {
         );
     }
 
+    /// Centres re-pinned when `connect_inland_seas_via_straits` was deleted. The carver used to cut
+    /// land corridors from landlocked water out to the ocean; without it the land is markedly less
+    /// fragmented, and [`derive_mountain_mask`] buckets plate count by land connected-component
+    /// area — so the plate decomposition, and with it the whole fold/fault network, genuinely
+    /// changes. This is a real terrain change, not unexplained drift. Tolerances are unchanged.
     #[test]
     fn earthlike_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64));
         assert!(
-            (metrics.land_ratio - 0.403).abs() <= 0.01,
+            (metrics.land_ratio - 0.4033).abs() <= 0.01,
             "earthlike land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 2326).abs() <= 32,
+            (metrics.fold as isize - 2652).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 254).abs() <= 16,
+            (metrics.fault as isize - 328).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 24).abs() <= 6,
+            (metrics.volcanic as isize - 19).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 707).abs() <= 32,
+            (metrics.dome as isize - 692).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 613).abs() <= 32,
+            (metrics.polar_fold as isize - 1158).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 157).abs() <= 16,
+            (metrics.polar_fault as isize - 174).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 136).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 161).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 12).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 32).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
@@ -3704,7 +3598,6 @@ mod tests {
                 &preset.macro_land,
                 &preset.shelf,
                 &preset.islands,
-                &preset.inland_sea,
                 &preset.ocean,
                 preset.moisture_scale,
                 &preset.biomes,
@@ -3749,51 +3642,56 @@ mod tests {
         }
     }
 
+    /// Centres re-pinned when `connect_inland_seas_via_straits` was deleted. The carver used to cut
+    /// land corridors from landlocked water out to the ocean; without it the land is markedly less
+    /// fragmented, and [`derive_mountain_mask`] buckets plate count by land connected-component
+    /// area — so the plate decomposition, and with it the whole fold/fault network, genuinely
+    /// changes. This is a real terrain change, not unexplained drift. Tolerances are unchanged.
     #[test]
     fn polar_contrast_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("polar_contrast", None);
         assert!(
-            (metrics.land_ratio - 0.440).abs() <= 0.01,
+            (metrics.land_ratio - 0.4422).abs() <= 0.01,
             "polar_contrast land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 3004).abs() <= 40,
+            (metrics.fold as isize - 2840).abs() <= 40,
             "polar_contrast fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 702).abs() <= 24,
+            (metrics.fault as isize - 889).abs() <= 24,
             "polar_contrast fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 52).abs() <= 10,
+            (metrics.volcanic as isize - 42).abs() <= 10,
             "polar_contrast volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 981).abs() <= 40,
+            (metrics.dome as isize - 854).abs() <= 40,
             "polar_contrast dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 1471).abs() <= 36,
+            (metrics.polar_fold as isize - 1745).abs() <= 36,
             "polar_contrast polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 244).abs() <= 18,
+            (metrics.polar_fault as isize - 497).abs() <= 18,
             "polar_contrast polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 233).abs() <= 14,
+            (metrics.polar_uplift_cells as isize - 227).abs() <= 14,
             "polar_contrast polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 368).abs() <= 18,
+            (metrics.polar_relief_cells as isize - 429).abs() <= 18,
             "polar_contrast polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
@@ -3885,7 +3783,6 @@ mod tests {
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,

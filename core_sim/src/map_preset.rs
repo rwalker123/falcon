@@ -33,7 +33,6 @@ pub struct MapPreset {
     pub mountain_scale: f32,
     pub moisture_scale: f32,
     pub river_density: f32,
-    pub lake_chance: f32,
     #[serde(default)]
     pub climate_band_weights: HashMap<String, f32>,
     #[serde(default)]
@@ -102,8 +101,6 @@ pub struct MapPreset {
     pub shelf: ShelfConfig,
     #[serde(default)]
     pub islands: IslandConfig,
-    #[serde(default)]
-    pub inland_sea: InlandSeaConfig,
     #[serde(default)]
     pub ocean: OceanConfig,
     #[serde(default)]
@@ -820,29 +817,6 @@ impl Default for IslandConfig {
             fringing_shelf_width: 2,
             min_distance_from_continent: 12,
             island_peak_margin: 0.06,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct InlandSeaConfig {
-    pub min_area: u32,
-    pub merge_strait_width: u32,
-    /// How far **below** `sea_level` a strait corridor is cut, on the normalized 0..1 elevation
-    /// scale. `connect_inland_seas_via_straits` lowers the corridor's elevation and the mask is
-    /// re-derived, rather than flipping `land`/`is_ocean` behind the field's back. Large enough that
-    /// the corridor is unambiguously water; small enough that it reads as a shallow channel and not
-    /// a trench.
-    pub strait_depth_margin: f32,
-}
-
-impl Default for InlandSeaConfig {
-    fn default() -> Self {
-        Self {
-            min_area: 24,
-            merge_strait_width: 2,
-            strait_depth_margin: 0.02,
         }
     }
 }

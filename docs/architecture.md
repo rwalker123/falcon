@@ -74,7 +74,6 @@ What was intentionally kept (it is simulation/2D data, not 3D rendering):
 - `macro_land`: `{ continents, min_area, target_land_pct, jitter }`
 - `shelf`: `{ width_tiles, slope_width_tiles }`
 - `islands`: `{ continental_density, oceanic_density, fringing_shelf_width, min_distance_from_continent }`
-- `inland_sea`: `{ min_area, merge_strait_width }`
 - `ocean`: `{ ridge_density, ridge_amplitude }`
 - `biomes`: `{ orographic_strength, transition_width, band_profile, coastal_rainfall_decay, interior_aridity_strength }`
 - `mountains`: `{ belt_width_tiles, fold_strength, fault_line_count, fault_strength, volcanic_arc_chance, volcanic_chain_length, volcanic_strength, plateau_density }`
@@ -86,7 +85,9 @@ See `core_sim/CLAUDE.md` for full world generation pipeline details.
 ## Validation & Debug
 - Invariants logged at startup (target `shadow_scale::mapgen`):
   - Every `ContinentalShelf` tile lies within `shelf.width_tiles` of land.
-  - No `InlandSea` touches `DeepOcean` (unless merged via a strait).
+  - No `InlandSea` touches `DeepOcean`. A lake is water the mask left unconnected to the ocean;
+    nothing merges one into the sea (the `inland_sea` strait carver is deleted — see `core_sim/CLAUDE.md`
+    → "Lakes are emergent").
   - Detached shelf tile count (should be 0 for contiguous coasts).
 - Metrics: counts of land, shelf, slope, abyss, inland tiles are emitted for quick inspection.
 
