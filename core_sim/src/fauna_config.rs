@@ -120,7 +120,8 @@ pub enum ShoreRequirement {
     None,
     /// Any open water on one of the six hex sides (`WATER`), fresh or salt.
     Any,
-    /// **Salt water only** — `WATER` without `FRESHWATER`, the ocean (see [`ShoreRequirement::salt_fresh`]).
+    /// **Salt water only** — `WATER` without `FRESHWATER`, the ocean (the same rule `hydrology`'s
+    /// `TileWorld::is_ocean` states, in the same tag vocabulary).
     Salt,
     /// **Fresh water only** — `WATER` *with* `FRESHWATER`: lakes, inland seas, navigable rivers.
     Fresh,
@@ -190,7 +191,7 @@ pub struct SpeciesDef {
     #[serde(default)]
     pub host_biomes: Vec<String>,
     /// **The shore predicate** — the kind of open water a spawn site must border on one of its six
-    /// hex sides ([`crate::fauna::adjacent_water_kinds`]). The site rule a *marine forager* must
+    /// hex sides (`fauna`'s `adjacent_water_kinds`). The site rule a *marine forager* must
     /// satisfy: a seal colony hauls out on a shoreline, never on inland tundra.
     ///
     /// **The kind matters.** `Salt` is `WATER` without `FRESHWATER` — the ocean; `Fresh` is `WATER`
