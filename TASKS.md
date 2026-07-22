@@ -266,6 +266,22 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Extend `sim_schema/schemas/snapshot.fbs` and generated bindings with Knowledge Ledger tables (`KnowledgeLedgerState`, modifier breakdown children, espionage timeline) plus supporting enums, then update Rust builders and Godot bindings (Owner: Tooling Team — Mei, Estimate: 1d; Deps: KnowledgeLedger infrastructure task). _Status_: Schema/rust bindings now emit ledger entries, modifier breakdowns, espionage timeline, and knowledge metric payloads; FlatBuffers regenerated via `cargo build -p shadow_scale_flatbuffers`._
 - [x] Surface the new knowledge metrics/log channels in `sim_runtime` (`SimulationMetrics`, `knowledge.telemetry`) and integrate helper views for ledger payloads (Owner: Tooling Team — Mei, Estimate: 0.5d; Deps: schema extension task). _Status_: sim_runtime now exposes knowledge ledger/timeline views, encode/decode helpers, telemetry parsing, and SimulationMetrics/WorldSnapshot wiring carries knowledge counters._
 
+- [ ] **Per-entity diffing for the forage-patch snapshot section.** Surfaced by a Copilot review on
+  PR #157 (flora F1), and the finding is bigger than the field that exposed it.
+  `SnapshotHistory` diffs `forage_patches` as a **whole vector** (`core_sim/src/snapshot/capture.rs`
+  — `if self.forage_patches == forage_patches_state { None } else { Some(...) }`), and patches regrow
+  **every turn**, so the entire array reships on essentially every delta rather than only on full
+  snapshots. Patch count is order-1000 on a standard map (one per non-zero-capacity `FoodModuleTag`
+  tile, which is nearly all land plus `ContinentalShelf`/`InlandSea`), and the section now carries 22
+  fields per patch — so this is one of the larger recurring payloads on the wire.
+  **Measure first, then fix:** encoded snapshot size on a standard map, before and after. The fix is
+  per-entity diffing of the section (pays off across all 22 fields), **not** trimming any one field.
+  Explicitly *rejected* as the fix: dropping `FloraShareInfo.displayName` to ship ids only — the
+  client holds no roster by design (the same server-resolves-display-names rule the discovered-sites
+  wire follows), and a per-biome composition table referenced by id is only valid in F1, since
+  `docs/plan_flora_roster.md` §4.2 makes composition genuinely per-patch at F2 when `Cultivate`/`Sow`
+  commit a tile to one species. (Owner: TBD, Estimate: 1d + measurement; Deps: none.)
+
 ### Culture Trait Stack
 - [x] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
 - [x] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
