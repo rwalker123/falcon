@@ -53,6 +53,11 @@ const HUNT_FORECAST_PARTY := 4
 # above every policy ceiling here, so the HERD (not the hunters) is the binding constraint — which is
 # exactly the case where the per-turn yield preview earns its keep.
 const LOCAL_HUNT_HUNTERS := 6
+# The crowded hex's staffed-wildlife-row state: the SAME herd worked both ways at once. Two distinct
+# counts so the row's meta can only read right if it SUMS them (4 + 6 = `10 🏹`) — a single shared
+# number would pass even if one source were dropped.
+const OCCUPANTS_HUNT_LOCAL_WORKERS := 4
+const OCCUPANTS_HUNT_PARTY_WORKERS := 6
 # The sim's forward-SIMULATED turns-to-fill for the 4-worker party in these states (it exports the
 # answer; the client never divides). Sustain is a small renewable flow → slow; Surplus/Market strip the
 # herd's stock headroom first → fast. The deer's Sustain trip (54) blows past the 20-turn viability
@@ -1364,6 +1369,31 @@ func _ready() -> void:
 	_hud.show_herd_selection(_occupied_herd_fixture())
 	await _settle()
 	await _save("occupants_herd")
+
+	# State 3e-staffed — the SAME hex, with the bison actually being hunted BOTH ways at once: a
+	# standing local hunt (4 workers assigned by Band Fen) and a detached hunting party of 6
+	# committed to the same herd. The wildlife row's meta must read the SUM, `10 🏹`, right-aligned
+	# exactly like the land row's `N 🌾` — one herd, two mechanisms, one staffing number. The drawer
+	# leads with `Size: Big game`, the class that used to ride the row.
+	var hunted_bands: Array = _occupied_units_fixture()
+	hunted_bands[0]["labor_assignments"] = [
+		{"kind": "hunt", "workers": OCCUPANTS_HUNT_LOCAL_WORKERS, "fauna_id": "game_bison_02",
+			"policy": "sustain", "target_x": 58, "target_y": 24},
+	]
+	_hud._player_bands = hunted_bands
+	_hud._player_band = hunted_bands[0]
+	_hud._player_expeditions = [
+		{"id": "Party Fen", "entity": 401, "home_band_entity": 301,
+			"size": OCCUPANTS_HUNT_PARTY_WORKERS, "expedition_mission": "hunt",
+			"expedition_target_herd": "game_bison_02", "expedition_phase": "outbound",
+			"current_x": 59, "current_y": 24},
+	]
+	_hud.show_herd_selection(_occupied_herd_fixture())
+	await _settle()
+	await _save("occupants_herd_staffed")
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._player_expeditions = []
 
 	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
 	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its

@@ -314,6 +314,9 @@ const LAND_ROW_GLYPH := "◈"
 # Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
 const LAND_META_WORKERS_FORMAT := "%d %s"
 const LAND_META_NO_FORAGE := "No forage"
+# Herd-row meta: the same `<count> <activity glyph>` form the land row uses, so a hunted herd
+# (`1 🏹`) and a foraged hex (`2 🌾`) state their staffing identically down the subject list.
+const HERD_META_WORKERS_FORMAT := "%d %s"
 # Chip strip font: one notch under the row labels — a chip is a standing condition, not a heading.
 const CHIP_FONT_SIZE := 11
 # Tag chips are skipped when the tile reports this literal (the `tags_text` "no tags" value): an
@@ -655,6 +658,12 @@ const HERDERS_SLIPPING_FORMAT := "Tameness slipping — teaching Herding, not Pe
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
 # `_split_detail_kv` renders it as an aligned table row beside Biomass.
 const HERD_RANGE_ROW := "Range"
+# Herd drawer size class: the `<size> game` class the roster row used to carry as its meta. The row's
+# meta slot now states the herd's STAFFING (`1 🏹`, parallel to the land row), so the size class moved
+# to the drawer — where the facts that don't fit the row live. The key stays ≤ 16 chars so
+# `_split_detail_kv` renders it as an aligned table row above Biomass.
+const HERD_SIZE_ROW := "Size"
+const HERD_SIZE_CLASS_FORMAT := "%s game"
 # Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
 # range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
 # of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
@@ -7316,8 +7325,8 @@ func _build_band_row(unit: Dictionary) -> Button:
     button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
     return button
 
-## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and
-## the size-class label. Selecting it drives the drawer + the map ring to the herd.
+## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
+## the hunters on it. Selecting it drives the drawer + the map ring to the herd.
 func _build_herd_row(herd: Dictionary) -> Button:
     var herd_id := String(herd.get("id", ""))
     var selected := not _selected_herd.is_empty() and String(_selected_herd.get("id", "")) == herd_id
@@ -7331,14 +7340,51 @@ func _build_herd_row(herd: Dictionary) -> Button:
     # The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
     # code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
     # `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
-    # shows the two things a player can act on — the species and its size class.
-    var size_class := String(herd.get("size_class", "")).strip_edges()
-    if size_class != "":
-        row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))
+    # shows the species and, as its meta, how many hunters are on it; the size class reads in the
+    # drawer.
+    var meta := _herd_row_meta(herd)
+    if meta != "":
+        row.add_child(_roster_meta_label(meta))
     button.tooltip_text = label
     button.add_child(row)
     button.pressed.connect(_on_roster_row_selected.bind("herd", herd_id))
     return button
+
+## The herd row's meta — the deliberate twin of `_land_row_meta`'s rule: a workable source states
+## its staffing, anything else states nothing. A huntable herd with nobody on it reads `0 🏹`,
+## parallel to the staffed form (and to the land row's `0 🌾`), so "nobody is working this" reads at
+## a glance. A NON-huntable herd is not a source at all, so it earns no meta — exactly as a
+## module-less tile earns no worker meta.
+func _herd_row_meta(herd: Dictionary) -> String:
+    var herd_id := String(herd.get("id", "")).strip_edges()
+    var workers := _hunt_workers_on_herd(herd_id)
+    if workers > 0 or bool(herd.get("huntable", false)):
+        return HERD_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_HUNT]]
+    return ""
+
+## Hunters this faction has on `herd_id`, summed across BOTH ways a herd can be worked: standing
+## local hunts assigned by any player band, and detached hunting expeditions committed to it (in
+## whatever phase — a party en route to a herd is hunting it). The row states the herd's TOTAL
+## staffing, not one band's or one mechanism's share of it — the same rule
+## `_forage_workers_on_tile` documents for a hex.
+func _hunt_workers_on_herd(herd_id: String) -> int:
+    if herd_id == "":
+        return 0
+    var total := 0
+    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    for band_variant in bands:
+        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
+            total += _workers_for_hunt(band_variant, herd_id)
+    for exp_variant in _player_expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if String(exp.get("expedition_mission", "")).strip_edges().to_lower() != EXPEDITION_MISSION_HUNT:
+            continue
+        if String(exp.get("expedition_target_herd", "")).strip_edges() != herd_id:
+            continue
+        total += int(exp.get("size", 0))
+    return total
 
 ## A roster row's clickable Button shell: selected rows read as "primary", others
 ## as "ghost". Toggle_mode is off — selection is driven by a rebuild, not the
@@ -7387,7 +7433,7 @@ func _roster_meta_label(text: String) -> Label:
     # The META is the row's ELASTIC, EXPENDABLE half: it claims the slack after the name (hence the
     # right alignment the rows have always read with) and, when the row runs out of width in a 320px
     # dock, it is the meta that gives — ellipsised, not hard-cut, and never the name, which is the
-    # row's identity. Free for the short band/herd metas ("120", "Big game"); it is the land row's
+    # row's identity. Free for the short band/herd metas ("120", "1 🏹"); it is the land row's
     # long module label that would otherwise push past the card's edge, and that label also reads in
     # full in the drawer.
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -8193,11 +8239,15 @@ func _format_food_kind_label(kind_value: String) -> String:
     return " ".join(parts)
 
 func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
-    # NO identity rows. The herd's own roster row above this drawer already shows the species glyph +
-    # name, the `<size> game` class, AND (as a dim meta) the fauna id — so `Herd` / `Species` / `Size`
-    # were the same three facts a second time (the name three times, counting the `Herd` row's
-    # "Red Deer (game_deer_07)"). What follows is only what the header CAN'T show: the herd's state.
+    # The split with the roster row above this drawer: the ROW carries identity (species glyph +
+    # name) and STAFFING (`1 🏹`) — so no `Herd` / `Species` row here, which would be the same name a
+    # second time. The SIZE class lives here because the row's one meta slot now belongs to the
+    # staffing count, and the drawer is where the facts that don't fit the row live. Everything below
+    # it is what the row can't show anyway: the herd's state.
     var lines: Array[String] = []
+    var size_class := String(herd_data.get("size_class", "")).strip_edges()
+    if size_class != "":
+        lines.append("%s: %s" % [HERD_SIZE_ROW, HERD_SIZE_CLASS_FORMAT % size_class.capitalize()])
     # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
     # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
     # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
