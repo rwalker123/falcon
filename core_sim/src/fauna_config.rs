@@ -105,6 +105,54 @@ impl HusbandryCeiling {
     }
 }
 
+/// **What kind of open water a species' spawn site must border** — the shore predicate's four states.
+///
+/// `None` is "no rule at all" (the default, so every species that omits it is byte-identical);
+/// `Any` is the historical "any `WATER` tag will do". The salt/fresh split exists because the two
+/// species carrying a shore rule want opposite things: a seal is a **marine** forager, so a
+/// landlocked freshwater lake (or a navigable river) is not a coast it can haul out on, while the
+/// Silt Catfish is freshwater and is happy beside anything wet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShoreRequirement {
+    /// No site rule — the species may spawn anywhere its `host_biomes` admit. The default.
+    #[default]
+    None,
+    /// Any open water on one of the six hex sides (`WATER`), fresh or salt.
+    Any,
+    /// **Salt water only** — `WATER` without `FRESHWATER`, the ocean (see [`ShoreRequirement::salt_fresh`]).
+    Salt,
+    /// **Fresh water only** — `WATER` *with* `FRESHWATER`: lakes, inland seas, navigable rivers.
+    Fresh,
+}
+
+impl ShoreRequirement {
+    /// Stable string key, matching the JSON spelling (also the `validate` rejection's `value`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ShoreRequirement::None => "none",
+            ShoreRequirement::Any => "any",
+            ShoreRequirement::Salt => "salt",
+            ShoreRequirement::Fresh => "fresh",
+        }
+    }
+
+    /// Does this rule ask anything of the site at all?
+    pub fn is_required(&self) -> bool {
+        !matches!(self, ShoreRequirement::None)
+    }
+
+    /// Is this requirement satisfied by a site that borders `has_salt` / `has_fresh` water?
+    pub fn satisfied_by(&self, has_salt: bool, has_fresh: bool) -> bool {
+        match self {
+            ShoreRequirement::None => true,
+            ShoreRequirement::Any => has_salt || has_fresh,
+            ShoreRequirement::Salt => has_salt,
+            ShoreRequirement::Fresh => has_fresh,
+        }
+    }
+}
+
 /// One species row in the table.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpeciesDef {
@@ -141,10 +189,15 @@ pub struct SpeciesDef {
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
-    /// **The shore predicate** — when `true`, the species may only spawn on a land tile that
-    /// **borders open water** on one of its six hex sides ([`crate::fauna::has_adjacent_water`]).
-    /// The site rule a *marine forager* must satisfy: a seal colony hauls out on a shoreline, never
-    /// on inland tundra.
+    /// **The shore predicate** — the kind of open water a spawn site must border on one of its six
+    /// hex sides ([`crate::fauna::adjacent_water_kinds`]). The site rule a *marine forager* must
+    /// satisfy: a seal colony hauls out on a shoreline, never on inland tundra.
+    ///
+    /// **The kind matters.** `Salt` is `WATER` without `FRESHWATER` — the ocean; `Fresh` is `WATER`
+    /// *with* it — a lake, an inland sea, a navigable river. Seals are marine, so they ask for
+    /// `salt`: a one-hex freshwater lake is not a coast. The Silt Catfish (`river_fish`) is
+    /// freshwater game and asks for `any`, which is exactly the historical behaviour — it wants a
+    /// shore, and does not care which.
     ///
     /// It is deliberately a **site** rule and nothing else. The *cold* half of "cold coast" comes
     /// from [`SpeciesDef::host_biomes`] (`boreal_arctic` = BorealTaiga/Tundra/PeriglacialSteppe/
@@ -153,10 +206,11 @@ pub struct SpeciesDef {
     /// would drift from it. And it **reads** the coastline geometry rather than editing terrain, so
     /// worldgen stays the sole authority on where the water is.
     ///
-    /// Defaults to `false`, so every species that omits it is byte-identical. **Rejected in
-    /// combination with [`SpeciesDef::migratory`]** — see [`FaunaConfig::validate`].
+    /// Defaults to [`ShoreRequirement::None`], so every species that omits it is byte-identical.
+    /// **Any non-`None` value is rejected in combination with [`SpeciesDef::migratory`]** — see
+    /// [`FaunaConfig::validate`].
     #[serde(default)]
-    pub requires_adjacent_water: bool,
+    pub adjacent_water: ShoreRequirement,
     /// Turns the group grazes its current tile before stepping ≤1 hex (the graze-wander cadence,
     /// `advance_herds`). `~1` → effectively half speed, so an equal-speed party can catch it during
     /// a graze turn. Game rows use this; migratory rows use it for the pause between loiter wanders.
@@ -1066,14 +1120,14 @@ impl FaunaConfig {
             // species asking for adjacent water would have that request **silently ignored** — it
             // would spawn inland and nothing would say why. Make the unhandled state
             // unrepresentable and loud rather than quietly wrong.
-            if def.migratory && def.requires_adjacent_water {
+            if def.migratory && def.adjacent_water.is_required() {
                 return Err(FaunaConfigError::Invalid {
-                    field: species_field("requires_adjacent_water"),
+                    field: species_field("adjacent_water"),
                     constraint:
                         "not be combined with `migratory: true` — the migratory placement path does \
                          not apply the site rule, so the water requirement would be silently ignored"
                             .to_string(),
-                    value: "true".to_string(),
+                    value: def.adjacent_water.as_str().to_string(),
                 });
             }
         }
