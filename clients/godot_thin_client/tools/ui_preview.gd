@@ -1501,6 +1501,27 @@ func _ready() -> void:
 	_hud.cancel_active_targeting()
 	await _settle()
 
+	# (4) A WHEEL TICK OVER THE CATCHER MUST NOT DISMISS THE SHEET. The catcher is MOUSE_FILTER_STOP
+	# across the whole viewport, so an idle scroll anywhere over the map lands on it — and this sheet
+	# has NO SCRIM precisely because the player is still reading that map while composing. Dismissing
+	# on a wheel tick would throw the composition away mid-read. Driven through the REAL handler by
+	# emitting the catcher's own `gui_input`, and paired with the left-click half, which is what proves
+	# the wheel half is not vacuous (i.e. that click-outside dismissal still works at all).
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
+	await _settle()
+	_assert_hud("precondition: the sheet is open before the wheel tick",
+		_hud.is_compose_sheet_open())
+	for wheel_button in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		_hud._compose_sheet.gui_input.emit(_mouse_button_event(wheel_button))
+	await _settle()
+	_assert_hud("a wheel tick on the catcher leaves the compose sheet OPEN",
+		_hud.is_compose_sheet_open())
+	_hud._compose_sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT))
+	await _settle()
+	_assert_hud("a left-click on the catcher still CLOSES the compose sheet",
+		not _hud.is_compose_sheet_open())
+
 	# tile_panel_standing — §14's own frame: the drawer's CLOSED read state on a source the player
 	# already works. The summary reuses `_source_yield_readout` verbatim, so it wears the same three
 	# parts a Band-panel Current-actions row does — the policy glyph + crew + rate, the ⚠ overdraw
@@ -2337,6 +2358,15 @@ func _compose_forage(tile_info: Dictionary) -> void:
 
 func _compose_herd(herd: Dictionary) -> void:
 	_hud._open_herd_compose(herd)
+
+## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
+## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
+## rather than calling the handler's effect directly.
+func _mouse_button_event(button_index: int) -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = button_index
+	event.pressed = true
+	return event
 
 ## Find a Button by its face anywhere under `root` — the harness presses the REAL control the player
 ## presses, so an assertion covers the wiring and not just the handler it would have called.

@@ -58,6 +58,9 @@ const TITLE_FONT_SIZE := 14
 const EYEBROW_FONT_SIZE := 11
 const CLOSE_BUTTON_WIDTH := 26.0
 const HEADER_FORMAT := "[color=#%s][font_size=%d]%s[/font_size][/color]  %s"
+## The mouse buttons a click-outside DISMISS accepts. Deliberately an allowlist of real clicks rather
+## than a list of wheel indices to exclude — see `_on_catcher_input`.
+const DISMISS_BUTTONS: Array[int] = [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]
 
 var _card: AutoSizingPanel = null
 var _header: RichTextLabel = null
@@ -228,5 +231,11 @@ func _place_card() -> void:
 # ---- input -----------------------------------------------------------------
 
 func _on_catcher_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
+	# Only a deliberate CLICK dismisses — a wheel tick must not. This is the second place the sheet
+	# departs from `NarrativeForkPanel` (rule 3 above is the first), and for the same reason: a fork is
+	# a modal story beat, whereas an assignment is composed AGAINST a live map the player is still
+	# reading (docs/plan_tile_panel_layout.md §"NO SCRIM"), so scrolling over the map is an ordinary
+	# reading gesture and must never throw the composition away. An ALLOWLIST, not a wheel exclusion,
+	# so a future Godot wheel/extra button index stays non-dismissing by default.
+	if event is InputEventMouseButton and event.pressed and DISMISS_BUTTONS.has(event.button_index):
 		close()
