@@ -4152,6 +4152,48 @@ fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> VarDictionary {
     dict
 }
 
+/// EVERY fixed-point (`Scalar`, 1e6) field on a `PopulationCohortState`, converted to real units in
+/// ONE place — the sim stores these as `Scalar`, the wire carries them as a raw `long`, and reading
+/// one raw renders a 30-person band as "9292500 children" or a morale of 820000%.
+///
+/// It exists to be TESTABLE: `population_to_dict` returns a Godot `Dictionary`, which cannot be
+/// constructed outside a running engine, so the dict itself is unreachable from `cargo test`. This
+/// struct is plain Rust over a real FlatBuffer, so `cohort_scalars_decode_fixed_point` can pin the
+/// scale of each field. **A new Scalar cohort field belongs here, not inlined at its insert site** —
+/// inlined is exactly how the age cohorts shipped un-divided.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CohortScalars {
+    morale: f64,
+    morale_delta: f64,
+    output_multiplier: f64,
+    discontent_fraction: f64,
+    grievance: f64,
+    morale_settling: f64,
+    morale_terrain: f64,
+    morale_climate: f64,
+    morale_unrest: f64,
+    age_children: f64,
+    age_working: f64,
+    age_elders: f64,
+}
+
+fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
+    CohortScalars {
+        morale: fixed64_to_f64(cohort.morale()),
+        morale_delta: fixed64_to_f64(cohort.moraleDelta()),
+        output_multiplier: fixed64_to_f64(cohort.outputMultiplier()),
+        discontent_fraction: fixed64_to_f64(cohort.discontentFraction()),
+        grievance: fixed64_to_f64(cohort.grievance()),
+        morale_settling: fixed64_to_f64(cohort.moraleSettling()),
+        morale_terrain: fixed64_to_f64(cohort.moraleTerrain()),
+        morale_climate: fixed64_to_f64(cohort.moraleClimate()),
+        morale_unrest: fixed64_to_f64(cohort.moraleUnrest()),
+        age_children: fixed64_to_f64(cohort.children()),
+        age_working: fixed64_to_f64(cohort.working()),
+        age_elders: fixed64_to_f64(cohort.elders()),
+    }
+}
+
 fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", cohort.entity() as i64);
@@ -4164,31 +4206,27 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
     let _ = dict.insert("size", cohort.size() as i64);
-    let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
+    // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
+    let scalars = cohort_scalars(cohort);
+    let _ = dict.insert("morale", scalars.morale);
     // Signed per-turn morale trend + the dominant negative driver when falling
     // (0=None, 1=Terrain, 2=Cold, 3=Unrest). A rehydrated save reports 0/None for
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
-    let _ = dict.insert("morale_delta", fixed64_to_f64(cohort.moraleDelta()));
+    let _ = dict.insert("morale_delta", scalars.morale_delta);
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
     // Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity + discontent +
     // migration counters + the four signed Layer-1 morale contributions (their sum IS
     // morale_delta) that drive the itemized morale breakdown in the band drawer.
-    let _ = dict.insert(
-        "output_multiplier",
-        fixed64_to_f64(cohort.outputMultiplier()),
-    );
-    let _ = dict.insert(
-        "discontent_fraction",
-        fixed64_to_f64(cohort.discontentFraction()),
-    );
+    let _ = dict.insert("output_multiplier", scalars.output_multiplier);
+    let _ = dict.insert("discontent_fraction", scalars.discontent_fraction);
     let _ = dict.insert("last_emigrated", cohort.lastEmigrated() as i64);
     let _ = dict.insert("last_immigrated", cohort.lastImmigrated() as i64);
     // grievance: telemetry only (reserved for a future revolution consequence) — not displayed in P1.
-    let _ = dict.insert("grievance", fixed64_to_f64(cohort.grievance()));
-    let _ = dict.insert("morale_settling", fixed64_to_f64(cohort.moraleSettling()));
-    let _ = dict.insert("morale_terrain", fixed64_to_f64(cohort.moraleTerrain()));
-    let _ = dict.insert("morale_climate", fixed64_to_f64(cohort.moraleClimate()));
-    let _ = dict.insert("morale_unrest", fixed64_to_f64(cohort.moraleUnrest()));
+    let _ = dict.insert("grievance", scalars.grievance);
+    let _ = dict.insert("morale_settling", scalars.morale_settling);
+    let _ = dict.insert("morale_terrain", scalars.morale_terrain);
+    let _ = dict.insert("morale_climate", scalars.morale_climate);
+    let _ = dict.insert("morale_unrest", scalars.morale_unrest);
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
@@ -4336,6 +4374,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("labor_assignments", &array);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
+    // Age cohorts (children / working / elders head-counts). Deliberately prefixed `age_*` and NOT
+    // named `working`/`working_age`: `workingAge` above is the count of ASSIGNABLE workers, a
+    // different quantity, and a key collision between the two would be silent and awful.
+    //
+    // **These are SCALAR fixed-point (`PopulationCohort.children: Scalar`), not raw counts** — the
+    // population is fractional in the sim — so they take `fixed64_to_f64` like `morale` above.
+    // Reading the `long` raw renders a 30-person band as "9292500 children"; the ×1e6 is big enough
+    // that it can only ever be a wire-scale mistake, never a plausible head-count.
+    // NOTE the neighbouring `PopulationDemographicsState` children/working/elders are `uint` PLAIN
+    // COUNTS (the faction-wide top-bar strip) — same three words, two different wire encodings.
+    let _ = dict.insert("age_children", scalars.age_children);
+    let _ = dict.insert("age_working", scalars.age_working);
+    let _ = dict.insert("age_elders", scalars.age_elders);
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
     // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
@@ -5245,3 +5296,103 @@ struct ShadowScaleExtension;
 
 #[gdextension(entry_symbol = godot_rs_shadow_scale_godot_init)]
 unsafe impl ExtensionLibrary for ShadowScaleExtension {}
+
+#[cfg(test)]
+mod cohort_decode_tests {
+    use super::*;
+
+    /// THE GAP THIS CLOSES: every preview/UI harness feeds `Hud` a hand-written fixture dict and so
+    /// bypasses this decoder entirely. A cohort field can be decoded at the wrong SCALE — or never
+    /// decoded at all — and every rendered frame still looks perfect; both have now reached the
+    /// running client. `population_to_dict` itself is untestable here (its Godot `Dictionary` cannot
+    /// be constructed outside a live engine), which is exactly why the fixed-point conversions live
+    /// in `cohort_scalars`: plain Rust over a real FlatBuffer, so the wire scale can be pinned.
+    ///
+    /// The values are deliberately chosen so a MISSING divide is unmistakable rather than plausible:
+    /// they are the numbers from the playtest that caught it, where the panel rendered "9292500
+    /// children" for a band of thirty people.
+    fn build_cohort(builder: &mut flatbuffers::FlatBufferBuilder<'_>) -> Vec<u8> {
+        let cohort = fb::PopulationCohortState::create(
+            builder,
+            &fb::PopulationCohortStateArgs {
+                size: 30,
+                children: 9_292_500,
+                working: 16_537_500,
+                elders: 4_642_500,
+                morale: 820_000,
+                // == the four Layer-1 contributions below, which the test asserts.
+                moraleDelta: -11_000,
+                outputMultiplier: 1_000_000,
+                discontentFraction: 250_000,
+                grievance: 40_000,
+                moraleSettling: 10_000,
+                moraleTerrain: -26_000,
+                moraleClimate: -6_000,
+                moraleUnrest: 11_000,
+                ..Default::default()
+            },
+        );
+        builder.finish(cohort, None);
+        builder.finished_data().to_vec()
+    }
+
+    #[test]
+    fn cohort_scalars_decode_fixed_point() {
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let bytes = build_cohort(&mut builder);
+        let cohort = flatbuffers::root::<fb::PopulationCohortState>(&bytes).expect("valid cohort");
+        let scalars = cohort_scalars(cohort);
+
+        // The age brackets are Scalar, NOT head-counts: 9_292_500 is 9.2925 people.
+        assert!((scalars.age_children - 9.2925).abs() < 1e-9);
+        assert!((scalars.age_working - 16.5375).abs() < 1e-9);
+        assert!((scalars.age_elders - 4.6425).abs() < 1e-9);
+        // ... and they describe the SAME band the cohort's own `size` reports.
+        let people = scalars.age_children + scalars.age_working + scalars.age_elders;
+        assert!(
+            (people - f64::from(cohort.size())).abs() < 1.0,
+            "age brackets sum to {people}, cohort size is {}",
+            cohort.size()
+        );
+
+        assert!((scalars.morale - 0.82).abs() < 1e-9);
+        assert!((scalars.morale_delta - -0.011).abs() < 1e-9);
+        assert!((scalars.output_multiplier - 1.0).abs() < 1e-9);
+        assert!((scalars.discontent_fraction - 0.25).abs() < 1e-9);
+        assert!((scalars.grievance - 0.04).abs() < 1e-9);
+        // The four signed Layer-1 contributions must sum to the reported morale trend.
+        let contributions = scalars.morale_settling
+            + scalars.morale_terrain
+            + scalars.morale_climate
+            + scalars.morale_unrest;
+        assert!(
+            (contributions - scalars.morale_delta).abs() < 1e-9,
+            "contributions {contributions} != morale_delta {}",
+            scalars.morale_delta
+        );
+    }
+
+    /// A raw-`long` read would leave every one of these at 1e6 scale. This is the assertion that
+    /// actually fails when someone adds a Scalar field and forgets the divide.
+    #[test]
+    fn cohort_scalars_are_never_wire_scale() {
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let bytes = build_cohort(&mut builder);
+        let cohort = flatbuffers::root::<fb::PopulationCohortState>(&bytes).expect("valid cohort");
+        let scalars = cohort_scalars(cohort);
+        for (name, value) in [
+            ("age_children", scalars.age_children),
+            ("age_working", scalars.age_working),
+            ("age_elders", scalars.age_elders),
+            ("morale", scalars.morale),
+            ("output_multiplier", scalars.output_multiplier),
+            ("discontent_fraction", scalars.discontent_fraction),
+            ("grievance", scalars.grievance),
+        ] {
+            assert!(
+                value.abs() < 1_000.0,
+                "{name} decoded as {value} — that is wire scale, not real units (missing /1e6)"
+            );
+        }
+    }
+}

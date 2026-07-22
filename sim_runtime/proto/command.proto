@@ -269,6 +269,10 @@ message AnswerForkCommand {
 message CancelOrderCommand {
   uint32 faction_id = 1;
   optional uint64 band_entity_bits = 2;
+  // What the cancel clears: "all" (worked sources + standing roles + stop movement),
+  // "work" (Forage/Hunt only, movement untouched), "roles" (Scout/Warrior only, movement
+  // untouched). Absent == "all", the historical behaviour.
+  optional string scope = 3;
 }
 
 // Early-Game Labor (slice 3a): set the worker count for one labor target on a band

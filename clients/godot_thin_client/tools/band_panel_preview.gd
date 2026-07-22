@@ -15,19 +15,71 @@ extends Node
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 ## Scratch prefs file — never the player's `user://narrative.cfg`.
 const PREVIEW_PREFS_PATH := "user://band_panel_preview_prefs.cfg"
+## Scratch DOCK prefs — never the player's `user://band_city_dock.cfg`. Without this the harness both
+## read the tab a previous run left selected (so the early frames rendered whichever zone that was,
+## not the band zone they exist to show) and wrote its own tab walk back over the player's.
+const PREVIEW_DOCK_PREFS_PATH := "user://band_panel_preview_dock.cfg"
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
+## The real MapView, for the map-selection path state (see `band_panel_people_map_path`).
+const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
+const MAP_PATH_TILE := Vector2i(71, 18)
+## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
+const MAP_PATH_GRID_W := 80
+const MAP_PATH_GRID_H := 30
+const MAP_PATH_TERRAIN_ID := 11
 const OUT_DIR := "res://ui_preview_out"
 # A left inspector strip width to prove co-edge stacking (bug 1).
 const INSPECTOR_STRIP := 300.0
 # The sim turn the arrival-schedule states render on, so the strip tooltips + the outlook "empty ~turn
 # N" marker read as absolute turns rather than the pre-first-overlay relative form.
 const ARRIVAL_PREVIEW_TURN := 40
+# The paged-board states work a row of this many forage patches from this origin — far past one
+# page in either shell, which is the whole point of the pager.
+const MANY_SOURCE_COUNT := 34
+const MANY_SOURCE_ORIGIN_X := 40
+const MANY_SOURCE_ORIGIN_Y := 20
+# Dependants per working-age adult in the big-band fixture, held near the base band's own shape
+# (9 children + 5 elders to 16 workers) so its PEOPLE bar reads like a real band, not a scaled prop.
+const MANY_SOURCE_CHILD_RATIO := 0.56
+const MANY_SOURCE_ELDER_RATIO := 0.31
+# Sub-pixel slack when comparing a zone's content rect against its host rect.
+const ZONE_BOUNDS_TOLERANCE := 1.0
+# The two disclosure keys of `_band_fixture()` (entity 904) — the `[url]` meta payload its Food /
+# Morale rows carry, i.e. what `Hud._breakdown_key` builds for that band.
+const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
+const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
+# A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
+const ULTRAWIDE_WIDTH := 3440
+const ULTRAWIDE_HEIGHT := 900
+# The two shell-threshold probe windows. The panel is bottom-docked in both, so the window width IS
+# `_panel_extent().x`, the value `_shell_is_wide` tests — one pixel below the derived threshold (must
+# pick the NARROW tabbed shell) and exactly at it (the narrowest legitimate WIDE shell). Derived from
+# the panel's own const so they can never drift from the threshold they bracket.
+const SHELL_THRESHOLD_WIDTH := int(BandCityPanel.WIDE_SHELL_MIN_WIDTH)
+const SHELL_THRESHOLD_UNDERSHOOT := 1
+const SHELL_THRESHOLD_HEIGHT := 900
+# The window every state but the ultrawide one renders at.
+const PREVIEW_SIZE := Vector2i(1500, 900)
+# How many frames to keep re-asserting the window before giving up and warning.
+const WINDOW_PIN_MAX_FRAMES := 30
 
+## The size every state re-asserts before it renders — see `_pin_window`.
+var _pinned_size := PREVIEW_SIZE
+## The canvas size every state re-asserts, `ZERO` = leave the project's stretch alone — see `_pin_canvas`.
+var _pinned_canvas := Vector2i.ZERO
 var _hud: HudLayer
 var _panel: BandCityPanel
+## The last state `_save`d, so an assertion failure names the frame it fired on.
+var _current_state := "<pre-render>"
 
 func _ready() -> void:
-	get_window().size = Vector2i(1500, 900)
+	# PIN THE WINDOW. `project.godot` opens MAXIMIZED and macOS applies — and re-applies — that
+	# asynchronously, so a bare `size =` is a race the harness does not stay winning: every frame then
+	# renders at monitor size instead of PREVIEW_SIZE, silently changing what each state proves (a
+	# 3440-wide "bottom dock" frame is testing the ultrawide cap, not the ordinary wide shell). Same
+	# hazard `blend_probe._pin_canvas` exists for.
+	await _pin_window(PREVIEW_SIZE)
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	var bg_layer := CanvasLayer.new()
@@ -43,6 +95,9 @@ func _ready() -> void:
 	# has not. Same rule as ui_preview; see its prefs-isolation block.
 	NarrativeForkPanel.config_path_override = PREVIEW_PREFS_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_PREFS_PATH))
+
+	BandCityPanel.config_path_override = PREVIEW_DOCK_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_DOCK_PREFS_PATH))
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
@@ -100,21 +155,6 @@ func _ready() -> void:
 	await _save("band_panel_collapsed")
 	_panel.set_collapsed(false)
 
-	# Clickable Current-actions rows: each Forage/Hunt row's LABEL is an inline link that jumps the
-	# map to that source (Scout/Warrior are band-wide roles — plain labels, not links). A static frame
-	# can't hover, so synthesize a mouse-motion over the Hunt row's label and render the HOVER skin
-	# (tinted fill + cyan border/text) — the affordance proof.
-	_panel.set_dock(SIDE_LEFT)
-	await _settle()
-	var hunt_link := _find_button_containing(_panel, "Hunt ")
-	if hunt_link != null:
-		# The harness window has no real pointer, so drive the button's hover state directly (the
-		# same notification the engine sends on mouse-enter) — BaseButton then draws its hover skin.
-		hunt_link.notification(Control.NOTIFICATION_MOUSE_ENTER)
-	else:
-		push_warning("band_panel_preview: no Hunt link button found — Current-actions row not clickable?")
-	await _settle()
-	await _save("band_panel_source_row_hover")
 
 	# Bug 1 — co-edge stacking with the Inspector. Reserve a left inspector strip (as Main does)
 	# and push the band panel's matching leading offset, docked left: the panel must render to the
@@ -138,28 +178,39 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_stepper_foreign")
 
-	# Food + Morale summary-line disclosures — force-expanded in BOTH dock layouts (tall LEFT / wide
-	# TOP). The static harness can't click, so the per-band override opens each collapsed-by-default
-	# breakdown to confirm the click-expanded layout renders without clipping.
-	# (a) Food breakdown open (indented Gathered/Hunted/Eaten under the Food line).
+	# Food + Morale summary-line disclosures, in BOTH dock layouts (tall LEFT / wide TOP). The
+	# breakdown opens in a POPOVER, never inline — so these frames prove two things at once: the
+	# popover renders its rows, and the band zone behind it is UNCHANGED (WORKFORCE + both role cards
+	# still whole). Driven through the REAL path: `meta_clicked` on the live vitals label, i.e. the
+	# exact signal a click emits and the exact handler it runs — a debug back door could pass here
+	# while the live path was broken.
+	# (a) Food breakdown (Gathered/Hunted/Eaten).
 	_hud.update_band_alerts([_band_fixture()])
-	_hud._breakdown_expanded = {"food:904": true}
-	_hud._refresh_panel_band()
+	_panel.set_active_tab(&"band")   # the narrow shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_expanded_left"},
 			{"edge": SIDE_TOP, "name": "band_panel_food_expanded_top"}]:
 		_panel.set_dock(state["edge"])
 		await _settle()
+		_click_disclosure(BAND_FIXTURE_DISCLOSURE_FOOD)
+		await _settle()
 		await _save(state["name"])
+		_assert_zones_within_bounds()
+		_assert_work_zone_readable()
+		_assert_zone_content_fits()
+		_click_disclosure(BAND_FIXTURE_DISCLOSURE_FOOD)   # toggle shut before the next dock
 
-	# (b) Morale breakdown open (same disclosure mechanism, indented contributions under Morale).
-	_hud._breakdown_expanded = {"morale:904": true}
-	_hud._refresh_panel_band()
+	# (b) Morale breakdown (same disclosure mechanism, same popover, indented contributions).
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_morale_expanded_left"},
 			{"edge": SIDE_TOP, "name": "band_panel_morale_expanded_top"}]:
 		_panel.set_dock(state["edge"])
 		await _settle()
+		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
+		await _settle()
 		await _save(state["name"])
-	_hud._breakdown_expanded = {}
+		_assert_zones_within_bounds()
+		_assert_work_zone_readable()
+		_assert_zone_content_fits()
+		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_hud.update_band_alerts([_concerning_food_band_fixture()])
@@ -237,14 +288,383 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_arrivals_empty")
 
+	# ---- Zone content (docs/band_panel_ux_proposal.html) ----------------------
+	# PEOPLE + WORKFORCE bars and the two role CARDS, in the TALL (L dock) shell where the band zone
+	# gets its full height: both bars, their keys, the dependency ratio, and the hinted cards.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_people")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# band_panel_people_map_path — THE SAME PEOPLE BLOCK, reached the OTHER way: by clicking the band
+	# ON THE MAP. `band_panel_people` above drives the SNAPSHOT path (`update_band_alerts` re-resolves
+	# the band from the raw `populations` floats), which is exactly the path that SELF-HEALS the marker
+	# truncation bug — so it could never have caught it. The map path feeds the panel MapView's unit
+	# MARKER instead (`_rebuild_unit_markers` → `refresh_selection_payload` → `show_unit_selection` →
+	# `_render_band_into_panel`), and a marker that narrowed the fractional age brackets with `int()`
+	# zeroes every remainder, leaving `_apportion_people` nothing to redistribute: 9 + 16 + 4 = 29 in
+	# the PEOPLE header against a band of 30. Driven through the REAL MapView, never a hand-built dict.
+	var map_path_view: Node2D = MAP_VIEW_SCRIPT.new()
+	map_path_view.visible = false   # data only — a visible map would render behind every later frame
+	add_child(map_path_view)
+	map_path_view.display_snapshot(_map_path_snapshot())
+	map_path_view.unit_selected.connect(_hud.show_unit_selection)
+	map_path_view.handle_hex_click(MAP_PATH_TILE.x, MAP_PATH_TILE.y, MOUSE_BUTTON_LEFT)
+	# The HUD already holds its own copy of the payload, so the map goes away BEFORE the capture:
+	# MapView's minimap is its own CanvasLayer and is NOT hidden by `visible = false`, so a surviving
+	# instance paints a stray thumbnail into this frame and every later one (map_preview's gotcha).
+	map_path_view.unit_selected.disconnect(_hud.show_unit_selection)
+	map_path_view.queue_free()
+	await get_tree().process_frame
+	await _settle()
+	_assert_people_sum_matches_size(_hud._selected_unit, "band_panel_people_map_path")
+	await _save("band_panel_people_map_path")
+	# Restore the snapshot-path band so the later states start from the same subject they always did.
+	_hud.update_band_alerts([_band_fixture()])
+
+	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
+	# pager must appear and NOTHING may scroll.
+	_hud.update_food_modules(_many_forage_modules())
+	_hud.update_band_alerts([_many_sources_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_page")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_work_wide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
+	_panel.set_dock(SIDE_LEFT)
+	_hud._toggle_work_inspector(_hud._work_source_models(_hud._panel_band, 0)[0]["key"])
+	await _settle()
+	await _save("band_panel_inspector")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._toggle_work_inspector(_hud._work_open_key)
+
+	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
+	_hud._on_work_unassign_all_pressed(_hud._panel_band, 34)
+	await _settle()
+	await _save("band_panel_clear_confirm")
+	_dismiss_dialogs()
+
+	# The parties COMPOSE sheet, mission-first: Hunt picked → party stepper, policy picker, forecast.
+	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_panel.set_active_tab(&"parties")
+	_hud._party_compose_open = true
+	_hud._party_compose_mission = "hunt"
+	_hud._rerender_panel_allocation()
+	await _settle()
+	await _save("band_panel_compose_hunt")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._party_compose_open = false
+
+	# Zero idle workers: "Send a party…" stays VISIBLE and DISABLED, with its reason.
+	_hud.update_band_alerts([_no_idle_band_fixture()])
+	await _settle()
+	await _save("band_panel_no_idle")
+
+	_assert_no_scroll_containers()
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# ULTRAWIDE: past the width the three zones can USE, the wide shell CENTRES at its content cap
+	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
+	# across the whole monitor and the band zone sits a screen away from the parties zone. The frame to
+	# read is the equality of the two black margins — and that the board itself is unchanged.
+	await _pin_window(Vector2i(ULTRAWIDE_WIDTH, ULTRAWIDE_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	_hud.update_band_alerts([_many_sources_band_fixture()])
+	await _settle()
+	await _save("band_panel_wide_ultrawide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	print("band_panel_preview: ultrawide — work zone %.0fpx of a %dpx panel (capped + centred)" % [
+		_panel.work_zone_size().x, ULTRAWIDE_WIDTH])
+
+	# THE SHELL THRESHOLD, bracketed. `WIDE_SHELL_MIN_WIDTH` is DERIVED from what the wide shell needs
+	# (both flanks + one readable work column + the separators + the card chrome), and nothing else in
+	# this harness renders anywhere near it — 1500 and 3440 are both comfortably past it, so a
+	# too-low threshold was invisible here. These two frames are the before/after of the flip.
+	# One pixel BELOW: the wide shell could not give the board a readable column, so the panel must
+	# choose the NARROW tabbed shell — which hands the board the panel's WHOLE interior.
+	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_shell_below_threshold")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_shell_is_wide(false, "band_panel_shell_below_threshold")
+
+	# Exactly AT it: the narrowest legitimate wide shell — three columns, the work zone at exactly
+	# `ZONE_WORK_MIN_WIDTH`, its rows still legible with un-clipped labels.
+	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_shell_at_threshold")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_shell_is_wide(true, "band_panel_shell_at_threshold")
+
 	get_tree().quit()
 
+## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
+## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
+## narrow for its own row labels, and the NARROW shell would have given the board strictly MORE room.
+## That is the invariant a hand-picked `WIDE_SHELL_MIN_WIDTH` violated across a whole band of widths,
+## and the recursive zone-bounds assertion cannot catch it: a CLIPPED label still sits inside its rect.
+func _assert_work_zone_readable() -> void:
+	if not _panel._shell_is_wide():
+		return
+	var work_width := _panel.work_zone_size().x
+	if work_width + ZONE_BOUNDS_TOLERANCE < BandCityPanel.ZONE_WORK_MIN_WIDTH:
+		push_error("band_panel_preview: wide shell with a %.0fpx work zone — under ZONE_WORK_MIN_WIDTH (%.0f)" % [
+			work_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
+	else:
+		print("band_panel_preview: assert OK — wide shell work zone %.0fpx >= %.0f" % [
+			work_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
+
+## GUARD: the two threshold-probe states exist to pin WHICH shell is chosen, so state it outright —
+## a frame that silently rendered the other shell would still pass every other assertion here.
+func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
+	var actual := _panel._shell_is_wide()
+	if actual != expected:
+		push_error("band_panel_preview: %s expected shell wide=%s but got %s" % [
+			state_name, expected, actual])
+	else:
+		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
+
+## GUARD: the PEOPLE block's three brackets must account for EVERY person in the band. They arrive
+## fractional (Scalar), so `Hud._apportion_people` distributes the remainders by largest remainder —
+## which only works if the remainders survive the trip. A marker that narrowed them with `int()`
+## truncates every one to zero, and the header then undercounts against the band's own size.
+func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> void:
+	var raw: Array[float] = [
+		float(band.get("age_children", 0.0)),
+		float(band.get("age_working", 0.0)),
+		float(band.get("age_elders", 0.0)),
+	]
+	var whole := _hud._apportion_people(raw)
+	var total := 0
+	for part in whole:
+		total += part
+	var size := int(band.get("size", 0))
+	if total != size:
+		push_error("band_panel_preview: %s PEOPLE brackets sum to %d but the band holds %d (raw %s — narrowed?)" % [
+			state_name, total, size, str(raw)])
+	else:
+		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
+
+## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
+## silently reintroduce the content-dependent sizing the rework removed.
+func _assert_no_scroll_containers() -> void:
+	var found := _find_scroll_container(_panel)
+	if found != null:
+		push_error("band_panel_preview: ScrollContainer in the panel at %s — the zones must not scroll" % found.get_path())
+	else:
+		print("band_panel_preview: assert OK — no ScrollContainer in the panel")
+
+func _find_scroll_container(node: Node) -> Node:
+	if node is ScrollContainer:
+		return node
+	for child in node.get_children():
+		var found := _find_scroll_container(child)
+		if found != null:
+			return found
+	return null
+
+## GUARD: a zone's content must FIT — not merely sit inside its host's rect. The zone hosts clip, so
+## content the box cannot hold still reports a rect within bounds and passes `_assert_zones_within_bounds`
+## while being silently sliced off the frame (the WORKFORCE key row cut mid-glyph, the role cards gone).
+## Containment is not completeness: the invariant that matters is that the zone box is at least as tall
+## as the content's own combined minimum size.
+func _assert_zone_content_fits() -> void:
+	var failures: Array[String] = []
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		_collect_zone_content_shortfall(host, host, failures)
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — every zone's content fits its zone box (%s)" % _current_state)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [_current_state, failure])
+
+## Walk a zone host looking for content the BOX cannot hold. The zone content roots are plain
+## `Control` wrappers (`Hud._wrap_zone`) that report NO minimum size, so the measurable thing is the
+## column inside them — hence the recursion past every zero-minimum wrapper. A control that DOES
+## report a minimum height is measured from where it sits (its top, relative to the zone) and then
+## not descended into: its own minimum already accounts for its children.
+func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[String]) -> void:
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var needed := content.get_combined_minimum_size().y
+		if needed <= 0.0:
+			_collect_zone_content_shortfall(content, host, failures)
+			continue
+		var top := content.global_position.y - host.global_position.y
+		var box := host.size.y
+		if top + needed > box + ZONE_BOUNDS_TOLERANCE:
+			failures.append("zone %s: %s (%s) needs %.0fpx from y=%.0f but the box is only %.0fpx (short by %.0f)" % [
+				host.name, content.name, content.get_class(), needed, top, box, top + needed - box])
+
+## GUARD: nothing a zone renders may fall outside the zone rect it was given. Checked RECURSIVELY —
+## the top-level content is anchored full-rect and so always "fits", while the thing that actually
+## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
+## in the frame; this is the only thing that catches it.
+func _assert_zones_within_bounds() -> void:
+	var failures: Array[String] = []
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		_collect_zone_overflow(host, host.get_global_rect(), failures)
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — every zone renders inside its zone rect")
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s" % failure)
+
+func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) -> void:
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var rect := content.get_global_rect()
+		# Zero-sized spacers/separators report a degenerate rect; only real content can overflow.
+		if rect.size.x > 0.0 and rect.size.y > 0.0:
+			var over_x: float = rect.end.x - bounds.end.x
+			var over_y: float = rect.end.y - bounds.end.y
+			if over_x > ZONE_BOUNDS_TOLERANCE or over_y > ZONE_BOUNDS_TOLERANCE:
+				failures.append("%s (%s) overflows its zone by (%.1f, %.1f)" % [
+					content.name, content.get_class(), maxf(over_x, 0.0), maxf(over_y, 0.0)])
+				continue   # one report per subtree — its children overflow by construction
+		_collect_zone_overflow(content, bounds, failures)
+
+## The panel's fixed-size zone hosts (BandCityPanel names them `Zone_<key>` / `NarrowZoneHost`).
+func _find_zone_hosts(node: Node) -> Array:
+	var hosts: Array = []
+	if String(node.name).begins_with("Zone_") or node.name == "NarrowZoneHost":
+		hosts.append(node)
+	for child in node.get_children():
+		hosts.append_array(_find_zone_hosts(child))
+	return hosts
+
+## Close any modal the preview opened, so the next state renders unobstructed.
+func _dismiss_dialogs() -> void:
+	for child in _hud.get_children():
+		if child is AcceptDialog:
+			(child as AcceptDialog).hide()
+			child.queue_free()
+
+## 34 gather modules on a row of tiles, so every Forage row resolves a real map glyph.
+func _many_forage_modules() -> Array:
+	var modules: Array = []
+	for i in range(MANY_SOURCE_COUNT):
+		modules.append({"x": MANY_SOURCE_ORIGIN_X + i, "y": MANY_SOURCE_ORIGIN_Y,
+			"module": "savanna_grassland", "kind": "gather"})
+	return modules
+
+## A band working MANY_SOURCE_COUNT forage patches — the case the paged board exists for (34 rows
+## would be ~950px of unbroken list in the old stack).
+func _many_sources_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["working_age"] = MANY_SOURCE_COUNT * 2
+	band["idle_workers"] = MANY_SOURCE_COUNT
+	# Keep the age split in step with the enlarged workforce — `age_working` IS `working_age`, and the
+	# three sum to `size` (see `_band_fixture`). Derived, not retyped, so raising MANY_SOURCE_COUNT
+	# cannot silently desync the PEOPLE bar from the WORKFORCE bar beneath it.
+	var workers: int = int(band["working_age"])
+	band["age_working"] = workers
+	band["age_children"] = int(round(workers * MANY_SOURCE_CHILD_RATIO))
+	band["age_elders"] = int(round(workers * MANY_SOURCE_ELDER_RATIO))
+	band["size"] = workers + int(band["age_children"]) + int(band["age_elders"])
+	var assignments: Array = []
+	for i in range(MANY_SOURCE_COUNT):
+		assignments.append({
+			"kind": "forage", "workers": 1,
+			# Every third patch is overstaffed, so the ⚠ attention chip + the WARN stripe have content.
+			"workers_needed": 1 if i % 3 != 0 else 0,
+			"policy": "sustain",
+			"target_x": MANY_SOURCE_ORIGIN_X + i, "target_y": MANY_SOURCE_ORIGIN_Y,
+			"actual_yield": 0.10 + 0.01 * float(i), "sustainable_yield": 0.10 + 0.01 * float(i),
+		})
+	band["labor_assignments"] = assignments
+	return band
+
+## Every worker committed: the parties footer must still SHOW its button, disabled, with the reason.
+func _no_idle_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 16, "workers_needed": 16, "policy": "sustain",
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+	]
+	return band
+
+## Pin the CANVAS (`content_scale_size`) as well as the window, and keep the two equal so the stretch
+## factor is exactly 1 and the panel's canvas-space width IS `size.x`.
+##
+## Needed because `project.godot` stretches `canvas_items` with an `expand` aspect: the canvas is
+## never SMALLER than the project's base resolution on either axis, so `get_visible_rect().size.x`
+## floors at 1920 however narrow the window is — a plain `_pin_window(1055, 900)` still renders a
+## 1920-wide panel and silently proves nothing about a sub-1920 threshold.
+func _pin_canvas(size: Vector2i) -> void:
+	_pinned_canvas = size
+	await _pin_window(size)
+
+## Force the window WINDOWED at `size` and wait for the WM to actually honour it, so a maximize
+## cannot land between two states and render them at different resolutions.
+func _pin_window(size: Vector2i) -> void:
+	_pinned_size = size
+	var window := get_window()
+	window.mode = Window.MODE_WINDOWED
+	window.size = size
+	if _pinned_canvas != Vector2i.ZERO:
+		window.content_scale_size = _pinned_canvas
+	for _i in range(WINDOW_PIN_MAX_FRAMES):
+		if window.size == size and window.mode == Window.MODE_WINDOWED:
+			break
+		window.mode = Window.MODE_WINDOWED
+		window.size = size
+		await get_tree().process_frame
+	if window.size != size:
+		push_warning("band_panel_preview: window pinned to %s but reports %s" % [size, window.size])
+
 func _settle() -> void:
+	# Re-assert the window EVERY state: the WM's maximize lands asynchronously and can arrive between
+	# two states, rendering them at different resolutions (blend_probe hit the same thing).
+	await _pin_window(_pinned_size)
 	await get_tree().process_frame
 	RenderingServer.force_draw()
 	await get_tree().process_frame
 
 func _save(name: String) -> void:
+	_current_state = name
 	var image := get_viewport().get_texture().get_image()
 	if image == null:
 		push_warning("band_panel_preview: null image (dummy renderer?) — skipping %s.png; run without --headless" % name)
@@ -255,17 +675,27 @@ func _save(name: String) -> void:
 	else:
 		print("band_panel_preview: saved ", name, ".png")
 
-## Depth-first search for the first Button whose text CONTAINS `needle` (used to locate a
-## Current-actions link row in the live panel tree — the row text leads with a resource glyph,
-## so this deliberately does not anchor at the start).
-func _find_button_containing(node: Node, needle: String) -> Button:
-	if node is Button and (node as Button).text.contains(needle):
-		return node as Button
+## Drive a Food/Morale disclosure the way a CLICK does: emit `meta_clicked` on the live vitals
+## RichTextLabel with the very `[url]` meta its own text carries, so the bound handler + anchor run
+## exactly as they do in the game. A debug back door (poking Hud state directly) would pass even with
+## the click path broken, which is the whole reason this goes through the signal.
+func _click_disclosure(key: String) -> void:
+	var meta := HudLayer.BREAKDOWN_TOGGLE_META_PREFIX + key
+	var label := _find_meta_label(_panel, meta)
+	if label == null:
+		push_warning("band_panel_preview: no vitals label offering '%s' — disclosure not rendered?" % meta)
+		return
+	label.meta_clicked.emit(meta)
+
+func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
+	if node is RichTextLabel and (node as RichTextLabel).text.contains("[url=%s]" % meta):
+		return node
 	for child in node.get_children():
-		var found := _find_button_containing(child, needle)
+		var found := _find_meta_label(child, meta)
 		if found != null:
 			return found
 	return null
+
 
 ## The snapshot's herd list (shape `Hud.update_herds` / `MapView._rebuild_herd_markers` consume).
 ## The hunted herd sits at (68, 15) — NOT the (70, 17) its hunt assignment was launched at — so the
@@ -314,6 +744,19 @@ func _cap_demo_band_fixture() -> Dictionary:
 	]
 	return band
 
+## The MapView snapshot behind `band_panel_people_map_path` — the SAME `_band_fixture()` cohort the
+## snapshot-path state uses, on a flat grid just big enough to hold its hex, so the marker MapView
+## builds carries exactly the age structure the panel is judged on. FoW is off in a fresh MapView.
+func _map_path_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(MAP_PATH_GRID_W * MAP_PATH_GRID_H)
+	terrain.fill(MAP_PATH_TERRAIN_ID)
+	return {
+		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [_band_fixture()],
+	}
+
 ## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
 ## working-age labor with idle workers + a couple of active assignments + the settlement stage
 ## header fields, so the relocated panel shows a full detail + allocation report.
@@ -322,7 +765,7 @@ func _band_fixture() -> Dictionary:
 		"id": "Band 2",
 		"entity": 904,
 		"faction": 0,
-		"size": 148,
+		"size": 30,
 		"pos": [71, 18],
 		"current_x": 71,
 		"current_y": 18,
@@ -338,6 +781,18 @@ func _band_fixture() -> Dictionary:
 		"stores": {"provisions": 84.0},
 		"working_age": 16,
 		"idle_workers": 3,
+		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
+		# **`age_working` MUST equal `working_age`, and the three MUST sum to `size`.** They are one
+		# band counted two ways, and the sim keeps them in step; a fixture that disagrees renders a
+		# PEOPLE bar of 99 working-age adults above a WORKFORCE bar of 16 workers, which reads as a
+		# bug in the very frame the two-bar design is judged on. These are the live game's own
+		# numbers (`Pop 30 👶9 🛠16 🧓5`), so dep = round((9 + 5) / 16 * 100) = 88 per 100 workers.
+		# FRACTIONAL, as the wire actually carries them (Scalar) — the panel apportions them to whole
+		# people. Rounding each on its own gives 9 + 17 + 5 = 31 for a band of 30, which is the
+		# off-by-one this fixture now guards: the frame must read 9 · 16 · 5.
+		"age_children": 9.2925,
+		"age_working": 16.5375,
+		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"hunt_reach": 16,

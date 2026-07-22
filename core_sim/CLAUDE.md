@@ -1244,8 +1244,17 @@ in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_d
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
 staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
-worker count (0 unassigns; clamps to free headroom); `cancel_order` clears all assignments + stops
-movement (fully idle). The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
+worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_entity_bits]
+[all|work|roles]`** clears the assignments its **scope** names — `all` (the default when the token is
+omitted, and the historical behaviour) clears every assignment **and** stops movement (fully idle),
+`work` unassigns only the worked Forage/Hunt sources, `roles` clears only the Scout/Warrior standing
+roles. **The two narrow scopes never touch `BandTravel`** — moving is not working, so unassigning a
+band's sources must not strand it mid-journey — and the rejection is **scope-aware**: a band with
+sources but no roles accepts `work` and refuses `roles` ("…has no standing roles to clear."), rather
+than claiming it is idle. The scope rides the wire as `CancelOrderCommand.scope` (absent == `all`);
+an **unrecognised scope token is a hard text-parse error** (failing closed — silently defaulting to
+`all` would mass-unassign a band that asked for `work`), while an unrecognised *proto* string decodes
+to `all`. The Band panel's per-section clears are what the scope exists for. The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
 summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt's policy) for the
 pre-3b client. Husbandry re-homes here — but **Sustain no longer tames** (slice 3a): a **`Tame`** Hunt
 fills the meter, while any stewardship policy on a Thriving source earns the knowledge that source's

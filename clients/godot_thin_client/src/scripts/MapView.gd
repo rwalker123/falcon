@@ -2712,6 +2712,14 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
 			"working_age": int(entry.get("working_age", 0)),
 			"idle_workers": int(entry.get("idle_workers", 0)),
+			# Age structure of THIS band (children / working / elders). Distinct from `working_age`
+			# above, which counts assignable workers — hence the `age_` prefix on all three.
+			# FRACTIONAL, like every other Scalar on this block: the decoder runs them through
+			# `fixed64_to_f64`, and truncating here zeroes every remainder, so `Hud._apportion_people`
+			# has nothing left to redistribute and the PEOPLE header undercounts the band.
+			"age_children": float(entry.get("age_children", 0.0)),
+			"age_working": float(entry.get("age_working", 0.0)),
+			"age_elders": float(entry.get("age_elders", 0.0)),
 			# Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
 			# cohort tagged Expedition flowing through this same populations[] array. These three
 			# discriminator fields drive the distinct expedition marker (_draw_band_token →

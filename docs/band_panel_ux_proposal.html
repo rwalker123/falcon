@@ -1,0 +1,1953 @@
+<title>Band Panel — layout proposal</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; the PROTOTYPE keeps
+     the game's own dark console palette in both themes on purpose
+     (the HUD is dark and stays dark — see clients/.../CLAUDE.md).
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 66ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #080e10;
+    --panel:       #111a1e;
+    --panel-2:     #0e161a;
+    --line:        #26363c;
+    --line-soft:   #1b282d;
+    --ink:         #e9efe9;
+    --dim:         #9db0ad;
+    --faint:       #6f8380;
+    --signal:      #4fe0cf;
+    --signal-wash: rgba(79, 224, 207, 0.12);
+    --warn:        #f2b13f;
+    --healthy:     #76cd80;
+    --danger:      #e8746a;
+  }
+
+  :root[data-theme="light"] {
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+  }
+
+  /* ---------- page ---------- */
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+  a { color: var(--signal); }
+
+  /* ---------- masthead ---------- */
+  .masthead { padding: 64px 0 40px; border-bottom: 1px solid var(--line); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--signal);
+    margin: 0 0 20px;
+  }
+  h1 {
+    font-size: clamp(34px, 5.2vw, 54px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    margin: 0 0 20px;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .standfirst { font-size: 19px; line-height: 1.55; color: var(--dim); max-width: var(--measure); margin: 0 0 28px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 28px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .meta b { color: var(--dim); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: 0.1em; padding-top: 6px; }
+  h2 { font-size: 27px; letter-spacing: -0.018em; font-weight: 650; margin: 0; text-wrap: balance; }
+  h3 { font-size: 17px; font-weight: 650; letter-spacing: -0.008em; margin: 32px 0 8px; }
+  p { max-width: var(--measure); margin: 0 0 16px; }
+  .lede { color: var(--dim); max-width: var(--measure); margin: 0 0 28px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--panel-2);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r);
+    padding: 1px 5px;
+  }
+
+  /* ---------- findings ---------- */
+  .findings { display: grid; gap: 14px; margin: 8px 0 0; }
+  .finding {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 4px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r);
+    padding: 18px 20px;
+  }
+  .finding .n { font-family: var(--mono); font-size: 13px; color: var(--warn); padding-top: 2px; }
+  .finding h4 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .finding p { margin: 6px 0 0; grid-column: 2; color: var(--dim); font-size: 15px; }
+  .finding.is-note { border-left-color: var(--signal); }
+  .finding.is-note .n { color: var(--signal); }
+
+  /* ---------- model ---------- */
+  .model { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 24px 0 8px; }
+  .model-col { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px 20px; }
+  .model-col h4 {
+    margin: 0 0 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--signal);
+  }
+  .model-col .who { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  .model-col p { font-size: 14px; color: var(--dim); margin: 0; max-width: none; }
+
+  .flow { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 28px 0 0; }
+  .flow-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px 20px; }
+  .flow-card h4 {
+    margin: 0 0 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .flow-card ol { margin: 0; padding-left: 20px; font-family: var(--mono); font-size: 12.5px; line-height: 2; color: var(--dim); }
+  .flow-card li::marker { color: var(--faint); }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 2px;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.band { background: rgba(79,224,207,0.16); color: var(--signal); }
+  .tag.work { background: rgba(118,205,128,0.16); color: var(--healthy); }
+  .tag.party { background: rgba(242,177,63,0.16); color: var(--warn); }
+
+  /* ============================================================
+     THE PROTOTYPE
+     ============================================================ */
+  .stage { margin: 28px 0 0; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 20px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: var(--r) var(--r) 0 0;
+  }
+  .ctl-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-right: 2px;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 12px;
+    background: transparent;
+    color: var(--dim);
+    border: none;
+    cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--signal-wash); color: var(--signal); }
+  .seg button:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+
+  .screen {
+    --g-panel:    #111a1e;
+    --g-panel-2:  #0e161a;
+    --g-line:     #26363c;
+    --g-line-soft:#1b282d;
+    --g-ink:      #e9efe9;
+    --g-dim:      #9db0ad;
+    --g-faint:    #6f8380;
+    --g-signal:   #4fe0cf;
+    --g-warn:     #f2b13f;
+    --g-healthy:  #76cd80;
+    --g-danger:   #e8746a;
+
+    position: relative;
+    background: linear-gradient(155deg, #0d1a1d 0%, #0a1316 45%, #0c171a 100%);
+    border: 1px solid var(--line);
+    border-radius: 0 0 var(--r) var(--r);
+    padding: 18px;
+    overflow: hidden;
+    font-family: var(--sans);
+    color: var(--g-ink);
+  }
+  .screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(79,224,207,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,224,207,0.045) 1px, transparent 1px);
+    background-size: 46px 46px;
+    pointer-events: none;
+  }
+  .screen-inner { position: relative; display: flex; justify-content: flex-start; }
+
+  /* ---------- the panel ---------- */
+  .bp {
+    background: var(--g-panel);
+    border: 1px solid var(--g-line);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 18px 40px rgba(0,0,0,0.45);
+    font-size: 13px;
+    line-height: 1.45;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .screen[data-dock="side"] .bp { width: 380px; height: 664px; }
+  .screen[data-dock="bottom"] .bp { width: 100%; height: 340px; }
+
+  /* identity */
+  .bp-id {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--g-line-soft);
+    flex: none;
+  }
+  .bp-id .glyph { font-size: 19px; line-height: 1; }
+  .bp-id .name { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .bp-id .stage { font-size: 10.5px; color: var(--g-faint); }
+  .bp-id .grow { flex: 1 1 auto; }
+  .cycler { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--g-dim); }
+  .chip-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--g-dim);
+    background: transparent;
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    padding: 3px 7px;
+    cursor: pointer;
+    line-height: 1.3;
+  }
+  .chip-btn:hover { color: var(--g-signal); border-color: var(--g-signal); }
+  .chip-btn:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+
+  /* section overflow menu — absolutely positioned so opening it never changes any height */
+  .menu-wrap { position: relative; margin-left: auto; }
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 5;
+    min-width: 178px;
+    background: #0f1b1f;
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    box-shadow: 0 10px 26px rgba(0,0,0,0.6);
+    padding: 4px;
+    display: grid;
+    gap: 2px;
+    text-align: left;
+  }
+  .menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--g-dim);
+    font-family: var(--sans);
+    font-size: 12px;
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 5px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .menu button:hover { background: rgba(79,224,207,0.1); color: var(--g-ink); }
+  .menu button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .menu button:disabled:hover { background: none; color: var(--g-dim); }
+  .menu button.destructive { color: var(--g-danger); }
+  .menu button.destructive:hover { background: rgba(232,116,106,0.14); color: var(--g-danger); }
+  .menu .mconfirm {
+    padding: 6px 8px 7px;
+    display: grid;
+    gap: 6px;
+    font-family: var(--sans);
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--g-ink);
+    line-height: 1.4;
+  }
+  .menu .mconfirm .mrow { display: flex; gap: 6px; }
+  .menu .mconfirm .mrow .btn { flex: 1 1 0; padding: 4px 8px; font-size: 12px; }
+  .menu .mconfirm .btn.danger { background: #2a1c1a; border-color: #5a3a36; color: #f0c3bd; }
+  .menu .mconfirm .btn.danger:hover { background: #331f1d; border-color: var(--g-danger); color: var(--g-danger); }
+
+  /* Per-item removal. A work row does NOT get one — its removal is the labelled "Unassign" in the
+     inspector strip, which is safer beside a −/+ stepper than a hover-only ✕. A party row has no
+     stepper and no inspector, so it carries its own recall, always visible rather than hover-gated. */
+  .kill {
+    flex: none;
+    width: 17px;
+    height: 17px;
+    line-height: 15px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--g-faint);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0.55;
+  }
+  .party:hover .kill, .party:focus-within .kill { opacity: 1; }
+  .kill:hover { color: var(--g-danger); border-color: rgba(232,116,106,0.6); }
+  .kill:focus-visible { opacity: 1; outline: 2px solid var(--g-signal); outline-offset: 1px; }
+
+  .btn {
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: var(--r);
+    border: 1px solid var(--g-line);
+    background: #13211f;
+    color: var(--g-dim);
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--g-signal); color: var(--g-signal); }
+  .btn.primary { background: #163a34; border-color: #1f9c8e; color: #d8fff8; }
+  .btn.primary:hover { background: #1c4640; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn:disabled:hover { border-color: var(--g-line); color: var(--g-dim); }
+  .btn:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+
+  /* ---------- tab bar (narrow dock only) ---------- */
+  .tabbar { display: flex; border-bottom: 1px solid var(--g-line); flex: none; background: #0c1417; }
+  .tab {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 4px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--g-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--g-dim); }
+  .tab[aria-selected="true"] { color: var(--g-signal); border-bottom-color: var(--g-signal); background: rgba(79,224,207,0.05); }
+  .tab:focus-visible { outline: 2px solid var(--g-signal); outline-offset: -2px; }
+  .tab .badge {
+    font-size: 9.5px;
+    letter-spacing: 0;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.07);
+    color: var(--g-dim);
+  }
+  .tab .badge.hot { background: var(--g-warn); color: #241703; font-weight: 700; }
+
+  /* ---------- zones ---------- */
+  .bp-body { flex: 1 1 auto; min-height: 0; display: flex; }
+  .screen[data-dock="bottom"] .bp-body { flex-direction: row; }
+  .screen[data-dock="side"] .bp-body { flex-direction: column; }
+
+  /* overflow stays VISIBLE so a section menu can drop over the board; the fixed-fit design means
+     nothing else ever overflows, and .bp is the backstop if something does. */
+  .zone { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: visible; }
+  .screen[data-dock="bottom"] .zone + .zone { border-left: 1px solid var(--g-line-soft); }
+  .screen[data-dock="bottom"] .zone-vitals { flex: 0 0 292px; }
+  .screen[data-dock="bottom"] .zone-work   { flex: 1 1 auto; }
+  .screen[data-dock="bottom"] .zone-party  { flex: 0 0 286px; }
+  .screen[data-dock="side"]   .zone        { flex: 1 1 auto; }
+
+  .sect-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 9px 12px 5px;
+    flex: none;
+  }
+  .sect-label .total { margin-left: auto; color: var(--g-healthy); letter-spacing: 0.04em; font-size: 10.5px; }
+  .sect-label .menu-wrap { margin-left: 8px; align-self: center; }
+  .sect-label .push { margin-left: auto; }
+
+  /* The section-actions button. Deliberately a bit louder than the other chrome chips: it is the
+     only route to the bulk clears, and a whisper-quiet ⋯ is a control nobody finds. */
+  .menu-btn {
+    letter-spacing: 0;
+    text-transform: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    color: var(--g-dim);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    cursor: pointer;
+  }
+  .sect-label:hover .menu-btn { color: var(--g-signal); border-color: var(--g-signal); }
+  .menu-btn:hover { color: var(--g-signal); border-color: var(--g-signal); background: rgba(79,224,207,0.1); }
+  .menu-btn[aria-expanded="true"] { color: var(--g-signal); border-color: var(--g-signal); background: rgba(79,224,207,0.14); }
+  .menu-btn:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+
+  /* ---------- vitals ---------- */
+  .vitals { padding: 2px 12px 10px; display: grid; gap: 7px; flex: none; }
+  .stat-row { display: flex; align-items: baseline; gap: 10px; font-variant-numeric: tabular-nums; }
+  .stat-row .k {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    width: 54px;
+    flex: none;
+  }
+  .stat-row .v { font-size: 13.5px; }
+  .v.good { color: var(--g-healthy); }
+  .v.bad { color: var(--g-danger); }
+  .sub { color: var(--g-dim); font-size: 12px; }
+
+  .chart-wrap { padding: 0 12px 10px; flex: none; }
+  .chart-cap {
+    display: flex;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    margin-bottom: 3px;
+  }
+  .chart-cap .cright { margin-left: auto; letter-spacing: 0.02em; color: var(--g-dim); }
+  .spark { width: 100%; display: block; }
+
+  /* ---------- people (age composition) ---------- */
+  .people { margin: 0 12px 10px; flex: none; }
+  .people-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    margin-bottom: 6px;
+  }
+  .people-head .count { margin-left: auto; letter-spacing: 0.02em; font-size: 11.5px; color: var(--g-ink); }
+  .people-bar { display: flex; height: 7px; border-radius: 2px; overflow: hidden; background: #0a1214; gap: 1px; }
+  .people-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 12px;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--g-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .people-key span { display: inline-flex; align-items: center; gap: 4px; }
+  .people-key .dep { margin-left: auto; color: var(--g-faint); }
+  .people-key .dep.heavy { color: var(--g-warn); }
+
+  /* ---------- workforce ---------- */
+  .workforce {
+    margin: 0 12px 12px;
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    background: var(--g-panel-2);
+    padding: 9px 10px 10px;
+    flex: none;
+  }
+  .wf-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    margin-bottom: 7px;
+  }
+  .wf-head .count { margin-left: auto; letter-spacing: 0.02em; font-size: 11.5px; color: var(--g-ink); }
+  .wf-bar { display: flex; height: 9px; border-radius: 2px; overflow: hidden; background: #0a1214; gap: 1px; }
+  .wf-seg { height: 100%; }
+  .wf-key { display: flex; flex-wrap: wrap; gap: 3px 11px; margin-top: 7px; font-family: var(--mono); font-size: 10.5px; color: var(--g-dim); }
+  .wf-key span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 8px; height: 8px; border-radius: 1px; display: inline-block; }
+
+  .roles { display: flex; gap: 8px; margin-top: 10px; }
+  .role {
+    flex: 1 1 0;
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    background: rgba(255,255,255,0.015);
+    padding: 6px 8px 7px;
+    min-width: 0;
+  }
+  .role .rname { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+  .role .rhint { font-size: 10.5px; color: var(--g-faint); line-height: 1.3; margin-top: 2px; }
+  .role .stepper { margin-top: 6px; }
+
+  /* ---------- stepper ---------- */
+  .stepper { display: inline-flex; align-items: center; gap: 1px; }
+  .stepper button {
+    width: 21px; height: 21px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1;
+    background: #13211f;
+    color: var(--g-dim);
+    border: 1px solid var(--g-line);
+    cursor: pointer;
+    padding: 0;
+  }
+  .stepper button:first-child { border-radius: var(--r) 0 0 var(--r); }
+  .stepper button:last-child { border-radius: 0 var(--r) var(--r) 0; }
+  .stepper button:hover:not(:disabled) { color: var(--g-signal); border-color: var(--g-signal); }
+  .stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .stepper button:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+  .stepper .n {
+    min-width: 22px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    border-top: 1px solid var(--g-line);
+    border-bottom: 1px solid var(--g-line);
+    height: 21px;
+    line-height: 19px;
+    background: #0c1518;
+  }
+
+  /* ---------- work board ---------- */
+  .work-tools { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 7px; flex: none; }
+  .pill {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--g-line);
+    background: transparent;
+    color: var(--g-dim);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pill[aria-pressed="true"] { background: var(--g-signal); border-color: var(--g-signal); color: #06201d; font-weight: 600; }
+  .pill.alert { border-color: rgba(242,177,63,0.5); color: var(--g-warn); }
+  .pill.alert[aria-pressed="true"] { background: var(--g-warn); border-color: var(--g-warn); color: #241703; }
+  .pill:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+
+  .board {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    align-content: start;
+    border-top: 1px solid var(--g-line-soft);
+    overflow: hidden;
+  }
+  .board .col-sep { border-left: 1px solid var(--g-line-soft); }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 10px;
+    height: 28px;
+    border-bottom: 1px solid rgba(27,40,45,0.5);
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .row:hover { background: rgba(79,224,207,0.05); }
+  .row.warn { border-left-color: var(--g-warn); }
+  .row.pending { border-left-color: var(--g-signal); }
+  .row.open { background: rgba(79,224,207,0.08); border-left-color: var(--g-signal); }
+  .row .icon { width: 15px; text-align: center; flex: none; font-size: 12.5px; }
+  .row .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .row .rate {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--g-healthy);
+    flex: none;
+  }
+  .row.warn .rate { color: var(--g-warn); }
+  .row .marks { font-family: var(--mono); font-size: 10.5px; color: var(--g-dim); flex: none; width: 26px; text-align: right; }
+  .row.pending .label { color: var(--g-warn); }
+  .row.blank { cursor: default; border-bottom-color: rgba(27,40,45,0.28); }
+  .row.blank:hover { background: none; }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 12px;
+    border-top: 1px solid var(--g-line-soft);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--g-faint);
+    flex: none;
+  }
+  .pager .range { margin-left: auto; }
+
+  /* ---------- inspector strip (replaces inline expansion) ---------- */
+  .inspect {
+    flex: none;
+    border-top: 1px solid var(--g-signal);
+    background: #0c1a1c;
+    padding: 8px 12px 9px;
+    display: grid;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--g-dim);
+  }
+  .inspect .ihead { display: flex; align-items: center; gap: 8px; color: var(--g-ink); font-size: 12.5px; }
+  .inspect .ihead .x { margin-left: auto; background: none; border: none; color: var(--g-faint); cursor: pointer; font: inherit; }
+  .inspect .warnline { color: var(--g-warn); }
+  .ticks { display: flex; gap: 2px; }
+  .tick { width: 6px; height: 6px; border-radius: 1px; background: var(--g-line); }
+  .tick.on { background: var(--g-healthy); }
+  .detail-links { display: flex; gap: 14px; font-family: var(--mono); font-size: 11px; }
+  .lnk {
+    color: var(--g-signal);
+    border: none;
+    border-bottom: 1px solid rgba(79,224,207,0.35);
+    background: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .lnk:hover { border-bottom-color: var(--g-signal); }
+
+  .empty { padding: 14px 12px; color: var(--g-faint); font-size: 12px; }
+
+  /* ---------- parties ---------- */
+  .party-list { padding: 2px 12px 0; display: grid; gap: 6px; flex: none; }
+  .party {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 9px;
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    background: var(--g-panel-2);
+    cursor: pointer;
+  }
+  .party:hover { border-color: var(--g-signal); }
+  .party.awaiting { border-color: rgba(242,177,63,0.55); background: rgba(242,177,63,0.07); }
+  .party .pglyph { font-size: 13px; }
+  .party .pname { flex: 1 1 auto; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .phase {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.05);
+    color: var(--g-dim);
+    flex: none;
+  }
+  .phase.hot { background: rgba(242,177,63,0.2); color: var(--g-warn); }
+
+  .party-foot { padding: 9px 12px 11px; flex: none; }
+  .reason { font-size: 11px; color: var(--g-faint); margin: 6px 0 0; }
+
+  .compose {
+    margin: 2px 12px 11px;
+    border: 1px solid var(--g-signal);
+    border-radius: var(--r);
+    background: #0c1a1c;
+    padding: 10px 11px 11px;
+    display: grid;
+    gap: 9px;
+    flex: none;
+  }
+  .compose h5 {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--g-signal);
+    display: flex;
+  }
+  .compose h5 .x { margin-left: auto; cursor: pointer; color: var(--g-faint); background: none; border: none; font: inherit; }
+  .field { display: flex; align-items: center; gap: 8px; }
+  .field > .fk {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    width: 50px;
+    flex: none;
+  }
+  .choices { display: flex; gap: 5px; flex-wrap: wrap; }
+  .forecast {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--g-signal);
+    background: rgba(79,224,207,0.07);
+    border-left: 2px solid var(--g-signal);
+    padding: 6px 9px;
+  }
+  .forecast .warnbit { color: var(--g-warn); }
+
+  /* ---------- annotations ---------- */
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 14px; }
+  .note { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); padding: 12px 14px; }
+  .note .nk {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--signal);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .note p { font-size: 13.5px; color: var(--dim); margin: 0; max-width: none; line-height: 1.5; }
+
+  /* ---------- budget ledger ---------- */
+  .ledger { margin: 24px 0 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .ledger-head {
+    display: flex;
+    padding: 10px 16px;
+    background: var(--panel-2);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .ledger-head .r { margin-left: auto; }
+  .ledger-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 9px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--line-soft);
+    font-size: 14.5px;
+  }
+  .ledger-row .px { margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .ledger-row.sum { background: var(--panel-2); font-weight: 650; }
+  .ledger-row.sum .px { color: var(--signal); }
+  .ledger-row .why { color: var(--faint); font-size: 13px; }
+
+  /* ---------- table ---------- */
+  .table-scroll { overflow-x: auto; margin: 20px 0 0; border: 1px solid var(--line); border-radius: var(--r); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14.5px; background: var(--panel); }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+    background: var(--panel-2);
+  }
+  tr:last-child td { border-bottom: none; }
+  td.fix { color: var(--dim); }
+  td .who { font-family: var(--mono); font-size: 11px; color: var(--signal); }
+
+  /* ---------- open questions ---------- */
+  .questions { display: grid; gap: 16px; margin: 20px 0 0; }
+  .q { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px 20px; }
+  .q > h4 { margin: 0 0 8px; font-size: 16.5px; font-weight: 650; letter-spacing: -0.012em; line-height: 1.35; text-wrap: balance; }
+  .q > p { margin: 0; color: var(--dim); font-size: 15px; max-width: var(--measure); }
+  .q > p + p { margin-top: 10px; }
+  .q .lean {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line-soft);
+    font-size: 14px;
+    color: var(--dim);
+  }
+  .q .lean b {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--signal);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+  .q ol { margin: 10px 0 0; padding-left: 22px; color: var(--dim); font-size: 15px; }
+  .q ol li { margin-bottom: 8px; }
+  .q ol li:last-child { margin-bottom: 0; }
+  .q ol b { color: var(--ink); font-weight: 650; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+  }
+
+  @media (max-width: 720px) {
+    .flow { grid-template-columns: 1fr; }
+    .screen[data-dock="side"] .bp { width: 100%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Client UX proposal · Band / City dock · rev 2, no-scroll</p>
+    <h1>The Band panel is three panels wearing one coat.</h1>
+    <p class="standfirst">
+      Everything in it today is a flat run of stepper rows — the band's own orders, the workforce's
+      assignments, and the parties that already left camp all share one vertical list and one visual
+      weight. That is why Move looks like it belongs to Warrior, why a policy picker looks like it
+      belongs to the scouting button, and why thirty worked sources would bury all of it. This proposal
+      separates the three, and gives the work list a shape that fits a late-game band
+      <em>without a scrollbar anywhere</em>.
+    </p>
+    <p class="meta">
+      <span><b>Branch</b> worktree-band-panel-ux</span>
+      <span><b>Touches</b> BandCityPanel.gd · Hud.gd</span>
+      <span><b>Status</b> proposal — nothing implemented yet</span>
+    </p>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>What's wrong today</h2></div>
+    <p class="lede">Your four findings, plus two things I found underneath them.</p>
+
+    <div class="findings">
+      <div class="finding">
+        <span class="n">01</span>
+        <h4>The actions list has no ceiling</h4>
+        <p>
+          Each worked source is a three-line row (title + stepper, yield line, arrival strip). Six sources
+          already fill the panel; thirty would be roughly 900px of unbroken list, pushing Band roles and
+          Move off the bottom of the dock entirely. There is no grouping, no subtotal, no sort, and no
+          bound of any kind — the list grows and the panel grows with it.
+        </p>
+      </div>
+      <div class="finding">
+        <span class="n">02</span>
+        <h4>Band roles read as two more actions</h4>
+        <p>
+          Scout and Warrior use the identical stepper row as a Forage or Hunt assignment, under a label that
+          looks the same as <code>CURRENT ACTIONS</code>. But they are a different kind of thing: a standing
+          posture with no source, no tile, no yield and no policy. Same control shape implies same semantics.
+        </p>
+      </div>
+      <div class="finding">
+        <span class="n">03</span>
+        <h4>Move / Clear all sit at the bottom of a list they don't belong to</h4>
+        <p>
+          They are band-level verbs — relocate the whole band, unassign everyone — but they render directly
+          beneath the Warrior stepper, so they read as Warrior's buttons. Proximity is the strongest grouping
+          cue on the panel and it is pointing at the wrong owner. The answer turned out not to be
+          <em>relocating</em> them but <b>deleting both</b> — see §02.
+        </p>
+      </div>
+      <div class="finding">
+        <span class="n">04</span>
+        <h4>The expedition block reads as one control stack, and it isn't</h4>
+        <p>
+          <code>Party</code>, <em>Send scouting expedition</em>, the four policy buttons, and
+          <em>Send hunting expedition</em> are one undifferentiated column. The Party stepper feeds both
+          verbs; the policy row feeds only the second. In reading order, Sustain/Surplus/Market look like
+          modifiers on the scouting button directly above them.
+        </p>
+      </div>
+      <div class="finding is-note">
+        <span class="n">✳</span>
+        <h4>The vanished expeditions are not a bug</h4>
+        <p>
+          Two sections have near-identical names. <code>ACTIVE EXPEDITIONS</code> lists parties in the field
+          and renders only when the band has some; <code>SEND EXPEDITION</code> is the launcher, and
+          <code>_build_send_expedition_section</code> returns <code>null</code> when <code>idle == 0</code>.
+          Your first screenshot has Idle 0 and one party out, the second Idle 16 and none out — so each shows
+          exactly one of the two, and they read as one block appearing and disappearing.
+        </p>
+      </div>
+      <div class="finding is-note">
+        <span class="n">✳</span>
+        <h4>The bottom-dock reshuffle and the flicker are symptoms of the same flat list</h4>
+        <p>
+          Because the panel is one undifferentiated stack of blocks, the wide dock has to guess at columns:
+          <code>_pack_wide_columns</code> greedily assigns each block to whichever column is currently
+          shortest, so a section's home changes whenever any height changes. Give the panel real zones and
+          the guess disappears — see §05.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Three kinds of thing, and a fixed budget of pixels</h2></div>
+    <p class="lede">
+      Every control in the panel belongs to one of three subjects. The fix is to stop interleaving them —
+      and then to spend a fixed height on each, so nothing ever needs to scroll.
+    </p>
+
+    <div class="model">
+      <div class="model-col">
+        <h4>The band</h4>
+        <p class="who">One camp, one place, one set of orders</p>
+        <p>Name, stage, population, larder, morale — and the verbs that act on the whole band: Move, Clear all. Belongs at the top, with the identity it modifies.</p>
+      </div>
+      <div class="model-col">
+        <h4>The workforce</h4>
+        <p class="who">Sixteen workers, allocated</p>
+        <p>Every worker is somewhere: a forage patch, a herd, a standing role, or idle. Sources and roles spend the <em>same</em> pool, so they share one budget readout — but they earn different row shapes, because only one of them yields food.</p>
+      </div>
+      <div class="model-col">
+        <h4>The parties</h4>
+        <p class="who">Workers who already left</p>
+        <p>Detached, elsewhere on the map, on their own clock. Listing them and launching them are one subject, not two sections with confusable names.</p>
+      </div>
+    </div>
+
+    <h3>Neither band verb survives the split</h3>
+    <p>
+      Sorting the controls by subject exposed something better than a new home for Move and Clear all:
+      <b>neither one is really a band verb</b>, and the panel is better off without both.
+    </p>
+    <p>
+      <b>Move belongs to a tile, not to the band.</b> "Move" arms a targeting mode and then waits for you to
+      click a destination — the decision is about a <em>place</em>, and the panel that describes a place is
+      the Tile panel. Moving it there turns a verb-first flow (arm, then hunt for a tile) into a target-first
+      one (look at a tile, decide to go). Out of scope here — the Tile panel is not this proposal's to change
+      — but it comes off the Band panel either way.
+    </p>
+    <p>
+      <b>Clear all was one button for two unrelated demolitions.</b> Today <code>cancel_order</code> wipes
+      sources <em>and</em> standing roles in a single click, from a spot where it reads as belonging to
+      Warrior. Split by subject it becomes two scoped actions living in the sections they act on —
+      <em>Unassign all work</em> in Work, <em>Recall all parties</em> in Parties — each behind that section's
+      <code>⋯</code> menu with an inline confirm naming exactly what it will and won't touch.
+    </p>
+    <p>
+      With both gone the band command row goes too, and the identity row carries the whole band header on its
+      own. That is worth about one more row of work board in each dock — the no-scroll budget's cheapest win
+      in this pass.
+    </p>
+
+    <h3>Two bars, two questions</h3>
+    <p>
+      The Band tab now carries a <b>People</b> bar — children, working age, elders, with the dependency
+      ratio — directly above the <b>Workforce</b> bar. Same shape, deliberately different palettes: People
+      is muted earth and slate (who the band <em>is</em>, which you do not control), Workforce is the
+      saturated signal palette (what they are <em>doing</em>, which you do). Reading them stacked answers
+      the question the old <code>Population 30 · Workers 16</code> line only asserted: <em>why</em> are only
+      sixteen of thirty people working.
+    </p>
+    <p>
+      This needs <b>no schema change</b> — <code>PopulationCohortState</code> already carries
+      <code>children</code>, <code>working</code> and <code>elders</code>, and
+      <code>population_to_dict</code> in <code>native/src/lib.rs</code> simply never decoded them. That is
+      the same decoder the subsystem docs already flag for having silently dropped appended fields several
+      times; this is another one. Three decoder lines, plus the keys added to
+      <code>marker_field_guard</code>'s consumed set.
+    </p>
+
+    <h3>Removing one of something</h3>
+    <p>
+      A source's removal is the labelled <b>Unassign</b> in the inspector strip — deliberately not a hover
+      <code>✕</code> on the row, which would sit a destructive control millimetres from the <code>−</code>
+      stepper. A party has neither stepper nor inspector, so it carries its own always-visible recall on the
+      row. Neither asks for confirmation: both are one click to undo. The two <em>bulk</em> actions do ask,
+      because thirty-four unassignments are not.
+    </p>
+
+    <h3>Where the no-scroll rule bites</h3>
+    <p>
+      Only one thing in the panel is unbounded: worked sources. Everything else has a fixed maximum —
+      six vitals rows, one chart, two role cards, a handful of parties. So the whole design reduces to
+      one question: <b>how do you show N sources in a fixed box without a scrollbar?</b>
+      Three moves, in order of how much they buy:
+    </p>
+
+    <div class="ledger">
+      <div class="ledger-head"><span>Move</span><span class="r">Sources visible at once</span></div>
+      <div class="ledger-row">
+        <span>Today's three-line row</span>
+        <span class="why">~76px each</span>
+        <span class="px">4</span>
+      </div>
+      <div class="ledger-row">
+        <span>One-line row, detail on demand</span>
+        <span class="why">28px each</span>
+        <span class="px">14</span>
+      </div>
+      <div class="ledger-row">
+        <span>Give the work list the whole panel</span>
+        <span class="why">tabs in the narrow dock</span>
+        <span class="px">18</span>
+      </div>
+      <div class="ledger-row">
+        <span>Flow into columns where width allows</span>
+        <span class="why">bottom dock, 3 columns</span>
+        <span class="px">18</span>
+      </div>
+      <div class="ledger-row sum">
+        <span>Beyond that: page, don't scroll</span>
+        <span class="why">filter chips cut the set first</span>
+        <span class="px">‹ 1 / 2 ›</span>
+      </div>
+    </div>
+
+    <p style="margin-top:20px">
+      Paging rather than scrolling is the deliberate call. A pager is a <em>fixed</em> control at a
+      <em>fixed</em> place, so panel height stops depending on content — which is also what kills the
+      reservation churn behind the map flicker. And the filter chips mean paging is the rare case: at
+      thirty-four sources you are normally looking at "the four that need attention", not at all of them.
+    </p>
+
+    <div class="flow">
+      <div class="flow-card">
+        <h4>Today — reading order</h4>
+        <ol>
+          <li>Population / Food / Morale<span class="tag band">band</span></li>
+          <li>Food outlook<span class="tag band">band</span></li>
+          <li>Active expeditions<span class="tag party">party</span></li>
+          <li>Current actions<span class="tag work">work</span></li>
+          <li>Band roles<span class="tag work">work</span></li>
+          <li>Move / Clear all<span class="tag band">band</span></li>
+          <li>Send expedition<span class="tag party">party</span></li>
+        </ol>
+      </div>
+      <div class="flow-card">
+        <h4>Proposed — same three zones, two arrangements</h4>
+        <ol>
+          <li>Identity — always visible<span class="tag band">band</span></li>
+          <li>Side dock: tabs — Band · Work · Parties</li>
+          <li>Bottom dock: columns — Band | Work | Parties</li>
+          <li>Work fills whatever it is given, then pages<span class="tag work">work</span></li>
+          <li>Each section owns its own clear<span class="tag work">work</span><span class="tag party">party</span></li>
+          <li>Move leaves for the Tile panel<span class="tag band">band</span></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The prototype</h2></div>
+    <p class="lede">
+      Live and clickable, and there is no scrollbar in it at either dock or either workload. Flip the dock
+      to see tabs give way to columns; load the band to thirty-four sources to see the pager and the
+      attention filter take over.
+    </p>
+
+    <div class="stage">
+      <div class="controls">
+        <span class="ctl-label">Dock</span>
+        <div class="seg" role="group" aria-label="Dock edge">
+          <button type="button" data-dock-btn="side" aria-pressed="true">Side · narrow</button>
+          <button type="button" data-dock-btn="bottom" aria-pressed="false">Bottom · wide</button>
+        </div>
+        <span class="ctl-label">Workload</span>
+        <div class="seg" role="group" aria-label="Workload">
+          <button type="button" data-load-btn="early" aria-pressed="true">Early · 6</button>
+          <button type="button" data-load-btn="late" aria-pressed="false">Late · 34</button>
+        </div>
+        <span class="ctl-label">Idle</span>
+        <div class="seg" role="group" aria-label="Idle workers">
+          <button type="button" data-idle-btn="some" aria-pressed="true">Some spare</button>
+          <button type="button" data-idle-btn="none" aria-pressed="false">None spare</button>
+        </div>
+        <div class="seg"><button type="button" id="reset">Reset</button></div>
+      </div>
+
+      <div class="screen" id="screen" data-dock="side">
+        <div class="screen-inner"><div class="bp" id="panel"></div></div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note">
+        <span class="nk">Answers 03 — try it</span>
+        <p>Both band buttons are gone. The bulk clears live behind the <code>⋯</code> at the right-hand end of the <b>WORK</b> and <b>PARTIES</b> section headers — click one for <em>Unassign all work</em> / <em>Recall all parties</em> and its inline confirm.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Answers 02</span>
+        <p>Scout and Warrior are boxed role cards inside the workforce budget: different shape, different ground, adjacent to the pool they draw from.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Answers 01</span>
+        <p>One-line rows, filter chips carrying live subtotals, a fixed board that fills its zone, and a pager instead of a scrollbar. Row detail opens in a pinned strip, so the board never grows.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Answers 04</span>
+        <p>One Parties section. Launching is a compose sheet where the mission is picked <em>first</em>, so the policy row can only ever appear under Hunt.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Your call, adopted</span>
+        <p>Tabs appear only when the dock is too narrow for three columns. The bottom dock shows all three zones at once and has no tab bar at all.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Cross-tab awareness</span>
+        <p>Tabs carry the state they hide: Work shows an amber count when sources need attention, Parties an amber badge when one is awaiting orders.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Removing one thing</span>
+        <p>A source is removed by <em>Unassign</em> in its inspector strip — no hover ✕ beside the stepper. A party carries its own recall, since it has neither stepper nor inspector.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Decisions, one per complaint</h2></div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Change</th><th>Why</th><th>Fallout</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Move leaves the panel</b><br><span class="who">finding 03</span></td>
+            <td class="fix">The decision is about a destination, so it belongs to the panel that describes a place. Target-first beats verb-first.</td>
+            <td class="fix">Out of scope here — the Tile panel gains it in its own change. Until then the map double-click / existing targeting path still works.</td>
+          </tr>
+          <tr>
+            <td><b>Clear all splits by section</b><br><span class="who">finding 03</span></td>
+            <td class="fix">One button was demolishing two unrelated things. Scoped actions live in the section they act on, behind <code>⋯</code>, with an inline confirm that names what is spared.</td>
+            <td class="fix">Needs a scope on the server verb, or N zero-assignments client-side — see §06. Standing roles keep only their own steppers.</td>
+          </tr>
+          <tr>
+            <td><b>Per-item removal</b><br><span class="who">your note</span></td>
+            <td class="fix">Sources use the labelled <em>Unassign</em> already in the inspector; parties get an always-visible recall because they have no stepper to walk to zero.</td>
+            <td class="fix">No confirm on either — both are one click to undo. Recall reuses the existing <code>recall_expedition</code>.</td>
+          </tr>
+          <tr>
+            <td><b>Responsive shell: tabs or columns</b><br><span class="who">your call</span></td>
+            <td class="fix">The narrow dock cannot show three zones at once without scrolling, so it shows one at a time. The wide dock can, so it does.</td>
+            <td class="fix">One threshold decides which shell renders (roughly 3× the minimum zone width). Both shells build the same three zone nodes.</td>
+          </tr>
+          <tr>
+            <td><b>People bar</b><br><span class="who">your request</span></td>
+            <td class="fix">Children / working age / elders plus the dependency ratio, stacked above the workforce bar. Explains the gap between population and workers instead of asserting it.</td>
+            <td class="fix">No schema change — the cohort already carries all three; <code>population_to_dict</code> never decoded them. Add the keys to <code>marker_field_guard</code>.</td>
+          </tr>
+          <tr>
+            <td><b>Workforce budget</b><br><span class="who">findings 01 · 02</span></td>
+            <td class="fix">One stacked bar shows where all workers are. "Idle 0" stops being a number in a header and becomes a visibly full bar.</td>
+            <td class="fix">New widget, but it reads only data the panel already has (<code>working_age</code>, the effective worker map, <code>_effective_idle</code>).</td>
+          </tr>
+          <tr>
+            <td><b>Roles as cards</b><br><span class="who">finding 02</span></td>
+            <td class="fix">A standing posture is not a worked source: different shape, inside the budget block, never in the work board.</td>
+            <td class="fix">Same stepper, same <code>assign_labor</code> emit. Hint text shortens to fit the card.</td>
+          </tr>
+          <tr>
+            <td><b>One-line rows + pinned inspector</b><br><span class="who">finding 01</span></td>
+            <td class="fix">28px instead of 76px per source. Detail opens in a fixed strip at the foot of the board rather than expanding inline, so the board's height never changes.</td>
+            <td class="fix">Yield line, arrival strip, notes and warnings move into the inspector. Collapsed rows still signal trouble with a severity stripe and an amber rate.</td>
+          </tr>
+          <tr>
+            <td><b>Filter chips with subtotals</b><br><span class="who">finding 01</span></td>
+            <td class="fix">Chips are the summary <em>and</em> the filter: "Foraging 23 · +12.40" answers "is foraging carrying us" and narrows the board in one control.</td>
+            <td class="fix">Replaces the collapsible group headers — same information, no nested state, no scroll.</td>
+          </tr>
+          <tr>
+            <td><b>Page, don't scroll</b><br><span class="who">no-scroll rule</span></td>
+            <td class="fix">A pager is fixed furniture at a fixed place; a scrollbar makes panel height a function of content.</td>
+            <td class="fix">Panel height becomes constant per dock edge, which is what stops <code>reservation_changed</code> firing mid-interaction.</td>
+          </tr>
+          <tr>
+            <td><b>Parties section + compose sheet</b><br><span class="who">finding 04 · ✳</span></td>
+            <td class="fix">Mission first means policy is scoped to Hunt by construction, not by reading order. One section means the block never appears to vanish.</td>
+            <td class="fix">With no idle workers the launcher stays visible and disabled with a reason, instead of the section disappearing.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>What this does to the two bugs</h2></div>
+    <p>
+      The wide dock currently has no notion of what belongs where, so <code>_pack_wide_columns</code>
+      distributes blocks into whichever column is shortest at that moment. Column membership is therefore a
+      function of measured heights, and the pack runs against heights that are not yet settled — which is
+      why Send Expedition changes columns when you press <code>+</code>.
+    </p>
+    <p>
+      With three named zones the wide dock stops guessing: band is a fixed left column, work is the flexible
+      middle, parties is a fixed right column. Nothing migrates, because nothing is being balanced.
+    </p>
+    <p>
+      The no-scroll rule then finishes the job. Because the work board pages instead of growing, the panel's
+      reserved height is a constant per dock edge — so <code>reservation_changed</code> stops firing on
+      content changes, and <code>MapView.set_reserved_inset</code> stops throwing away the terrain cache
+      mid-interaction. The greedy packer, the deferred re-measure pass and the fit-to-content height all go
+      away together.
+    </p>
+    <p>
+      Two things still want fixing on their own merits alongside this: the double render per click
+      (<code>_after_pending_change</code> rebuilds the whole panel twice), and the free-and-recreate of
+      container nodes each pass. Both are cheap once the zones are static.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Decisions I need from you</h2></div>
+
+    <div class="questions">
+
+      <div class="q">
+        <h4>Is paging an acceptable price for no scrolling?</h4>
+        <p>
+          At thirty-four sources in the narrow dock you get eighteen per page, so two pages — or one, once
+          you tap a filter chip. The alternative is a scroller, which shows all thirty-four in one gesture
+          but makes panel height content-dependent again.
+        </p>
+        <span class="lean"><b>Leaning</b>Pager, because it is what makes the fixed-height guarantee real —
+        and the chips mean you rarely reach page two.</span>
+      </div>
+
+      <div class="q">
+        <h4>Where should the tab / column threshold sit?</h4>
+        <p>
+          The prototype hard-switches on dock edge: side means tabs, bottom means columns. It could instead
+          key on actual width, so a wide left dock (or a narrow window with the panel at the bottom) picks
+          the right shell on its own.
+        </p>
+        <span class="lean"><b>Leaning</b>Key on width, not edge — same rule, no special cases, and it
+        survives a resizable dock later.</span>
+      </div>
+
+      <div class="q">
+        <h4>Which tab opens by default in the narrow dock?</h4>
+        <p>
+          Work is where the decisions are, and it is the tab that justifies the redesign. Band is what the
+          panel opens on today. Opening on Work means the first thing you see on selecting a band is its
+          economy rather than its larder.
+        </p>
+        <span class="lean"><b>Leaning</b>Work, with the vitals summarised in the identity row so the larder
+        is never fully hidden.</span>
+      </div>
+
+      <div class="q">
+        <h4>Does the food outlook chart survive?</h4>
+        <p>
+          In the narrow dock it now has room on the Band tab, at full size with its
+          <code>empty ~turn N</code> marker intact. In the wide dock it competes with the work board for the
+          left column, so the prototype shows a sparkline there.
+        </p>
+        <span class="lean"><b>Leaning</b>Full chart when the zone has the height, sparkline when it does not
+        — one widget, two sizes, same data.</span>
+      </div>
+
+      <div class="q">
+        <h4>How much lands in one PR?</h4>
+        <p>Two slices in one arc:</p>
+        <ol>
+          <li>
+            <b>Zones, responsive shell, band command row, role cards, unified Parties section.</b>
+            Fixes findings 02, 03 and 04 plus both layout bugs, and is verifiable against the existing
+            <code>band_panel_preview</code> frames.
+          </li>
+          <li>
+            <b>Work board: one-line rows, filter chips, pager, pinned inspector.</b> Fixes finding 01. Needs
+            new fixtures at thirty-plus sources either way.
+          </li>
+        </ol>
+      </div>
+
+      <div class="q">
+        <h4>Does <code>cancel_order</code> gain a scope, or does the client send N zeroes?</h4>
+        <p>
+          Splitting Clear all means the client needs "unassign every <em>source</em>, leave the roles" — which
+          today's <code>cancel_order</code> cannot express, since it clears everything. Either the verb takes
+          a scope argument, or the client emits one <code>assign_labor … 0</code> per source.
+        </p>
+        <span class="lean"><b>Leaning</b>A scope on the verb — thirty-four commands for one click is a lot of
+        wire traffic and thirty-four chances to half-apply, and the sim should own "what does clearing mean".</span>
+      </div>
+
+      <div class="q">
+        <h4>Where does Move actually land on the Tile panel?</h4>
+        <p>
+          The Tile panel already carries the forage assign controls for the selected tile, so a
+          <em>Move band here</em> action alongside them is a natural fit — but it needs a band picker once
+          there is more than one band, exactly as the forage control has. Worth designing with the multi-band
+          slice rather than bolting on now.
+        </p>
+        <span class="lean"><b>Note</b>Out of scope for this proposal — flagged so the Band panel's removal
+        does not leave the verb homeless.</span>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>
+    Prototype is HTML standing in for GDScript — spacing, type sizes and palette come from HudStyle, but
+    treat the pixel values as intent, not spec.
+  </footer>
+
+</div>
+
+<script>
+  const SPECIES = ["Wild Boar", "Red Deer", "Wild Sheep", "Aurochs", "Marsh Fowl", "Wild Goat", "Reindeer", "Wild Horse"];
+  const TILES = [[41,15],[40,18],[42,18],[39,16],[43,14],[38,19],[44,17],[37,15],[45,20],[36,18],[46,16],[35,21],[47,19],[34,17],[48,15],[33,20],[49,18],[32,16]];
+
+  // Rows per column, per dock — with and without the inspector strip open. Dropping the band
+  // command row bought one more row in each.
+  const CAPACITY = {
+    side:   { cols: 1, rows: 17, rowsInspect: 13 },
+    bottom: { cols: 3, rows: 7,  rowsInspect: 4 },
+  };
+
+  const state = {
+    dock: "side",
+    load: "early",
+    idle: "some",
+    tab: "work",
+    filter: "all",
+    page: 0,
+    open: null,
+    compose: false,
+    mission: null,
+    policy: "sustain",
+    party: 2,
+    roles: { scout: 0, warrior: 0 },
+    menu: null,        // "work" | "party" — which section menu is open
+    confirm: null,     // "work" | "party" — which clear is awaiting confirmation
+    dropped: {},       // source ids removed in this prototype session
+    recalled: {},      // party names recalled in this prototype session
+  };
+
+  function sources() {
+    const n = state.load === "early" ? 6 : 34;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const isHunt = i % 3 === 0;
+      out.push({
+        id: "s" + i,
+        kind: isHunt ? "hunt" : "forage",
+        icon: isHunt ? "🐗" : "🌰",
+        label: isHunt ? "Hunt " + SPECIES[i % SPECIES.length] : "Forage (" + TILES[i % TILES.length][0] + ", " + TILES[i % TILES.length][1] + ")",
+        workers: 1 + (i % 3),
+        rate: 0.42 + ((i * 37) % 61) / 100,
+        policy: i % 7 === 3 ? "⬆" : "♻",
+        warn: i % 7 === 3,
+        overstaffed: i % 11 === 5,
+        pending: i === 2 && state.load === "early",
+        lumpy: isHunt,
+      });
+    }
+    return out.filter(s => !state.dropped[s.id]);
+  }
+
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const f2 = n => (n < 0 ? "" : "+") + n.toFixed(2);
+  const sum = (a, k) => a.reduce((t, s) => t + s[k], 0);
+  const isWide = () => state.dock === "bottom";
+
+  function model() {
+    const list = sources();
+    const forage = list.filter(s => s.kind === "forage");
+    const hunt = list.filter(s => s.kind === "hunt");
+    const attention = list.filter(s => s.warn || s.overstaffed || s.pending);
+
+    const staffed = sum(list, "workers");
+    const roleWorkers = state.roles.scout + state.roles.warrior;
+    const partyWorkers = parties().reduce((a, _, i) => a + (i === 0 ? 2 : 1), 0);
+    const workers = state.load === "early" ? 16 : 48;
+    const idle = state.idle === "none" ? 0 : Math.max(0, workers - staffed - roleWorkers - partyWorkers);
+    const population = state.load === "early" ? 30 : 88;
+    const income = sum(list, "rate");
+
+    // Age structure. PopulationCohortState already carries children / working / elders on the wire —
+    // they are simply not decoded yet (see the proposal §02).
+    const children = state.load === "early" ? 9 : 26;
+    const elders = population - children - workers;
+    const dependents = children + elders;
+    const depPer100 = Math.round((dependents / Math.max(1, workers)) * 100);
+
+    return { list, forage, hunt, attention, workers, idle, roleWorkers, partyWorkers, population, income,
+             children, elders, dependents, depPer100,
+             net: income - population * 0.136 };
+  }
+
+  const ALL_PARTIES = [
+    { glyph: "🏹", name: "Wild Sheep · Sustain", phase: "Hunting", hot: false },
+    { glyph: "⚑", name: "Scouts → (52, 11)", phase: "Awaiting", hot: true },
+  ];
+  const parties = () => ALL_PARTIES.filter(p => !state.recalled[p.name]);
+
+  function render() {
+    const m = model();
+    const cap = CAPACITY[state.dock];
+    const perPage = (state.open ? cap.rowsInspect : cap.rows) * cap.cols;
+
+    let filtered = m.list;
+    if (state.filter === "forage") filtered = m.forage;
+    if (state.filter === "hunt") filtered = m.hunt;
+    if (state.filter === "attention") filtered = m.attention;
+
+    const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+    if (state.page >= pages) state.page = pages - 1;
+    const start = state.page * perPage;
+    const visible = filtered.slice(start, start + perPage);
+
+    const shell = isWide()
+      ? `<div class="bp-body">${zoneBand(m, true)}${zoneWork(m, filtered, visible, pages, perPage, start, cap)}${zoneParty(m)}</div>`
+      : `${tabbar(m)}<div class="bp-body">${
+          state.tab === "band" ? zoneBand(m, false)
+          : state.tab === "party" ? zoneParty(m)
+          : zoneWork(m, filtered, visible, pages, perPage, start, cap)
+        }</div>`;
+
+    document.getElementById("panel").innerHTML = identity(m) + shell;
+    wire();
+  }
+
+  function identity(m) {
+    return `
+      <div class="bp-id">
+        <span class="glyph">⛺</span>
+        <span>
+          <span class="name">Band 1</span><br>
+          <span class="stage">Nomadic · ${m.population} people · ${m.idle} idle</span>
+        </span>
+        <span class="grow"></span>
+        <span class="cycler">
+          <button class="chip-btn" type="button" aria-label="Previous band">◀</button>
+          1 / 1
+          <button class="chip-btn" type="button" aria-label="Next band">▶</button>
+        </span>
+        <button class="chip-btn" type="button" aria-label="Dock edge">▣</button>
+        <button class="chip-btn" type="button" aria-label="Collapse">▾</button>
+      </div>`;
+  }
+
+  // A section's overflow menu. Absolutely positioned, so opening it — or dropping into its
+  // confirm state — never changes the height of anything.
+  function sectionMenu(key, items, confirmText, confirmLabel) {
+    const open = state.menu === key;
+    return `
+      <span class="menu-wrap">
+        <button class="menu-btn" type="button" data-menu="${key}" aria-expanded="${open}"
+                title="Section actions" aria-label="Section actions">⋯</button>
+        ${!open ? "" : state.confirm === key ? `
+          <div class="menu" role="menu">
+            <div class="mconfirm">
+              <div>${confirmText}</div>
+              <div class="mrow">
+                <button class="btn danger" type="button" data-do-clear="${key}">${confirmLabel}</button>
+                <button class="btn" type="button" data-menu-close="1">Cancel</button>
+              </div>
+            </div>
+          </div>` : `
+          <div class="menu" role="menu">
+            ${items.map(it => `
+              <button type="button" class="${it.destructive ? "destructive" : ""}" ${it.disabled ? "disabled" : ""}
+                      ${it.confirm ? `data-ask-clear="${key}"` : "data-menu-close=\"1\""} role="menuitem">${it.label}</button>`).join("")}
+          </div>`}
+      </span>`;
+  }
+
+  function tabbar(m) {
+    const ps = parties();
+    const tabs = [
+      { k: "band", label: "Band", badge: "", hot: false },
+      { k: "work", label: "Work", badge: m.attention.length ? String(m.attention.length) : String(m.list.length), hot: m.attention.length > 0 },
+      { k: "party", label: "Parties", badge: String(ps.length), hot: ps.some(p => p.hot) },
+    ];
+    return `
+      <div class="tabbar" role="tablist">
+        ${tabs.map(t => `
+          <button class="tab" type="button" role="tab" data-tab="${t.k}" aria-selected="${state.tab === t.k}">
+            ${t.label}${t.badge ? `<span class="badge ${t.hot ? "hot" : ""}">${t.badge}</span>` : ""}
+          </button>`).join("")}
+      </div>`;
+  }
+
+  function zoneBand(m, compact) {
+    return `
+      <div class="zone zone-vitals">
+        <div class="vitals">
+          <div class="stat-row"><span class="k">Food</span><span class="v">76 <span class="sub">(∞)</span> <span style="color:${m.net >= 0 ? "var(--g-healthy)" : "var(--g-danger)"}">${f2(m.net)} /turn</span></span></div>
+          <div class="stat-row"><span class="k">Morale</span><span class="v good">88% ▲</span></div>
+        </div>
+        ${peopleBlock(m)}
+        <div class="chart-wrap">
+          <div class="chart-cap"><span>Food outlook</span><span class="cright">${compact ? "20 turns" : "never empties · 20 turns"}</span></div>
+          ${spark(compact ? 26 : 70)}
+        </div>
+        <div class="workforce">
+          <div class="wf-head"><span>Workforce</span><span class="count">${m.idle} idle of ${m.workers}</span></div>
+          <div class="wf-bar">${wfSegs(m).map(s => `<div class="wf-seg" style="width:${s.pct}%;background:${s.c}" title="${s.k}: ${s.n}"></div>`).join("")}</div>
+          <div class="wf-key">${wfSegs(m).map(s => `<span><i class="swatch" style="background:${s.c}"></i>${s.k} ${s.n}</span>`).join("")}</div>
+          <div class="roles">
+            ${role("scout", "🔭 Scout", "Sees around obstacles.")}
+            ${role("warrior", "🛡 Warrior", "Guards the camp.")}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // Who the band IS. Deliberately a MUTED palette against the workforce bar's saturated one below:
+  // two bars, same shape, different question — composition vs allocation.
+  function peopleBlock(m) {
+    const segs = [
+      { k: "👶", n: m.children, c: "#c89c66", label: "children" },
+      { k: "🛠", n: m.workers, c: "#9db0ad", label: "working age" },
+      { k: "🧓", n: m.elders, c: "#82a2b4", label: "elders" },
+    ].filter(s => s.n > 0);
+    const total = segs.reduce((a, s) => a + s.n, 0) || 1;
+    return `
+      <div class="people">
+        <div class="people-head"><span>People</span><span class="count">${m.population}</span></div>
+        <div class="people-bar">
+          ${segs.map(s => `<div class="wf-seg" style="width:${(s.n / total) * 100}%;background:${s.c}" title="${s.n} ${s.label}"></div>`).join("")}
+        </div>
+        <div class="people-key">
+          ${segs.map(s => `<span title="${s.label}"><i class="swatch" style="background:${s.c}"></i>${s.k} ${s.n}</span>`).join("")}
+          <span class="dep ${m.depPer100 > 100 ? "heavy" : ""}" title="${m.dependents} dependents per ${m.workers} working-age adults">dep ${m.depPer100}/100</span>
+        </div>
+      </div>`;
+  }
+
+  function wfSegs(m) {
+    const segs = [
+      { k: "Forage", n: sum(m.forage, "workers"), c: "#76cd80" },
+      { k: "Hunt", n: sum(m.hunt, "workers"), c: "#4fe0cf" },
+      { k: "Roles", n: m.roleWorkers, c: "#82a2b4" },
+      { k: "Parties", n: m.partyWorkers, c: "#f2b13f" },
+      { k: "Idle", n: m.idle, c: m.idle > 0 ? "#6f8380" : "#3a4a4c" },
+    ].filter(s => s.n > 0);
+    const total = segs.reduce((a, s) => a + s.n, 0) || 1;
+    return segs.map(s => ({ ...s, pct: (s.n / total) * 100 }));
+  }
+
+  function role(key, name, hint) {
+    const n = state.roles[key];
+    return `
+      <div class="role">
+        <div class="rname">${name}</div>
+        <div class="rhint">${hint}</div>
+        <div class="stepper">
+          <button type="button" data-role="${key}" data-delta="-1" ${n <= 0 ? "disabled" : ""} aria-label="Fewer ${key}s">−</button>
+          <span class="n">${n}</span>
+          <button type="button" data-role="${key}" data-delta="1" aria-label="More ${key}s">+</button>
+        </div>
+      </div>`;
+  }
+
+  function zoneWork(m, filtered, visible, pages, perPage, start, cap) {
+    const chips = [
+      { k: "all", label: `All ${m.list.length}`, alert: false },
+      { k: "forage", label: `🌰 Foraging ${m.forage.length} · ${f2(sum(m.forage, "rate"))}`, alert: false },
+      { k: "hunt", label: `🐗 Hunting ${m.hunt.length} · ${f2(sum(m.hunt, "rate"))}`, alert: false },
+      { k: "attention", label: `⚠ ${m.attention.length}`, alert: true },
+    ];
+
+    const cells = visible.slice();
+    while (cells.length < perPage) cells.push(null);
+    const rowsPerCol = perPage / cap.cols;
+
+    const board = filtered.length
+      ? `<div class="board" style="grid-template-rows: repeat(${rowsPerCol}, 28px)">
+           ${cells.map((s, i) => {
+             const newCol = cap.cols > 1 && i % rowsPerCol === 0 && i > 0;
+             return s ? rowHtml(s, newCol) : `<div class="row blank ${newCol ? "col-sep" : ""}"></div>`;
+           }).join("")}
+         </div>`
+      : `<p class="empty">No sources worked yet — select a tile or herd on the map to assign foragers and hunters.</p>`;
+
+    const inspected = state.open ? m.list.find(s => s.id === state.open) : null;
+
+    return `
+      <div class="zone zone-work">
+        <div class="sect-label">
+          <span>Work</span>
+          <span>${m.list.length} sources</span>
+          <span class="total">${f2(m.income)} /turn</span>
+          ${sectionMenu("work", [
+            { label: "Sort by yield" },
+            { label: "Sort by name" },
+            { label: `Unassign all work (${m.list.length})`, destructive: true, confirm: true, disabled: !m.list.length },
+          ], `Return all ${m.list.length} sources' workers to idle? Standing roles and parties are untouched.`,
+             "Unassign all")}
+        </div>
+        <div class="work-tools">
+          ${chips.map(c => `<button class="pill ${c.alert ? "alert" : ""}" type="button" data-filter="${c.k}" aria-pressed="${state.filter === c.k}">${c.label}</button>`).join("")}
+        </div>
+        ${board}
+        ${pages > 1 ? `
+          <div class="pager">
+            <button class="chip-btn" type="button" data-page="-1" ${state.page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>
+            <span>Page ${state.page + 1} / ${pages}</span>
+            <button class="chip-btn" type="button" data-page="1" ${state.page >= pages - 1 ? "disabled" : ""} aria-label="Next page">›</button>
+            <span class="range">${start + 1}–${Math.min(start + perPage, filtered.length)} of ${filtered.length}</span>
+          </div>` : ""}
+        ${inspected ? inspectHtml(inspected) : ""}
+      </div>`;
+  }
+
+  function rowHtml(s, newCol) {
+    const cls = [
+      s.warn ? "warn" : "",
+      s.pending ? "pending" : "",
+      state.open === s.id ? "open" : "",
+      newCol ? "col-sep" : "",
+    ].join(" ");
+    return `
+      <div class="row ${cls}" data-row="${s.id}" tabindex="0" role="button" aria-pressed="${state.open === s.id}">
+        <span class="icon">${s.icon}</span>
+        <span class="label">${esc(s.label)}${s.pending ? " ○" : ""}</span>
+        <span class="rate">${f2(s.rate)}</span>
+        <span class="marks">${s.policy}${s.warn ? " ⚠" : s.overstaffed ? " ·" : ""}</span>
+        <span class="stepper">
+          <button type="button" data-src="${s.id}" data-delta="-1" aria-label="Fewer workers">−</button>
+          <span class="n">${s.workers}</span>
+          <button type="button" data-src="${s.id}" data-delta="1" aria-label="More workers">+</button>
+        </span>
+      </div>`;
+  }
+
+  function inspectHtml(s) {
+    const ticks = Array.from({ length: 20 }, (_, i) =>
+      `<i class="tick ${s.lumpy ? (i % 3 === 0 ? "on" : "") : "on"}"></i>`).join("");
+    return `
+      <div class="inspect">
+        <div class="ihead">
+          <span>${s.icon} ${esc(s.label)}</span>
+          <button class="x" type="button" data-close-inspect aria-label="Close detail">✕</button>
+        </div>
+        <div>${f2(s.rate)} /turn · ${s.policy === "♻" ? "Sustain — renewable" : "Surplus"} · working · ${s.workers} assigned</div>
+        ${s.warn ? `<div class="warnline">⚠ Overdraws the herd at this policy.</div>` : ""}
+        ${s.overstaffed ? `<div class="warnline">Only 2 of ${s.workers} working — the source is at its ceiling.</div>` : ""}
+        ${s.lumpy ? `<div class="ticks">${ticks}</div>` : ""}
+        <div class="detail-links">
+          <button class="lnk" type="button">Jump to source</button>
+          <button class="lnk" type="button">Change policy</button>
+          <button class="lnk" type="button" data-drop="${s.id}">Unassign</button>
+        </div>
+      </div>`;
+  }
+
+  function zoneParty(m) {
+    const ps = parties();
+    return `
+      <div class="zone zone-party">
+        <div class="sect-label">
+          <span>Parties</span>
+          <span>${ps.length} out · ${m.partyWorkers} workers</span>
+          ${sectionMenu("party", [
+            { label: `Recall all parties (${ps.length})`, destructive: true, confirm: true, disabled: !ps.length },
+          ], `Recall all ${ps.length} parties? They walk home carrying what they have.`, "Recall all")}
+        </div>
+        <div class="party-list">
+          ${ps.length ? ps.map(p => `
+            <div class="party ${p.hot ? "awaiting" : ""}" tabindex="0" role="button">
+              <span class="pglyph">${p.glyph}</span>
+              <span class="pname">${esc(p.name)}</span>
+              <span class="phase ${p.hot ? "hot" : ""}">${esc(p.phase)}</span>
+              <button class="kill" type="button" data-recall="${esc(p.name)}" title="Recall — the party walks home" aria-label="Recall ${esc(p.name)}">✕</button>
+            </div>`).join("") : `<p class="reason" style="margin:2px 0 6px">No parties in the field.</p>`}
+        </div>
+        ${state.compose ? composeHtml(m.idle) : `
+          <div class="party-foot">
+            <button class="btn primary" type="button" data-compose="open" ${m.idle <= 0 ? "disabled" : ""} style="width:100%">Send a party…</button>
+            ${m.idle <= 0 ? `<p class="reason">No idle workers to spare. Free some from Work.</p>` : ""}
+          </div>`}
+      </div>`;
+  }
+
+  function composeHtml(idle) {
+    return `
+      <div class="compose">
+        <h5>Send a party <button class="x" type="button" data-compose="close" aria-label="Cancel">✕</button></h5>
+        <div class="field">
+          <span class="fk">Mission</span>
+          <span class="choices">
+            <button class="pill" type="button" data-mission="scout" aria-pressed="${state.mission === "scout"}">⚑ Scout</button>
+            <button class="pill" type="button" data-mission="hunt" aria-pressed="${state.mission === "hunt"}">🏹 Hunt</button>
+          </span>
+        </div>
+        ${!state.mission ? `<p class="reason" style="margin:0">Pick a mission — the rest of the form follows from it.</p>` : `
+          <div class="field">
+            <span class="fk">Party</span>
+            <span class="stepper">
+              <button type="button" data-party="-1" ${state.party <= 1 ? "disabled" : ""} aria-label="Smaller party">−</button>
+              <span class="n">${state.party}</span>
+              <button type="button" data-party="1" ${state.party >= idle ? "disabled" : ""} aria-label="Bigger party">+</button>
+            </span>
+            <span class="sub" style="font-size:11px">of ${idle} idle</span>
+          </div>
+          ${state.mission === "hunt" ? `
+            <div class="field">
+              <span class="fk">Policy</span>
+              <span class="choices">
+                ${[["sustain", "♻"], ["surplus", "⬆"], ["market", "⇄"], ["eradicate", "💀"]].map(([k, g]) =>
+                  `<button class="pill" type="button" data-policy="${k}" aria-pressed="${state.policy === k}">${g} ${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}
+              </span>
+            </div>
+            <div class="forecast">delivers ≈5 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~20 food <span class="warnbit">· ⚠ 12% wasted</span></div>
+          ` : `<div class="forecast">${state.party} scouts · sees ${state.party + 1} tiles beyond the band's own sight</div>`}
+          <button class="btn primary" type="button" data-compose="close" style="width:100%">
+            ${state.mission === "hunt" ? "Choose a herd on the map…" : "Choose a destination…"}
+          </button>`}
+      </div>`;
+  }
+
+  function spark(h) {
+    const pts = Array.from({ length: 26 }, (_, i) => (h - 8) - i * ((h - 16) / 26) - Math.sin(i / 2.2) * (h / 14));
+    const w = 100;
+    const step = w / (pts.length - 1);
+    const line = pts.map((p, i) => `${(i * step).toFixed(2)},${p.toFixed(2)}`).join(" ");
+    return `
+      <svg class="spark" viewBox="0 0 ${w} ${h}" height="${h}" preserveAspectRatio="none" role="img" aria-label="Larder projection over 20 turns, rising">
+        <polygon points="0,${h} ${line} ${w},${h}" fill="rgba(79,224,207,0.14)"></polygon>
+        <polyline points="${line}" fill="none" stroke="#4fe0cf" stroke-width="1.1" vector-effect="non-scaling-stroke"></polyline>
+        <circle cx="${w - 0.6}" cy="${pts[pts.length - 1].toFixed(2)}" r="1.6" fill="#4fe0cf"></circle>
+      </svg>`;
+  }
+
+  function wire() {
+    const panel = document.getElementById("panel");
+
+    panel.querySelectorAll("[data-tab]").forEach(el =>
+      el.addEventListener("click", () => { state.tab = el.dataset.tab; render(); }));
+
+    panel.querySelectorAll("[data-menu]").forEach(el =>
+      el.addEventListener("click", () => {
+        const k = el.dataset.menu;
+        state.menu = state.menu === k ? null : k;
+        state.confirm = null;
+        render();
+      }));
+
+    panel.querySelectorAll("[data-menu-close]").forEach(el =>
+      el.addEventListener("click", () => { state.menu = null; state.confirm = null; render(); }));
+
+    panel.querySelectorAll("[data-ask-clear]").forEach(el =>
+      el.addEventListener("click", () => { state.confirm = el.dataset.askClear; render(); }));
+
+    panel.querySelectorAll("[data-do-clear]").forEach(el =>
+      el.addEventListener("click", () => {
+        if (el.dataset.doClear === "work") sources().forEach(s => { state.dropped[s.id] = true; });
+        else parties().forEach(p => { state.recalled[p.name] = true; });
+        state.menu = null;
+        state.confirm = null;
+        state.open = null;
+        state.page = 0;
+        render();
+      }));
+
+    panel.querySelectorAll("[data-drop]").forEach(el =>
+      el.addEventListener("click", e => {
+        e.stopPropagation();
+        state.dropped[el.dataset.drop] = true;
+        if (state.open === el.dataset.drop) state.open = null;
+        render();
+      }));
+
+    panel.querySelectorAll("[data-recall]").forEach(el =>
+      el.addEventListener("click", e => {
+        e.stopPropagation();
+        state.recalled[el.dataset.recall] = true;
+        render();
+      }));
+
+    panel.querySelectorAll("[data-row]").forEach(el => {
+      const toggle = e => {
+        if (e.target.closest("[data-src]") || e.target.closest("[data-drop]")) return;
+        state.open = state.open === el.dataset.row ? null : el.dataset.row;
+        render();
+      };
+      el.addEventListener("click", toggle);
+      el.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); }
+      });
+    });
+
+    panel.querySelectorAll("[data-close-inspect]").forEach(el =>
+      el.addEventListener("click", () => { state.open = null; render(); }));
+
+    panel.querySelectorAll("[data-filter]").forEach(el =>
+      el.addEventListener("click", () => { state.filter = el.dataset.filter; state.page = 0; render(); }));
+
+    panel.querySelectorAll("[data-page]").forEach(el =>
+      el.addEventListener("click", () => { state.page = Math.max(0, state.page + Number(el.dataset.page)); render(); }));
+
+    panel.querySelectorAll("[data-role]").forEach(el =>
+      el.addEventListener("click", () => {
+        const k = el.dataset.role;
+        state.roles[k] = Math.max(0, state.roles[k] + Number(el.dataset.delta));
+        render();
+      }));
+
+    panel.querySelectorAll("[data-compose]").forEach(el =>
+      el.addEventListener("click", () => {
+        state.compose = el.dataset.compose === "open";
+        if (!state.compose) state.mission = null;
+        render();
+      }));
+
+    panel.querySelectorAll("[data-mission]").forEach(el =>
+      el.addEventListener("click", () => { state.mission = el.dataset.mission; render(); }));
+    panel.querySelectorAll("[data-policy]").forEach(el =>
+      el.addEventListener("click", () => { state.policy = el.dataset.policy; render(); }));
+    panel.querySelectorAll("[data-party]").forEach(el =>
+      el.addEventListener("click", () => { state.party = Math.max(1, state.party + Number(el.dataset.delta)); render(); }));
+  }
+
+  document.querySelectorAll("[data-dock-btn]").forEach(b =>
+    b.addEventListener("click", () => {
+      state.dock = b.dataset.dockBtn;
+      state.page = 0;
+      document.getElementById("screen").dataset.dock = state.dock;
+      document.querySelectorAll("[data-dock-btn]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+      render();
+    }));
+
+  document.getElementById("reset").addEventListener("click", () => {
+    state.dropped = {};
+    state.recalled = {};
+    state.open = null;
+    state.menu = null;
+    state.confirm = null;
+    state.page = 0;
+    state.filter = "all";
+    state.roles = { scout: 0, warrior: 0 };
+    render();
+  });
+
+  // Click anywhere else closes an open section menu.
+  document.addEventListener("click", e => {
+    if (state.menu && !e.target.closest(".menu-wrap")) {
+      state.menu = null;
+      state.confirm = null;
+      render();
+    }
+  });
+
+  document.querySelectorAll("[data-load-btn]").forEach(b =>
+    b.addEventListener("click", () => {
+      state.load = b.dataset.loadBtn;
+      state.open = null;
+      state.dropped = {};
+      state.page = 0;
+      document.querySelectorAll("[data-load-btn]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+      render();
+    }));
+
+  document.querySelectorAll("[data-idle-btn]").forEach(b =>
+    b.addEventListener("click", () => {
+      state.idle = b.dataset.idleBtn;
+      document.querySelectorAll("[data-idle-btn]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+      render();
+    }));
+
+  render();
+</script>

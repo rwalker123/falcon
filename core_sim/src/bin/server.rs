@@ -53,9 +53,9 @@ use core_sim::{
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
-    AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
-    CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
-    OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
+    AxisBiasState, CancelScope, CommandEnvelope as ProtoCommandEnvelope,
+    CommandPayload as ProtoCommandPayload, CorruptionEntry, CorruptionSubsystem,
+    InfluenceScopeKind, OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
     SupportChannel as ProtoSupportChannel, TerrainTags,
 };
 use sim_schema::{encode_map_export_json, MapExport};
@@ -603,8 +603,9 @@ fn main() {
             Command::CancelOrder {
                 faction,
                 band_entity_bits,
+                scope,
             } => {
-                handle_cancel_order(&mut app, faction, band_entity_bits);
+                handle_cancel_order(&mut app, faction, band_entity_bits, scope);
             }
         }
 
@@ -768,6 +769,8 @@ enum Command {
     CancelOrder {
         faction: FactionId,
         band_entity_bits: Option<u64>,
+        /// What the cancel clears: everything (+ travel), the worked sources, or the standing roles.
+        scope: CancelScope,
     },
     ExportMap {
         path: Option<String>,
@@ -2886,13 +2889,51 @@ fn resolve_expedition_entity(
     Some(entity)
 }
 
-/// Clear every labor assignment on a band and stop any in-progress move — the band goes fully
-/// idle (the repurposed per-source unassign of the retired single-task `cancel_order`). Rejects an
-/// already-idle band so a stray invocation reports a failure rather than a misleading "stood down".
+/// Whether `scope` clears an assignment on `target`. [`CancelScope::All`] takes everything;
+/// `Work` takes only the worked food sources and `Roles` only the band-wide standing roles, which
+/// is what lets the Band panel's Work and Roles sections clear independently.
+fn cancel_scope_clears(scope: CancelScope, target: &LaborTarget) -> bool {
+    match scope {
+        CancelScope::All => true,
+        CancelScope::Work => matches!(
+            target,
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+        ),
+        CancelScope::Roles => matches!(target, LaborTarget::Scout | LaborTarget::Warrior),
+    }
+}
+
+/// What the rejection says when the requested scope has nothing to clear — the band may be busy
+/// with work the *other* scope owns, so the message has to name the scope rather than claim the
+/// band is idle.
+fn cancel_scope_nothing_to_clear(scope: CancelScope, band_label: &str) -> String {
+    match scope {
+        CancelScope::All => format!("{band_label} has no active order to cancel."),
+        CancelScope::Work => format!("{band_label} has no worked sources to unassign."),
+        CancelScope::Roles => format!("{band_label} has no standing roles to clear."),
+    }
+}
+
+/// The feed line a successful cancel pushes. Only `All` stands the band down; the narrow scopes
+/// leave the band working (and possibly travelling), so they must not claim otherwise.
+fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String {
+    match scope {
+        CancelScope::All => format!("{band_label} stood down"),
+        CancelScope::Work => format!("{band_label} unassigned its worked sources"),
+        CancelScope::Roles => format!("{band_label} cleared its standing roles"),
+    }
+}
+
+/// Clear the labor assignments `scope` names on a band — every one plus any in-progress move under
+/// [`CancelScope::All`] (the band goes fully idle), the worked Forage/Hunt sources under `Work`, or
+/// the Scout/Warrior roles under `Roles`. The narrow scopes deliberately leave [`BandTravel`] alone:
+/// moving is not working. Rejects when *the requested scope* has nothing to clear, so a stray
+/// invocation reports a failure rather than a misleading "stood down".
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_entity_bits: Option<u64>,
+    scope: CancelScope,
 ) {
     let Some(band) = select_starting_band(
         app,
@@ -2904,13 +2945,19 @@ fn handle_cancel_order(
         return;
     };
 
+    let clears_travel = matches!(scope, CancelScope::All);
     let has_task = {
         let entity = app.world.entity(band.entity);
-        entity.contains::<BandTravel>()
+        (clears_travel && entity.contains::<BandTravel>())
             || app
                 .world
                 .get::<LaborAllocation>(band.entity)
-                .map(|allocation| !allocation.assignments.is_empty())
+                .map(|allocation| {
+                    allocation
+                        .assignments
+                        .iter()
+                        .any(|assignment| cancel_scope_clears(scope, &assignment.target))
+                })
                 .unwrap_or(false)
     };
     if !has_task {
@@ -2918,26 +2965,33 @@ fn handle_cancel_order(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            format!("{} has no active order to cancel.", band.label),
+            cancel_scope_nothing_to_clear(scope, &band.label),
         );
         return;
     }
 
     {
         let mut entity = app.world.entity_mut(band.entity);
-        entity.remove::<BandTravel>();
+        if clears_travel {
+            entity.remove::<BandTravel>();
+        }
         if let Some(mut allocation) = entity.get_mut::<LaborAllocation>() {
-            allocation.clear();
+            allocation.clear_kinds(|target| !cancel_scope_clears(scope, target));
         }
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
-    let detail = format!("status=cancelled band={}", band.label);
+    let detail = format!(
+        "status=cancelled scope={} band={}",
+        scope.as_str(),
+        band.label
+    );
     info!(
         target: "shadow_scale::command",
         command = "cancel_order",
         faction = %faction.0,
         band = %band.label,
+        scope = %scope.as_str(),
         "command.cancel_order.applied"
     );
     push_command_event(
@@ -2945,7 +2999,7 @@ fn handle_cancel_order(
         tick,
         CommandEventKind::CancelOrder,
         faction,
-        format!("{} stood down", band.label),
+        cancel_scope_applied_message(scope, &band.label),
         Some(detail),
     );
 }
@@ -4310,9 +4364,11 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_entity_bits,
+            scope,
         } => Some(Command::CancelOrder {
             faction: FactionId(faction_id),
             band_entity_bits,
+            scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
         ProtoCommandPayload::NewGame {
@@ -7425,6 +7481,220 @@ mod tests {
         assert!(
             allocation.last_yields.is_empty(),
             "its telemetry row must go with it"
+        );
+    }
+
+    // --- `cancel_order` scopes --------------------------------------------------------------------
+    //
+    // The Band panel splits the single "cancel" button into per-section clears, so the verb names
+    // what it clears. `work` takes the worked sources, `roles` the standing roles, `all` both plus
+    // the band's travel — and only `all` may touch `BandTravel` (moving is not working).
+
+    /// Workers each staffed source/role carries in the cancel-scope harness. Distinct per target so
+    /// a mis-scoped clear shows up in the freed-worker count instead of cancelling out.
+    const CANCEL_FORAGE_WORKERS: u32 = 3;
+    const CANCEL_HUNT_WORKERS: u32 = 4;
+    const CANCEL_SCOUT_WORKERS: u32 = 2;
+    const CANCEL_WARRIOR_WORKERS: u32 = 1;
+    /// The herd the harness band hunts. It need not exist — `cancel_order` only reads assignments.
+    const CANCEL_HERD_ID: &str = "game_deer_01";
+
+    /// A band staffing all four labor targets: two worked sources and both standing roles.
+    fn spawn_band_working_every_target(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+    ) -> (Entity, UVec2) {
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(app, coord);
+        let band = spawn_idle_band(app, faction, tile);
+        let available = available_workers(
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("band has a cohort")
+                .working,
+        );
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+            CANCEL_FORAGE_WORKERS,
+            available,
+        );
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: CANCEL_HERD_ID.to_string(),
+                policy: FollowPolicy::Sustain,
+            },
+            CANCEL_HUNT_WORKERS,
+            available,
+        );
+        allocation.set_assignment(LaborTarget::Scout, CANCEL_SCOUT_WORKERS, available);
+        allocation.set_assignment(LaborTarget::Warrior, CANCEL_WARRIOR_WORKERS, available);
+        app.world.entity_mut(band).insert(allocation);
+        (band, coord)
+    }
+
+    /// Unassigned workers, exactly as the snapshot derives them.
+    fn idle_workers(app: &bevy::prelude::App, band: Entity) -> u32 {
+        let working = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("band has a cohort")
+            .working;
+        let assigned = app
+            .world
+            .get::<LaborAllocation>(band)
+            .map(|allocation| allocation.assigned_total())
+            .unwrap_or(0);
+        available_workers(working).saturating_sub(assigned)
+    }
+
+    fn staffed_kinds(app: &bevy::prelude::App, band: Entity) -> Vec<&'static str> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments
+            .iter()
+            .map(|assignment| assignment.target.kind())
+            .collect()
+    }
+
+    /// `work` unassigns the worked sources and leaves the standing roles staffed, freeing exactly
+    /// the source workers.
+    #[test]
+    fn cancel_order_work_clears_the_sources_and_keeps_the_roles() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let (band, _) = spawn_band_working_every_target(&mut app, faction);
+        let idle_before = idle_workers(&app, band);
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::Work);
+
+        assert_eq!(
+            staffed_kinds(&app, band),
+            vec!["scout", "warrior"],
+            "only the worked sources are unassigned"
+        );
+        assert_eq!(
+            idle_workers(&app, band),
+            idle_before + CANCEL_FORAGE_WORKERS + CANCEL_HUNT_WORKERS,
+            "the freed source workers go idle"
+        );
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert_eq!(
+            allocation.last_yields.len(),
+            allocation.assignments.len(),
+            "the telemetry rows stay index-aligned with the assignments"
+        );
+    }
+
+    /// `roles` is the mirror: the standing roles go, the worked sources stay.
+    #[test]
+    fn cancel_order_roles_clears_the_roles_and_keeps_the_sources() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let (band, _) = spawn_band_working_every_target(&mut app, faction);
+        let idle_before = idle_workers(&app, band);
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::Roles);
+
+        assert_eq!(
+            staffed_kinds(&app, band),
+            vec!["forage", "hunt"],
+            "only the standing roles are cleared"
+        );
+        assert_eq!(
+            idle_workers(&app, band),
+            idle_before + CANCEL_SCOUT_WORKERS + CANCEL_WARRIOR_WORKERS,
+            "the freed role workers go idle"
+        );
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert_eq!(
+            allocation.last_yields.len(),
+            allocation.assignments.len(),
+            "the telemetry rows stay index-aligned with the assignments"
+        );
+    }
+
+    /// `all` is the historical behaviour: everything goes, travel included.
+    #[test]
+    fn cancel_order_all_clears_everything_and_stops_the_move() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let (band, _) = spawn_band_working_every_target(&mut app, faction);
+        handle_move_band(&mut app, faction, None, 2, 2);
+        assert!(
+            app.world.entity(band).contains::<BandTravel>(),
+            "the band is travelling before the cancel"
+        );
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::All);
+
+        assert!(
+            staffed_kinds(&app, band).is_empty(),
+            "every assignment is cleared"
+        );
+        assert!(
+            !app.world.entity(band).contains::<BandTravel>(),
+            "`all` stops the band's move"
+        );
+    }
+
+    /// Moving is not working: a `work` clear must leave an in-progress `move_band` running.
+    #[test]
+    fn cancel_order_work_leaves_an_in_progress_move_alone() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let (band, _) = spawn_band_working_every_target(&mut app, faction);
+        handle_move_band(&mut app, faction, None, 2, 2);
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::Work);
+
+        assert!(
+            app.world.entity(band).contains::<BandTravel>(),
+            "unassigning the sources must not strand the band mid-journey"
+        );
+    }
+
+    /// The rejection is scope-aware: a band with sources but no roles accepts `work` and refuses
+    /// `roles`, rather than reporting itself idle.
+    #[test]
+    fn cancel_order_rejects_only_the_scope_that_has_nothing_to_clear() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let available = available_workers(
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("band has a cohort")
+                .working,
+        );
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+            CANCEL_FORAGE_WORKERS,
+            available,
+        );
+        app.world.entity_mut(band).insert(allocation);
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::Roles);
+        assert_eq!(
+            staffed_kinds(&app, band),
+            vec!["forage"],
+            "a rejected `roles` clear touches nothing"
+        );
+
+        handle_cancel_order(&mut app, faction, None, CancelScope::Work);
+        assert!(
+            staffed_kinds(&app, band).is_empty(),
+            "`work` is accepted on the same band"
         );
     }
 }

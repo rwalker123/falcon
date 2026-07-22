@@ -8,7 +8,7 @@ signal map_zoom_fit
 ## Emitted when the player clears ALL of a band's labor assignments (the "Clear all"
 ## affordance); carries the band dict so Main can extract faction + entity bits for the
 ## repurposed `cancel_order` command (now a clear-all → fully idle).
-signal cancel_order_requested(band: Dictionary)
+signal cancel_order_requested(band: Dictionary, scope: String)
 ## Early-Game Labor (docs/plan_early_game_labor.md, slice 3b): assign/unassign
 ## working-age workers to a source or band-wide role. Payload keys:
 ## { faction, band, kind ("forage"|"hunt"|"scout"|"warrior"), workers,
@@ -411,11 +411,20 @@ var _selected_band_food_turns: float = NAN
 # clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
 var _food_flow_present: bool = false
 # Disclosure context for the Food + Morale summary rows, rebuilt each render in `_unit_summary_lines`:
-# row-label → {kind, open}. `_format_detail_bbcode` reads it to render the caret + clickable meta.
+# row-label → {key, open, concerning}. `_format_detail_bbcode` reads it to render the caret + meta.
 var _disclosure_state: Dictionary = {}
-# Per-row per-band expand override, keyed `"<kind>:<entity>"` → bool. Absent = follow the row's
-# concerning default (food: net-negative / low runway; morale: below-warn / falling); a click stores one.
-var _breakdown_expanded: Dictionary = {}
+# The breakdown rows each disclosure would show, keyed `"<kind>:<entity>"` → Array[String]. Written
+# every render by `_register_disclosure` and read by the popover, so the popover never recomputes a
+# number and a click needs no band lookup — the meta carries the key. Deliberately NOT cleared with
+# `_disclosure_state`: that one is per-render and per-host, and the other host's render must not be
+# able to empty the payload behind an open popover.
+var _breakdown_payloads: Dictionary = {}
+# The disclosure key whose popover is currently up, `""` = none. It is what "open" means now, so it
+# is also what flips the row's caret.
+var _breakdown_popover_key: String = ""
+# The one popover both hosts share, built lazily on the first disclosure click.
+var _breakdown_popover: PopupPanel = null
+var _breakdown_popover_label: RichTextLabel = null
 # Morale (0–1) of the currently-selected player band, so the detail formatter can
 # threshold-tint the Morale row. NAN when no player band is selected.
 var _selected_band_morale: float = NAN
@@ -749,8 +758,6 @@ const ALLOC_SECTION_FONT_SIZE := 10
 # tall stack reads unchanged; the Band/City panel spaces the blocks THEMSELVES apart (tall) or flows
 # them into columns (wide).
 const ALLOC_BLOCK_SEPARATION := 6
-const ALLOC_HEADER_ACTIONS := "Current actions"
-const ALLOC_HEADER_ROLES := "Band roles"
 # The merged larder projection's section header (see `_build_food_outlook_block`). Its own block, not
 # a line inside the summary RichTextLabel — BBCode cannot host a drawn chart.
 const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
@@ -957,9 +964,17 @@ const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
 const FOOD_FLOW_MIN := 0.001
-# Click-to-expand disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label,
-# a clickable `[url]` meta = `<prefix><kind>` dispatched by `_on_detail_meta_clicked`, and a per-row
-# per-band expand override in `_breakdown_expanded` (absent → the row's concerning default).
+# Click-to-open disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label and
+# a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `_on_detail_meta_clicked`.
+#
+# THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE. Expanding it in place grew the vitals label — a
+# `fit_content` RichTextLabel — by several lines AFTER `_build_band_zone_content` had already chosen
+# its height tier from the zone box, and the zone box is fixed by design with `clip_contents` hosts,
+# so the extra lines silently sliced the WORKFORCE row and ate the role cards. A Window cannot change
+# a zone's height, which is the same reason the section `⋯` menus are `MenuButton`s and the
+# destructive confirms are `ConfirmationDialog`s. The work board's budgeted inline inspector strip is
+# the other idiom and does not apply here: in the SHORT tier the chart is already dropped and the role
+# cards are already hint-less, so there is nothing left to spend but PEOPLE/WORKFORCE — the content.
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
@@ -968,18 +983,22 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
 const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
+# The breakdown popover's card: wide enough for the longest breakdown row (`▼ −1.74  🐄 Pen feed
+# (animals)` / `▲ +1.0%  harsh terrain (Karst Cavern Mouth)`) without wrapping every line, and
+# padded like the cards it borrows its stylebox from.
+const BREAKDOWN_POPOVER_WIDTH := 300.0
+const BREAKDOWN_POPOVER_PADDING := 10
+# The gap between the clicked row and the popover's top edge, so the caret stays readable under it.
+const BREAKDOWN_POPOVER_GAP := 4.0
 # ---- Band/City panel identity grid ---------------------------------------------------------------
 # The panel's own header already states the band's name + settlement stage, so the summary rows there
 # drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
 # under another name) with the labor line — same numbers, one row, in the identity grid where they
 # belong. The Occupants-card drawer (FOREIGN bands, and the no-panel ui_preview fallback) keeps
 # Unit/Size: it has no panel header naming the band, and a foreign band exposes no worker breakdown.
-# Hence `_unit_summary_lines(unit, in_panel)` rather than deleting the rows outright.
-const DETAIL_ROW_POPULATION := "Population"
-# The labor line's numbers. ONE format, two hosts: the panel's identity-grid row renders it without
-# the leading label (the grid supplies that), the legacy in-card allocation block with it.
-const WORKERS_VALUE_FORMAT := "%d · Workers %d (Idle %d)"
-const WORKERS_HEADER_FORMAT := "%s %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT]
+# The population/workers LINE is gone from the summary entirely: the band zone's People and
+# Workforce bars state the same numbers as two readable charts, and a text restatement above them
+# was the third telling of one fact.
 # Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
 # through the SAME `_format_detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
 # eaten amber) — no inline color tags, which mis-layout between the KV table segments.
@@ -1018,7 +1037,6 @@ const EXPEDITION_PHASE_LABELS := {
 }
 # Band/City panel "Active expeditions" section — mission glyphs mirror the map markers
 # (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
-const PANEL_EXPEDITIONS_HEADER := "Active expeditions"
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 const SEND_EXPEDITION_TITLE := "Send scouting expedition"
@@ -1059,7 +1077,225 @@ const COMPOSE_KIND_NONE := ""
 const COMPOSE_KIND_FORAGE := "forage"
 const COMPOSE_KIND_HERD := "herd"
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
-const SEND_EXPEDITION_SECTION := "Send expedition"
+
+# ---- Band/City panel zones (docs/band_panel_ux_proposal.html) ---------------
+## Gap between a zone's top-level sections (vitals / people / outlook / workforce), and the tighter
+## gap between the parts of one section (bar → key → cards).
+const ZONE_SECTION_SEPARATION := 12
+const ZONE_BLOCK_SEPARATION := 6
+## The zone box assumed when no dock is injected (the HUD-only ui_preview host), so the work board
+## still pages against a sane measure instead of collapsing to one row.
+const ZONE_FALLBACK_SIZE := Vector2(340.0, 360.0)
+## A zone section head reserves exactly this height, so the work board's capacity maths and what the
+## head actually draws are the same number.
+const ZONE_HEAD_HEIGHT := 20.0
+const ZONE_HEAD_SEPARATION := 6
+const ZONE_HEAD_FONT_SIZE := 10
+## Section-menu affordance (`⋯`) — a MenuButton, so its popup is a Window and cannot move any layout.
+const SECTION_MENU_GLYPH := "⋯"
+const SECTION_MENU_WIDTH := 22.0
+const CONFIRM_DIALOG_TITLE := "Confirm"
+
+## Zone section headers (uppercased by `_alloc_section_label`).
+const ZONE_HEADER_PEOPLE := "People"
+const ZONE_HEADER_WORKFORCE := "Workforce"
+const ZONE_HEADER_WORK := "Work"
+const ZONE_HEADER_PARTIES := "Parties"
+
+## Stacked-bar geometry, shared by the People and Workforce bars.
+const COMPOSITION_BAR_HEIGHT := 9.0
+const COMPOSITION_BAR_SEPARATION := 2
+## A present-but-tiny segment still needs a visible sliver, so the stretch ratio never falls to 0.
+const COMPOSITION_MIN_RATIO := 1.0
+const COMPOSITION_KEY_SEPARATION := 12
+const COMPOSITION_KEY_FONT_SIZE := 11
+const COMPOSITION_SWATCH_SIZE := Vector2(8.0, 8.0)
+const COMPOSITION_SWATCH_SEPARATION := 4
+
+## PEOPLE key glyphs + words (the words live in the tooltips the glyphs replaced).
+const PEOPLE_GLYPH_CHILDREN := "👶"
+const PEOPLE_GLYPH_WORKING := "🛠"
+const PEOPLE_GLYPH_ELDERS := "🧓"
+const PEOPLE_LABEL_CHILDREN := "children"
+const PEOPLE_LABEL_WORKING := "working age"
+const PEOPLE_LABEL_ELDERS := "elders"
+## Dependency ratio: dependents per this many working-age adults.
+const PEOPLE_DEPENDENCY_BASE := 100
+## Above this many dependents per 100 workers the band carries more mouths than hands → WARN.
+const PEOPLE_DEPENDENCY_HEAVY := 100
+## The chip says the COUNT, not the ratio. `dep 88/100` was the analyst's framing of a number the
+## player has to act on — it reads as a score out of 100 (and the game's designer could not tell what
+## it meant), while the bar beside it already shows the split. "14 dependents" is the fact; the ratio
+## and what it implies live in the tooltip, which is where the teaching belongs.
+const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
+## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
+## dependent IS and who carries them. The long version (which also quoted the ratio) explained the
+## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
+const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from the larder but cannot be put to work.
+%d working-age adults support them."""
+## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
+const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
+
+## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
+## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
+## At/above TALL: the full-height food-outlook chart and hinted role cards.
+## Between CHART_MIN and TALL: a compact chart.
+## Below CHART_MIN (a 360px T/B dock): no chart at all, and the role cards drop their hint line to a
+## tooltip — the two biggest blocks, given up in the order they are least missed.
+## All measured against the zone BOX, never against the dock edge.
+const BAND_ZONE_TALL_MIN_HEIGHT := 420.0
+const BAND_ZONE_CHART_MIN_HEIGHT := 340.0
+const FOOD_CHART_COMPACT_HEIGHT := 42.0
+## The three tiers as an ordinal, so `zones_resized` can tell a mere re-page (the work board) from a
+## band-zone tier change (which needs the zone rebuilt, not re-paged).
+const BAND_ZONE_TIER_SHORT := 0
+const BAND_ZONE_TIER_COMPACT := 1
+const BAND_ZONE_TIER_TALL := 2
+
+## WORKFORCE readout + segment keys.
+const WORKFORCE_IDLE_FORMAT := "%d idle of %d"
+const WORKFORCE_KEY_FORAGE := "Forage"
+const WORKFORCE_KEY_HUNT := "Hunt"
+const WORKFORCE_KEY_ROLES := "Roles"
+const WORKFORCE_KEY_PARTIES := "Parties"
+const WORKFORCE_KEY_IDLE := "Idle"
+
+## Standing-role CARDS (the fix for roles reading as one more worked source in a list).
+const ROLE_NAME_SCOUT := "Scout"
+const ROLE_NAME_WARRIOR := "Warrior"
+## Trimmed to what the SHORT tier affords: at 8/8 the band zone stood 5px past a 360px T/B dock
+## (measured by `band_panel_preview`'s zone-bounds assertion, which is why it exists).
+const ROLE_CARD_SEPARATION := 6
+const ROLE_CARD_PADDING := 6
+const ROLE_CARD_CORNER_RADIUS := 4
+const ROLE_CARD_NAME_FONT_SIZE := 12
+## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
+## hint wraps to.
+const ROLE_CARD_HINT_HEIGHT := 28.0
+
+## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
+## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
+const WORK_ROW_HEIGHT := 28.0
+## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
+## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate
+## (`Forage (73, 20`), which costs the row the one thing it is for: naming WHICH source. Three
+## readable columns beat four unreadable ones — the page loses ~7 rows, the row keeps its identity.
+const WORK_COLUMN_MIN_WIDTH := 380.0
+const WORK_MAX_COLUMNS := 4
+const WORK_CHIPS_HEIGHT := 26.0
+const WORK_PAGER_HEIGHT := 24.0
+const WORK_INSPECTOR_HEIGHT := 118.0
+## The inspector with its policy picker open (an extra rung row + its hint).
+const WORK_INSPECTOR_POLICY_HEIGHT := 186.0
+## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
+const WORK_ZONE_GAP_COUNT := 3.0
+const WORK_COLUMN_RULE_WIDTH := 1.0
+const WORK_COLUMN_SEPARATION := 10
+const WORK_ROW_STRIPE_WIDTH := 2.0
+## The row is a fixed budget: everything but the label is fixed-width, so the label gets whatever a
+## `WORK_COLUMN_MIN_WIDTH` column has left. These are trimmed to the smallest legible size so the
+## label's share stays as wide as possible; past it the label ellipsises and the inspector strip
+## spells the row out in full.
+const WORK_ROW_SEPARATION := 4
+const WORK_ROW_ICON_WIDTH := 16.0
+const WORK_ROW_RATE_WIDTH := 46.0
+const WORK_ROW_MARKS_WIDTH := 20.0
+const WORK_ROW_PADDING_H := 4
+const WORK_ROW_PADDING_V := 2
+## A board row must be EXACTLY `WORK_ROW_HEIGHT` — the capacity maths divides by it, so a row that
+## renders taller silently overflows the page off the bottom of the zone. The default button chrome
+## (`HudStyle._button_stylebox`, 9px of vertical padding) makes a stepper ~42px tall on its own, so a
+## work row's stepper takes a COMPACT treatment: these are the paddings and type sizes that fit.
+const WORK_ROW_FONT_SIZE := 13
+const WORK_STEPPER_FONT_SIZE := 12
+const WORK_STEPPER_PADDING_V := 2
+## The same squeeze for the zone chrome, each sized to its own reserved height.
+const ZONE_MENU_PADDING_V := 2
+const WORK_CHIP_PADDING_V := 3
+const WORK_PAGER_PADDING_V := 2
+const INSPECTOR_CLOSE_PADDING_V := 2
+const WORK_CHIP_SEPARATION := 4
+const WORK_CHIP_FONT_SIZE := 11
+
+## Board filters + sorts. The chips ARE the summary and the filter (they replace group headers).
+const WORK_FILTER_ALL := &"all"
+const WORK_FILTER_FORAGE := &"forage"
+const WORK_FILTER_HUNT := &"hunt"
+const WORK_FILTER_ATTENTION := &"attention"
+const WORK_SORT_YIELD := &"yield"
+const WORK_SORT_NAME := &"name"
+const WORK_CHIP_ALL_FORMAT := "All %d"
+const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
+const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
+const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
+
+const WORK_SOURCES_FORMAT := "%d sources"
+const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
+const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
+const WORK_MENU_SORT_YIELD := "Sort by yield"
+const WORK_MENU_SORT_NAME := "Sort by name"
+const WORK_MENU_UNASSIGN_FORMAT := "Unassign all work (%d)"
+const WORK_UNASSIGN_CONFIRM_FORMAT := "Return all %d sources' workers to idle? Standing roles and parties are untouched."
+const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
+
+const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
+const WORK_ROW_HUNT_FORMAT := "Hunt %s"
+const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
+const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
+
+## The inspector strip (the row's second/third lines, relocated to one place).
+const INSPECTOR_CLOSE_GLYPH := "✕"
+const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
+const WORK_INSPECT_JUMP := "Jump to source"
+const WORK_INSPECT_POLICY := "Change policy"
+const WORK_INSPECT_UNASSIGN := "Unassign"
+const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
+const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
+const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
+
+const PAGER_PREV_GLYPH := "‹"
+const PAGER_NEXT_GLYPH := "›"
+const PAGER_PREV_TOOLTIP := "Previous page"
+const PAGER_NEXT_TOOLTIP := "Next page"
+const PAGER_FORMAT := "Page %d / %d"
+const PAGER_RANGE_FORMAT := "%d–%d of %d"
+
+## PARTIES zone.
+const PARTIES_HEADER_FORMAT := "%d out · %d workers"
+const PARTIES_EMPTY_HINT := "No parties in the field."
+const PARTY_MENU_TOOLTIP := "Bulk actions for parties in the field."
+const PARTY_RECALL_GLYPH := "✕"
+const PARTY_RECALL_TOOLTIP := "Recall — the party walks home"
+const PARTY_RECALL_WIDTH := 24.0
+## The per-row recall stays VISIBLE (parties have no other removal path) but rests dimmed, so it
+## reads as available without competing with the row it sits on.
+const PARTY_RECALL_REST_ALPHA := 0.45
+const PARTY_RECALL_ALL_FORMAT := "Recall all parties (%d)"
+const PARTY_RECALL_CONFIRM_FORMAT := "Recall all %d parties? They walk home carrying what they have."
+const PARTY_RECALL_CONFIRM_OK := "Recall all"
+const SEND_PARTY_BUTTON := "Send a party…"
+const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
+
+## The compose sheet — MISSION FIRST, so the policy picker is unreachable except under Hunt.
+const COMPOSE_MISSION_SCOUT := "scout"
+const COMPOSE_MISSION_HUNT := "hunt"
+const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
+const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
+const COMPOSE_PICK_MISSION_HINT := "Pick a mission — the rest of the form follows from it."
+const COMPOSE_FIELD_PARTY := "Party"
+const COMPOSE_FIELD_POLICY := "Policy"
+const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
+const COMPOSE_CANCEL_TOOLTIP := "Cancel"
+
+## `cancel_order` scopes (the server grammar: `cancel_order <faction> [band] [all|work|roles]`).
+## `work` clears Forage + Hunt only — standing roles, parties and an in-progress move survive.
+## A policy picker rendered INSIDE a zone wraps to this many columns — four rungs abreast do not fit
+## a 380px L/R dock, and a picker wider than its zone drags the whole zone column past its host.
+const ZONE_POLICY_PICKER_COLUMNS := 2
+
+const CANCEL_SCOPE_ALL := "all"
+const CANCEL_SCOPE_WORK := "work"
+const CANCEL_SCOPE_ROLES := "roles"
 # The hunt party's carry-ceiling FULL badge (shown in the hunt panel when carried ≥ cap).
 const HUNT_FULL_BADGE := "· FULL"
 # The launch policy (Sustain/Surplus/Market/Eradicate) chosen for a hunting EXPEDITION, with a
@@ -1292,6 +1528,26 @@ var _player_bands: Array = []
 # `_player_bands`. The Band/City panel's "Active expeditions" section lists the ones whose
 # `home_band_entity` matches the shown band.
 var _player_expeditions: Array = []
+
+# ---- Band/City zone state (persists across renders, so a filter/tab/page survives a snapshot) ----
+## Which sources the work board shows, how it orders them, and which page is on screen.
+var _work_filter: StringName = WORK_FILTER_ALL
+var _work_sort: StringName = WORK_SORT_YIELD
+var _work_page: int = 0
+## The source key open in the work inspector strip ("" = none), and whether its policy picker is out.
+## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
+var _work_open_key: String = ""
+var _work_policy_open: bool = false
+## The live work-zone column + its band, so `zones_resized` can RE-PAGE the board in place instead of
+## re-rendering all three zones.
+var _work_zone_host: VBoxContainer = null
+var _work_zone_band: Dictionary = {}
+## The band-zone height tier the current render was built for (see `_band_zone_tier`).
+var _band_zone_tier: int = BAND_ZONE_TIER_TALL
+## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
+## keeps the party size / policy / forecast fields hidden until the mission decides them).
+var _party_compose_open: bool = false
+var _party_compose_mission: String = ""
 # The dockable Band/City command center (docs/plan_band_city_dock.md §3), injected by Main. When
 # present, a selected player band's detail (summary + labor allocation) renders into IT rather than
 # the Occupants card, and the panel persists across selection changes showing `_panel_band`.
@@ -1440,7 +1696,7 @@ func _ready() -> void:
     _setup_build_overlay()
     # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
     if occupant_detail != null:
-        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(false))
+        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(occupant_detail))
     # Re-cap the drawer whenever its content changes SIZE, whoever changed it — a stepper tick, a
     # policy click, a per-snapshot rebuild. One hookup instead of a refit call sprinkled through
     # every early-return in the three compose builders. No feedback loop: the fit writes the
@@ -2086,15 +2342,13 @@ func update_demographics(demographics_variant: Variant) -> void:
         demographics_label.visible = false
         return
     demographics_label.visible = true
-    # Dependency ratio = dependents (children + elders) per 100 working-age.
-    var dependency := 0
-    if working > 0:
-        dependency = int(round(float(children + elders) / float(working) * 100.0))
-    else:
-        dependency = 999
-    demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d  dep %d/100" % [total, children, working, elders, dependency]
-    # A high dependency ratio (more mouths than hands) is the warning state.
-    demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
+    # NO DEPENDENCY RATIO HERE. This strip is the FACTION total across every band, and dependents are
+    # fed per BAND — a band with more mouths than hands is in trouble whatever the faction average
+    # says, and a healthy faction average can hide it. So the ratio belongs to the Band panel's PEOPLE
+    # block (where it is stated as a dependent COUNT with the ratio in its tooltip) and is out of
+    # place as a faction figure. The strip states the composition and nothing else.
+    demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d" % [total, children, working, elders]
+    demographics_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 
 ## Show the player faction's discovered Wondrous Sites as a compact top-bar readout: the count
 ## (`◈ Discoveries N`) followed by a strip of one mark per distinct site KIND, so landmark vs
@@ -2181,7 +2435,7 @@ func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
     label.text = glyph if glyph != "" else DISCOVERIES_UNKNOWN_GLYPH
     label.add_theme_color_override("font_color", HudStyle.SIGNAL)
     label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    label.tooltip_text = site_name
+    _set_label_tooltip(label, site_name)
     return label
 
 ## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
@@ -2312,13 +2566,6 @@ func _knowledge_meter_text(progress: float) -> String:
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
-func _dependency_color(working: int, dependency: int) -> Color:
-    if working <= 0 or dependency >= 100:
-        return HudStyle.WARN
-    if dependency <= 60:
-        return HudStyle.SIGNAL
-    return HudStyle.INK_DIM
-
 ## A block-glyph bar for a 0–100 score. `cells` defaults to the standard width, so the
 ## Sedentarization meter and every existing caller are unchanged; the knowledge strip passes a
 ## narrower one because it now carries FOUR tracks on one top-bar line.
@@ -2632,7 +2879,8 @@ func _on_turn_orb_advance() -> void:
 # Source-centric worker allocation for the single player band. The allocation panel
 # (band drawer), the herd "assign hunters" controls, and the tile "assign foragers"
 # controls are all built at runtime here; each emits `assign_labor_requested` (Main
-# formats the `assign_labor …` command). Clear-all reuses `cancel_order_requested`.
+# formats the `assign_labor …` command). The Work zone's bulk unassign reuses
+# `cancel_order_requested`, scoped `work`.
 
 ## Resolve the band that assignment/move/clear commands target. The selected band when
 ## it is a player band; otherwise the single player band captured from the snapshot (so
@@ -2812,7 +3060,7 @@ func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> in
     return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
 ## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
-## falling back to idle when the cap is absent/0 (mirrors _build_send_expedition_section' party_max).
+## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`).
 func _expedition_party_cap(band: Dictionary) -> int:
     var idle := int(band.get("idle_workers", 0))
     var cap := int(band.get("max_expedition_party_size", 0))
@@ -3282,8 +3530,7 @@ func _build_row_name_label(text: String, ink: Color, row_tooltip: String, on_foc
     var plain := Label.new()
     plain.text = text
     plain.add_theme_color_override("font_color", ink)
-    if row_tooltip != "":
-        plain.tooltip_text = row_tooltip
+    _set_label_tooltip(plain, row_tooltip)
     return plain
 
 ## A single-line note Label (⚠ / overstaff / wasted) for the one-line stepper form.
@@ -3291,8 +3538,7 @@ func _build_row_note_label(text: String, color: Color, row_tooltip: String) -> L
     var label := Label.new()
     label.text = text
     label.add_theme_color_override("font_color", color)
-    if row_tooltip != "":
-        label.tooltip_text = row_tooltip
+    _set_label_tooltip(label, row_tooltip)
     return label
 
 ## A secondary status part (line 2 of the two-line form): rendered a touch smaller
@@ -3306,7 +3552,7 @@ func _build_status_part(text: String, color: Color) -> Label:
 
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
-func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable) -> void:
+func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact: bool = false) -> void:
     var minus := Button.new()
     minus.text = "−"
     minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
@@ -3327,6 +3573,27 @@ func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, o
     plus.disabled = not plus_enabled
     plus.pressed.connect(func() -> void: on_change.call(count + WORKER_STEP))
     row.add_child(plus)
+    if compact:
+        for control in [minus, value, plus]:
+            _compact_control(control, WORK_STEPPER_FONT_SIZE, WORK_STEPPER_PADDING_V)
+
+## Squeeze a control into a zone's fixed-height chrome row: smaller type, and a button's stylebox
+## chrome trimmed vertically. `HudStyle._button_stylebox` pads 9px top and bottom, which alone makes a
+## plain Button ~40px tall — taller than `WORK_ROW_HEIGHT`, `ZONE_HEAD_HEIGHT`, `WORK_CHIPS_HEIGHT`
+## and `WORK_PAGER_HEIGHT` put together. Every one of those consts is a height the board's capacity
+## maths SUBTRACTS, so a control that renders taller pushes the page off the bottom of the zone.
+func _compact_control(control: Control, font_size: int, padding_v: int) -> void:
+    control.add_theme_font_size_override("font_size", font_size)
+    if not (control is Button):
+        return
+    for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+        var box: StyleBox = control.get_theme_stylebox(state)
+        if box == null:
+            continue
+        var squeezed: StyleBox = box.duplicate()
+        squeezed.content_margin_top = padding_v
+        squeezed.content_margin_bottom = padding_v
+        control.add_theme_stylebox_override(state, squeezed)
 
 ## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
 ## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
@@ -3640,33 +3907,35 @@ func _sum_realized_yield(band: Dictionary, kind: String) -> float:
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
 
-## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
-## below the warn threshold — mirroring `_morale_is_concerning`'s below-warn / falling gate.
+## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
+## mirroring `_morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything
+## (a popover that pops itself open on a snapshot would be worse than the clipping it replaced); it
+## marks the row's caret WARN, so a row with something worth reading still says so at a glance.
 func _food_is_concerning(band: Dictionary) -> bool:
     var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return _band_net_food(band) < 0.0 \
         or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
-## Per-row-per-band expand-override key.
+## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 func _breakdown_key(kind: String, band: Dictionary) -> String:
     return "%s:%d" % [kind, int(band.get("entity", -1))]
 
-## Effective expand state of a band's Food/Morale breakdown: the user's per-band override if set,
-## else that row's concerning default (auto-open when concerning, closed when healthy). Shared by
-## both disclosure rows — the only per-kind bit is which "concerning" gate to consult.
-func _breakdown_open_for(kind: String, band: Dictionary) -> bool:
+## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-open disclosure: stash the
+## rows its popover will show and record the caret state for `_format_detail_bbcode`. Returns whether
+## the affordance is offered at all — a row with nothing to show gets no caret. Shared by both
+## disclosure rows and by BOTH hosts (the panel's vitals label and the Occupants-card drawer), which
+## is the point: one click behaviour, no `is_panel` fork.
+func _register_disclosure(row_label: String, kind: String, band: Dictionary, lines: Array[String]) -> bool:
+    if lines.is_empty():
+        return false
     var key := _breakdown_key(kind, band)
-    if _breakdown_expanded.has(key):
-        return bool(_breakdown_expanded[key])
-    return _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
-
-## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-expand disclosure so
-## `_format_detail_bbcode` renders its caret + clickable meta; returns whether it's currently open
-## (so the caller appends the breakdown sub-lines). Shared by both disclosure rows.
-func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> bool:
-    var open := _breakdown_open_for(kind, band)
-    _disclosure_state[row_label] = {"kind": kind, "open": open}
-    return open
+    _breakdown_payloads[key] = lines
+    var concerning := _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
+    _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
+    # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
+    if _breakdown_popover_key == key:
+        _refresh_breakdown_popover_text()
+    return true
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
 ## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
@@ -3696,22 +3965,105 @@ func _food_breakdown_row(value: float, label: String) -> String:
     var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else MORALE_CONTRIB_NEGATIVE_GLYPH
     return "%s%s %s  %s" % [MORALE_BREAKDOWN_INDENT, glyph, _format_signed(value), label]
 
-## Meta dispatcher for the summary-row disclosures (Food/Morale): parses the clicked row kind from
-## the `[url]` meta and toggles that row's per-band expand override, then re-renders. `is_panel`
-## routes the re-render to the dockable Band/City panel vs the Occupants-card drawer.
-func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
+## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure
+## key, so the handler needs no band lookup and no host flag — the SAME click behaviour wherever the
+## row renders. `anchor` is the label that emitted the click, bound at wire time; it is what the
+## popover positions under.
+func _on_detail_meta_clicked(meta: Variant, anchor: Control) -> void:
     var payload := String(meta)
     if not payload.begins_with(BREAKDOWN_TOGGLE_META_PREFIX):
         return
-    var kind := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
-    var band: Dictionary = _panel_band if is_panel else _selected_unit
-    if band.is_empty():
+    var key := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
+    if _breakdown_popover_key == key:
+        _close_breakdown_popover()
         return
-    _breakdown_expanded[_breakdown_key(kind, band)] = not _breakdown_open_for(kind, band)
-    if is_panel:
+    _open_breakdown_popover(key, anchor)
+
+## Open a disclosure's breakdown in the popover, anchored under the clicked row. The anchor rect is
+## captured BEFORE the hosts re-render, because that render frees the very label we are anchoring to
+## (the panel builds a fresh vitals label each time).
+func _open_breakdown_popover(key: String, anchor: Control) -> void:
+    var lines := _breakdown_lines_for(key)
+    if lines.is_empty():
+        return
+    var anchor_rect := _breakdown_anchor_rect(anchor)
+    _breakdown_popover_key = key
+    _refresh_disclosure_hosts()
+    var popover := _ensure_breakdown_popover()
+    _refresh_breakdown_popover_text()
+    popover.popup(anchor_rect)
+
+## Dismiss the breakdown popover, if any. Idempotent — `popup_hide` runs the same teardown, so a
+## click-away / Esc and an explicit close converge on one path.
+func _close_breakdown_popover() -> void:
+    if _breakdown_popover != null and _breakdown_popover.visible:
+        _breakdown_popover.hide()
+        return
+    _on_breakdown_popover_hidden()
+
+func _on_breakdown_popover_hidden() -> void:
+    if _breakdown_popover_key == "":
+        return
+    _breakdown_popover_key = ""
+    _refresh_disclosure_hosts()
+
+## The rows a disclosure key's popover shows — stashed by `_register_disclosure`, never recomputed.
+func _breakdown_lines_for(key: String) -> Array[String]:
+    var stored: Variant = _breakdown_payloads.get(key, null)
+    var lines: Array[String] = []
+    if stored is Array:
+        for line in (stored as Array):
+            lines.append(String(line))
+    return lines
+
+## Where the popover sits: a zero-height rect at the bottom-left of the clicked row, in SCREEN space
+## (what `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas
+## stretch, both of which this HUD has.
+func _breakdown_anchor_rect(anchor: Control) -> Rect2i:
+    if anchor == null or not is_instance_valid(anchor):
+        return Rect2i()
+    var xform := anchor.get_screen_transform()
+    var below := xform * Vector2(0.0, anchor.size.y + BREAKDOWN_POPOVER_GAP)
+    return Rect2i(Vector2i(below), Vector2i.ZERO)
+
+## The popover itself: a `PopupPanel`, so it is a WINDOW — it cannot change any zone's height, which
+## is the whole reason the breakdown moved here. Styled through `HudStyle` like every other card.
+func _ensure_breakdown_popover() -> PopupPanel:
+    if _breakdown_popover != null and is_instance_valid(_breakdown_popover):
+        return _breakdown_popover
+    var popover := PopupPanel.new()
+    popover.name = "BreakdownPopover"
+    popover.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    var margin := MarginContainer.new()
+    for side in ["left", "top", "right", "bottom"]:
+        margin.add_theme_constant_override("margin_%s" % side, BREAKDOWN_POPOVER_PADDING)
+    popover.add_child(margin)
+    var label := RichTextLabel.new()
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD
+    label.custom_minimum_size = Vector2(BREAKDOWN_POPOVER_WIDTH, 0.0)
+    margin.add_child(label)
+    popover.popup_hide.connect(_on_breakdown_popover_hidden)
+    add_child(popover)
+    _breakdown_popover = popover
+    _breakdown_popover_label = label
+    return popover
+
+## Restate the open popover from the current payload — the breakdown CONTENT is unchanged from the
+## inline form: the same indented ▲/▼ rows through the same shared two-tone tint path.
+func _refresh_breakdown_popover_text() -> void:
+    if _breakdown_popover_label == null or not is_instance_valid(_breakdown_popover_label):
+        return
+    _breakdown_popover_label.text = _format_detail_bbcode(_breakdown_lines_for(_breakdown_popover_key))
+
+## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
+## hosts, unconditionally — that is the `is_panel` fork this change exists to remove.
+func _refresh_disclosure_hosts() -> void:
+    if _band_city_panel != null and not _panel_band.is_empty():
         _render_band_into_panel(_panel_band)
-    else:
-        _render_subject_drawer()
+    _render_subject_drawer()
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there).
@@ -3743,7 +4095,7 @@ func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 ## — the block is omitted — for a non-player band, a band with no real food flow (same gate as the Food
 ## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
 ## than a summary line because BBCode cannot host a drawn chart.
-func _build_food_outlook_block(band: Dictionary) -> VBoxContainer:
+func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxContainer:
     if not (_is_player_unit(band) and _band_has_food_flow(band)):
         return null
     var arrivals := _merged_arrival_schedule(band)
@@ -3757,6 +4109,10 @@ func _build_food_outlook_block(band: Dictionary) -> VBoxContainer:
     chart.set_projection(
         _band_provisions(band), arrivals,
         float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _current_turn)
+    # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
+    # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
+    if compact:
+        chart.custom_minimum_size = Vector2(chart.custom_minimum_size.x, FOOD_CHART_COMPACT_HEIGHT)
     block.add_child(chart)
     return block
 
@@ -3769,24 +4125,24 @@ func _make_alloc_block() -> VBoxContainer:
     block.add_theme_constant_override("separation", ALLOC_BLOCK_SEPARATION)
     return block
 
-## Build the labor-allocation UI into `target` (the legacy flat host — the Occupants card's
-## %AllocationPanel, used by the no-panel `ui_preview` harness). `target` defaults to %AllocationPanel.
-## Delegates the rows to `_build_allocation_sections` and appends the section blocks into the flat
-## host, so the wiring lives in ONE place (the section builder), shared with the Band/City panel.
+## Stack the three ZONE contents into `target` — the legacy flat host (the Occupants card's
+## %AllocationPanel, used by the no-dock `ui_preview` harness). It renders exactly what the dock
+## renders, through the SAME three builders; there is no second layout to maintain.
 func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> void:
     var container: VBoxContainer = target if target != null else allocation_panel
     if container == null:
         return
-    for child in container.get_children():
-        child.queue_free()
+    _clear_children(container)
     var is_player := not band.is_empty() and _is_player_unit(band)
     container.visible = is_player
     if not is_player:
         return
-    # The legacy flat host rebuilds itself in place on a local-state edit (party size / send policy).
-    var rebuild := func() -> void: _build_allocation_panel(band, container)
-    for block in _build_allocation_sections(band, rebuild):
-        container.add_child(block)
+    container.add_child(_build_band_zone_content(band, false))
+    container.add_child(_build_work_zone_content(band))
+    container.add_child(_build_parties_zone_content(band))
+    # The docked path offers Move from `_build_band_move_actions`; this host must offer it too, or a
+    # selected player band has no way to be moved at all here (see `_make_band_move_actions`).
+    container.add_child(_make_band_move_actions())
 
 ## Per-SOURCE `+`-gate for a Current-actions Forage/Hunt row: the compose controls cap the stepper at
 ## max-useful (`_forecast_worker_cap`), and a confirmed row must cap the same way — a source's `+` may
@@ -3808,220 +4164,1175 @@ func _source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> 
         note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
     return {"can_add": false, "note": note}
 
-## Build the band's labor allocation as an ordered list of discrete **section blocks** (Workers /
-## Current actions / Band roles / Orders / Send expedition), returned for the caller to host — the
-## Band/City panel arranges them into a tall stack or a wide column-flow; the legacy flat host just
-## stacks them. The per-row wiring (worker steppers, `_emit_assign_labor` closures, Move/Clear
-## handlers, the expedition outfit) is byte-for-byte the pre-refactor logic — only each row's parent
-## changed from one flat container to its section block. `rebuild` is called by the local-state
-## controls (party stepper / send-policy picker) to re-render the host; labor edits re-render
-## themselves through `_after_pending_change`.
-## `with_population_header` hosts the `Population N · Workers W (Idle I)` line as the allocation
-## stack's first block. The Band/City panel passes **false**: that line is the band's identity, not an
-## allocation section, and riding along with the blocks it rendered wherever CURRENT ACTIONS did —
-## stranded between Active expeditions and Current actions. There it lives in the summary's identity
-## grid instead (`_unit_summary_lines(unit, in_panel = true)`), off the SAME `_effective_idle`. The
-## legacy flat in-card host (no dock injected — the HUD-only ui_preview fallback) still shows it here,
-## since that path renders no identity grid of its own.
-func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_population_header: bool = true) -> Array:
-    var blocks: Array = []
-    # Idle counts OPTIMISTICALLY (confirmed idle overlaid with any pending changes) so the
-    # math reflects a just-issued assignment immediately.
+## ============================================================================
+## Band/City panel ZONES (docs/band_panel_ux_proposal.html §02/§05)
+## ----------------------------------------------------------------------------
+## The panel hosts three named zones at a FIXED size (see BandCityPanel): `band`
+## (who they are + what they do), `work` (the paged board of worked sources) and
+## `parties`. Each builder below returns a bare VBox; `_wrap_zone` anchors it into
+## the plain-Control zone host the panel hands out, and the legacy flat host
+## (`_build_allocation_panel`, the no-dock ui_preview fallback) simply stacks the
+## same three VBoxes — ONE set of builders, never a second layout.
+##
+## NOTHING here scrolls. Content that can outgrow its box is PAGED against
+## `BandCityPanel.work_zone_size()`; a ScrollContainer would reintroduce exactly
+## the content-dependent height the panel rework removed.
+## ============================================================================
+
+## A zone's content column: the VBox every zone builder fills.
+func _make_zone_column() -> VBoxContainer:
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", ZONE_SECTION_SEPARATION)
+    return col
+
+## Wrap a zone column in the plain `Control` the panel parents into its fixed-size zone host (the host
+## reports no minimum size, so the content must anchor itself — see BandCityPanel `_make_zone_host`).
+func _wrap_zone(content: VBoxContainer) -> Control:
+    var host := Control.new()
+    host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    host.add_child(content)
+    content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    return host
+
+## Detach-then-free a container's children. `queue_free` alone leaves them parented for the rest of
+## the frame, so a rebuild-in-place (the work zone's re-page) would briefly stack old rows under new.
+func _clear_children(node: Node) -> void:
+    for child in node.get_children():
+        node.remove_child(child)
+        child.queue_free()
+
+## The interior box a zone's content may fill, in canvas px. The panel answers it from its FIXED
+## geometry (`work_zone_size`), so it is a pure function of dock/collapse/window — never of content.
+## The fallback keeps the no-dock ui_preview host laying out sensibly.
+func _zone_box() -> Vector2:
+    if _band_city_panel != null:
+        var box: Vector2 = _band_city_panel.work_zone_size()
+        if box.x > 0.0 and box.y > 0.0:
+            return box
+    return ZONE_FALLBACK_SIZE
+
+## A zone section head: an uppercase title on the left, a dim readout on the right, and an optional
+## trailing `⋯` menu button. The one head vocabulary all three zones use.
+func _zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "") -> HBoxContainer:
+    var head := HBoxContainer.new()
+    head.custom_minimum_size = Vector2(0.0, ZONE_HEAD_HEIGHT)
+    head.add_theme_constant_override("separation", ZONE_HEAD_SEPARATION)
+    head.add_child(_alloc_section_label(title))
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    head.add_child(spacer)
+    if readout != "":
+        var right := Label.new()
+        right.text = readout
+        right.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
+        right.add_theme_color_override("font_color", readout_color)
+        _set_label_tooltip(right, readout_tooltip)
+        head.add_child(right)
+    if menu != null:
+        head.add_child(menu)
+    return head
+
+## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
+## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
+## array of `{label, disabled, on_pick}` dictionaries.
+func _build_section_menu(entries: Array, tooltip: String) -> MenuButton:
+    var button := MenuButton.new()
+    button.text = SECTION_MENU_GLYPH
+    button.tooltip_text = tooltip
+    button.focus_mode = Control.FOCUS_NONE
+    button.custom_minimum_size = Vector2(SECTION_MENU_WIDTH, 0.0)
+    HudStyle.apply_button(button, "ghost")
+    _compact_control(button, ZONE_HEAD_FONT_SIZE, ZONE_MENU_PADDING_V)
+    var popup := button.get_popup()
+    var picks: Array[Callable] = []
+    for entry_variant in entries:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var index := picks.size()
+        popup.add_item(String(entry.get("label", "")), index)
+        popup.set_item_disabled(index, bool(entry.get("disabled", false)))
+        var pick: Variant = entry.get("on_pick", null)
+        picks.append(pick if pick is Callable else Callable())
+    popup.id_pressed.connect(func(id: int) -> void:
+        if id >= 0 and id < picks.size() and picks[id].is_valid():
+            picks[id].call())
+    return button
+
+## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
+## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
+## as "undo everything".
+func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -> void:
+    var dialog := ConfirmationDialog.new()
+    dialog.dialog_text = body
+    dialog.ok_button_text = ok_text
+    dialog.title = CONFIRM_DIALOG_TITLE
+    dialog.confirmed.connect(func() -> void:
+        on_confirm.call()
+        dialog.queue_free())
+    dialog.canceled.connect(func() -> void: dialog.queue_free())
+    add_child(dialog)
+    dialog.popup_centered()
+
+# ---- shared stacked bar (People + Workforce) --------------------------------
+
+## A proportional stacked bar. `segments` are `{key, count, color, tooltip}`; zero-count segments are
+## dropped by the caller. Widths come from `size_flags_stretch_ratio`, so the bar fills its zone at
+## any width without any measuring.
+func _build_composition_bar(segments: Array) -> HBoxContainer:
+    var bar := HBoxContainer.new()
+    bar.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
+    bar.add_theme_constant_override("separation", COMPOSITION_BAR_SEPARATION)
+    for segment_variant in segments:
+        var segment: Dictionary = segment_variant
+        var cell := ColorRect.new()
+        cell.color = segment.get("color", HudStyle.INK_FAINT)
+        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        cell.size_flags_stretch_ratio = maxf(float(segment.get("count", 0)), COMPOSITION_MIN_RATIO)
+        cell.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
+        cell.tooltip_text = String(segment.get("tooltip", ""))
+        cell.mouse_filter = Control.MOUSE_FILTER_STOP
+        bar.add_child(cell)
+    return bar
+
+## The key under a stacked bar: one `▪ <key> <count>` chip per segment. An `HFlowContainer` so a
+## narrow zone wraps the key rather than widening (the zone has a fixed width to respect).
+func _build_composition_key(segments: Array, trailing: Control = null) -> HFlowContainer:
+    var key := HFlowContainer.new()
+    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    key.add_theme_constant_override("h_separation", COMPOSITION_KEY_SEPARATION)
+    for segment_variant in segments:
+        var segment: Dictionary = segment_variant
+        var chip := HBoxContainer.new()
+        chip.add_theme_constant_override("separation", COMPOSITION_SWATCH_SEPARATION)
+        chip.tooltip_text = String(segment.get("tooltip", ""))
+        var swatch := ColorRect.new()
+        swatch.color = segment.get("color", HudStyle.INK_FAINT)
+        swatch.custom_minimum_size = COMPOSITION_SWATCH_SIZE
+        swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+        swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        chip.add_child(swatch)
+        var text := Label.new()
+        text.text = "%s %d" % [String(segment.get("key", "")), int(segment.get("count", 0))]
+        text.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
+        text.add_theme_color_override("font_color", HudStyle.INK_DIM)
+        text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        chip.add_child(text)
+        key.add_child(chip)
+    if trailing != null:
+        key.add_child(trailing)
+    return key
+
+# ---- zone `band` ------------------------------------------------------------
+
+## Zone `band`: vitals · people · food outlook · workforce (+ the two role cards).
+## `with_vitals` is false for the legacy flat host, whose Occupants card already renders the very
+## same Food/Morale/Position rows in its own `%OccupantDetail` drawer above this.
+func _build_band_zone_content(band: Dictionary, with_vitals: bool = true) -> VBoxContainer:
+    var col := _make_zone_column()
+    _band_zone_tier = _band_zone_tier_for(_zone_box().y)
+    if with_vitals:
+        col.add_child(_build_vitals_label(band))
+    var people := _build_people_block(band)
+    if people != null:
+        col.add_child(people)
+    if _band_zone_tier != BAND_ZONE_TIER_SHORT:
+        var outlook := _build_food_outlook_block(band, _band_zone_tier == BAND_ZONE_TIER_COMPACT)
+        if outlook != null:
+            col.add_child(outlook)
+    col.add_child(_build_workforce_block(band, _band_zone_tier == BAND_ZONE_TIER_SHORT))
+    return col
+
+## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
+## FRESH RichTextLabel each render (it resets and re-sets the food/morale tint context), so its
+## `meta_clicked` is wired here, bound `is_panel = true`.
+func _build_vitals_label(band: Dictionary) -> RichTextLabel:
+    var detail_label := RichTextLabel.new()
+    detail_label.bbcode_enabled = true
+    detail_label.fit_content = true
+    detail_label.scroll_active = false
+    detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+    detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(detail_label))
+    detail_label.text = _format_detail_bbcode(_unit_summary_lines(band))
+    return detail_label
+
+## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
+## largest-remainder method: floor every part, then hand the leftover people out to the biggest
+## fractions, biggest first. `round()` per part does NOT preserve the total (9.29 + 16.54 + 4.64 =
+## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
+## people are in the band reads as a bug in both.
+func _apportion_people(parts: Array[float]) -> Array[int]:
+    var whole: Array[int] = []
+    var assigned := 0
+    var total := 0.0
+    for part in parts:
+        var floored: int = maxi(int(floor(part)), 0)
+        whole.append(floored)
+        assigned += floored
+        total += maxf(part, 0.0)
+    var leftover := roundi(total) - assigned
+    while leftover > 0:
+        var best := -1
+        var best_fraction := -1.0
+        for i in range(parts.size()):
+            var fraction: float = maxf(parts[i], 0.0) - float(whole[i])
+            if fraction > best_fraction:
+                best_fraction = fraction
+                best = i
+        if best < 0:
+            break
+        whole[best] += 1
+        leftover -= 1
+    return whole
+
+## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
+## dependency ratio. Returns null when the snapshot carries no age structure at all, so the block is
+## OMITTED rather than rendered from a fabricated split.
+## The palette is deliberately MUTED against the Workforce bar below: the two bars share a shape but
+## answer different questions (composition vs allocation) and must not read as the same chart twice.
+func _build_people_block(band: Dictionary) -> VBoxContainer:
+    # The brackets arrive FRACTIONAL (Scalar) — a real band is 9.29 children, 16.54 workers, 4.64
+    # elders — so they are APPORTIONED to whole people rather than rounded one at a time. Rounding
+    # each independently is what made this panel read 9 + 17 + 5 = 31 beside a top bar reading 30:
+    # the same band, counted twice, disagreeing by a person.
+    var raw: Array[float] = [
+        float(band.get("age_children", 0.0)),
+        float(band.get("age_working", 0.0)),
+        float(band.get("age_elders", 0.0)),
+    ]
+    # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a different
+    # quantity that happens to track it). Fall back to the latter when the cohort field is absent.
+    if raw[1] <= 0.0:
+        raw[1] = float(band.get("working_age", 0))
+    var whole := _apportion_people(raw)
+    var children: int = whole[0]
+    var working: int = whole[1]
+    var elders: int = whole[2]
+    var total := children + working + elders
+    if total <= 0:
+        return null
+    var segments: Array = []
+    if children > 0:
+        segments.append({"key": PEOPLE_GLYPH_CHILDREN, "count": children,
+            "color": HudStyle.VOICE_PIGMENT, "tooltip": "%d %s" % [children, PEOPLE_LABEL_CHILDREN]})
+    if working > 0:
+        segments.append({"key": PEOPLE_GLYPH_WORKING, "count": working,
+            "color": HudStyle.INK_DIM, "tooltip": "%d %s" % [working, PEOPLE_LABEL_WORKING]})
+    if elders > 0:
+        segments.append({"key": PEOPLE_GLYPH_ELDERS, "count": elders,
+            "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, PEOPLE_LABEL_ELDERS]})
+    var block := _make_zone_block()
+    block.add_child(_zone_head(ZONE_HEADER_PEOPLE, str(total)))
+    block.add_child(_build_composition_bar(segments))
+    block.add_child(_build_composition_key(segments, _build_dependency_chip(children, working, elders)))
+    return block
+
+## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
+## `MOUSE_FILTER_IGNORE`**, so setting `tooltip_text` on one and walking away is a SILENT no-op — the
+## text is stored, the mouse never reaches the control, nothing ever appears. Six labels across this
+## HUD shipped tooltips that had never once been seen. Route every Label tooltip through here.
+func _set_label_tooltip(label: Label, text: String) -> void:
+    label.tooltip_text = text
+    label.mouse_filter = Control.MOUSE_FILTER_STOP if text != "" else Control.MOUSE_FILTER_IGNORE
+
+## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
+func _dependency_per_hundred(dependents: int, working: int) -> int:
+    if working <= 0:
+        return 0
+    return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
+
+## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
+## decides the WARN tint — so it stays out of the words too.
+func _dependency_tooltip(dependents: int, working: int) -> String:
+    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
+    if _dependency_per_hundred(dependents, working) > PEOPLE_DEPENDENCY_HEAVY:
+        text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
+    return text
+
+## The dependency ratio chip: dependents (children + elders) per 100 working-age adults, WARN-tinted
+## once the band carries more mouths than hands. Null when there is no working-age cohort to divide by.
+func _build_dependency_chip(children: int, working: int, elders: int) -> Control:
+    if working <= 0:
+        return null
+    var dependents := children + elders
+    var per_hundred := _dependency_per_hundred(dependents, working)
+    var chip := Label.new()
+    chip.text = PEOPLE_DEPENDENCY_FORMAT % dependents
+    chip.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
+    chip.add_theme_color_override("font_color",
+        HudStyle.WARN if per_hundred > PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
+    _set_label_tooltip(chip, _dependency_tooltip(dependents, working))
+    chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    return chip
+
+## "WORKFORCE" — what the band DOES: a stacked Forage/Hunt/Roles/Parties/Idle bar, its key, and the
+## two standing-role CARDS. Saturated against People's muted palette (see `_build_people_block`).
+func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContainer:
     var idle := _effective_idle(band)
-    var can_add := idle > 0
-    # Workers block — clarified header: population (all people) vs the working-age labor split, so
-    # nobody expects "Idle" to equal the 30 people — only the ~16 workers labor (children/elders eat
-    # but don't work). E.g. "Population 30 · Workers 16 (Idle 16)".
-    if with_population_header:
-        var workers_block := _make_alloc_block()
-        var header := Label.new()
-        header.text = WORKERS_HEADER_FORMAT % [
-            int(band.get("size", 0)), int(band.get("working_age", 0)), idle]
-        header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
-        header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        workers_block.add_child(header)
-        blocks.append(workers_block)
-    # "Current actions" block — the report of what each group is doing (confirmed + optimistic).
-    var actions_block := _make_alloc_block()
-    actions_block.add_child(_alloc_section_label(ALLOC_HEADER_ACTIONS))
+    var forage_workers := 0
+    var hunt_workers := 0
     var merged := _effective_worker_map(band)
-    var has_source := false
+    for key in merged:
+        var m: Dictionary = merged[key]
+        var workers := int(m.get("workers", 0))
+        match String(m.get("kind", "")):
+            LABOR_KIND_FORAGE: forage_workers += workers
+            LABOR_KIND_HUNT: hunt_workers += workers
+    var scout_eff := _effective_role_workers(band, LABOR_KIND_SCOUT)
+    var warrior_eff := _effective_role_workers(band, LABOR_KIND_WARRIOR)
+    var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0))
+    var party_workers := _band_party_workers(band)
+    var segments: Array = []
+    for spec in [
+        [WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
+        [WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        [WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
+        [WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        [WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
+    ]:
+        if int(spec[1]) > 0:
+            segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
+                "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
+    var block := _make_zone_block()
+    block.add_child(_zone_head(ZONE_HEADER_WORKFORCE,
+        WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
+        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
+    if not segments.is_empty():
+        block.add_child(_build_composition_bar(segments))
+        block.add_child(_build_composition_key(segments))
+    # The two standing roles as CARDS, side by side — a bordered card reads as "a standing role", not
+    # as one more worked source in a list (the complaint the card treatment fixes).
+    var cards := HBoxContainer.new()
+    cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    cards.add_theme_constant_override("separation", ROLE_CARD_SEPARATION)
+    cards.add_child(_build_role_card(band, ROLE_NAME_SCOUT, SCOUT_ROLE_HINT, LABOR_KIND_SCOUT, scout_eff, idle, compact_cards))
+    cards.add_child(_build_role_card(band, ROLE_NAME_WARRIOR, WARRIOR_ROLE_HINT, LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards))
+    block.add_child(cards)
+    return block
+
+## One standing-role card: name · one-line hint · the SAME −/+ stepper (same `assign_labor` emit,
+## same idle gating) the role rows used to carry.
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, compact: bool = false) -> PanelContainer:
+    var workers := int(effective.get("workers", 0))
+    var pending := bool(effective.get("pending", false))
+    var card := PanelContainer.new()
+    card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    card.add_theme_stylebox_override("panel", _role_card_stylebox())
+    # In a short zone the hint moves to the card's tooltip — the words survive, the two lines do not.
+    card.tooltip_text = hint
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", ROLE_CARD_SEPARATION)
+    card.add_child(col)
+    var title := Label.new()
+    title.text = role_name
+    title.add_theme_font_size_override("font_size", ROLE_CARD_NAME_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
+    col.add_child(title)
+    if not compact:
+        var hint_label := _alloc_hint_label(hint)
+        hint_label.custom_minimum_size = Vector2(0.0, ROLE_CARD_HINT_HEIGHT)
+        col.add_child(hint_label)
+    var stepper := HBoxContainer.new()
+    stepper.alignment = BoxContainer.ALIGNMENT_CENTER
+    stepper.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    _add_stepper_controls(stepper, workers, idle > 0,
+        func(n: int) -> void: _emit_assign_labor(band, kind, n, -1, -1, "", ""))
+    col.add_child(stepper)
+    return card
+
+func _role_card_stylebox() -> StyleBoxFlat:
+    var sb := StyleBoxFlat.new()
+    sb.bg_color = HudStyle.GROUND_2
+    sb.set_border_width_all(1)
+    sb.border_color = HudStyle.LINE
+    sb.set_corner_radius_all(ROLE_CARD_CORNER_RADIUS)
+    sb.content_margin_left = ROLE_CARD_PADDING
+    sb.content_margin_right = ROLE_CARD_PADDING
+    sb.content_margin_top = ROLE_CARD_PADDING
+    sb.content_margin_bottom = ROLE_CARD_PADDING
+    return sb
+
+## A tight sub-block inside a zone (bar + key + cards belong together, closer than the zone's own
+## section spacing).
+func _make_zone_block() -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
+    return block
+
+# ---- zone `work` (the paged board) ------------------------------------------
+
+## Zone `work`: header · filter chips · the paged board · pager · inspector strip. The column keeps a
+## reference to itself so `zones_resized` can RE-PAGE in place rather than re-render the whole panel.
+func _build_work_zone_content(band: Dictionary) -> VBoxContainer:
+    var col := _make_zone_column()
+    col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
+    _work_zone_host = col
+    _work_zone_band = band
+    _fill_work_zone(col, band)
+    return col
+
+## The panel's `zones_resized` handler. Re-paging the work board is the cheap common case, but the
+## BAND zone yields by height tier too (chart / role-card hints), so a tier change needs the zones
+## rebuilt rather than the board re-paged — otherwise a tall-shell band zone lands in a short box and
+## is silently clipped by its host.
+func _on_zones_resized() -> void:
+    if _band_zone_tier != _band_zone_tier_for(_zone_box().y):
+        _rerender_panel_allocation()
+        return
+    _repage_work_zone()
+
+## Which content tier the band zone's height affords (see `BAND_ZONE_*_MIN_HEIGHT`).
+func _band_zone_tier_for(zone_height: float) -> int:
+    if zone_height >= BAND_ZONE_TALL_MIN_HEIGHT:
+        return BAND_ZONE_TIER_TALL
+    if zone_height >= BAND_ZONE_CHART_MIN_HEIGHT:
+        return BAND_ZONE_TIER_COMPACT
+    return BAND_ZONE_TIER_SHORT
+
+## Re-page the live work board against the panel's new zone box. Only the board is rebuilt — the
+## other two zones are untouched.
+func _repage_work_zone() -> void:
+    if _work_zone_host == null or not is_instance_valid(_work_zone_host) or _work_zone_band.is_empty():
+        return
+    _clear_children(_work_zone_host)
+    _fill_work_zone(_work_zone_host, _work_zone_band)
+
+func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    var idle := _effective_idle(band)
+    var models := _work_source_models(band, idle)
+    var income := 0.0
+    for m in models:
+        income += float((m as Dictionary).get("rate", 0.0))
+    col.add_child(_build_work_head(band, models, income))
+    # BEFORE the chips are built, so the pressed chip is always one that actually renders.
+    _reconcile_work_filter(models)
+    col.add_child(_build_work_chips(models))
+    var filtered := _filter_work_models(models)
+    _sort_work_models(filtered)
+    # Drop an inspector pinned to a source that has left the filtered set (unassigned, filtered out).
+    var inspected := _find_work_model(filtered, _work_open_key)
+    if inspected.is_empty():
+        _work_open_key = ""
+        _work_policy_open = false
+    if filtered.is_empty():
+        var hint := _alloc_hint_label(WORK_EMPTY_HINT)
+        hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
+        col.add_child(hint)
+        return
+    var capacity := _work_board_capacity(filtered.size(), not inspected.is_empty())
+    var page_size := int(capacity["page_size"])
+    var pages := int(capacity["pages"])
+    _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
+    var start := _work_page * page_size
+    col.add_child(_build_work_board(band, filtered.slice(start, start + page_size),
+        int(capacity["cols"]), int(capacity["rows_per_col"])))
+    if pages > 1:
+        col.add_child(_build_work_pager(pages, start, mini(start + page_size, filtered.size()), filtered.size()))
+    if not inspected.is_empty():
+        col.add_child(_build_work_inspector(band, inspected))
+
+## Board capacity, derived ENTIRELY from the fixed zone box:
+##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
+##   rows_per_col = remaining height / WORK_ROW_HEIGHT, after the head, chips, inspector and (when it
+##                  is actually needed) the pager — each of which reserves the very height it draws at.
+## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
+## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
+func _work_board_capacity(count: int, inspector_open: bool) -> Dictionary:
+    var box := _zone_box()
+    var cols := clampi(int(box.x / WORK_COLUMN_MIN_WIDTH), 1, WORK_MAX_COLUMNS)
+    var inspector_h := 0.0
+    if inspector_open:
+        inspector_h = WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open else WORK_INSPECTOR_HEIGHT
+    var chrome := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + inspector_h \
+        + float(ZONE_BLOCK_SEPARATION) * WORK_ZONE_GAP_COUNT
+    var rows := maxi(1, int((box.y - chrome) / WORK_ROW_HEIGHT))
+    var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
+    if pages > 1:
+        rows = maxi(1, int((box.y - chrome - WORK_PAGER_HEIGHT - float(ZONE_BLOCK_SEPARATION)) / WORK_ROW_HEIGHT))
+        pages = ceili(float(count) / float(maxi(cols * rows, 1)))
+    return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
+
+## The board itself: `cols` column VBoxes filled COLUMN-MAJOR (top of column 1 to its bottom, then
+## column 2), separated by a hairline rule. Fixed-height rows, no scroll — the page IS the limit.
+func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: int) -> HBoxContainer:
+    var board := HBoxContainer.new()
+    board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    board.add_theme_constant_override("separation", WORK_COLUMN_SEPARATION)
+    for c in range(cols):
+        if c > 0:
+            var rule := ColorRect.new()
+            rule.color = HudStyle.LINE_SOFT
+            rule.custom_minimum_size = Vector2(WORK_COLUMN_RULE_WIDTH, 0.0)
+            rule.size_flags_vertical = Control.SIZE_EXPAND_FILL
+            rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+            board.add_child(rule)
+        var column := VBoxContainer.new()
+        column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        column.size_flags_vertical = Control.SIZE_FILL
+        column.add_theme_constant_override("separation", 0)
+        board.add_child(column)
+        for r in range(rows_per_col):
+            var index := c * rows_per_col + r
+            if index >= page.size():
+                break
+            column.add_child(_build_work_row(band, page[index]))
+    return board
+
+## The zone's head row: WORK · n sources · the band's total rate · the `⋯` section menu.
+func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxContainer:
+    var menu := _build_section_menu([
+        {"label": WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(WORK_SORT_YIELD)},
+        {"label": WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(WORK_SORT_NAME)},
+        {"label": WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
+            "on_pick": func() -> void: _on_work_unassign_all_pressed(band, models.size())},
+    ], WORK_MENU_TOOLTIP)
+    var head := _zone_head(ZONE_HEADER_WORK, WORK_SOURCES_FORMAT % models.size(), menu)
+    # The total sits between the count and the menu, tinted like the Food line's net rate.
+    var total := Label.new()
+    total.text = _format_yield(income)
+    total.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
+    total.add_theme_color_override("font_color", HudStyle.HEALTHY if income > 0.0 else HudStyle.INK_DIM)
+    _set_label_tooltip(total, WORK_TOTAL_TOOLTIP)
+    head.add_child(total)
+    head.move_child(total, head.get_child_count() - 2)
+    return head
+
+## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
+## **A chip for an EMPTY set never renders** — a kind the band works none of is dead weight in a row
+## that is otherwise live summary, and an always-present `⚠ 0` reads as an alarm. `All` always shows
+## (it is the reset), so the row is never empty.
+func _build_work_chips(models: Array) -> HFlowContainer:
+    var chips := HFlowContainer.new()
+    chips.custom_minimum_size = Vector2(0.0, WORK_CHIPS_HEIGHT)
+    chips.add_theme_constant_override("h_separation", WORK_CHIP_SEPARATION)
+    var forage: Array = models.filter(func(m): return String(m["kind"]) == LABOR_KIND_FORAGE)
+    var hunt: Array = models.filter(func(m): return String(m["kind"]) == LABOR_KIND_HUNT)
+    var attention: Array = models.filter(func(m): return bool(m["attention"]))
+    chips.add_child(_build_work_chip(WORK_FILTER_ALL, WORK_CHIP_ALL_FORMAT % models.size(), false))
+    if not forage.is_empty():
+        chips.add_child(_build_work_chip(WORK_FILTER_FORAGE, WORK_CHIP_KIND_FORMAT % [
+            FoodIcons.DEFAULT, forage.size(), _format_magnitude(_work_rate_sum(forage))], false))
+    if not hunt.is_empty():
+        chips.add_child(_build_work_chip(WORK_FILTER_HUNT, WORK_CHIP_KIND_FORMAT % [
+            FoodIcons.HUNT, hunt.size(), _format_magnitude(_work_rate_sum(hunt))], false))
+    if not attention.is_empty():
+        chips.add_child(_build_work_chip(WORK_FILTER_ATTENTION,
+            WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
+    return chips
+
+func _work_rate_sum(models: Array) -> float:
+    var total := 0.0
+    for m in models:
+        total += float((m as Dictionary).get("rate", 0.0))
+    return total
+
+func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
+    var active := _work_filter == filter
+    var chip := Button.new()
+    chip.text = text
+    chip.focus_mode = Control.FOCUS_NONE
+    HudStyle.apply_button(chip, "primary" if active else "ghost")
+    _compact_control(chip, WORK_CHIP_FONT_SIZE, WORK_CHIP_PADDING_V)
+    if alert and not active:
+        chip.add_theme_color_override("font_color", HudStyle.WARN)
+    chip.tooltip_text = WORK_CHIP_TOOLTIP
+    chip.pressed.connect(func() -> void: _set_work_filter(filter))
+    return chip
+
+## ONE-LINE source row: severity stripe · glyph · label (clipped) · rate · policy/⚠ marks · the
+## existing −/+ stepper. Clicking anywhere but the stepper opens the row in the inspector strip.
+func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var open := String(model.get("key", "")) == _work_open_key
+    var row := PanelContainer.new()
+    row.custom_minimum_size = Vector2(0.0, WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.mouse_filter = Control.MOUSE_FILTER_STOP
+    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    row.tooltip_text = String(model.get("tooltip", ""))
+    row.add_theme_stylebox_override("panel", _work_row_stylebox(open))
+    row.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+            _toggle_work_inspector(String(model.get("key", ""))))
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    row.add_child(line)
+    # Severity stripe: WARN when the source is overdrawing or overstaffed, SIGNAL while an edit is
+    # still pending, transparent otherwise — so the eye finds trouble without reading a word.
+    var stripe := ColorRect.new()
+    stripe.custom_minimum_size = Vector2(WORK_ROW_STRIPE_WIDTH, 0.0)
+    stripe.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    stripe.color = _work_row_stripe_color(model)
+    stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(stripe)
+    var icon := Label.new()
+    icon.text = String(model.get("icon", ""))
+    icon.custom_minimum_size = Vector2(WORK_ROW_ICON_WIDTH, 0.0)
+    icon.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(icon)
+    var label := Label.new()
+    label.text = String(model.get("label", ""))
+    label.clip_text = true
+    # A label too long even for the widened column ELLIPSISES rather than hard-cutting: `Hunt Woolly
+    # Mamm…` reads as a truncation, `Forage (73, 20` reads as a wrong coordinate.
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color",
+        HudStyle.WARN if bool(model.get("pending", false)) else HudStyle.INK)
+    label.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    var rate := Label.new()
+    rate.text = _format_signed(float(model.get("rate", 0.0))) if bool(model.get("has_yield", false)) else ""
+    rate.custom_minimum_size = Vector2(WORK_ROW_RATE_WIDTH, 0.0)
+    rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    rate.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    rate.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    rate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(rate)
+    var marks := Label.new()
+    marks.text = String(model.get("marks", ""))
+    marks.custom_minimum_size = Vector2(WORK_ROW_MARKS_WIDTH, 0.0)
+    marks.add_theme_color_override("font_color",
+        HudStyle.WARN if bool(model.get("warn", false)) else HudStyle.INK_DIM)
+    marks.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(marks)
+    _add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
+        func(n: int) -> void: _emit_work_assign(band, model, n), true)
+    return row
+
+func _work_row_stripe_color(model: Dictionary) -> Color:
+    if bool(model.get("warn", false)) or String(model.get("note", "")) != "":
+        return HudStyle.WARN
+    if bool(model.get("pending", false)):
+        return HudStyle.SIGNAL
+    return Color(0.0, 0.0, 0.0, 0.0)
+
+func _work_row_stylebox(open: bool) -> StyleBoxFlat:
+    var sb := StyleBoxFlat.new()
+    sb.bg_color = HudStyle.SIGNAL_WASH if open else Color(0.0, 0.0, 0.0, 0.0)
+    sb.content_margin_left = WORK_ROW_PADDING_H
+    sb.content_margin_right = WORK_ROW_PADDING_H
+    sb.content_margin_top = WORK_ROW_PADDING_V
+    sb.content_margin_bottom = WORK_ROW_PADDING_V
+    return sb
+
+## The pager, shown only when one page cannot hold the filtered set.
+func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HBoxContainer:
+    var pager := HBoxContainer.new()
+    pager.custom_minimum_size = Vector2(0.0, WORK_PAGER_HEIGHT)
+    pager.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    var prev := Button.new()
+    prev.text = PAGER_PREV_GLYPH
+    prev.focus_mode = Control.FOCUS_NONE
+    prev.disabled = _work_page <= 0
+    prev.tooltip_text = PAGER_PREV_TOOLTIP
+    HudStyle.apply_button(prev, "ghost")
+    _compact_control(prev, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
+    prev.pressed.connect(func() -> void: _step_work_page(-1))
+    pager.add_child(prev)
+    var label := Label.new()
+    label.text = PAGER_FORMAT % [_work_page + 1, pages]
+    label.add_theme_font_size_override("font_size", WORK_CHIP_FONT_SIZE)
+    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    pager.add_child(label)
+    var next := Button.new()
+    next.text = PAGER_NEXT_GLYPH
+    next.focus_mode = Control.FOCUS_NONE
+    next.disabled = _work_page >= pages - 1
+    next.tooltip_text = PAGER_NEXT_TOOLTIP
+    HudStyle.apply_button(next, "ghost")
+    _compact_control(next, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
+    next.pressed.connect(func() -> void: _step_work_page(1))
+    pager.add_child(next)
+    var range_label := Label.new()
+    range_label.text = PAGER_RANGE_FORMAT % [start + 1, shown_end, total]
+    range_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    range_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    range_label.add_theme_font_size_override("font_size", WORK_CHIP_FONT_SIZE)
+    range_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    pager.add_child(range_label)
+    return pager
+
+## The inspector strip — the row's SECOND and THIRD lines, relocated to one place at the bottom of the
+## zone so the board itself stays one line per source. Spells the yield/policy/status out in words,
+## carries the warning lines and the arrival strip, and offers the three inline actions.
+## `Unassign` lives HERE (not as a hover `✕` on the row) — a destructive control beside the `−`
+## stepper would be a mis-click hazard; this is the labelled version.
+func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var strip := PanelContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    strip.custom_minimum_size = Vector2(0.0,
+        WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open else WORK_INSPECTOR_HEIGHT)
+    strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
+    strip.add_child(col)
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    var title := Label.new()
+    title.text = "%s %s" % [String(model.get("icon", "")), String(model.get("label", ""))]
+    title.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    title.clip_text = true
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var close := Button.new()
+    close.text = INSPECTOR_CLOSE_GLYPH
+    close.focus_mode = Control.FOCUS_NONE
+    close.tooltip_text = INSPECTOR_CLOSE_TOOLTIP
+    HudStyle.apply_button(close, "ghost")
+    _compact_control(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
+    close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
+    head.add_child(close)
+    col.add_child(head)
+    col.add_child(_build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM))
+    if bool(model.get("warn", false)):
+        col.add_child(_build_status_part(WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
+    if String(model.get("note", "")) != "":
+        col.add_child(_build_status_part(String(model.get("note", "")), HudStyle.WARN))
+    if String(model.get("muted_note", "")) != "":
+        col.add_child(_build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT))
+    var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
+    if ArrivalStrip.has_gap(schedule):
+        var arrivals := ArrivalStrip.new()
+        arrivals.set_schedule(schedule, _current_turn)
+        col.add_child(arrivals)
+    var links := HBoxContainer.new()
+    links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
+    links.add_child(_build_inline_link(WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
+        _focus_work_source(model)))
+    links.add_child(_build_inline_link(WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
+        _work_policy_open = not _work_policy_open
+        _repage_work_zone()))
+    links.add_child(_build_inline_link(WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
+        _work_open_key = ""
+        _work_policy_open = false
+        _emit_work_assign(band, model, 0)))
+    col.add_child(links)
+    if _work_policy_open:
+        # The four EXTRACTIVE rungs only. The investment rungs (cultivate/sow/tame/corral) are ladder
+        # COMMITMENTS made at the source's own compose control, where their knowledge gates and payoff
+        # forecasts live; changing an existing assignment's take needs no gate.
+        col.add_child(_build_policy_picker(func(policy: String) -> void:
+            _work_policy_open = false
+            _emit_work_assign(band, model, int(model.get("workers", 0)), policy),
+            String(model.get("policy", "")), LABOR_HUNT_POLICIES, {}, {}, ZONE_POLICY_PICKER_COLUMNS))
+    return strip
+
+func _work_inspector_stylebox() -> StyleBoxFlat:
+    var sb := StyleBoxFlat.new()
+    sb.bg_color = HudStyle.GROUND_2
+    sb.set_border_width_all(1)
+    sb.border_color = HudStyle.LINE
+    sb.set_corner_radius_all(ROLE_CARD_CORNER_RADIUS)
+    sb.content_margin_left = ROLE_CARD_PADDING
+    sb.content_margin_right = ROLE_CARD_PADDING
+    sb.content_margin_top = ROLE_CARD_PADDING
+    sb.content_margin_bottom = ROLE_CARD_PADDING
+    return sb
+
+## The inspector's one-sentence readout: rate · policy in WORDS · status · assigned workers.
+func _work_inspector_sentence(model: Dictionary) -> String:
+    var parts: Array[String] = []
+    if bool(model.get("has_yield", false)):
+        parts.append(_format_yield(float(model.get("rate", 0.0))))
+    var policy := String(model.get("policy", ""))
+    if policy != "":
+        parts.append(policy.capitalize())
+    parts.append(_status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
+        else FoodIcons.STATUS_WORKING))
+    parts.append(WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
+    return WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
+
+## An inline text link (the inspector's three actions / the parties footer reasons).
+func _build_inline_link(text: String, ink: Color, on_press: Callable) -> Button:
+    var link := Button.new()
+    link.text = text
+    link.focus_mode = Control.FOCUS_NONE
+    link.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
+    HudStyle.apply_link_button(link, ink)
+    link.pressed.connect(func() -> void: on_press.call())
+    return link
+
+# ---- work-zone models + state ----------------------------------------------
+
+## One dict per worked source, carrying everything the row, the chips and the inspector need — built
+## ONCE per render off `_effective_worker_map` (confirmed + optimistic pending), so the board, the
+## chip counts and the totals can never disagree.
+func _work_source_models(band: Dictionary, idle: int) -> Array:
+    var models: Array = []
+    var merged := _effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
         var workers := int(m.get("workers", 0))
         var pending := bool(m.get("pending", false))
-        # Per-source yield readout: the actual take headlines the row, sustainable lives in the
-        # tooltip, and a WARN ⚠ flags overhunting. Pending rows have no confirmed yield → no number.
+        if not (kind == LABOR_KIND_FORAGE or kind == LABOR_KIND_HUNT):
+            continue
+        if workers <= 0 and not pending:
+            continue
         var yld := _source_yield_readout(m, kind)
-        # Show a source row when it's staffed, or while its removal/change is still pending.
-        if kind == LABOR_KIND_FORAGE and (workers > 0 or pending):
-            has_source = true
-            var fx := int(m.get("x", -1))
-            var fy := int(m.get("y", -1))
-            # Policy is now populated for forage assignments (sim writes the string field). The row
-            # carries it as the shared POLICY GLYPH (`FoodIcons.for_policy` — the same icon on the
-            # picker button and the map's yield label), not the old "[sustain]" word; the tooltip
-            # spells it out. An assignment whose policy is unset falls back to no glyph. Re-staffing
-            # via the stepper preserves the policy (default Sustain when absent).
-            var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
-            var forage_policy_glyph := _row_glyph_suffix(FoodIcons.for_policy(fpolicy)) \
-                if fpolicy in FORAGE_POLICY_OPTIONS else ""
-            var forage_emit_policy := fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
-            # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
-            # truth), so a source reads identically in the panel and on the map. Unknown module → "".
-            var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
-            # Two-line row: the title (icon + Forage + tile) stays on the stepper line; the yield + the
-            # policy glyph drop to the indented secondary line 2 (leading separator stripped so it reads
-            # "+0.61 /turn  ♻").
-            var forage_status_line := String(yld.label_suffix + forage_policy_glyph).strip_edges()
-            # Cap the `+` at this patch's max-useful (the compose control's cap, applied to the confirmed
-            # row) so a single source can't absorb workers past the point they help. The raw wire patch
-            # dict carries the forecast fields BARE (BARE_FORECAST_PREFIX), unlike the `patch_`-prefixed
-            # tile_info cross-ref the compose control reads; unknown patch → the plain idle gate.
-            var forage_forecast := _forecast_inputs(
-                _forage_patch_lookup.get(Vector2i(fx, fy), {}), SOURCE_KIND_FORAGE, BARE_FORECAST_PREFIX,
-                forage_emit_policy)
-            var forage_cap := _source_worker_cap_state(forage_forecast, workers, idle)
-            actions_block.add_child(_build_worker_stepper(
-                "%sForage (%d, %d)" % [forage_icon, fx, fy],
-                workers, bool(forage_cap["can_add"]),
-                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
-                pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy), String(forage_cap["note"])]), yld.note,
-                # A forage patch is a fixed tile: the assignment's own target IS its live location.
-                func() -> void: _focus_labor_source(fx, fy),
-                # A confirmed local forage row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, forage_status_line,
-                _as_schedule(m.get("arrival_schedule", null))))
-        elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
-            has_source = true
-            var herd_id := String(m.get("herd_id", ""))
-            var hx := int(m.get("x", -1))
-            var hy := int(m.get("y", -1))
-            var policy := String(m.get("policy", ""))
+        var x := int(m.get("x", -1))
+        var y := int(m.get("y", -1))
+        var herd_id := String(m.get("herd_id", ""))
+        var policy := String(m.get("policy", "")).strip_edges().to_lower()
+        var icon := ""
+        var label := ""
+        var cap := {}
+        if kind == LABOR_KIND_FORAGE:
+            if not (policy in FORAGE_POLICY_OPTIONS):
+                policy = DEFAULT_HUNT_POLICY
+            # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
+            # `_source_icon_prefix`, which welds it to the label with a trailing space for the
+            # single-label row this replaced.
+            icon = _food_module_icon(x, y)
+            label = WORK_ROW_FORAGE_FORMAT % [x, y]
+            cap = _source_worker_cap_state(_forecast_inputs(
+                _forage_patch_lookup.get(Vector2i(x, y), {}), SOURCE_KIND_FORAGE,
+                BARE_FORECAST_PREFIX, policy), workers, idle)
+        else:
             if not (policy in HUNT_POLICY_OPTIONS):
                 policy = _policy_for_hunt(band, herd_id)
-            # Same species glyph the map's herd marker uses (FoodIcons.for_herd, keyed off the herd
-            # label/species) — the panel row and the map marker read as the same animal.
             var herd_label := _herd_label_for_id(herd_id)
-            var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
-            # A summary row headlines the honest per-turn FOOD rate (yld.rate = sustainable, not the pulse);
-            # the animals-per-turn cadence lives on the compose-preview line, not here. Two-line row: the
-            # title (icon + Hunt + species) stays on the stepper line; the yield + policy glyph drop to
-            # the indented secondary line 2 (leading separator stripped so it reads "+1.19 /turn  ♻").
-            var hunt_status_line := String(yld.label_suffix + _row_glyph_suffix(FoodIcons.for_policy(policy))).strip_edges()
-            # Cap the `+` at this herd's max-useful (the compose control's cap, applied to the confirmed
-            # row) so a single source can't absorb workers past the point they help. Herds carry the
-            # forecast fields BARE (BARE_FORECAST_PREFIX); resolve the herd's LIVE dict (migrating) from
-            # `_world_herds`, mirroring `_build_herd_assign_controls`. Unknown herd → the plain idle gate.
-            var hunt_forecast := _forecast_inputs(_find_world_herd(herd_id), SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, policy)
-            var hunt_cap := _source_worker_cap_state(hunt_forecast, workers, idle)
-            actions_block.add_child(_build_worker_stepper(
-                "%sHunt %s" % [hunt_icon, herd_label],
-                workers, bool(hunt_cap["can_add"]),
-                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending, yld.warn,
-                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy), String(hunt_cap["note"])]), yld.note,
-                # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
-                # assignment's launch-time target, kept as the fallback for an unknown herd).
-                func() -> void: _focus_hunt_source(herd_id, hx, hy),
-                # A confirmed local hunt row has no sim phase — it is simply working.
-                FoodIcons.STATUS_WORKING, yld.muted_note, hunt_status_line,
-                _as_schedule(m.get("arrival_schedule", null))))
-    if not has_source:
-        actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
-    blocks.append(actions_block)
-    # "Band roles" block — Scout + Warrior are standing band-wide roles: always shown (even at 0
-    # workers), each with a one-line hint so the −/+ steppers read as "this is how you staff this role".
-    var roles_block := _make_alloc_block()
-    roles_block.add_child(_alloc_section_label(ALLOC_HEADER_ROLES))
-    var scout_eff := _effective_role_workers(band, LABOR_KIND_SCOUT)
-    roles_block.add_child(_build_worker_stepper(
-        "Scout", int(scout_eff.get("workers", 0)), can_add,
-        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", ""),
-        bool(scout_eff.get("pending", false))))
-    roles_block.add_child(_alloc_hint_label(SCOUT_ROLE_HINT))
-    var warrior_eff := _effective_role_workers(band, LABOR_KIND_WARRIOR)
-    roles_block.add_child(_build_worker_stepper(
-        "Warrior", int(warrior_eff.get("workers", 0)), can_add,
-        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_WARRIOR, n, -1, -1, "", ""),
-        bool(warrior_eff.get("pending", false))))
-    roles_block.add_child(_alloc_hint_label(WARRIOR_ROLE_HINT))
-    blocks.append(roles_block)
-    # "Orders" block — Move / Clear all.
-    var orders_block := _make_alloc_block()
-    var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var move_btn := Button.new()
-    move_btn.text = "Move"
-    HudStyle.apply_button(move_btn, "primary")
-    move_btn.tooltip_text = "Relocate the band, then click a destination tile."
-    move_btn.pressed.connect(_on_move_band_pressed)
-    actions.add_child(move_btn)
-    var clear_btn := Button.new()
-    clear_btn.text = "Clear all"
-    HudStyle.apply_button(clear_btn, "ghost")
-    clear_btn.tooltip_text = "Return every worker to idle (clears all assignments)."
-    # Nothing to clear when no source is staffed AND every worker is already idle (roles included).
-    clear_btn.disabled = not has_source and idle >= int(band.get("working_age", 0))
-    clear_btn.pressed.connect(_on_clear_all_pressed.bind(band))
-    actions.add_child(clear_btn)
-    orders_block.add_child(actions)
-    blocks.append(orders_block)
-    # "Send expedition" block — detach a party from this band's idle workers (omitted when idle == 0).
-    var send_block := _build_send_expedition_section(band, idle, rebuild)
-    if send_block != null:
-        blocks.append(send_block)
-    return blocks
+            icon = FoodIcons.for_herd(herd_label)
+            label = WORK_ROW_HUNT_FORMAT % herd_label
+            # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_world_herds` rather than the
+            # assignment's launch-time target.
+            cap = _source_worker_cap_state(_forecast_inputs(
+                _find_world_herd(herd_id), SOURCE_KIND_HERD,
+                BARE_FORECAST_PREFIX, policy), workers, idle)
+        var note := String(yld.get("note", ""))
+        var marks := FoodIcons.for_policy(policy)
+        if bool(yld.get("warn", false)):
+            marks += " " + OVERHUNT_FLAG
+        models.append({
+            "key": String(key), "kind": kind, "icon": icon, "label": label,
+            "rate": float(yld.get("rate", 0.0)), "has_yield": bool(m.get("has_yield", false)),
+            "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
+            "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
+            "policy": policy, "x": x, "y": y, "herd_id": herd_id,
+            "can_add": bool(cap.get("can_add", idle > 0)),
+            "schedule": _as_schedule(m.get("arrival_schedule", null)),
+            "tooltip": _join_tooltip_lines([String(yld.get("tooltip", "")),
+                _policy_hint(kind, policy), String(cap.get("note", "")), WORK_ROW_OPEN_HINT]),
+            # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
+            "attention": bool(yld.get("warn", false)) or note != "" or pending,
+        })
+    return models
 
-## Outfit affordance section block (docs/plan_exploration_and_sites.md §2): a party-size stepper
-## (1..party_max, party_max = min(idle_workers, max_expedition_party_size)) + a "Send scouting
-## expedition" button that enters tile-targeting, plus the hunt policy picker + "Send hunting
-## expedition". Returns null when the band has no idle workers to spare. `rebuild` re-renders the
-## host when the local party size / send policy changes (those don't go through `_emit_assign_labor`).
-## The server still rejects a genuinely over-cap request with a feed message as a backstop.
-func _build_send_expedition_section(band: Dictionary, idle: int, rebuild: Callable) -> VBoxContainer:
+## Reset a filter that now selects nothing back to `All`. A kind/attention chip is hidden once its set
+## empties (the last herd is unassigned, the last ⚠ clears), so a standing filter would otherwise
+## strand the player on an empty board with no chip left to press to get back out of it.
+func _reconcile_work_filter(models: Array) -> void:
+    if _work_filter == WORK_FILTER_ALL:
+        return
+    if _work_models_matching(_work_filter, models).is_empty():
+        _work_filter = WORK_FILTER_ALL
+
+func _filter_work_models(models: Array) -> Array:
+    return _work_models_matching(_work_filter, models)
+
+func _work_models_matching(filter: StringName, models: Array) -> Array:
+    match filter:
+        WORK_FILTER_FORAGE:
+            return models.filter(func(m): return String(m["kind"]) == LABOR_KIND_FORAGE)
+        WORK_FILTER_HUNT:
+            return models.filter(func(m): return String(m["kind"]) == LABOR_KIND_HUNT)
+        WORK_FILTER_ATTENTION:
+            return models.filter(func(m): return bool(m["attention"]))
+    return models.duplicate()
+
+func _sort_work_models(models: Array) -> void:
+    if _work_sort == WORK_SORT_NAME:
+        models.sort_custom(func(a, b): return String(a["label"]).naturalnocasecmp_to(String(b["label"])) < 0)
+    else:
+        models.sort_custom(func(a, b): return float(a["rate"]) > float(b["rate"]))
+
+func _find_work_model(models: Array, key: String) -> Dictionary:
+    if key == "":
+        return {}
+    for m in models:
+        if String((m as Dictionary).get("key", "")) == key:
+            return m
+    return {}
+
+## Re-send this source's `assign_labor` at a new worker count (and optionally a new policy) — the
+## same emit the old Current-actions stepper made.
+func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int, policy: String = "") -> void:
+    var kind := String(model.get("kind", ""))
+    _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
+        String(model.get("herd_id", "")),
+        policy if policy != "" else String(model.get("policy", "")))
+
+## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
+func _focus_work_source(model: Dictionary) -> void:
+    if String(model.get("kind", "")) == LABOR_KIND_HUNT:
+        _focus_hunt_source(String(model.get("herd_id", "")), int(model.get("x", -1)), int(model.get("y", -1)))
+    else:
+        _focus_labor_source(int(model.get("x", -1)), int(model.get("y", -1)))
+
+## One inspector row at a time — opening a second closes the first (and opening one costs the board
+## rows, which is why `_work_board_capacity` subtracts the strip's height).
+func _toggle_work_inspector(key: String) -> void:
+    _work_open_key = "" if _work_open_key == key else key
+    _work_policy_open = false
+    _repage_work_zone()
+
+func _set_work_filter(filter: StringName) -> void:
+    if _work_filter == filter:
+        return
+    _work_filter = filter
+    _work_page = 0
+    _repage_work_zone()
+
+func _set_work_sort(sort: StringName) -> void:
+    if _work_sort == sort:
+        return
+    _work_sort = sort
+    _work_page = 0
+    _repage_work_zone()
+
+func _step_work_page(delta: int) -> void:
+    _work_page = maxi(_work_page + delta, 0)
+    _repage_work_zone()
+
+## The Work menu's destructive entry. Scoped `work`: Forage + Hunt only — standing roles, parties and
+## an in-progress move are untouched, which is exactly what the confirm promises.
+func _on_work_unassign_all_pressed(band: Dictionary, count: int) -> void:
+    if band.is_empty() or count <= 0:
+        return
+    _confirm_destructive(WORK_UNASSIGN_CONFIRM_FORMAT % count, WORK_UNASSIGN_CONFIRM_OK,
+        func() -> void: _emit_cancel_order(band, CANCEL_SCOPE_WORK))
+
+## Clear labor for a band at `scope` (`all` / `work` / `roles`). Main formats the
+## `cancel_order <faction> <band> <scope>` command.
+func _emit_cancel_order(band: Dictionary, scope: String) -> void:
+    if band.is_empty():
+        return
+    emit_signal("cancel_order_requested", band, scope)
+
+# ---- zone `parties` ---------------------------------------------------------
+
+## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
+func _build_parties_zone_content(band: Dictionary) -> VBoxContainer:
+    var col := _make_zone_column()
+    col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
+    var parties := _band_parties(band)
+    var menu := _build_section_menu([
+        {"label": PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
+            "on_pick": func() -> void: _on_recall_all_parties_pressed(parties)},
+    ], PARTY_MENU_TOOLTIP)
+    col.add_child(_zone_head(ZONE_HEADER_PARTIES,
+        PARTIES_HEADER_FORMAT % [parties.size(), _band_party_workers(band)], menu))
+    if parties.is_empty():
+        col.add_child(_alloc_hint_label(PARTIES_EMPTY_HINT))
+    else:
+        for exp in parties:
+            col.add_child(_build_party_row(exp))
+    var spacer := Control.new()
+    spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    col.add_child(spacer)
+    col.add_child(_build_party_footer(band))
+    return col
+
+## The player expeditions this band detached (grouped by `home_band_entity`).
+func _band_parties(band: Dictionary) -> Array:
+    var band_entity := int(band.get("entity", -1))
+    var rows: Array = []
+    for exp_variant in _player_expeditions:
+        if exp_variant is Dictionary and int((exp_variant as Dictionary).get("home_band_entity", 0)) == band_entity:
+            rows.append(exp_variant)
+    return rows
+
+## Workers currently out with this band's parties — the Workforce bar's Parties segment.
+func _band_party_workers(band: Dictionary) -> int:
+    var total := 0
+    for exp in _band_parties(band):
+        total += int((exp as Dictionary).get("size", 0))
+    return total
+
+## One party row: mission glyph · subject · phase chip · an always-visible recall `✕` (dimmed at rest,
+## bright on hover). Parties carry no stepper and no inspector, so the `✕` is their only removal path.
+## Clicking the row BODY keeps the existing behaviour: focus + select the expedition on the map.
+func _build_party_row(exp: Dictionary) -> HBoxContainer:
+    var phase := _expedition_phase_key(exp)
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    var body := Button.new()
+    body.text = _panel_expedition_summary(exp)
+    body.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    body.focus_mode = Control.FOCUS_NONE
+    body.clip_text = true
+    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(body, "ghost")
+    if phase == EXPEDITION_PHASE_AWAITING:
+        body.add_theme_color_override("font_color", HudStyle.WARN)
+    body.tooltip_text = _expedition_row_tooltip(exp, phase)
+    var entity := int(exp.get("entity", -1))
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    body.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
+    row.add_child(body)
+    var recall := Button.new()
+    recall.text = PARTY_RECALL_GLYPH
+    recall.focus_mode = Control.FOCUS_NONE
+    recall.tooltip_text = PARTY_RECALL_TOOLTIP
+    recall.custom_minimum_size = Vector2(PARTY_RECALL_WIDTH, 0.0)
+    HudStyle.apply_button(recall, "ghost")
+    recall.modulate.a = PARTY_RECALL_REST_ALPHA
+    recall.mouse_entered.connect(func() -> void: recall.modulate.a = 1.0)
+    recall.mouse_exited.connect(func() -> void: recall.modulate.a = PARTY_RECALL_REST_ALPHA)
+    recall.pressed.connect(func() -> void: _on_recall_expedition_pressed(exp))
+    row.add_child(recall)
+    return row
+
+## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
+## one `recall_expedition` per party through the existing signal.
+func _on_recall_all_parties_pressed(parties: Array) -> void:
+    if parties.is_empty():
+        return
+    _confirm_destructive(PARTY_RECALL_CONFIRM_FORMAT % parties.size(), PARTY_RECALL_CONFIRM_OK,
+        func() -> void:
+            for exp in parties:
+                _on_recall_expedition_pressed(exp))
+
+## The parties footer: the single primary `Send a party…` button, or the compose sheet in its place.
+## With no idle workers the button stays VISIBLE and DISABLED with its reason — the section vanishing
+## is what made expeditions look like they had been removed from the game.
+func _build_party_footer(band: Dictionary) -> VBoxContainer:
+    var idle := _effective_idle(band)
+    var foot := _make_zone_block()
+    if _party_compose_open and idle > 0:
+        foot.add_child(_build_compose_sheet(band, idle))
+        return foot
+    var send := Button.new()
+    send.text = SEND_PARTY_BUTTON
+    send.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(send, "primary")
+    send.tooltip_text = SEND_EXPEDITION_HINT
+    send.disabled = idle <= 0
+    send.pressed.connect(func() -> void:
+        _party_compose_open = true
+        _party_compose_mission = ""
+        _rerender_panel_allocation())
+    foot.add_child(send)
     if idle <= 0:
-        return null
-    var block := _make_alloc_block()
-    block.add_child(_alloc_section_label(SEND_EXPEDITION_SECTION))
-    # The party max is the smaller of the band's idle workers and the server's hard party-size cap
-    # (from the expedition config). Guard defensively: a missing/0 cap (older server, or the field
-    # absent) falls back to idle so the stepper is never clamped to 0.
+        foot.add_child(_alloc_hint_label(SEND_PARTY_NO_IDLE_REASON))
+    return foot
+
+## The compose sheet, MISSION FIRST: nothing below appears until a mission is picked, so the policy
+## picker is unreachable except under Hunt (it used to sit above the scouting button and read as if
+## it modified it).
+func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
+    var sheet := _make_zone_block()
+    var head := HBoxContainer.new()
+    var title := Label.new()
+    title.text = SEND_PARTY_BUTTON
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var cancel := Button.new()
+    cancel.text = INSPECTOR_CLOSE_GLYPH
+    cancel.focus_mode = Control.FOCUS_NONE
+    cancel.tooltip_text = COMPOSE_CANCEL_TOOLTIP
+    HudStyle.apply_button(cancel, "ghost")
+    cancel.pressed.connect(func() -> void:
+        _party_compose_open = false
+        _rerender_panel_allocation())
+    head.add_child(cancel)
+    sheet.add_child(head)
+    var missions := HBoxContainer.new()
+    missions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    missions.add_child(_build_mission_chip(COMPOSE_MISSION_SCOUT, COMPOSE_MISSION_LABEL_SCOUT))
+    missions.add_child(_build_mission_chip(COMPOSE_MISSION_HUNT, COMPOSE_MISSION_LABEL_HUNT))
+    sheet.add_child(missions)
+    if _party_compose_mission == "":
+        sheet.add_child(_alloc_hint_label(COMPOSE_PICK_MISSION_HINT))
+        return sheet
+    # Party size — the SAME cap logic the old Send-expedition section used.
     var cap := int(band.get("max_expedition_party_size", 0))
     var party_max: int = mini(idle, cap) if cap > 0 else idle
-    # Clamp the persisted party size into 1..party_max (both can shrink between renders).
     _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, party_max)
-    block.add_child(_build_worker_stepper(
-        "Party", _send_expedition_count, _send_expedition_count < party_max,
+    var party_row := HBoxContainer.new()
+    party_row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var party_key := Label.new()
+    party_key.text = COMPOSE_FIELD_PARTY
+    party_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    party_row.add_child(party_key)
+    _add_stepper_controls(party_row, _send_expedition_count, _send_expedition_count < party_max,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, WORKER_STEP, party_max)
-            rebuild.call()))
-    # Both expedition verbs share the one party stepper above (they detach the same workers); the
-    # scout targets a tile, the hunt targets a herd.
-    var send_btn := Button.new()
-    send_btn.text = SEND_EXPEDITION_BUTTON
-    HudStyle.apply_button(send_btn, "primary")
-    send_btn.tooltip_text = SEND_EXPEDITION_HINT
-    send_btn.pressed.connect(func() -> void: _on_send_expedition_pressed(band, _send_expedition_count))
-    block.add_child(send_btn)
-    # Hunt verb: a policy radio (Sustain/Surplus/Market/Eradicate, default Sustain) + a one-line
-    # behaviour hint for the picked policy, then the launch button. The policy is the trailing arg.
-    if not (_send_hunt_policy in LABOR_HUNT_POLICIES):
-        _send_hunt_policy = DEFAULT_HUNT_POLICY
-    block.add_child(_build_policy_picker(func(policy: String) -> void:
-        _send_hunt_policy = policy
-        rebuild.call(), _send_hunt_policy))
-    block.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
-    var hunt_btn := Button.new()
-    hunt_btn.text = SEND_HUNT_EXPEDITION_BUTTON
-    HudStyle.apply_button(hunt_btn, "primary")
-    hunt_btn.tooltip_text = SEND_HUNT_EXPEDITION_HINT
-    hunt_btn.pressed.connect(func() -> void: _on_send_hunt_expedition_pressed(band, _send_expedition_count, _send_hunt_policy))
-    block.add_child(hunt_btn)
-    return block
+            _rerender_panel_allocation())
+    sheet.add_child(party_row)
+    sheet.add_child(_alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
+    var is_hunt := _party_compose_mission == COMPOSE_MISSION_HUNT
+    if is_hunt:
+        if not (_send_hunt_policy in LABOR_HUNT_POLICIES):
+            _send_hunt_policy = DEFAULT_HUNT_POLICY
+        sheet.add_child(_alloc_section_label(COMPOSE_FIELD_POLICY))
+        sheet.add_child(_build_policy_picker(func(policy: String) -> void:
+            _send_hunt_policy = policy
+            _rerender_panel_allocation(), _send_hunt_policy, LABOR_HUNT_POLICIES, {}, {},
+            ZONE_POLICY_PICKER_COLUMNS))
+        sheet.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
+    else:
+        sheet.add_child(_alloc_hint_label(SEND_EXPEDITION_HINT))
+    var confirm := Button.new()
+    confirm.text = SEND_HUNT_EXPEDITION_BUTTON if is_hunt else SEND_EXPEDITION_BUTTON
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(confirm, "primary")
+    confirm.tooltip_text = SEND_HUNT_EXPEDITION_HINT if is_hunt else SEND_EXPEDITION_HINT
+    confirm.pressed.connect(func() -> void:
+        _party_compose_open = false
+        if is_hunt:
+            _on_send_hunt_expedition_pressed(band, _send_expedition_count, _send_hunt_policy)
+        else:
+            _on_send_expedition_pressed(band, _send_expedition_count))
+    sheet.add_child(confirm)
+    return sheet
+
+func _build_mission_chip(mission: String, label: String) -> Button:
+    var chip := Button.new()
+    chip.text = label
+    chip.focus_mode = Control.FOCUS_NONE
+    chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(chip, "primary" if _party_compose_mission == mission else "ghost")
+    chip.pressed.connect(func() -> void:
+        _party_compose_mission = mission
+        _rerender_panel_allocation())
+    return chip
+
+# ---- badges -----------------------------------------------------------------
+
+## Push the narrow shell's tab badges: Work carries its attention count (hot) or its source count,
+## Parties its size (hot while any party is awaiting orders). Band carries none — it is always there.
+func _push_zone_badges(band: Dictionary) -> void:
+    if _band_city_panel == null:
+        return
+    var models := _work_source_models(band, _effective_idle(band))
+    var attention: Array = models.filter(func(m): return bool(m["attention"]))
+    _band_city_panel.set_tab_badge(BandCityPanel.ZONE_BAND, "", false)
+    _band_city_panel.set_tab_badge(BandCityPanel.ZONE_WORK,
+        str(attention.size()) if not attention.is_empty() else str(models.size()),
+        not attention.is_empty())
+    var parties := _band_parties(band)
+    var awaiting := false
+    for exp in parties:
+        if _expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+            awaiting = true
+    _band_city_panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
+        str(parties.size()) if not parties.is_empty() else "", awaiting)
 
 ## The selected PLAYER band's one drawer action (§18): Move. Shares the allocation-panel host with
 ## `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
@@ -4037,6 +5348,15 @@ func _build_band_move_actions() -> void:
     for child in allocation_panel.get_children():
         child.queue_free()
     allocation_panel.visible = true
+    allocation_panel.add_child(_make_band_move_actions())
+
+## The Move row itself, so the two hosts that offer it build the SAME control rather than two that
+## can drift. **Both hosts must offer it**: the docked path adds it beside the panel pointer, and the
+## NO-PANEL fallback appends it under the band content — the fallback used to inherit a Move from the
+## allocation stack's Orders block, and when the Band panel rework deleted that block the fallback
+## silently offered no way to move a band at all. `ui_preview`'s "exactly ONE Move button" assertion
+## is what catches either half of that going wrong (none offered, or one offered twice).
+func _make_band_move_actions() -> HBoxContainer:
     var actions := HBoxContainer.new()
     actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var move_btn := Button.new()
@@ -4045,7 +5365,7 @@ func _build_band_move_actions() -> void:
     move_btn.tooltip_text = MOVE_BAND_BUTTON_TOOLTIP
     move_btn.pressed.connect(_on_move_band_pressed)
     actions.add_child(move_btn)
-    allocation_panel.add_child(actions)
+    return actions
 
 ## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
 ## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
@@ -4684,7 +6004,8 @@ func _build_policy_picker(
     selected: String = "",
     options: Array = LABOR_HUNT_POLICIES,
     gates: Dictionary = {},
-    takes: Dictionary = {}) -> VBoxContainer:
+    takes: Dictionary = {},
+    columns: int = 0) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -4692,7 +6013,13 @@ func _build_policy_picker(
     # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
     # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
     var grid := GridContainer.new()
-    grid.columns = maxi(1, options.size()) if options.size() <= POLICY_PICKER_MAX_SINGLE_ROW else POLICY_PICKER_COLUMNS
+    # `columns > 0` overrides the width-driven default: a zone is a FIXED-width box, and a picker whose
+    # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column
+    # out past its host (where it is clipped) — taking the section menu beside it off the edge.
+    if columns > 0:
+        grid.columns = columns
+    else:
+        grid.columns = maxi(1, options.size()) if options.size() <= POLICY_PICKER_MAX_SINGLE_ROW else POLICY_PICKER_COLUMNS
     grid.add_theme_constant_override("h_separation", WORKER_STEPPER_SEPARATION)
     grid.add_theme_constant_override("v_separation", WORKER_STEPPER_SEPARATION)
     for policy in options:
@@ -5252,11 +6579,6 @@ func _huntable_herd_on_tile(tile_info: Dictionary) -> Dictionary:
                 return herd
     return {}
 
-## Clear-all: return every worker to idle (repurposed cancel_order).
-func _on_clear_all_pressed(band: Dictionary) -> void:
-    if band.is_empty():
-        return
-    emit_signal("cancel_order_requested", band)
 
 ## Map double-click convenience (Main forwards `MapView.herd_quick_hunt_requested`): assign
 ## ALL of the player band's currently-idle workers to hunt `herd_id` at the default Sustain
@@ -6182,52 +7504,20 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # DEEP-COPY the subject: `_panel_band` must NOT alias `_selected_unit` (the selection
     # path passes it in), because selecting a foreign tile calls `_selected_unit.clear()` —
     # which would empty a shared dict and blank the panel on its next stepper rebuild. The
-    # allocation closures below also capture this stable copy, so they keep targeting the
-    # panel band regardless of the current selection.
+    # zone closures below also capture this stable copy, so they keep targeting the panel band
+    # regardless of the current selection.
     _panel_band = unit.duplicate(true)
-    # Assemble the ordered section blocks Hud hands the panel to arrange (tall stack vs wide
-    # column-flow). Ownership passes to the panel, which frees the previous render's blocks. Order
-    # per docs/plan_band_panel_wide_flow.md: Summary, Active expeditions, then the allocation sections
-    # (Workers / Current actions / Band roles / Orders / Send expedition).
+    # The vitals RichTextLabel rebuilds the food/morale/output tint context from scratch each render.
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
-    var blocks: Array = []
-    # Summary block — a fresh RichTextLabel per render (resets + re-sets the food/morale/output tint
-    # context, then tints via bbcode). Wrapped in a section block so it columns like the rest.
-    var summary_block := _make_alloc_block()
-    var detail_label := RichTextLabel.new()
-    detail_label.bbcode_enabled = true
-    detail_label.fit_content = true
-    detail_label.scroll_active = false
-    detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-    detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # The panel's Food/Morale labels are the same click-to-expand disclosures as the Occupants drawer.
-    # This RichTextLabel is rebuilt each render, so wire its `meta_clicked` here (bound is_panel = true).
-    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(true))
-    # `in_panel`: the panel header already names the band + stage, so the summary drops the Unit row
-    # and folds the population/workers line into the identity grid (see `_unit_summary_lines`).
-    detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band, true))
-    summary_block.add_child(detail_label)
-    blocks.append(summary_block)
-    # "Food outlook" block — the merged larder projection over the arrivals horizon (its own section
-    # because BBCode can't host the drawn chart). Sits right after the summary; omitted for a band with
-    # no projected food flow.
-    var outlook_block := _build_food_outlook_block(_panel_band)
-    if outlook_block != null:
-        blocks.append(outlook_block)
-    # "Active expeditions" block the panel band has detached (grouped by home_band_entity); omitted
-    # when the band has none.
-    var exp_block := _build_panel_expeditions_block(_panel_band)
-    if exp_block != null:
-        blocks.append(exp_block)
-    # Allocation section blocks (closures capture the stable `_panel_band`; the party/policy controls
-    # re-render the panel via `_rerender_panel_allocation`, which re-runs this whole assembly).
-    var rebuild := func() -> void: _rerender_panel_allocation()
-    # No population header block here — the panel's identity grid carries that line (above), so it
-    # can't strand itself between Active expeditions and Current actions.
-    blocks.append_array(_build_allocation_sections(_panel_band, rebuild, false))
-    _band_city_panel.set_band_sections(blocks)
+    # The three zone contents. Ownership passes to the panel, which frees the previous render's zones
+    # and parents these into whichever shell (wide columns / narrow tabs) its width selected.
+    _band_city_panel.set_zones(
+        _wrap_zone(_build_band_zone_content(_panel_band)),
+        _wrap_zone(_build_work_zone_content(_panel_band)),
+        _wrap_zone(_build_parties_zone_content(_panel_band)))
+    _push_zone_badges(_panel_band)
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
@@ -6237,53 +7527,8 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     var index := _index_of_player_band(int(_panel_band.get("entity", -1)))
     _band_city_panel.set_header(stage_id, glyph, _band_display_name(_panel_band, index + 1), stage_label)
     _band_city_panel.set_cycler(index, _player_bands.size())
-    # `set_band_sections` above already flipped the panel to band-present (non-empty block list);
-    # just make sure it's shown.
+    # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _band_city_panel.set_shown(true)
-
-## Build the panel band's "Active expeditions" section block — the player expeditions whose
-## `home_band_entity` matches the shown band. Its own block (separate from the allocation blocks, so
-## a stepper rebuild can't clear it). Returns null when the band has detached none.
-func _build_panel_expeditions_block(band: Dictionary) -> VBoxContainer:
-    var band_entity := int(band.get("entity", -1))
-    var rows: Array = []
-    for exp_variant in _player_expeditions:
-        if not (exp_variant is Dictionary):
-            continue
-        var exp: Dictionary = exp_variant
-        if int(exp.get("home_band_entity", 0)) == band_entity:
-            rows.append(exp)
-    if rows.is_empty():
-        return null
-    var block := _make_alloc_block()
-    block.add_child(_alloc_section_label(PANEL_EXPEDITIONS_HEADER))
-    for exp in rows:
-        block.add_child(_build_panel_expedition_row(exp))
-    return block
-
-## One clickable "Active expeditions" row: mission glyph + compact summary + the phase GLYPH. Click
-## routes the map selection to the expedition (its detail then shows in the Occupants card's
-## expedition drawer), via the same signal path a roster click uses.
-## An `awaiting` row is the ONE state that keeps its words and reads WARN-amber: the party is parked
-## at its objective burning provisions until the player acts, and a call to action must not hide
-## behind a hover (see the action-status vocabulary).
-func _build_panel_expedition_row(exp: Dictionary) -> Button:
-    var phase := _expedition_phase_key(exp)
-    var btn := Button.new()
-    btn.text = _panel_expedition_summary(exp)
-    btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    btn.focus_mode = Control.FOCUS_NONE
-    btn.clip_text = true
-    btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    HudStyle.apply_button(btn, "ghost")
-    if phase == EXPEDITION_PHASE_AWAITING:
-        btn.add_theme_color_override("font_color", HudStyle.WARN)
-    btn.tooltip_text = _expedition_row_tooltip(exp, phase)
-    var entity := int(exp.get("entity", -1))
-    var x := int(exp.get("current_x", -1))
-    var y := int(exp.get("current_y", -1))
-    btn.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
-    return btn
 
 ## The expedition's sim phase key, normalized (the wire's `ExpeditionPhase` string).
 func _expedition_phase_key(exp: Dictionary) -> String:
@@ -6532,6 +7777,10 @@ func _index_of_player_band(entity: int) -> int:
 ## in `_render_band_into_panel`, since main's section-block model rebuilds that label each render.)
 func set_band_city_panel(panel: BandCityPanel) -> void:
     _band_city_panel = panel
+    # The panel re-reports its zone box on a shell flip / dock change / collapse / window resize.
+    # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
+    if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
+        panel.zones_resized.connect(_on_zones_resized)
 
 ## Walk to the next/prev player band (cycler ◀/▶). Routes through the SAME band-selection a roster
 ## click uses — recenter + select the band's hex (rebuilding that hex's roster), then pin the exact
@@ -6578,12 +7827,9 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## hosts name the band above the detail — the Band/City dock in its panel header, the Occupants card
 ## in the band's roster row — and the roster row also carries the band's SIZE, so neither the
 ## `Unit: <name>` row nor the `Size: <n>` row survives.
-## `in_panel` = rendered into the dock, which is the only host with a labor readout to give: there the
-## population becomes the **Population** row carrying the labor line (`29 · Workers 14 (Idle 12)`) —
-## the same reading the allocation block used to strand between Active expeditions and Current
-## actions. The Occupants-card drawer (foreign bands / the no-panel fallback) has no worker breakdown
-## to show for a band that isn't ours, so it states no population at all; the roster row has it.
-func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array[String]:
+## Nor does it state the population: the band zone's People + Workforce bars carry that, and the
+## Occupants-card drawer has no worker breakdown to show for a band that isn't ours anyway.
+func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     if bool(unit_data.get("is_expedition", false)):
         return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
@@ -6593,12 +7839,6 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     _disclosure_state = {}
     _food_flow_present = false
     _selected_band_food_turns = NAN
-    if in_panel:
-        # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
-        # calculation is moved here, never forked.
-        lines.append("%s: %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT % [
-            int(unit_data.get("size", 0)), int(unit_data.get("working_age", 0)),
-            _effective_idle(unit_data)]])
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
@@ -6606,11 +7846,13 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
     # how many (its roster row's size).
     if _is_player_unit(unit_data):
         lines.append(_band_food_line(unit_data))
-        # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown
-        # when concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure`
-        # records the row so `_format_detail_bbcode` draws the caret + clickable meta.
-        if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
-            lines.append_array(_food_breakdown_lines(unit_data))
+        # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
+        # set `_food_flow_present`; `_register_disclosure` stashes the rows for the popover and records
+        # the row so `_format_detail_bbcode` draws the caret + clickable meta. The rows are NEVER
+        # appended here — inline growth is what clipped the zone.
+        if _food_flow_present:
+            _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
+                _food_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -6621,13 +7863,11 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
         var output_line := _band_output_line(unit_data)
         if output_line != "":
             lines.append(output_line)
-        # Itemized morale breakdown: the SAME click-to-expand disclosure as Food (auto-shown when
-        # concerning). Only offered when there's actually a breakdown to show (a contribution above
-        # the epsilon, or the concerning recovery line).
-        var morale_breakdown := _morale_breakdown_lines(unit_data)
-        if not morale_breakdown.is_empty() \
-                and _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data):
-            lines.append_array(morale_breakdown)
+        # Itemized morale breakdown: the SAME click-to-open disclosure as Food, in the same popover.
+        # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
+        # the concerning recovery line) — `_register_disclosure` declines an empty payload.
+        _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data,
+            _morale_breakdown_lines(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -7286,16 +8526,19 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == PEN_FEED_ROW:
                 # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
                 value_hex = _pen_feed_value_hex(String(kv[1]))
-            # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
-            # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
-            # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.
+            # A disclosure row (Food/Morale) renders its key as a clickable `[url]` + ▸/▾ caret, which
+            # opens its breakdown in the shared POPOVER via `meta_clicked` → `_on_detail_meta_clicked`
+            # (never inline — see the BREAKDOWN_* consts). The caret is ▾ only while THIS row's
+            # popover is up. A CONCERNING row wears the caret in WARN rather than SIGNAL: the
+            # breakdown no longer opens itself, so the invitation to read it has to be visible.
             var key_cell := "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, kv[0]]
             if _disclosure_state.has(kv[0]):
                 var st: Dictionary = _disclosure_state[kv[0]]
                 var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
+                var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
                 key_cell = "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
-                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("kind", "")),
-                    HudStyle.SIGNAL_HEX, kv[0], caret,
+                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
+                    caret_hex, kv[0], caret,
                 ]
             out += "[cell]%s[/cell][cell][color=#%s]%s[/color][/cell]" % [
                 key_cell, value_hex, kv[1],
