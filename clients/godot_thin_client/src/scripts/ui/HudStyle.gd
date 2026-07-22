@@ -102,6 +102,31 @@ static func banner_stylebox() -> StyleBoxFlat:
 	sb.shadow_offset = Vector2(0.0, 8.0)
 	return sb
 
+# ---- chips -----------------------------------------------------------------
+# A CHIP is a pinned one-word standing condition (the selection card's Sight / Habitability /
+# Climate / Tags / Site strip): a pill that reads as a label wearing a state colour, never as a
+# button. Hence the near-black wash + a hairline border at CHIP_BORDER_ALPHA of the passed tint —
+# a full-strength border would compete with the text it frames. The radius is deliberately far past
+# the chip's own height so the ends are true semicircles at any font size.
+const CHIP_BG := Color(0.0, 0.0, 0.0, 0.25)
+const CHIP_BORDER_ALPHA := 0.4
+const CHIP_CORNER_RADIUS := 999
+const CHIP_PADDING_X := 7
+const CHIP_PADDING_Y := 2
+
+## Pill chrome for one chip, bordered in the caller's semantic tint.
+static func chip_stylebox(border: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = CHIP_BG
+	sb.set_corner_radius_all(CHIP_CORNER_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(border.r, border.g, border.b, CHIP_BORDER_ALPHA)
+	sb.content_margin_left = CHIP_PADDING_X
+	sb.content_margin_right = CHIP_PADDING_X
+	sb.content_margin_top = CHIP_PADDING_Y
+	sb.content_margin_bottom = CHIP_PADDING_Y
+	return sb
+
 ## Header treatment: transparent fill with a hairline divider under the title,
 ## giving each card its "title bar" separation from the body.
 static func header_stylebox() -> StyleBoxFlat:
@@ -113,6 +138,14 @@ static func header_stylebox() -> StyleBoxFlat:
 	sb.content_margin_bottom = 7
 	sb.content_margin_left = 0
 	sb.content_margin_right = 0
+	return sb
+
+## A standalone hairline RULE inside a card — the same LINE_SOFT 1px `header_stylebox` draws under
+## a title, for a divider between two blocks of one card's body (the selection card's list ↔ drawer
+## boundary). The caller owns the thickness (a `custom_minimum_size.y` on the node it styles).
+static func hairline_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = LINE_SOFT
 	return sb
 
 # ---- buttons ---------------------------------------------------------------

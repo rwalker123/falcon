@@ -243,6 +243,7 @@ func _ready() -> void:
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_victory", Key.KEY_V)
+    _ensure_action_binding("toggle_command_feed", Key.KEY_R)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
@@ -756,6 +757,14 @@ func _toggle_victory_visibility() -> void:
     if hud.has_method("toggle_victory"):
         _hud_invoke("toggle_victory")
 
+## The command feed ships hidden (six read-only receipts, no verbs) so the selection card owns the
+## left dock's height; `R` opens it on demand, exactly as `L` / `V` open the two reference cards.
+func _toggle_command_feed_visibility() -> void:
+    if hud == null:
+        return
+    if hud.has_method("toggle_command_feed"):
+        _hud_invoke("toggle_command_feed")
+
 # Fog of War is ON by default at startup (seated in _ready before the first world renders); the `F`
 # key flips this and MapView's state together, so the toggle still works from the on state.
 var _fow_active: bool = true
@@ -813,6 +822,8 @@ func _process(delta: float) -> void:
         _toggle_legend_visibility()
     if Input.is_action_just_pressed("toggle_victory"):
         _toggle_victory_visibility()
+    if Input.is_action_just_pressed("toggle_command_feed"):
+        _toggle_command_feed_visibility()
     if Input.is_action_just_pressed("toggle_fow"):
         _toggle_fow_overlay()
     if command_client != null:

@@ -19,9 +19,19 @@ const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## Injected for ONE state (`tile_panel_band`) and released again: a selected player band's detail
+## renders into this panel, so it is the only way to render the drawer's "it went over there"
+## pointer line rather than the no-panel legacy fallback.
+const BAND_CITY_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
 # Slice 1 reserved-dock probe: left-edge reservation width used to verify the HUD insets.
 const RESERVED_PROBE_WIDTH := 300.0
+# The crowded hex the sticky-land-selection state clicks, and a grid just large enough to contain it
+# (the crowded fixtures all sit at 58, 24). Prairie steppe, matching that fixture's biome.
+const STICKY_TILE := Vector2i(58, 24)
+const STICKY_GRID_W := 64
+const STICKY_GRID_H := 32
+const STICKY_TERRAIN_ID := 11
 # Park the OS cursor over empty canvas before rendering. The HUD drops its hovered-hex record (and
 # with it the targeting banner's hunt forecast) whenever the pointer sits over an interactive HUD
 # control — see Hud._suppress_tooltip_over_ui. Wherever the cursor happened to be when the harness
@@ -1320,6 +1330,131 @@ func _ready() -> void:
 	_hud.show_herd_selection(_occupied_herd_fixture())
 	await _settle()
 	await _save("occupants_herd")
+
+	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
+	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its
+	# first row, and one height-capped drawer that whichever row is lit fills. These six states are
+	# the layout's own frames — every other tile/herd/forage state above exercises the same builders
+	# through it, which is why their framing changed with this arc.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud._forage_assign_count = 3
+
+	# tile_panel_land — the LAND row lit: chips pinned above (In sight · Hospitable · Temperate ·
+	# Fertile · Verdant Basin), the land row leading the list with the tile's forage glyph + biome
+	# name, and the terrain rows + "Assign foragers" compose block in the drawer beneath.
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("tile_panel_land")
+
+	# tile_panel_no_forage — the same layout on ground that offers nothing: the land row's meta
+	# reads "No forage" and the drawer carries terrain rows with NO compose block.
+	_hud.show_tile_selection(_barren_tile_fixture())
+	await _settle()
+	await _save("tile_panel_no_forage")
+
+	# tile_panel_herd — a herd row lit: the land row is STILL in the list above it (the land never
+	# leaves), and the hunt compose block fills the one drawer.
+	_hud._player_band = _hunt_preview_local_band()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_occupied_herd_fixture())
+	await _settle()
+	await _save("tile_panel_herd")
+
+	# tile_panel_crowded — THE state this arc exists for: 3 bands + 2 herds. Every row must be
+	# visible, the drawer must CAP (scrolling internally on the selected band's allocation block),
+	# and the whole card must fit the dock without the dock itself scrolling.
+	_hud.show_tile_selection(_crowded_tile_fixture())
+	await _settle()
+	await _save("tile_panel_crowded")
+
+	# tile_panel_land_sticky — THE BEHAVIOURAL ASSERTION for the sticky land selection, driven
+	# through the REAL client path, because the bug does not live where a hand-picked
+	# `reapply_selection("tile", …)` would put it. MapView holds its OWN occupant selection, and
+	# `refresh_selection_payload` answers `kind: "unit"` for as long as `selected_unit_id >= 0` — so on
+	# an OCCUPIED hex the tile branch is never even reached. Hence: instance the real MapView, wire the
+	# two signals Main wires, click the hex, click the LAND row, then ASK MAPVIEW what the next
+	# snapshot's payload is and feed whatever it says into `reapply_selection`. Hardcoding "tile" here
+	# would assert a path the bug cannot reach.
+	var sticky_map: Node2D = MAP_VIEW_SCRIPT.new()
+	# Data only — a visible map would render behind the HUD in this and every later frame.
+	sticky_map.visible = false
+	add_child(sticky_map)
+	sticky_map.display_snapshot(_sticky_map_snapshot())
+	# Main's wiring, verbatim (Main._on_map_tile_selected / _on_map_unit_selected /
+	# _on_hud_roster_occupant_selected).
+	sticky_map.tile_selected.connect(_hud.show_tile_selection)
+	sticky_map.unit_selected.connect(_hud.show_unit_selection)
+	_hud.roster_occupant_selected.connect(sticky_map.select_occupant)
+	sticky_map.handle_hex_click(STICKY_TILE.x, STICKY_TILE.y, MOUSE_BUTTON_LEFT)  # lands on a band
+	_hud._on_land_row_selected()                                                  # the player picks LAND
+	# The next snapshot: Main asks MapView what is selected and replays it into the HUD.
+	var sticky_payload: Dictionary = sticky_map.refresh_selection_payload()
+	_hud.reapply_selection(String(sticky_payload.get("kind", "none")), sticky_payload.get("data", {}))
+	await _settle()
+	_assert_hud("land row clears MapView's occupant selection (payload is not \"unit\")",
+		String(sticky_payload.get("kind", "")) != "unit")
+	_assert_hud("land selection survives the next snapshot on a crowded hex",
+		_hud._selected_subject == "land" and _hud._selected_unit.is_empty() and _hud._selected_herd.is_empty())
+	await _save("tile_panel_land_sticky")
+	sticky_map.tile_selected.disconnect(_hud.show_tile_selection)
+	sticky_map.unit_selected.disconnect(_hud.show_unit_selection)
+	_hud.roster_occupant_selected.disconnect(sticky_map.select_occupant)
+	sticky_map.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_unseen — a REMEMBERED hex. Chips + the land row render (geography is remembered
+	# knowledge), the herd this fixture deliberately carries does NOT, and the drawer states that
+	# the contents are unknown. An empty list would be a claim of emptiness we cannot back up.
+	_hud.clear_selection()
+	_hud.show_tile_selection(_sight_tile_fixture(VIS_DISCOVERED))
+	await _settle()
+	await _save("tile_panel_unseen")
+
+	# tile_panel_band — a PLAYER band lit while the dockable Band/City panel exists: its detail
+	# renders there, so the drawer would otherwise be a blank gap. It must point at where the
+	# detail went instead. (The panel is injected only for this frame and released after, so the
+	# reserved edge does not follow the states below.)
+	var tile_panel_band_panel: BandCityPanel = BAND_CITY_PANEL_SCENE.instantiate()
+	add_child(tile_panel_band_panel)
+	# Fan the panel's reservation onto the HUD as Main does, and dock it RIGHT — docked left it
+	# reserves the very edge the selection card lives on and covers the frame under test.
+	tile_panel_band_panel.reservation_changed.connect(func(edge: int, size: float):
+		_hud.set_reserved_inset(&"band_panel", edge, size))
+	tile_panel_band_panel.set_dock(SIDE_RIGHT)
+	_hud.set_band_city_panel(tile_panel_band_panel)
+	var tile_panel_band_subject: Dictionary = _crowded_bands_fixture()[0]
+	tile_panel_band_subject["tile_info"] = _crowded_tile_fixture()
+	_hud.show_unit_selection(tile_panel_band_subject)
+	await _settle()
+	await _save("tile_panel_band")
+	_hud.set_band_city_panel(null)
+	_hud.set_reserved_inset(&"band_panel", SIDE_RIGHT, 0.0)
+	tile_panel_band_panel.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_feed_shown — the command feed is hidden by default now (six read-only receipts, no
+	# verbs) and opens on `R`. Toggled on, the dock must reflow with the selection card above it and
+	# nothing clipped.
+	_hud.ingest_command_events(_telling_command_receipts())
+	_hud.show_tile_selection(_food_tile_fixture())
+	_hud.toggle_command_feed()
+	await _settle()
+	await _save("tile_panel_feed_shown")
+	_hud.toggle_command_feed()
+	await _settle()
+
+	# Restore the single-band compose context the states below assume.
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
 
 	# State 4 — targeting active: pressing "Move" on the band allocation panel enters
 	# tile-targeting, raising the top-centre banner ("MOVE … click a destination tile").
@@ -3199,6 +3334,90 @@ func _pastoral_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 0.6
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
+
+## Ground that offers NOTHING to gather: no food module, no patch. The land row's meta must read
+## "No forage" (not a blank), and the drawer must carry terrain rows with no compose block.
+func _barren_tile_fixture() -> Dictionary:
+	return {
+		"x": 71, "y": 4,
+		"terrain_label": "Rocky Regolith",
+		"tags_text": "none",
+		"visibility_state": "active",
+		"habitability": 0.07,
+		"temperature": 2.0,
+		"food_module": "",
+		"food_module_label": "",
+		"height_display": "62 ▮▮▮▮▮▯▯▯",
+	}
+
+## THE CROWDED HEX — 3 bands + 2 herds, i.e. six subject rows once the land is counted. The state
+## the height cap is judged on: every row visible, the drawer capped, the dock not scrolling.
+func _crowded_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["x"] = 58
+	tile["y"] = 24
+	tile["units"] = _crowded_bands_fixture()
+	tile["herds"] = _crowded_herds_fixture()
+	return tile
+
+## Three player bands on the crowded hex, spanning the food tiers (green / amber / red dots) and
+## carrying real labor so the auto-selected band's drawer renders a full allocation block — which is
+## what makes the cap do any work at all.
+func _crowded_bands_fixture() -> Array:
+	return [
+		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
+			"work_range": 2, "hunt_reach": 4, "days_of_food": 15.0, "morale": 0.72,
+			"activity": "forage", "stores": {"provisions": 180.0},
+			"food_income": 3.2, "food_consumption": 2.4,
+			"labor_assignments": [
+				{"kind": "forage", "workers": 5, "target_x": 58, "target_y": 24, "policy": "sustain",
+					"actual_yield": 0.96, "sustainable_yield": 0.96, "realized_yield": 0.96,
+					"workers_needed": 5, "overdraws": false},
+			]},
+		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 44, "idle_workers": 4,
+			"work_range": 2, "hunt_reach": 4, "days_of_food": 7.0, "morale": 0.51,
+			"activity": "scout", "stores": {"provisions": 40.0}, "labor_assignments": []},
+		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 27, "idle_workers": 0,
+			"work_range": 2, "hunt_reach": 4, "days_of_food": 2.0, "morale": 0.30,
+			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
+	]
+
+## Two herds sharing the crowded hex — a stressed bison (amber dot) and a thriving boar (green), so
+## the Wildlife group is genuinely plural and the ecology dots differ down the list.
+func _crowded_herds_fixture() -> Array:
+	return [
+		_occupied_herd_only(),
+		{
+			"id": "game_boar_04",
+			"label": "Wild Boar (game_boar_04)",
+			"species": "Wild Boar",
+			"size_class": "medium",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"domestication": 0.0,
+			"biomass": 1010.0,
+			"carrying_capacity": 1433.0,
+			"graze_range_radius": 1,
+			"x": 58, "y": 24,
+		},
+	]
+
+## The MapView snapshot behind `tile_panel_land_sticky` — the crowded hex's OWN bands and herds on a
+## grid just big enough to hold it, so MapView's `_tile_info_at` / `_units_on_tile` see exactly what
+## the HUD fixture describes. FoW is off by default in a fresh MapView, so nothing is redacted.
+func _sticky_map_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)
+	terrain.fill(STICKY_TERRAIN_ID)
+	return {
+		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": _crowded_bands_fixture(),
+		"herds": _crowded_herds_fixture(),
+	}
 
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
 func _occupied_tile_fixture() -> Dictionary:

@@ -99,9 +99,19 @@ var _server_build: String = "?"
 @onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
 @onready var tile_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel as PanelCard
 @onready var tile_detail: RichTextLabel = %TileDetail
-@onready var occupants_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel as PanelCard
 @onready var occupant_detail: RichTextLabel = %OccupantDetail
-@onready var roster_list: VBoxContainer = %RosterList
+# ONE card, ONE list, ONE drawer (docs/plan_tile_panel_layout.md). The chip strip carries the
+# tile's standing condition and never scrolls; `%SubjectList` is the selectable list of subjects on
+# this hex — the LAND first, then the bands and wildlife — and `%SubjectScroll` is the single,
+# height-capped drawer every one of them fills. Only one drawer is ever open, which is what bounds
+# the card: rows are ~30px, a compose block is 300+.
+@onready var tile_chips: HFlowContainer = %TileChips
+@onready var subject_list: VBoxContainer = %SubjectList
+@onready var subject_scroll: ScrollContainer = %SubjectScroll
+@onready var subject_body: VBoxContainer = %SubjectBody
+# The 1px rule marking where the LIST ends and the DRAWER begins — without it the drawer's first
+# row runs straight on from the last wildlife row and the two blocks read as one list.
+@onready var subject_divider: Panel = %SubjectDivider
 # Early-Game Labor allocation UI (slice 3b), all runtime-populated containers:
 # the band's allocation panel (Working/Idle + assignment rows + Scout/Warrior + Move/Clear),
 # the herd "assign hunters" controls, and the tile "assign foragers" controls.
@@ -288,6 +298,36 @@ const ROSTER_ROW_SEPARATION := 8
 const ROSTER_ROW_H_PADDING := 10.0
 const ROSTER_ACCENT_WIDTH := 3.0
 const ROSTER_HEADER_FONT_SIZE := 10
+# ---- The subject list: the land is the FIRST ROW, not a card above the occupants ---------------
+# The land is the same KIND of thing a band or a herd is — a subject on this hex you can put
+# workers on — so it is a row, and selecting it fills the same one drawer. `_selected_subject` says
+# only which KIND of row is lit; `_selected_unit` / `_selected_herd` stay authoritative for WHICH.
+const SUBJECT_LAND := "land"
+const SUBJECT_UNIT := "unit"
+const SUBJECT_HERD := "herd"
+# `roster_occupant_selected`'s id for the LAND kind: the land has no entity, and the signal's id is
+# a Variant, so it carries the same "no occupant" sentinel the rest of the client uses.
+const LAND_SUBJECT_ID := -1
+# Fallback glyph for the land row on a tile carrying no food module. Text-presentation (the
+# line-art policy in `FoodIcons`): it inherits the row label's colour, so it dims with the row.
+const LAND_ROW_GLYPH := "◈"
+# Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
+const LAND_META_WORKERS_FORMAT := "%d %s"
+const LAND_META_NO_FORAGE := "No forage"
+# Chip strip font: one notch under the row labels — a chip is a standing condition, not a heading.
+const CHIP_FONT_SIZE := 11
+# Tag chips are skipped when the tile reports this literal (the `tags_text` "no tags" value): an
+# absent condition earns no chip, exactly as it earns no row.
+const CHIP_TAGS_NONE := "none"
+# The drawer's floor. Below this a compose block is unreadable, so the card is allowed to push the
+# dock into its own scroll rather than crushing the controls the player came here to use.
+const SUBJECT_DRAWER_MIN_HEIGHT := 180.0
+const SUBJECT_DRAWER_BOTTOM_MARGIN := 12.0
+# The list ↔ drawer rule: one hairline, the same weight `header_stylebox` draws under a card title.
+const SUBJECT_DIVIDER_HEIGHT := 1.0
+# A selected PLAYER band's detail lives in the dockable Band/City panel, so its drawer here would
+# otherwise be a blank gap. Say where it went instead.
+const BAND_PANEL_POINTER_TEXT := "Labor allocation is in the Band / City panel."
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
 # most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
 const ACTIVITY_GLYPHS := {
@@ -306,6 +346,7 @@ const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const HUD_PANELS_CONFIG_SECTION := "hud_panels"
 const CONFIG_KEY_LEGEND_SUPPRESSED := "legend_suppressed"
 const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
+const CONFIG_KEY_COMMAND_FEED_SUPPRESSED := "command_feed_suppressed"
 # Both reference cards start HIDDEN: the right dock is the narrative surface's home, and Victory /
 # Terrain Types are look-it-up readouts the player opens on demand (V / L) rather than standing
 # furniture competing with the telling for dock height.
@@ -329,6 +370,17 @@ var _prev_band_sizes: Dictionary = {}
 var _selected_tile_info: Dictionary = {}
 var _selected_unit: Dictionary = {}
 var _selected_herd: Dictionary = {}
+# Which KIND of subject row is lit (SUBJECT_LAND | SUBJECT_UNIT | SUBJECT_HERD). The two dicts
+# above stay authoritative for WHICH unit/herd; this only picks the drawer.
+var _selected_subject: String = SUBJECT_LAND
+# The hex the player last EXPLICITLY chose a subject on (a row click), so the auto-select rule can
+# tell "a fresh hex, pick a default" from "the player already decided here". Without it, choosing
+# the LAND row on an occupied hex cleared both occupant dicts and the next snapshot's
+# `reapply_selection("tile", …)` re-ran the default and stole the selection back to the first band.
+# `(-1, -1)` = no choice yet, which no real hex matches.
+var _subject_choice_tile: Vector2i = Vector2i(-1, -1)
+# One drawer fit in flight at a time — see `_fit_subject_drawer`.
+var _subject_fit_pending: bool = false
 # The assembled Occupants roster for the current hex: full unit markers and herd
 # dicts (from `_selected_tile_info`, plus the selected occupant if the tile_info
 # doesn't list it — e.g. an inspector-driven herd selection). Rebuilt each render.
@@ -1135,6 +1187,9 @@ const VISIBILITY_UNEXPLORED := "unexplored"
 const TILE_SIGHT_KEY := "Sight"
 const TILE_SIGHT_ACTIVE := "In sight"
 const TILE_SIGHT_REMEMBERED := "Remembered — not in sight now"
+# The chip FACE for the remembered state. A pill states a condition in a word; the full sentence
+# above is a sentence — it was the widest element in the strip — so it rides the chip's tooltip.
+const TILE_SIGHT_REMEMBERED_SHORT := "Remembered"
 const TILE_SIGHT_UNEXPLORED := "Unexplored"
 # Shown INSTEAD of the Occupants roster on a hex the player cannot currently see. Never render an
 # empty roster there — an absent list is a claim of emptiness the client cannot back up.
@@ -1317,7 +1372,6 @@ func _ready() -> void:
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
     left_dock.add(tile_panel, 10)
-    left_dock.add(occupants_panel, 12)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
     # The right dock is the narrative surface's home: the telling owns the top of it and, with both
@@ -1334,9 +1388,17 @@ func _ready() -> void:
     _apply_hud_style()
     _ensure_targeting_banner()
     _setup_build_overlay()
-    # The Occupants-card drawer's Food/Morale labels are click-to-expand breakdown disclosures.
+    # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
     if occupant_detail != null:
         occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(false))
+    # Re-cap the drawer whenever its content changes SIZE, whoever changed it — a stepper tick, a
+    # policy click, a per-snapshot rebuild. One hookup instead of a refit call sprinkled through
+    # every early-return in the three compose builders. No feedback loop: the fit writes the
+    # SCROLL's minimum, which is outside the body it measures.
+    if subject_body != null:
+        subject_body.minimum_size_changed.connect(_fit_subject_drawer)
+    # A window resize changes the dock's height, hence the room the drawer may claim.
+    get_viewport().size_changed.connect(_fit_subject_drawer)
 
 ## Apply the shared HudStyle console look to the selection panel: restyle its
 ## action buttons, tint the detail text, and bring the two plain PanelContainers
@@ -1348,6 +1410,11 @@ func _apply_hud_style() -> void:
             detail.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
             detail.add_theme_constant_override("table_h_separation", 16)
             detail.add_theme_constant_override("table_v_separation", 3)
+    # The list ↔ drawer hairline: the palette owns the rule, the node owns its thickness.
+    if subject_divider != null:
+        subject_divider.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
+        subject_divider.custom_minimum_size = Vector2(0.0, SUBJECT_DIVIDER_HEIGHT)
+        subject_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
     if stockpile_panel != null:
         stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
     if victory_panel != null:
@@ -3585,7 +3652,7 @@ func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
     if is_panel:
         _render_band_into_panel(_panel_band)
     else:
-        _render_occupant_drawer()
+        _render_subject_drawer()
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there).
@@ -4962,6 +5029,7 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     _selected_tile_info = tile_info.duplicate(true) if tile_info is Dictionary else {}
     _selected_unit.clear()
     _selected_herd.clear()
+    _selected_subject = SUBJECT_LAND
     _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(_selected_tile_info, {}, {})
     _try_dispatch_pending_move_band(_selected_tile_info)
@@ -4985,6 +5053,7 @@ func show_unit_selection(unit_data: Dictionary) -> void:
     _selected_tile_info = tile_info
     _selected_unit = unit_data.duplicate(true)
     _selected_herd.clear()
+    _selected_subject = SUBJECT_UNIT
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, _selected_unit, {})
 
@@ -5002,6 +5071,7 @@ func show_herd_selection(herd_data: Dictionary) -> void:
     _selected_tile_info = tile_info
     _selected_herd = herd_data.duplicate(true)
     _selected_unit.clear()
+    _selected_subject = SUBJECT_HERD
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, {}, _selected_herd)
 
@@ -5030,30 +5100,30 @@ func reapply_selection(kind: String, data: Dictionary) -> void:
         "unit":
             _selected_unit = data.duplicate(true) if data is Dictionary else {}
             _selected_herd.clear()
+            _selected_subject = SUBJECT_UNIT
             _adopt_tile_info_from(_selected_unit)
             _render_selection_panel(_selected_tile_info, _selected_unit, {})
         "herd":
             _selected_herd = data.duplicate(true) if data is Dictionary else {}
             _selected_unit.clear()
+            _selected_subject = SUBJECT_HERD
             _adopt_tile_info_from(_selected_herd)
             _render_selection_panel(_selected_tile_info, {}, _selected_herd)
         "tile":
             _selected_tile_info = data.duplicate(true) if data is Dictionary else {}
             _selected_unit.clear()
             _selected_herd.clear()
+            _selected_subject = SUBJECT_LAND
             _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
             _render_selection_panel(_selected_tile_info, {}, {})
         _:
             # Selected occupant vanished (e.g. the band expired). Drop to its last tile
-            # if known, else hide both cards. Intentionally does not touch pending state.
+            # if known, else hide the card. Intentionally does not touch pending state.
             _selected_unit.clear()
             _selected_herd.clear()
+            _selected_subject = SUBJECT_LAND
             if _selected_tile_info.is_empty():
-                if tile_panel != null:
-                    tile_panel.visible = false
-                if forage_assign_controls != null:
-                    forage_assign_controls.visible = false
-                _set_occupants_relevant(false)
+                _hide_selection_card()
             else:
                 _render_selection_panel(_selected_tile_info, {}, {})
 
@@ -5075,7 +5145,24 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
     _selected_band_output = NAN
     _assemble_roster(_selected_tile_info)
     _render_tile_card(_selected_tile_info)
-    _render_occupants_card()
+    _resolve_auto_selected_subject()
+    _rebuild_subject_list()
+    _render_subject_drawer()
+
+## Hide the whole selection card (no tile, no occupant). One place, so the drawer's three
+## compose blocks can't be left visible behind a hidden card.
+func _hide_selection_card() -> void:
+    if tile_panel != null:
+        tile_panel.visible = false
+    _hide_drawer_blocks()
+
+func _hide_drawer_blocks() -> void:
+    if forage_assign_controls != null:
+        forage_assign_controls.visible = false
+    if allocation_panel != null:
+        allocation_panel.visible = false
+    if herd_assign_controls != null:
+        herd_assign_controls.visible = false
 
 ## Assemble the roster for the current hex from the tile's `units`/`herds`, then
 ## ensure the currently-selected occupant is represented even when the tile_info
@@ -5108,8 +5195,9 @@ func _assemble_roster(tile_info: Dictionary) -> void:
     if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
         _roster_herds.append(_selected_herd)
 
-## The Tile card: the place. Terrain rows + the "Assign foragers" controls (its only
-## action). Kind stays "Tile" even when an occupant is selected.
+## The card's chrome: the coordinates as the title, and the pinned chip strip. The terrain ROWS
+## are no longer here — they are the land subject's drawer content, rendered by
+## `_render_subject_drawer` when the land row is the lit one.
 func _render_tile_card(tile_info: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
@@ -5119,29 +5207,95 @@ func _render_tile_card(tile_info: Dictionary) -> void:
     if not tile_info.is_empty():
         title_text = "(%d, %d)" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
     tile_panel.set_card_title(title_text)
-    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(tile_info))
-    _build_forage_assign_controls(tile_info)
+    _build_tile_chips(tile_info)
 
-## The tile's `Sight: …` row — which of the three FoW states this hex is in, in plain words.
-## "" (FoW off) yields no row.
-func _tile_sight_line(visibility_state: String) -> String:
-    var value := ""
+## The sight state in plain words — the FULL form, which is the chip's tooltip. "" (FoW off) yields
+## no chip at all.
+func _tile_sight_value(visibility_state: String) -> String:
     match visibility_state:
         VISIBILITY_ACTIVE:
-            value = TILE_SIGHT_ACTIVE
+            return TILE_SIGHT_ACTIVE
         VISIBILITY_DISCOVERED:
-            value = TILE_SIGHT_REMEMBERED
+            return TILE_SIGHT_REMEMBERED
         VISIBILITY_UNEXPLORED:
-            value = TILE_SIGHT_UNEXPLORED
+            return TILE_SIGHT_UNEXPLORED
         _:
             return ""
-    return "%s: %s" % [TILE_SIGHT_KEY, value]
+
+## The chip FACE: one or two words. Only the remembered state has a long form to shorten — the
+## other two already ARE their short form, so they pass through and cannot drift out of step.
+func _tile_sight_chip_value(value: String) -> String:
+    return TILE_SIGHT_REMEMBERED_SHORT if value == TILE_SIGHT_REMEMBERED else value
+
+## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's
+## BBCode hex and the chip's Color, so the two forms cannot drift apart.
+func _sight_is_live(value: String) -> bool:
+    return value == TILE_SIGHT_ACTIVE
 
 ## Value tint for the Sight row: in-sight reads live (SIGNAL cyan — the HUD's "this is current"
 ## color), while both unseen states read dim (INK_DIM). The row states what you KNOW, not what is
 ## wrong, so it never borrows the WARN/DANGER palette.
 func _sight_value_hex(value: String) -> String:
-    return HudStyle.SIGNAL_HEX if value == TILE_SIGHT_ACTIVE else HudStyle.INK_DIM_HEX
+    return HudStyle.SIGNAL_HEX if _sight_is_live(value) else HudStyle.INK_DIM_HEX
+
+func _sight_value_color(value: String) -> Color:
+    return HudStyle.SIGNAL if _sight_is_live(value) else HudStyle.INK_DIM
+
+# ---- The chip strip ---------------------------------------------------------
+# Chips carry the tile's STANDING CONDITION — the one-word states you reason with while composing
+# an action — pinned above the list so they never scroll away. Numbers stay as rows in the land
+# drawer, where their subject is. Each chip is SKIPPED when its field is absent, exactly as the
+# equivalent row is: a rehydrated tile must never show an invented rating.
+func _build_tile_chips(tile_info: Dictionary) -> void:
+    if tile_chips == null:
+        return
+    for child in tile_chips.get_children():
+        child.queue_free()
+    if tile_info.is_empty():
+        tile_chips.visible = false
+        return
+    tile_chips.visible = true
+    var visibility_state := String(tile_info.get("visibility_state", ""))
+    var sight_value := _tile_sight_value(visibility_state)
+    if sight_value != "":
+        # Short face, full sentence on hover — same value behind both, so they cannot disagree.
+        tile_chips.add_child(_make_chip(
+            _tile_sight_chip_value(sight_value), _sight_value_color(sight_value), sight_value
+        ))
+    # Nothing else is knowable on ground nobody has stood on — not even its biome.
+    if visibility_state == VISIBILITY_UNEXPLORED:
+        return
+    if tile_info.has("habitability"):
+        var rating := TileHabitability.rating_for(float(tile_info["habitability"]))
+        tile_chips.add_child(_make_chip(rating, TileHabitability.color_for(float(tile_info["habitability"]))))
+    # Climate is INFORMATIONAL, so it wears neutral ink and never the warning palette; the cut
+    # points are the SIM's, so until they are published there is no chip rather than a guess.
+    if tile_info.has("temperature") and TileClimate.has_bands():
+        tile_chips.add_child(_make_chip(TileClimate.band_for(float(tile_info["temperature"])), HudStyle.INK_DIM))
+    var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
+    if tags_text != "" and tags_text.to_lower() != CHIP_TAGS_NONE:
+        tile_chips.add_child(_make_chip(tags_text, HudStyle.INK_DIM))
+    var site_name := String(tile_info.get("site_name", "")).strip_edges()
+    if site_name != "":
+        tile_chips.add_child(_make_chip(site_name, HudStyle.INK_DIM))
+
+## One chip: a pill wearing the palette's chip chrome, tinted by the condition it states. An
+## optional `tooltip` carries the long form of a condition whose face had to be short; a chip
+## without one stays mouse-transparent, exactly as before.
+func _make_chip(text: String, tint: Color, tooltip: String = "") -> PanelContainer:
+    var chip := PanelContainer.new()
+    chip.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(tint))
+    chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    if tooltip != "" and tooltip != text:
+        chip.tooltip_text = tooltip
+        chip.mouse_filter = Control.MOUSE_FILTER_STOP
+    var label := Label.new()
+    label.text = text
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.add_theme_color_override("font_color", tint)
+    label.add_theme_font_size_override("font_size", CHIP_FONT_SIZE)
+    chip.add_child(label)
+    return chip
 
 ## True when the hex's LIVE contents (occupants, workable sources) are unknowable right now — a
 ## remembered or a never-seen tile. MapView already redacts them from `tile_info` at source (it strips
@@ -5152,66 +5306,124 @@ func _tile_contents_unseen(tile_info: Dictionary) -> bool:
     var state := String(tile_info.get("visibility_state", ""))
     return state == VISIBILITY_DISCOVERED or state == VISIBILITY_UNEXPLORED
 
-## The Occupants card: a selectable roster of bands + wildlife on the hex, plus a
-## detail drawer for the selected occupant. Hidden (dock reflows) on an empty hex that the player
-## can actually SEE; on an unseen hex it stays up and states that the contents are unknown.
-func _render_occupants_card() -> void:
-    if occupants_panel == null:
-        return
-    if _roster_units.is_empty() and _roster_herds.is_empty():
-        if _tile_contents_unseen(_selected_tile_info):
-            _render_occupants_unknown()
-            return
-        _set_occupants_relevant(false)
-        if allocation_panel != null:
-            allocation_panel.visible = false
-        if herd_assign_controls != null:
-            herd_assign_controls.visible = false
-        return
-    _set_occupants_relevant(true)
-    occupants_panel.set_card_kind("Occupants")
-    occupants_panel.set_card_title("on this hex")
-    # Auto-select the first occupant on a fresh tile click (nothing selected yet),
-    # driving the drawer + the map ring through the same signal a click would.
-    if _selected_unit.is_empty() and _selected_herd.is_empty():
-        if not _roster_units.is_empty():
-            _selected_unit = (_roster_units[0] as Dictionary).duplicate(true)
-            emit_signal("roster_occupant_selected", "unit", int(_selected_unit.get("entity", -1)))
-        else:
-            _selected_herd = (_roster_herds[0] as Dictionary).duplicate(true)
-            emit_signal("roster_occupant_selected", "herd", String(_selected_herd.get("id", "")))
-    _rebuild_roster()
-    _render_occupant_drawer()
+## The selected hex's coordinates, as the one key an explicit subject choice is remembered against.
+func _selected_tile_coords() -> Vector2i:
+    return Vector2i(int(_selected_tile_info.get("x", -1)), int(_selected_tile_info.get("y", -1)))
 
-## The Occupants card on a hex the player CANNOT see: the roster is emptied and the drawer states
-## that the hex's live contents are unknown. This is the whole point of the fog gate — an absent
-## roster would silently claim "nothing here", which is a different (and unearned) statement.
-func _render_occupants_unknown() -> void:
-    _set_occupants_relevant(true)
-    occupants_panel.set_card_kind("Occupants")
-    occupants_panel.set_card_title(OCCUPANTS_UNKNOWN_TITLE)
-    if roster_list != null:
-        for child in roster_list.get_children():
-            child.queue_free()
+## Auto-select the subject whose drawer opens on a fresh tile click.
+##
+## THE RULE IS DELIBERATELY UNCHANGED, PLUS A LAND FALLBACK: first roster unit → else first herd →
+## else the land. A hex with no occupants used to hide the Occupants card and leave the Tile card
+## showing terrain, which IS "the land is selected" — so the fallback preserves today's behaviour
+## rather than introducing a new default. Selecting the land emits `roster_occupant_selected("land",
+## …)`, which moves no ring (the hex outline already marks the tile) but CLEARS MapView's occupant
+## selection — see `_on_land_row_selected`.
+func _resolve_auto_selected_subject() -> void:
+    if not _selected_unit.is_empty() or not _selected_herd.is_empty():
+        return
+    # THE DEFAULT ONLY APPLIES WHERE THE PLAYER HAS NOT ALREADY CHOSEN. Both occupant dicts are
+    # empty either because this is a fresh hex (auto-select) or because the player picked the LAND
+    # row here (honour it) — and only the choice tile can tell the two apart. Without this, the
+    # per-snapshot `reapply_selection("tile", …)` re-ran the default every turn and stole a
+    # deliberately-chosen land selection back to the first band. A genuinely new hex has different
+    # coords, so today's first-band → first-herd → land default is preserved exactly.
+    if not _selected_tile_info.is_empty() and _subject_choice_tile == _selected_tile_coords():
+        _selected_subject = SUBJECT_LAND
+        return
+    if not _roster_units.is_empty():
+        _selected_unit = (_roster_units[0] as Dictionary).duplicate(true)
+        _selected_subject = SUBJECT_UNIT
+        emit_signal("roster_occupant_selected", "unit", int(_selected_unit.get("entity", -1)))
+    elif not _roster_herds.is_empty():
+        _selected_herd = (_roster_herds[0] as Dictionary).duplicate(true)
+        _selected_subject = SUBJECT_HERD
+        emit_signal("roster_occupant_selected", "herd", String(_selected_herd.get("id", "")))
+    else:
+        _selected_subject = SUBJECT_LAND
+
+## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
+## paths is visible at a time — that is what bounds the card's height.
+func _render_subject_drawer() -> void:
+    if _selected_subject == SUBJECT_LAND:
+        _render_land_drawer()
+    else:
+        _render_occupant_drawer()
+    _fit_subject_drawer()
+
+## The LAND drawer: the terrain rows + the "Assign foragers" compose block (the land's only action).
+## On a hex the player cannot see it also carries the unknown-contents statement — see below.
+func _render_land_drawer() -> void:
+    if tile_detail == null:
+        return
+    tile_detail.visible = true
+    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(_selected_tile_info))
+    _build_forage_assign_controls(_selected_tile_info)
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
         herd_assign_controls.visible = false
-    if occupant_detail != null:
-        var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
-            if String(_selected_tile_info.get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
-            else OCCUPANTS_UNKNOWN_REMEMBERED
-        occupant_detail.text = _format_detail_bbcode([message])
+    _render_unknown_contents_note()
 
-func _set_occupants_relevant(relevant: bool) -> void:
-    if left_dock != null:
-        left_dock.set_relevant(occupants_panel, relevant)
-    elif occupants_panel != null:
-        occupants_panel.visible = relevant
+## An EMPTY occupant list is a claim of emptiness the client cannot back up, so on a hex the player
+## cannot see the list carries the land row and nothing else, and the drawer says so out loud. This
+## is the whole point of the fog gate — silence would read as "nothing here".
+##
+## Skipped when the list DOES carry occupant rows: that only happens for your own party on an
+## unseen hex, and `_rebuild_subject_list` already appends `OCCUPANTS_UNSEEN_OTHERS_HINT` there.
+func _render_unknown_contents_note() -> void:
+    if occupant_detail == null:
+        return
+    var unseen := _tile_contents_unseen(_selected_tile_info)
+    var roster_empty := _roster_units.is_empty() and _roster_herds.is_empty()
+    if not unseen or not roster_empty:
+        occupant_detail.visible = false
+        occupant_detail.text = ""
+        return
+    occupant_detail.visible = true
+    var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
+        if String(_selected_tile_info.get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
+        else OCCUPANTS_UNKNOWN_REMEMBERED
+    occupant_detail.text = _format_detail_bbcode([message])
 
-## Terrain-only tile readout: FoW redaction, Biome/Height/Tags, and the tile's
-## gather module relabeled `Forage:` (occupant/harvester/scout listings moved to
-## the roster + drawer). Keeps the forage-pending hint here (Forage is a tile action).
+## Cap the drawer against the room left in the dock beneath the card, so a crowded hex scrolls
+## INSIDE the drawer rather than dragging the whole dock.
+##
+## WAITS A WHOLE FRAME, not just `call_deferred`, and that is load-bearing. The drawer's content
+## height is a function of its WIDTH — the detail label wraps, and the card's width is itself set by
+## whichever compose block is showing — so a measurement taken before the new subject has been laid
+## out reports the PREVIOUS subject's wrapping. On a card that just got narrower that under-reports
+## the height and the drawer caps short with a scrollbar over content that would have fit. A
+## deferred call is flushed inside the same frame and is not enough; one `process_frame` is.
+## Coalesced, so the render + the body's own `minimum_size_changed` collapse into one fit.
+func _fit_subject_drawer() -> void:
+    if subject_scroll == null or subject_body == null or _subject_fit_pending:
+        return
+    _subject_fit_pending = true
+    await get_tree().process_frame
+    _subject_fit_pending = false
+    if subject_scroll == null or subject_body == null:
+        return
+    DockScrollFit.fit_height(
+        subject_scroll,
+        subject_body.get_combined_minimum_size().y,
+        left_dock_scroll,
+        SUBJECT_DRAWER_MIN_HEIGHT,
+        SUBJECT_DRAWER_BOTTOM_MARGIN,
+    )
+
+
+## The LAND DRAWER's rows: only what a CHIP CANNOT CARRY.
+##
+## The pinned chip strip above the list already states this tile's standing condition — Sight,
+## Habitability, Climate, Tags, Site — so printing those as rows here restated the strip verbatim,
+## and `Biome` restated the land ROW's own label (the "no restated identity" rule,
+## docs/plan_tile_panel_layout.md §8). The chips REPLACE those rows; what is left is the numbers and
+## the stocks, whose subject is the land: Height · the rivers · Pasture · Forage · the patch's
+## biomass/ecology · the two build meters — plus the FoW sentences, which are statements, not
+## conditions, and have no chip.
+##
+## `_render_land_drawer` is the ONE caller (the map hover tooltip builds its own text in
+## `show_tooltip`), so the trim is local to the drawer.
 func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     if tile_info.is_empty():
@@ -5220,48 +5432,24 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # Fog of War: never-seen tiles reveal nothing; remembered (Discovered) tiles
     # show only their last-known terrain, not current contents. See MapView
     # _apply_visibility_to_info, which redacts the hidden fields before this runs.
+    # The Sight CHIP states which of the three states this hex is in; the sentence says what that
+    # costs you, which is the part a chip cannot carry.
     var visibility_state := String(tile_info.get("visibility_state", ""))
     if visibility_state == VISIBILITY_UNEXPLORED:
-        lines.append(_tile_sight_line(visibility_state))
         lines.append("Not yet scouted — send a band to reveal this area.")
         return lines
-    # The Sight row leads the card: it frames everything under it as either live truth (In sight) or
-    # remembered knowledge (Remembered), so the terrain rows are never mistaken for current contents.
-    lines.append(_tile_sight_line(visibility_state))
-    var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
-    lines.append("Biome: %s" % terrain_label)
     if tile_info.has("height_display"):
         lines.append("Height: %s" % String(tile_info["height_display"]))
-    var tags_text := String(tile_info.get("tags_text", "none"))
-    lines.append("Tags: %s" % tags_text)
-    # Habitability is terrain-intrinsic (band-independent), so it's fine on a remembered
-    # tile — surface it before the discovered early-return. Only when the snapshot carries
-    # the field (a rehydrated tile may lack it) so we never invent a rating.
-    if tile_info.has("habitability"):
-        var drain := float(tile_info["habitability"])
-        lines.append("Habitability: %s" % TileHabitability.rating_for(drain))
-    # Climate is the tile's latitude+elevation temperature band (informational, not a
-    # warning). Terrain-intrinsic, so fine on a remembered tile; only when the snapshot
-    # carries the field (a rehydrated tile may lack it) so we never invent a band. The band
-    # cut points are the SIM's (published as MapSection.climateBands); until they arrive we
-    # skip the row rather than guess a threshold that could disagree with the biome.
-    if tile_info.has("temperature") and TileClimate.has_bands():
-        var temperature := float(tile_info["temperature"])
-        lines.append("Climate: %s" % TileClimate.band_for(temperature))
     # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
     # apply to). Terrain-intrinsic permanent geography, so it renders before the discovered
-    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated snapshot
+    # early-return, like Pasture below. Guarded on the key so a rehydrated snapshot
     # degrades to no row instead of a wrong one; RiverEdges returns [] on a riverless tile, so it
     # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
     if tile_info.has("river_edges"):
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
-    # A discovered Wondrous Site is known knowledge — fine on a remembered tile — so surface
-    # it before the discovered early-return. Only when the field is present.
-    var site_name := String(tile_info.get("site_name", "")).strip_edges()
-    if site_name != "":
-        lines.append("Site: %s" % site_name)
+    # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     # PASTURE — the animal-edible stock (see PASTURE_KEY). Surfaced BEFORE the discovered
-    # early-return because, like the biome and the habitability above it, grass is a property of the
+    # early-return because, like the biome on the land row and the habitability chip, grass is a property of the
     # GROUND: you can read a steppe from a ridge, and a remembered tile already remembers its biome.
     # (What a remembered tile redacts is live CONTENTS — the bands and herds standing on it.) Only
     # when the ground carries pasture at all, so a glacier prints nothing rather than "0 / 0".
@@ -5325,28 +5513,101 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
             lines.append("%s: %s" % [FIELD_ROW, _field_label(field_progress, false)])
     return lines
 
-# ---- Occupants roster ------------------------------------------------------
+# ---- The subject list ------------------------------------------------------
 
-## Rebuild the roster rows: a `Bands (N)` sub-group and a `Wildlife (N)` sub-group,
-## each a dim uppercase header + one selectable row per occupant. The row matching
-## the current selection is styled as selected.
-func _rebuild_roster() -> void:
-    if roster_list == null:
+## Rebuild the subject rows: the LAND first (no group header — it is not one of a group), then a
+## `Bands (N)` sub-group and a `Wildlife (N)` sub-group, each a dim uppercase header + one
+## selectable row per occupant. The row matching the current selection is styled as selected.
+func _rebuild_subject_list() -> void:
+    if subject_list == null:
         return
-    for child in roster_list.get_children():
+    for child in subject_list.get_children():
         child.queue_free()
+    if not _selected_tile_info.is_empty():
+        subject_list.add_child(_build_land_row(_selected_tile_info))
     if not _roster_units.is_empty():
-        roster_list.add_child(_roster_group_header("Bands", _roster_units.size()))
+        subject_list.add_child(_roster_group_header("Bands", _roster_units.size()))
         for unit in _roster_units:
-            roster_list.add_child(_build_band_row(unit))
+            subject_list.add_child(_build_band_row(unit))
     if not _roster_herds.is_empty():
-        roster_list.add_child(_roster_group_header("Wildlife", _roster_herds.size()))
+        subject_list.add_child(_roster_group_header("Wildlife", _roster_herds.size()))
         for herd in _roster_herds:
-            roster_list.add_child(_build_herd_row(herd))
+            subject_list.add_child(_build_herd_row(herd))
     # Reached only when your OWN unit is on a hex you can't see (everything else was redacted): say so,
     # or the lone row would read as "and nothing else is here" — which we cannot know.
-    if _tile_contents_unseen(_selected_tile_info):
-        roster_list.add_child(_alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT))
+    if _tile_contents_unseen(_selected_tile_info) and not (_roster_units.is_empty() and _roster_herds.is_empty()):
+        subject_list.add_child(_alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT))
+
+## The LAND row — the same shape as a band/herd row, because the land is the same KIND of thing:
+## a subject on this hex you can put workers on.
+##
+## Label = the BIOME name (more informative than a generic "The land", and it leaves the card title
+## as the coordinates). Glyph = the tile's food-module icon where it carries one — the SAME icon the
+## map marker draws, so a source reads identically in the panel and on the map — else the neutral
+## `◈`. Dot = the patch's ecology tier, the same vitality vocabulary as the band/herd dots.
+func _build_land_row(tile_info: Dictionary) -> Button:
+    var selected := _selected_subject == SUBJECT_LAND
+    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
+    var dot_color := _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT
+    var module_key := String(tile_info.get("food_module", "")).strip_edges()
+    var glyph := LAND_ROW_GLYPH
+    if module_key != "":
+        glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
+    var button := _make_roster_button(selected)
+    var row := _make_roster_row(selected, dot_color)
+    var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
+    row.add_child(_roster_name_label("%s %s" % [glyph, terrain_label], selected))
+    var meta := _land_row_meta(tile_info)
+    if meta != "":
+        row.add_child(_roster_meta_label(meta))
+    button.add_child(row)
+    button.pressed.connect(_on_land_row_selected)
+    return button
+
+## The land row's meta, shortest true form: the workers already on it · else the module it offers ·
+## else that there is nothing to gather here.
+func _land_row_meta(tile_info: Dictionary) -> String:
+    var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if workers > 0:
+        return LAND_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_FORAGE]]
+    # Gated on the module KEY, never on its label: a tile with no module still ships the label
+    # `"None"`, which would render as a source called "None" instead of the honest "No forage".
+    if String(tile_info.get("food_module", "")).strip_edges() != "":
+        var module_label := String(tile_info.get("food_module_label", "")).strip_edges()
+        if module_label != "":
+            return module_label
+    return LAND_META_NO_FORAGE
+
+## Foragers this faction has on (x, y), summed across every player band — the row states the hex's
+## staffing, not one band's share of it.
+func _forage_workers_on_tile(x: int, y: int) -> int:
+    if x < 0 or y < 0:
+        return 0
+    var total := 0
+    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    for band_variant in bands:
+        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
+            total += _workers_for_forage(band_variant, x, y)
+    return total
+
+## The land row was clicked. It emits `roster_occupant_selected` with the THIRD kind, `"land"` (an
+## additive kind on the existing `(kind, id)` contract — no id, so `LAND_SUBJECT_ID`), because
+## MapView holds its OWN occupant selection: picking a band there clears the herd, and picking the
+## land must clear both. There is still no map ring to move — the hex outline already marks the tile
+## and `selected_tile` is untouched — but without this the next snapshot's
+## `refresh_selection_payload` keeps answering `kind: "unit"` off the stale `selected_unit_id` and
+## restores the band, which made the land unselectable on any occupied hex.
+func _on_land_row_selected() -> void:
+    _subject_choice_tile = _selected_tile_coords()
+    _selected_unit = {}
+    _selected_herd = {}
+    _selected_subject = SUBJECT_LAND
+    _selected_band_food_days = NAN
+    _selected_band_morale = NAN
+    _selected_band_output = NAN
+    _rebuild_subject_list()
+    _render_subject_drawer()
+    emit_signal("roster_occupant_selected", SUBJECT_LAND, LAND_SUBJECT_ID)
 
 func _roster_group_header(title: String, count: int) -> Label:
     var label := Label.new()
@@ -5439,10 +5700,11 @@ func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
     row.add_child(dot)
     return row
 
+## The row's IDENTITY — never elastic, never truncated. It takes its natural width and the meta
+## beside it absorbs whatever is left (see `_roster_meta_label`).
 func _roster_name_label(text: String, selected: bool) -> Label:
     var label := Label.new()
     label.text = text
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
     return label
@@ -5450,6 +5712,16 @@ func _roster_name_label(text: String, selected: bool) -> Label:
 func _roster_meta_label(text: String) -> Label:
     var label := Label.new()
     label.text = text
+    # The META is the row's ELASTIC, EXPENDABLE half: it claims the slack after the name (hence the
+    # right alignment the rows have always read with) and, when the row runs out of width in a 320px
+    # dock, it is the meta that gives — ellipsised, not hard-cut, and never the name, which is the
+    # row's identity. Free for the short band/herd metas ("120", "Big game"); it is the land row's
+    # long module label that would otherwise push past the card's edge, and that label also reads in
+    # full in the drawer.
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    label.clip_text = true
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.add_theme_color_override("font_color", HudStyle.INK_DIM)
     return label
@@ -5496,22 +5768,30 @@ func _on_roster_row_selected(kind: String, id: Variant) -> void:
     emit_signal("roster_occupant_selected", kind, id)
 
 func _select_roster_occupant(kind: String, id: Variant) -> void:
+    _subject_choice_tile = _selected_tile_coords()
     if kind == "unit":
         _selected_unit = _find_roster_unit(int(id)).duplicate(true)
         _selected_herd = {}
+        _selected_subject = SUBJECT_UNIT
     else:
         _selected_herd = _find_roster_herd(String(id)).duplicate(true)
         _selected_unit = {}
+        _selected_subject = SUBJECT_HERD
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
-    _rebuild_roster()
-    _render_occupant_drawer()
+    _rebuild_subject_list()
+    _render_subject_drawer()
 
-## The detail drawer + action buttons for the currently-selected occupant.
+## The detail drawer + action buttons for the currently-selected occupant. Shares the one drawer
+## with the land, so it hides the land's content first — exactly one subject fills it.
 func _render_occupant_drawer() -> void:
     if occupant_detail == null:
         return
+    if tile_detail != null:
+        tile_detail.visible = false
+    if forage_assign_controls != null:
+        forage_assign_controls.visible = false
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
@@ -5525,8 +5805,10 @@ func _render_occupant_drawer() -> void:
     # panel is injected (e.g. the HUD-only ui_preview harness).
     if is_player_band and _band_city_panel != null:
         _render_band_into_panel(_selected_unit)
-        occupant_detail.text = ""
-        occupant_detail.visible = false
+        # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
+        # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
+        occupant_detail.visible = true
+        occupant_detail.text = _format_detail_bbcode([BAND_PANEL_POINTER_TEXT])
         if allocation_panel != null:
             allocation_panel.visible = false
         if herd_assign_controls != null:
@@ -6703,21 +6985,14 @@ func _split_detail_kv(line: String) -> Array:
 func clear_selection() -> void:
     _selected_unit.clear()
     _selected_herd.clear()
+    _selected_subject = SUBJECT_LAND
     _selected_food_module = ""
     _selected_food_is_hunt = false
     # Keep pending move-band so the user can still choose a destination after deselecting.
     if _selected_tile_info.is_empty():
-        if tile_panel != null:
-            tile_panel.visible = false
-        if forage_assign_controls != null:
-            forage_assign_controls.visible = false
-        _set_occupants_relevant(false)
+        _hide_selection_card()
     else:
         _render_selection_panel(_selected_tile_info, {}, {})
-    if allocation_panel != null:
-        allocation_panel.visible = false
-    if herd_assign_controls != null:
-        herd_assign_controls.visible = false
 
 func _travel_eta_hint(tile_info: Dictionary) -> String:
     var distance := int(tile_info.get("nearest_unit_distance", -1))
@@ -6996,6 +7271,18 @@ func toggle_victory() -> void:
     _apply_victory_visibility()
     _save_panel_pref(CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
 
+## The command feed's counterpart to `toggle_legend` / `toggle_victory` (bound to `R` in Main). The
+## feed holds six read-only receipts and NO verbs, so hiding it absorbs nothing — it simply hands
+## its dock height to the selection card, which is where the actions are. Hiding goes through the
+## controller (not a bare `visible = false`) so the dock reflows with no gap AND the next command
+## receipt can't re-show a card the player closed.
+func toggle_command_feed() -> void:
+    if _command_feed == null:
+        return
+    _command_feed.toggle_suppressed()
+    _refit_left_dock()
+    _save_panel_pref(CONFIG_KEY_COMMAND_FEED_SUPPRESSED, _command_feed.feed_suppressed)
+
 func _apply_victory_visibility() -> void:
     if victory_panel == null:
         return
@@ -7014,6 +7301,21 @@ func _refit_right_dock() -> void:
     if _telling != null:
         _telling.refit()
 
+## The left dock's twin, for the one event that moves BOTH of its growing cards at once: the `R`
+## toggle. The drawer sizes itself against whatever the feed below it reserves, so on a toggle the
+## two must settle in a fixed order or each measures the other mid-flight and their sum overspills
+## the dock. Release the drawer's claim → let the feed re-fit into the freed column → then let the
+## drawer take exactly the remainder. Ordinary selection changes need none of this: the feed is
+## already settled and `_fit_subject_drawer` alone fits into what is left.
+func _refit_left_dock() -> void:
+    if subject_scroll != null:
+        subject_scroll.custom_minimum_size.y = 0.0
+    await get_tree().process_frame
+    if _command_feed != null:
+        _command_feed.refit()
+    await get_tree().process_frame
+    _fit_subject_drawer()
+
 # ---- dock-card visibility persistence --------------------------------------
 
 func _load_hud_panel_prefs() -> void:
@@ -7024,9 +7326,15 @@ func _load_hud_panel_prefs() -> void:
                 HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
         _victory_suppressed = bool(cfg.get_value(
             HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT))
-    elif _legend != null:
+        if _command_feed != null:
+            _command_feed.set_suppressed(bool(cfg.get_value(
+                HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_COMMAND_FEED_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
+    else:
         # No prefs file yet (or unreadable): fall back to the hidden-by-default layout.
-        _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
+        if _legend != null:
+            _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
+        if _command_feed != null:
+            _command_feed.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
     _apply_victory_visibility()
 
 ## Persist ONE panel's preference — never the whole section.
