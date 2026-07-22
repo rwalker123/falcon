@@ -42,6 +42,8 @@ const HERD_SPECIES := {
 	"rabbit": "🐇",
 	"fowl": "🐓",
 	"grouse": "🐓",
+	"hare": "🐇",
+	"catfish": "🐟",
 }
 
 # Take-policy glyphs (the extractive `LABOR_HUNT_POLICIES` set shared by forage + hunt, plus the two
