@@ -13,6 +13,12 @@ const TellingPanelScript := preload("res://src/scripts/ui/TellingPanel.gd")
 const COMMAND_FEED_LIMIT := 6
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
+# THE FEED MAY NEVER OWN MORE THAN THIS SHARE OF ITS DOCK. It shares the left column with the
+# selection card, which is where the VERBS are — and six receipts at full height are tall enough to
+# push that card's compose block below the fold, which is exactly the failure the one-card layout
+# exists to remove. The feed is a log you glance at: past this share it scrolls internally instead
+# of growing. (The Telling panel bounds itself the same way, against the viewport.)
+const COMMAND_FEED_MAX_DOCK_FRACTION := 0.4
 
 const COMMAND_TURN_COLOR_HEX := "8fd4ff"
 
@@ -23,6 +29,12 @@ var _dock_scroll: ScrollContainer = null
 
 var _entries: Array = []
 var _signatures: Dictionary = {}
+# Hidden by default — six read-only receipts and NO verbs, so the selection card gets the dock
+# height instead and the player opens the feed with `R` when they want the log. Hud overrides this
+# from the persisted prefs on ready. It lives here rather than in Hud because `render()` runs on
+# every ingest: a controller that unconditionally shows its panel would undo the dock's
+# `set_relevant(false)` the moment any command receipt arrived.
+var feed_suppressed: bool = true
 
 func _init(panel: PanelCard, scroll: ScrollContainer, label: RichTextLabel, dock_scroll: ScrollContainer) -> void:
 	_panel = panel
@@ -86,10 +98,30 @@ func _trim() -> void:
 	while _entries.size() > COMMAND_FEED_LIMIT:
 		_entries.pop_front()
 
+## Restore a persisted suppress state (Hud's prefs load) / flip it from the `R` hotkey. Mirrors
+## `LegendController.set_suppressed` / `toggle_suppressed` exactly — same pattern, same contract.
+func set_suppressed(suppressed: bool) -> void:
+	feed_suppressed = suppressed
+	render()
+
+func toggle_suppressed() -> void:
+	set_suppressed(not feed_suppressed)
+
+## Re-cap the feed against the room the dock has left NOW. The left dock holds two cards that grow
+## — the selection drawer and this feed — and they share one height budget, so whichever fits second
+## must measure the other in its settled state or their sum overflows the dock. Hud fits the drawer
+## first and then calls this. No-op while suppressed (a hidden card claims nothing).
+func refit() -> void:
+	if feed_suppressed:
+		return
+	_resize()
+
 func render() -> void:
 	if _panel == null or _label == null:
 		return
-	_panel.visible = true
+	_panel.visible = not feed_suppressed
+	if feed_suppressed:
+		return
 	if _entries.is_empty():
 		_label.text = "[i]No command activity yet.[/i]"
 	else:
@@ -106,7 +138,11 @@ func render() -> void:
 func _resize() -> void:
 	if _scroll == null or _label == null:
 		return
-	DockScrollFit.fit(_scroll, _label, _dock_scroll, COMMAND_FEED_MIN_HEIGHT, COMMAND_FEED_BOTTOM_MARGIN)
+	var content: float = _label.get_content_height()
+	if _dock_scroll != null and _dock_scroll.size.y > 0.0:
+		content = min(content, _dock_scroll.size.y * COMMAND_FEED_MAX_DOCK_FRACTION)
+	DockScrollFit.fit_height(
+		_scroll, content, _dock_scroll, COMMAND_FEED_MIN_HEIGHT, COMMAND_FEED_BOTTOM_MARGIN)
 	# A receipt is worthless once read, so the feed ALWAYS snaps to newest — no read-position
 	# preservation here (that is the Telling panel's concern, where scrolling back is the point).
 	_scroll.set_deferred("scroll_vertical", int(_label.get_content_height()))

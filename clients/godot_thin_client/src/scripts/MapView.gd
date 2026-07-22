@@ -2801,11 +2801,18 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 		if not active_ids.has(herd_id):
 			herd_trails.erase(herd_id)
 
-## Select a band/herd chosen from the HUD Occupants roster (no hex click). `kind` is
-## "unit" (id = entity_id int) or "herd" (id = herd_id String). Sets
-## `selected_unit_id`/`selected_herd_id` (and syncs `cycle_index`) so the picked occupant
-## becomes the active/top stack card and the hex selection outline reflects it — there is
+## Select a subject chosen from the HUD selection list (no hex click). `kind` is
+## "unit" (id = entity_id int), "herd" (id = herd_id String) or **"land"** (no id — the tile
+## itself). Sets `selected_unit_id`/`selected_herd_id` (and syncs `cycle_index`) so the picked
+## occupant becomes the active/top stack card and the hex selection outline reflects it — there is
 ## no per-token ring; selection is the hex outline.
+##
+## "LAND" IS A REAL SUBJECT, SO IT MUST CLEAR THE OCCUPANT SELECTION — picking a band clears the
+## herd, and picking the land clears both. Without it `refresh_selection_payload` still sees
+## `selected_unit_id >= 0` and answers `kind: "unit"` every snapshot, which restores the band and
+## silently steals a deliberately-chosen land selection back (the land was unselectable on any
+## occupied hex). `selected_tile` is deliberately untouched — the land IS that tile — and so is
+## `cycle_index`, so re-clicking the hex on the map still cycles the band stack from where it was.
 func select_occupant(kind: String, id) -> void:
 	if kind == "unit":
 		selected_unit_id = int(id)
@@ -2815,6 +2822,9 @@ func select_occupant(kind: String, id) -> void:
 	elif kind == "herd":
 		selected_herd_id = String(id)
 		selected_unit_id = -1
+	elif kind == "land":
+		selected_unit_id = -1
+		selected_herd_id = ""
 	queue_redraw()
 
 ## The band's position within the stack on its own tile — so a roster selection shows it
