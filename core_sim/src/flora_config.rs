@@ -19,7 +19,7 @@
 //! bet on it" discipline the graze layer and the ladder's behavior primitives used.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env, fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -329,7 +329,14 @@ impl FloraConfig {
 
         // Species key → its absolute biomass across both terms. Merged, so a species hosting the
         // underlying biome *and* the channel lands in exactly one row.
-        let mut weights: HashMap<&str, f32> = HashMap::new();
+        //
+        // A `BTreeMap`, and it must stay one: `HashMap` iteration order is randomized per instance,
+        // and f32 addition is not associative, so both the per-species `+=` merge below and the
+        // `total` sum would land a ULP apart between two runs in the same process. That ULP divides
+        // into every share and changes the snapshot hash — it made `deterministic_snapshots_match`
+        // fail roughly one run in four. Sorting `blended` at the end does not save it: the damage is
+        // done in the accumulator, before the sort.
+        let mut weights: BTreeMap<&str, f32> = BTreeMap::new();
         for (shares, capacity) in terms {
             if !capacity.is_finite() || capacity <= NO_FORAGE_CAPACITY {
                 continue;
@@ -510,11 +517,16 @@ fn build_composition(species: &HashMap<String, FloraDef>) -> HashMap<TerrainType
     weights
         .into_iter()
         .filter_map(|(terrain, mut rows)| {
+            // Sort BEFORE summing. `rows` was pushed in `species` HashMap iteration order, which is
+            // randomized per instance, and f32 addition is not associative — so a `total` summed
+            // here would land a ULP apart between two builds of the same config, and that ULP
+            // divides into every published share. The sort is load-bearing for the arithmetic, not
+            // just for the wire order.
+            rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             let total: f32 = rows.iter().map(|(_, weight)| *weight).sum();
             if total <= 0.0 {
                 return None;
             }
-            rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             let shares = rows
                 .into_iter()
                 .map(|(species, weight)| FloraShare {
@@ -840,6 +852,93 @@ mod tests {
                     ordered,
                     "{terrain:?} composition is not deterministically ordered"
                 );
+            }
+        }
+    }
+
+    /// The per-biome share table must be **bit-identical** build to build, not merely sorted.
+    ///
+    /// The twin of the navigable guard below, one layer down: `build_composition` collects each
+    /// biome's rows in `species` HashMap order, so its `Σ weights` denominator is exposed to the
+    /// same non-associative-f32 drift. Sorting the rows for the wire does not fix the arithmetic —
+    /// the sum has to happen after the sort — and this is what says so.
+    #[test]
+    fn the_share_table_is_bit_identical_across_builds() {
+        const REPEATS: usize = 64;
+
+        let baseline = FloraConfig::builtin();
+        for repeat in 1..REPEATS {
+            let again = FloraConfig::builtin();
+            for terrain in TerrainType::VALUES {
+                let first = baseline.composition(terrain);
+                let second = again.composition(terrain);
+                assert_eq!(
+                    first.len(),
+                    second.len(),
+                    "{terrain:?} composition changed length on build {repeat}"
+                );
+                for (a, b) in first.iter().zip(second) {
+                    assert_eq!(
+                        a.species, b.species,
+                        "{terrain:?} composition reordered on build {repeat}"
+                    );
+                    assert_eq!(
+                        a.share.to_bits(),
+                        b.share.to_bits(),
+                        "{terrain:?} share for {} drifted on build {repeat}: {} vs {}",
+                        a.species,
+                        a.share,
+                        b.share
+                    );
+                }
+            }
+        }
+    }
+
+    /// The navigable blend must be **bit-identical** call to call, not merely sorted.
+    ///
+    /// It merges two baskets through a map keyed by species. With a `HashMap` there, iteration
+    /// order is randomized per instance, and since f32 addition is not associative the merged
+    /// weights and their `total` land a ULP apart between calls — which divides into every share
+    /// and changes the published snapshot hash. That is the shape of the flake this guards:
+    /// `deterministic_snapshots_match` failed on roughly a quarter of runs because two simulations
+    /// in one process disagreed in the last digit of a river tile's flora shares.
+    ///
+    /// Repeating the call is what exercises it: each call builds a fresh map, so a randomized
+    /// container gives a fresh order every time.
+    #[test]
+    fn navigable_composition_is_bit_identical_across_calls() {
+        const REPEATS: usize = 64;
+
+        let config = FloraConfig::builtin();
+        let forage = LaborConfig::from_json_str(crate::labor_config::BUILTIN_LABOR_CONFIG)
+            .expect("builtin labor config should parse and validate")
+            .forage;
+
+        for terrain in TerrainType::VALUES {
+            let baseline = config.navigable_composition(terrain, &forage);
+            for repeat in 1..REPEATS {
+                let again = config.navigable_composition(terrain, &forage);
+                assert_eq!(
+                    baseline.len(),
+                    again.len(),
+                    "{terrain:?} navigable blend changed length on repeat {repeat}"
+                );
+                for (first, second) in baseline.iter().zip(&again) {
+                    assert_eq!(
+                        first.species, second.species,
+                        "{terrain:?} navigable blend reordered on repeat {repeat}"
+                    );
+                    assert_eq!(
+                        first.share.to_bits(),
+                        second.share.to_bits(),
+                        "{terrain:?} navigable share for {} drifted on repeat {repeat}: \
+                         {} vs {}",
+                        first.species,
+                        first.share,
+                        second.share
+                    );
+                }
             }
         }
     }
