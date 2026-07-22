@@ -19,9 +19,28 @@ const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## Preloaded for its STATIC `escape_claimant` alone (the ESC precedence chain, extracted so the order
+## can be asserted without standing up the whole app scene) — Main is never instanced here.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+## Injected for ONE state (`tile_panel_band`) and released again: a selected player band's detail
+## renders into this panel, so it is the only way to render the drawer's "it went over there"
+## pointer line rather than the no-panel legacy fallback.
+const BAND_CITY_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
+# The SECOND player band on the crowded hex (`_crowded_bands_fixture()[1]`, "Band Ash"). The Move
+# assertion selects it deliberately: the faction default is the FIRST band, so a Move wired to
+# anything but the list selection answers 301 instead.
+const TILE_PANEL_MOVE_BAND_ENTITY := 302
+# The Move button's face, in both hosts (the drawer's §18 button and the Band/City Orders block).
+const MOVE_BUTTON_TEXT := "Move"
 # Slice 1 reserved-dock probe: left-edge reservation width used to verify the HUD insets.
 const RESERVED_PROBE_WIDTH := 300.0
+# The crowded hex the sticky-land-selection state clicks, and a grid just large enough to contain it
+# (the crowded fixtures all sit at 58, 24). Prairie steppe, matching that fixture's biome.
+const STICKY_TILE := Vector2i(58, 24)
+const STICKY_GRID_W := 64
+const STICKY_GRID_H := 32
+const STICKY_TERRAIN_ID := 11
 # Park the OS cursor over empty canvas before rendering. The HUD drops its hovered-hex record (and
 # with it the targeting banner's hunt forecast) whenever the pointer sits over an interactive HUD
 # control — see Hud._suppress_tooltip_over_ui. Wherever the cursor happened to be when the harness
@@ -333,7 +352,7 @@ func _ready() -> void:
 	var full_hunt := _hunt_expedition_fixture()
 	full_hunt["expedition_phase"] = "delivering"
 	full_hunt["stores"] = {"provisions": 16.0}
-	full_hunt["days_of_food"] = 8.0
+	full_hunt["turns_of_food"] = 8.0
 	_hud.show_unit_selection(full_hunt)
 	await _settle()
 	await _save("expedition_hunt_full")
@@ -343,7 +362,7 @@ func _ready() -> void:
 	var returning_hunt := _hunt_expedition_fixture()
 	returning_hunt["expedition_phase"] = "returning"
 	returning_hunt["stores"] = {"provisions": 12.0}
-	returning_hunt["days_of_food"] = 6.0
+	returning_hunt["turns_of_food"] = 6.0
 	_hud.show_unit_selection(returning_hunt)
 	await _settle()
 	await _save("expedition_hunt_returning")
@@ -412,6 +431,7 @@ func _ready() -> void:
 	# controls (a "Band:" dropdown naming the actor band + a Foragers −/+ count + an enabled **Forage**
 	# button). With one player band the dropdown is a single item ("Band 1").
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
 
@@ -420,7 +440,7 @@ func _ready() -> void:
 	# DISABLED, the "max 3 workers useful here — more would be idle" note explains why, and the
 	# "Expected yield" row reads the ceiling itself (+0.96 /turn = min(3 × 0.32, 0.96)).
 	_hud._forage_assign_count = 3
-	_hud._build_forage_assign_controls(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_forecast_cap")
 
@@ -434,7 +454,7 @@ func _ready() -> void:
 	_hud._player_band = forage_labor_band
 	_hud._forage_assign_band = -1
 	_hud._forage_assign_count = 2
-	_hud._build_forage_assign_controls(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_labor_bound")
 	# Restore the 10-idle range band + count for the states that follow.
@@ -446,6 +466,7 @@ func _ready() -> void:
 	# "🌾 Tended Patch" (SIGNAL tint) with an "Ecology: Thriving" row above it. A tended
 	# patch's ceilings all equal its per-worker yield, so the forecast caps the stepper at 1 worker.
 	_hud.show_tile_selection(_tended_tile_fixture())
+	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("tended_tile")
 
@@ -543,6 +564,7 @@ func _ready() -> void:
 	# action that finishes it, BEFORE they can use it.
 	_hud._forage_assign_count = 1
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_locked")
 
@@ -556,7 +578,7 @@ func _ready() -> void:
 	# (ceiling_cultivate → tended_yield) — and the stepper caps at 1 worker (a managed source needs one).
 	_hud.show_tile_selection(_food_tile_fixture())
 	_hud._forage_assign_policy = "cultivate"
-	_hud._build_forage_assign_controls(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate")
 
@@ -565,6 +587,7 @@ func _ready() -> void:
 	# Thriving" (the ecology gate, not the knowledge one). The remedy is deliberately NOT "Sustain it":
 	# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever.
 	_hud.show_tile_selection(_stressed_tile_fixture())
+	_compose_forage(_stressed_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_stressed")
 
@@ -578,6 +601,7 @@ func _ready() -> void:
 	}])
 	_hud._forage_assign_policy = "sustain"
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_sow_locked")
 
@@ -593,6 +617,7 @@ func _ready() -> void:
 	# re-derive the answer (it has neither the biome capacity table nor the hydrology). The line must
 	# name the fault (dry), not just refuse, and point at the rung that lifts it.
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_sow_too_dry")
 
@@ -600,6 +625,7 @@ func _ready() -> void:
 	# upland ground that IS watered. A different fault must produce a different sentence and a
 	# different remedy — if these two frames read the same, the reason field is being wasted.
 	_hud.show_tile_selection(_sow_too_poor_tile_fixture())
+	_compose_forage(_sow_too_poor_tile_fixture())
 	await _settle()
 	await _save("forage_sow_too_poor")
 
@@ -610,7 +636,7 @@ func _ready() -> void:
 	# of), then 2× a tended patch. That asymmetry IS rung 3's bargain.
 	_hud.show_tile_selection(_sowable_tile_fixture())
 	_hud._forage_assign_policy = "sow"
-	_hud._build_forage_assign_controls(_sowable_tile_fixture())
+	_compose_forage(_sowable_tile_fixture())
 	await _settle()
 	await _save("forage_sow")
 
@@ -635,7 +661,7 @@ func _ready() -> void:
 	# lying: Cultivate used to stay enabled and keep paying the low prep dip on a finished patch.
 	_hud.show_tile_selection(_tended_tile_fixture())
 	_hud._forage_assign_policy = "cultivate"
-	_hud._build_forage_assign_controls(_tended_tile_fixture())
+	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_done")
 
@@ -644,7 +670,7 @@ func _ready() -> void:
 	# greyed here too — the ground is both tended AND a Field).
 	_hud.show_tile_selection(_field_tile_fixture())
 	_hud._forage_assign_policy = "sow"
-	_hud._build_forage_assign_controls(_field_tile_fixture())
+	_compose_forage(_field_tile_fixture())
 	await _settle()
 	await _save("forage_sow_done")
 
@@ -708,6 +734,7 @@ func _ready() -> void:
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_forage_out_of_range")
 
@@ -718,6 +745,7 @@ func _ready() -> void:
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_forage_band_near")
 
@@ -725,7 +753,7 @@ func _ready() -> void:
 	# now DISABLES Forage + shows the out-of-range hint, proving WHICH band is selected drives the
 	# enabled-vs-disabled state (the case single-band playtest can't cover).
 	_hud._forage_assign_band = int(_forage_range_bands()[1]["entity"])
-	_hud._build_forage_assign_controls(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_forage_band_far")
 	# Reset so later states resolve their usual band.
@@ -745,6 +773,7 @@ func _ready() -> void:
 	# sustain/surplus/market/eradicate policy picker, and the local "Assign Local Hunt" button). A
 	# Thriving herd shows a neutral ecology readout in the drawer.
 	_hud.show_herd_selection(_herd_fixture())
+	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
 
@@ -811,7 +840,7 @@ func _ready() -> void:
 	# tiles" footprint row.
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_self_feeding_pen_herd_fixture())
-	_hud._build_herd_assign_controls(_self_feeding_pen_herd_fixture())
+	_compose_herd(_self_feeding_pen_herd_fixture())
 	await _settle()
 	await _save("herd_pen_self_feeding")
 
@@ -821,7 +850,7 @@ func _ready() -> void:
 	# larder 0.7 food/turn".
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_extending_pen_herd_fixture())
-	_hud._build_herd_assign_controls(_extending_pen_herd_fixture())
+	_compose_herd(_extending_pen_herd_fixture())
 	await _settle()
 	await _save("herd_pen_extending")
 
@@ -830,7 +859,7 @@ func _ready() -> void:
 	# picker offers the extractive four with NO Corral rung.
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_wild_herd_fixture())
-	_hud._build_herd_assign_controls(_wild_herd_fixture())
+	_compose_herd(_wild_herd_fixture())
 	await _settle()
 	await _save("herd_ceiling_wild")
 
@@ -839,7 +868,7 @@ func _ready() -> void:
 	# policy picker again drops the Corral rung.
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_pastoral_herd_fixture())
-	_hud._build_herd_assign_controls(_pastoral_herd_fixture())
+	_compose_herd(_pastoral_herd_fixture())
 	await _settle()
 	await _save("herd_ceiling_pastoral")
 
@@ -859,6 +888,7 @@ func _ready() -> void:
 	}])
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
 	await _save("herd_corral_locked_both")
 
@@ -874,12 +904,13 @@ func _ready() -> void:
 	}])
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
 	await _save("herd_corral_locked")
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
-	# − 0.34 feed", ceiling_corral → corral_yield minus the projected pen_upkeep, stepper capped at the
+	# − 0.34 feed", the `corral` ceiling row → corral_yield minus the projected pen_upkeep, stepper capped at the
 	# 1 keeper a managed source needs), and the drawer carries the "Corral: Building 40%" row — the
 	# herd twin of the tile's "Cultivation N%". The picker's 🐄 Corral button wears the `→ +1.50/turn`
 	# PAYOFF (corral_yield), above ◎ Tame's `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
@@ -890,7 +921,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_ready_herd_fixture())
 	_hud._hunt_assign_policy = "corral"
-	_hud._build_herd_assign_controls(_corral_ready_herd_fixture())
+	_compose_herd(_corral_ready_herd_fixture())
 	await _settle()
 	await _save("herd_corral")
 
@@ -905,7 +936,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "corral"
 	_hud._hunt_assign_count = 1
 	_hud._hunt_assign_autofill = true
-	_hud._build_herd_assign_controls(_under_herded_corral_fixture())
+	_compose_herd(_under_herded_corral_fixture())
 	await _settle()
 	await _save("herd_corral_under_herded")
 
@@ -916,7 +947,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_depleted_corral_herd_fixture())
 	_hud._hunt_assign_policy = "corral"
-	_hud._build_herd_assign_controls(_depleted_corral_herd_fixture())
+	_compose_herd(_depleted_corral_herd_fixture())
 	await _settle()
 	await _save("herd_corral_depleted")
 
@@ -937,7 +968,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_taming_herd_fixture())
 	_hud._hunt_assign_policy = "tame"
-	_hud._build_herd_assign_controls(_taming_herd_fixture())
+	_compose_herd(_taming_herd_fixture())
 	await _settle()
 	await _save("two_meter_split")
 
@@ -957,7 +988,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_taming_stalled_herd_fixture())
 	_hud._hunt_assign_policy = "tame"
-	_hud._build_herd_assign_controls(_taming_stalled_herd_fixture())
+	_compose_herd(_taming_stalled_herd_fixture())
 	await _settle()
 	await _save("herd_tame_stalled")
 
@@ -973,7 +1004,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""   # force a fresh seed so the default selection = resolved band
 	_hud.show_herd_selection(_herd_fixture())
 	_hud._hunt_assign_count = 8
-	_hud._build_herd_assign_controls(_herd_fixture())
+	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_band_picker")
 
@@ -984,7 +1015,7 @@ func _ready() -> void:
 	_hud._hunt_assign_band = int(second_band["entity"])
 	_hud._hunt_assign_count = clampi(
 		_hud._hunt_assign_count, 0, _hud._assignable_hunt_workers(second_band, _herd_fixture()["id"]))
-	_hud._build_herd_assign_controls(_herd_fixture())
+	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_band_picker_b")
 	# Reset so later states render their usual single-band dropdown.
@@ -1000,6 +1031,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_hunt_distance_herd())
+	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_expedition")
 
@@ -1011,6 +1043,7 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_hunt_distance_herd())
+	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_band_near")
 
@@ -1018,7 +1051,7 @@ func _ready() -> void:
 	# herd now offers "Send Hunting Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
 	# WHICH band is selected flips the label + command + band-entity target, not the herd.
 	_hud._hunt_assign_band = int(_hunt_distance_bands()[1]["entity"])   # FAR band
-	_hud._build_herd_assign_controls(_hunt_distance_herd())
+	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_band_far")
 	# Reset so later states render their usual single-band dropdown + default band.
@@ -1056,7 +1089,7 @@ func _ready() -> void:
 		_hud.show_herd_selection(far_herd)
 		_hud._hunt_assign_count = HUNT_FORECAST_PARTY
 		_hud._hunt_assign_policy = String(state["policy"])   # the policy-picker click, without the click
-		_hud._build_herd_assign_controls(far_herd)
+		_compose_herd(far_herd)
 		await _settle()
 		await _save(String(state["name"]))
 
@@ -1070,7 +1103,7 @@ func _ready() -> void:
 	_hud.show_herd_selection(automax_herd)
 	_hud._hunt_assign_policy = "sustain"
 	_hud._hunt_assign_autofill = true
-	_hud._build_herd_assign_controls(automax_herd)
+	_compose_herd(automax_herd)
 	await _settle()
 	await _save("herd_hunt_expedition_automax")
 
@@ -1093,12 +1126,12 @@ func _ready() -> void:
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(boar)
-	_hud._build_herd_assign_controls(boar)   # source_changed seeds party = 1
+	_compose_herd(boar)   # source_changed seeds party = 1
 	await _settle()
 	await _save("herd_hunt_boar_raid")
 
 	_hud._hunt_assign_count = 2               # key unchanged → no re-seed; caps at the plateau (2)
-	_hud._build_herd_assign_controls(boar)
+	_compose_herd(boar)
 	await _settle()
 	await _save("herd_hunt_max_useful")
 
@@ -1114,7 +1147,7 @@ func _ready() -> void:
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(boar)
 	_hud._hunt_assign_count = 2
-	_hud._build_herd_assign_controls(boar)
+	_compose_herd(boar)
 	await _settle()
 	await _save("herd_hunt_raid_travel")
 	# Restore the far band (no move rate) for the remaining raid states.
@@ -1126,7 +1159,7 @@ func _ready() -> void:
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(lean)
 	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
-	_hud._build_herd_assign_controls(lean)
+	_compose_herd(lean)
 	await _settle()
 	await _save("herd_hunt_no_surplus")
 
@@ -1134,9 +1167,9 @@ func _ready() -> void:
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(boar)
 	_hud._hunt_assign_count = 2
-	_hud._build_herd_assign_controls(boar)   # seeds sustain; key now = boar id
+	_compose_herd(boar)   # seeds sustain; key now = boar id
 	_hud._hunt_assign_policy = "eradicate"
-	_hud._build_herd_assign_controls(boar)   # key unchanged → the eradicate policy sticks
+	_compose_herd(boar)   # key unchanged → the eradicate policy sticks
 	await _settle()
 	await _save("herd_hunt_eradicate")
 	_hud._hunt_assign_policy = "sustain"
@@ -1156,13 +1189,13 @@ func _ready() -> void:
 	_hud.show_herd_selection(bison)
 	_hud._hunt_assign_count = 3
 	_hud._hunt_assign_policy = "sustain"
-	_hud._build_herd_assign_controls(bison)
+	_compose_herd(bison)
 	await _settle()
 	await _save("herd_hunt_labor_bound")
 	#   3u Market — SAME herd + band, policy flipped: the plateau rises to 7 → "3 of 7 useful", proving the
 	#              ceiling tracks the selected policy. Key unchanged so the policy override sticks.
 	_hud._hunt_assign_policy = "market"
-	_hud._build_herd_assign_controls(bison)
+	_compose_herd(bison)
 	await _settle()
 	await _save("herd_hunt_labor_bound_market")
 	#   3v Party-size-bound — the SUB-CASE where freeing idle workers would NOT help: idle 6 >= max party 2,
@@ -1178,7 +1211,7 @@ func _ready() -> void:
 	_hud.show_herd_selection(bison)
 	_hud._hunt_assign_count = 2
 	_hud._hunt_assign_policy = "sustain"
-	_hud._build_herd_assign_controls(bison)
+	_compose_herd(bison)
 	await _settle()
 	await _save("herd_hunt_party_size_bound")
 	# Restore the far band + sustain for the states that follow.
@@ -1204,14 +1237,14 @@ func _ready() -> void:
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(local_herd)
 	_hud._hunt_assign_count = LOCAL_HUNT_HUNTERS
-	_hud._build_herd_assign_controls(local_herd)
+	_compose_herd(local_herd)
 	await _settle()
 	await _save("herd_hunt_local_sustain")
 
 	# Flip the policy picker to Market — the same click path the player takes; the preview line
 	# re-computes live off the new ceiling.
 	_hud._hunt_assign_policy = "market"
-	_hud._build_herd_assign_controls(local_herd)
+	_compose_herd(local_herd)
 	await _settle()
 	await _save("herd_hunt_local_overdraw")
 
@@ -1227,14 +1260,14 @@ func _ready() -> void:
 	var aurochs := _aurochs_big_game_fixture()
 	_hud.show_herd_selection(aurochs)
 	_hud._hunt_assign_count = 1
-	_hud._build_herd_assign_controls(aurochs)
+	_compose_herd(aurochs)
 	await _settle()
 	await _save("herd_hunt_whole_animal_cap")
 
 	# Flip to Market — two bodies drop on the peak turn, so the cap climbs to 4: it tracks the selected
 	# policy's ceiling, exactly as the smoothed-rate cap did.
 	_hud._hunt_assign_policy = "market"
-	_hud._build_herd_assign_controls(aurochs)
+	_compose_herd(aurochs)
 	await _settle()
 	await _save("herd_hunt_whole_animal_cap_market")
 
@@ -1253,7 +1286,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 	_hud.show_herd_selection(oracle_clean)
 	_hud._hunt_assign_count = 2
-	_hud._build_herd_assign_controls(oracle_clean)
+	_compose_herd(oracle_clean)
 	await _settle()
 	await _save("herd_hunt_delivered_clean")
 
@@ -1265,7 +1298,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 	_hud.show_herd_selection(oracle_waste)
 	_hud._hunt_assign_count = 1
-	_hud._build_herd_assign_controls(oracle_waste)
+	_compose_herd(oracle_waste)
 	await _settle()
 	await _save("herd_hunt_delivered_waste")
 
@@ -1278,9 +1311,9 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 	_hud.show_herd_selection(oracle_automax)
 	_hud._hunt_assign_count = 1
-	_hud._build_herd_assign_controls(oracle_automax)
+	_compose_herd(oracle_automax)
 	_hud._hunt_assign_autofill = true
-	_hud._build_herd_assign_controls(oracle_automax)
+	_compose_herd(oracle_automax)
 	await _settle()
 	await _save("herd_hunt_automax")
 
@@ -1293,9 +1326,9 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 	_hud.show_herd_selection(window_herd)
 	_hud._hunt_assign_count = 1
-	_hud._build_herd_assign_controls(window_herd)
+	_compose_herd(window_herd)
 	_hud._hunt_assign_autofill = true
-	_hud._build_herd_assign_controls(window_herd)
+	_compose_herd(window_herd)
 	await _settle()
 	await _save("herd_hunt_big_game_window")
 
@@ -1307,7 +1340,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 
 	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
-	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
+	# player bands (turns_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
 	# harvest / scout / idle activity glyphs) under Bands (3), and one stressed herd
 	# (amber ecology dot) under Wildlife (1). Auto-selects the first band, so the
 	# drawer shows its Rations and the Scout verb.
@@ -1320,6 +1353,295 @@ func _ready() -> void:
 	_hud.show_herd_selection(_occupied_herd_fixture())
 	await _settle()
 	await _save("occupants_herd")
+
+	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
+	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its
+	# first row, and one height-capped drawer that whichever row is lit fills. These six states are
+	# the layout's own frames — every other tile/herd/forage state above exercises the same builders
+	# through it, which is why their framing changed with this arc.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud._forage_assign_count = 3
+
+	# tile_panel_land — the LAND row lit: chips pinned above (In sight · Hospitable · Temperate ·
+	# Fertile · Verdant Basin), the land row leading the list with the tile's forage glyph + biome
+	# name, and the terrain rows + "Assign foragers" compose block in the drawer beneath.
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("tile_panel_land")
+
+	# tile_panel_no_forage — the same layout on ground that offers nothing: the land row's meta
+	# reads "No forage" and the drawer carries terrain rows with NO compose block.
+	_hud.show_tile_selection(_barren_tile_fixture())
+	await _settle()
+	await _save("tile_panel_no_forage")
+
+	# tile_panel_herd — a herd row lit: the land row is STILL in the list above it (the land never
+	# leaves), and the hunt compose block fills the one drawer.
+	_hud._player_band = _hunt_preview_local_band()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_occupied_herd_fixture())
+	await _settle()
+	await _save("tile_panel_herd")
+
+	# tile_panel_crowded — THE state this arc exists for: 3 bands + 2 herds. Every row must be
+	# visible, the drawer must CAP (scrolling internally on the selected band's allocation block),
+	# and the whole card must fit the dock without the dock itself scrolling.
+	# The player faction really IS these three bands here, and the first of them forages this very
+	# hex — so the land row must report the hex's STAFFING (`5 🌾`), not restate the module name the
+	# drawer and the sheet header already carry (§20). Leaving `_player_bands` empty made the row
+	# fall back to the module label and ellipsise it, which is the defect, not the fixture's intent.
+	_hud._player_bands = _crowded_bands_fixture()
+	_hud.show_tile_selection(_crowded_tile_fixture())
+	await _settle()
+	await _save("tile_panel_crowded")
+	# NO Band/City panel is injected here, so this is the legacy fallback path — it renders
+	# `%AllocationPanel`, whose Orders block already carries a Move. The drawer's §18 button must NOT
+	# be added on top of it, or the player would see the same order offered twice.
+	_assert_hud("the no-panel fallback shows exactly ONE Move button",
+		_count_buttons_by_text(_hud.allocation_panel, MOVE_BUTTON_TEXT) == 1)
+
+	# ---- PART 2: THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§17) ----------------------
+	# The two ~270px compose blocks left the drawer for a floating sheet. The states above are now the
+	# READ state (a standing summary + `Assign … ▸`, and the drawer is visibly shorter for it); these
+	# are the WRITE state.
+
+	# tile_panel_compose_forage — the sheet open over the LAND: the full policy grid + band picker +
+	# stepper + forecast + button, floating beside the selection card. The MAP MUST STILL BE VISIBLE
+	# behind it — an assignment is composed AGAINST the map (work-range ring, hunt reach), so unlike
+	# NarrativeForkPanel this sheet draws NO scrim.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	_assert_hud("the Assign button opens the compose sheet", _hud.is_compose_sheet_open())
+	await _save("tile_panel_compose_forage")
+
+	# tile_panel_compose_herd — the herd sheet on the EXPEDITION branch (the band is beyond hunt
+	# reach): the raid forecast + "Send Hunting Expedition" must survive the move to the sheet intact.
+	_hud._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_hunt_distance_herd())
+	_compose_herd(_hunt_distance_herd())
+	await _settle()
+	await _save("tile_panel_compose_herd")
+
+	# tile_panel_compose_gated — a LOCKED rung inside the sheet: 🐄 Corral greyed AND its gate reasons
+	# rendered right beside it. The reasons explain the greyed button, so they had to travel WITH the
+	# picker; a reason left behind in the drawer would explain a button that is no longer there.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35,
+	}])
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
+	await _settle()
+	await _save("tile_panel_compose_gated")
+
+	# ---- BEHAVIOURAL ASSERTIONS (§17) -----------------------------------------------------------
+	# (2) A SNAPSHOT MUST NOT CLOSE THE SHEET. `reapply_selection` runs every turn; closing on it
+	# would make the sheet unusable under autoplay. Driven through the real per-snapshot path — the
+	# same `reapply_selection("herd", …)` Main replays from MapView's payload — with the sheet open.
+	_assert_hud("precondition: the herd sheet is open before the snapshot",
+		_hud.is_compose_sheet_open())
+	_hud.reapply_selection("herd", _corral_locked_herd_fixture())
+	await _settle()
+	_assert_hud("a snapshot re-render leaves the compose sheet OPEN",
+		_hud.is_compose_sheet_open())
+	# …and the SAME refresh DOES close it when the subject it is composing is gone. This half is what
+	# proves the half above is not vacuous: the refresh really ran and chose to keep the sheet.
+	_hud.reapply_selection("herd", _raid_boar_herd())   # a DIFFERENT herd id
+	await _settle()
+	_assert_hud("a snapshot that swaps the subject closes the sheet",
+		not _hud.is_compose_sheet_open())
+	# Re-open on the herd the targeting assertion below needs.
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
+	await _settle()
+
+	# (3) STARTING A TARGETING FLOW CLOSES THE SHEET — a floating sheet over the map while the player
+	# is being asked to click a hex is a trap. Driven through the real Move-band entry point.
+	_hud._on_move_band_pressed()
+	await _settle()
+	_assert_hud("starting move-band targeting closes the compose sheet",
+		not _hud.is_compose_sheet_open())
+
+	# (1) ESC PRECEDENCE. The chain lives in `Main.escape_claimant`, driven here with the REAL HUD's
+	# own `is_compose_sheet_open()` / `is_targeting_active()` rather than hardcoded booleans. It is
+	# asserted with BOTH TRUE AT ONCE — targeting is still armed above and the player then opens the
+	# sheet on top of it (the drawer stays clickable during targeting, so this is a state the client
+	# really reaches). Both-true is the only configuration that can tell the ORDER apart: with the
+	# sheet open alone, any ordering answers "compose_sheet".
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
+	_hud._on_move_band_pressed()
+	_compose_herd(_corral_locked_herd_fixture())
+	await _settle()
+	_assert_hud("precondition: a sheet and targeting are BOTH active",
+		_hud.is_compose_sheet_open() and _hud.is_targeting_active())
+	_assert_hud("ESC claims the sheet AHEAD of targeting (and never the pause menu)",
+		MAIN_SCRIPT.escape_claimant(false, _hud.is_compose_sheet_open(), _hud.is_targeting_active())
+			== MAIN_SCRIPT.ESC_COMPOSE_SHEET)
+	_hud.close_compose_sheet()
+	await _settle()
+	_assert_hud("…and with the sheet closed, ESC falls back through to targeting-cancel",
+		MAIN_SCRIPT.escape_claimant(false, _hud.is_compose_sheet_open(), _hud.is_targeting_active())
+			== MAIN_SCRIPT.ESC_TARGETING)
+	_hud.cancel_active_targeting()
+	await _settle()
+
+	# (4) A WHEEL TICK OVER THE CATCHER MUST NOT DISMISS THE SHEET. The catcher is MOUSE_FILTER_STOP
+	# across the whole viewport, so an idle scroll anywhere over the map lands on it — and this sheet
+	# has NO SCRIM precisely because the player is still reading that map while composing. Dismissing
+	# on a wheel tick would throw the composition away mid-read. Driven through the REAL handler by
+	# emitting the catcher's own `gui_input`, and paired with the left-click half, which is what proves
+	# the wheel half is not vacuous (i.e. that click-outside dismissal still works at all).
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	_compose_herd(_corral_locked_herd_fixture())
+	await _settle()
+	_assert_hud("precondition: the sheet is open before the wheel tick",
+		_hud.is_compose_sheet_open())
+	for wheel_button in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		_hud._compose_sheet.gui_input.emit(_mouse_button_event(wheel_button))
+	await _settle()
+	_assert_hud("a wheel tick on the catcher leaves the compose sheet OPEN",
+		_hud.is_compose_sheet_open())
+	_hud._compose_sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT))
+	await _settle()
+	_assert_hud("a left-click on the catcher still CLOSES the compose sheet",
+		not _hud.is_compose_sheet_open())
+
+	# tile_panel_standing — §14's own frame: the drawer's CLOSED read state on a source the player
+	# already works. The summary reuses `_source_yield_readout` verbatim, so it wears the same three
+	# parts a Band-panel Current-actions row does — the policy glyph + crew + rate, the ⚠ overdraw
+	# flag (ecological) and the "· only N of M working" overstaff note (labor). This fixture crosses
+	# the two deliberately: a Market patch that DOES overdraw, staffed 4 where only 2 are needed.
+	_hud._player_bands = []
+	_hud._player_band = _standing_forage_band_fixture()
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("tile_panel_standing")
+
+	# tile_panel_land_sticky — THE BEHAVIOURAL ASSERTION for the sticky land selection, driven
+	# through the REAL client path, because the bug does not live where a hand-picked
+	# `reapply_selection("tile", …)` would put it. MapView holds its OWN occupant selection, and
+	# `refresh_selection_payload` answers `kind: "unit"` for as long as `selected_unit_id >= 0` — so on
+	# an OCCUPIED hex the tile branch is never even reached. Hence: instance the real MapView, wire the
+	# two signals Main wires, click the hex, click the LAND row, then ASK MAPVIEW what the next
+	# snapshot's payload is and feed whatever it says into `reapply_selection`. Hardcoding "tile" here
+	# would assert a path the bug cannot reach.
+	var sticky_map: Node2D = MAP_VIEW_SCRIPT.new()
+	# Data only — a visible map would render behind the HUD in this and every later frame.
+	sticky_map.visible = false
+	add_child(sticky_map)
+	sticky_map.display_snapshot(_sticky_map_snapshot())
+	# Main's wiring, verbatim (Main._on_map_tile_selected / _on_map_unit_selected /
+	# _on_hud_roster_occupant_selected).
+	sticky_map.tile_selected.connect(_hud.show_tile_selection)
+	sticky_map.unit_selected.connect(_hud.show_unit_selection)
+	_hud.roster_occupant_selected.connect(sticky_map.select_occupant)
+	sticky_map.handle_hex_click(STICKY_TILE.x, STICKY_TILE.y, MOUSE_BUTTON_LEFT)  # lands on a band
+	_hud._on_land_row_selected()                                                  # the player picks LAND
+	# The next snapshot: Main asks MapView what is selected and replays it into the HUD.
+	var sticky_payload: Dictionary = sticky_map.refresh_selection_payload()
+	_hud.reapply_selection(String(sticky_payload.get("kind", "none")), sticky_payload.get("data", {}))
+	await _settle()
+	_assert_hud("land row clears MapView's occupant selection (payload is not \"unit\")",
+		String(sticky_payload.get("kind", "")) != "unit")
+	_assert_hud("land selection survives the next snapshot on a crowded hex",
+		_hud._selected_subject == "land" and _hud._selected_unit.is_empty() and _hud._selected_herd.is_empty())
+	await _save("tile_panel_land_sticky")
+	sticky_map.tile_selected.disconnect(_hud.show_tile_selection)
+	sticky_map.unit_selected.disconnect(_hud.show_unit_selection)
+	_hud.roster_occupant_selected.disconnect(sticky_map.select_occupant)
+	sticky_map.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_unseen — a REMEMBERED hex. Chips + the land row render (geography is remembered
+	# knowledge), the herd this fixture deliberately carries does NOT, and the drawer states that
+	# the contents are unknown. An empty list would be a claim of emptiness we cannot back up.
+	_hud.clear_selection()
+	_hud.show_tile_selection(_sight_tile_fixture(VIS_DISCOVERED))
+	await _settle()
+	await _save("tile_panel_unseen")
+
+	# tile_panel_band — a PLAYER band lit while the dockable Band/City panel exists: its detail
+	# renders there, so the drawer would otherwise be a blank gap. It must point at where the
+	# detail went instead. (The panel is injected only for this frame and released after, so the
+	# reserved edge does not follow the states below.)
+	var tile_panel_band_panel: BandCityPanel = BAND_CITY_PANEL_SCENE.instantiate()
+	add_child(tile_panel_band_panel)
+	# Fan the panel's reservation onto the HUD as Main does, and dock it RIGHT — docked left it
+	# reserves the very edge the selection card lives on and covers the frame under test.
+	tile_panel_band_panel.reservation_changed.connect(func(edge: int, size: float):
+		_hud.set_reserved_inset(&"band_panel", edge, size))
+	tile_panel_band_panel.set_dock(SIDE_RIGHT)
+	_hud.set_band_city_panel(tile_panel_band_panel)
+	# THREE player bands on this hex, and the faction default is the FIRST one — so "the band the
+	# list has selected" and "the faction's default band" are DIFFERENT answers, which is the only
+	# configuration in which the Move assertion below can fail (§18).
+	var tile_panel_band_roster: Array = _crowded_bands_fixture()
+	_hud._player_bands = tile_panel_band_roster
+	_hud._player_band = tile_panel_band_roster[0]
+	var tile_panel_band_subject: Dictionary = tile_panel_band_roster[0]
+	tile_panel_band_subject["tile_info"] = _crowded_tile_fixture()
+	_hud.show_unit_selection(tile_panel_band_subject)
+	# The player then picks the SECOND band, through the real subject-list selection path.
+	_hud._select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
+	await _settle()
+	await _save("tile_panel_band")
+
+	# THE MOVE ASSERTION (§18). Driven through the drawer's REAL button — calling
+	# `_on_move_band_pressed` directly would assert the resolver, not the wiring — and the pending
+	# move must name the band SELECTED IN THE LIST (302), never the faction default
+	# (`_player_band`, 301), which is what a naive wiring resolves to on a crowded hex.
+	var tile_panel_move_btn: Button = _find_button_by_text(_hud.allocation_panel, MOVE_BUTTON_TEXT)
+	_assert_hud("the player-band drawer offers Move", tile_panel_move_btn != null)
+	if tile_panel_move_btn != null:
+		tile_panel_move_btn.emit_signal("pressed")
+	await _settle()
+	_assert_hud("Move enters move-band targeting", _hud.is_targeting_active())
+	_assert_hud("…targeting the band SELECTED IN THE LIST, not the faction default",
+		int(_hud._pending_move_band.get("entity", -1)) == TILE_PANEL_MOVE_BAND_ENTITY)
+	_hud.cancel_active_targeting()
+	await _settle()
+	_hud.set_band_city_panel(null)
+	_hud.set_reserved_inset(&"band_panel", SIDE_RIGHT, 0.0)
+	tile_panel_band_panel.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_feed_shown — the command feed is hidden by default now (six read-only receipts, no
+	# verbs) and opens on `R`. Toggled on, the dock must reflow with the selection card above it and
+	# nothing clipped.
+	_hud.ingest_command_events(_telling_command_receipts())
+	_hud.show_tile_selection(_food_tile_fixture())
+	_hud.toggle_command_feed()
+	await _settle()
+	await _save("tile_panel_feed_shown")
+	_hud.toggle_command_feed()
+	await _settle()
+
+	# Restore the single-band compose context the states below assume.
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud._hunt_assign_policy = "sustain"
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
 
 	# State 4 — targeting active: pressing "Move" on the band allocation panel enters
 	# tile-targeting, raising the top-centre banner ("MOVE … click a destination tile").
@@ -1363,7 +1685,7 @@ func _ready() -> void:
 	_hud.clear_selection()
 	_hud.update_overlay(42, {})
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 501, "size": 40, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 501, "size": 40, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 30, "current_y": 20, "idle_workers": 0},
 	])
 	await _settle()
@@ -1387,7 +1709,7 @@ func _ready() -> void:
 	# attention entry, open via the face click, then fire the footer button and assert the emit.
 	advance_hits[0] = 0
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 511, "size": 40, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 511, "size": 40, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 30, "current_y": 20, "idle_workers": 5},
 	])
 	_hud.turn_orb._on_face_pressed()
@@ -1412,27 +1734,27 @@ func _ready() -> void:
 	# it produces NO attention entry (never "Band N starving") and does not shift Band 2/Band 3's
 	# positional numbers — the idle-workers row still reads "Band 3", matching the picker/header.
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
+		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 12.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
-		{"faction": 0, "entity": 602, "size": 90, "days_of_food": 999.0, "activity": "hunt",
+		{"faction": 0, "entity": 602, "size": 90, "turns_of_food": 999.0, "activity": "hunt",
 			"current_x": 31, "current_y": 21},
-		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9},
 	])
 	_hud.update_band_alerts([
-		# Band 1 — starving (3 days of food, below critical).
-		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
+		# Band 1 — starving (3 turns of food, below critical).
+		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
 		# A detached hunt expedition, also starving — must NOT emit a "Band N starving" entry and
 		# must NOT consume a band number (Band 2/Band 3 below stay 2 and 3).
-		{"faction": 0, "entity": 650, "size": 6, "days_of_food": 2.0, "is_expedition": true,
+		{"faction": 0, "entity": 650, "size": 6, "turns_of_food": 2.0, "is_expedition": true,
 			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
 			"current_x": 25, "current_y": 18},
 		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
-		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
+		{"faction": 0, "entity": 602, "size": 78, "turns_of_food": 999.0, "morale": 0.30,
 			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
 		# Band 3 — idle labor: 4 working-age workers unassigned.
-		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
 	])
 	_hud.turn_orb.open_popover()
@@ -1448,23 +1770,23 @@ func _ready() -> void:
 	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
 	_hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 701, "size": 60, "days_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 701, "size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
-		{"faction": 0, "entity": 751, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+		{"faction": 0, "entity": 751, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 39, "current_y": 26},
 		# The hunt party names its OBJECTIVE by species (game_deer_07 → "Red Deer" via the world-herd
 		# list pushed above), not the raw fauna id — the row has to be actionable at a glance.
-		{"faction": 0, "entity": 752, "size": 5, "days_of_food": 7.0, "is_expedition": true,
+		{"faction": 0, "entity": 752, "size": 5, "turns_of_food": 7.0, "is_expedition": true,
 			"expedition_mission": "hunt", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"expedition_target_herd": "game_deer_07", "current_x": 64, "current_y": 11},
-		{"faction": 0, "entity": 753, "size": 4, "days_of_food": 6.0, "is_expedition": true,
+		{"faction": 0, "entity": 753, "size": 4, "turns_of_food": 6.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 18, "current_y": 44},
-		{"faction": 0, "entity": 754, "size": 4, "days_of_food": 5.0, "is_expedition": true,
+		{"faction": 0, "entity": 754, "size": 4, "turns_of_food": 5.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 51, "current_y": 8},
-		{"faction": 0, "entity": 755, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+		{"faction": 0, "entity": 755, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "outbound", "home_band_entity": 701,
 			"current_x": 33, "current_y": 30},
 	])
@@ -1480,7 +1802,7 @@ func _ready() -> void:
 	_hud.turn_orb.set_attention([])
 	_hud.update_herds([_starving_pen_herd_fixture()])
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 801, "size": 46, "days_of_food": 1.0, "activity": "hunt",
+		{"faction": 0, "entity": 801, "size": 46, "turns_of_food": 1.0, "activity": "hunt",
 			"current_x": 64, "current_y": 11, "idle_workers": 0,
 			"labor_assignments": [
 				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral",
@@ -1815,7 +2137,7 @@ func _ready() -> void:
 	_hud._hunt_assign_policy = "sustain"
 	_hud._hunt_assign_count = 3
 	_hud.show_herd_selection(picker_herd)
-	_hud._build_herd_assign_controls(picker_herd)
+	_compose_herd(picker_herd)
 	await _settle()
 	await _save("hunt_picker_ascending")
 
@@ -1823,7 +2145,7 @@ func _ready() -> void:
 	# "Herders" so a pen whose workersNeeded scales with the herd doesn't look like a hunt-party bug.
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_domesticated_herd_fixture())
-	_hud._build_herd_assign_controls(_domesticated_herd_fixture())
+	_compose_herd(_domesticated_herd_fixture())
 	await _settle()
 	await _save("hunt_crew_herders")
 
@@ -2024,6 +2346,50 @@ func _pending_forks_fixture() -> Array:
 func _stance_axes_fixture() -> Array:
 	return [{"faction": 0, "axes": [{"axis": "roam_settle", "value": -0.18}]}]
 
+## Open the COMPOSE SHEET on a source and render its compose block there.
+##
+## Part 2 of docs/plan_tile_panel_layout.md moved `%ForageAssignControls` / `%HerdAssignControls` out
+## of the drawer into a floating sheet, so a state that exists to judge the picker/stepper/forecast/
+## gate-reasons has to OPEN it — the drawer now shows only the standing summary + `Assign … ▸`.
+## These two calls replace the direct `_hud._build_*_assign_controls(...)` the states used before;
+## the builders still run, just against the sheet's content container.
+func _compose_forage(tile_info: Dictionary) -> void:
+	_hud._open_forage_compose(tile_info)
+
+func _compose_herd(herd: Dictionary) -> void:
+	_hud._open_herd_compose(herd)
+
+## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
+## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
+## rather than calling the handler's effect directly.
+func _mouse_button_event(button_index: int) -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = button_index
+	event.pressed = true
+	return event
+
+## Find a Button by its face anywhere under `root` — the harness presses the REAL control the player
+## presses, so an assertion covers the wiring and not just the handler it would have called.
+func _find_button_by_text(root: Node, text: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).text == text:
+		return root as Button
+	for child in root.get_children():
+		var found := _find_button_by_text(child, text)
+		if found != null:
+			return found
+	return null
+
+## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
+func _count_buttons_by_text(root: Node, text: String) -> int:
+	if root == null:
+		return 0
+	var total := 1 if (root is Button and (root as Button).text == text) else 0
+	for child in root.get_children():
+		total += _count_buttons_by_text(child, text)
+	return total
+
 ## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
 ## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
 ## for someone to notice a card that should not be there.
@@ -2071,7 +2437,7 @@ func _band_fixture() -> Dictionary:
 		"pos": [71, 18],
 		# Good food state: a long larder runway (≥ warn) + positive net (0.94 − 0.68 = +0.26) → the
 		# Food line reads "… · +0.26 /turn" and the category breakdown is collapsed (clickable open).
-		"days_of_food": 22.0,
+		"turns_of_food": 22.0,
 		# Good morale (≥ warn, not falling) → the Morale row is collapsed with a ▸ caret. The signed
 		# Layer-1 contributions (above the breakdown epsilon) give the disclosure real content on expand.
 		"morale": 0.82,
@@ -2146,7 +2512,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = PEN_KEEPER_BAND_ENTITY
 	band["id"] = "Band 4"
-	band["days_of_food"] = 22.0
+	band["turns_of_food"] = 22.0
 	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
 	band["food_consumption"] = 1.15     # the PEOPLE's meals
 	band["pen_feed_upkeep"] = 1.74      # the ANIMALS' feed — a debit in neither row above
@@ -2167,7 +2533,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 ## shrinks, so it yields less, so there is less to feed it with.
 func _starving_pen_band_fixture() -> Dictionary:
 	var band := _pen_keeper_band_fixture()
-	band["days_of_food"] = 3.0
+	band["turns_of_food"] = 3.0
 	band["food_income"] = 1.32          # forage 0.48 + the shrunken pen's 0.84
 	band["pen_feed_upkeep"] = 0.70      # PAID, not demanded — the herd starves for the difference
 	band["labor_assignments"] = [
@@ -2184,7 +2550,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 905
 	band["id"] = "Band 3"
-	band["days_of_food"] = 4.0
+	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
 	band["labor_assignments"] = [
@@ -2204,7 +2570,7 @@ func _expedition_fixture() -> Dictionary:
 		"entity": 7001,
 		"faction": 0,
 		"pos": [80, 30],
-		"days_of_food": 9.0,
+		"turns_of_food": 9.0,
 		"stores": {"provisions": 48.0},
 		"is_expedition": true,
 		"expedition_mission": "scout",
@@ -2229,7 +2595,7 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"entity": 7101,
 		"faction": 0,
 		"pos": [64, 22],
-		"days_of_food": 4.0,
+		"turns_of_food": 4.0,
 		# Carried 8 of a 16 carry cap → "Carried 8 / 16".
 		"stores": {"provisions": 8.0},
 		"is_expedition": true,
@@ -2254,7 +2620,7 @@ func _low_morale_band_fixture() -> Dictionary:
 	var fixture := _band_fixture()
 	fixture["id"] = "Band 5"
 	fixture["entity"] = 905
-	fixture["days_of_food"] = 999.0
+	fixture["turns_of_food"] = 999.0
 	fixture["stores"] = {"provisions": 260.0}
 	fixture["morale"] = 0.22
 	# Falling morale driven by the harsh cavern terrain: the drawer shows
@@ -2289,22 +2655,22 @@ func _low_morale_band_fixture() -> Dictionary:
 ## compare against (Band Ash drops 90 → 78 in the live fixture below).
 func _band_alert_baseline() -> Array:
 	return [
-		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 12.0, "activity": "harvest", "current_x": 71, "current_y": 18},
-		{"faction": 0, "entity": 102, "size": 90, "days_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22},
-		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "harvest", "current_x": 12, "current_y": 9},
+		{"faction": 0, "entity": 101, "size": 60, "turns_of_food": 12.0, "activity": "harvest", "current_x": 71, "current_y": 18},
+		{"faction": 0, "entity": 102, "size": 90, "turns_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22},
+		{"faction": 0, "entity": 103, "size": 45, "turns_of_food": 999.0, "activity": "harvest", "current_x": 12, "current_y": 9},
 	]
 
 func _band_alert_fixture() -> Array:
 	return [
-		# Starving: 3 days of food (< critical) → red alert.
-		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
+		# Starving: 3 turns of food (< critical) → red alert.
+		{"faction": 0, "entity": 101, "size": 60, "turns_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
 			"harvest": {"band_label": "Band Fen"}},
 		# Losing population to relocation: size 90 → 78, well-fed (∞) but discontented and
 		# 12 people emigrated last turn → amber alert "losing population — people leaving".
-		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 40, "current_y": 22,
+		{"faction": 0, "entity": 102, "size": 78, "turns_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 40, "current_y": 22,
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
-		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
+		{"faction": 0, "entity": 103, "size": 45, "turns_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
 	]
 
 ## Two player bands (multi-band split is deferred, but the assign controls' band-picker must
@@ -2348,6 +2714,20 @@ func _forage_range_bands() -> Array:
 		{"entity": 822, "faction": 0, "size": 80, "current_x": 80, "current_y": 24,
 			"working_age": 10, "idle_workers": 6, "work_range": 2, "activity": "forage", "labor_assignments": []},
 	]
+
+## The near band of `_forage_range_bands`, ALREADY WORKING the (66,10) food tile — the fixture behind
+## the drawer's standing-assignment summary (§14). The assignment deliberately crosses the two
+## INDEPENDENT flags the summary shares with a Band-panel Current-actions row: `overdraws` true (a
+## Market patch drawing past regrowth — the ecological ⚠) AND 4 workers where 2 are needed (the labor
+## "· only 2 of 4 working" note). `realized_yield` is the steady average the summary headlines.
+func _standing_forage_band_fixture() -> Dictionary:
+	var band: Dictionary = _forage_range_bands()[0]
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": 4, "target_x": 66, "target_y": 10, "policy": "market",
+		"actual_yield": 2.74, "sustainable_yield": 0.96, "realized_yield": 2.74,
+		"workers_needed": 2, "overdraws": true,
+	}]
+	return band
 
 ## The herd the distance-aware states select — the same (66,10) herd but a NON-food tile_info, so the
 ## Tile card drops its "Assign foragers" block and the hunt button + distance hint sit in-frame.
@@ -2663,8 +3043,6 @@ func _delivered_oracle_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 1.23,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.33, "ceiling_surplus": 3.5,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.33, "surplus": 3.5, "market": 5.0, "eradicate": 7.0,
 		},
@@ -2684,8 +3062,6 @@ func _big_game_window_herd() -> Dictionary:
 		"husbandry_ceiling": "wild",
 		"food_per_animal": 16.0,
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": 2.4, "ceiling_surplus": 3.6,
-		"ceiling_market": 5.0, "ceiling_eradicate": 7.0,
 		"hunt_policy_ceilings": {
 			"sustain": 2.4, "surplus": 3.6, "market": 5.0, "eradicate": 7.0,
 		},
@@ -2868,17 +3244,12 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"food_per_animal": fpa,
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
-		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
+		#   • `per_worker_yield` + the `hunt_policy_ceilings` table, which drive the shared
 		#     `_forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
-		#   • `hunt_policy_ceilings` / `hunt_trip_estimates` below (the BAND flow ceiling and the
-		#     sim's forward-simulated EXPEDITION trip answers).
-		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings match the
+		#   • `hunt_trip_estimates` below (the sim's forward-simulated EXPEDITION trip answers).
+		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings ARE the
 		# band ceilings, because the sim exports one hunt model — the two paths must agree.
 		"per_worker_yield": 0.8,
-		"ceiling_sustain": sustain_ceiling,
-		"ceiling_surplus": sustain_ceiling * 4.0,
-		"ceiling_market": sustain_ceiling * 2.0,
-		"ceiling_eradicate": 0.0,
 		"hunt_policy_ceilings": {
 			"sustain": sustain_ceiling,
 			"surplus": sustain_ceiling * 4.0,
@@ -3110,28 +3481,22 @@ func _herd_fixture() -> Dictionary:
 		# decoder now emits. The kill-rhythm divides it by the food rate (both provisions): 2.0
 		# food/animal vs a 0.90/turn Sustain take reads "≈1 Red Deer / 3 turns".
 		"food_per_animal": 2.0,
-		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
-		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
-		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this
-		# herd), so the Hunters stepper caps at 3 with the "max 3 workers useful here" note.
+		# Pre-commit yield forecast (food/turn at this herd's biomass, at output_multiplier 1.0).
+		# Sustain admits ceil(0.90 / 0.30) = 3 useful hunters, below the reference band's 7 assignable
+		# (3 idle + the 4 it already has on this herd), so the Hunters stepper caps at 3 with the
+		# "max 3 workers useful here" note.
 		"per_worker_yield": 0.30,
-		"ceiling_sustain": 0.90,
-		"ceiling_surplus": 1.80,
-		"ceiling_market": 2.70,
-		"ceiling_eradicate": 4.50,
 		# The two INVESTMENT rungs' PAYOFFS — the food/turn each rung pays ONCE prepared (the pastoral
 		# MSY after taming, the pen's sustained rate once built), NOT the during-build dip. Ordered
 		# Sustain (0.90) < Tame (1.20) < Corral (1.50) so the picker's `→ +Y/turn` payoff buttons read
 		# as an ascending ladder, both clearly above Sustain's `up to +0.90/turn` cap.
-		"ceiling_corral": 0.23,
 		"corral_yield": 1.50,
 		"pastoral_yield": 1.20,
 		"corral_progress": 0.0,
-		# The TAME/Corral DIPS. There is no flat `ceilingTame` scalar on the wire — the Tame ceiling
-		# rides the `hunt_policy_ceilings` LIST (the sim exports a row for every one of the six
-		# `FollowPolicy::HUNT_POLICIES`), so this is the shape the decoder produces and where
-		# `_forecast_inputs` reads Tame's dip. The extractive rows match the flat ceilings above,
-		# because the sim exports ONE hunt model and the two views must agree.
+		# EVERY ceiling — the four extractive rungs plus the Tame/Corral DIPS — rides this ONE list;
+		# the herd has no flat `ceiling*` scalars on the wire any more (deprecated schema slots). The
+		# sim exports a row for every one of the six `FollowPolicy::HUNT_POLICIES`, so this is the
+		# shape the decoder produces and where `_forecast_inputs` reads every herd ceiling.
 		"hunt_policy_ceilings": {
 			"sustain": 0.90,
 			"surplus": 1.80,
@@ -3168,10 +3533,6 @@ func _aurochs_big_game_fixture() -> Dictionary:
 	fixture["husbandry_ceiling"] = "wild"
 	fixture["food_per_animal"] = 1.6
 	fixture["per_worker_yield"] = 0.80
-	fixture["ceiling_sustain"] = 0.74
-	fixture["ceiling_surplus"] = 1.20
-	fixture["ceiling_market"] = 1.86
-	fixture["ceiling_eradicate"] = 2.60
 	fixture["hunt_policy_ceilings"] = {
 		"sustain": 0.74, "surplus": 1.20, "market": 1.86, "eradicate": 2.60,
 	}
@@ -3200,6 +3561,90 @@ func _pastoral_herd_fixture() -> Dictionary:
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
 
+## Ground that offers NOTHING to gather: no food module, no patch. The land row's meta must read
+## "No forage" (not a blank), and the drawer must carry terrain rows with no compose block.
+func _barren_tile_fixture() -> Dictionary:
+	return {
+		"x": 71, "y": 4,
+		"terrain_label": "Rocky Regolith",
+		"tags_text": "none",
+		"visibility_state": "active",
+		"habitability": 0.07,
+		"temperature": 2.0,
+		"food_module": "",
+		"food_module_label": "",
+		"height_display": "62 ▮▮▮▮▮▯▯▯",
+	}
+
+## THE CROWDED HEX — 3 bands + 2 herds, i.e. six subject rows once the land is counted. The state
+## the height cap is judged on: every row visible, the drawer capped, the dock not scrolling.
+func _crowded_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["x"] = 58
+	tile["y"] = 24
+	tile["units"] = _crowded_bands_fixture()
+	tile["herds"] = _crowded_herds_fixture()
+	return tile
+
+## Three player bands on the crowded hex, spanning the food tiers (green / amber / red dots) and
+## carrying real labor so the auto-selected band's drawer renders a full allocation block — which is
+## what makes the cap do any work at all.
+func _crowded_bands_fixture() -> Array:
+	return [
+		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 15.0, "morale": 0.72,
+			"activity": "forage", "stores": {"provisions": 180.0},
+			"food_income": 3.2, "food_consumption": 2.4,
+			"labor_assignments": [
+				{"kind": "forage", "workers": 5, "target_x": 58, "target_y": 24, "policy": "sustain",
+					"actual_yield": 0.96, "sustainable_yield": 0.96, "realized_yield": 0.96,
+					"workers_needed": 5, "overdraws": false},
+			]},
+		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 44, "idle_workers": 4,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 7.0, "morale": 0.51,
+			"activity": "scout", "stores": {"provisions": 40.0}, "labor_assignments": []},
+		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
+			"current_x": 58, "current_y": 24, "working_age": 27, "idle_workers": 0,
+			"work_range": 2, "hunt_reach": 4, "turns_of_food": 2.0, "morale": 0.30,
+			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
+	]
+
+## Two herds sharing the crowded hex — a stressed bison (amber dot) and a thriving boar (green), so
+## the Wildlife group is genuinely plural and the ecology dots differ down the list.
+func _crowded_herds_fixture() -> Array:
+	return [
+		_occupied_herd_only(),
+		{
+			"id": "game_boar_04",
+			"label": "Wild Boar (game_boar_04)",
+			"species": "Wild Boar",
+			"size_class": "medium",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"domestication": 0.0,
+			"biomass": 1010.0,
+			"carrying_capacity": 1433.0,
+			"graze_range_radius": 1,
+			"x": 58, "y": 24,
+		},
+	]
+
+## The MapView snapshot behind `tile_panel_land_sticky` — the crowded hex's OWN bands and herds on a
+## grid just big enough to hold it, so MapView's `_tile_info_at` / `_units_on_tile` see exactly what
+## the HUD fixture describes. FoW is off by default in a fresh MapView, so nothing is redacted.
+func _sticky_map_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)
+	terrain.fill(STICKY_TERRAIN_ID)
+	return {
+		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": _crowded_bands_fixture(),
+		"herds": _crowded_herds_fixture(),
+	}
+
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
 func _occupied_tile_fixture() -> Dictionary:
 	return {
@@ -3220,11 +3665,11 @@ func _occupied_tile_fixture() -> Dictionary:
 func _occupied_units_fixture() -> Array:
 	return [
 		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
-			"days_of_food": 15.0, "activity": "harvest", "stores": {"provisions": 180.0}},
+			"turns_of_food": 15.0, "activity": "harvest", "stores": {"provisions": 180.0}},
 		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
-			"days_of_food": 7.0, "activity": "scout", "stores": {"provisions": 40.0}},
+			"turns_of_food": 7.0, "activity": "scout", "stores": {"provisions": 40.0}},
 		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
-			"days_of_food": 2.0, "activity": "idle", "stores": {"provisions": 8.0}},
+			"turns_of_food": 2.0, "activity": "idle", "stores": {"provisions": 8.0}},
 	]
 
 ## The stressed herd sharing the occupied hex (amber ecology dot).
@@ -3392,8 +3837,13 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	fixture["corral_progress"] = 0.0
 	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
 	fixture["per_worker_yield"] = 0.10
-	fixture["ceiling_sustain"] = 0.10
-	fixture["ceiling_corral"] = 0.05
+	# Override the inherited ceiling table's two rows this frame reads — Sustain (the extractive
+	# baseline) and the Corral DIP. The herd's ceilings live only in `hunt_policy_ceilings` now, so
+	# a depleted variant must restate them here rather than shadowing them with flat scalars.
+	var depleted_ceilings: Dictionary = (fixture["hunt_policy_ceilings"] as Dictionary).duplicate()
+	depleted_ceilings["sustain"] = 0.10
+	depleted_ceilings["corral"] = 0.05
+	fixture["hunt_policy_ceilings"] = depleted_ceilings
 	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
 	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture

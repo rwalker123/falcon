@@ -3441,20 +3441,18 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("corral_progress", herd.corralProgress());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
-        //   expected(workers, policy) = min(workers * per_worker_yield, ceiling_<policy>)
-        //   max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)
+        //   expected(workers, policy) = min(workers * per_worker_yield, hunt_policy_ceilings[policy])
+        //   max_useful_workers(policy) = ceil(hunt_policy_ceilings[policy] / per_worker_yield)
         // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
-        // hunter stepper at what the herd can actually absorb.
+        // hunter stepper at what the herd can actually absorb. EVERY herd-side ceiling now comes
+        // from the `hunt_policy_ceilings` Dictionary above — the old per-policy scalars
+        // (ceilingSustain/Surplus/Market/Eradicate/Corral) are deprecated schema slots and are no
+        // longer decoded. (ForagePatchState keeps its scalars: a patch has no such list.)
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
-        let _ = dict.insert("ceiling_sustain", herd.ceilingSustain());
-        let _ = dict.insert("ceiling_surplus", herd.ceilingSurplus());
-        let _ = dict.insert("ceiling_market", herd.ceilingMarket());
-        let _ = dict.insert("ceiling_eradicate", herd.ceilingEradicate());
-        // The Corral INVESTMENT rung (hunt-only): `ceiling_corral` is the food/turn the herd pays
-        // WHILE the pen is being built (the deliberate dip), `corral_yield` what it pays once penned.
-        // Together they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned. Its
+        // DURING-BUILDING dip rides the `hunt_policy_ceilings` list (the "corral" row), so together
+        // they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
         // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
-        let _ = dict.insert("ceiling_corral", herd.ceilingCorral());
         let _ = dict.insert("corral_yield", herd.corralYield());
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
         // cannot graze, so its keeper hauls it food every turn.
@@ -4231,7 +4229,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_unrest", scalars.morale_unrest);
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
-    let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
+    let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
     // Band food ledger (food/turn): total realized income across all worked sources and total
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);

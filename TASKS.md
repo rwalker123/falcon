@@ -296,7 +296,7 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Provide serde-compatible adapters for early testing.
 - [x] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
-- [ ] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
+- [x] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
   per-policy band hunt ceiling **twice**: the flat scalars (`ceilingSustain`/`ceilingSurplus`/
   `ceilingMarket`/`ceilingEradicate`/`ceilingCorral` + `corralYield`/`perWorkerYield`) and the
   `huntPolicyCeilings:[{policy, provisionsPerTurn}]` list. They are the **same numbers** — the list is a
@@ -307,7 +307,58 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
   repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
   source.
-- [ ] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
+  _Status_: **Done — with two corrections to the scope above, both forced by reading the code.**
+  1. **The five ceiling scalars are marked `(deprecated)` in `snapshot.fbs`, NOT deleted.** They sit
+     **mid-table** in `HerdTelemetryState`, with a long appended tail after them (`huntPolicyCeilings`,
+     `huntTripEstimates`, `penUpkeep`, `penFedFraction`, `bodyMass`, `foodPerAnimal`, `pastoralYield`,
+     …). A FlatBuffers field's vtable slot is **positional**, so deleting a line silently renumbers
+     every field below it and corrupts the wire for all of them. `(deprecated)` retains the slot and
+     drops the accessors, which is what "retire" has to mean here. Verified post-change: order
+     unchanged, and the regenerated bindings emit no herd accessors while `ForagePatchState`'s still
+     resolve.
+  2. **Only FIVE of the seven named fields were retired.** `perWorkerYield` and `corralYield` are
+     **kept** — they are not ceilings, and `huntPolicyCeilings` (`[{policy, provisionsPerTurn}]`)
+     structurally cannot carry them: `perWorkerYield` is the per-worker RATE (the divisor in
+     `maxUsefulWorkers = ceil(ceiling / perWorkerYield)`, which drives the worker-stepper cap) and
+     `corralYield` is the post-pen PAYOFF (`FORECAST_PAYOFF_KEYS`, rendered as Corral's `→ +5.40/turn`).
+     Retiring them would have deleted information, not a duplicate.
+
+  **`ForagePatchState` keeps its identical-looking scalar block** (`perWorkerYield` + the four
+  extractive ceilings) on the wire, in the decoder, and behind `MapView`'s `patch_`-prefixed
+  cross-refs: a patch has **no** `huntPolicyCeilings` list, so for a patch the scalars are the only
+  representation. The herd↔patch asymmetry is now the documented rule in both CLAUDE.mds.
+
+  Client: `_forecast_inputs` branches on `prefix == HERD_FORECAST_PREFIX` → `_hunt_policy_ceiling`
+  (the list) for **every** herd rung, else the unchanged scalar lookup — a generalization of the
+  branch that already existed for `tame`, whose dip never had a scalar. `FORECAST_CEILING_KEYS` is
+  now the FORAGE-only map (lost its hunt-only `corral` entry). The "not known" contract is unchanged
+  and was checked, not assumed: `known` is `per_worker >= FORECAST_MIN_PER_WORKER` and never
+  consulted the ceiling, so a herd with no forecast data still renders no row and applies no cap —
+  the clamped `0.0` cannot manufacture a `+0.00`.
+
+  Verified: `cargo fmt`/`clippy -D warnings` clean, 491 core_sim + 46 sim_schema + every
+  integration-test binary green, `cargo build --workspace` clean, `cargo xtask godot-build` OK,
+  `marker_field_guard` PASS. **8 of the 9 herd-forecast ui_preview frames are byte-identical** to the
+  pre-change baseline (this is a representation change, so identical pixels is the contract):
+  `herd_hunt_delivered_clean`, `herd_hunt_delivered_waste`, `hunt_picker_ascending`, `herd_corral`,
+  `herd_tame`, `two_meter_split`, `herd_hunt_local_sustain`, `herd_hunt_local_overdraw`.
+
+  **The 9th frame changed, and it is the best argument for this task.** `herd_corral_depleted`'s
+  fixture was internally contradictory in a way only the duplicate representation allowed: it
+  overrode `ceiling_sustain 0.10` / `ceiling_corral 0.05` (read by the forecast) while leaving the
+  inherited `huntPolicyCeilings` at `sustain 0.90 / corral 0.23` (read by the picker), so the frame
+  rendered `Preparing: +0.05` beside a `♻ +0.90` Sustain button — **two different numbers for one
+  herd, a state the wire can no longer express.** With one representation the button reads `♻ +0.10`,
+  consistent with `per_worker_yield 0.10`. Everything the frame exists to prove is pixel-identical
+  (`Preparing: +0.05 → then +0.00 − 0.14 feed`, and the amber `⚠ Too depleted to pen…` note).
+
+  **Note the claim this task rested on was never test-pinned.** "They cannot drift" held only because
+  both views were built from one `SourceYieldForecast` — no test asserted the scalars and the list
+  agree (checked; there wasn't one, so nothing was silently weakened by the removal). Collapsing to
+  one representation makes non-divergence **structural** rather than incidental, which is the durable
+  win — and the `herd_corral_depleted` fixture is proof the two views could and did disagree in
+  practice, at least in a harness.
+- [x] **Rename `daysOfFood` → `turnsOfFood`; the name is a lie.** The field no longer means days and
   no longer means `larder / consumption`: since the food-arrivals arc (PR #150) it is the **larder
   runway — turns until the larder empties, with income counted**, resolved by walking the per-source
   `arrivalSchedule`s. The unit was fixed at the display layer (`Hud._food_days_text` renders "turns",
@@ -318,6 +369,34 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
   `native/src/lib.rs`'s `days_of_food` key, and the client's `days_of_food` / `UNLIMITED_DAYS` /
   `warn_days` / `color_for_days` / `food_days.{warn,critical}` config key. No back-compat needed
   (no shipped saves), so it can be a straight rename rather than a deprecation.
+  _Status_: **Done.** Straight rename end-to-end, zero behaviour change (the `999.0` not-food-limited
+  sentinel is untouched). Wire: `daysOfFood` → **`turnsOfFood`**, renamed **in place** on its original
+  line in `PopulationCohortState` — a FlatBuffers field's slot is positional, so it was NOT moved,
+  reordered, or delete-and-appended. Sim: `sim_schema`'s `days_of_food` → `turns_of_food`,
+  `core_sim`'s `NOT_FOOD_LIMITED_DAYS` → `NOT_FOOD_LIMITED_TURNS`, plus `snapshot/population.rs`,
+  `snapshot/mod.rs` and `integration_tests/tests/larder_runway.rs`. Client: the decoder key
+  (`native/src/lib.rs`), the whole `BandFoodStatus` vocabulary (`UNLIMITED_TURNS`, `warn_turns()`,
+  `color_for_turns`, `hex_for_turns`, …), the config key **`food_turns.{warn,critical}`** (values
+  unchanged), `Hud._food_turns_text` / `_selected_band_food_turns`, `MapView`, `BandMarkerRenderer`,
+  and all three preview harnesses — including `marker_field_guard`'s `PANEL_CONSUMED_KEYS`, whose
+  fixture + assertion moved with it so the guard keeps guarding the field. The "misnomer pending a
+  rename" caveats are deleted from `snapshot.fbs`, `sim_schema`, `core_sim/CLAUDE.md` and the client
+  `CLAUDE.md`. Verified: `cargo fmt` clean, `clippy -D warnings` clean, **491 core_sim + 46 sim_schema
+  + every integration-test binary green**, `cargo xtask godot-build` OK, `marker_field_guard` PASS.
+
+  **A live defect was found and fixed on the way — the Food row's threshold tint was dead.**
+  `Hud._format_detail_bbcode` recognized the runway row by sniffing the rendered string for `"day"`,
+  but PR #150 had changed `_food_days_text` to render `"%d turns"` — so `contains("day")` was **always
+  false** for a finite runway and the value rendered in neutral ink instead of WARN/DANGER. Only the
+  `∞` case still tinted, and that one tints healthy-green, so **a starving band's `Food: 3 (2 turns)`
+  row showed no warning colour at all**; the same guard covers the expedition `Provisions`/`Carried`
+  rows. (The map dot and the turn-orb `starving` producer were unaffected — they call the colour
+  helper directly.) Fixed at the root rather than by patching the literal: a shared
+  **`Hud.FOOD_RUNWAY_UNIT`** const is now the ONE place the unit word is spelled, consumed by both the
+  renderer and the guard, so they cannot drift apart again. Confirmed on rendered frames, not by
+  inspection: `band_food_concerning.png` (4 turns → **red**), `band.png` (22 turns → **green**),
+  `expedition_panel.png` (9 turns → **amber**), `band_panel_food_concerning_top.png` (the Band/City
+  panel's row, red).
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -333,9 +412,6 @@ Authoritative spec + config table + the full measured A/B: `core_sim/CLAUDE.md` 
 - [x] Surface faction-specific Great Discovery progress (constellation readiness, observation gates, ETA) in the Knowledge tab with filtering/summary affordances (Owner: TBD, Estimate: 1d; Deps: Great Discovery snapshot contracts). _Status_: The new tab also renders faction-specific constellation readiness with observation deficits, ETA, and posture details driven by snapshot/delta updates._
 - [x] Visualise selected culture layers on the map: from the Culture tab, highlight the chosen regional/local footprint, dim non-selected tiles, and align overlay stats with the selection so divergence hotspots match the list (Owner: TBD, Estimate: 2d; Deps: culture overlay rendering hooks, selection broadcast). _Status_: Inspector selection now persists across refreshes, passes highlighted layer ids to the map, dims non-selected tiles, and reuses the selection set for overlay stats/legend context so divergence hotspots match the list._
 - [x] Hook espionage mission control into the Godot inspector Knowledge tab: surface mission queues, success odds, misinformation flags, and counter-intel posture/budget controls using the existing command envelopes (`queue_espionage_mission`, `counterintel_policy`, `counterintel_budget`) per `docs/architecture.md` Knowledge Ledger follow-up notes (Owner: TBD, Estimate: 2d; Deps: command bridge, Knowledge telemetry bindings). _Status_: Knowledge inspector now renders mission telemetry/queue data, including success odds, MISINFO tags, and live counter-intel posture/budget feedback (`clients/godot_thin_client/src/Main.tscn`, `clients/godot_thin_client/src/scripts/Inspector.gd`). Documentation updated (`docs/architecture.md`, `shadow_scale_strategy_game_concept_technical_plan_v_0.md`) to match the new UI flow.
-
-### Band Panel UX (the zone rework)
-- [ ] **Give `move_band` a home on the Tile panel — the Band panel no longer has one, so a resident band CANNOT BE MOVED.** The zone rework deleted the Band panel's `Move` button on the reasoning that the decision is about a *destination*, so it belongs to the panel that describes a place (target-first: look at a tile, decide to go — instead of arming a targeting mode and then hunting for a tile). The targeting machinery is all intact and reachable — `Hud._on_move_band_pressed` / `_pending_move_band` / `_try_dispatch_pending_move_band` / `move_band_requested` → `Main._on_hud_move_band` → `move_band <faction> <band> <x> <y>` — but its ONLY surviving caller is `_build_expedition_panel`, i.e. **expeditions can still be moved and bands cannot**. That is a functional regression on the band-panel branch, not a deferral: ship the Tile-panel half before this merges, or restore a temporary Move to the Band panel. **The Tile panel makes the flow better, not merely relocated:** the tile is already selected when the button is pressed, so `move_band` can be emitted DIRECTLY with that tile's coordinates and the targeting mode is not needed at all — no banner, no second click, no Esc-to-cancel. Sit it beside `%ForageAssignControls` (which already carries the `_build_band_picker` dropdown the multi-band case needs, and the same `_band_tile`/`_hex_distance_wrapped` plumbing if a range hint is ever wanted). Add a `ui_preview` state for it. (Owner: TBD, Estimate: 0.5d; Deps: none.)
 
 ### Fauna Icon Sprites (map markers)
 - [ ] **Decide the map's `texture_filter` so bundled sprites can be filtered — the fauna icons currently render with slightly ragged, speckled edges.** `MapView._ready` pins `texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST` (commented as preventing seams from bilinear interpolation on the terrain-cache blit), and Godot 4 has **no per-draw-command filter override** — filter is a CanvasItem property, so the `draw_texture_rect` calls in `MapView._draw_marker_sprite` inherit NEAREST and the `mipmaps/generate=true` set on `clients/godot_thin_client/assets/icons/fauna/*.png.import` is **never sampled**. A 256px source nearest-minified to a ~36px marker (the game's on-screen size at hex radius ≈ 75) shows speckled leg/outline pixels. **Current workaround** (shipped in PR #132): `process/size_limit=64` on those `.import` files, so the *importer* does a filtered downscale and in-engine minification drops from ~7:1 to ~1.8:1; the mipmap flag was left on so it pays off if the filter is ever raised. **The proper fix** is `TEXTURE_FILTER_LINEAR_WITH_MIPMAPS` on MapView plus dropping `size_limit` back to `0` to recover full source resolution — but that is a **terrain-rendering** change, not an icon change: the NEAREST guard protects the cached-viewport blit at fractional pan offsets (`CachedMapRenderer` / `_build_hex_texture_cache`) and the blend-OFF per-hex texture path. The shader terrain path binds its own samplers and is unaffected. **Verify by pixel-diff, not by eye**: `tools/blend_probe.tscn` states must byte-compare unchanged where they should (`blend_bands_full`, `V7_coast_unchanged`, `V10_shore*`, the `H_gate_*` pair), and `map_preview`'s terrain frames plus a fractional pan/zoom must show no seams reappearing at hex boundaries — that is exactly the artifact the comment exists to prevent, and it is invisible in a downscaled screenshot. If seams do return, the fallback is to keep NEAREST and instead pre-downscale the icon assets to their true drawn size. (Owner: TBD, Estimate: 0.5d; Deps: none — PR #132 landed the sprites and the workaround.)
@@ -1397,12 +1473,17 @@ fires**" edge), and `clients/godot_thin_client/CLAUDE.md` → *TellingPanel* (th
 ## HUD Discoverability
 
 - [ ] **Retune the food-starvation thresholds against the honest runway — they may now warn too
-      late.** The food-arrivals arc (PR #150) corrected `daysOfFood` from `larder / consumption`
+      late.** The food-arrivals arc (PR #150) corrected `turnsOfFood` (then still named `daysOfFood`)
+      from `larder / consumption`
       ("how long if you stop hunting") to the real runway with income counted. That is the right
       number, but the warn/critical thresholds in `clients/godot_thin_client/src/config/band_status_config.json`
-      (`food_days.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and three
-      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_days`), the turn-orb
-      `starving` attention producer, and `Hud._food_is_concerning`'s auto-expand. Measured on a real
+      (`food_turns.warn` 10 / `critical` 5) were tuned against the **pessimistic** figure, and **four**
+      surfaces key on it: the map band food dot (`BandFoodStatus.color_for_turns`), the turn-orb
+      `starving` attention producer, `Hud._food_is_concerning`'s auto-expand, and — **newly live, so
+      it has never been playtested against these numbers** — the selection-panel Food row's own
+      threshold tint, which was dead from PR #150 until the `turnsOfFood` rename fixed it (see that
+      entry). Retuning must account for the fact that the row's colour is now visible at all.
+      Measured on a real
       turn (seed 119304647): a well-fed band moves **9.39 → 52.89** (amber → green, correct), a
       genuinely starving band stays **0.43** (unchanged, correct — with no income the formula degrades
       to the old one). **The gap is the band in between:** one whose income *nearly* covers its drain

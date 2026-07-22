@@ -32,7 +32,25 @@ static func fit(
 ) -> void:
 	if scroll == null or label == null:
 		return
-	var cap: float = label.get_content_height()
+	fit_height(scroll, label.get_content_height(), dock_scroll, min_height, bottom_margin)
+
+## The same cap, measured from a CONTENT HEIGHT the caller already has.
+##
+## `fit` above measures a RichTextLabel, which is all this helper ever wrapped while its only
+## clients were the command feed and the Telling panel. The selection card's drawer is a VBox of
+## live controls (detail label + compose block), whose height comes from
+## `get_combined_minimum_size().y` instead — so the measurement moves to the caller and the height
+## MATH stays here, in exactly one copy. `fit` is now written in terms of this.
+static func fit_height(
+	scroll: ScrollContainer,
+	content_height: float,
+	dock_scroll: ScrollContainer,
+	min_height: float,
+	bottom_margin: float,
+) -> void:
+	if scroll == null:
+		return
+	var cap: float = content_height
 	if dock_scroll != null and dock_scroll.size.y > 0.0:
 		var top_in_dock: float = scroll.global_position.y - dock_scroll.global_position.y
 		var available: float = (dock_scroll.size.y - top_in_dock - bottom_margin

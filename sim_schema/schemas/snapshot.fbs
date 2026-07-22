@@ -520,9 +520,8 @@ table PopulationCohortState {
   // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
   // walked off the sources' arrival schedules so it agrees with the client's food-outlook chart.
   // 999.0 = not food-limited (no demand, or income meets the drain). An expedition has no income,
-  // so it reduces to provisions / consumption. The "days" in the name is a MISNOMER pending a
-  // rename — the sim counts turns, and the client already renders "turns".
-  daysOfFood:float = 0;
+  // so it reduces to provisions / consumption.
+  turnsOfFood:float = 0;
   activity:string;
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
@@ -591,7 +590,7 @@ table PopulationCohortState {
   settlementStage:SettlementStageView;
   // Hunt expedition only: carry cap = party_workers × expedition_config.hunt.per_worker_carry (the
   // provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for scouts +
-  // normal bands. The client shows carried/cap (carried = stores/daysOfFood) + a FULL state.
+  // normal bands. The client shows carried/cap (carried = stores/turnsOfFood) + a FULL state.
   expeditionCarryCap:float = 0;
   // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
   // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
@@ -613,7 +612,7 @@ table PopulationCohortState {
   huntReach:uint = 0;
   // Band-level per-turn food flow (derived at capture). foodIncome = Σ of every worked source's
   // actualYield (the per-source breakdown summed); foodConsumption = food_demand(children, working,
-  // elders) (the one-turn demand daysOfFood divides by). Client draws a food-ledger footer from these
+  // elders) (the one-turn demand turnsOfFood divides by). Client draws a food-ledger footer from these
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;
@@ -1156,29 +1155,36 @@ table HerdTelemetryState {
   // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
   // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
   // Hunt assignment. Captured with an output_multiplier of 1.0 (scale by the band's
-  // `outputMultiplier`). Compose:
-  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
-  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
+  // `outputMultiplier`). The per-policy ceilings live in `huntPolicyCeilings` below (one row per
+  // policy, keyed by a free-form policy name); this scalar is the per-worker RATE they clamp:
+  //   ceiling(policy)           = huntPolicyCeilings[policy].provisionsPerTurn
+  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling(policy))
+  //   maxUsefulWorkers(policy)  = ceil(ceiling(policy) / perWorkerYield)   [perWorkerYield > 0]
   // Ceilings are already clamped to the herd's remaining biomass; `hunt_take` and the forecast share
   // the ceiling/conversion helpers, so forecast == actual (see core_sim/CLAUDE.md).
   // A CORRALLED herd reports its corral yield as every ceiling with perWorkerYield equal to it — one
   // keeper suffices (maxUsefulWorkers = 1) and the policy is irrelevant.
   perWorkerYield:float = 0;
-  ceilingSustain:float = 0;
-  ceilingSurplus:float = 0;
-  ceilingMarket:float = 0;
-  ceilingEradicate:float = 0;
+  // Retired: the per-policy ceilings are now carried ONLY by `huntPolicyCeilings`. Kept as
+  // (deprecated) slots because a FlatBuffers field's vtable slot is positional — deleting these
+  // lines would renumber every field appended after them.
+  ceilingSustain:float = 0 (deprecated);
+  ceilingSurplus:float = 0 (deprecated);
+  ceilingMarket:float = 0 (deprecated);
+  ceilingEradicate:float = 0 (deprecated);
   // --- The Corral investment rung (appended) --- the herd twin of `ForagePatchState`'s Cultivate
-  // block. `ceilingCorral` = food/turn WHILE the pen is being built under the Corral policy
-  // (= corralling_yield_fraction × ceilingSustain — the yield dip that buys the pen). `corralYield`
-  // = food/turn the herd will pay ONCE penned (maintenance labor: one keeper suffices). Corral is
-  // HUNT-ONLY (the patch twin is Cultivate).
-  ceilingCorral:float = 0;
+  // block. The food/turn WHILE the pen is being built under the Corral policy (= the
+  // corralling yield dip that buys the pen) is the `corral` row of `huntPolicyCeilings`.
+  // `corralYield` = food/turn the herd will pay ONCE penned (maintenance labor: one keeper
+  // suffices). Corral is HUNT-ONLY (the patch twin is Cultivate).
+  ceilingCorral:float = 0 (deprecated);
   corralYield:float = 0;
   // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
   // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
   // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
-  // corral yield. These are the same numbers as the ceiling* scalars above, projected as a list.
+  // corral yield. This list is the ONLY wire representation of a herd's per-policy ceilings (the
+  // old ceiling* scalars are deprecated slots): a free-form `policy` string means a new policy
+  // needs no schema change, matching `species` and `huntTripEstimates`.
   // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
   // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
   // ecology model. Appended (append-only discipline).

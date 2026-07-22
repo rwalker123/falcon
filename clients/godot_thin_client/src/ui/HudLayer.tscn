@@ -232,12 +232,6 @@ card_title = "Tile"
 custom_minimum_size = Vector2(320, 0)
 visible = false
 
-[node name="OccupantsPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
-script = ExtResource("4")
-card_title = "Occupants"
-custom_minimum_size = Vector2(320, 0)
-visible = false
-
 [node name="StockpilePanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
 custom_minimum_size = Vector2(320, 120)
 
@@ -261,30 +255,33 @@ size_flags_vertical = 3
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="TileDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
+[node name="TileChips" type="HFlowContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
-bbcode_enabled = true
-fit_content = true
-scroll_active = false
-autowrap_mode = 2
+theme_override_constants/h_separation = 5
+theme_override_constants/v_separation = 4
 
-[node name="ForageAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
-[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel"]
-size_flags_horizontal = 3
-theme_override_constants/separation = 8
-
-[node name="RosterList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="SubjectList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
-[node name="OccupantDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="SubjectDivider" type="Panel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="SubjectScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="SubjectBody" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TileDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -292,13 +289,27 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 
-[node name="AllocationPanel" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="ForageAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 visible = false
 
-[node name="HerdAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="OccupantDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+autowrap_mode = 2
+
+[node name="AllocationPanel" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+visible = false
+
+[node name="HerdAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
@@ -308,6 +319,7 @@ visible = false
 [node name="CommandFeedPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
 script = ExtResource("4")
 card_title = "Command Feed"
+hotkey_hint = "R"
 custom_minimum_size = Vector2(320, 0)
 
 [node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"]
