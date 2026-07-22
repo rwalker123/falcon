@@ -253,3 +253,218 @@ Existing `food_tile` / `forage_*` / `herd_*` / `tile_sight_*` states exercise th
 builders and must keep passing; **their frames will change** (one card instead of two) —
 that is the intended diff, not a regression. Re-read them after the change and confirm the
 content is intact.
+
+---
+
+# Part 2 — the compose sheet (option E)
+
+**Status:** IMPLEMENTED. Follows the Part 1 rebuild (`13880e8`), same branch. See
+`clients/godot_thin_client/CLAUDE.md` → the selection-card section and the `ui/hud/ComposeSheet.gd`
+row for the shipped shape.
+
+## 10. Why
+
+Part 1 bounded the panel by capping the drawer. It did not make the drawer *small* — the
+two compose blocks are still ~270 px of always-expanded controls living permanently in a
+column that also has to show the land, the roster and the detail rows. On a hex where you
+are composing a hunt, the drawer is mostly picker.
+
+Composing is **modal by nature**: you open it, make a decision, commit, and it is done.
+So the read state keeps the column and the write state borrows space only while in use.
+
+## 11. Shape
+
+The drawer keeps the detail rows, gains a one-line **standing-assignment summary**, and
+ends in a single `Assign … ▸` button. Pressing it opens a **compose sheet** floating over
+the HUD; committing or dismissing returns to the read state.
+
+```
+  drawer (read state)                 sheet (write state)
+  ┌──────────────────────┐            ┌────────────────────────┐
+  │ Biomass   820 / 1100 │            │ ASSIGN HUNTERS  Boar ✕ │
+  │ Range     1 tile     │            │ Band  [Band 1      ⌄] │
+  │ Ecology   Thriving   │    ▸       │ [♻][⬆][⇄][💀][◎][🐄]  │
+  │ ──────────────────── │            │ hint …                 │
+  │ ♻ 2 hunters +10.67   │            │ Party  [−] 1 [+]       │
+  │ [ Assign hunters ▸ ] │            │ forecast …             │
+  └──────────────────────┘            │ [ Send Hunting Exp. ]  │
+                                      └────────────────────────┘
+```
+
+**Which blocks move:** `%ForageAssignControls` (land) and `%HerdAssignControls` (herd)
+only. `%AllocationPanel` stays inline — for an expedition it is two buttons and a callout,
+and its band branch only renders in the no-Band/City-panel fallback.
+
+## 12. Two traps, both already documented in this repo
+
+**Use `AutoSizingPanel`, not `DockScrollFit`.** The root `CLAUDE.md` rule: a *free-floating*
+panel measured against the **viewport** is `AutoSizingPanel.fit_to_content`; `DockScrollFit`
+is for a card inside a dock's `VBoxContainer`. The sheet is free-floating, so it is
+`AutoSizingPanel` — the opposite of what Part 1 needed. Picking the wrong one misbehaves
+silently rather than failing.
+
+**Nest the catcher, don't sibling it.** Reuse `NarrativeForkPanel` exactly: the sheet node
+*is* a full-screen dismiss catcher (`MOUSE_FILTER_STOP`) with the card as a **child**, not a
+sibling — siblings make the ordering ambiguous and the catcher swallows the card's own
+clicks. Pin the catcher to the viewport **explicitly**; the full-rect anchor preset does not
+settle in time and leaves a zero-size rect (`NarrativeForkPanel._pin_to_viewport`).
+
+**No scrim.** `NarrativeForkPanel` dims because a fork is a story beat demanding attention.
+An assignment is a working action composed *against* the map — the band's work-range ring,
+the herd's position, the hunt reach are all live context. Use the catcher for click-outside
+dismissal with **no dimming**. This is the one place the sheet deliberately departs from the
+fork panel.
+
+## 13. Hosting the controls
+
+**Do not reparent the existing `%ForageAssignControls` / `%HerdAssignControls` nodes into
+the sheet.** `PanelCard`'s contract note is explicit: reparenting silently clears
+`unique_name_in_owner`, breaking every `%Name` lookup in the owner script.
+
+Instead give the builders an explicit target:
+
+```gdscript
+func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void
+func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void
+```
+
+The sheet passes its own content container. Every existing rebuild path (stepper tick,
+policy click, band-picker change) keeps working because it re-runs the same builder against
+the same target. The compose state members (`_forage_assign_count`, `_forage_assign_policy`,
+`_hunt_assign_count`, `_hunt_assign_policy`, the autofill one-shots) are unchanged — the
+sheet is a different *host*, not a different state model.
+
+Gate-reason lines move **with** the picker: they explain the greyed buttons, so they belong
+beside them.
+
+## 14. The drawer's standing summary
+
+Only when the source is actually staffed by the player faction. Reuse
+`_source_yield_readout` — do **not** recompute a rate:
+
+`♻ 3 foragers · +2.74 /turn` · `♻ 2 hunters · +10.67 /turn`
+
+Policy glyph from `FoodIcons.for_policy`, warn/overdraw flags exactly as the Band panel's
+Current-actions rows render them. Unstaffed → no summary row, just the button.
+
+Button label: `Assign foragers ▸` / `Assign hunters ▸` (`Assign herders ▸` on a managed
+herd — `_is_managed_hunt_source` already decides that noun).
+
+## 15. Lifecycle
+
+- **Open** on the drawer button. One sheet at a time; opening replaces any open one.
+- **Close** on: commit (Assign / Send), the `✕`, a catcher click, or `Esc`.
+- **Esc precedence.** `Main._unhandled_input` currently runs ESC → targeting-cancel → pause
+  menu (Main.gd:661-667). The sheet becomes the **first** claimant: add
+  `Hud.is_compose_sheet_open()` and check it before `is_targeting_active()`.
+- **Targeting closes the sheet.** Move-band and send-expedition enter tile targeting; a
+  floating sheet over the map while the player is asked to click a hex is a trap. Any
+  `_pending_*` targeting flow starting must close the sheet first.
+- **Selection changes close the sheet.** Picking another row, another hex, or another band
+  invalidates the subject being composed.
+- **A snapshot must NOT close it.** `reapply_selection` runs every turn; closing on it would
+  make the sheet unusable during autoplay. The sheet re-renders in place against the fresh
+  subject, and closes only if that subject is gone.
+
+## 16. What must not regress
+
+Everything in §8 still holds. Additionally:
+
+- **No yield, forecast, ecology or gate logic may be re-derived.** This moves the host of
+  existing controls. Every number and every gate reason must come from the same call it
+  comes from today.
+- The forage **range gate** and the herd **local-vs-expedition branch** are decided from the
+  *selected band's* position; that threading is explicit today and must stay explicit.
+- `Esc` must still cancel targeting and still open the pause menu when no sheet is open.
+
+## 17. Verification
+
+| State | Asserts |
+|---|---|
+| `tile_panel_compose_forage` | sheet open over the land, full policy grid + stepper + button, map still visible (no scrim) |
+| `tile_panel_compose_herd` | herd sheet, expedition branch, raid forecast intact |
+| `tile_panel_compose_gated` | locked rungs greyed **and** their gate reasons rendered in the sheet |
+| `tile_panel_land` (updated) | closed state — summary line + `Assign foragers ▸`, drawer visibly shorter than Part 1 |
+| `tile_panel_crowded` (updated) | closed state on a crowded hex; card is now well clear of the dock ceiling |
+
+Behavioural assertions, in the style of the Part 1 sticky test — and each must be shown to
+**fail** before it is trusted:
+
+1. `Esc` with a sheet open closes the sheet and does **not** open the pause menu.
+2. `reapply_selection` with a sheet open leaves it open.
+3. Starting a move-band targeting flow closes the sheet.
+
+---
+
+# Part 3 — Move on the tile panel, and two corrections
+
+**Status:** design settled, implementation pending. Follows Part 2, same branch.
+
+## 18. Move a band from the tile panel
+
+Selecting a player band in the subject list redirects its detail to the Band/City panel, so
+the drawer holds only a pointer line. But **repositioning a band is a map action**, and the
+player is already on the map with the hex open — making them cross to another panel to give
+that order is the wrong shape.
+
+Add a **Move** button to that drawer branch. `BandCityPanel` and `_build_allocation_sections`
+are **not touched** — its own Orders section keeps its Move.
+
+- Wire it directly to the existing `_on_move_band_pressed`. It resolves its target through
+  `_resolve_assign_band()`, which returns `_selected_unit` whenever that is a player band —
+  so it already moves **the band selected in the list**, which is the whole point on a hex
+  carrying several. No new targeting logic, no change to `move_band_requested`.
+- `ghost` treatment, and the Orders section's tooltip verbatim. (An earlier draft justified
+  `ghost` as "matching the Orders section" — that was factually wrong: Orders' Move is
+  `primary`. `ghost` is still right, for a different reason. `primary` means *the* thing to do
+  on this surface, and on a band that is labor allocation, which lives elsewhere; repositioning
+  is a secondary convenience. It also matches the **expedition** Move sitting in this same
+  drawer, which is the consistency axis that matters here.)
+- **Player resident bands only.** That drawer branch is already player-band-gated; a foreign
+  band's orders are not ours to give.
+- **Not** in the no-Band/City-panel fallback path — that renders `%AllocationPanel`, which
+  already has its own Move, and a second one would double it.
+- Expeditions already have Move here via `_build_expedition_panel`; leave that alone.
+
+`Clear all` is deliberately **not** added. It returns every worker on the band to idle, which
+is a heavier action than repositioning, and it belongs beside the labor allocation it clears.
+
+## 19. The open-state Assign button must not wear `armed`
+
+`HudStyle.apply_button(btn, "armed")` is the **destructive/warned** treatment — `DANGER`
+border, `#f0c3bd` text — used for things like a slow raid the player is choosing anyway. "Its
+compose sheet is open" is not a warning; it is a *live* state, and this HUD spells live in
+SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse).
+
+Use **`primary`** while the button's own sheet is open and `ghost` at rest.
+
+## 20. The land row's meta duplicates and truncates
+
+The row currently renders the module name, which ellipsises to `Savanna Gras…` at dock width
+while the drawer prints `Forage: Savanna Grassland — Savanna Track` and the sheet header reads
+`ASSIGN FORAGERS  Savanna Grassland` — the same string three times, and the only truncated one
+is the row.
+
+The row's meta earns its space in the **closed** state, when another subject is selected and
+the row is the only place the land reports anything. So make it the shortest true thing:
+
+| Condition | Meta |
+|---|---|
+| staffed by the player | `3 🌾` — the worker count, the actionable fact |
+| a patch, unstaffed | `0 🌾` |
+| no patch | `No forage` |
+
+The worker count comes from the same `_forage_assignment_of` lookup Part 2 introduced for the
+standing summary — do not count assignments a second way.
+
+**Correction, recorded because the first draft of this section was wrong.** §20 originally
+specified the module label for the unstaffed case and blamed the ellipsis on the code. The code
+was already correct at `13880e8`; the defect was in the *fixtures* — `tile_panel_crowded` left
+`_player_bands` empty, so a hex a band was actively foraging fell through to the label branch.
+That is fixed in the harness.
+
+But the unstaffed case then still truncated, because a module label does not fit the row at dock
+width. Hence `0 🌾`: the row already **leads with that module's own glyph**, so the label was
+restating it, and it was the only one of the three renderings that truncated (the drawer's
+`Forage:` row and the sheet header both print it whole). The zero form is parallel to the
+staffed one, so an unworked patch reads at a glance rather than by comparison.

@@ -657,18 +657,46 @@ func _send_runtime_command(line: String, message: String) -> void:
     else:
         push_warning("Inspector unavailable; cannot send command: %s" % line)
 
+## ESC PRECEDENCE, as data. Which surface claims the key, innermost first:
+##   (1) an open pause menu resumes;
+##   (2) an open COMPOSE SHEET closes — it is the innermost working surface, so it claims ESC ahead
+##       of targeting (docs/plan_tile_panel_layout.md §15);
+##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
+##   (4) otherwise the pause menu opens.
+## Extracted as a pure static so the ORDER can be asserted without standing up the whole app scene
+## (ui_preview drives it with the real HUD's own `is_compose_sheet_open` / `is_targeting_active`).
+const ESC_RESUME := "resume"
+const ESC_COMPOSE_SHEET := "compose_sheet"
+const ESC_TARGETING := "targeting"
+const ESC_PAUSE := "pause"
+
+static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool) -> String:
+    if pause_open:
+        return ESC_RESUME
+    if compose_open:
+        return ESC_COMPOSE_SHEET
+    if targeting:
+        return ESC_TARGETING
+    return ESC_PAUSE
+
 func _unhandled_input(event: InputEvent) -> void:
     if event.is_action_pressed("ui_cancel"):
-        # ESC precedence: (1) an open pause menu resumes; (2) active targeting keeps ESC for
-        # MapView's targeting-cancel path (do NOT consume); (3) otherwise open the pause menu.
-        if pause_layer != null and pause_layer.visible:
-            _hide_pause_menu()
-            get_viewport().set_input_as_handled()
-        elif hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")):
-            return
-        else:
-            _show_pause_menu()
-            get_viewport().set_input_as_handled()
+        var claimant := escape_claimant(
+            pause_layer != null and pause_layer.visible,
+            hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
+            hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")))
+        match claimant:
+            ESC_RESUME:
+                _hide_pause_menu()
+                get_viewport().set_input_as_handled()
+            ESC_COMPOSE_SHEET:
+                hud.call("close_compose_sheet")
+                get_viewport().set_input_as_handled()
+            ESC_TARGETING:
+                return
+            _:
+                _show_pause_menu()
+                get_viewport().set_input_as_handled()
 
 func _toggle_inspector_visibility() -> void:
     if inspector == null:

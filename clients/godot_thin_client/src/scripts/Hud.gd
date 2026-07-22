@@ -328,6 +328,11 @@ const SUBJECT_DIVIDER_HEIGHT := 1.0
 # A selected PLAYER band's detail lives in the dockable Band/City panel, so its drawer here would
 # otherwise be a blank gap. Say where it went instead.
 const BAND_PANEL_POINTER_TEXT := "Labor allocation is in the Band / City panel."
+# …but REPOSITIONING is a map action, and the player is already on the map with this hex open, so
+# Move stays in the drawer beside the pointer (§18). Same words as the Band/City panel's own Orders
+# Move — one order, one name.
+const MOVE_BAND_BUTTON_TEXT := "Move"
+const MOVE_BAND_BUTTON_TOOLTIP := "Relocate the band, then click a destination tile."
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
 # most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
 const ACTIVITY_GLYPHS := {
@@ -1014,6 +1019,25 @@ const SEND_HUNTING_EXPEDITION_BUTTON := "Send Hunting Expedition"
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
+# ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
+# Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
+# in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
+# keeps the detail rows, gains a one-line STANDING-ASSIGNMENT summary, and ends in the button below.
+const FORAGE_CREW_LABEL := "Foragers"
+# `Assign foragers ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
+# sheet's stepper uses, so the drawer and the sheet can never disagree about who is being staffed.
+const COMPOSE_OPEN_BUTTON_FORMAT := "Assign %s ▸"
+const COMPOSE_SHEET_EYEBROW_FORMAT := "Assign %s"
+# The standing staffing being edited, shown INSIDE the sheet (the header carries verb + subject).
+const COMPOSE_NOW_STAFFED_FORMAT := "Now %d%s"
+const COMPOSE_PENDING_SUFFIX := " · pending"
+# The drawer's one-line summary of what is ALREADY standing on this source: `♻ 3 foragers · +2.74
+# /turn`. The rate comes from `_source_yield_readout` — never recomputed here.
+const STANDING_SUMMARY_FORMAT := "%s %d %s"
+const STANDING_SUMMARY_SEPARATOR := " ·"
+const COMPOSE_KIND_NONE := ""
+const COMPOSE_KIND_FORAGE := "forage"
+const COMPOSE_KIND_HERD := "herd"
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
 const SEND_EXPEDITION_SECTION := "Send expedition"
 # The hunt party's carry-ceiling FULL badge (shown in the hunt panel when carried ≥ cap).
@@ -1346,6 +1370,12 @@ var _band_attention: Array = []
 # every subsequent snapshot. Keyed by beat_id.
 var _auto_opened_forks: Dictionary = {}
 var _fork_panel: NarrativeForkPanel = null
+# The floating compose sheet + which source it is composing. `_compose_kind` is one of the
+# COMPOSE_KIND_* constants; `_compose_subject` is the source key (a "x,y" tile key or a herd id), so
+# a per-snapshot refresh can tell "the same source, restated" from "a different source, gone".
+var _compose_sheet: ComposeSheet = null
+var _compose_kind: String = COMPOSE_KIND_NONE
+var _compose_subject: String = ""
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -2810,56 +2840,52 @@ func _workers_for_role(band: Dictionary, kind: String) -> int:
             return int((entry as Dictionary).get("workers", 0))
     return 0
 
-## Workers currently foraging a specific in-range tile; 0 when unstaffed.
-func _workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+## The band's standing FORAGE assignment on (x,y) — `{}` when it works no such tile. The one lookup
+## behind the worker count, the seeded policy and the drawer's standing summary, so the three can
+## never read different assignments.
+func _forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
     for entry in _labor_assignments_of(band):
         if not (entry is Dictionary):
             continue
         var a: Dictionary = entry
         if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
                 and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
-            return int(a.get("workers", 0))
-    return 0
+            return a
+    return {}
+
+## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
+## of `_forage_assignment_of`.
+func _hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
+    for entry in _labor_assignments_of(band):
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
+            return a
+    return {}
+
+## Workers currently foraging a specific in-range tile; 0 when unstaffed.
+func _workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+    return int(_forage_assignment_of(band, x, y).get("workers", 0))
 
 ## Workers currently hunting a specific herd; 0 when unstaffed.
 func _workers_for_hunt(band: Dictionary, herd_id: String) -> int:
-    for entry in _labor_assignments_of(band):
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
-            return int(a.get("workers", 0))
-    return 0
+    return int(_hunt_assignment_of(band, herd_id).get("workers", 0))
 
 ## The take policy of the band's existing hunt on `herd_id`, else the default.
 func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
-    for entry in _labor_assignments_of(band):
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
-            var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            # HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
-            # re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
-            if policy in HUNT_POLICY_OPTIONS:
-                return policy
-    return DEFAULT_HUNT_POLICY
+    var policy := String(_hunt_assignment_of(band, herd_id).get("policy", "")).strip_edges().to_lower()
+    # HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
+    # re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
+    return policy if policy in HUNT_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
 
 ## The take policy of the band's existing forage on (x,y), else the default.
 func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
-    for entry in _labor_assignments_of(band):
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
-                and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
-            var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            # FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
-            # re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
-            # investment back to Sustain (and the patch would go feral).
-            if policy in FORAGE_POLICY_OPTIONS:
-                return policy
-    return DEFAULT_HUNT_POLICY
+    var policy := String(_forage_assignment_of(band, x, y).get("policy", "")).strip_edges().to_lower()
+    # FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
+    # re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
+    # investment back to Sustain (and the patch would go feral).
+    return policy if policy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
 
 ## A friendlier label for a herd id — the roster/selected herd's label when known, else the
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
@@ -3963,6 +3989,30 @@ func _build_send_expedition_section(band: Dictionary, idle: int, rebuild: Callab
     block.add_child(hunt_btn)
     return block
 
+## The selected PLAYER band's one drawer action (§18): Move. Shares the allocation-panel host with
+## `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
+## exclusive on the selected occupant, so the fallback path's own Orders Move is never doubled.
+##
+## Wired straight to `_on_move_band_pressed`, which resolves through `_resolve_assign_band()` and so
+## already targets the band selected in THIS list — the whole point on a hex carrying several.
+## `Clear all` is deliberately NOT here: it returns every worker to idle, a heavier action that
+## belongs beside the labor allocation it clears.
+func _build_band_move_actions() -> void:
+    if allocation_panel == null:
+        return
+    for child in allocation_panel.get_children():
+        child.queue_free()
+    allocation_panel.visible = true
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var move_btn := Button.new()
+    move_btn.text = MOVE_BAND_BUTTON_TEXT
+    HudStyle.apply_button(move_btn, "ghost")
+    move_btn.tooltip_text = MOVE_BAND_BUTTON_TOOLTIP
+    move_btn.pressed.connect(_on_move_band_pressed)
+    actions.add_child(move_btn)
+    allocation_panel.add_child(actions)
+
 ## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
 ## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
 ## entity) and Recall. Reuses the allocation-panel host; player expeditions only.
@@ -4018,13 +4068,13 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
 ## WARN-amber "Fencing N%" badge — the pen twin of the corral-build "Building N%" meter. The server
 ## rejects an extend at max radius / unowned / Herding-unknown with a feed message; the client does
 ## not pre-gate on those (max radius is not on the wire).
-func _build_extend_pen_control(herd: Dictionary) -> void:
+func _build_extend_pen_control(herd: Dictionary, target: VBoxContainer) -> void:
     var extend_progress := float(herd.get("pen_extend_progress", 0.0))
     if extend_progress > 0.0:
         var badge := Label.new()
         badge.text = PEN_FENCING_LABEL % int(round(extend_progress * PROGRESS_PERCENT_SCALE))
         badge.add_theme_color_override("font_color", HudStyle.WARN)
-        herd_assign_controls.add_child(badge)
+        target.add_child(badge)
         return
     var x := int(herd.get("x", -1))
     var y := int(herd.get("y", -1))
@@ -4035,7 +4085,7 @@ func _build_extend_pen_control(herd: Dictionary) -> void:
     extend_btn.tooltip_text = PEN_EXTEND_TOOLTIP
     HudStyle.apply_button(extend_btn, "ghost")
     extend_btn.pressed.connect(_emit_extend_pen.bind(x, y))
-    herd_assign_controls.add_child(extend_btn)
+    target.add_child(extend_btn)
 
 ## Emit the extend-pen request for the pen anchored at (x, y). Main formats `extend_pen <faction> <x> <y>`.
 func _emit_extend_pen(x: int, y: int) -> void:
@@ -4047,21 +4097,14 @@ func _emit_extend_pen(x: int, y: int) -> void:
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
-func _build_herd_assign_controls(herd: Dictionary) -> void:
-    if herd_assign_controls == null:
+func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void:
+    if target == null:
         return
-    for child in herd_assign_controls.get_children():
+    for child in target.get_children():
         child.queue_free()
-    var resolved := _resolve_assign_band()
-    var corralled := bool(herd.get("corralled", false))
-    var can_assign := bool(herd.get("huntable", false)) and not resolved.is_empty()
-    # A penned herd always offers the Extend-pen action (grow the fenced footprint), even if it is no
-    # longer huntable — so the controls stay visible for a pen OR a huntable herd.
-    herd_assign_controls.visible = can_assign or corralled
-    if corralled:
-        _build_extend_pen_control(herd)
-    if not can_assign:
+    if not _herd_compose_available(herd):
         return
+    var resolved := _resolve_assign_band()
     var herd_id := String(herd.get("id", ""))
     # When the selected herd changes, default the actor band to the resolved band (and re-seed
     # the compose count/policy from its staffing); otherwise preserve the picked band + count
@@ -4082,20 +4125,18 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_hunt_workers(band, herd_id)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
-    var title := Label.new()
-    # A MANAGED (corralled/pastoral) herd's crew are keepers, not a hunt party (fix #6) — so the title
-    # reads "Assign herders" to match the stepper's crew label below.
-    var title_noun := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
-        else HUNT_CREW_LABEL
-    title.text = "Assign %s" % title_noun.to_lower() \
-        + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
-    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
-    herd_assign_controls.add_child(title)
+    # The sheet's own header already names the verb ("ASSIGN HERDERS") and the herd, so this line
+    # carries only what the header cannot: the standing staffing being edited.
+    if current > 0 or pending:
+        var title := Label.new()
+        title.text = COMPOSE_NOW_STAFFED_FORMAT % [current, COMPOSE_PENDING_SUFFIX if pending else ""]
+        title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
+        target.add_child(title)
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
     # how many workers"). Switching bands re-runs the distance-aware branch below for that band.
-    herd_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+    target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _hunt_assign_band = int(picked.get("entity", -1))
-        _build_herd_assign_controls(herd)))
+        _build_herd_assign_controls(herd, target)))
     # Distance-aware: a LOCAL hunt when the herd is within the SELECTED band's hunt_reach, a hunting
     # EXPEDITION when it's beyond. Distance is wrap-aware from the picked band's OWN tile — every part
     # of the decision (distance, reach, and the command's band target) keys off `band` explicitly, so
@@ -4180,34 +4221,34 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
     var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
         else HUNT_CREW_LABEL
-    herd_assign_controls.add_child(_build_worker_stepper(
+    target.add_child(_build_worker_stepper(
         "Party" if is_expedition else crew_label, _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
-            _build_herd_assign_controls(herd)))
+            _build_herd_assign_controls(herd, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
-        herd_assign_controls.add_child(_alloc_hint_label(cap_note))
+        target.add_child(_alloc_hint_label(cap_note))
     # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
     # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
     # Market < Eradicate). Worker-independent on both branches (the expedition's is the max over party
     # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
     var policy_takes := _expedition_policy_takes(band, herd) if is_expedition \
         else _hunt_policy_takes(herd)
-    herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
+    target.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
         # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
         _hunt_assign_autofill = true
-        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
+        _build_herd_assign_controls(herd, target), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
     # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
     # promise the expedition player a payoff the sim never pays.
     if forecast_active:
-        herd_assign_controls.add_child(
+        target.add_child(
             _forecast_yield_row(forecast, _hunt_assign_count, band))
     if is_expedition:
-        herd_assign_controls.add_child(_alloc_hint_label(
+        target.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
     var assign_btn := Button.new()
@@ -4222,7 +4263,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         var trip := _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)
         var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
-            herd_assign_controls.add_child(_forecast_label(forecast_line))
+            target.add_child(_forecast_label(forecast_line))
         # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
         var no_surplus := _hunt_trip_no_surplus(trip)
@@ -4230,12 +4271,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         _style_send_hunt_button(assign_btn, trip, reason)
         # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
         if no_surplus:
-            herd_assign_controls.add_child(_alloc_hint_label(reason))
+            target.add_child(_alloc_hint_label(reason))
     else:
         # What this policy DOES for a resident band (the forecast line below carries the number; this
         # carries the consequence — above all what Sustain actually teaches, which is otherwise
         # invisible). Deliberately NOT the expedition hints: a party earns neither.
-        herd_assign_controls.add_child(_alloc_hint_label(
+        target.add_child(_alloc_hint_label(
             String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
         # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
         # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
@@ -4246,7 +4287,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         if not (_hunt_assign_policy in INVESTMENT_POLICIES):
             var window_turns := _hunt_avg_window_turns(herd, _hunt_assign_policy)
             if window_turns > 0:
-                herd_assign_controls.add_child(_alloc_hint_label(
+                target.add_child(_alloc_hint_label(
                     HUNT_AVG_WINDOW_FORMAT % window_turns))
         # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
         # than left to be guessed. See `_tame_stalled_hint`.
@@ -4254,7 +4295,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         if stalled != "":
             var stalled_label := _alloc_hint_label(stalled)
             stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
-            herd_assign_controls.add_child(stalled_label)
+            target.add_child(stalled_label)
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
         # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
         # EXTRACTIVE rungs ONLY — an INVESTMENT rung is answered by the dip→payoff row above
@@ -4265,7 +4306,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             var yield_line := _local_hunt_preview_bbcode(
                 band, herd, _hunt_assign_policy, _hunt_assign_count)
             if yield_line != "":
-                herd_assign_controls.add_child(_forecast_label(yield_line))
+                target.add_child(_forecast_label(yield_line))
         assign_btn.text = ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
@@ -4284,12 +4325,15 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 "fauna_id": herd_id,
                 "fauna_label": _herd_display_name(herd),
                 "policy": _hunt_assign_policy if _hunt_assign_policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
-            }))
+            })
+            # Committing is the end of the compose act — return to the read state (§15).
+            close_compose_sheet())
     else:
         assign_btn.pressed.connect(func() -> void:
             _emit_assign_labor(band, LABOR_KIND_HUNT, _hunt_assign_count,
-                herd_x, herd_y, herd_id, _hunt_assign_policy))
-    herd_assign_controls.add_child(assign_btn)
+                herd_x, herd_y, herd_id, _hunt_assign_policy)
+            close_compose_sheet())
+    target.add_child(assign_btn)
 
 ## Style the hunt-expedition send button from the live forecast. Two treatments, and the line between
 ## them is the point:
@@ -4678,17 +4722,14 @@ func _gate_reasons(gates: Dictionary, policy: String) -> Array:
 ## actually SEE (a workable patch is live state, redacted from a remembered tile like its occupants;
 ## MapView already strips `food_module*` there, and this holds the line if anything ever feeds a
 ## non-redacted dict).
-func _build_forage_assign_controls(tile_info: Dictionary) -> void:
-    if forage_assign_controls == null:
+func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
+    if target == null:
         return
-    for child in forage_assign_controls.get_children():
+    for child in target.get_children():
         child.queue_free()
-    var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    var resolved := _resolve_assign_band()
-    var can_assign := module_key != "" and not resolved.is_empty() and not _tile_contents_unseen(tile_info)
-    forage_assign_controls.visible = can_assign
-    if not can_assign:
+    if not _forage_compose_available(tile_info):
         return
+    var resolved := _resolve_assign_band()
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
     var key := "%d,%d" % [x, y]
@@ -4710,18 +4751,18 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_forage_workers(band, x, y)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_FORAGE, x, y, ""))
-    var label := String(tile_info.get("food_module_label", module_key)).strip_edges()
-    if label == "":
-        label = module_key.capitalize()
-    var title := Label.new()
-    title.text = "Assign foragers — %s" % label + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
-    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
-    forage_assign_controls.add_child(title)
+    # The sheet's own header already names the verb and the subject ("ASSIGN FORAGERS  Nut Grove"),
+    # so this line carries only what the header cannot: the standing staffing being edited.
+    if current > 0 or pending:
+        var title := Label.new()
+        title.text = COMPOSE_NOW_STAFFED_FORMAT % [current, COMPOSE_PENDING_SUFFIX if pending else ""]
+        title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
+        target.add_child(title)
     # Which band supplies the foragers (above the stepper). Switching re-runs the range check below
     # for that band.
-    forage_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+    target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _forage_assign_band = int(picked.get("entity", -1))
-        _build_forage_assign_controls(tile_info)))
+        _build_forage_assign_controls(tile_info, target)))
     # Forage take policy (Sustain/Surplus/Market/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
@@ -4735,12 +4776,12 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
     # like Corral — their dip→payoff is stated by the forecast row below).
     var forage_takes := _forage_policy_takes(tile_info)
-    forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
+    target.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
         _forage_assign_autofill = true
-        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
-    forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
+        _build_forage_assign_controls(tile_info, target), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates, forage_takes))
+    target.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
     # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
@@ -4755,14 +4796,14 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
         _forage_assign_count = cap
         _forage_assign_autofill = false
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
-    forage_assign_controls.add_child(_build_worker_stepper(
-        "Foragers", _forage_assign_count, _forage_assign_count < cap,
+    target.add_child(_build_worker_stepper(
+        FORAGE_CREW_LABEL, _forage_assign_count, _forage_assign_count < cap,
         func(n: int) -> void:
             _forage_assign_count = clampi(n, 0, cap)
-            _build_forage_assign_controls(tile_info)))
+            _build_forage_assign_controls(tile_info, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
-        forage_assign_controls.add_child(_alloc_hint_label(cap_note))
+        target.add_child(_alloc_hint_label(cap_note))
     # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
     # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
     # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
@@ -4770,13 +4811,13 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # warning an Eradicate/Market forage used to render silently.
     if _forage_assign_policy in INVESTMENT_POLICIES:
         if bool(forecast["known"]):
-            forage_assign_controls.add_child(
+            target.add_child(
                 _forecast_yield_row(forecast, _forage_assign_count, band))
     else:
         var yield_line := _local_forage_preview_bbcode(
             band, tile_info, _forage_assign_policy, _forage_assign_count)
         if yield_line != "":
-            forage_assign_controls.add_child(_forecast_label(yield_line))
+            target.add_child(_forecast_label(yield_line))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
@@ -4786,7 +4827,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     var distance := _hex_distance_wrapped(band_tile.x, band_tile.y, x, y)
     var out_of_range := distance >= 0 and distance > work_range
     if out_of_range:
-        forage_assign_controls.add_child(_alloc_hint_label(
+        target.add_child(_alloc_hint_label(
             "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
     var assign_btn := Button.new()
     assign_btn.text = FORAGE_ASSIGN_BUTTON
@@ -4794,11 +4835,252 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range
     assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", _forage_assign_policy))
-    forage_assign_controls.add_child(assign_btn)
+        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", _forage_assign_policy)
+        close_compose_sheet())
+    target.add_child(assign_btn)
+
+# ---- THE COMPOSE SHEET: the drawer's read state + the floating write state --------------------
+#
+# docs/plan_tile_panel_layout.md §10-§15. The drawer keeps the detail rows, gains a one-line
+# standing-assignment summary, and ends in `Assign … ▸`; the sheet (`ui/hud/ComposeSheet.gd`) hosts
+# the compose block itself. NOTHING is re-derived here — the summary's rate comes from the same
+# `_source_yield_readout` the Band panel's Current-actions rows use, and every gate, forecast and
+# ceiling in the sheet comes from the same call it came from when the block lived in the drawer.
+
+## Build the compose sheet once. Like the fork panel it is a child of the HUD CanvasLayer itself,
+## NOT of `layout_root`: it floats over the whole window and must not inset with the reserved docks.
+func _ensure_compose_sheet() -> void:
+    if _compose_sheet != null:
+        return
+    _compose_sheet = ComposeSheet.new()
+    _compose_sheet.name = "ComposeSheet"
+    _compose_sheet.closed.connect(_on_compose_sheet_closed)
+    add_child(_compose_sheet)
+
+## Is a compose sheet open? `Main._unhandled_input` asks this FIRST on Esc — the sheet is the
+## innermost surface, so it claims the key ahead of targeting-cancel and the pause menu (§15).
+func is_compose_sheet_open() -> bool:
+    return _compose_sheet != null and _compose_sheet.is_open()
+
+## Close any open sheet and return to the read state. Idempotent, so every close reason (commit, ✕,
+## catcher click, Esc, selection change, targeting) can call it unconditionally.
+func close_compose_sheet() -> void:
+    if _compose_sheet != null:
+        _compose_sheet.close()
+
+## The sheet reports itself closed (including when WE closed it) — drop the compose state so the two
+## can never disagree, and restore the drawer's read state so its button un-presses.
+func _on_compose_sheet_closed() -> void:
+    _compose_kind = COMPOSE_KIND_NONE
+    _compose_subject = ""
+    _refresh_drawer_actions()
+
+## The rect the sheet floats beside: the selection card, so the subject list + standing summary it
+## is editing stay readable. A zero rect (card hidden) makes the sheet hug the viewport margin.
+func _compose_anchor_rect() -> Rect2:
+    if tile_panel == null or not tile_panel.visible:
+        return Rect2()
+    return tile_panel.get_global_rect()
+
+## Can this LAND offer a forage compose at all? The gate the drawer's button and the sheet share, so
+## the button can never open an empty sheet. (A workable patch is live state — redacted on a
+## remembered hex like its occupants — and there must be a player band to staff it.)
+func _forage_compose_available(tile_info: Dictionary) -> bool:
+    return String(tile_info.get("food_module", "")).strip_edges() != "" \
+        and not _resolve_assign_band().is_empty() \
+        and not _tile_contents_unseen(tile_info)
+
+## Can this HERD offer a hunt/herding compose? Huntable, with a player band to staff it. (A penned
+## herd's Extend-pen action is NOT a compose — it stays in the drawer, see `_build_herd_drawer_actions`.)
+func _herd_compose_available(herd: Dictionary) -> bool:
+    return bool(herd.get("huntable", false)) and not _resolve_assign_band().is_empty()
+
+## The stable key identifying a composed source, so a per-snapshot refresh can tell "the same
+## source, restated" from "a different source" (§15: a snapshot must NOT close the sheet).
+func _forage_source_key(tile_info: Dictionary) -> String:
+    return "%d,%d" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
+
+## The crew noun the sheet's stepper uses for this herd — herders on a MANAGED (corralled/pastoral)
+## herd, hunters on a wild one. Read by the drawer button too, so the two always agree.
+func _herd_crew_noun(herd: Dictionary) -> String:
+    return HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) else HUNT_CREW_LABEL
+
+func _open_forage_compose(tile_info: Dictionary) -> void:
+    if not _forage_compose_available(tile_info):
+        return
+    _ensure_compose_sheet()
+    _compose_kind = COMPOSE_KIND_FORAGE
+    _compose_subject = _forage_source_key(tile_info)
+    var subject := String(tile_info.get("food_module_label", "")).strip_edges()
+    if subject == "":
+        subject = _format_food_module_label(String(tile_info.get("food_module", "")))
+    var content := _compose_sheet.open(
+        COMPOSE_SHEET_EYEBROW_FORMAT % FORAGE_CREW_LABEL.to_lower(),
+        subject, _compose_subject, _compose_anchor_rect())
+    _build_forage_assign_controls(tile_info, content)
+    _refresh_drawer_actions()
+
+func _open_herd_compose(herd: Dictionary) -> void:
+    if not _herd_compose_available(herd):
+        return
+    _ensure_compose_sheet()
+    _compose_kind = COMPOSE_KIND_HERD
+    _compose_subject = String(herd.get("id", ""))
+    var content := _compose_sheet.open(
+        COMPOSE_SHEET_EYEBROW_FORMAT % _herd_crew_noun(herd).to_lower(),
+        _herd_display_name(herd), _compose_subject, _compose_anchor_rect())
+    _build_herd_assign_controls(herd, content)
+    _refresh_drawer_actions()
+
+## A snapshot arrived: re-render the OPEN sheet in place against the fresh subject. It must NOT
+## close — `reapply_selection` runs every turn and closing would make the sheet unusable under
+## autoplay (§15). It closes only when the subject it is composing is actually GONE (a different
+## source is now selected, or the source stopped offering the compose at all).
+func _refresh_compose_sheet() -> void:
+    if not is_compose_sheet_open():
+        return
+    match _compose_kind:
+        COMPOSE_KIND_FORAGE:
+            if _forage_source_key(_selected_tile_info) != _compose_subject \
+                    or not _forage_compose_available(_selected_tile_info):
+                close_compose_sheet()
+                return
+            _build_forage_assign_controls(_selected_tile_info, _compose_sheet.content())
+        COMPOSE_KIND_HERD:
+            if String(_selected_herd.get("id", "")) != _compose_subject \
+                    or not _herd_compose_available(_selected_herd):
+                close_compose_sheet()
+                return
+            _build_herd_assign_controls(_selected_herd, _compose_sheet.content())
+        _:
+            close_compose_sheet()
+
+## Re-render whichever subject's drawer actions are showing (the standing summary + the `Assign … ▸`
+## button), so a turn's staffing change lands in the read state as well as in the open sheet.
+func _refresh_drawer_actions() -> void:
+    if not _selected_herd.is_empty():
+        _build_herd_drawer_actions(_selected_herd)
+    elif not _selected_tile_info.is_empty() and _selected_unit.is_empty():
+        _build_forage_drawer_actions(_selected_tile_info)
+
+## The LAND drawer's read state: the standing forage summary (when the player already works this
+## patch) and the `Assign foragers ▸` button that opens the sheet. Fills `%ForageAssignControls`,
+## which is why that node keeps its name and its place in the drawer — the compose block MOVED out
+## of it, the node did not move.
+func _build_forage_drawer_actions(tile_info: Dictionary) -> void:
+    if forage_assign_controls == null:
+        return
+    for child in forage_assign_controls.get_children():
+        child.queue_free()
+    var available := _forage_compose_available(tile_info)
+    forage_assign_controls.visible = available
+    if not available:
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var standing := _standing_assignment(LABOR_KIND_FORAGE, x, y, "")
+    if not standing.is_empty():
+        forage_assign_controls.add_child(_build_standing_summary(
+            standing, LABOR_KIND_FORAGE, FORAGE_CREW_LABEL.to_lower()))
+    forage_assign_controls.add_child(_build_compose_open_button(
+        FORAGE_CREW_LABEL, _forage_source_key(tile_info),
+        func() -> void: _open_forage_compose(tile_info)))
+
+## The HERD drawer's read state: the Extend-pen action (a one-click standing action on a built pen —
+## NOT a compose, so it stays here rather than hiding behind a sheet), the standing hunt summary, and
+## the `Assign hunters ▸` / `Assign herders ▸` button.
+func _build_herd_drawer_actions(herd: Dictionary) -> void:
+    if herd_assign_controls == null:
+        return
+    for child in herd_assign_controls.get_children():
+        child.queue_free()
+    var corralled := bool(herd.get("corralled", false))
+    var available := _herd_compose_available(herd)
+    # A penned herd always offers Extend-pen, even if it is no longer huntable — so the container
+    # stays visible for a pen OR a composable herd.
+    herd_assign_controls.visible = available or corralled
+    if corralled:
+        _build_extend_pen_control(herd, herd_assign_controls)
+    if not available:
+        return
+    var herd_id := String(herd.get("id", ""))
+    var noun := _herd_crew_noun(herd)
+    var standing := _standing_assignment(LABOR_KIND_HUNT, -1, -1, herd_id)
+    if not standing.is_empty():
+        herd_assign_controls.add_child(_build_standing_summary(
+            standing, LABOR_KIND_HUNT, noun.to_lower()))
+    herd_assign_controls.add_child(_build_compose_open_button(
+        noun, herd_id, func() -> void: _open_herd_compose(herd)))
+
+## The `Assign … ▸` button. It lights "primary" (SIGNAL cyan — this HUD's LIVE state, as on the
+## Sight chip and the selection accent) while ITS sheet is the open one, so the drawer shows which
+## source is being composed rather than looking idle behind the sheet; "ghost" at rest. NOT "armed"
+## — that is the destructive/warned treatment (DANGER border), and an open sheet is not a warning.
+func _build_compose_open_button(noun: String, subject_key: String, on_press: Callable) -> Button:
+    var button := Button.new()
+    button.text = COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
+    var composing := is_compose_sheet_open() and _compose_subject == subject_key
+    HudStyle.apply_button(button, "primary" if composing else "ghost")
+    button.pressed.connect(on_press)
+    return button
+
+## The player faction's standing assignment on a source, across every player band — `{}` when
+## nobody works it. Scans `_player_bands` (the full player-faction list) and falls back to the
+## single `_player_band` the one-band case (and the HUD-only preview harness) carries.
+func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dictionary:
+    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    for band_variant in bands:
+        if not (band_variant is Dictionary):
+            continue
+        var band: Dictionary = band_variant
+        var found := _hunt_assignment_of(band, herd_id) if kind == LABOR_KIND_HUNT \
+            else _forage_assignment_of(band, x, y)
+        if not found.is_empty():
+            return found
+    return {}
+
+## The drawer's one-line standing-assignment summary: `♻ 3 foragers · +2.74 /turn`, with the SAME
+## warn/overdraw and overstaff/wasted flags the Band panel's Current-actions rows render, from the
+## SAME `_source_yield_readout` call. The rate is never recomputed here.
+func _build_standing_summary(assignment: Dictionary, kind: String, noun: String) -> Control:
+    # `has_yield` is the ONE key `_source_yield_readout` reads that is not on the wire assignment —
+    # it gates the rate on a CONFIRMED source (`_effective_worker_map` sets it false for a pending,
+    # yield-less optimistic assign). Everything else — actual/sustainable/realized, `overdraws`,
+    # `workers_needed`, `wasted_yield` — is read straight off the assignment the sim sent.
+    var m := assignment.duplicate()
+    m["has_yield"] = assignment.has("actual_yield")
+    var readout := _source_yield_readout(m, kind)
+    var tooltip := String(readout["tooltip"])
+    var flow := HFlowContainer.new()
+    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
+    if tooltip != "":
+        flow.tooltip_text = tooltip
+    var text := STANDING_SUMMARY_FORMAT % [
+        FoodIcons.for_policy(String(assignment.get("policy", ""))),
+        int(assignment.get("workers", 0)),
+        noun,
+    ]
+    var suffix := String(readout["label_suffix"])
+    if suffix != "":
+        text += STANDING_SUMMARY_SEPARATOR + suffix
+    flow.add_child(_build_status_part(text.strip_edges(), HudStyle.INK))
+    # ⚠ = ecological (the take outruns regrowth); the notes = labor (extra workers idle here / the
+    # crew could not carry what the source offered). Same three parts, same three colours as a row.
+    if bool(readout["warn"]):
+        flow.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, tooltip))
+    var note := String(readout["note"])
+    if note != "":
+        flow.add_child(_build_row_note_label(note, HudStyle.WARN, tooltip))
+    var muted_note := String(readout["muted_note"])
+    if muted_note != "":
+        flow.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, tooltip))
+    return flow
 
 ## Move-band: enter tile-targeting; the destination click emits move_band_requested.
 func _on_move_band_pressed() -> void:
+    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
+    close_compose_sheet()
     var band := _resolve_assign_band()
     if band.is_empty():
         return
@@ -4835,6 +5117,8 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
 ## Send-expedition: outfit `band` with `party_workers` and enter tile-targeting; the next tile
 ## click emits send_expedition_requested. Mirrors the move-band pending flow.
 func _on_send_expedition_pressed(band: Dictionary, party_workers: int) -> void:
+    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
+    close_compose_sheet()
     if band.is_empty() or party_workers <= 0:
         return
     _pending_send_expedition = {"band": band.duplicate(true), "party_workers": party_workers}
@@ -4868,6 +5152,8 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 ## and enter HERD-targeting; the next click resolves to a huntable herd on the clicked hex and emits
 ## send_hunt_expedition_requested. Mirrors the scout send flow, but targets a herd not a tile.
 func _on_send_hunt_expedition_pressed(band: Dictionary, party_workers: int, policy: String) -> void:
+    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
+    close_compose_sheet()
     if band.is_empty() or party_workers <= 0:
         return
     var chosen := policy if policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
@@ -5026,6 +5312,8 @@ func _refresh_campaign_label() -> void:
 func reset_command_feed() -> void:
     _command_feed.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     _selected_tile_info = tile_info.duplicate(true) if tile_info is Dictionary else {}
     _selected_unit.clear()
     _selected_herd.clear()
@@ -5044,6 +5332,8 @@ func notify_hex_selected(tile_info: Dictionary) -> void:
     _try_dispatch_pending_send_hunt_expedition(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     var tile_info: Dictionary = {}
     var tile_variant: Variant = unit_data.get("tile_info", {})
     if tile_variant is Dictionary:
@@ -5058,6 +5348,8 @@ func show_unit_selection(unit_data: Dictionary) -> void:
     _render_selection_panel(tile_info, _selected_unit, {})
 
 func show_herd_selection(herd_data: Dictionary) -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     var tile_info: Dictionary = {}
     var tile_variant: Variant = herd_data.get("tile_info", {})
     if tile_variant is Dictionary and not (tile_variant as Dictionary).is_empty():
@@ -5348,6 +5640,11 @@ func _render_subject_drawer() -> void:
         _render_land_drawer()
     else:
         _render_occupant_drawer()
+    # An OPEN compose sheet re-renders IN PLACE against the fresh subject. This is the SNAPSHOT path
+    # (`reapply_selection` → here, every turn), and it must NOT close the sheet — closing would make
+    # it unusable under autoplay (§15). A SELECTION change has already closed the sheet by the time it
+    # reaches here, so this is a no-op there.
+    _refresh_compose_sheet()
     _fit_subject_drawer()
 
 ## The LAND drawer: the terrain rows + the "Assign foragers" compose block (the land's only action).
@@ -5357,7 +5654,7 @@ func _render_land_drawer() -> void:
         return
     tile_detail.visible = true
     tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(_selected_tile_info))
-    _build_forage_assign_controls(_selected_tile_info)
+    _build_forage_drawer_actions(_selected_tile_info)
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
@@ -5564,18 +5861,19 @@ func _build_land_row(tile_info: Dictionary) -> Button:
     button.pressed.connect(_on_land_row_selected)
     return button
 
-## The land row's meta, shortest true form: the workers already on it · else the module it offers ·
-## else that there is nothing to gather here.
+## The land row's meta, shortest true form: the foragers on this hex · else that the patch is
+## unworked · else that there is nothing to gather here.
 func _land_row_meta(tile_info: Dictionary) -> String:
     var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-    if workers > 0:
-        return LAND_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_FORAGE]]
     # Gated on the module KEY, never on its label: a tile with no module still ships the label
     # `"None"`, which would render as a source called "None" instead of the honest "No forage".
-    if String(tile_info.get("food_module", "")).strip_edges() != "":
-        var module_label := String(tile_info.get("food_module_label", "")).strip_edges()
-        if module_label != "":
-            return module_label
+    if workers > 0 or String(tile_info.get("food_module", "")).strip_edges() != "":
+        # An UNWORKED patch reads `0 🌾`, not its module label. The row already LEADS with that
+        # module's own glyph, so the label restated it — and at dock width the row was the ONE
+        # place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
+        # compose sheet's header both printed it whole. The zero form is parallel to the staffed
+        # one, so "nobody is working this" reads at a glance instead of needing a comparison.
+        return LAND_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_FORAGE]]
     return LAND_META_NO_FORAGE
 
 ## Foragers this faction has on (x, y), summed across every player band — the row states the hex's
@@ -5598,6 +5896,8 @@ func _forage_workers_on_tile(x: int, y: int) -> int:
 ## `refresh_selection_payload` keeps answering `kind: "unit"` off the stale `selected_unit_id` and
 ## restores the band, which made the land unselectable on any occupied hex.
 func _on_land_row_selected() -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     _subject_choice_tile = _selected_tile_coords()
     _selected_unit = {}
     _selected_herd = {}
@@ -5768,6 +6068,8 @@ func _on_roster_row_selected(kind: String, id: Variant) -> void:
     emit_signal("roster_occupant_selected", kind, id)
 
 func _select_roster_occupant(kind: String, id: Variant) -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     _subject_choice_tile = _selected_tile_coords()
     if kind == "unit":
         _selected_unit = _find_roster_unit(int(id)).duplicate(true)
@@ -5809,8 +6111,9 @@ func _render_occupant_drawer() -> void:
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         occupant_detail.visible = true
         occupant_detail.text = _format_detail_bbcode([BAND_PANEL_POINTER_TEXT])
-        if allocation_panel != null:
-            allocation_panel.visible = false
+        # The one order that stays HERE (§18): repositioning is a map action. Player resident bands
+        # only — this branch is already player-band-gated, and a foreign band's orders aren't ours.
+        _build_band_move_actions()
         if herd_assign_controls != null:
             herd_assign_controls.visible = false
         return
@@ -5831,7 +6134,7 @@ func _render_occupant_drawer() -> void:
     elif allocation_panel != null:
         allocation_panel.visible = false
     if is_herd:
-        _build_herd_assign_controls(_selected_herd)
+        _build_herd_drawer_actions(_selected_herd)
     elif herd_assign_controls != null:
         herd_assign_controls.visible = false
 
@@ -6983,6 +7286,8 @@ func _split_detail_kv(line: String) -> Array:
     return [key, value]
 
 func clear_selection() -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
     _selected_unit.clear()
     _selected_herd.clear()
     _selected_subject = SUBJECT_LAND
@@ -7152,10 +7457,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _player_band, which only just refreshed here).
-    if not _selected_herd.is_empty():
-        _build_herd_assign_controls(_selected_herd)
-    elif not _selected_tile_info.is_empty() and _selected_unit.is_empty():
-        _build_forage_assign_controls(_selected_tile_info)
+    _refresh_drawer_actions()
+    # An OPEN compose sheet re-renders IN PLACE against the fresh subject — it must not close on a
+    # snapshot, or it would be unusable under autoplay (§15). It closes only if its subject is gone.
+    _refresh_compose_sheet()
 
 ## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
 ## then, since morale no longer kills (discontent relocates people — see
