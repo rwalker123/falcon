@@ -1049,21 +1049,23 @@ const EXPEDITION_PHASE_LABELS := {
 # (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
-const SEND_EXPEDITION_TITLE := "Send scouting expedition"
 const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
-const SEND_EXPEDITION_BUTTON := "Send scouting expedition…"
+const SEND_EXPEDITION_BUTTON := "Send scouting party…"
 # Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
 # migratory herd, accumulates food, and drops it at the band. Launched from a resident band by
 # picking a herd (herd-target click, not a tile), and Recalled like a scout expedition.
-const SEND_HUNT_EXPEDITION_TITLE := "Send hunting expedition"
 const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, then click on the herd."
-const SEND_HUNT_EXPEDITION_BUTTON := "Send hunting expedition…"
 # Distance-aware herd-hunt affordance (docs/plan_exploration_and_sites.md §2b): clicking a herd
 # offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
 # it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
 # wrap-aware hex distance from the selected band's own tile.
 const ASSIGN_LOCAL_HUNT_BUTTON := "Assign Local Hunt"
-const SEND_HUNTING_EXPEDITION_BUTTON := "Send Hunting Expedition"
+## The ONE label for a hunting party's send, at BOTH entry points (the herd drawer's beyond-reach
+## branch and the Parties sheet) — `_style_send_hunt_button` owns the button's text in every branch,
+## so a second const would only ever be the placeholder it overwrites. **No ellipsis, deliberately:**
+## both callers now COMMIT on the press. The scout send keeps its `…` because it still opens tile
+## targeting — the ellipsis is the form's one signal that more input is coming.
+const SEND_HUNTING_EXPEDITION_BUTTON := "Send hunting party"
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
@@ -1283,17 +1285,29 @@ const PARTY_RECALL_REST_ALPHA := 0.45
 const PARTY_RECALL_ALL_FORMAT := "Recall all parties (%d)"
 const PARTY_RECALL_CONFIRM_FORMAT := "Recall all %d parties? They walk home carrying what they have."
 const PARTY_RECALL_CONFIRM_OK := "Recall all"
-const SEND_PARTY_BUTTON := "Send a party…"
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 
-## The compose sheet — MISSION FIRST, so the policy picker is unreachable except under Hunt.
+## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
+## always already on one and the policy picker is unreachable except under Hunt.
 const COMPOSE_MISSION_SCOUT := "scout"
 const COMPOSE_MISSION_HUNT := "hunt"
 const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
-const COMPOSE_PICK_MISSION_HINT := "Pick a mission — the rest of the form follows from it."
+const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
+const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
 const COMPOSE_FIELD_PARTY := "Party"
 const COMPOSE_FIELD_POLICY := "Policy"
+## The QUARRY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
+## take and the trip length, so every field below it is unanswerable until it is picked.
+const COMPOSE_FIELD_QUARRY := "Quarry"
+const COMPOSE_QUARRY_CHOOSE := "Choose…"
+const COMPOSE_QUARRY_HINT := "Choose a quarry — the rest of the form follows from it."
+const COMPOSE_QUARRY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
+const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
+## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
+## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
+## the distance, the reach that binds and the local alternative.
+const QUARRY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 
@@ -1590,19 +1604,23 @@ var _pending_move_band: Dictionary = {}
 # Send-expedition targeting: the pending expedition-launch tile pick. {} when inactive. Holds the
 # resident band being outfitted plus the chosen party size (mirrors `_pending_move_band`).
 var _pending_send_expedition: Dictionary = {}
-# Send-hunt-expedition targeting: the pending hunt-launch HERD pick (the click resolves to a
-# huntable herd on the clicked hex, not a tile). {} when inactive.
-var _pending_send_hunt_expedition: Dictionary = {}
-# The hex the pointer is currently over (MapView.tile_hovered -> show_tooltip), or {} when the
-# pointer is off the map / over a HUD control. While a hunt expedition is armed, the targeting
-# banner reads the hovered hex's herd out of this to show the pre-launch turns-to-fill forecast
-# BEFORE the click commits (the herd is only known at the targeting step, never at outfit time).
-var _hovered_tile_info: Dictionary = {}
+# Quarry-pick targeting: the pending HERD pick for the party compose sheet (the click resolves to a
+# huntable herd on the clicked hex, not a tile). {} when inactive. It carries only the band — party
+# size and policy are chosen in the sheet AFTER the quarry, which is what the pick is for.
+var _pending_pick_quarry: Dictionary = {}
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = WORKER_STEP
 # Compose state for the hunt-expedition launch policy (Sustain/Surplus/Market/Eradicate).
 var _send_hunt_policy: String = DEFAULT_HUNT_POLICY
+# The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is
+# the FIRST question the hunt form asks, because the herd sets the useful party size, the per-policy
+# take and the trip length — everything below it in the form.
+var _send_party_quarry_id: String = ""
+# One-shot: set when the player CLICKS a policy in the compose sheet so the next rebuild auto-fills
+# the party to that policy's max-useful cap. The sheet's OWN autofill — `_hunt_assign_autofill` is
+# the herd drawer's, and sharing it would let one surface's click refill the other's stepper.
+var _send_party_autofill := false
 # Compose state for the herd/tile "Assign" controls — the in-progress worker count (and, for
 # hunts, the policy) the player is dialing before pressing Assign. Keyed to the source so a
 # per-snapshot re-render preserves the count, but re-initializes from current staffing when
@@ -1844,20 +1862,25 @@ func _current_targeting_info() -> Dictionary:
                 String(band.get("id", "Band")), int(_pending_send_expedition.get("party_workers", 0)),
             ],
         }
-    if not _pending_send_hunt_expedition.is_empty():
-        var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
+    if not _pending_pick_quarry.is_empty():
+        var band: Dictionary = _pending_pick_quarry.get("band", {})
         var pos: Array = Array(band.get("pos", []))
         var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
         var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
+        # `need: "herd"` is what makes MapView glow the huntable herds. No party size in the label —
+        # none is chosen yet; the sheet asks for it once the quarry is known.
+        # `min_distance`: a valid target must lie STRICTLY farther than this from the origin — the
+        # render-side half of `_is_expedition_quarry`, so the halo cannot offer a herd the pick will
+        # refuse. Every other targeting mode omits the key and MapView defaults it to 0, which admits
+        # everything and so changes nothing for move/scout-tile targeting.
         return {
             "active": true,
-            "command": "hunt_expedition",
+            "command": "quarry",
             "need": "herd",
             "origin_x": ox,
             "origin_y": oy,
-            "context_label": "%s · %d" % [
-                String(band.get("id", "Band")), int(_pending_send_hunt_expedition.get("party_workers", 0)),
-            ],
+            "min_distance": int(band.get("hunt_reach", 0)),
+            "context_label": String(band.get("id", "Band")),
         }
     return {}
 
@@ -1877,34 +1900,13 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
         instruction = "click a destination tile"
     elif cmd == "EXPEDITION":
         instruction = "click a target tile to scout"
-    elif cmd == "HUNT_EXPEDITION":
+    elif cmd == "QUARRY":
         instruction = "click on a herd to hunt"
     else:
         instruction = "click a tile to survey"
-    var line := "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
+    return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
         HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
     ]
-    var forecast := _hunt_forecast_bbcode()
-    if forecast != "":
-        line += "\n" + forecast
-    return line
-
-## The pre-launch turns-to-fill line for the herd currently under the pointer, or "" when no hunt
-## expedition is armed / the pointer isn't over a huntable herd / the snapshot predates the forecast
-## fields. This is the real moment of decision: party size + policy are chosen at OUTFIT time, but the
-## HERD — which sets the take ceiling, and therefore the trip length — is only known HERE, so the
-## forecast cannot live in the outfit block. The click still commits: this is information, not a gate.
-func _hunt_forecast_bbcode() -> String:
-    if _pending_send_hunt_expedition.is_empty() or _hovered_tile_info.is_empty():
-        return ""
-    var herd := _huntable_herd_on_tile(_hovered_tile_info)
-    if herd.is_empty():
-        return ""
-    var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
-    var workers := int(_pending_send_hunt_expedition.get("party_workers", 0))
-    var policy := String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY))
-    return _hunt_forecast_line_bbcode(
-        _hunt_trip_forecast(band, herd, policy, workers), _herd_display_name(herd))
 
 ## Render a `_hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
 ## three colors (cyan viable / amber too-slow / red returns-empty), or "" when the forecast isn't
@@ -2251,7 +2253,7 @@ func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, polic
 func cancel_active_targeting() -> void:
     _cancel_pending_move_band()
     _cancel_pending_send_expedition()
-    _cancel_pending_send_hunt_expedition()
+    _cancel_pending_pick_quarry()
 
 ## Bottom-CENTRE version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. It lives centre-bottom rather than
@@ -5218,38 +5220,53 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
             for exp in parties:
                 _on_recall_expedition_pressed(exp))
 
-## The parties footer: the single primary `Send a party…` button, or the compose sheet in its place.
-## With no idle workers the button stays VISIBLE and DISABLED with its reason — the section vanishing
-## is what made expeditions look like they had been removed from the game.
+## The parties footer: the two missions offered DIRECTLY (Scout / Hunt), each opening the compose
+## sheet already on that mission, or the compose sheet in their place. With no idle workers the
+## buttons stay VISIBLE and DISABLED with their reason — the section vanishing is what made
+## expeditions look like they had been removed from the game.
 func _build_party_footer(band: Dictionary) -> VBoxContainer:
     var idle := _effective_idle(band)
     var foot := _make_zone_block()
-    if _party_compose_open and idle > 0:
+    if _party_compose_open and _party_compose_mission != "" and idle > 0:
         foot.add_child(_build_compose_sheet(band, idle))
         return foot
-    var send := Button.new()
-    send.text = SEND_PARTY_BUTTON
-    send.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    HudStyle.apply_button(send, "primary")
-    send.tooltip_text = SEND_EXPEDITION_HINT
-    send.disabled = idle <= 0
-    send.pressed.connect(func() -> void:
-        _party_compose_open = true
-        _party_compose_mission = ""
-        _rerender_panel_allocation())
-    foot.add_child(send)
+    var missions := HBoxContainer.new()
+    missions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    missions.add_child(_build_mission_launch_button(COMPOSE_MISSION_SCOUT,
+        COMPOSE_MISSION_LABEL_SCOUT, SEND_EXPEDITION_HINT, idle))
+    missions.add_child(_build_mission_launch_button(COMPOSE_MISSION_HUNT,
+        COMPOSE_MISSION_LABEL_HUNT, SEND_HUNT_EXPEDITION_HINT, idle))
+    foot.add_child(missions)
     if idle <= 0:
         foot.add_child(_alloc_hint_label(SEND_PARTY_NO_IDLE_REASON))
     return foot
 
-## The compose sheet, MISSION FIRST: nothing below appears until a mission is picked, so the policy
-## picker is unreachable except under Hunt (it used to sit above the scouting button and read as if
-## it modified it).
+## One footer mission button: opens the compose sheet already committed to `mission`.
+func _build_mission_launch_button(mission: String, label: String, hint: String,
+        idle: int) -> Button:
+    var btn := Button.new()
+    btn.text = label
+    btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(btn, "primary")
+    btn.tooltip_text = hint
+    btn.disabled = idle <= 0
+    btn.pressed.connect(func() -> void:
+        _party_compose_open = true
+        _party_compose_mission = mission
+        # A fresh compose act starts with no quarry — never a herd left over from a cancelled one.
+        _send_party_quarry_id = ""
+        _rerender_panel_allocation())
+    return btn
+
+## The compose sheet. The mission is already settled by the footer button that opened it, so the
+## sheet titles itself by mission and the policy picker is unreachable except under Hunt (it used to
+## sit above the scouting button and read as if it modified it). `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
+    var is_hunt := _party_compose_mission == COMPOSE_MISSION_HUNT
     var sheet := _make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
-    title.text = SEND_PARTY_BUTTON
+    title.text = COMPOSE_TITLE_HUNT if is_hunt else COMPOSE_TITLE_SCOUT
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
@@ -5258,70 +5275,172 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     cancel.tooltip_text = COMPOSE_CANCEL_TOOLTIP
     HudStyle.apply_button(cancel, "ghost")
     cancel.pressed.connect(func() -> void:
-        _party_compose_open = false
-        _rerender_panel_allocation())
+        _close_party_compose())
     head.add_child(cancel)
     sheet.add_child(head)
-    var missions := HBoxContainer.new()
-    missions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    missions.add_child(_build_mission_chip(COMPOSE_MISSION_SCOUT, COMPOSE_MISSION_LABEL_SCOUT))
-    missions.add_child(_build_mission_chip(COMPOSE_MISSION_HUNT, COMPOSE_MISSION_LABEL_HUNT))
-    sheet.add_child(missions)
-    if _party_compose_mission == "":
-        sheet.add_child(_alloc_hint_label(COMPOSE_PICK_MISSION_HINT))
+    if is_hunt:
+        _fill_hunt_compose_sheet(sheet, band, idle)
         return sheet
-    # Party size — the SAME cap logic the old Send-expedition section used.
-    var cap := int(band.get("max_expedition_party_size", 0))
-    var party_max: int = mini(idle, cap) if cap > 0 else idle
+    # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
+    # depends on where it is going, so the destination is still picked on the map after the send.
+    var party_max := _scout_party_max(band, idle)
     _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, party_max)
-    var party_row := HBoxContainer.new()
-    party_row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var party_key := Label.new()
-    party_key.text = COMPOSE_FIELD_PARTY
-    party_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    party_row.add_child(party_key)
-    _add_stepper_controls(party_row, _send_expedition_count, _send_expedition_count < party_max,
+    sheet.add_child(_build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, WORKER_STEP, party_max)
-            _rerender_panel_allocation())
-    sheet.add_child(party_row)
+            _rerender_panel_allocation()))
     sheet.add_child(_alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
-    var is_hunt := _party_compose_mission == COMPOSE_MISSION_HUNT
-    if is_hunt:
-        if not (_send_hunt_policy in LABOR_HUNT_POLICIES):
-            _send_hunt_policy = DEFAULT_HUNT_POLICY
-        sheet.add_child(_alloc_section_label(COMPOSE_FIELD_POLICY))
-        sheet.add_child(_build_policy_picker(func(policy: String) -> void:
-            _send_hunt_policy = policy
-            _rerender_panel_allocation(), _send_hunt_policy, LABOR_HUNT_POLICIES, {}, {},
-            ZONE_POLICY_PICKER_COLUMNS))
-        sheet.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
-    else:
-        sheet.add_child(_alloc_hint_label(SEND_EXPEDITION_HINT))
+    sheet.add_child(_alloc_hint_label(SEND_EXPEDITION_HINT))
     var confirm := Button.new()
-    confirm.text = SEND_HUNT_EXPEDITION_BUTTON if is_hunt else SEND_EXPEDITION_BUTTON
+    confirm.text = SEND_EXPEDITION_BUTTON
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(confirm, "primary")
-    confirm.tooltip_text = SEND_HUNT_EXPEDITION_HINT if is_hunt else SEND_EXPEDITION_HINT
+    confirm.tooltip_text = SEND_EXPEDITION_HINT
     confirm.pressed.connect(func() -> void:
-        _party_compose_open = false
-        if is_hunt:
-            _on_send_hunt_expedition_pressed(band, _send_expedition_count, _send_hunt_policy)
-        else:
-            _on_send_expedition_pressed(band, _send_expedition_count))
+        _close_party_compose()
+        _on_send_expedition_pressed(band, _send_expedition_count))
     sheet.add_child(confirm)
     return sheet
 
-func _build_mission_chip(mission: String, label: String) -> Button:
-    var chip := Button.new()
-    chip.text = label
-    chip.focus_mode = Control.FOCUS_NONE
-    chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    HudStyle.apply_button(chip, "primary" if _party_compose_mission == mission else "ghost")
-    chip.pressed.connect(func() -> void:
-        _party_compose_mission = mission
-        _rerender_panel_allocation())
-    return chip
+## The HUNT form, in the order the decision is actually made: QUARRY → POLICY → PARTY → forecast →
+## send. The quarry leads because it is what makes every field under it answerable — the per-policy
+## metrics on the picker, the max-useful party cap, the trip forecast and the no-surplus verdict are
+## all functions of the herd. Every one of those comes from the SAME helper the herd drawer's
+## beyond-reach branch uses, so the two entry points cannot quote different numbers.
+func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
+    # Re-resolve the quarry LIVE each render: a herd can be hunted out or leave the snapshot while the
+    # sheet is open, and rendering a form against a stale id would forecast a herd that is gone. A herd
+    # that MIGRATES into the band's hunt reach fails for the same reason — it is no longer a party's
+    # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
+    # should not make.
+    var herd := _find_world_herd(_send_party_quarry_id)
+    if herd.is_empty() or not _is_expedition_quarry(band, herd):
+        herd = {}
+        _send_party_quarry_id = ""
+    sheet.add_child(_build_quarry_row(band, herd))
+    if _send_party_quarry_id == "":
+        # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
+        # shown so the shape of the form is legible, and it says why it is not yet pressable.
+        sheet.add_child(_alloc_hint_label(COMPOSE_QUARRY_HINT))
+        var blocked := Button.new()
+        blocked.text = SEND_HUNTING_EXPEDITION_BUTTON
+        blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        blocked.disabled = true
+        blocked.tooltip_text = COMPOSE_QUARRY_HINT
+        HudStyle.apply_button(blocked, "ghost")
+        sheet.add_child(blocked)
+        return
+    if not (_send_hunt_policy in LABOR_HUNT_POLICIES):
+        _send_hunt_policy = DEFAULT_HUNT_POLICY
+    sheet.add_child(_alloc_section_label(COMPOSE_FIELD_POLICY))
+    # With a herd in hand the four rungs finally carry their ascending per-policy metric — the same
+    # `_expedition_policy_takes` the herd drawer feeds its picker.
+    sheet.add_child(_build_policy_picker(func(policy: String) -> void:
+        _send_hunt_policy = policy
+        # Auto-max on policy select, exactly as the herd drawer does: "give me everything this herd
+        # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
+        _send_party_autofill = true
+        _rerender_panel_allocation(), _send_hunt_policy, LABOR_HUNT_POLICIES,
+        {}, _expedition_policy_takes(band, herd), ZONE_POLICY_PICKER_COLUMNS))
+    sheet.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
+    # Party size, capped at the raid's max-useful plateau for THIS herd + policy (the herd drawer's
+    # own cap), so extra hunters can no longer be sent to stand idle at the kill.
+    var assignable := _scout_party_max(band, idle)
+    var capped := _expedition_useful_cap(band, herd, _send_hunt_policy, assignable)
+    var cap: int = maxi(int(capped["cap"]), WORKER_STEP)
+    if _send_party_autofill:
+        _send_expedition_count = cap
+        _send_party_autofill = false
+    _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, cap)
+    sheet.add_child(_build_party_stepper_row(_send_expedition_count, cap,
+        func(n: int) -> void:
+            _send_expedition_count = clampi(n, WORKER_STEP, cap)
+            _rerender_panel_allocation()))
+    sheet.add_child(_alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
+    var cap_note := String(capped["note"])
+    if cap_note != "":
+        sheet.add_child(_alloc_hint_label(cap_note))
+    # LIVE raid forecast for the quarry + policy + party now dialed — the same trip lookup and the
+    # same one-line renderer the herd drawer uses.
+    var trip := _hunt_trip_forecast(band, herd, _send_hunt_policy, _send_expedition_count)
+    var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_display_name(herd))
+    if forecast_line != "":
+        sheet.add_child(_forecast_label(forecast_line))
+    var no_surplus := _hunt_trip_no_surplus(trip)
+    var reason := _hunt_no_surplus_reason(herd) if no_surplus else ""
+    var confirm := Button.new()
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only a
+    # herd with no surplus disables. `_style_send_hunt_button` owns the text in every branch.
+    _style_send_hunt_button(confirm, trip, reason)
+    if no_surplus:
+        sheet.add_child(_alloc_hint_label(reason))
+    var quarry_id := _send_party_quarry_id
+    confirm.pressed.connect(func() -> void:
+        emit_signal("send_hunt_expedition_requested", {
+            "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+            "band": int(band.get("entity", -1)),
+            "party_workers": _send_expedition_count,
+            "fauna_id": quarry_id,
+            "fauna_label": _herd_display_name(herd),
+            "policy": _send_hunt_policy,
+        })
+        _close_party_compose())
+    sheet.add_child(confirm)
+
+## The Quarry row — the Party row's shape, with a button instead of a stepper. Unpicked it invites
+## (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
+func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var key := Label.new()
+    key.text = COMPOSE_FIELD_QUARRY
+    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(key)
+    var pick := Button.new()
+    pick.focus_mode = Control.FOCUS_NONE
+    # EXPAND_FILL is load-bearing on the picked branch: `clip_text` drops the button's minimum width
+    # to ~0, so beside an EXPAND_FILL key label it collapses to a sliver. Both branches take it so the
+    # row does not resize as a quarry is chosen.
+    pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    if herd.is_empty():
+        pick.text = COMPOSE_QUARRY_CHOOSE
+        pick.tooltip_text = SEND_HUNT_EXPEDITION_HINT
+        HudStyle.apply_button(pick, "primary")
+    else:
+        var name_text := _herd_display_name(herd)
+        pick.text = COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+        pick.clip_text = true
+        pick.tooltip_text = COMPOSE_QUARRY_TOOLTIP_FORMAT % [
+            name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
+        ]
+        HudStyle.apply_button(pick, "ghost")
+    pick.pressed.connect(func() -> void: _on_pick_quarry_pressed(band))
+    row.add_child(pick)
+    return row
+
+## The party stepper row, shared by both missions so they cannot drift apart in shape.
+func _build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var key := Label.new()
+    key.text = COMPOSE_FIELD_PARTY
+    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(key)
+    _add_stepper_controls(row, count, count < party_max, on_change)
+    return row
+
+## The party size the band can field at all: idle workers, capped by the server's party-size limit.
+func _scout_party_max(band: Dictionary, idle: int) -> int:
+    var cap := int(band.get("max_expedition_party_size", 0))
+    return mini(idle, cap) if cap > 0 else idle
+
+## Leave the compose sheet — every flag together, so `open` / `mission` / `quarry` can never disagree.
+func _close_party_compose() -> void:
+    _party_compose_open = false
+    _party_compose_mission = ""
+    _send_party_quarry_id = ""
+    _rerender_panel_allocation()
 
 # ---- badges -----------------------------------------------------------------
 
@@ -6519,28 +6638,29 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
     _pending_send_expedition = {}
     _refresh_targeting()
 
-## Send-hunt-expedition (docs/plan_exploration_and_sites.md §2b): outfit `band` with `party_workers`
-## and enter HERD-targeting; the next click resolves to a huntable herd on the clicked hex and emits
-## send_hunt_expedition_requested. Mirrors the scout send flow, but targets a herd not a tile.
-func _on_send_hunt_expedition_pressed(band: Dictionary, party_workers: int, policy: String) -> void:
-    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
+## Quarry PICK: enter HERD-targeting so the next map click names the herd the compose sheet is aimed
+## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Quarry row in,
+## then asks for policy and party size against that herd. (`_pending_send_hunt_expedition`, which used
+## to mean "party is outfitted, now click a herd and send it", was repurposed into this.)
+func _on_pick_quarry_pressed(band: Dictionary) -> void:
+    # Targeting asks the player to click the map — the tile panel's FLOATING sheet over it is a trap
+    # (§15). The DOCKED party sheet is not floating and deliberately stays open.
     close_compose_sheet()
-    if band.is_empty() or party_workers <= 0:
+    if band.is_empty():
         return
-    var chosen := policy if policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
-    _pending_send_hunt_expedition = {
-        "band": band.duplicate(true), "party_workers": party_workers, "policy": chosen,
-    }
+    _pending_pick_quarry = {"band": band.duplicate(true)}
     _refresh_targeting()
 
-func _cancel_pending_send_hunt_expedition() -> void:
-    if _pending_send_hunt_expedition.is_empty():
+func _cancel_pending_pick_quarry() -> void:
+    if _pending_pick_quarry.is_empty():
         return
-    _pending_send_hunt_expedition = {}
+    # Only the PICK is cancelled: a quarry chosen earlier stays chosen, so Esc during a re-pick
+    # returns the player to the form they already had rather than emptying it.
+    _pending_pick_quarry = {}
     _refresh_targeting()
 
-func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
-    if _pending_send_hunt_expedition.is_empty() or tile_info.is_empty():
+func _try_pick_quarry(tile_info: Dictionary) -> void:
+    if _pending_pick_quarry.is_empty() or tile_info.is_empty():
         return
     # Resolve the target from the clicked hex's herds (herd markers occupy the hex, so a click on a
     # herd lands here). Pick the first huntable herd on the tile; if none, keep targeting and nudge.
@@ -6549,26 +6669,44 @@ func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
     if fauna_id == "":
         _note_command_feed("Hunt expedition", "No huntable herd there — click on a herd.")
         return
-    var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
-    var workers := int(_pending_send_hunt_expedition.get("party_workers", 0))
-    var policy := String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY))
-    # The SAME block as the panel button, at the other entry point: a raid that would return empty (no
-    # surplus above the policy's floor) is not dispatchable here either. Stay in targeting and SAY WHY
-    # (never swallow the click silently), exactly like the "no huntable herd here" nudge above — the
-    # player can pick another herd or cancel. Same sentence the panel shows, from the one helper.
-    if _hunt_trip_no_surplus(_hunt_trip_forecast(band, herd, policy, workers)):
-        _note_command_feed("Hunt expedition", _hunt_no_surplus_reason(herd))
+    # A herd INSIDE the band's hunt reach is a local hunt, not a party's job. Refuse it here and stay
+    # in targeting, exactly like the miss above — and say why, since the reach split is invisible on
+    # the map. (MapView doesn't glow these, so this is the belt to that braces.)
+    var band: Dictionary = _pending_pick_quarry.get("band", {})
+    if not _is_expedition_quarry(band, herd):
+        var band_tile := _band_tile(band)
+        _note_command_feed("Hunt expedition", QUARRY_WITHIN_REACH_FORMAT % [
+            _herd_display_name(herd),
+            _hex_distance_wrapped(band_tile.x, band_tile.y,
+                int(herd.get("x", -1)), int(herd.get("y", -1))),
+            String(band.get("id", "this band")),
+            int(band.get("hunt_reach", 0)),
+        ])
         return
-    emit_signal("send_hunt_expedition_requested", {
-        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
-        "band": int(band.get("entity", -1)),
-        "party_workers": int(_pending_send_hunt_expedition.get("party_workers", 0)),
-        "fauna_id": fauna_id,
-        "fauna_label": _herd_display_name(herd),
-        "policy": String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY)),
-    })
-    _pending_send_hunt_expedition = {}
+    # NO no-surplus check here: no policy is chosen yet, so that verdict is unknowable. It lives
+    # entirely on the sheet's Send button, which has every input.
+    _send_party_quarry_id = fauna_id
+    # Fill the party to this herd's max-useful cap for the default policy, same one-shot a policy
+    # click sets. Party size is meaningless until the quarry is known (the useful count is a property
+    # of the HERD), so picking one is the first moment we CAN default it — "give me everyone this raid
+    # can use". Consumed on the next render before the clamp; a −/+ tick still overrides freely.
+    _send_party_autofill = true
+    _pending_pick_quarry = {}
     _refresh_targeting()
+    _rerender_panel_allocation()
+
+## Is `herd` a valid quarry for a DETACHED party from `band`? A hunting party exists precisely for
+## game the band cannot work from home, so the answer is the SAME split the herd drawer makes when it
+## chooses between "Assign Local Hunt" and the expedition branch: strictly beyond the band's
+## `hunt_reach`, wrap-aware, measured from the band's own tile. THE single definition — the pick, the
+## sheet's re-validation and MapView's glow all route through it (the map must never promise a target
+## the pick refuses). An unknown distance (missing tiles) is NOT a quarry, mirroring the drawer's
+## fallback to the local hunt.
+func _is_expedition_quarry(band: Dictionary, herd: Dictionary) -> bool:
+    var band_tile := _band_tile(band)
+    var distance := _hex_distance_wrapped(
+        band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
+    return distance >= 0 and distance > int(band.get("hunt_reach", 0))
 
 ## A herd's player-facing name (species → label → id). One definition, shared by the targeting banner's
 ## forecast line and the command-feed refusal, so a herd is never called two different things.
@@ -6688,14 +6826,14 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     _render_selection_panel(_selected_tile_info, {}, {})
     _try_dispatch_pending_move_band(_selected_tile_info)
     _try_dispatch_pending_send_expedition(_selected_tile_info)
-    _try_dispatch_pending_send_hunt_expedition(_selected_tile_info)
+    _try_pick_quarry(_selected_tile_info)
 
 func notify_hex_selected(tile_info: Dictionary) -> void:
     if tile_info.is_empty():
         return
     _try_dispatch_pending_move_band(tile_info)
     _try_dispatch_pending_send_expedition(tile_info)
-    _try_dispatch_pending_send_hunt_expedition(tile_info)
+    _try_pick_quarry(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -7517,6 +7655,10 @@ func _render_occupant_drawer() -> void:
 func _render_band_into_panel(unit: Dictionary) -> void:
     if _band_city_panel == null or unit.is_empty():
         return
+    # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
+    # cycler swapping the panel subject must not carry one across.
+    if int(unit.get("entity", -1)) != int(_panel_band.get("entity", -1)):
+        _send_party_quarry_id = ""
     # DEEP-COPY the subject: `_panel_band` must NOT alias `_selected_unit` (the selection
     # path passes it in), because selecting a foreign tile calls `_selected_unit.clear()` —
     # which would empty a shared dict and blank the panel on its next stepper rebuild. The
@@ -9026,34 +9168,18 @@ func _process(_delta: float) -> void:
 ## (panel, button, minimap, inspector). The map cannot detect this itself: those
 ## controls are MOUSE_FILTER_STOP and consume the motion events, so the map never
 ## receives a "moved away" event to clear its tooltip and it would otherwise stay
-## frozen on top of the panel. The hovered-hex record (which drives the targeting
-## banner's hunt forecast) is dropped for the same reason — the pointer is no
-## longer over a herd, so a stale forecast must not linger in the banner.
+## frozen on top of the panel.
 func _suppress_tooltip_over_ui() -> void:
-    var over_ui_viewport := get_viewport()
-    var over_ui := over_ui_viewport != null and over_ui_viewport.gui_get_hovered_control() != null
-    if over_ui and not _hovered_tile_info.is_empty():
-        _hovered_tile_info = {}
-        _refresh_targeting()
     if tooltip_panel == null or not tooltip_panel.visible:
         return
     var viewport := get_viewport()
     if viewport != null and viewport.gui_get_hovered_control() != null:
         tooltip_panel.visible = false
 
-## Record the hex under the pointer and, only while a hunt expedition is armed (the one flow that
-## reads it), re-render the targeting banner so its forecast tracks the hovered herd. Gated so an
-## ordinary hover doesn't re-emit targeting_changed on every hex the pointer crosses.
-func _set_hovered_tile_info(info: Dictionary) -> void:
-    _hovered_tile_info = info if info is Dictionary else {}
-    if not _pending_send_hunt_expedition.is_empty():
-        _refresh_targeting()
-
-## MapView.tile_hovered lands here. Besides the hex tooltip it records the hovered hex, which is how
-## the targeting banner knows WHICH herd the player is considering while a hunt expedition is armed
-## (the pre-launch turns-to-fill forecast) — see _hunt_forecast_bbcode.
+## MapView.tile_hovered lands here — the hex tooltip. The hovered hex is no longer recorded: its only
+## reader was the targeting banner's pre-launch raid forecast, which moved INTO the compose sheet once
+## the quarry is picked first (the sheet has the real party size and policy; a hover never did).
 func show_tooltip(info: Dictionary) -> void:
-    _set_hovered_tile_info(info)
     if tooltip_panel == null:
         return
 
