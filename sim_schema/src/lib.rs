@@ -1146,7 +1146,7 @@ impl TerrainType {
         match self {
             TerrainType::DeepOcean => "deep water",
             TerrainType::ContinentalShelf => "shallow-sea",
-            TerrainType::InlandSea => "inland-sea",
+            TerrainType::InlandSea => "lake",
             TerrainType::CoralShelf => "coral",
             TerrainType::HydrothermalVentField => "vent-field",
             TerrainType::TidalFlat => "tidal",

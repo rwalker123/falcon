@@ -254,7 +254,7 @@ Raw terrain defines movement, habitability, and discovery potential before facti
 |----|---------------|-----|
 | 00 | Deep Ocean | `#0B1E3D` |
 | 01 | Continental Shelf | `#14405E` |
-| 02 | Inland Sea/Large Lake | `#1C5872` |
+| 02 | Lake | `#1C5872` |
 | 03 | Coral/Reef Shelf Analogues | `#157A73` |
 | 04 | Hydrothermal Vent Fields | `#2F7F89` |
 | 05 | Tidal Flats | `#B8B08A` |
@@ -299,7 +299,7 @@ Raw terrain defines movement, habitability, and discovery potential before facti
 - **Open Water & Shelf Biomes**
   - **Deep Ocean**: abyssal plains/trenches with crushing pressure; logistics limited to specialized hulls and submersibles; harbors exotic vents/resources.
   - **Continental Shelf**: shallow seas supporting fisheries and easy coastal trade; foundations for ports, tidal energy, and early submersible exploration.
-  - **Inland Sea/Large Lake**: enclosed freshwater/brackish bodies moderating climate; anchors ferry trade, evaporation risks, and water diplomacy.
+  - **Lake**: landlocked **freshwater** bodies — water with no connection to the sea, which the catchment drains *through* on its way downhill (any body that does reach the ocean is shelf, not lake). Fresh, so you can drink it, fish it, and farm the ground beside it; moderates climate, and anchors ferry trade, evaporation risks, and water diplomacy.
   - **Coral/Reef Shelf Analogues**: biologically dense shallows; hazardous navigation but rich in biomaterials and filtration chemistry.
   - **Hydrothermal Vent Fields**: deepwater geothermal plumes; gateways to chemosynthetic ecosystems, rare isotopes, and thermal energy capture.
 
