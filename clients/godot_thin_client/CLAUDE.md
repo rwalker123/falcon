@@ -3021,15 +3021,22 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
   the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
   (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its
-  key and the **dependent count** — `14 dependents`, WARN-tinted once the RATIO
-  `(children+elders)/working × 100` passes `PEOPLE_DEPENDENCY_HEAVY`. **The chip says the COUNT, not
-  the ratio**: `dep 88/100` read as a score out of 100 and the game's own designer could not tell what
-  it meant, while the bar beside it already shows the split — so the number the player acts on is on
-  the face and the ratio moved into the tooltip, where the teaching belongs. `_dependency_tooltip`
-  spells out what a dependent IS, who carries them, the ratio, and (when heavy) its consequence, and
-  the **top-bar `dep N/100` strip carries the SAME tooltip** — one number, one explanation, wherever
-  you hover. (The top bar keeps its compact wording: it is deliberately dense and self-explanatory
-  copy would run it off the edge, the same pressure that forced the knowledge strip to wrap.)
+  key and the **dependent count** — `14 dependents`, WARN-tinted once the ratio
+  `(children+elders)/working × 100` passes `PEOPLE_DEPENDENCY_HEAVY`. **THE RATIO IS NOT SHOWN
+  ANYWHERE** — it only decides that tint. `dep 88/100` read as a score out of 100, the game's own
+  designer could not tell what it meant, and a tooltip quoting it did not make it any more useful; the
+  bar beside it already shows the split, so the chip states the COUNT, which is the fact the player
+  acts on. `_dependency_tooltip` is deliberately SHORT: what a dependent is (children and elders, who
+  eat but cannot be put to work), how many adults carry them, and — only when heavy — "More mouths
+  than hands."
+  **The top-bar strip no longer carries a dependency figure at all** (`Pop 30 👶9 🛠16 🧓5`): it is
+  the FACTION total across every band, and dependents are fed per BAND — a band in trouble is in
+  trouble whatever the faction average says, and a healthy average hides it. `_dependency_color` went
+  with it.
+  **`Label` DEFAULTS TO `MOUSE_FILTER_IGNORE`**, so `tooltip_text` on one is a SILENT no-op — six
+  labels across this HUD (the dependency chip, the discoveries strip, both detail-row builders, the
+  zone-head readout, the work total) shipped tooltips that had never once been seen. Every Label
+  tooltip now goes through **`_set_label_tooltip`**, which sets the filter with the text; use it.
   **The brackets arrive FRACTIONAL** (`Scalar` — see the decoder note) and are apportioned to whole
   people by LARGEST REMAINDER (`_apportion_people`), never rounded one at a time: 9.29 + 16.54 + 4.64
   rounds independently to 9 + 17 + 5 = **31** for a band of 30, and a panel that disagrees with the

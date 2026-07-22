@@ -1008,13 +1008,13 @@ const PEOPLE_DEPENDENCY_HEAVY := 100
 ## it meant), while the bar beside it already shows the split. "14 dependents" is the fact; the ratio
 ## and what it implies live in the tooltip, which is where the teaching belongs.
 const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
-## Spelled out wherever the ratio appears — the panel chip AND the top-bar strip — so the two
-## surfaces can never explain the same number differently.
-const PEOPLE_DEPENDENCY_TOOLTIP := """%d dependents — children and elders. They eat from the larder but cannot be assigned to work.
-%d working-age adults carry them: %d dependents per 100 workers.
-Only the working age can forage, hunt or hold a role."""
-## Appended when dependents outnumber workers.
-const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nThere are now more mouths than hands — every worker is feeding more than one other person."
+## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
+## dependent IS and who carries them. The long version (which also quoted the ratio) explained the
+## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
+const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from the larder but cannot be put to work.
+%d working-age adults support them."""
+## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
+const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
 
 ## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
 ## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
@@ -2201,21 +2201,13 @@ func update_demographics(demographics_variant: Variant) -> void:
         demographics_label.visible = false
         return
     demographics_label.visible = true
-    # Dependency ratio = dependents (children + elders) per 100 working-age.
-    var dependency := 0
-    if working > 0:
-        dependency = int(round(float(children + elders) / float(working) * 100.0))
-    else:
-        dependency = 999
-    demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d  dep %d/100" % [total, children, working, elders, dependency]
-    # The compact `dep N/100` stays — the top bar is deliberately dense and any wording long enough to
-    # be self-explanatory would run it off the edge (the knowledge strip already had to wrap for that
-    # reason). It carries the SAME tooltip as the Band panel's chip instead, so the one place a player
-    # can ask "what is this?" answers identically wherever they hover.
-    demographics_label.tooltip_text = _dependency_tooltip(children + elders, working)
-    demographics_label.mouse_filter = Control.MOUSE_FILTER_STOP
-    # A high dependency ratio (more mouths than hands) is the warning state.
-    demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
+    # NO DEPENDENCY RATIO HERE. This strip is the FACTION total across every band, and dependents are
+    # fed per BAND — a band with more mouths than hands is in trouble whatever the faction average
+    # says, and a healthy faction average can hide it. So the ratio belongs to the Band panel's PEOPLE
+    # block (where it is stated as a dependent COUNT with the ratio in its tooltip) and is out of
+    # place as a faction figure. The strip states the composition and nothing else.
+    demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d" % [total, children, working, elders]
+    demographics_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 
 ## Show the player faction's discovered Wondrous Sites as a compact top-bar readout: the count
 ## (`◈ Discoveries N`) followed by a strip of one mark per distinct site KIND, so landmark vs
@@ -2302,7 +2294,7 @@ func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
     label.text = glyph if glyph != "" else DISCOVERIES_UNKNOWN_GLYPH
     label.add_theme_color_override("font_color", HudStyle.SIGNAL)
     label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    label.tooltip_text = site_name
+    _set_label_tooltip(label, site_name)
     return label
 
 ## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
@@ -2433,13 +2425,6 @@ func _knowledge_meter_text(progress: float) -> String:
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
-func _dependency_color(working: int, dependency: int) -> Color:
-    if working <= 0 or dependency >= 100:
-        return HudStyle.WARN
-    if dependency <= 60:
-        return HudStyle.SIGNAL
-    return HudStyle.INK_DIM
-
 ## A block-glyph bar for a 0–100 score. `cells` defaults to the standard width, so the
 ## Sedentarization meter and every existing caller are unchanged; the knowledge strip passes a
 ## narrower one because it now carries FOUR tracks on one top-bar line.
@@ -3408,8 +3393,7 @@ func _build_row_name_label(text: String, ink: Color, row_tooltip: String, on_foc
     var plain := Label.new()
     plain.text = text
     plain.add_theme_color_override("font_color", ink)
-    if row_tooltip != "":
-        plain.tooltip_text = row_tooltip
+    _set_label_tooltip(plain, row_tooltip)
     return plain
 
 ## A single-line note Label (⚠ / overstaff / wasted) for the one-line stepper form.
@@ -3417,8 +3401,7 @@ func _build_row_note_label(text: String, color: Color, row_tooltip: String) -> L
     var label := Label.new()
     label.text = text
     label.add_theme_color_override("font_color", color)
-    if row_tooltip != "":
-        label.tooltip_text = row_tooltip
+    _set_label_tooltip(label, row_tooltip)
     return label
 
 ## A secondary status part (line 2 of the two-line form): rendered a touch smaller
@@ -4010,8 +3993,7 @@ func _zone_head(title: String, readout: String, menu: MenuButton = null, readout
         right.text = readout
         right.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
         right.add_theme_color_override("font_color", readout_color)
-        if readout_tooltip != "":
-            right.tooltip_text = readout_tooltip
+        _set_label_tooltip(right, readout_tooltip)
         head.add_child(right)
     if menu != null:
         head.add_child(menu)
@@ -4213,18 +4195,25 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
     block.add_child(_build_composition_key(segments, _build_dependency_chip(children, working, elders)))
     return block
 
+## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
+## `MOUSE_FILTER_IGNORE`**, so setting `tooltip_text` on one and walking away is a SILENT no-op — the
+## text is stored, the mouse never reaches the control, nothing ever appears. Six labels across this
+## HUD shipped tooltips that had never once been seen. Route every Label tooltip through here.
+func _set_label_tooltip(label: Label, text: String) -> void:
+    label.tooltip_text = text
+    label.mouse_filter = Control.MOUSE_FILTER_STOP if text != "" else Control.MOUSE_FILTER_IGNORE
+
 ## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
 func _dependency_per_hundred(dependents: int, working: int) -> int:
     if working <= 0:
         return 0
     return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
 
-## What "dependents" MEANS, in the player's terms, plus the ratio and its consequence. Shared by the
-## Band panel's chip and the top-bar demographics strip so one number never gets two explanations.
+## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
+## decides the WARN tint — so it stays out of the words too.
 func _dependency_tooltip(dependents: int, working: int) -> String:
-    var per_hundred := _dependency_per_hundred(dependents, working)
-    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % [dependents, working, per_hundred]
-    if per_hundred > PEOPLE_DEPENDENCY_HEAVY:
+    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
+    if _dependency_per_hundred(dependents, working) > PEOPLE_DEPENDENCY_HEAVY:
         text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
     return text
 
@@ -4240,7 +4229,7 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
     chip.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
     chip.add_theme_color_override("font_color",
         HudStyle.WARN if per_hundred > PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
-    chip.tooltip_text = _dependency_tooltip(dependents, working)
+    _set_label_tooltip(chip, _dependency_tooltip(dependents, working))
     chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     return chip
@@ -4474,7 +4463,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxCon
     total.text = _format_yield(income)
     total.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
     total.add_theme_color_override("font_color", HudStyle.HEALTHY if income > 0.0 else HudStyle.INK_DIM)
-    total.tooltip_text = WORK_TOTAL_TOOLTIP
+    _set_label_tooltip(total, WORK_TOTAL_TOOLTIP)
     head.add_child(total)
     head.move_child(total, head.get_child_count() - 2)
     return head
