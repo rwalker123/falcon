@@ -3787,7 +3787,7 @@ fn terrain_label(terrain: TerrainType) -> &'static str {
     match terrain {
         TerrainType::DeepOcean => "Deep Ocean",
         TerrainType::ContinentalShelf => "Continental Shelf",
-        TerrainType::InlandSea => "Inland Sea",
+        TerrainType::InlandSea => "Lake",
         TerrainType::CoralShelf => "Coral Shelf",
         TerrainType::HydrothermalVentField => "Hydrothermal Vent Field",
         TerrainType::TidalFlat => "Tidal Flat",

@@ -3,8 +3,8 @@
 //! Seals used to host **only** `coastal_littoral`, which on a generated map is a handful of
 //! `RiverDelta` tiles at abundance 0.10 shared with Wild Fowl — an expected count of ~0–1 colonies
 //! per map. They now also host `boreal_arctic` (abundance 0.12, plentiful), gated by the per-species
-//! site rule `requires_adjacent_water`, so they seat on arctic/boreal **shorelines** and never on
-//! inland tundra.
+//! site rule `adjacent_water: "salt"`, so they seat on arctic/boreal **shorelines** — and only on
+//! SALT ones — never on inland tundra and never beside a landlocked freshwater lake.
 //!
 //! The cold half comes for free from `host_biomes` — there is deliberately **no** second climate
 //! gate here (`climate_band_for_temperature` is the single climate authority). The only new concept
@@ -16,7 +16,7 @@ use bevy::math::UVec2;
 
 use core_sim::{
     build_headless_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry,
-    SimulationConfig, Tile, TileRegistry,
+    ShoreRequirement, SimulationConfig, Tile, TileRegistry,
 };
 use sim_runtime::TerrainTags;
 
@@ -37,12 +37,12 @@ const SEAL_SPECIES: &str = "Grey Seals";
 const MIN_SEALS_OVER_SWEEP: usize = 8;
 
 /// The tiles a seal colony occupies on one generated map, paired with whether each is land and
-/// whether it borders open water.
+/// whether it borders **salt** water (the seal's `adjacent_water: salt` site rule).
 struct SealSite {
     id: String,
     position: UVec2,
     is_land: bool,
-    has_adjacent_water: bool,
+    has_adjacent_salt_water: bool,
 }
 
 /// One generated map's reading: where its seals are, and how much ground the new host actually
@@ -92,16 +92,26 @@ fn survey(seed: u64, turns: u32) -> Survey {
     let width = GRID.x;
     let height = GRID.y;
     let registry = app.world.resource::<TileRegistry>().clone();
-    let water_at = |pos: UVec2| -> bool {
+    let tags_at = |pos: UVec2| -> TerrainTags {
         registry
             .index(pos.x, pos.y)
             .and_then(|entity| app.world.get::<Tile>(entity))
-            .is_some_and(|tile| tile.terrain_tags.contains(TerrainTags::WATER))
+            .map(|tile| tile.terrain_tags)
+            .unwrap_or_else(TerrainTags::empty)
+    };
+    let water_at = |pos: UVec2| -> bool { tags_at(pos).contains(TerrainTags::WATER) };
+    // **Salt, not merely wet** — `WATER` WITHOUT `FRESHWATER`, the same rule `TileWorld::is_ocean`
+    // states in `hydrology.rs`. A plain any-`WATER` test is what let a lakeside seal pass: an
+    // `InlandSea` (or a navigable river) is `WATER | FRESHWATER`, so it satisfied the old predicate
+    // AND the old assertion, and the invariant held vacuously.
+    let salt_water_at = |pos: UVec2| -> bool {
+        let tags = tags_at(pos);
+        tags.contains(TerrainTags::WATER) && !tags.contains(TerrainTags::FRESHWATER)
     };
 
-    let borders_water = |pos: UVec2| -> bool {
+    let borders_salt_water = |pos: UVec2| -> bool {
         core_sim::grid_utils::hex_neighbors_wrapped(pos.x, pos.y, width, height, wrap)
-            .any(|(nx, ny)| water_at(UVec2::new(nx, ny)))
+            .any(|(nx, ny)| salt_water_at(UVec2::new(nx, ny)))
     };
 
     let seals = app
@@ -116,7 +126,7 @@ fn survey(seed: u64, turns: u32) -> Survey {
                 id: herd.id.clone(),
                 position,
                 is_land: !water_at(position),
-                has_adjacent_water: borders_water(position),
+                has_adjacent_salt_water: borders_salt_water(position),
             }
         })
         .collect();
@@ -128,7 +138,7 @@ fn survey(seed: u64, turns: u32) -> Survey {
         .filter(|tile| {
             classify_food_module(tile) == Some(FoodModule::BorealArctic)
                 && !tile.terrain_tags.contains(TerrainTags::WATER)
-                && borders_water(tile.position)
+                && borders_salt_water(tile.position)
         })
         .count();
 
@@ -139,7 +149,20 @@ fn survey(seed: u64, turns: u32) -> Survey {
 }
 
 /// **The core invariant: zero inland seals, ever.** Every spawned colony sits on land that borders
-/// open water — the shore predicate, applied through the real spawn path.
+/// **salt** water — the shore predicate, applied through the real spawn path.
+///
+/// The salt half closes a **vacuity** hole: with an any-`WATER` helper the assertion was satisfied by
+/// an `InlandSea` or a navigable river (both `WATER | FRESHWATER`) — i.e. by exactly the tiles the
+/// old predicate wrongly admitted — so a lakeside seal passed it.
+///
+/// **It is still not the discriminating guard, and must not be relied on as one.** Measured over
+/// [`SWEEP_SEEDS`], a seal-hosting land tile bordering *only* fresh water is **0–10** against
+/// **59–100** salt-shore ones, and the map-wide game cap seats just 2–3 colonies per map — so the
+/// buggy case is a few percent per seed and this sweep passes on the **old** predicate by luck. The
+/// regression that actually fails on the bug is
+/// `fauna::tests::the_spawn_path_seats_seals_on_an_ocean_shore_and_never_on_a_lakeshore`, which
+/// drives the real spawn path on a fixture where fresh-only shore is the *only* ground on offer.
+/// This test remains the standing whole-map invariant.
 #[test]
 fn seals_spawn_only_on_water_adjacent_land() {
     for seed in SWEEP_SEEDS {
@@ -150,8 +173,9 @@ fn seals_spawn_only_on_water_adjacent_land() {
                 site.position
             );
             assert!(
-                site.has_adjacent_water,
-                "seed {seed}: a seal colony at {:?} borders no open water — an inland seal",
+                site.has_adjacent_salt_water,
+                "seed {seed}: a seal colony at {:?} borders no SALT water — a seal is a marine \
+                 forager, and a freshwater lake or river is not a coast it can haul out on",
                 site.position
             );
         }
@@ -165,7 +189,7 @@ fn seals_spawn_only_on_water_adjacent_land() {
 /// animals swim out from, not a herd that wanders overland.
 ///
 /// **It asserts the colony does not MOVE, not merely that it is still near water** — and that
-/// distinction is the whole value of the test. Re-checking `has_adjacent_water` after some turns
+/// distinction is the whole value of the test. Re-checking `has_adjacent_salt_water` after some turns
 /// passes on the old `[1, 2]` roster too: this map's coastline is convoluted enough (~53% of the
 /// largest landmass is coastal) that a one-hex wander almost always lands on *another* shore tile,
 /// so the invariant survived on **geometry luck rather than design** and the assertion discriminated
@@ -192,7 +216,7 @@ fn a_seal_rookery_never_moves_off_its_haul_out() {
                 site.id, site.position
             );
             assert!(
-                site.is_land && site.has_adjacent_water,
+                site.is_land && site.has_adjacent_salt_water,
                 "seed {seed}: seal colony {} no longer sits on a shore at {:?}",
                 site.id,
                 site.position
@@ -227,9 +251,11 @@ fn the_seal_row_hosts_cold_coasts_under_the_shore_rule() {
         .get("seal")
         .expect("the roster defines the seal");
 
-    assert!(
-        seal.requires_adjacent_water,
-        "a seal must haul out on a shore"
+    assert_eq!(
+        seal.adjacent_water,
+        ShoreRequirement::Salt,
+        "a seal must haul out on a SALT shore — it is a marine forager, so a landlocked lake is not \
+         a coast"
     );
     for biome in ["boreal_arctic", "coastal_littoral"] {
         assert!(seal.hosts_biome(biome), "seals should host {biome}");
@@ -240,26 +266,56 @@ fn the_seal_row_hosts_cold_coasts_under_the_shore_rule() {
     }
 }
 
-/// **A migratory species requiring adjacent water is refused at load.** The migratory placement path
-/// picks anchors off `host_biomes` alone and never applies the site rule, so the combination would
-/// be *silently ignored* — the unhandled state is made unrepresentable instead.
+/// **A migratory species requiring adjacent water is refused at load — at EVERY non-`None` kind.**
+/// The migratory placement path picks anchors off `host_biomes` alone and never applies the site
+/// rule, so the combination would be *silently ignored* — the unhandled state is made
+/// unrepresentable instead.
 #[test]
 fn validate_rejects_a_migratory_species_requiring_adjacent_water() {
+    for requirement in [
+        ShoreRequirement::Any,
+        ShoreRequirement::Salt,
+        ShoreRequirement::Fresh,
+    ] {
+        let mut config = (*FaunaConfig::builtin()).clone();
+        let seal = config
+            .species
+            .get_mut("seal")
+            .expect("the roster defines the seal");
+        seal.migratory = true;
+        seal.adjacent_water = requirement;
+
+        let err = config
+            .validate()
+            .expect_err("migratory + a shore rule must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("adjacent_water"),
+            "the rejection must name the offending field, got: {message}"
+        );
+        assert!(
+            message.contains(requirement.as_str()),
+            "the rejection must name the offending value ({}), got: {message}",
+            requirement.as_str()
+        );
+    }
+}
+
+/// **A migratory species with NO shore rule is still accepted.** `None` is the default and must stay
+/// compatible with `migratory: true` — otherwise every migratory row in the roster would be refused.
+#[test]
+fn validate_accepts_a_migratory_species_without_a_shore_rule() {
     let mut config = (*FaunaConfig::builtin()).clone();
     let seal = config
         .species
         .get_mut("seal")
         .expect("the roster defines the seal");
     seal.migratory = true;
+    seal.adjacent_water = ShoreRequirement::None;
 
-    let err = config
+    config
         .validate()
-        .expect_err("migratory + requires_adjacent_water must be refused");
-    let message = err.to_string();
-    assert!(
-        message.contains("requires_adjacent_water"),
-        "the rejection must name the offending field, got: {message}"
-    );
+        .expect("migratory without a site rule is a perfectly ordinary roster row");
 }
 
 /// Measurement probe (`--ignored --nocapture`): seals per seed and the count of water-adjacent

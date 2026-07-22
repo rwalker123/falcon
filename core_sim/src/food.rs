@@ -169,15 +169,17 @@ pub fn classify_food_module_from_traits(
 
     let module = match terrain {
         TidalFlat | RiverDelta | MangroveSwamp | CoralShelf => FoodModule::CoastalLittoral,
-        // A navigable river is freshwater fishing water, same module as its floodplain.
-        Floodplain | AlluvialPlain | NavigableRiver => FoodModule::RiverineDelta,
+        // A navigable river is freshwater fishing water, same module as its floodplain — and so is
+        // a lake: `InlandSea` is landlocked `WATER | FRESHWATER`, not the deep-ocean nutrient
+        // column `CoastalUpwelling` means.
+        Floodplain | AlluvialPlain | NavigableRiver | InlandSea => FoodModule::RiverineDelta,
         PrairieSteppe | SemiAridScrub | OasisBasin => FoodModule::SavannaGrassland,
         MixedWoodland | PeatHeath | ImpactCraterField => FoodModule::TemperateForest,
         BorealTaiga | Tundra | PeriglacialSteppe | SeasonalSnowfield => FoodModule::BorealArctic,
         AlpineMountain | KarstHighland | HighPlateau => FoodModule::MontaneHighland,
         HydrothermalVentField | FreshwaterMarsh => FoodModule::WetlandSwamp,
         HotDesertErg | RockyReg | SaltFlat => FoodModule::SemiAridScrub,
-        ContinentalShelf | InlandSea => FoodModule::CoastalUpwelling,
+        ContinentalShelf => FoodModule::CoastalUpwelling,
         RollingHills | KarstCavernMouth | SinkholeField | AquiferCeiling => {
             FoodModule::MixedWoodland
         }

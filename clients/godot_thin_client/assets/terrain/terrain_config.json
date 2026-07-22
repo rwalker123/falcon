@@ -64,7 +64,7 @@
   "terrains": [
     { "id": 0, "name": "deep_ocean", "label": "Deep Ocean", "category": "water", "blend_class": "water", "color": [11, 30, 61], "shore_profile": { "sand_scale": 0.0, "foam_scale": 1.0, "wisp_scale": 1.0 } },
     { "id": 1, "name": "continental_shelf", "label": "Continental Shelf", "category": "water", "blend_class": "water", "color": [20, 64, 94], "shore_profile": { "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5 } },
-    { "id": 2, "name": "inland_sea", "label": "Inland Sea", "category": "water", "blend_class": "water", "color": [28, 88, 114], "shore_profile": { "sand_scale": 0.5, "foam_scale": 0.5, "wisp_scale": 0.0 } },
+    { "id": 2, "name": "inland_sea", "label": "Lake", "category": "water", "blend_class": "water", "color": [28, 88, 114], "shore_profile": { "sand_scale": 0.5, "foam_scale": 0.5, "wisp_scale": 0.0 } },
     { "id": 3, "name": "coral_shelf", "label": "Coral Shelf", "category": "water", "blend_class": "water", "color": [21, 122, 115] },
     { "id": 4, "name": "hydrothermal_vent_field", "label": "Hydrothermal Vent Field", "category": "water", "blend_class": "water", "color": [47, 127, 137] },
     { "id": 5, "name": "tidal_flat", "label": "Tidal Flat", "category": "coastal", "blend_class": "flat", "color": [184, 176, 138] },
