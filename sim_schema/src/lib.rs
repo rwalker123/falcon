@@ -352,6 +352,12 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
+    /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
+    /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
+    /// own footprint already fed. Lets the client show "fed by hay" beside the `pen_upkeep` bread bill.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub fodder_draw: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -390,6 +396,7 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
+            fodder_draw: 0.0,
         }
     }
 }
@@ -567,6 +574,12 @@ pub struct FloraShareInfo {
     /// [`ForagePatchState::field_yield`]. Appended (append-only).
     #[serde(default)]
     pub sow_payoff: f32,
+    /// Fodder/turn a sown Field of this plant would harvest into the band's FODDER store on this tile
+    /// (Flora Roster F3). A fodder crop's payoff is in this account, not provisions, so the picker can
+    /// show hay's value instead of the bare `0×` its `sow_yield_ratio` reads. `0` for a staple or a
+    /// plant that cannot climb to the Field rung here. Appended (append-only).
+    #[serde(default)]
+    pub sow_fodder_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -2326,6 +2339,13 @@ pub struct PopulationCohortState {
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
+    /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
+    /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
+    /// draws it, and it never converts to provisions. Appended (append-only). (The deprecated
+    /// `foodIncomeAverage` slot sits between this and `bandMoveTilesPerTurn` on the wire but is not
+    /// carried on the Rust side.)
+    #[serde(default)]
+    pub fodder_store: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -4274,6 +4294,8 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
+                // Hay this pen drew last turn (F3) — appended last (append-only wire).
+                fodderDraw: herd.fodder_draw,
             },
         );
         entries.push(entry);
@@ -4353,6 +4375,8 @@ fn create_flora_shares<'a>(
                 // What it would actually pay — appended last (append-only wire).
                 cultivatePayoff: share.cultivate_payoff,
                 sowPayoff: share.sow_payoff,
+                // The fodder a hay Field would pay — appended last (append-only wire, F3).
+                sowFodderPayoff: share.sow_fodder_payoff,
             },
         );
         entries.push(entry);
@@ -4839,6 +4863,10 @@ fn create_populations<'a>(
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
+                    // (`foodIncomeAverage` sits here on the wire but is `(deprecated)`, so flatc omits
+                    // it from the generated Args — nothing to set.)
+                    // The band's hay reserve (F3) — appended (append-only wire).
+                    fodderStore: cohort.fodder_store,
                 },
             )
         })

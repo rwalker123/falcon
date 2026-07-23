@@ -664,6 +664,11 @@ table PopulationCohortState {
   // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
   // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
   foodIncomeAverage:float = 0 (deprecated);
+  // The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on the
+  // same LocalStore as provisions: a hay Field harvests into it, a pen that knows Foddering draws it,
+  // and it NEVER converts to provisions. Appended (append-only). Lets the client show a band's hay
+  // reserve beside its food reserve.
+  fodderStore:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -1121,6 +1126,14 @@ table FloraShareInfo {
   // tendedYield/fieldYield read. 0 where the plant cannot climb the rung.
   cultivatePayoff:float = 0;
   sowPayoff:float = 0;
+  // --- WHAT A HAY FIELD WOULD PAY (appended, flora roster F3) ---
+  // Fodder/turn a sown Field of THIS plant would harvest into the band's FODDER store on this tile,
+  // in the same convention as `sowPayoff` but routed to the FODDER account. A fodder crop's payoff is
+  // NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as food) — this is
+  // the number that lets the picker show hay's real value instead of a bare 0x. `0` for a staple (its
+  // yield vector pays no fodder) or a plant that cannot climb to the Field rung here. Produced by the
+  // same `field_fodder` payoff function the sim pays with, so the quote and the payout cannot drift.
+  sowFodderPayoff:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -1389,6 +1402,11 @@ table HerdTelemetryState {
   // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
   // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
   pastoralYield:float = 0;
+  // The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3, §5.2), in
+  // fodder units. Lets the client show "fed by hay" beside `penUpkeep`'s "fed by bread": a pen fed by
+  // its hay draws down provisions less (or not at all). 0 for an unpenned herd, a keeper that has not
+  // learned Foddering, or a pen whose own footprint already fed it. Appended (append-only).
+  fodderDraw:float = 0;
 }
 
 table CommandEventState {

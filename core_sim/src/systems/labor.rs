@@ -117,6 +117,18 @@ pub fn advance_labor_allocation(
         // the snapshot must export it or the band's net-food readout overstates the surplus by exactly
         // this much (see `LaborAllocation::last_pen_feed_upkeep`).
         let mut pen_feed_paid = 0.0_f32;
+        // **The band's fodder inflow rate this turn** (Flora Roster F3, §5.3) — the fodder its hay
+        // Fields harvest into the `FODDER` store, summed across every Forage assignment. This is the
+        // *sustained flow* the pen's `K_pen` term reads (NOT the store's stock, which would spike K
+        // off a buffer and oscillate): in steady state inflow = the field output the store holds
+        // steady at. Cached onto each pen this band keeps after the assignment loop and read next turn
+        // by `advance_herds`' `ecological_carrying_capacity` — the deliberate Logistics-reads-what-
+        // Population-wrote one-turn lag, exactly as `footprint_intake` is.
+        let mut band_fodder_inflow = 0.0_f32;
+        // The fauna ids of the pens this band tends this turn — the keepers whose `K_pen` gets the
+        // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
+        // already borrows the herd mutably, so a second pass keeps the borrows simple).
+        let mut kept_pens: Vec<String> = Vec::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -321,6 +333,22 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
+                        // **The FODDER account (Flora Roster F3, §5.1).** The *same* managed harvest,
+                        // routed by the yield vector's fodder component instead of its provisions
+                        // component — a grain Field's `field_fodder` is `0` (its crop pays no fodder),
+                        // a hay Field's `field_provisions` is `0` (hay is no food), so this is
+                        // commodity-generic with **no role branch**. The crew carries hay home at the
+                        // same throughput it carries grain, so the collection cap is
+                        // `managed_per_worker_fodder`. Credited to the same `FODDER` `LocalStore` key,
+                        // which round-trips through the snapshot for free.
+                        let fodder_production = field_fodder(patch, &labor.forage, &flora, mult_f);
+                        let fodder_collection = workers as f32
+                            * managed_per_worker_fodder(patch, &labor.forage, &flora, mult_f);
+                        let fodder = scalar_from_f32(fodder_production.min(fodder_collection));
+                        if fodder > scalar_zero() {
+                            cohort.stores.add(FODDER, fodder);
+                            band_fodder_inflow += fodder.to_f32();
+                        }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -655,20 +683,54 @@ pub fn advance_labor_allocation(
                             0.0
                         };
                         herd.pen_pasture_fraction = pasture_fraction;
-                        let demand = pen_upkeep(herd, &fauna) * (1.0 - pasture_fraction);
+                        // **HAY, drawn BEFORE the lossy larder (Flora Roster F3, §5.2).** Hay is
+                        // delivered graze-flow: it enters the pen economy at exactly the point graze
+                        // does, covering the gap the footprint left BEFORE any human food is hauled.
+                        // Gated on **Foddering** — no Foddering, no draw, and everything below is
+                        // byte-identical to the pre-F3 pasture-only pen. The draw is bounded by the gap
+                        // AND the `FODDER` store (a stock — this is the buffer the overwintering carry
+                        // rides), and `LocalStore::take` returns what it *actually* took.
+                        let grass_shortfall = (demand_grass - herd.footprint_intake).max(0.0);
+                        let fodder_draw = if grass_shortfall > 0.0
+                            && knows(
+                                &discovery,
+                                faction,
+                                FODDERING_DISCOVERY_ID,
+                                knowledge_threshold,
+                            ) {
+                            cohort
+                                .stores
+                                .take(FODDER, scalar_from_f32(grass_shortfall))
+                                .to_f32()
+                        } else {
+                            0.0
+                        };
+                        herd.fodder_draw = fodder_draw;
+                        // The share fed by the LAND and HAY together (grass + delivered hay), before
+                        // the larder is touched. Hay *is* feed, so it pays down the larder bill exactly
+                        // as pasture does — one term, both jobs.
+                        let land_hay_fraction = if demand_grass > 0.0 {
+                            ((herd.footprint_intake + fodder_draw) / demand_grass).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let demand = pen_upkeep(herd, &fauna) * (1.0 - land_hay_fraction);
                         let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
                         pen_feed_paid += paid;
-                        // The herd's TOTAL fed fraction: the footprint's share plus the paid share of
-                        // the (reduced) larder bill. Fully fed when the larder covers its remainder (or
-                        // nothing was demanded). A well-pastured pen whose keeper can't pay is still fed
-                        // by its grass — `pasture_fraction`, never falsely 0.
+                        // The herd's TOTAL fed fraction: the land+hay share plus the paid share of the
+                        // (further-reduced) larder bill. Fully fed when the larder covers its remainder
+                        // (or nothing was demanded). A pen fed by its grass and hay whose keeper can't
+                        // pay is still fed by them — `land_hay_fraction`, never falsely 0 — so
+                        // starvation/shrink sees a hayed pen as fed.
                         let larder_covered = if demand > 0.0 {
                             (paid / demand).clamp(0.0, 1.0)
                         } else {
                             1.0
                         };
                         herd.pen_fed_fraction =
-                            pasture_fraction + (1.0 - pasture_fraction) * larder_covered;
+                            land_hay_fraction + (1.0 - land_hay_fraction) * larder_covered;
+                        // This band keeps this pen — its `K_pen` gets the fodder-flow term next turn.
+                        kept_pens.push(fauna_id.clone());
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
                         // **While EXTENDING the pen (2d-β) the keeper is fencing, not fully
@@ -995,6 +1057,32 @@ pub fn advance_labor_allocation(
                 }
                 LaborTarget::Warrior => {
                     // Inert this slice — the predator slice consumes Warrior strength.
+                }
+            }
+        }
+        // **Stamp the fodder-flow rate onto every pen this band keeps** (Flora Roster F3, §5.3), now
+        // that the whole band's hay harvest (`band_fodder_inflow`) is summed. Split evenly across the
+        // band's pens so the *total* K contribution reflects the *total* hay grown, not N copies of
+        // it. Read next turn by `ecological_carrying_capacity` (the one-turn Logistics-reads-Population
+        // lag). **Gated on Foddering** exactly as the feed draw is: a faction that grew hay but has not
+        // learned to hay a herd delivers nothing to the pen's ceiling, so `K_pen` stays byte-identical
+        // to its footprint-only self — the fodder term is all-or-nothing with the capability, never a
+        // free K boost from unusable hay. Always written (0 when un-foddered), so a pen a band stops
+        // keeping does not carry a stale rate.
+        if !kept_pens.is_empty() {
+            let per_pen = if knows(
+                &discovery,
+                faction,
+                FODDERING_DISCOVERY_ID,
+                knowledge_threshold,
+            ) {
+                band_fodder_inflow / kept_pens.len() as f32
+            } else {
+                0.0
+            };
+            for fauna_id in &kept_pens {
+                if let Some(herd) = registry.herds.iter_mut().find(|herd| &herd.id == fauna_id) {
+                    herd.fodder_delivery_rate = per_pen;
                 }
             }
         }

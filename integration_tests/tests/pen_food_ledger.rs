@@ -19,9 +19,10 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, FactionId, FollowPolicy, GrazeRegistry,
-    HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, Tile, FOOD, RUNG_COMPLETE,
+    build_headless_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
+    FollowPolicy, GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget,
+    PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID,
+    FOOD, RUNG_COMPLETE,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -45,7 +46,12 @@ const EPSILON: f32 = 0.01;
 /// `(larder_before, larder_after, food_income, food_consumption, pen_feed_upkeep, pen_fed_fraction)`.
 /// `pen_fed_fraction` (paid ÷ demanded, read off the live herd) is the partial-payment witness: `1.0`
 /// = fully fed, `< 1.0` = the pen only part-paid and the herd starves for the rest.
-fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
+///
+/// `hay > 0` (Flora Roster F3) grants the band **Foddering** and seeds its `FODDER` store with that
+/// much hay: the pen then draws hay *before* the larder, so its `penFeedUpkeep` (the **provisions**
+/// paid) drops — but the ledger identity is over the FOOD store alone, so it must still hold, because
+/// `FODDER` is a separate store that never converts to `FOOD`.
+fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f32) {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -136,6 +142,18 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
         .stores
         .set(FOOD, scalar_from_f32(larder));
 
+    // F3: a hayed pen. Grant Foddering and seed the FODDER store — the pen draws hay before bread.
+    if hay > 0.0 {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("band")
+            .stores
+            .set(FODDER, scalar_from_f32(hay));
+    }
+
     let before = app
         .world
         .get::<PopulationCohort>(band)
@@ -192,7 +210,7 @@ fn run_one_turn_with_a_pen(larder: f32) -> (f32, f32, f32, f32, f32, f32) {
 #[test]
 fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
     let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(AMPLE_LARDER);
+        run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
 
     assert!(
         pen_feed > 0.0,
@@ -228,7 +246,7 @@ fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
 #[test]
 fn the_food_ledger_reconciles_when_the_pen_is_only_partly_fed() {
     let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(THIN_LARDER);
+        run_one_turn_with_a_pen(THIN_LARDER, 0.0);
 
     // The people ate first (in full — `THIN_LARDER` covers their demand), so the pen was paid only
     // the larder's *remainder*: a real, positive, but **partial** debit. `pen_fed_fraction < 1` is the
@@ -254,5 +272,40 @@ fn the_food_ledger_reconciles_when_the_pen_is_only_partly_fed() {
         "the identity must hold on a PARTIAL payment too (penFeedUpkeep is the real debit, not the \
          demand): delta={delta} vs ledger={ledger} \
          (income={income} consumption={consumption} feed={pen_feed})"
+    );
+}
+
+/// **The identity when the pen is fed HAY** (Flora Roster F3). Hay is a *separate* store, drawn before
+/// the larder, so a hayed pen's `penFeedUpkeep` (the provisions paid) **drops** — but the identity is
+/// over the FOOD store alone and `FODDER` never converts to `FOOD`, so it must still reconcile. This is
+/// the ledger half of "provisions stays lossy": the food line moves by *less* precisely because hay,
+/// not bread, covered the feed.
+#[test]
+fn the_food_ledger_reconciles_when_the_pen_is_fed_hay() {
+    // Ample provisions AND ample hay: the pen covers its whole feed from hay first, so almost nothing
+    // is drawn from the FOOD store.
+    let (before, after, income, consumption, hay_pen_feed, pen_fed_fraction) =
+        run_one_turn_with_a_pen(AMPLE_LARDER, 10_000.0);
+    // For contrast, the same pen with NO hay pays a real provisions feed (the fully-fed bread case).
+    let (_, _, _, _, bread_pen_feed, _) = run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
+
+    assert!(
+        (pen_fed_fraction - 1.0).abs() < EPSILON,
+        "hay feeds the pen in full (fed fraction {pen_fed_fraction})"
+    );
+    // Hay covered the feed, so the PROVISIONS bill collapsed — the food line barely moved for the feed.
+    assert!(
+        hay_pen_feed < bread_pen_feed * 0.05,
+        "a hayed pen's provisions feed collapses: {hay_pen_feed} vs the bread-fed {bread_pen_feed}"
+    );
+
+    // The identity still holds — hay is off-ledger (a separate store), FODDER never became FOOD.
+    let delta = after - before;
+    let ledger = income - consumption - hay_pen_feed;
+    assert!(
+        (delta - ledger).abs() < EPSILON,
+        "the identity must hold for a HAY-fed pen too — FODDER is a separate store, never converted \
+         to FOOD: delta={delta} vs ledger={ledger} \
+         (income={income} consumption={consumption} penFeedUpkeep={hay_pen_feed})"
     );
 }

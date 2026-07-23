@@ -936,6 +936,34 @@ pub fn commit_payoff(
     rung_payoff(&patch, forage, flora, output_multiplier, rung)
 }
 
+/// **The FODDER (hay) a sown Field of THIS plant would pay per turn on this tile** (Flora Roster F3,
+/// §5, Part D) — the fodder twin of [`commit_payoff`]'s Field arm, so the crop picker can show a hay
+/// crop's real value instead of the bare `0×` its provisions ratio reads. Built through the *same*
+/// `hypothetical_patch` construction and the *same* `field_fodder` the sim pays with (the §4.3 "assert
+/// the quote against the payoff function" rule), so the published number and the payout cannot drift.
+/// `0.0` for a plant that pays no fodder or cannot climb to the Field rung here.
+pub fn commit_fodder_payoff(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: &str,
+    share: f32,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    if !species_climbs(species, share, flora, RungKey::PlantField) {
+        return 0.0;
+    }
+    let patch = hypothetical_patch(
+        tile,
+        tile_capacity,
+        Some((species, share)),
+        forage,
+        RungKey::PlantField,
+    );
+    field_fodder(&patch, forage, flora, output_multiplier)
+}
+
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
 /// same Sustain skim `rung_payoff` gives any uncommitted patch.
 pub fn wild_payoff(
@@ -1386,6 +1414,60 @@ pub(crate) fn field_provisions(
         * forage.cultivation.field_provisions_per_biomass
         * patch_species_quality(patch, flora, forage)
         * output_multiplier
+}
+
+/// The **projected** fodder conversion rate — a committed patch's `yield.fodder_per_biomass` as it
+/// will read once the improvement completes (the fodder twin of `projected_provisions_per_biomass`,
+/// `docs/plan_flora_roster.md` §5). Reads `0.0` for anything not committed to a fodder crop, which is
+/// exactly what makes a grain Field credit no fodder and a hay Field no food, with **no `role`
+/// branch** — the vector does the routing. Used by the managed-fodder payout and forecast so a hay
+/// Field being sown quotes the hay it *will* pay.
+fn projected_fodder_per_biomass(patch: &ForagePatch, flora: &FloraConfig) -> f32 {
+    projected_species(patch, flora).map_or(0.0, |def| def.yield_.fodder_per_biomass)
+}
+
+/// The place-local managed **fodder** harvest a sown hay **Field** (rung 3) pays into the band's
+/// `FODDER` store each turn — the exact fodder twin of [`field_provisions`], routed by the yield
+/// vector's fodder component instead of its provisions component. Same shape
+/// (`biomass × field_provisions_per_biomass × fodder_quality`, no biomass drawn down), so a hay Field
+/// and a grain Field of the same standing crop harvest the same *fraction* of their biomass — they
+/// differ only in which account it lands in. `0` for any patch not committed to a fodder crop, so a
+/// grain Field credits no fodder, with no role branch.
+///
+/// `fodder_quality` = the committed crop's `fodder_per_biomass` relative to the **wild provisions
+/// baseline** — the same normalization [`patch_species_quality`] uses for the food account, so the
+/// field rung's one rate dial (`field_provisions_per_biomass`) prices both accounts consistently.
+pub(crate) fn field_fodder(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    if forage.provisions_per_biomass <= 0.0 {
+        return 0.0;
+    }
+    let fodder_quality = projected_fodder_per_biomass(patch, flora) / forage.provisions_per_biomass;
+    patch.biomass
+        * forage.cultivation.field_provisions_per_biomass
+        * fodder_quality
+        * output_multiplier
+}
+
+/// **What one worker can carry home from a hay Field**, in fodder/turn — the fodder twin of
+/// [`managed_per_worker_yield`]. The crew carries hay exactly as it carries grain, at the same
+/// per-worker throughput, so the collection cap on a hay Field is this, in fodder units. `0` for a
+/// non-fodder crop (a grain Field's fodder collection is moot).
+pub(crate) fn managed_per_worker_fodder(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        projected_fodder_per_biomass(patch, flora),
+        output_multiplier,
+    )
 }
 
 /// **The `plant:field` rung's investment dip**, resolved off the ladder — the fraction of what a

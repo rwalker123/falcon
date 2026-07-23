@@ -46,7 +46,7 @@ use thiserror::Error;
 
 use crate::{
     components::FollowPolicy,
-    fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
+    fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
     forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
     labor_config::NO_FORAGE_CAPACITY,
@@ -399,8 +399,8 @@ impl RungDef {
     /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
     ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
     ///   sites already had, or
-    /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `animal:pen` rung, whose
-    ///   `selective_breeding` is a future rung's business).
+    /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `plant:field` rung, whose
+    ///   `irrigation`/`rotation` is a future rung's business; the `animal:pen` rung teaches Foddering).
     ///
     /// **The two webs cannot cross-teach** (§4.2) and it costs no code to guarantee: the lesson is
     /// read off the *source's own rung*, and a rung belongs to exactly one [`RungBranch`], so a hunt
@@ -678,6 +678,9 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // not a dangling name.
         "seed_selection" => Some(SEED_SELECTION_DISCOVERY_ID),
         "penning" => Some(PENNING_DISCOVERY_ID),
+        // Flora Roster F3 — the `animal:pen` rung's `earns_knowledge`. Running a pen teaches
+        // Foddering, which unlocks the fodder-draw (feed + `K_pen` term); it gates no rung of its own.
+        "foddering" => Some(FODDERING_DISCOVERY_ID),
         _ => None,
     }
 }
@@ -1050,11 +1053,12 @@ mod tests {
 
         // Animal rung 3 — the shipped Corral investment, fenced only by a `pen`-ceiling species and,
         // since the §4.3 reshuffle (slice 4), gated on **Penning** rather than Herding: one
-        // knowledge per transition. It still teaches nothing (`selective_breeding` is rung 4, §6).
+        // knowledge per transition. Since Flora Roster F3 it TEACHES **Foddering** (2007) — running a
+        // pen is how you learn to hay one (`selective_breeding`, rung 4's lesson, stays parked).
         let pen = ladder.rung(RungKey::AnimalPen);
         assert_eq!(pen.verb_policy(), Some(FollowPolicy::Corral));
         assert_eq!(pen.unlock_discovery_id(), Some(PENNING_DISCOVERY_ID));
-        assert_eq!(pen.earns_discovery_id(), None);
+        assert_eq!(pen.earns_discovery_id(), Some(FODDERING_DISCOVERY_ID));
         assert_eq!(pen.ceiling_required, Some(HusbandryCeiling::Pen));
 
         // **The §4.3 invariant, stated as one assertion: every transition has its OWN knowledge.**
@@ -1407,10 +1411,19 @@ mod tests {
                 .knowledge_earned(FollowPolicy::Sustain, true),
             Some(SEED_SELECTION_DISCOVERY_ID)
         );
-        // A rung that teaches nothing yields nothing even when everything else holds.
+        // The `animal:pen` rung now teaches **Foddering** (Flora Roster F3) — running a pen is how you
+        // learn to hay one.
         assert_eq!(
             ladder
                 .rung(RungKey::AnimalPen)
+                .knowledge_earned(FollowPolicy::Sustain, true),
+            Some(FODDERING_DISCOVERY_ID)
+        );
+        // A rung that teaches nothing yields nothing even when everything else holds (`plant:field`'s
+        // `irrigation`/`rotation` is a parked rung-4 lesson).
+        assert_eq!(
+            ladder
+                .rung(RungKey::PlantField)
                 .knowledge_earned(FollowPolicy::Sustain, true),
             None
         );

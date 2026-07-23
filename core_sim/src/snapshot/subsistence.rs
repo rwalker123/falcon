@@ -317,6 +317,10 @@ pub(crate) fn herd_snapshot_entries(
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield,
+                // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
+                // the corral-tend branch wrote, so the client can render "fed by hay" beside the
+                // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
+                fodder_draw: herd.map(|herd| herd.fodder_draw).unwrap_or(0.0),
             }
         })
         .collect()

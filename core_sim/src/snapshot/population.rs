@@ -439,6 +439,10 @@ pub(crate) fn population_state(
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
+        // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
+        // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
+        // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
+        fodder_store: cohort.stores.get(FODDER).to_f32(),
     }
 }
 

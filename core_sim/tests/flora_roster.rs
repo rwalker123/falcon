@@ -146,34 +146,56 @@ fn a_navigable_hex_names_both_its_valley_and_its_fishery() {
     }
 }
 
-/// **The S1 conversion rates are per-species and live** — the F1 "everything is 0.05 verbatim" rule
-/// is deliberately gone (`docs/plan_flora_roster.md` §4.3): with identical rates, committing a patch
-/// would be a strict downgrade for every species whose `share × concentration_gain < 1`, so rung 2
-/// would ship knowingly broken. What *is* still verbatim is everything F3/F4 own.
+/// **The yield vector routes by account, and only the accounts F3/F4 have opened are live.** S1 made
+/// `provisions_per_biomass` per-species (`docs/plan_flora_roster.md` §4.3); F3 opened the **fodder**
+/// account for the one fodder crop, hay_grass. So a **staple** pays food and no fodder, the **fodder
+/// crop** pays fodder and no food, and trade stays the flat F1 rate on staples (0.0 on the fodder
+/// crop — a fodder crop pays no trade). `role` is a display tag, so this reads the *vector*, not the
+/// tag. Regrowth is still verbatim on every row (S1/F3 move no regrowth).
 #[test]
-fn only_the_conversion_rate_diverged_the_rest_of_the_vector_is_still_flat() {
+fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
     let flora = FloraConfig::builtin();
     let forage = labor().forage;
 
+    let mut fodder_crops = 0;
     for (key, def) in &flora.species {
-        assert!(
-            def.yield_.provisions_per_biomass > 0.0,
-            "`{key}` must convert biomass into food at some positive rate"
-        );
-        assert_eq!(
-            def.yield_.trade_goods_per_biomass, forage.market.trade_goods_per_biomass,
-            "`{key}` must still carry the flat trade rate verbatim — F4 owns cash crops"
-        );
-        // There is no hay in the model yet; a non-zero fodder rate would be F3 arriving early.
-        assert_eq!(
-            def.yield_.fodder_per_biomass, 0.0,
-            "`{key}` must pay no fodder — the fodder store does not exist yet"
-        );
+        let is_fodder_crop = def.yield_.fodder_per_biomass > 0.0;
+        if is_fodder_crop {
+            // A fodder crop pays into the fodder account, NOT provisions and NOT trade.
+            fodder_crops += 1;
+            assert_eq!(
+                def.yield_.provisions_per_biomass, 0.0,
+                "fodder crop `{key}` must pay no provisions — hay feeds animals, not people"
+            );
+            assert_eq!(
+                def.yield_.trade_goods_per_biomass, 0.0,
+                "fodder crop `{key}` must pay no trade — its payoff is the fodder account"
+            );
+        } else {
+            // A staple converts biomass to food positively, pays the flat F1 trade rate, and — since
+            // the fodder account is for hay alone — pays no fodder.
+            assert!(
+                def.yield_.provisions_per_biomass > 0.0,
+                "staple `{key}` must convert biomass into food at some positive rate"
+            );
+            assert_eq!(
+                def.yield_.trade_goods_per_biomass, forage.market.trade_goods_per_biomass,
+                "staple `{key}` must still carry the flat trade rate verbatim — F4 owns cash crops"
+            );
+            assert_eq!(
+                def.yield_.fodder_per_biomass, 0.0,
+                "staple `{key}` must pay no fodder — only a fodder crop does"
+            );
+        }
         assert_eq!(
             def.regrowth_rate, forage.ecology.regrowth_rate,
-            "`{key}` must regrow at forage.ecology.regrowth_rate — S1 moves no regrowth"
+            "`{key}` must regrow at forage.ecology.regrowth_rate — S1/F3 move no regrowth"
         );
     }
+    assert_eq!(
+        fodder_crops, 1,
+        "F3 ships exactly one fodder crop (hay_grass); the rest are staples"
+    );
     assert!(
         flora
             .species
@@ -225,6 +247,12 @@ fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its
         if !def.cultivation_ceiling.allows_cultivate() {
             continue;
         }
+        // A **fodder crop** climbs the ladder too, but its payoff is in the fodder account, not
+        // provisions — the provisions bar below would read its `0.0` food rate as "never worth
+        // tending". Its own worth-it bar is asserted in `the_fodder_crop_pays_a_positive_fodder_yield`.
+        if def.yield_.fodder_per_biomass > 0.0 {
+            continue;
+        }
         // The commit value on each biome this species hosts: `min(1, share × gain) × rate`, against
         // the wild basket's `1.0 × forage.provisions_per_biomass`.
         let mut values: Vec<(TerrainType, f32)> = def
@@ -254,6 +282,45 @@ fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its
             worst < wild,
             "`{key}` is worth tending even on {worst_biome:?}, where it is marginal ({worst} vs \
              {wild}) — a commitment that is right everywhere is not a decision"
+        );
+    }
+}
+
+/// **The fodder crop pays a positive fodder yield, and it is a Field crop that competes with grain**
+/// (Flora Roster F3, `docs/plan_flora_roster.md` §5). Its worth-it bar is the fodder account, not
+/// provisions: a hay Field's harvest is `> 0`, so a pen keeper who grows it has hay to draw. It hosts
+/// the good sowable farmland — so growing hay costs a grain tile — and it climbs to the Field rung
+/// (you Sow it).
+#[test]
+fn the_fodder_crop_pays_a_positive_fodder_yield() {
+    let flora = FloraConfig::builtin();
+
+    let fodder: Vec<(&String, &_)> = flora
+        .species
+        .iter()
+        .filter(|(_, def)| def.yield_.fodder_per_biomass > 0.0)
+        .collect();
+    assert_eq!(fodder.len(), 1, "F3 ships exactly one fodder crop");
+
+    let (key, def) = fodder[0];
+    assert!(
+        def.yield_.fodder_per_biomass > 0.0,
+        "`{key}` must pay a positive fodder rate — it is what a pen draws"
+    );
+    assert!(
+        def.cultivation_ceiling.allows_sow(),
+        "`{key}` is a Field crop (you Sow hay) — it must reach the field rung"
+    );
+    // It competes with grain for scarce sowable tiles: every biome it hosts must also host at least
+    // one staple, so growing hay genuinely displaces calories.
+    for terrain in def.host_biomes.keys() {
+        let contested = flora
+            .composition(*terrain)
+            .iter()
+            .any(|share| flora.species[&share.species].yield_.provisions_per_biomass > 0.0);
+        assert!(
+            contested,
+            "`{key}` hosts {terrain:?} but no staple does — hay must contest grain's ground"
         );
     }
 }

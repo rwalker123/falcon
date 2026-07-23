@@ -300,44 +300,113 @@ shipped it**, and the roster stays economy-neutral until you actually commit a p
 This is the arc's load-bearing piece and the one place it reaches into the animal web. Design it as
 a coupling, not a lever (`plan_intensification_ladder.md` §2's own instruction).
 
-**The plant half (this arc).** A fodder crop is an ordinary Field of a species whose yield vector is
-fodder-dominant. Sowing it needs **no new plant knowledge** — `Sow` already exists and is already
-gated on Seed Selection. Its harvest does not go to provisions; it accumulates in a per-faction
-**fodder store** (a feed larder, distinct from the provisions larder).
+**Two decisions settled at F3 planning** (they resolve a contradiction the earlier draft carried —
+the §5 formula said fodder raised the pen's *ceiling*, while properties 2–3 described it paying the
+*feed bill*; those are different mechanisms and the doc asked for both without saying so):
 
-**The animal half (animal rung 4, `Foddering`, discovery id 2007).** Today:
+> **Fodder is delivered graze-flow.** Hay is grass you grew and stored; it enters the pen economy at
+> **exactly the point graze does**, so it raises `K_pen` **and** pays down the lossy larder bill in
+> one term — because it *is* feed. And **the whole loop ships in one slice** (F3): the fodder crop,
+> the store, the `Foddering` capability, and the pen's draw, measured together against the pen
+> economy's existing invariants.
+
+### 5.1 The plant half — grow the hay
+
+A **fodder crop** is an ordinary Field of a species whose yield vector is **fodder-dominant**
+(`fodder_per_biomass > 0`, `provisions_per_biomass ≈ 0`). Sowing it needs **no new plant knowledge**
+— `Sow` already exists and is gated on Seed Selection. Its harvest does **not** credit provisions; it
+credits a **fodder store**, which is a **second commodity key** in the band's existing `LocalStore`
+(the commodity-keyed larder from the population arc, already snapshot-persisted): `FODDER = "fodder"`
+beside `FOOD = "provisions"`. No new resource type, no new persistence path — the store round-trips
+for free, and the supply network can already balance any commodity (deferred: whether fodder *should*
+flow over it — v1 keeps it band-local).
+
+The fodder Field is otherwise a normal rung-3 Field: same `Sow` site rule (rich, watered ground),
+same build, same feral-if-abandoned. It just pays in hay. So **your best cropland is now contested**:
+grain (calories) *or* hay (herd ceiling) from the same scarce sowable tile — the §4.3 land-use
+tension, extended to the animal web.
+
+### 5.2 The animal half — `Foddering`, and one augmented flow
+
+**`Foddering`** is a faction **capability knowledge** (discovery id **2007**, next free), earned by
+**running a pen** — the `animal:pen` rung's `earns_knowledge` (`null` today) becomes `foddering`, so
+*you learn to hay a herd by keeping one*. It is **not** a new ladder rung with a verb or a build
+meter (a pen already exists; foddering only unlocks the store-draw), and it is never start-granted.
+Once known, a pen automatically draws hay when a fodder store is in reach.
+
+**The model — fodder is a flow that supplements the footprint, drawn before the larder.** Today
+(`fauna::advance_herd_grazing` + the corral feed branch):
 
 ```
-K_pen = footprint_graze_flow / herd.fodder_per_biomass          (grazing 2d)
+demand          = fodder_per_biomass × biomass
+footprint_intake= graze the fenced footprint yields           (from GrazeRegistry)
+pasture_fraction= clamp(footprint_intake / demand, 0, 1)
+larder_upkeep   = upkeep_per_biomass × biomass × (1 − pasture_fraction)   ← the LOSSY human-food bill
 ```
 
-With foddering, the pen may draw its shortfall from the fodder store:
+F3 inserts hay **between** the footprint and the larder:
 
 ```
-K_pen = (footprint_graze_flow + delivered_fodder_flow) / herd.fodder_per_biomass
+shortfall       = max(0, demand − footprint_intake)
+fodder_draw     = min(shortfall, band FODDER store, [faction knows Foddering])   ← hay covers the gap
+fed_by_land+hay = footprint_intake + fodder_draw
+larder_upkeep   = upkeep_per_biomass × biomass × (1 − fed_by_land+hay / demand)  ← same bill, smaller
 ```
 
-Three properties this must preserve, all inherited from `plan_grazing_foundation.md`:
+and the **ceiling** reads the same augmented flow (`ecological_carrying_capacity`, the one `K` seam):
 
-1. **The land still decides — it is just *different* land.** Hay is graze flow you *grew*, on your
-   fields, and delivered. The pen's ceiling stops coming from its own tile and starts coming from
-   your farming. That is mixed farming, and it makes the plant ladder a **prerequisite** for the
-   animal ladder's top rung.
-2. **Hauling human food to livestock stays wasteful.** The existing larder-shortfall path is
-   *deliberately lossy* (§2.1: "the larder can never be the strategy"). Fodder is **not** that path
-   reopened — it is a separate store that only a fodder crop fills. Feeding a pen wheat must remain
-   as bad a deal as it is today; feeding it hay is the whole point of having grown hay.
-3. **A dead tile still cannot hold a pen** — but a *fed* pen on thin pasture now survives, at the
-   cost of a field elsewhere. That is precisely the historical decoupling, and it is a genuine
-   land-use decision rather than an exemption.
+```
+K_pen = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass
+```
 
-**Delivery.** v1: a fodder Field within the owning band's work range feeds pens in the same range —
-the simplest rule that keeps the coupling *spatial* (you cannot hay a pen from across the map).
-Routing fodder over the supply network is a follow-on, deliberately deferred.
+where `fodder_delivery_rate` is the hay the store can sustain per turn (store-limited; in steady
+state = your fodder Fields' output rate, since inflow = outflow). So **one term does both jobs**: hay
+raises `K` (the herd grows) *and* it is subtracted from the larder bill before the lossy path (the
+pen stops draining bread) — because delivered hay and grazed grass are the same quantity, `fodder`.
 
-**Overwintering.** Because the store is a stock and graze flow is seasonal, a fodder buffer carries a
-herd through the trough — the historical function of hay. This falls out of the store being a stock;
-no seasonal special-case is needed.
+### 5.3 The four properties, re-checked against the resolved model
+
+1. **The land still decides — but now it is *your fields' land too*.** The pen's ceiling stops coming
+   from its own tile and starts coming from your farming (`K_pen` reads your fodder output). This
+   makes the plant ladder a hard **prerequisite** for a big pen, which is the coupling the whole arc
+   was reaching for.
+2. **Hauling human food to livestock stays wasteful — untouched.** `larder_upkeep` is the *same*
+   deliberately-lossy provisions bill; hay is drawn *before* it, so growing hay *shrinks* it but never
+   makes it a better deal. Feeding a pen bread is exactly as bad as today; feeding it hay is the point
+   of having grown hay. (`fodder` and `provisions` are separate `LocalStore` keys — a fodder crop
+   fills one, the population eats the other; they never convert.)
+3. **"A dead tile cannot hold a pen" is deliberately RELAXED — a feedlot is real.** The literal
+   grazing-foundation statement is overturned (accepted at planning): with hay as flow, a pen on thin
+   or barren footprint *can* be carried by delivered fodder — that is a drylot, historically exactly
+   what hay is *for*. What keeps "the land decides" honest is **not** a dead-tile block but that the
+   hay must be **grown on real farmland** (a fodder Field needs rich, watered, sowable ground) and
+   **delivered within the band's work range**. Land-relevance moves from the pen's tile to your
+   fields' tile — mixed farming, not an exemption.
+4. **Convergence must be proven, not assumed.** `K → biomass → demand → fodder_draw → flow → K` is a
+   coupled loop, exactly like the graze loop grazing 2b-ii had to gate with a convergence test. F3
+   owes the same: a store-limited `fodder_delivery_rate` (bounded by what the store holds and the
+   field output that fills it) so the loop settles rather than runs away. **Ship a convergence test
+   before betting the pen economy on it.**
+
+**Delivery.** v1: a fodder Field within the **owning band's work range** feeds the pens that band
+keeps (the keeper band draws its own `FODDER` store). Spatial by construction — you cannot hay a pen
+from across the map. Routing fodder over the supply network is a follow-on, deliberately deferred.
+
+**Overwintering** falls out for free: the store is a **stock**, so a fodder buffer carries a herd
+through a seasonal graze trough with no seasonal special-case.
+
+### 5.4 What F3 must not break
+
+The pen economy is tightly validated and this slice reopens it — re-measure, do not assume:
+- **The net-positive floor** (`FaunaConfig::validate`, grazing 2d §2.4) — fodder lowers the larder
+  bill, which can only *help* a pen's net, but the floor's derivation reads `upkeep × biomass ×
+  (2 + r)/4`; confirm the `(1 − fed/demand)` factor doesn't invalidate its scale-free argument.
+- **The convergence gate** (grazing 2b-ii) — the new flow term joins the coupled loop; the existing
+  convergence tests must still pass and a fodder-specific one must be added.
+- **`pen_fed_fraction` / starvation** — a pen with hay in the store is *fed*; the starvation shrink
+  and its one-turn-lag flag must read the hay-inclusive fed fraction.
+- **Rollback** — the `FODDER` store rides `LocalStore` (already persisted); nothing new to plumb, but
+  the herd's per-turn `fodder_draw` (if cached like `footprint_intake`) is transient, not persisted.
 
 ---
 

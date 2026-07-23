@@ -20,5 +20,8 @@
   },
   "penning": {
     "discovery_id": 2006
+  },
+  "foddering": {
+    "discovery_id": 2007
   }
 }
