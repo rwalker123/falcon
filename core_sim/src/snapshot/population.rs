@@ -222,6 +222,7 @@ pub(crate) fn population_state(
     settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
     travel_target: Option<UVec2>,
     hunt_reach: u32,
+    expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
@@ -431,6 +432,20 @@ pub(crate) fn population_state(
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
+        // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
+        // whose delivery can't be projected).
+        expedition_eta_turns: expedition_delivery
+            .as_ref()
+            .and_then(|d| d.eta_turns)
+            .unwrap_or(0),
+        expedition_projected_delivery: expedition_delivery
+            .as_ref()
+            .map(|d| d.projected_food)
+            .unwrap_or(0.0),
+        expedition_recurring: expedition_delivery
+            .as_ref()
+            .map(|d| d.recurring)
+            .unwrap_or(false),
     }
 }
 
@@ -602,6 +617,7 @@ mod tests {
             &crate::settlement_stage_config::SettlementStageConfig::builtin(),
             None,
             0,
+            None,
         )
         .turns_of_food
     }

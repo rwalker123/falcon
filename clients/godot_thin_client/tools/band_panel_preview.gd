@@ -61,6 +61,10 @@ const QUARRY_NEAR_Y := 18
 # Morale rows carry, i.e. what `Hud._breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
+
+# The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
+const HUNT_DELIVERING_ENTITY := 952
+const HUNT_LEAN_ENTITY := 953
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
@@ -427,6 +431,52 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# PARTIES INSPECTOR STRIP — a row click opens the full Mission/Target/Policy/Phase/Carried/
+	# Next-delivery detail, mirroring the work board's row → inspector.
+	_hud.show_tile_selection({})
+	_hud._pending_labor.clear()
+	_hud.update_herds(_herd_fixtures())
+
+	# (a) WIDE shell (bottom dock): the strip renders in the height-capped T/B shell too → the
+	# DELIVERING party's "Next delivery: ~14 food in 6 turns". Uses the work-heavy band fixture (the
+	# `band_panel_work_wide` config, whose band zone provably fits the ~300px T/B cap — `_band_fixture`'s
+	# richer FOOD OUTLOOK vitals do NOT, independent of the parties feature). The strip + a party row +
+	# footer fit because the strip replaces the bottom spacer (see `_build_parties_zone_content`).
+	_hud.update_food_modules(_many_forage_modules())
+	_hud.update_band_alerts([_many_sources_band_fixture(), _hunt_expedition_fixture()])
+	_panel.set_dock(SIDE_BOTTOM)
+	_hud._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	await _settle()
+	await _save("band_panel_parties_inspector_wide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))   # close before the next state
+
+	# (b) NARROW shell (left dock, Parties tab): the tall L/R parties zone holds both parties + the strip
+	# with room to spare. Inspect the NO-SURPLUS party → the invisible-line bug the strip fixes:
+	# "Next delivery: none — the herd has no surplus to raid" must be VISIBLE, not hidden.
+	_hud.update_band_alerts([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"parties")
+	_hud._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
+	await _settle()
+	await _save("band_panel_parties_inspector_narrow")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
+
+	# (c) DETAIL-PANEL via the MARKER path — the FIX-4 regression. The Occupants-card drawer reads
+	# `_expedition_summary_lines(_selected_unit)`, and `_selected_unit` is the MapView unit MARKER, not
+	# a raw `_player_expeditions` dict. Drive the REAL marker path (display_snapshot →
+	# _rebuild_unit_markers → handle_hex_click → show_unit_selection → _selected_unit) with a hunt party
+	# projecting 14.5 food in 6t, and ASSERT the Next-delivery line reaches the panel (rounds to 15).
+	_assert_detail_panel_delivery()
+
+	# (d) The row ✕ recall must CONFIRM first (like "Recall all"), not emit immediately.
+	_assert_row_recall_confirms()
+
 	# ULTRAWIDE: past the width the three zones can USE, the wide shell CENTRES at its content cap
 	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
 	# across the whole monitor and the band zone sits a screen away from the parties zone. The frame to
@@ -470,6 +520,65 @@ func _ready() -> void:
 	_assert_shell_is_wide(true, "band_panel_shell_at_threshold")
 
 	get_tree().quit()
+
+## GUARD (FIX 4): the Next-delivery line must reach the DETAIL PANEL through the MARKER, not only the
+## raw `_player_expeditions` dict. Push a hunt party through a REAL MapView (display_snapshot →
+## _rebuild_unit_markers), click its hex to set `_hud._selected_unit`, and assert the marker-sourced
+## drawer line reads "Next delivery: ~15 food in 6 turns" (14.5 → 15). Verified to FAIL before the
+## marker copy carried the three fields.
+func _assert_detail_panel_delivery() -> void:
+	var view: Node2D = MAP_VIEW_SCRIPT.new()
+	view.visible = false   # data only — a visible map paints behind later frames (minimap gotcha)
+	add_child(view)
+	var tile := Vector2i(64, 11)
+	var terrain: Array = []
+	terrain.resize(MAP_PATH_GRID_W * MAP_PATH_GRID_H)
+	terrain.fill(MAP_PATH_TERRAIN_ID)
+	var party := _hunt_expedition_fixture()
+	party["current_x"] = tile.x
+	party["current_y"] = tile.y
+	party["expedition_projected_delivery"] = 14.5
+	party["expedition_eta_turns"] = 6
+	view.display_snapshot({
+		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [party],
+	})
+	view.unit_selected.connect(_hud.show_unit_selection)
+	view.handle_hex_click(tile.x, tile.y, MOUSE_BUTTON_LEFT)
+	view.unit_selected.disconnect(_hud.show_unit_selection)
+	var lines: Array = _hud._expedition_summary_lines(_hud._selected_unit)
+	var want := "Next delivery: ~15 food in 6 turns"
+	if lines.has(want):
+		print("band_panel_preview: assert OK — detail panel (marker path) renders '%s'" % want)
+	else:
+		push_error("band_panel_preview: detail panel MISSING '%s' — marker path dropped the field. Got: %s" % [
+			want, str(lines)])
+	view.queue_free()
+
+## GUARD: the row ✕ (single-party recall) must route through the CONFIRM dialog, not fire the recall
+## emit immediately — mirroring "Recall all". Build a real party row, press its recall Button, and
+## assert a ConfirmationDialog appeared on the HUD while `recall_expedition_requested` did NOT fire.
+## Verified to FAIL with the ✕ wired straight to `_on_recall_expedition_pressed`.
+func _assert_row_recall_confirms() -> void:
+	var fired := [false]
+	var sink := func(_payload: Dictionary) -> void: fired[0] = true
+	_hud.recall_expedition_requested.connect(sink)
+	var row: HBoxContainer = _hud._build_party_row(_hunt_expedition_fixture())
+	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
+	recall.pressed.emit()
+	var dialog_shown := false
+	for child in _hud.get_children():
+		if child is ConfirmationDialog:
+			dialog_shown = true
+	_hud.recall_expedition_requested.disconnect(sink)
+	if dialog_shown and not fired[0]:
+		print("band_panel_preview: assert OK — row ✕ recall confirms first (no immediate emit)")
+	else:
+		push_error("band_panel_preview: row ✕ recall did NOT confirm (dialog=%s, emitted=%s)" % [
+			dialog_shown, fired[0]])
+	_dismiss_dialogs()
+	row.queue_free()
 
 ## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
 ## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
@@ -1112,4 +1221,31 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"expedition_target_herd": "game_deer_79",
 		"expedition_hunt_policy": "surplus",
 		"home_band_entity": 904,
+		# In-flight next delivery → the parties inspector's "Next delivery: ~14 food in 6 turns" line.
+		"expedition_eta_turns": 6,
+		"expedition_projected_delivery": 14.0,
+		"expedition_recurring": false,
+	}
+
+## A hunt party whose forecast projects ZERO delivery — the herd is at/below its policy floor, so the
+## raid returns empty. The field is PRESENT and 0 (a real no-surplus answer), which the parties
+## inspector must render as "Next delivery: none — the herd has no surplus to raid", never hide.
+func _lean_hunt_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 2",
+		"entity": 953,
+		"faction": 0,
+		"size": 4,
+		"current_x": 64,
+		"current_y": 11,
+		"turns_of_food": 4.0,
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "hunting",
+		"expedition_target_herd": "game_deer_07",
+		"expedition_hunt_policy": "sustain",
+		"home_band_entity": 904,
+		"expedition_eta_turns": 0,
+		"expedition_projected_delivery": 0.0,
+		"expedition_recurring": false,
 	}

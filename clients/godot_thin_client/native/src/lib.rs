@@ -4449,6 +4449,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),
     );
+    // In-flight hunt-party next-delivery forecast (the drawer's "Next delivery: ~X food in ~N turns"
+    // line) — the in-flight twin of the pre-launch huntTripEstimates. 0 / 0.0 / false when n/a
+    // (scout, normal band, or a raid with no finite ETA). See core_sim expedition_delivery.
+    let _ = dict.insert(
+        "expedition_eta_turns",
+        i64::from(cohort.expeditionEtaTurns()),
+    );
+    let _ = dict.insert(
+        "expedition_projected_delivery",
+        f64::from(cohort.expeditionProjectedDelivery()),
+    );
+    let _ = dict.insert("expedition_recurring", cohort.expeditionRecurring());
     // Hard cap on party size the server enforces (from the expedition config, default 8). The
     // outfit stepper clamps its max to min(idle_workers, this) so the player can't dial an
     // over-cap party.

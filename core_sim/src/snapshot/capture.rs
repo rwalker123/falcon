@@ -1469,6 +1469,17 @@ pub fn capture_snapshot(
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
         band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
     };
+    // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
+    // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
+    let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
+        .iter()
+        .filter_map(|(entity, cohort, _, _, _)| {
+            tile_positions
+                .get(&cohort.current_tile.to_bits())
+                .copied()
+                .map(|p| (entity, p))
+        })
+        .collect();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, allocation, travel, expedition)| {
@@ -1488,6 +1499,25 @@ pub fn capture_snapshot(
                 .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
                 .unwrap_or(0);
             let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+            // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
+            // normal band). Reuses the raid forward-sim seeded with the party's current haul.
+            let expedition_delivery = expedition.and_then(|exp| {
+                let party_pos = current_pos?;
+                let home_pos = cohort_positions.get(&exp.home_band).copied();
+                crate::systems::expedition_delivery(
+                    exp,
+                    cohort.stores.get(FOOD).to_f32(),
+                    available_workers(cohort.working),
+                    party_pos,
+                    home_pos,
+                    &herd_registry,
+                    &fauna_config,
+                    &labor_config,
+                    &expedition_cfg,
+                    config.grid_size.x,
+                    config.map_topology.wrap_horizontal,
+                )
+            });
             population_state(
                 entity,
                 cohort,
@@ -1508,6 +1538,7 @@ pub fn capture_snapshot(
                 &settlement_stage_config,
                 travel_target,
                 hunt_reach,
+                expedition_delivery,
             )
         })
         .collect();

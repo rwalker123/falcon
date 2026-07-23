@@ -652,6 +652,7 @@ mod tests {
             &stages,
             None,
             0,
+            None,
         )
     }
 

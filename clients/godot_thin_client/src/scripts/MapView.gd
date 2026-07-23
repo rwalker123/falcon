@@ -2737,6 +2737,13 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# Hunt party take policy (sustain|surplus|market|eradicate; "" for scouts) + carry cap.
 			"expedition_hunt_policy": String(entry.get("expedition_hunt_policy", "")),
 			"expedition_carry_cap": float(entry.get("expedition_carry_cap", 0.0)),
+			# Next-delivery forecast (the in-flight raid twin): the detail panel's "Next delivery" line
+			# reads these off `_selected_unit` (the marker), so they MUST ride the marker or the panel
+			# renders nothing while the Parties-zone row (raw dict) shows the token — guarded by
+			# marker_field_guard (fractional round-trip for the projected float).
+			"expedition_eta_turns": int(entry.get("expedition_eta_turns", 0)),
+			"expedition_projected_delivery": float(entry.get("expedition_projected_delivery", 0.0)),
+			"expedition_recurring": bool(entry.get("expedition_recurring", false)),
 			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
 			# clamps its max to min(idle_workers, this).
 			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),

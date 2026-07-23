@@ -942,6 +942,34 @@ pub fn hunt_trip_forecast(
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> HuntTripForecast {
+    // The pre-launch estimate: an EMPTY pack (the party has not left yet). See
+    // `hunt_trip_forecast_seeded` for the in-flight (partial-pack) variant.
+    hunt_trip_forecast_seeded(
+        workers,
+        herd,
+        policy,
+        fauna,
+        labor,
+        expedition,
+        scalar_zero(),
+    )
+}
+
+/// The raid forward-simulation, seeded with an `initial_larder` — the twin of [`hunt_trip_forecast`]
+/// for a party **already in flight** carrying a partial pack. `delivered_food` accumulates only the
+/// NEW food taken (room-capped against the seeded larder), so a caller's total delivery is
+/// `initial_larder + delivered_food`. Passing `scalar_zero()` reproduces the pre-launch estimate
+/// byte-for-byte.
+#[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
+fn hunt_trip_forecast_seeded(
+    workers: u32,
+    herd: &Herd,
+    policy: FollowPolicy,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+    initial_larder: Scalar,
+) -> HuntTripForecast {
     let delivers_food = policy.delivers_food();
     let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
     // Denial carries nothing home, and an empty party has no pack — either way a "turns to fill" number
@@ -966,7 +994,7 @@ pub fn hunt_trip_forecast(
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
     let floor = hunt_expedition_floor(policy, capacity, &ecology, fauna);
-    let mut larder = scalar_zero();
+    let mut larder = initial_larder;
     let mut first_turn_provisions = 0.0_f32;
     let mut animals_taken = 0u32;
     let mut delivered_food = 0.0_f32;
@@ -1053,5 +1081,97 @@ pub fn hunt_trip_forecast(
         animals_taken,
         delivered_food,
         wasted_food,
+    }
+}
+
+/// The in-flight delivery forecast for a live **hunting** party — the client's
+/// "Next delivery: ~X food in ~N turns" drawer line, the in-flight twin of the pre-launch
+/// `hunt_trip_forecast`/`huntTripEstimates`. Scouts deliver map data, not food, so they → `None`.
+///
+/// `eta_turns` decomposes as remaining-travel-to-herd + hunting-turns-to-complete + walk-home; it is
+/// an APPROXIMATION (the home band is nomadic and may move, and the walk-home is measured from the
+/// herd) — honest for a "~N turns" readout, deliberately not turn-perfect. `None` when the raid can't
+/// complete within the forecast horizon (a trickle-fill): the client shows the amount without an ETA.
+pub struct ExpeditionDelivery {
+    pub eta_turns: Option<u32>,
+    pub projected_food: f32,
+    pub recurring: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn expedition_delivery(
+    expedition: &Expedition,
+    carried: f32,
+    workers: u32,
+    party_pos: UVec2,
+    home_pos: Option<UVec2>,
+    herds: &HerdRegistry,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition_cfg: &ExpeditionConfig,
+    grid_width: u32,
+    wrap_horizontal: bool,
+) -> Option<ExpeditionDelivery> {
+    let ExpeditionMission::Hunt { fauna_id, policy } = &expedition.mission else {
+        return None; // Scouts deliver map data, not food.
+    };
+    let policy = *policy;
+
+    let speed = labor.band_move_tiles_per_turn.max(1);
+    let travel = |a: UVec2, b: UVec2| {
+        crate::grid_utils::hex_distance_wrapped(a, b, grid_width, wrap_horizontal).div_ceil(speed)
+    };
+    let recurring = policy.expedition_recurring();
+
+    match expedition.phase {
+        // Already heading home with its haul: the delivery is what it carries, ETA is the walk home.
+        ExpeditionPhase::Returning | ExpeditionPhase::Delivering => Some(ExpeditionDelivery {
+            eta_turns: home_pos.map(|h| travel(party_pos, h)),
+            projected_food: carried,
+            recurring,
+        }),
+        // Still working toward the kill.
+        ExpeditionPhase::Hunting | ExpeditionPhase::Outbound | ExpeditionPhase::AwaitingOrders => {
+            let Some(herd) = herds.find(fauna_id) else {
+                // Herd lost → the party will fold home carrying what it has.
+                return Some(ExpeditionDelivery {
+                    eta_turns: home_pos.map(|h| travel(party_pos, h)),
+                    projected_food: carried,
+                    recurring: false,
+                });
+            };
+            let herd_pos = herd.position();
+            let in_reach = crate::grid_utils::hex_distance_wrapped(
+                party_pos,
+                herd_pos,
+                grid_width,
+                wrap_horizontal,
+            ) <= expedition_cfg.hunt.reach_tiles;
+            let travel_to_herd = if in_reach {
+                0
+            } else {
+                travel(party_pos, herd_pos)
+            };
+            let fc = hunt_trip_forecast_seeded(
+                workers,
+                herd,
+                policy,
+                fauna,
+                labor,
+                expedition_cfg,
+                scalar_from_f32(carried),
+            );
+            let projected_food = carried + fc.delivered_food; // room-capped by construction, ≤ cap
+            let travel_home = home_pos.map(|h| travel(herd_pos, h)); // delivers from near the herd
+            let eta_turns = match (fc.turns_to_fill, travel_home) {
+                (Some(h), Some(t)) => Some(travel_to_herd + h + t),
+                _ => None,
+            };
+            Some(ExpeditionDelivery {
+                eta_turns,
+                projected_food,
+                recurring,
+            })
+        }
     }
 }
