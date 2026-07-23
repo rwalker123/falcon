@@ -2622,19 +2622,20 @@ mod labor_yield_tests {
         );
     }
 
-    /// **Rung 2 is a WILD stand on a better curve** — the slice-7 correction, and the plant twin of a
-    /// *pastoral* herd. A tended patch is Sustain-gathered at its **boosted** MSY (`wild MSY ×
-    /// tended_regrowth_gain` — strictly more than the same patch wild: the intensification incentive),
-    /// it **draws down** like any wild stand, and it is marked tended-this-turn.
+    /// **Rung 2 is a WILD stand, and since Flora Roster S2 it is a NEUTRAL one** — the plant twin of a
+    /// *pastoral* herd, but no longer on a boosted curve. A *bare* (uncommitted) tended patch is
+    /// Sustain-gathered at **exactly wild MSY** (`wild MSY × tended_regrowth_gain`, and the gain is now
+    /// `1.0`): it regrows and yields exactly as fast as the same patch wild. It still **draws down**
+    /// like any wild stand and is marked tended-this-turn — this test pins that neutrality plus those
+    /// rung mechanics (it draws down, marks the patch worked, and its Sustain take is honestly
+    /// sustainable).
     ///
-    /// **Retargeted twice.** It once pinned rung 2 as a flat managed rate (no draw-down); slice 7 made
-    /// it a boosted MSY curve; **Flora Roster S2 retired the boost** (`tended_regrowth_gain` → neutral
-    /// `1.0`). So a *bare* tended patch — one with no committed crop — now regrows and yields **exactly
-    /// as fast as wild**: this test pins that neutrality plus the rung mechanics that survive it (it
-    /// draws down, marks the patch worked, and its Sustain take is honestly sustainable). Tending's
-    /// payoff over wild moved to **concentration + conversion** — a committed crop — and is pinned by
-    /// the roster's own bar (`core_sim/tests/flora_roster.rs`) and `flora_commitment.rs`, which see the
-    /// crop this scale-free rung mechanic cannot.
+    /// **The intensification incentive moved to the committed crop.** It was once a flat managed rate (no
+    /// draw-down), then a boosted MSY curve; S2 retired the boost because, with S1 making
+    /// competitor-removal explicit as *concentration*, a growth boost double-counted it. So "tended
+    /// beats wild" now lives entirely in a committed crop — **concentration + conversion** (§4.3) — and
+    /// is pinned by the roster's own bar (`core_sim/tests/flora_roster.rs`) and `flora_commitment.rs`,
+    /// which see the crop this scale-free rung mechanic cannot.
     #[test]
     fn a_bare_tended_patch_is_neutral_versus_wild_and_draws_down() {
         let (mut world, tile) = world_with_source(CAP);
