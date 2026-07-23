@@ -2814,18 +2814,33 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   split's denominator `power_enemy / count_enemy`; with the enemy a single beast that leaves the split
   constant regardless of party size — contradicting the equip-to-shift-severity thesis — so the seam
   divides by the **defenders** (`count_self`), which is what makes a stronger party move severity.
-- **`SpeciesDef` gained `combat: CombatStats` + `diet: Diet` (`Herbivore|Carnivore`) + `aggression:
-  f32`** (all `#[serde(default)]`, so every existing species is byte-identical: `combat` defaults to
-  `{ attack 0, defense 1, range Melee }` → a harmless hunt). `diet` and `aggression` are **inert this
-  phase** (Phase 1 consumes them: prey-derived carrying capacity + the predator-raid trigger). Shipped
-  combat blocks: **mammoth `{ attack 8, defense 12 }`** (the Phase-0 dangerous-hunt subject), **aurochs
-  `{ attack 4, defense 6 }`**; everything else defaults to attack 0. `FaunaConfig::validate` enforces
-  `combat.attack ≥ 0` finite, `combat.defense > 0` finite (a denominator), `0 ≤ aggression ≤ 1`.
+- **Strength ≠ danger — `SpeciesDef` splits STRENGTH from BEHAVIOUR.** A big `attack` does **not** make
+  a thing dangerous to you (a mammoth is immensely strong but will never raid your camp); danger is
+  **DERIVED, never stored**. Four fields, all `#[serde(default)]` (so every existing species is
+  byte-identical):
+  - **STRENGTH** — `combat: CombatStats { attack, defense, range }` (open-ended, human = 1; defaults to
+    `{ attack 0, defense 1, Melee }`).
+  - **BEHAVIOUR** — `aggression: f32` (0..1 — P(initiates a raid unprovoked)) and **`ferocity: f32`**
+    (0..1 — P(fights back when hunted, vs flees)). `aggression` is *"does it start it"*, `ferocity` is
+    *"does it finish it"*.
+  - **`diet: Diet` (`Herbivore|Carnivore`)** — the trophic knob. Inert this phase.
+  Danger is composed client-side, never a stored scalar: **hunt-danger ≈ `attack × ferocity`**,
+  **camp-threat ≈ `attack × aggression`** (Phase 1). `diet` and `aggression` are **inert this phase**
+  (Phase 1 consumes them: prey-derived carrying capacity + the predator-raid trigger). `FaunaConfig::validate`
+  enforces `combat.attack ≥ 0` finite, `combat.defense > 0` finite (a denominator), `0 ≤ aggression ≤ 1`,
+  `0 ≤ ferocity ≤ 1`.
+- **The graduated roster** (`fauna_config.json`, playtest dials): mammoth `attack 8 / ferocity 0.9`
+  (strong AND fights back → deadly), aurochs `4 / 0.7 / aggression 0.1`, boar `1.5 / 0.6` (cornered
+  and mean), steppe/marsh grazer `2.5 / 0.4`, elk `2 / 0.4`, horse `2 / 0.3`, seal `1 / 0.3`, down to
+  deer `0.8 / 0.15` and gazelle `0.3 / 0.05` (skittish — flee, cost almost nothing). Rabbit / fowl /
+  snow hare / grouse / catfish stay fully default (attack 0 → harmless).
 - **The hunt-path adapter (`advance_labor_allocation`, the Hunt arm's wild-take branch).** After a wild
-  hunt take resolves, a herd whose `species.combat.attack > 0` turns on the party: the adapter builds a
+  hunt take resolves, a herd that will **fight back** (`attack × ferocity > 0` — a hunt only faces the
+  animal's attack to the extent it doesn't flee) turns on the party: the adapter builds a
   `FightPayload` — **band side** (`Aggressor`, one `"person"` contingent, `count = the hunters assigned
   to THIS herd`, profile = the creatures roster's `person`), **animal side** (`Defender`, one contingent
-  `count = 1.0`, profile = `species.combat`) — with a rollback-stable `seed = map_seed ^ tick ^ herd-id
+  `count = 1.0`, profile = `species.combat` with **attack scaled to `attack × ferocity`**) — with a
+  rollback-stable `seed = map_seed ^ tick ^ herd-id
   hash` (reserved/unused by the resolver but a real value), and applies **only the band side's** outcome
   (the take already removed the animal's biomass; applying its casualties too would double-count).
   `killed` comes out of the cohort's **working-age** bracket via
@@ -2839,7 +2854,7 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
 - **The expedition-hunt adapter is the SAME seam, but bloodier** (`advance_expeditions`, the
   `ExpeditionPhase::Hunting` arm — after `expedition_take_biomass`, inside the `in_reach` guard so it
   only fires on an engagement turn). A hunting **expedition** builds the identical fight — its party
-  (`count = the party workers`) vs the beast — and applies **only the band side's** `killed` to the
+  (`count = the party workers`) vs the beast (at `attack × ferocity`) — and applies **only the band side's** `killed` to the
   expedition's own `PopulationCohort`, narrating on the same `HuntDanger` feed. **It fights at a scaled
   lethality:** `tuning.lethality *= combat_config.expedition_danger_multiplier` (**1.5**) — a detached
   party is far from home, unsupported and tired, so the same beast costs it more than it costs a
@@ -2850,19 +2865,22 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   not a hunting escort — they do **not** mitigate hunt danger (the hunting party answers that itself,
   via its own equipment). Its labor arm remains a no-op branch. **Its first live consumer is the
   Phase 1 predator-raid path** — a carnivore with `aggression > 0` raiding a band, band as Defender.
-- **`HerdTelemetryState.danger:float` (append-only) publishes the per-species danger of hunting a
-  herd** — for the client's band-panel readout + a threat overlay. **Danger = the species' `attack`**
-  today (the casualty driver: 0 = harmless, mammoth = 8), captured in `snapshot/subsistence.rs`'s
-  `herd_snapshot_entries` via `fauna.species_by_display(&entry.species).map(|d| d.combat.attack)`. It is
-  a **server-derived scalar** single-sourced on the herd entity, so it can become a composite (defense,
-  aggression, pack size) later **without a wire change**; `HerdTelemetryEntry` is untouched. There is
-  **no TileState danger field** — the overlay projects this per-herd value onto tiles client-side.
+- **The wire carries the RAW combat components, not a stored `danger`** — danger is derived, so
+  `HerdTelemetryState` publishes `attack` / `defense` / `ferocity` / `aggression` (append-only, from
+  `snapshot/subsistence.rs`'s `herd_snapshot_entries` via `fauna.species_by_display`) and the **client
+  derives** hunt-danger (`attack × ferocity`) and camp-threat (`attack × aggression`) itself. There is
+  **no stored `danger` scalar** (a big `attack` alone is strength, not danger) and **no TileState danger
+  field** — the overlay projects the derived per-herd value onto tiles client-side. `HerdTelemetryEntry`
+  is untouched. **Client follow-up:** the native reader + band-panel/overlay display of the four
+  components are a separate client-dev task.
 
 Tests: `core_sim/src/combat/mod.rs` unit tests (even fight, 5:1, adding-defenders mitigation + wounded
 shift, defense→wounded shift, determinism, zero-attack → zero casualties); `core_sim/tests/predators.rs`
-(a mammoth hunt costs working-age lives with a killed/wounded split; a deer hunt costs nobody;
-config-validation rejections); `core_sim/tests/expedition_hunt.rs` (a hunting expedition takes
-casualties against a mammoth; the `expedition_danger_multiplier` scales losses).
+(a mammoth hunt costs working-age lives with a killed/wounded split; a **rabbit** hunt — ferocity 0 —
+costs nobody; ferocity scales hunt-danger; config-validation rejections including ferocity); `core_sim/tests/expedition_hunt.rs`
+(a hunting expedition takes casualties against a mammoth; the `expedition_danger_multiplier` scales
+losses). **Note:** `hunt_trip_forecast` does not yet model casualties, so `the_raid_forecast_matches_a_real_party_run`
+hunts a harmless species — wiring casualties into the launch forecast is a Phase-1+ follow-up.
 
 See Also: `docs/plan_predators.md` (the whole arc), "Fauna & Wild Game" (the `SpeciesDef` table + the
 Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam casualties apply at).

@@ -67,13 +67,16 @@ const FORAGE_OVERLAY_KEY := "forage"
 const FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
 const FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
 const FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
-# --- DANGER overlay (Predators Phase 0) --------------------------------------------------------
-# Danger is a per-ENTITY property (a herd's `danger` scalar) that the native decoder projects onto
-# tiles (max over the herds standing on each hex). Unlike pasture/forage it is NOT a per-tile field
-# and NOT a two-tone ramp: it uses the generic `GRID_COLOR.lerp(overlay_color, value)` path, so an
-# empty tile stays grid-colored and a hex with a deadly herd glows this threat red.
-const DANGER_OVERLAY_KEY := "danger"
-const DANGER_OVERLAY_COLOR := Color(0.85, 0.16, 0.16, 1.0)  # threat red
+# --- DANGER overlays (Predators Phase 0) -------------------------------------------------------
+# TWO derived-danger channels, both per-ENTITY properties the native decoder projects onto tiles
+# (max over the herds standing on each hex). Neither is a per-tile field or a two-tone ramp: both
+# ride the generic `GRID_COLOR.lerp(overlay_color, value)` path, so empty ground stays grid-colored
+# and a hex with a qualifying herd glows. `hunt_danger` (attack × ferocity) is a danger-ORANGE so it
+# reads apart from `threat` (attack × aggression), which keeps the harsher threat-RED.
+const HUNT_DANGER_OVERLAY_KEY := "hunt_danger"
+const HUNT_DANGER_OVERLAY_COLOR := Color(0.93, 0.52, 0.13, 1.0)  # danger orange
+const THREAT_OVERLAY_KEY := "threat"
+const THREAT_OVERLAY_COLOR := Color(0.85, 0.16, 0.16, 1.0)       # threat red
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
 # only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
@@ -648,8 +651,10 @@ const OVERLAY_COLORS := {
 	# The pasture channel paints through `_pasture_color` (a two-tone ramp plus two off-ramp barren
 	# tones), not a single-hue tint; this is the swatch any generic fallback path shows for it.
 	PASTURE_OVERLAY_KEY: PASTURE_RICH_COLOR,
-	# Danger rides the generic lerp path — empty tiles stay grid-colored, a deadly herd glows red.
-	DANGER_OVERLAY_KEY: DANGER_OVERLAY_COLOR,
+	# Both danger channels ride the generic lerp path — empty tiles stay grid-colored, a qualifying
+	# herd glows (hunt-danger orange, threat red, so the two read apart).
+	HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
+	THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
 }
 
 const TERRAIN_TAG_KEYS := [

@@ -207,6 +207,8 @@ pub(crate) fn herd_snapshot_entries(
         .iter()
         .map(|entry| {
             let herd = registry.find(&entry.id);
+            // The species row backing this herd — resolved once for the raw combat components below.
+            let species_def = fauna.species_by_display(&entry.species);
             let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
@@ -317,14 +319,15 @@ pub(crate) fn herd_snapshot_entries(
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield,
-                // Predators Phase 0 — the per-species DANGER of hunting this herd (`docs/plan_predators.md`).
-                // A server-derived scalar so it can become a composite later without a wire change;
-                // today it is the species' combat `attack`, the casualty driver (0 = harmless, mammoth
-                // = 8). Resolved by display name — the herd's `species` string.
-                danger: fauna
-                    .species_by_display(&entry.species)
-                    .map(|def| def.combat.attack)
-                    .unwrap_or(0.0),
+                // Predators Phase 0 — the RAW combat components of this herd's species
+                // (`docs/plan_predators.md`). Danger is DERIVED client-side, never stored, because
+                // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression.
+                // Resolved by display name (the herd's `species` string); a herd whose species does
+                // not resolve reads all-zeros (harmless).
+                attack: species_def.map(|def| def.combat.attack).unwrap_or(0.0),
+                defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
+                ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
+                aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
             }
         })
         .collect()

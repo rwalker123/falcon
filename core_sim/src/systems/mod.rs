@@ -14,8 +14,8 @@ use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     biome_palette::BiomePalette,
     combat::{
-        resolve_fight, Contingent, ContingentId, FightPayload, Force, ForceId, Posture,
-        TerrainContext,
+        resolve_fight, CombatStats, Contingent, ContingentId, FightPayload, Force, ForceId,
+        Posture, TerrainContext,
     },
     combat_config::CombatConfigHandle,
     components::{

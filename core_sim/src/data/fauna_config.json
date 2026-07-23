@@ -23,10 +23,14 @@
       "fodder_per_biomass": 0.011,
       "regrowth_rate": 0.04,
       "husbandry_ceiling": "wild",
-      "combat": { "attack": 8.0, "defense": 12.0, "range": "melee" }
+      "combat": { "attack": 8.0, "defense": 12.0, "range": "melee" },
+      "ferocity": 0.9
     },
     "steppe_runner": {
       "display_name": "Steppe Runners",
+      "combat": { "attack": 2.5, "defense": 3.0 },
+      "ferocity": 0.4,
+      "aggression": 0.05,
       "plural": "steppe runners",
       "adjective": "steppe-runner",
       "size_class": "migratory",
@@ -48,6 +52,9 @@
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
+      "combat": { "attack": 2.5, "defense": 3.0 },
+      "ferocity": 0.4,
+      "aggression": 0.05,
       "plural": "marsh grazers",
       "adjective": "marsh-grazer",
       "size_class": "migratory",
@@ -69,6 +76,8 @@
     },
     "deer": {
       "display_name": "Red Deer",
+      "combat": { "attack": 0.8, "defense": 1.0 },
+      "ferocity": 0.15,
       "plural": "deer",
       "adjective": "deer",
       "size_class": "big",
@@ -84,6 +93,9 @@
     },
     "boar": {
       "display_name": "Wild Boar",
+      "combat": { "attack": 1.5, "defense": 2.0 },
+      "ferocity": 0.6,
+      "aggression": 0.05,
       "plural": "boar",
       "adjective": "boar",
       "size_class": "big",
@@ -157,10 +169,14 @@
       "husbandry_ceiling": "pen",
       "pastoral_density": 2.0,
       "pen_density": 5.0,
-      "combat": { "attack": 4.0, "defense": 6.0 }
+      "combat": { "attack": 4.0, "defense": 6.0 },
+      "ferocity": 0.7,
+      "aggression": 0.1
     },
     "crag_goat": {
       "display_name": "Crag Goats",
+      "combat": { "attack": 0.6, "defense": 1.0 },
+      "ferocity": 0.2,
       "plural": "goats",
       "adjective": "goat",
       "size_class": "small",
@@ -180,6 +196,8 @@
     },
     "wild_sheep": {
       "display_name": "Wild Sheep",
+      "combat": { "attack": 0.4, "defense": 1.0 },
+      "ferocity": 0.1,
       "plural": "sheep",
       "adjective": "sheep",
       "size_class": "small",
@@ -199,6 +217,8 @@
     },
     "reindeer": {
       "display_name": "Wild Reindeer",
+      "combat": { "attack": 0.6, "defense": 1.0 },
+      "ferocity": 0.15,
       "plural": "reindeer",
       "adjective": "reindeer",
       "size_class": "migratory",
@@ -220,6 +240,8 @@
     },
     "wild_horse": {
       "display_name": "Wild Horses",
+      "combat": { "attack": 2.0, "defense": 2.0 },
+      "ferocity": 0.3,
       "plural": "horses",
       "adjective": "horse",
       "size_class": "migratory",
@@ -241,6 +263,9 @@
     },
     "seal": {
       "display_name": "Grey Seals",
+      "combat": { "attack": 1.0, "defense": 2.0 },
+      "ferocity": 0.3,
+      "aggression": 0.05,
       "plural": "seals",
       "adjective": "seal",
       "size_class": "big",
@@ -256,6 +281,9 @@
     },
     "wild_elk": {
       "display_name": "Wild Elk",
+      "combat": { "attack": 2.0, "defense": 3.0 },
+      "ferocity": 0.4,
+      "aggression": 0.05,
       "plural": "elk",
       "adjective": "elk",
       "size_class": "big",
@@ -271,6 +299,8 @@
     },
     "alpine_ibex": {
       "display_name": "Alpine Ibex",
+      "combat": { "attack": 0.6, "defense": 1.0 },
+      "ferocity": 0.2,
       "plural": "ibex",
       "adjective": "ibex",
       "size_class": "small",
@@ -286,6 +316,8 @@
     },
     "gazelle": {
       "display_name": "Desert Gazelle",
+      "combat": { "attack": 0.3, "defense": 1.0 },
+      "ferocity": 0.05,
       "plural": "gazelle",
       "adjective": "gazelle",
       "size_class": "small",

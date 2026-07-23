@@ -184,13 +184,16 @@ fn last_danger_casualties(app: &App) -> Option<(f32, f32)> {
         })
 }
 
-/// The mammoth's shipped display name — its combat block is `{ attack 8, defense 12 }`.
+/// The mammoth's shipped display name — `{ attack 8, defense 12, ferocity 0.9 }`: strong AND it
+/// fights back, so it is deadly to hunt.
 const MAMMOTH: &str = "Thunder Mammoths";
-/// A defaulted species (attack 0) — a harmless hunt.
-const DEER: &str = "Red Deer";
+/// A fully-defaulted species (attack 0, ferocity 0) — a harmless hunt. **Not a deer:** since the
+/// roster split, a deer has a small nonzero effective attack (`0.8 × 0.15`), so "harms nobody" must
+/// use a species with no combat block at all.
+const RABBIT: &str = "Rabbit Warren";
 
-/// A band hunting a **mammoth** (attack 8) loses working-age population over a turn, and the
-/// hunt-danger feed line reports a `killed`/`wounded` split (both modelled from day one).
+/// A band hunting a **mammoth** (effective attack `8 × 0.9`) loses working-age population over a
+/// turn, and the hunt-danger feed line reports a `killed`/`wounded` split (both modelled from day one).
 #[test]
 fn a_dangerous_mammoth_hunt_costs_working_age_lives() {
     let mut app = spawn_world();
@@ -202,7 +205,7 @@ fn a_dangerous_mammoth_hunt_costs_working_age_lives() {
     let killed = before - after;
     assert!(
         killed > 0.0,
-        "a mammoth (attack 8) hunt must cost working-age lives: {before} -> {after}"
+        "a mammoth (attack 8 × ferocity 0.9) hunt must cost working-age lives: {before} -> {after}"
     );
 
     let (feed_killed, feed_wounded) =
@@ -216,23 +219,84 @@ fn a_dangerous_mammoth_hunt_costs_working_age_lives() {
     assert!((killed - feed_killed).abs() < 1e-2);
 }
 
-/// A band hunting a **deer** (default `attack 0`) loses **nobody** — byte-identical to today.
+/// A band hunting a **rabbit** (no combat block → attack 0, ferocity 0) loses **nobody**.
 #[test]
-fn a_harmless_deer_hunt_costs_no_lives() {
+fn a_harmless_hunt_costs_no_lives() {
     let mut app = spawn_world();
-    let (herd, tile) = dangerous_herd(&mut app, DEER);
+    let (herd, tile) = dangerous_herd(&mut app, RABBIT);
     let band = hunting_band(&mut app, tile, 60, &herd, 4);
     let before = working_of(&app, band);
     app.world.run_system_once(advance_labor_allocation);
     let after = working_of(&app, band);
     assert_eq!(
         before, after,
-        "a deer (attack 0) hunt must not touch working-age population: {before} -> {after}"
+        "a harmless (attack 0) hunt must not touch working-age population: {before} -> {after}"
     );
     // ...and no hunt-danger feed line is pushed.
     assert!(
         last_danger_casualties(&app).is_none(),
         "a harmless hunt must push no hunt_danger event"
+    );
+}
+
+/// **Ferocity scales hunt-danger**: a strong animal that mostly *flees* (low ferocity) inflicts far
+/// fewer casualties than the same strength at high ferocity — the adapter feeds the resolver
+/// `attack × ferocity`, so the two differ only in that product. Asserted via a direct `resolve_fight`
+/// comparison (the two effective attacks a high-attack beast would present at low vs high ferocity).
+#[test]
+fn ferocity_scales_the_danger_of_a_hunt() {
+    use core_sim::{
+        resolve_fight, CombatStats, CombatTuning, Contingent, ContingentId, FightPayload, Force,
+        ForceId, Posture, RangeBand,
+    };
+
+    // Same strong beast (attack 8, defense 12), same party — only ferocity differs.
+    let band_losses_at = |ferocity: f32| -> f32 {
+        let payload = FightPayload {
+            sides: vec![
+                Force {
+                    id: ForceId(0),
+                    posture: Posture::Aggressor,
+                    contingents: vec![Contingent {
+                        kind: ContingentId::from("person"),
+                        count: 4.0,
+                        profile: CombatStats {
+                            attack: 1.0,
+                            defense: 1.0,
+                            range: RangeBand::Melee,
+                        },
+                    }],
+                },
+                Force {
+                    id: ForceId(1),
+                    posture: Posture::Defender,
+                    contingents: vec![Contingent {
+                        kind: ContingentId::from("beast"),
+                        count: 1.0,
+                        profile: CombatStats {
+                            attack: 8.0 * ferocity, // the adapter's `attack × ferocity`
+                            defense: 12.0,
+                            range: RangeBand::Melee,
+                        },
+                    }],
+                },
+            ],
+            terrain: vec![],
+            seed: 0,
+        };
+        let out = resolve_fight(&payload, &CombatTuning::default());
+        out.results
+            .iter()
+            .find(|r| r.force == ForceId(0))
+            .map(|r| r.killed + r.wounded)
+            .unwrap_or(0.0)
+    };
+
+    let timid = band_losses_at(0.15);
+    let fierce = band_losses_at(0.9);
+    assert!(
+        fierce > timid * 2.0,
+        "a fierce beast must be far deadlier than a fleeing one: timid {timid}, fierce {fierce}"
     );
 }
 
@@ -270,6 +334,15 @@ fn fauna_config_rejects_illegitimate_combat_dials() {
     assert!(
         bad_aggression.is_err(),
         "an aggression outside [0, 1] must be rejected"
+    );
+
+    // Ferocity outside [0, 1] is rejected (the mammoth is the only 0.9 in the roster).
+    let bad_ferocity = FaunaConfig::from_json_str(
+        &core_sim::BUILTIN_FAUNA_CONFIG.replace(r#""ferocity": 0.9"#, r#""ferocity": 1.5"#),
+    );
+    assert!(
+        bad_ferocity.is_err(),
+        "a ferocity outside [0, 1] must be rejected"
     );
 }
 

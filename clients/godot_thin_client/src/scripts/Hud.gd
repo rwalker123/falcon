@@ -748,18 +748,21 @@ const HERD_RANGE_ROW := "Range"
 # `_split_detail_kv` renders it as an aligned table row above Biomass.
 const HERD_SIZE_ROW := "Size"
 const HERD_SIZE_CLASS_FORMAT := "%s game"
-# Herd drawer Danger row (Predators Phase 0): the species' `danger` scalar (the sim-computed "attack"
-# — how dangerous this animal is) mapped to a qualitative word. The value reads against the
-# human-strength anchor of 1.0 (a bare human), so a deer is Harmless, an aurochs (~4) Dangerous, a
-# mammoth (~8) Deadly. Shown for EVERY herd — the player learns which animals are safe. Key ≤ 16 chars
-# so `_split_detail_kv` aligns it as a table row; tinted by `_danger_value_hex` (green→amber→red).
-const DANGER_ROW := "Danger"
-const DANGER_MINOR_THRESHOLD := 2.0
-const DANGER_DANGEROUS_THRESHOLD := 6.0
-const DANGER_HARMLESS_LABEL := "Harmless"
-const DANGER_MINOR_LABEL := "Minor"
-const DANGER_DANGEROUS_LABEL := "Dangerous"
-const DANGER_DEADLY_LABEL := "Deadly"
+# Herd drawer combat-component rows (Predators Phase 0). Strength is NOT danger — a mammoth is deadly
+# to HUNT (high attack × ferocity) yet no camp THREAT (aggression 0) — so the drawer shows the four RAW
+# components Elevation-style (a relative bar + the raw value, no verdict word: a word can't survive the
+# roster, since a mammoth and later mech-infantry can't both be "Deadly"). Attack / Defense are
+# open-ended, so their bars normalize against the max across the known herds (`_world_herds`); Ferocity
+# / Aggression are native 0..1, shown as a bar + %. Keys ≤ 16 chars so `_split_detail_kv` aligns them.
+const DANGER_ATTACK_ROW := "Attack"
+const DANGER_DEFENSE_ROW := "Defense"
+const DANGER_FEROCITY_ROW := "Fights back"
+const DANGER_AGGRESSION_ROW := "Aggressive"
+const DANGER_BAR_CELLS := 5
+# The compact derived-danger summary under the component rows: the two dangers a player actually reasons
+# about (hunt cost vs unprovoked menace), each = attack × the relevant behaviour scalar.
+const DANGER_DERIVED_ROW := "Danger"
+const DANGER_DERIVED_FORMAT := "Hunt %s · Threat %s"
 # Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
 # range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
 # of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
@@ -8774,9 +8777,11 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
-    # Danger (Predators Phase 0): the species' threat, shown for EVERY herd (including harmless ones,
-    # so the player learns which animals are safe). A pure map of one sim-provided scalar to a word.
-    lines.append("%s: %s" % [DANGER_ROW, _danger_label(float(herd_data.get("danger", 0.0)))])
+    # Predators Phase 0 — the four RAW combat components (strength ≠ danger), shown for EVERY herd
+    # (a rabbit reads all-empty, a mammoth reads high-attack/high-fights-back/zero-aggressive — the
+    # "deadly to hunt, no camp threat" story at a glance). No verdict word; each row is a relative bar
+    # + the raw value, Elevation-style.
+    _append_danger_component_lines(lines, herd_data)
     # Grazing 2d-δ — how far up the husbandry ladder THIS species can climb gates the whole section.
     # A WILD-ceiling herd shows NO husbandry track at all (just the hunt-only hint); a PASTORAL one
     # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
@@ -8868,28 +8873,54 @@ func _ecology_value_hex(value: String) -> String:
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
-## Player-facing danger word for a herd's `danger` scalar (0 = harmless deer … ~8 = mammoth), read
-## against the human-strength anchor of 1.0. Buckets: 0 → Harmless, >0..<2 → Minor, 2..<6 →
-## Dangerous, >=6 → Deadly. `_format_detail_bbcode` tints the value via `_danger_value_hex`.
-func _danger_label(danger: float) -> String:
-    if danger <= 0.0:
-        return DANGER_HARMLESS_LABEL
-    if danger < DANGER_MINOR_THRESHOLD:
-        return DANGER_MINOR_LABEL
-    if danger < DANGER_DANGEROUS_THRESHOLD:
-        return DANGER_DANGEROUS_LABEL
-    return DANGER_DEADLY_LABEL
+## Append the Predators combat-component rows (Attack / Defense / Fights back / Aggressive) plus the
+## compact derived-danger summary. Attack + Defense are open-ended, so their bars normalize against the
+## max across the KNOWN herds (`_world_herds`), Elevation-style — a herd reads relative to the roster,
+## and falls back to a full bar if it IS the reference (no other herds, or it holds the max). Ferocity +
+## Aggression are native 0..1 → bar + %, using the readable behaviour labels the player parses.
+func _append_danger_component_lines(lines: Array[String], herd_data: Dictionary) -> void:
+    var attack := float(herd_data.get("attack", 0.0))
+    var defense := float(herd_data.get("defense", 0.0))
+    var ferocity := clampf(float(herd_data.get("ferocity", 0.0)), 0.0, 1.0)
+    var aggression := clampf(float(herd_data.get("aggression", 0.0)), 0.0, 1.0)
+    lines.append("%s: %s" % [DANGER_ATTACK_ROW, _danger_open_row(attack, "attack")])
+    lines.append("%s: %s" % [DANGER_DEFENSE_ROW, _danger_open_row(defense, "defense")])
+    lines.append("%s: %s" % [DANGER_FEROCITY_ROW, _danger_unit_row(ferocity)])
+    lines.append("%s: %s" % [DANGER_AGGRESSION_ROW, _danger_unit_row(aggression)])
+    # The compact derived line the player actually reasons about: hunt cost vs unprovoked menace.
+    lines.append("%s: %s" % [DANGER_DERIVED_ROW, DANGER_DERIVED_FORMAT % [
+        _format_danger_scalar(attack * ferocity), _format_danger_scalar(attack * aggression),
+    ]])
 
-## BBCode hex for a "Danger" value, mirroring `_ecology_value_hex`: Deadly red, Dangerous amber,
-## Harmless a calm green, Minor neutral ink — a green→amber→red ramp keyed on the label word.
-func _danger_value_hex(value: String) -> String:
-    if value == DANGER_DEADLY_LABEL:
-        return HudStyle.DANGER_HEX
-    if value == DANGER_DANGEROUS_LABEL:
-        return HudStyle.WARN_HEX
-    if value == DANGER_HARMLESS_LABEL:
-        return HudStyle.HEALTHY_HEX
-    return HudStyle.INK_HEX
+## An OPEN-ENDED component (attack/defense): a bar relative to the roster max + the raw value. The bar
+## normalizes against the biggest value of that component across `_world_herds`; with no reference (max
+## 0 / no herds) it degrades to the bare value with no bar, since a lone herd has nothing to compare to.
+func _danger_open_row(value: float, key: String) -> String:
+    var reference := _world_herd_component_max(key)
+    var raw := _format_danger_scalar(value)
+    if reference <= 0.0:
+        return raw
+    return "%s %s" % [_meter_bar(value / reference * 100.0, DANGER_BAR_CELLS), raw]
+
+## A NATIVE 0..1 component (ferocity/aggression): a bar + percent.
+func _danger_unit_row(value: float) -> String:
+    return "%s %d%%" % [_meter_bar(value * 100.0, DANGER_BAR_CELLS), int(round(value * 100.0))]
+
+## The largest value of an open-ended combat component across the known herds — the reference the
+## Attack/Defense bars normalize against (the Elevation-view idiom for an unbounded field).
+func _world_herd_component_max(key: String) -> float:
+    var reference := 0.0
+    for herd in _world_herds:
+        if herd is Dictionary:
+            reference = maxf(reference, float((herd as Dictionary).get(key, 0.0)))
+    return reference
+
+## Format a combat scalar for display: whole numbers bare (`8`), fractions to one decimal (`0.5`),
+## trailing zero stripped — the components read against the human-strength anchor of 1.0.
+func _format_danger_scalar(value: float) -> String:
+    if is_equal_approx(value, round(value)):
+        return "%d" % int(round(value))
+    return String.num(value, 1)
 
 ## Tile-count label for a herd's grazing range from its hex radius — "the ground this herd grazes".
 ## The hex-disk count `1 + 3r(r+1)`: radius 0 → 1 tile (small game, its own hex), 1 → 7, 2 → 19. Same
@@ -9157,9 +9188,6 @@ func _format_detail_bbcode(lines: Array) -> String:
                 # row keeps its own KEY only so a forage tile doesn't print two rows named "Ecology";
                 # the styling path is deliberately not forked.
                 value_hex = _ecology_value_hex(String(kv[1]))
-            elif String(kv[0]) == DANGER_ROW:
-                # The herd's threat rating tints green→amber→red, mirroring the Ecology case.
-                value_hex = _danger_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
             elif String(kv[0]) == HERDERS_ROW:

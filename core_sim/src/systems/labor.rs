@@ -1013,13 +1013,23 @@ pub fn advance_labor_allocation(
                     // removed the animal's biomass, so applying the animal-side result too would
                     // double-count (discarded in Phase 0).
                     if let Some(species) = fauna.species_by_display(&herd.species) {
-                        if species.combat.attack > 0.0 {
+                        // **Danger = strength × BEHAVIOUR** (`docs/plan_predators.md`): a hunt only faces
+                        // the animal's attack to the extent it *fights back* rather than flees, so the
+                        // beast's effective attack is `attack × ferocity`. A fleeing deer (ferocity ~0.15)
+                        // costs almost nothing; a cornered boar (0.6) does; a mammoth (0.9) is deadly.
+                        let effective_attack = species.combat.attack * species.ferocity;
+                        if effective_attack > 0.0 {
                             // **The hunting party answers the danger itself** — its defending strength is
                             // just the hunters assigned to THIS herd (bare-hands `person` profile today).
                             // Warriors are a band-wide standing guard (border/camp patrol) and do NOT
                             // mitigate a hunt; the hunters' own equipment (TOE, deferred) will compose
                             // into this profile when it lands, with no rework here.
                             let party_count = workers as f32;
+                            // The animal fights at its ferocity-scaled attack (defense/range unchanged).
+                            let animal_profile = CombatStats {
+                                attack: effective_attack,
+                                ..species.combat
+                            };
                             // A single beast turns on the party each dangerous hunt-turn — a deliberate
                             // Phase-0 simplification (scaling the engaged count with take/party size is a
                             // later refinement). Its intrinsic combat body is the same `attack` predation
@@ -1046,7 +1056,7 @@ pub fn advance_labor_allocation(
                                         contingents: vec![Contingent {
                                             kind: ContingentId(herd.species.clone()),
                                             count: 1.0,
-                                            profile: species.combat,
+                                            profile: animal_profile,
                                         }],
                                     },
                                 ],

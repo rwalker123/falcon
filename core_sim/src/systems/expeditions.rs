@@ -404,7 +404,14 @@ pub fn advance_expeditions(
                         // (the take already removed the animal's biomass). Fires only on an engagement
                         // turn (inside the `in_reach` guard).
                         if let Some(species) = fauna.species_by_display(&herd.species) {
-                            if species.combat.attack > 0.0 {
+                            // Danger = strength × BEHAVIOUR: the beast fights back at `attack × ferocity`
+                            // (a fleeing animal barely scratches the party). See the labor.rs adapter.
+                            let effective_attack = species.combat.attack * species.ferocity;
+                            if effective_attack > 0.0 {
+                                let animal_profile = CombatStats {
+                                    attack: effective_attack,
+                                    ..species.combat
+                                };
                                 let mut hasher = crate::hashing::FnvHasher::new();
                                 std::hash::Hash::hash(&herd.id, &mut hasher);
                                 let seed =
@@ -426,7 +433,7 @@ pub fn advance_expeditions(
                                             contingents: vec![Contingent {
                                                 kind: ContingentId(herd.species.clone()),
                                                 count: 1.0,
-                                                profile: species.combat,
+                                                profile: animal_profile,
                                             }],
                                         },
                                     ],

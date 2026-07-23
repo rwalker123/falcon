@@ -21,32 +21,41 @@ live Warrior role and a casualty interface — is the *interface*, and it is ide
 
 A predator is not a new kind of thing. It is an ordinary `Herd` (same `HerdRegistry`, same
 logistic ecology, same whole-animal quantization, same movement dispatch, same snapshot) sitting
-in a particular corner of a four-knob config space. Every one of the eight design goals collapses
-into **four independent fields on `SpeciesDef`**, and "predator" is just a name for one region of
-that space:
+in a particular corner of a config space with **two kinds of knob, deliberately kept apart**:
+**strength** (how hard it hits / how hard to kill — open-ended magnitude) and **behaviour** (what it
+*does* — will it fight, will it come for you). "Predator" is just a name for one region of that space.
 
-| Knob (`SpeciesDef` field) | Meaning | deer | wild ox / aurochs | mammoth | wolf pack |
-|---|---|---|---|---|---|
-| **`diet`** | *what it eats* — `herbivore` (grazes the land) vs `carnivore` (eats prey biomass). The **only** knob that changes the food/carrying-capacity layer. | herbivore | herbivore | herbivore | **carnivore** |
-| **`attack`** | offensive / retaliation power when a fight happens — *whoever started it*. Default ~0. | ~0 | moderate | **high** | **high** |
-| **`aggression`** | 0..1 — *does it initiate?* Will it raid your unguarded foragers unprovoked, or only fight back when hunted? Default 0. | 0 | low | ~0 | **high** |
-| **`defense`** | how hard it is to take down. Drives both predator-vs-prey resolution **and** casualty risk to your hunters. | low | high | **very high** | mid |
+| Knob | Kind | Meaning | rabbit | deer | wild boar | mammoth | wolf pack |
+|---|---|---|---|---|---|---|---|
+| **`attack`** (`CombatStats`) | strength | damage output when it fights. **Open-ended, anchored to bare-handed human = 1.0** — no ceiling (a tank out-scales a mammoth). | 0 | low | low | **high** | high |
+| **`defense`** (`CombatStats`) | strength | toughness / how hard to take down. Same open-ended scale. Drives predator-vs-prey resolution and the kill↔wound split. | low | low | mid | **very high** | mid |
+| **`ferocity`** (`SpeciesDef`, 0..1) | behaviour | P(it **fights back** when attacked, vs flees). Scales how much of its `attack` a *hunt* actually faces. Default 0. | 0 | low | **mid** | **high** | high |
+| **`aggression`** (`SpeciesDef`, 0..1) | behaviour | P(it **attacks you unprovoked**). Gates the predator-*raid* trigger. Default 0. | 0 | 0 | ~0 | **~0** | **high** |
+| **`diet`** (`SpeciesDef`) | — | *what it eats* — `herbivore` (grazes) vs `carnivore` (eats prey biomass). The only knob that changes the food/carrying-capacity layer. | herb | herb | herb | herb | **carn** |
 
-Consequences that fall out of this, rather than being coded as special cases:
+**Strength ≠ danger — this is the correction that shapes everything.** A big `attack` does *not* make
+a thing dangerous *to you*; a mammoth is deadly to hunt but will never come for your camp, and a tank
+is not "as deadly as a mammoth." Danger is **behaviour-weighted and derived, never stored** — and
+there are honestly *two* of it:
+
+- **Hunt-danger** ≈ `attack × ferocity` — how costly it is to go after it. Mammoth: max (huge attack,
+  high ferocity). Rabbit: 0 (it flees). A cornered boar: real but modest.
+- **Camp-threat** ≈ `attack × aggression` — how much it menaces you unprovoked. Wolf pack: high.
+  **Mammoth: ~0** (it never initiates). This is what a threat *map* should paint — a mammoth must not
+  light up your danger overlay.
+
+Consequences that fall out, rather than being coded as special cases:
 
 - **"Does it get eaten" is not a flag.** An animal is prey to a given predator iff that predator's
   `attack` clears its `defense`. Wolves can't crack a mammoth's defense, so a mammoth is simply not
-  in the wolf's prey set — idea 7, for free, no `is_prey` boolean.
-- **A dangerous hunt is not a predator.** A mammoth is `(herbivore, high attack, very-high
-  defense, ~0 aggression)`: it will never come for your camp, but hunting it is deadly. That is
-  idea 3 (danger of hunting big game) using the *same* fields as predator danger — one casualty
-  path, not two.
-- **Most prey just runs.** Deer is `(herbivore, ~0 attack, low defense, 0 aggression)`: killable,
-  harmless to hunt, never initiates. The distinction "runs vs fights back" is `attack` > 0, and
-  "hunts you vs ignores you" is `aggression` > 0 — exactly the split the design conversation
-  identified.
-- **Pack vs solitary is config, not structure.** A wolf *pack* and a solitary big cat differ only
-  in group `biomass` / `body_mass` (how many animals the herd represents), not in entity type.
+  in the wolf's prey set — idea 7, for free.
+- **A dangerous hunt is not a predator.** A mammoth is `(herbivore, high attack, high ferocity, ~0
+  aggression)`: deadly to hunt, no camp-threat. Same casualty path as a predator, different behaviour.
+- **"Runs vs fights back" is `ferocity`; "ignores you vs hunts you" is `aggression`** — two distinct
+  probabilities, not one. A deer with a small `attack` still flees (`ferocity ≈ 0`), so it costs you
+  nothing to hunt; a boar with the same `attack` *fights* (`ferocity` mid), so it does.
+- **Pack vs solitary is config** — a wolf *pack* and a solitary big cat differ only in group
+  `biomass` / `body_mass`, not in entity type.
 
 This mirrors the moves the codebase already made — forage transposed from herds, cultivation from
 husbandry. Predators are the trophic transpose of the grazer: an herbivore's carrying capacity
@@ -97,10 +106,12 @@ Grounding, so the phases below are edits to real seams, not green field:
    **abstracted biomass fraction** from prey herds in range whose `defense` its `attack` clears.
    Mirrors `advance_herd_grazing`. Continuous draw — whole-animal quantization is reserved for the
    *player's* hunt, not the wolf's dinner (decision below).
-3. **The rating web** — `diet` + `aggression` on `SpeciesDef`, plus the shared
-   **`CombatStats { attack, defense, range }`** value type embedded in `SpeciesDef`, and the
-   resolution helpers (who can eat whom; casualty math). Predation reads the *same* intrinsic
-   `attack` combat does.
+3. **The rating web — strength + behaviour, kept apart.** `diet` on `SpeciesDef`; the shared
+   **`CombatStats { attack, defense, range }`** (strength, open-ended); and the two behaviour
+   probabilities **`ferocity`** (fights back) + **`aggression`** (initiates), 0..1 on `SpeciesDef`.
+   Plus the resolution helpers (who can eat whom; the two *derived* dangers — hunt-danger
+   `attack × ferocity`, camp-threat `attack × aggression`; casualty math). **No stored `danger`
+   field.** Predation reads the *same* intrinsic `attack` combat does.
 4. **A combat subsystem + a creatures roster + band casualties** — a new first-class
    `core_sim/src/combat/` module exposing `resolve_fight(payload) -> outcome` (placeholder resolver
    now, real one later; the *seam* is the deliverable), plus a 1-row `creatures` roster for the base
@@ -411,7 +422,8 @@ basic.
 | 9 | **Movement primitive shared from the start** (Phase 2 extract) | The user requires scouting to reuse it; designing `relocate_toward_resource` as shared avoids a rewrite. |
 | 10 | **Defaults keep every existing species byte-identical** | `attack`/`aggression` default 0, `defense` low, `diet` herbivore — no-back-compat rule; the roster is unchanged until a species opts in. |
 | 11 | **Combat-strength magnitude is open-ended, anchored to *bare-handed human = 1.0*** | `attack`/`defense` are relative — only ratios carry meaning (mammoth 8 vs human 1 = 8:1), like the graze table. No ceiling; `f32` scales as far as history does (bronze, iron, tanks). The single discipline is the shared anchor so the whole future roster — animals, equipped humans, mounts — stays comparable on one scale. |
-| 12 | **`danger` is a single server-computed scalar per entity** | The player-facing "how dangerous is this thing" number, published per herd (`= attack` now, a composite later — no wire change), and generalizing to bands/rivals. The client shows it as a panel line + a map overlay; danger is single-sourced on the entity and *projected* onto tiles, never a second per-tile field. |
+| 12 | **Strength and behaviour are separate; "danger" is DERIVED, not a stored `attack`** | *(Corrected — the first cut stored `danger = attack`, which is wrong: strength ≠ danger.)* Four fields — `attack`/`defense` (strength, open-ended) + `ferocity`/`aggression` (behaviour, 0..1). There is **no stored `danger` field**; two dangers are derived: **hunt-danger** `≈ attack × ferocity` and **camp-threat** `≈ attack × aggression`. A mammoth is max hunt-danger, ~0 camp-threat. `ferocity` (fights back vs flees) is its own axis, distinct from `attack`. |
+| 13 | **Danger is DISPLAYED as an open/relative scale, never fixed words** | *(Corrected — the first cut bucketed into Harmless/Minor/Dangerous/Deadly, which can't survive the roster: a mammoth and mechanised infantry can't both be "Deadly".)* Like the Elevation view: the panel shows the raw **components as relative bars** (`attack`/`defense` normalised to the map's range, `ferocity`/`aggression` as native 0..1), no danger word; the map overlay paints **camp-threat**, relative-normalised so it auto-rebases as stronger units arrive (no ceiling to guess). |
 
 ## Open tuning dials (ship, measure, retune — playtest)
 

@@ -3640,26 +3640,36 @@ Raster overlays streamed from `core_sim`:
 | `terrain_tags` | Blended | Per-tag colors averaged |
 | `pasture` | Straw→grass ramp, **+ two off-ramp barren tones** | The GRAZE layer's per-tile **capacity** (`TileState.grazeCapacity`) |
 | `forage` | Wheat→green ramp, **+ one off-ramp barren tone** | The FORAGE (human food) layer's per-tile **capacity** (`TileState.forageCapacity`) |
-| `danger` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side from herd positions × `HerdTelemetryState.danger` (see below) |
+| `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
+| `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
 
 Legend rendering: min/avg/max values + channel description.
 
-**`danger` — the wildlife-threat overlay (Predators Phase 0).** Danger is a **per-ENTITY** property
-(a herd's `danger` scalar = the species' `attack`; 0 = harmless deer … ~4 = aurochs … ~8 = mammoth,
-against the human-strength anchor of 1.0), NOT a per-tile wire field — so the **native decoder projects
-it onto tiles** (`snapshot_dict`, beside the pasture/forage blocks): a grid-sized zero-init `danger`
-array, `max(existing, herd.danger)` stamped at each herd's tile index, normalized against the map's
-deadliest tile. **Guarded on `danger_max > 0`** so a placid map omits the channel entirely (no dead
-selector entry). Unlike pasture/forage it is **not** a two-tone ramp: MapView's `_color_for_tile` uses
-the generic `GRID_COLOR.lerp(DANGER_OVERLAY_COLOR, value)` path — empty ground stays grid-colored, a hex
-with a deadly herd glows the threat red — and the generic scalar legend handles it automatically (no
-bespoke builder). The overlay selector + legend are data-driven off `channel_order`, so the channel
-appears with no OverlayPanel edit. Also surfaced as a **`Danger` row** in the herd drawer
-(`Hud._herd_summary_lines`, after Ecology): `_danger_label` buckets the scalar into Harmless / Minor /
-Dangerous / Deadly (thresholds 2 / 6), shown for EVERY herd so the player learns which animals are safe;
-`_danger_value_hex` tints it green→ink→amber→red via `_format_detail_bbcode`'s shared registry (the
-Ecology case's twin). Verify via `map_preview` state **"danger"** (`map_danger.png` + the printed legend)
-and `ui_preview` `herd_verbs` (Harmless deer, green) / `herd_danger` (Deadly mammoth, red).
+**`hunt_danger` / `threat` — the two derived-danger overlays (Predators Phase 0).** STRENGTH ≠ DANGER:
+the wire carries four RAW components on `HerdTelemetryState` — `attack` / `defense` (open-ended, against
+the human-strength anchor 1.0) and `ferocity` / `aggression` (native 0..1, fights-back-vs-flees /
+initiates-unprovoked) — and **danger is DERIVED, never a stored field**. There are TWO: **HUNT danger =
+`attack × ferocity`** (cost to hunt it — a mammoth reads high) and **THREAT = `attack × aggression`**
+(menace unprovoked — a grazer reads ~0 however deadly it is to hunt; predators read high in Phase 1).
+Both are per-ENTITY, NOT per-tile wire fields, so the **native decoder projects each onto tiles**
+(`snapshot_dict`, beside the pasture/forage blocks): a grid-sized zero-init array, `max(existing, value)`
+stamped at each herd's tile index, normalized against **that channel's own** map-max. Each is **guarded
+on its own max > 0** — in Phase 0 nothing is aggressive yet, so `threat` is typically absent, and that
+is correct. Neither is a two-tone ramp: MapView's `_color_for_tile` rides the generic
+`GRID_COLOR.lerp(overlay_color, value)` path off `OVERLAY_COLORS` (`HUNT_DANGER_OVERLAY_COLOR` orange /
+`THREAT_OVERLAY_COLOR` red, so the two read apart) — empty ground stays grid-colored — and the generic
+scalar legend handles both. The overlay selector + legend are data-driven off `channel_order`, so the
+channels appear with no OverlayPanel edit. **The herd drawer shows the four RAW components, NOT a verdict
+word** (`Hud._herd_summary_lines` → `_append_danger_component_lines`, after Ecology, on EVERY herd): a
+word can't survive the roster (a mammoth and later mech-infantry can't both be "Deadly"), so each is a
+relative bar + raw value, Elevation-style — **Attack** / **Defense** bar against the max across
+`_world_herds` (falling back to the bare value with no reference), **Fights back** / **Aggressive** as a
+0..1 bar + %, plus a compact derived `Danger: Hunt X · Threat Y` summary. No `_format_detail_bbcode` tint
+case — the component rows carry no verdict word. Verify via `map_preview` states **"hunt_danger"**
+(`map_hunt_danger.png` — mammoth + wolf glow orange) / **"threat"** (`map_threat.png` — only the
+aggressive wolf glows red) + the printed legends, and `ui_preview` `herd_verbs` (harmless deer, all-empty
+bars) / `herd_danger` (mammoth: high Attack/Fights-back, empty Aggressive), whose behavioural assertions
+prove the component rows render and NO Harmless/Deadly word appears.
 
 **`pasture` — the graze (pasture) layer, Grazing Phase 2a** (`docs/plan_grazing_foundation.md`;
 `core_sim/CLAUDE.md` → The Graze (Pasture) Layer). Graze is the **animal-edible** vegetal stock

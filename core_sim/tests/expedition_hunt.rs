@@ -584,6 +584,21 @@ fn the_raid_forecast_matches_a_real_party_run() {
         ] {
             let mut app = spawn_world();
             let id = pinned_game_herd(&mut app, "big");
+            // Neutralize combat: `hunt_trip_forecast` deliberately does NOT model casualties in
+            // Phase 0, so a dangerous big-game species would shrink the party mid-raid and diverge
+            // the real run from the forecast. This test is about the raid economy, not combat (that
+            // has its own test), so retag to a harmless species (attack 0) while keeping the heavy
+            // body_mass the partial/waste mechanics need. Wiring casualties into the forecast is a
+            // Phase-1+ follow-up.
+            {
+                let mut registry = app.world.resource_mut::<HerdRegistry>();
+                registry
+                    .herds
+                    .iter_mut()
+                    .find(|h| h.id == id)
+                    .unwrap()
+                    .species = "Rabbit Warren".to_string();
+            }
             let (herd_pos, _before, _cap) = seed_herd(&mut app, &id, cap_fraction);
             let home = spawn_home_band(&mut app, herd_pos);
 

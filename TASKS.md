@@ -1123,16 +1123,29 @@ by **Warriors**, the band-wide guard — the Warrior role's first live consumer,
   hasher-independent tie-break (rollback determinism). This is also the deferred **Grazing 2c** dynamic
   (move toward live food, not just fertile land). Predators now follow the game and relocate when local
   prey thins. **Test:** move a deer herd across the map; the pack tracks it instead of idling.
-- [ ] **Phase 0 cleanup (PR #166, in progress) — expedition danger + the species danger view.**
-  (a) **Expedition hunts resolve combat too, and bloodier** — mirror the resident-band adapter into
-  `advance_expeditions`' Hunt arm, casualties applied to the detached party, scaled by a flat
-  `expedition_danger_multiplier` (~1.5×, config; the crude stand-in for the deferred combat-modifiers
-  layer). (b) **Publish `HerdTelemetryState.danger:float`** (server-computed `= attack`, append-only) so
-  the client can show it. (c) **Client danger view** — a **Danger** line on the herd/tile card
-  (`_herd_summary_lines`) *and* a **Danger map overlay** projecting per-herd danger onto tiles
-  (Pasture/Forage channel pattern, not Elevation's raster), verified via `ui_preview` + `map_preview`.
-  Danger is a general per-entity property ("any animal, and later any band"), single-sourced, not a
-  hunting concept.
+- [x] **Phase 0 cleanup — expedition danger (PR #166).** Expedition hunts resolve combat too, and
+  bloodier — the resident adapter mirrored into `advance_expeditions`' Hunt arm, casualties on the
+  detached party, scaled by a flat `expedition_danger_multiplier` (1.5×, config; the crude stand-in
+  for the deferred combat-modifiers layer). The multiplier is applied *by the caller* scaling
+  `CombatTuning.lethality` — combat is never told "this is an expedition."
+- [ ] **Phase 0 cleanup — the strength/behaviour model + danger view (reworking the first cut).**
+  *(The first cut stored `danger = attack` and displayed fixed word buckets — both wrong: strength ≠
+  danger, and words can't survive the roster. Corrected below.)*
+  (a) **Split strength from behaviour on `SpeciesDef`:** keep `CombatStats {attack, defense, range}`
+  (strength, open-ended, human=1); add **`ferocity`** (0..1, P fights-back) beside the existing
+  **`aggression`** (0..1, P initiates); validate both `0..1`.
+  (b) **Delete the stored `HerdTelemetryState.danger` field; publish the raw components** instead
+  (`attack`/`defense`/`ferocity`/`aggression`) so the client can show them and derive. Danger is
+  **derived, never stored** — hunt-danger `≈ attack × ferocity`, camp-threat `≈ attack × aggression`.
+  (c) **Wire `ferocity` into the hunt casualty adapter** (labor.rs + expeditions.rs): the animal
+  contingent's effective attack is `attack × ferocity`, so a fleeing deer costs nothing and a cornered
+  boar does. (d) **Populate a graduated roster** (attack/defense/ferocity/aggression across the
+  species, playtest dials) so the scale is actually visible.
+  (e) **Client display, Elevation-style:** replace the word buckets with **relative component bars**
+  on the herd/tile card (`attack`/`defense` normalised to the map's range, `ferocity`/`aggression` as
+  native 0..1), **no danger word**; change the map overlay from raw attack to **camp-threat**
+  (`attack × aggression`, relative-normalised so it auto-rebases as stronger units arrive). Verified via
+  `ui_preview` + `map_preview`. Danger is a general per-entity concept ("any animal, later any band").
 - [ ] **Phase 3 — Client legibility.** Threat/casualty events in the command feed; predator presence
   overlay; Warrior strength & hunt-danger readout on the band panel; yield-forfeited-to-raids on the
   income line. Free-form snapshot fields only; verify HUD via the *ui_preview* harness. **Test:** the

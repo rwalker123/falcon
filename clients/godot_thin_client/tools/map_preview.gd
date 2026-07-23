@@ -816,11 +816,12 @@ func _ready() -> void:
 	await _save("map_forage")
 	print("map_preview: forage legend = ", _map._legend_for_current_view())
 
-	# State "danger" (Predators Phase 0) — the DANGER overlay, projected client-side from herd
-	# positions × their `danger` scalar. A DEADLY mammoth (danger 8) and a HARMLESS deer (danger 0)
-	# on the earthlike shape: the mammoth's hex must glow the threat red while the deer's hex — and all
-	# empty ground — stays grid-colored (the generic lerp path, not a two-tone ramp). The legend is the
-	# generic scalar one, printed here since this harness has no HUD.
+	# States "hunt_danger" / "threat" (Predators Phase 0) — the two derived-danger overlays, projected
+	# client-side from herd positions. Three herds on the earthlike shape: a fierce MAMMOTH (attack ×
+	# ferocity high, attack × aggression 0), an aggressive DIRE WOLF (both high), a HARMLESS deer (both
+	# 0). On hunt_danger the mammoth + wolf hexes glow orange and the deer stays grid-colored; on threat
+	# ONLY the wolf's hex glows red (the mammoth is deadly to hunt yet no threat — strength ≠ danger).
+	# Both ride the generic lerp path + generic scalar legend, printed here since this harness has no HUD.
 	_map.set_fow_enabled(false)
 	_map.set_labor_pending({})
 	_map.enable_terrain_textures(false)
@@ -831,11 +832,16 @@ func _ready() -> void:
 	get_window().size = PASTURE_WINDOW_SIZE
 	await _settle()
 	_map.display_snapshot(_snapshot_danger())
-	_map.set_overlay_channel(DANGER_OVERLAY_KEY)
+	_map.set_overlay_channel(HUNT_DANGER_OVERLAY_KEY)
 	_map._fit_map_to_view()
 	await _settle()
-	await _save("map_danger")
-	print("map_preview: danger legend = ", _map._legend_for_current_view())
+	await _save("map_hunt_danger")
+	print("map_preview: hunt_danger legend = ", _map._legend_for_current_view())
+	# The threat channel — staged aggressive (a Phase-0 live map would omit it, which is correct).
+	_map.set_overlay_channel(THREAT_OVERLAY_KEY)
+	await _settle()
+	await _save("map_threat")
+	print("map_preview: threat legend = ", _map._legend_for_current_view())
 
 	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
 	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
@@ -1236,85 +1242,94 @@ func _snapshot_forage() -> Dictionary:
 		"herds": [],
 	}
 
-## The DANGER snapshot (Predators Phase 0). Danger is a per-ENTITY property, so the native decoder
-## projects it onto tiles from herd positions × their `danger` scalar; this hand-built harness snapshot
-## reproduces that projection: a zero-init grid, `max(existing, danger)` stamped at each herd's tile,
-## normalized against the deadliest tile. It reuses the pasture terrain SHAPE so the frame reads like
-## an ordinary map, then drops a DEADLY mammoth (danger 8) and a HARMLESS deer (danger 0) on it — the
-## deadly hex must glow the threat red while the deer's hex (and all empty ground) stays grid-colored.
-const DANGER_OVERLAY_KEY := "danger"   # mirrors MapView.DANGER_OVERLAY_KEY / the decoder's channel key
-const DANGER_DEADLY_COL := 9
-const DANGER_DEADLY_ROW := 7
-const DANGER_HARMLESS_COL := 16
-const DANGER_HARMLESS_ROW := 9
+## The DANGER snapshot (Predators Phase 0). Danger is DERIVED per-ENTITY, so the native decoder projects
+## TWO channels onto tiles from herd positions: hunt_danger = attack × ferocity, threat = attack ×
+## aggression. This hand-built harness snapshot reproduces both projections (a zero-init grid,
+## `max(existing, value)` at each herd's tile, normalized against that channel's own map-max). It reuses
+## the pasture terrain SHAPE, then drops three herds so BOTH channels light: a fierce MAMMOTH (attack 8,
+## ferocity 0.9, aggression 0 → high hunt_danger, zero threat), an aggressive DIRE WOLF (attack 4,
+## ferocity 0.7, aggression 0.9 → both channels), and a HARMLESS deer (all zero → colors neither).
+const HUNT_DANGER_OVERLAY_KEY := "hunt_danger"  # mirrors MapView.HUNT_DANGER_OVERLAY_KEY / the channel key
+const THREAT_OVERLAY_KEY := "threat"            # mirrors MapView.THREAT_OVERLAY_KEY / the channel key
+const DANGER_MAMMOTH_COL := 9
+const DANGER_MAMMOTH_ROW := 7
+const DANGER_WOLF_COL := 16
+const DANGER_WOLF_ROW := 9
+const DANGER_DEER_COL := 21
+const DANGER_DEER_ROW := 12
 func _snapshot_danger() -> Dictionary:
 	var ids := _pasture_terrain()
 	var total := PASTURE_GRID_W * PASTURE_GRID_H
 	var herds := [
 		{
-			"id": "game_mammoth_02",
-			"label": "Woolly Mammoth (game_mammoth_02)",
-			"species": "Woolly Mammoth",
-			"size_class": "big",
-			"huntable": true,
-			"ecology_phase": "thriving",
-			"x": DANGER_DEADLY_COL, "y": DANGER_DEADLY_ROW,
-			"biomass": 900.0,
-			"danger": 8.0,
+			"id": "game_mammoth_02", "label": "Woolly Mammoth (game_mammoth_02)",
+			"species": "Woolly Mammoth", "size_class": "big", "huntable": true,
+			"ecology_phase": "thriving", "x": DANGER_MAMMOTH_COL, "y": DANGER_MAMMOTH_ROW,
+			"biomass": 900.0, "attack": 8.0, "ferocity": 0.9, "aggression": 0.0,
 		},
 		{
-			"id": "game_deer_09",
-			"label": "Red Deer (game_deer_09)",
-			"species": "Red Deer",
-			"size_class": "big",
-			"huntable": true,
-			"ecology_phase": "thriving",
-			"x": DANGER_HARMLESS_COL, "y": DANGER_HARMLESS_ROW,
-			"biomass": 820.0,
-			"danger": 0.0,
+			"id": "game_direwolf_05", "label": "Dire Wolf (game_direwolf_05)",
+			"species": "Dire Wolf", "size_class": "medium", "huntable": true,
+			"ecology_phase": "thriving", "x": DANGER_WOLF_COL, "y": DANGER_WOLF_ROW,
+			"biomass": 240.0, "attack": 4.0, "ferocity": 0.7, "aggression": 0.9,
+		},
+		{
+			"id": "game_deer_09", "label": "Red Deer (game_deer_09)",
+			"species": "Red Deer", "size_class": "big", "huntable": true,
+			"ecology_phase": "thriving", "x": DANGER_DEER_COL, "y": DANGER_DEER_ROW,
+			"biomass": 820.0, "attack": 0.0, "ferocity": 0.0, "aggression": 0.0,
 		},
 	]
-	var raw := PackedFloat32Array()
-	raw.resize(total)
-	var danger_max := 0.0
+	var hunt_raw := PackedFloat32Array()
+	hunt_raw.resize(total)
+	var threat_raw := PackedFloat32Array()
+	threat_raw.resize(total)
+	var hunt_max := 0.0
+	var threat_max := 0.0
 	for herd in herds:
-		var danger := float(herd.get("danger", 0.0))
-		if danger <= 0.0:
-			continue
+		var attack := float(herd.get("attack", 0.0))
+		var hunt := attack * float(herd.get("ferocity", 0.0))
+		var threat := attack * float(herd.get("aggression", 0.0))
 		var idx := int(herd["y"]) * PASTURE_GRID_W + int(herd["x"])
-		if idx >= 0 and idx < total:
-			raw[idx] = maxf(raw[idx], danger)
-			danger_max = maxf(danger_max, raw[idx])
-	var normalized := PackedFloat32Array()
-	normalized.resize(total)
-	for i in total:
-		normalized[i] = (raw[i] / danger_max if danger_max > 0.0 else 0.0)
+		if idx < 0 or idx >= total:
+			continue
+		hunt_raw[idx] = maxf(hunt_raw[idx], hunt)
+		threat_raw[idx] = maxf(threat_raw[idx], threat)
+		hunt_max = maxf(hunt_max, hunt_raw[idx])
+		threat_max = maxf(threat_max, threat_raw[idx])
 	var tiles: Array = []
 	for i in total:
 		tiles.append({
-			"entity": i,
-			"x": i % PASTURE_GRID_W,
-			"y": i / PASTURE_GRID_W,
-			"terrain": int(ids[i]),
+			"entity": i, "x": i % PASTURE_GRID_W, "y": i / PASTURE_GRID_W, "terrain": int(ids[i]),
 		})
+	var channels := {}
+	var channel_order := PackedStringArray()
+	if hunt_max > 0.0:
+		channels[HUNT_DANGER_OVERLAY_KEY] = {
+			"label": "Hunt danger", "description": "How costly the wildlife here is to hunt.",
+			"normalized": _danger_normalized(hunt_raw, hunt_max), "raw": hunt_raw,
+		}
+		channel_order.append(HUNT_DANGER_OVERLAY_KEY)
+	if threat_max > 0.0:
+		channels[THREAT_OVERLAY_KEY] = {
+			"label": "Threat", "description": "How much the wildlife here menaces you unprovoked.",
+			"normalized": _danger_normalized(threat_raw, threat_max), "raw": threat_raw,
+		}
+		channel_order.append(THREAT_OVERLAY_KEY)
 	return {
 		"grid": {"width": PASTURE_GRID_W, "height": PASTURE_GRID_H, "wrap_horizontal": false},
-		"overlays": {
-			"terrain": ids,
-			"channels": {
-				DANGER_OVERLAY_KEY: {
-					"label": "Danger",
-					"description": "How dangerous the wildlife on this tile is.",
-					"normalized": normalized,
-					"raw": raw,
-				},
-			},
-			"channel_order": PackedStringArray([DANGER_OVERLAY_KEY]),
-		},
+		"overlays": {"terrain": ids, "channels": channels, "channel_order": channel_order},
 		"tiles": tiles,
 		"populations": [],
 		"herds": herds,
 	}
+
+func _danger_normalized(raw: PackedFloat32Array, channel_max: float) -> PackedFloat32Array:
+	var normalized := PackedFloat32Array()
+	normalized.resize(raw.size())
+	for i in raw.size():
+		normalized[i] = (raw[i] / channel_max if channel_max > 0.0 else 0.0)
+	return normalized
 
 func _terrain_array() -> Array:
 	var arr: Array = []

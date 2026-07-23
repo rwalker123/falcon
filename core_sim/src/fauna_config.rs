@@ -377,11 +377,24 @@ pub struct SpeciesDef {
     /// for carnivores.
     #[serde(default)]
     pub diet: Diet,
-    /// **Does it initiate?** `0..1` — will it raid unguarded foragers unprovoked (`> 0`), or only
-    /// fight back when hunted (`0`)? `#[serde(default)]` = `0.0`. **Inert this phase** — Phase 1's
-    /// predator-raid trigger consumes it. Validated finite & in `[0, 1]`.
+    /// **Does it initiate?** `0..1` — the probability it raids unguarded foragers *unprovoked* (`> 0`),
+    /// vs only ever reacting to being hunted (`0`). This is **behaviour**, orthogonal to strength
+    /// ([`SpeciesDef::combat`]): a mammoth is immensely strong but `aggression 0` (it never comes for
+    /// your camp), while a wolf is `aggression`-high. `#[serde(default)]` = `0.0`. **Inert this phase**
+    /// — Phase 1's predator-raid trigger consumes it (camp-threat ≈ `attack × aggression`). Validated
+    /// finite & in `[0, 1]`.
     #[serde(default)]
     pub aggression: f32,
+    /// **Does it fight back when attacked?** `0..1` — the probability it turns and fights a hunting
+    /// party rather than *fleeing*. The other half of the behaviour split (with [`SpeciesDef::aggression`]):
+    /// `aggression` is "does it start it", `ferocity` is "does it finish it". **Danger is DERIVED, never
+    /// stored** — hunt-danger ≈ `attack × ferocity` (a strong animal that flees costs you almost
+    /// nothing), so the hunt-casualty adapters scale the animal's effective attack by this. A fleeing
+    /// deer (`ferocity ~0.15`) barely scratches a party; a cornered boar (`0.6`) draws blood; a mammoth
+    /// (`0.9`) is deadly. `#[serde(default)]` = `0.0` (flees — harmless to hunt). Validated finite & in
+    /// `[0, 1]`.
+    #[serde(default)]
+    pub ferocity: f32,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -1177,6 +1190,9 @@ impl FaunaConfig {
             require_non_negative_finite(species_field("combat.attack"), def.combat.attack)?;
             require_positive_finite(species_field("combat.defense"), def.combat.defense)?;
             require_in_unit_range(species_field("aggression"), def.aggression)?;
+            // `ferocity` is a probability (fights back vs flees), so the same `[0, 1]` bound as
+            // `aggression`. It scales the animal's effective attack in the hunt-casualty adapters.
+            require_in_unit_range(species_field("ferocity"), def.ferocity)?;
             // **The shore predicate is only applied on the short-range game path.** The migratory
             // placement path (`suitable_tiles_for` / `build_migratory_route`) picks its loiter
             // anchors off `host_biomes` alone and never consults the site rule, so a migratory

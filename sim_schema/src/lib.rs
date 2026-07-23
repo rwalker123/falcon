@@ -352,12 +352,22 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
-    /// **The per-species danger of hunting this herd** (Predators Phase 0, `docs/plan_predators.md`) —
-    /// a server-derived scalar (today the species' combat `attack`, the casualty driver) for the
-    /// client's band-panel readout + threat overlay. `0` = a harmless hunt. Appended last
-    /// (append-only).
+    /// **The raw combat components of this herd's species** (Predators Phase 0, `docs/plan_predators.md`),
+    /// so the client can DERIVE danger itself — it is never stored server-side, because strength ≠
+    /// danger (hunt-danger ≈ `attack × ferocity`, camp-threat ≈ `attack × aggression`). `attack` /
+    /// [`Self::defense`] are STRENGTH (open-ended, human = 1); [`Self::ferocity`] / [`Self::aggression`]
+    /// are BEHAVIOUR probabilities (0..1). All `0` on a harmless animal. Appended last (append-only).
     #[serde(default)]
-    pub danger: f32,
+    pub attack: f32,
+    /// STRENGTH — how hard the animal is to bring down. See [`Self::attack`].
+    #[serde(default)]
+    pub defense: f32,
+    /// BEHAVIOUR — P(fights back when hunted, vs flees); scales hunt-danger. See [`Self::attack`].
+    #[serde(default)]
+    pub ferocity: f32,
+    /// BEHAVIOUR — P(initiates a raid unprovoked); scales camp-threat. See [`Self::attack`].
+    #[serde(default)]
+    pub aggression: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -396,7 +406,10 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
-            danger: 0.0,
+            attack: 0.0,
+            defense: 0.0,
+            ferocity: 0.0,
+            aggression: 0.0,
         }
     }
 }
@@ -4281,8 +4294,12 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
-                // Per-species hunt danger (Predators Phase 0) — appended last (append-only wire).
-                danger: herd.danger,
+                // Raw combat components (Predators Phase 0) — the client derives danger itself.
+                // Appended last (append-only wire).
+                attack: herd.attack,
+                defense: herd.defense,
+                ferocity: herd.ferocity,
+                aggression: herd.aggression,
             },
         );
         entries.push(entry);
