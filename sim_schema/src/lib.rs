@@ -358,6 +358,23 @@ pub struct HerdTelemetryState {
     /// Appended last (append-only).
     #[serde(default)]
     pub fodder_draw: f32,
+    /// **The pen's NET larder bill after pasture + hay** (Flora Roster F3) — the food/turn its keeper
+    /// hauls from the `FOOD` larder once the footprint's pasture and any drawn hay have covered their
+    /// share (the corral-tend branch's own `demand` = `gross pen_upkeep × (1 − land_hay_fraction)`), in
+    /// **food** units. `0.0` when fully fed by pasture + hay, or unpenned. The render-ready larder term
+    /// of the feed split: with [`Self::pen_upkeep`] (gross) and [`Self::pen_pasture_fraction`],
+    /// `pen_upkeep × pen_pasture_fraction + pen_hay_food + pen_larder_bill == pen_upkeep` — three terms
+    /// of one demand, no double-count. Appended last (append-only).
+    #[serde(default)]
+    pub pen_larder_bill: f32,
+    /// **Hay's contribution to the pen's feed, in food-equivalent units** (Flora Roster F3) — the food
+    /// it *displaced* from the larder (`pen_upkeep × fodder_draw / grass_demand`). [`Self::fodder_draw`]
+    /// is in grass units (~25× the food scale) and cannot share a row with the food-unit pasture/larder
+    /// terms; this can. `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is
+    /// unpenned. The hay term of the render-ready feed split (see [`Self::pen_larder_bill`]). Appended
+    /// last (append-only).
+    #[serde(default)]
+    pub pen_hay_food: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -397,6 +414,8 @@ impl Default for HerdTelemetryState {
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
             fodder_draw: 0.0,
+            pen_larder_bill: 0.0,
+            pen_hay_food: 0.0,
         }
     }
 }
@@ -4296,6 +4315,9 @@ fn create_herds<'a>(
                 pastoralYield: herd.pastoral_yield,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
+                // The render-ready feed split (F3) — appended last (append-only wire).
+                penLarderBill: herd.pen_larder_bill,
+                penHayFood: herd.pen_hay_food,
             },
         );
         entries.push(entry);

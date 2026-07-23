@@ -3496,6 +3496,24 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
+        // `fodder_draw` = the hay this pen drew from its keeper's fodder store last turn (Flora roster
+        // F3). NOTE THE UNITS: this is in FODDER units (`fodder_per_biomass × biomass` scale, ~25× the
+        // food-unit scale for deer), NOT food-equivalent — so it CANNOT sit in the feed-split row beside
+        // the food-unit pasture/larder terms. `pen_hay_food` below is its food-equivalent twin, which
+        // does drive the split. Surfaced for the fodder-store readout / completeness.
+        let _ = dict.insert("fodder_draw", herd.fodderDraw());
+        // The RENDER-READY three-way feed split (Flora roster F3), both in FOOD units so they share the
+        // row with the pasture term — the sim partitions the pen's GROSS demand (`pen_upkeep`) into
+        // three, ZERO client arithmetic (the `pen_feed_upkeep` precedent):
+        //   pasture_food     = pen_upkeep × pen_pasture_fraction  (grazed free by the footprint)
+        //   `pen_hay_food`   = hay's contribution, food-equivalent (0 without Foddering / no hay drawn)
+        //   `pen_larder_bill`= the NET food/turn the keeper actually hauls from the FOOD larder, AFTER
+        //                      pasture + hay (0 when fully fed by them). This is the honest bread bill —
+        //                      the herd drawer's "larder Y.Y" term reads THIS, never the gross
+        //                      `pen_upkeep` (which stays the pre-commit Corral decision's projection).
+        // Sim-pinned invariant: pasture_food + pen_hay_food + pen_larder_bill == pen_upkeep (gross).
+        let _ = dict.insert("pen_larder_bill", herd.penLarderBill());
+        let _ = dict.insert("pen_hay_food", herd.penHayFood());
         // Body mass = the biomass of ONE animal of this species (intensification ladder slice 8b). A
         // real appended wire field (was being dropped — decoder audit), surfaced for completeness /
         // future "N animals" readouts. NOTE: it is BIOMASS, so it CANNOT drive the kill-rhythm — that
@@ -3618,6 +3636,12 @@ fn forage_patches_to_array(
                 // divided by the wild rate; both come from the sim so the two can never disagree.)
                 let _ = share_dict.insert("cultivate_payoff", share.cultivatePayoff());
                 let _ = share_dict.insert("sow_payoff", share.sowPayoff());
+                // The FODDER twin of `sow_payoff` (Flora roster F3): provisions-equivalent hay a Sown
+                // Field of THIS species would pay per turn, routed to the fodder account. >0 marks a
+                // fodder crop (e.g. hay_grass), whose provisions payoff/ratio read 0 — worthless as
+                // food but valuable as feed. The crop picker shows this hay value in place of the 0×
+                // provisions ratio so a fodder crop does not read as a loss. 0 for a normal crop.
+                let _ = share_dict.insert("sow_fodder_payoff", share.sowFodderPayoff());
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);
@@ -4298,6 +4322,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`). The sim answers this — the
     // client must never re-derive it by summing the herds' `pen_upkeep`.
     let _ = dict.insert("pen_feed_upkeep", cohort.penFeedUpkeep() as f64);
+    // The band's FODDER store (Flora roster F3): hay this band has stockpiled to feed its pens, a second
+    // larder distinct from the food larder above. In food-equivalent units. A pen that knows Foddering
+    // draws from this each turn (`HerdTelemetryState.fodderDraw`) to shrink the bread bill it would
+    // otherwise pay from the food larder. 0 for a forager band with no fodder economy.
+    let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback

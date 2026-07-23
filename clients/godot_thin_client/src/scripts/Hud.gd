@@ -347,6 +347,11 @@ const ACTIVITY_GLYPHS := {
 }
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
+# The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
+# distinct from the food larder above, in food-equivalent units. Shown as its own stat line beneath
+# Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread bill —
+# `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
+const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 const FOOD_UNLIMITED_GLYPH := "∞"
 # The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the
 # ONE reader (`_format_detail_bbcode`'s Food/Provisions/Carried threshold tint, which recognizes the
@@ -640,6 +645,11 @@ const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this 
 # conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
 # the decision is "better or worse than wild", not a second significant figure.
 const FLORA_CROP_ROW_FORMAT := "%s %d%% · %.1f×"
+# A FODDER crop (hay) pays HAY, not provisions, so its provisions ratio is 0 and the `N.N×` row would
+# read it as worthless (Flora roster F3). When `sow_fodder_payoff > 0` the row instead states the hay
+# value in its own account — `Hay Grass 30% · 1.8 hay` — so a valuable feed crop never reads as a loss.
+const FLORA_CROP_FODDER_ROW_FORMAT := "%s %d%% · %.1f hay"
+const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.1f fodder/turn as a sown field — feed for penned animals, not food for people."
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea
 # and the ratio exists to stop that being invisible, not to prevent it.
@@ -686,9 +696,10 @@ const FIELD_BADGE_LABEL := "Field"
 # is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
 # state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView).
 const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
-# The pen's feed row in the herd drawer — what THIS pen demands per turn, and whether it is being
-# paid. The band's own ledger row is the sim-summed `pen_feed_upkeep` across all its pens; this is
-# the per-herd demand (`pen_upkeep`), which is why the two are never added together.
+# The pen's feed row in the herd drawer — the NET food-larder bill THIS pen draws per turn
+# (`pen_larder_bill`, after pasture + hay), and whether it is being paid. The same bill the feed-split's
+# "larder Y.Y" term states, so the two never disagree. The band's own ledger row is the sim-summed
+# `pen_feed_upkeep` across all its pens; this is the per-herd figure, which is why the two are never added.
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
@@ -696,13 +707,24 @@ const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
 #   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
 #     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
 #     edges, so the client never recomputes it).
-#   • the FEED SPLIT — "Fed by pasture NN% · larder N.N food/turn" (`pen_pasture_fraction` × 100 and
-#     `pen_upkeep`, the OFFSET larder bill). A self-feeding pen on lush land reads "100% · larder 0.0";
-#     a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
+#   • the FEED SPLIT — "Fed by pasture NN% · hay X.X · larder Y.Y food/turn". The three render-ready
+#     terms the sim partitions the pen's GROSS demand into, ALL in food units, ZERO client arithmetic:
+#     `pen_pasture_fraction` × 100 (grazed free), `pen_hay_food` (hay's food-equivalent draw), and
+#     `pen_larder_bill` (the NET bread bill after pasture + hay). NOTE the larder term reads
+#     `pen_larder_bill`, NOT `pen_upkeep` — `pen_upkeep` is the GROSS projection (`upkeep_per_biomass ×
+#     biomass`, same basis as `corral_yield`, used only for the pre-commit Corral decision, pinned by
+#     `core_sim` `snapshot/mod.rs` `pen_upkeep_*` tests); the honest bill the keeper actually hauls is
+#     `pen_larder_bill`. Sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
+#     pen_larder_bill == pen_upkeep`. The hay segment shows ONLY when `pen_hay_food >= FOOD_FLOW_MIN` (a
+#     pre-Foddering / no-hay pen renders the two-term form); a self-feeding pen reads "100% · larder
+#     0.0", a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
 const PEN_FOOTPRINT_ROW := "Pen"
 const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
 const PEN_FEED_SPLIT_ROW := "Fed by pasture"
-const PEN_FEED_SPLIT_FORMAT := "%d%% · larder %.1f food/turn"
+# The `%s` is the optional hay segment (empty, or `PEN_FEED_SPLIT_HAY_SEGMENT`) spliced between the
+# pasture percent and the NET larder bill — so a pen that drew no hay renders exactly the two-term form.
+const PEN_FEED_SPLIT_FORMAT := "%d%%%s · larder %.1f food/turn"
+const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 # The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
 # On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
 # (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
@@ -6374,6 +6396,12 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE))
     return float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE))
 
+## The FODDER (hay) this entry would pay per turn as a sown field — >0 marks a fodder crop, whose
+## provisions ratio reads 0. Routed to the fodder account, so the picker shows it in place of the 0×
+## ratio. `FLORA_CROP_RATIO_NONE` (0) for a normal provisions crop. Fodder is a Field payoff only.
+func _flora_entry_fodder_payoff(entry: Dictionary) -> float:
+    return float(entry.get("sow_fodder_payoff", FLORA_CROP_RATIO_NONE))
+
 ## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
 ## substituted) on a rung the species cannot climb.
@@ -6455,12 +6483,20 @@ func _build_crop_picker(
         var percent := int(entry["percent"])
         var legal := _flora_entry_allows(entry, policy)
         var ratio := _flora_entry_ratio(entry, policy)
+        # A fodder crop pays hay, not provisions: its ratio is 0, so its face states the hay value in
+        # its own account instead of a worthless-looking "0.0×".
+        var fodder_payoff := _flora_entry_fodder_payoff(entry)
+        var is_fodder := fodder_payoff > FLORA_CROP_RATIO_NONE
         var btn := Button.new()
-        # The payoff rides the face ONLY where there is one: a row greyed by the climbability flags
-        # carries the 0 sentinel, and printing "0.0×" there would read as "a crop worth nothing"
-        # rather than "not a crop at this rung".
-        btn.text = FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio] if ratio > FLORA_CROP_RATIO_NONE \
-            else FLORA_SHARE_FORMAT % [crop_name, percent]
+        # The payoff rides the face ONLY where there is one: a fodder crop shows its hay value, a
+        # provisions crop its ratio, and a row greyed by the climbability flags carries the 0 sentinel
+        # (printing "0.0×" there would read as "a crop worth nothing" rather than "not a crop at this rung").
+        if is_fodder:
+            btn.text = FLORA_CROP_FODDER_ROW_FORMAT % [crop_name, percent, fodder_payoff]
+        elif ratio > FLORA_CROP_RATIO_NONE:
+            btn.text = FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio]
+        else:
+            btn.text = FLORA_SHARE_FORMAT % [crop_name, percent]
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         HudStyle.apply_button(btn, "primary" if legal and species == selected else "ghost")
         # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
@@ -6470,9 +6506,14 @@ func _build_crop_picker(
         btn.disabled = not legal
         if legal:
             any_legal = true
+            # A fodder crop is valuable in the FODDER account, not the provisions one, so it never
+            # takes the loss-warn ink its 0 provisions ratio would otherwise earn: its tooltip names
+            # the hay it pays instead.
+            if is_fodder:
+                btn.tooltip_text = FLORA_CROP_FODDER_TOOLTIP_FORMAT % [crop_name, fodder_payoff]
             # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
             # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
-            if ratio > FLORA_CROP_RATIO_NONE and ratio < FLORA_CROP_BREAK_EVEN_RATIO:
+            elif ratio > FLORA_CROP_RATIO_NONE and ratio < FLORA_CROP_BREAK_EVEN_RATIO:
                 btn.add_theme_color_override("font_color", HudStyle.WARN)
                 btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
                 btn.tooltip_text = FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio]
@@ -8398,6 +8439,11 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
         if _food_flow_present:
             _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
                 _food_breakdown_lines(unit_data))
+        # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
+        # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
+        var fodder_store := float(unit_data.get("fodder_store", 0.0))
+        if fodder_store > FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > FOOD_FLOW_MIN:
+            lines.append(BAND_FODDER_ROW_FORMAT % fodder_store)
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -8809,12 +8855,23 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
                 var pen_radius := int(herd_data.get("pen_radius", 0))
                 var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
                 lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
-                var upkeep := float(herd_data.get("pen_upkeep", 0.0))
+                # The larder term is the NET bread bill (`pen_larder_bill`), NOT the gross `pen_upkeep`.
+                var larder_bill := float(herd_data.get("pen_larder_bill", 0.0))
                 var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
+                # Hay is the middle feed term, in food-equivalent units (`pen_hay_food`, NOT the
+                # grass-unit `fodder_draw`), shown ONLY when the pen drew hay. pasture_food + hay +
+                # larder == gross pen_upkeep (sim-pinned), so the three never double-count.
+                var hay_food := float(herd_data.get("pen_hay_food", 0.0))
+                var hay_segment := ""
+                if hay_food >= FOOD_FLOW_MIN:
+                    hay_segment = PEN_FEED_SPLIT_HAY_SEGMENT % hay_food
                 lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
-                    % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), upkeep]])
-                if upkeep >= FOOD_FLOW_MIN:
-                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
+                    % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), hay_segment, larder_bill]])
+                # The standing "Pen feed" debit is the SAME food-larder bill the split's larder term
+                # states (`pen_larder_bill`, net of pasture + hay), not the gross `pen_upkeep` — so a
+                # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
+                if larder_bill >= FOOD_FLOW_MIN:
+                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(larder_bill, fed_fraction)])
             elif corral_progress > 0.0:
                 lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
         elif ceiling == HUSBANDRY_CEILING_PASTORAL:
@@ -8984,6 +9041,9 @@ func _flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # payoff; without these the row renders a correct ratio above a forecast that ignores it.
             "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
             "sow_payoff": float(entry.get("sow_payoff", 0.0)),
+            # Fodder crops pay hay, not provisions — carried through so the picker row can show the
+            # hay value in place of the 0× provisions ratio a fodder crop would otherwise read.
+            "sow_fodder_payoff": float(entry.get("sow_fodder_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries

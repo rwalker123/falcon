@@ -321,6 +321,13 @@ pub(crate) fn herd_snapshot_entries(
                 // the corral-tend branch wrote, so the client can render "fed by hay" beside the
                 // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
                 fodder_draw: herd.map(|herd| herd.fodder_draw).unwrap_or(0.0),
+                // The render-ready feed split (Flora Roster F3): the NET larder bill after pasture +
+                // hay, and hay's food-equivalent, both the transient `Herd` scratch the corral-tend
+                // branch stamped, both in FOOD units. `0.0` for an unpenned/absent herd. With
+                // `pen_upkeep` (gross) and `pen_pasture_fraction`, the client draws "pasture NN% · hay
+                // X.X · larder Y.Y" with no arithmetic of its own.
+                pen_larder_bill: herd.map(|herd| herd.pen_larder_bill).unwrap_or(0.0),
+                pen_hay_food: herd.map(|herd| herd.pen_hay_food).unwrap_or(0.0),
             }
         })
         .collect()

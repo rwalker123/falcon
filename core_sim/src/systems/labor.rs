@@ -714,7 +714,27 @@ pub fn advance_labor_allocation(
                         } else {
                             0.0
                         };
-                        let demand = pen_upkeep(herd, &fauna) * (1.0 - land_hay_fraction);
+                        // **The three-terms-of-one-demand split (Flora Roster F3).** The gross bread
+                        // bill (`pen_upkeep`, on the SAME basis `corralYield` uses) is paid down by three
+                        // sources that PARTITION it — the footprint's pasture, delivered hay, and the
+                        // larder. Stamp the two NET, food-unit terms the client renders (pasture is
+                        // `gross × pen_pasture_fraction`, so it needs no field of its own), ready to draw
+                        // "Fed by pasture NN% · hay X.X · larder Y.Y" with zero client arithmetic:
+                        //   pasture_food + pen_hay_food + pen_larder_bill == gross   (± f32 epsilon)
+                        // Hay's food-equivalent is the share of the bread bill it paid off — its grass
+                        // draw over the grass demand — converting `fodder_draw` out of grass units (~25×
+                        // the food scale) so it sits in the same row as the food-unit pasture/larder
+                        // terms. Computed from the same locals, so the wire cannot disagree with what the
+                        // pen paid.
+                        let gross_upkeep = pen_upkeep(herd, &fauna);
+                        herd.pen_hay_food = if demand_grass > 0.0 {
+                            gross_upkeep * (fodder_draw / demand_grass)
+                        } else {
+                            0.0
+                        };
+                        let demand = gross_upkeep * (1.0 - land_hay_fraction);
+                        // The NET larder bill after pasture + hay — the exact number billed just below.
+                        herd.pen_larder_bill = demand;
                         let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
                         pen_feed_paid += paid;
                         // The herd's TOTAL fed fraction: the land+hay share plus the paid share of the

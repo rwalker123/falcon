@@ -1407,6 +1407,21 @@ table HerdTelemetryState {
   // its hay draws down provisions less (or not at all). 0 for an unpenned herd, a keeper that has not
   // learned Foddering, or a pen whose own footprint already fed it. Appended (append-only).
   fodderDraw:float = 0;
+  // --- The render-ready feed split (Flora Roster F3, appended last) --- the three terms one pen
+  // demand partitions into, so the client draws "Fed by pasture NN% · hay X.X · larder Y.Y" with ZERO
+  // arithmetic (the `penFeedUpkeep` precedent). `penUpkeep` above is the GROSS bill (upkeep × biomass,
+  // the same basis `corralYield` uses); these two are the NET remainders, in FOOD units.
+  // `penLarderBill` = the food/turn the keeper hauls from the FOOD larder AFTER the footprint's pasture
+  // and any drawn hay covered their share — the corral-tend branch's own `demand` local (= penUpkeep ×
+  // (1 − (footprint + hay)/grass_demand)). 0 when fully fed by pasture + hay, or unpenned. The
+  // invariant the client relies on: pasture_food + penHayFood + penLarderBill == penUpkeep (gross),
+  // where pasture_food = penUpkeep × penPastureFraction.
+  penLarderBill:float = 0;
+  // `penHayFood` = hay's contribution in FOOD-equivalent units (the food it DISPLACED from the larder
+  // = penUpkeep × fodderDraw / grass_demand). `fodderDraw` is in grass units (~25× the food scale) and
+  // cannot sit in the same row as the food-unit pasture/larder terms; this can. 0 when no hay drawn /
+  // no Foddering / unpenned.
+  penHayFood:float = 0;
 }
 
 table CommandEventState {

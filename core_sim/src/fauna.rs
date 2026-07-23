@@ -352,6 +352,23 @@ pub struct Herd {
     /// show "fed by hay" beside the `penUpkeep` "fed by bread". **Not** snapshot-persisted (recomputed
     /// each turn; the *store* itself rides `LocalStore`, which is persisted).
     pub fodder_draw: f32,
+    /// Transient per-turn scratch: the **net** food/turn this pen's keeper hauls from the `FOOD` larder,
+    /// *after* the footprint's pasture and any drawn hay have paid their share (Flora Roster F3) — the
+    /// corral-tend branch's own `demand` local (`gross pen_upkeep × (1 − land_hay_fraction)`), in
+    /// **food** units and the exact number the branch bills. `0.0` when pasture and hay fully feed the
+    /// pen, or for an unpenned herd. Exported as `penLarderBill` — the render-ready larder term of the
+    /// "pasture NN% · hay X.X · larder Y.Y" feed split, so the client sums nothing. **Not**
+    /// snapshot-persisted (recomputed each turn, like `fodder_draw`/`pen_pasture_fraction`).
+    pub pen_larder_bill: f32,
+    /// Transient per-turn scratch: hay's contribution to this pen's feed, converted to
+    /// **food-equivalent** units — the food it *displaced* from the larder (`gross pen_upkeep ×
+    /// fodder_draw / grass_demand`, Flora Roster F3). [`Self::fodder_draw`] itself is in grass units
+    /// (~25× the food scale) and cannot share a row with the food-unit pasture/larder terms; this can.
+    /// `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is unpenned. Exported as
+    /// `penHayFood` — the hay term of the feed split. Written beside `fodder_draw`; **not**
+    /// snapshot-persisted. The three terms partition the gross bill:
+    /// `gross × pen_pasture_fraction + pen_hay_food + pen_larder_bill == gross` (± f32 epsilon).
+    pub pen_hay_food: f32,
     /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's keeper band
     /// — the per-turn hay output of the band's fodder Fields (Flora Roster F3, §5.3). Written *after*
     /// the assignment loop in `advance_labor_allocation` (Population) and read the **next** turn by
@@ -491,6 +508,8 @@ impl Herd {
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
             fodder_draw: 0.0,
+            pen_larder_bill: 0.0,
+            pen_hay_food: 0.0,
             fodder_delivery_rate: 0.0,
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
@@ -1223,6 +1242,8 @@ fn herd_from_state(state: &HerdState) -> Herd {
         // Transient F3 scratch — a rehydrated pen reads no hay draw and no fodder inflow until its
         // keeper works a turn (so a rollback can only *shrink* K/feed for a turn, never inflate them).
         fodder_draw: 0.0,
+        pen_larder_bill: 0.0,
+        pen_hay_food: 0.0,
         fodder_delivery_rate: 0.0,
         corralled_tended_this_turn: true,
         pen_fed_fraction: PEN_FULLY_FED,
@@ -2619,6 +2640,15 @@ pub fn advance_husbandry(
                     // needs no reset — it is recomputed for every herd each turn in `advance_herd_grazing`
                     // and is not on the wire.)
                     herd.pen_pasture_fraction = 0.0;
+                    // Same reasoning for the F3 feed-split scratch (`fodder_draw` and its two derived
+                    // food-unit terms), all written ONLY in the corral-tend branch: clear them so an
+                    // escaped, now-mobile herd exports `0` for the whole "fed by pasture/hay/larder"
+                    // split — each of `fodderDraw`/`penHayFood`/`penLarderBill` reads "0 for an unpenned
+                    // herd" on the wire. (`fodder_draw` previously kept its stale value here; resetting
+                    // it alongside `pen_pasture_fraction` closes that gap.)
+                    herd.fodder_draw = 0.0;
+                    herd.pen_hay_food = 0.0;
+                    herd.pen_larder_bill = 0.0;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",

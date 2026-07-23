@@ -467,3 +467,124 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
          pays it down — the two never trade"
     );
 }
+
+/// `pen.upkeep_per_biomass` (fauna_config.json `husbandry.pen`) — the pen's **gross** feed rate per
+/// unit biomass, the basis `penUpkeep`/`corralYield` share. Named so the split invariant asserts the
+/// stamped terms against an INDEPENDENT gross, not a re-derivation of themselves.
+const PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
+
+/// The richest pasture tile WITHOUT stripping its graze — the feed-split test overrides
+/// `footprint_intake` directly, so the tile's own pasture is irrelevant and left intact.
+fn pen_tile(app: &App) -> UVec2 {
+    app.world
+        .resource::<GrazeRegistry>()
+        .richest_patch()
+        .expect("the earthlike map seeds graze patches")
+        .0
+}
+
+/// Drive ONE corral-tend turn on a directly-posed pen and read back the three stamped feed terms.
+///
+/// The pen at `biomass` demands `grass_demand = FODDER_RATE × biomass` of graze; we hand it exactly
+/// `pasture` from the footprint and `hay_in_store` in the keeper's `FODDER` store (drawn only if
+/// `foddering`), overriding the graze/grazing systems so each scenario is exact. `advance_labor_allocation`
+/// then runs the real corral-tend FEED+HARVEST, stamping the split on `Herd`. Returns
+/// `(gross, pasture_food, pen_hay_food, pen_larder_bill)` — the gross bread bill (`upkeep × biomass`,
+/// an INDEPENDENT reconstruction from the biomass we set) and the three NET food-unit shares.
+fn feed_split_terms(
+    biomass: f32,
+    pasture: f32,
+    foddering: bool,
+    hay_in_store: f32,
+) -> (f32, f32, f32, f32) {
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    if foddering {
+        learn_foddering(&mut app);
+    }
+    let id = seat_pen(&mut app, tile, 400.0, biomass);
+    // `Surplus` when NOT foddering so tending never teaches Foddering (the lossy-bread test's control
+    // trick); `Sustain` is fine once we granted it outright. The corral-tend branch FEEDs + HARVESTs
+    // under either policy.
+    let policy = if foddering {
+        FollowPolicy::Sustain
+    } else {
+        FollowPolicy::Surplus
+    };
+    let keeper = spawn_keeper(&mut app, &id, tile, policy);
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();
+        cohort.stores.set(FOOD, scalar_from_f32(RESTOCK));
+        cohort.stores.set(FODDER, scalar_from_f32(hay_in_store));
+    }
+    // Pose the grazed footprint directly (skip `advance_herd_grazing`) so `pasture` is exact and the
+    // biomass we seated is the biomass the FEED charges on (no `advance_herds` clamp/regrow ran).
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.footprint_intake = pasture;
+    }
+    app.world.run_system_once(advance_labor_allocation);
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(&id).unwrap();
+    let gross = PEN_UPKEEP_PER_BIOMASS * biomass;
+    let pasture_food = gross * herd.pen_pasture_fraction;
+    (gross, pasture_food, herd.pen_hay_food, herd.pen_larder_bill)
+}
+
+/// **The F3 feed-split invariant: the three feed terms partition the gross bread bill.** The client's
+/// "Fed by pasture NN% · hay X.X · larder Y.Y" row must never over- or under-count, so
+/// `pasture_food + penHayFood + penLarderBill == penUpkeep` (gross) on a penned herd, with
+/// `pasture_food = penUpkeep × penPastureFraction`. Asserted across a pasture-only pen, a hay-fed pen,
+/// and a fully-fed pen — the last proving the larder term drops to 0 when pasture + hay cover it. This
+/// is the guarantee the pre-existing two-term (pasture + larder) split violated on any pen with
+/// pasture > 0.
+#[test]
+fn the_three_pen_feed_terms_sum_to_the_gross_upkeep() {
+    const BIOMASS: f32 = 100.0; // grass_demand = FODDER_RATE × 100 = 10 grass/turn
+    const EPS: f32 = 1e-5;
+
+    // (1) Pasture-only pen: the footprint covers 4 of the 10 grass demand, no hay. The larder pays the
+    //     uncovered 60% — pasture > 0, hay == 0, larder > 0.
+    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 4.0, false, 0.0);
+    println!(
+        "pasture-only: gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
+    );
+    assert!(pasture > 0.0, "the footprint fed part of the pen");
+    assert!(hay.abs() < EPS, "no hay was drawn (pen_hay_food == 0)");
+    assert!(larder > 0.0, "the larder pays the uncovered share");
+    assert!(
+        (pasture + hay + larder - gross).abs() < EPS,
+        "pasture-only: pasture + hay + larder must equal gross ({gross})"
+    );
+
+    // (2) Hay-fed pen: barren footprint, hay in store covers 5 of the 10 demand. The larder pays the
+    //     rest — pasture == 0, hay > 0, larder > 0.
+    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 0.0, true, 5.0);
+    println!(
+        "hay-fed:      gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
+    );
+    assert!(pasture.abs() < EPS, "a barren footprint feeds nothing");
+    assert!(hay > 0.0, "hay was drawn (pen_hay_food > 0)");
+    assert!(larder > 0.0, "the larder pays what the partial hay left");
+    assert!(
+        (pasture + hay + larder - gross).abs() < EPS,
+        "hay-fed: pasture + hay + larder must equal gross ({gross})"
+    );
+
+    // (3) Fully-fed pen: footprint 4 + ample hay together cover the whole demand → the larder bill
+    //     drops to 0. pasture > 0, hay > 0, larder == 0.
+    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 4.0, true, 100.0);
+    println!(
+        "fully-fed:    gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
+    );
+    assert!(pasture > 0.0 && hay > 0.0, "pasture and hay both feed it");
+    assert!(
+        larder.abs() < EPS,
+        "fully fed by pasture + hay → the larder bill is 0 (got {larder})"
+    );
+    assert!(
+        (pasture + hay + larder - gross).abs() < EPS,
+        "fully-fed: pasture + hay + larder must equal gross ({gross})"
+    );
+}

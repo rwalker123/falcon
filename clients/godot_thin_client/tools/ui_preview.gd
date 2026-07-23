@@ -836,6 +836,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_crop_picker_sow")
 
+	# State F3 fodder crop — a basket with a HAY crop under Sow. Hay Grass pays fodder, not provisions,
+	# so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the picker
+	# instead shows "Hay Grass 30% · 1.8 hay". The provisions crop beside it (Wild Emmer) keeps its
+	# unchanged "70% · 3.2×" ratio — proof a normal crop's row is untouched.
+	_hud.show_tile_selection(_fodder_basket_tile_fixture())
+	_hud._forage_assign_policy = "sow"
+	_hud._forage_assign_species = ""
+	_compose_forage(_fodder_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker_fodder")
+
 	# State 6b-sowing — the rung-3 BUILD meter: the Field row reads "Sowing 45%", following the pen's
 	# "Building 40%" / the fence's "Fencing 60%" convention. It sits BESIDE the "Cultivation 🌾 Tended
 	# Patch" row: the patch carries TWO independent meters, and both are the SOURCE's own.
@@ -1049,6 +1060,18 @@ func _ready() -> void:
 	_compose_herd(_extending_pen_herd_fixture())
 	await _settle()
 	await _save("herd_pen_extending")
+
+	# State F3 foddered pen — the honest THREE-way feed split. The pen drew hay, so its GROSS demand
+	# (`pen_upkeep` 2.0) partitions into pasture 40% (0.80 free) · hay 0.9 (`pen_hay_food`) · larder 0.3
+	# (`pen_larder_bill`, the NET bread bill) — 0.80 + 0.90 + 0.30 == 2.0, the sim-pinned invariant. It
+	# reads "Fed by pasture 40% · hay 0.9 · larder 0.3 food/turn"; the two-term states above
+	# (`herd_domesticated` 0% · larder 1.7, `herd_pen_self_feeding` 100% · larder 0.0) show NO hay term,
+	# so the two forms are provably different — and the larder term is now the true net, not the gross.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_foddered_pen_herd_fixture())
+	_compose_herd(_foddered_pen_herd_fixture())
+	await _settle()
+	await _save("herd_pen_foddered")
 
 	# State 2d-δ wild ceiling — a hunt-only species. NO husbandry track in the drawer (no
 	# domestication / corral / pen rows), just the dim "Wild game — hunt only" hint, and the hunt policy
@@ -2785,6 +2808,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
 	band["food_consumption"] = 1.15     # the PEOPLE's meals
 	band["pen_feed_upkeep"] = 1.74      # the ANIMALS' feed — a debit in neither row above
+	band["fodder_store"] = 12.4         # the band's HAY larder (Flora roster F3) — feeds the pen
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
 		# A managed source: one keeper, take == sustainable (escapement); Corral is managed, so the
@@ -3571,6 +3595,25 @@ func _sowable_long_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = _long_basket_tile_fixture()["patch_composition"]
 	return tile
 
+## A basket with a FODDER crop (Flora roster F3): Hay Grass pays HAY, not provisions, so its provisions
+## payoff/ratio read 0 and the `N.N×` row would call it worthless. `sow_fodder_payoff` (1.8) is >0, so
+## the picker shows "Hay Grass 30% · 1.8 hay" — valuable in its own account — while the provisions crop
+## beside it (Wild Emmer, `sow_yield_ratio` 3.2) keeps its unchanged "70% · 3.2×" ratio. On sowable
+## ground so both rows are `can_sow`-legal and pressable — a fodder crop is a legal, valuable choice.
+func _fodder_basket_tile_fixture() -> Dictionary:
+	var tile := _sowable_tile_fixture()
+	tile["patch_composition"] = [
+		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.70,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 1.60, "sow_fodder_payoff": 0.0},
+		{"species": "hay_grass", "display_name": "Hay Grass", "share": 0.30,
+			"can_cultivate": false, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_fodder_payoff": 1.8},
+	]
+	return tile
+
 
 func _overgrazed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
@@ -4196,11 +4239,15 @@ func _domesticated_herd_fixture() -> Dictionary:
 	# amber "Pen feed: -1.74 /turn" standing debit.
 	fixture["pen_upkeep"] = PEN_UPKEEP_RED_DEER
 	fixture["pen_fed_fraction"] = 1.0
-	# Grazing 2d-γ — a radius-1 pen on POOR footprint: its fenced land covers NONE of the feed, so the
-	# feed-split reads "Fed by pasture 0% · larder 1.7 food/turn" and the full larder bill still stands.
+	# Grazing 2d-γ — a radius-1 pen on POOR footprint: its fenced land covers NONE of the feed
+	# (`pen_pasture_fraction` 0.0), so the whole GROSS demand falls on the FOOD larder as the net bill
+	# (`pen_larder_bill` == gross, no hay). Feed-split reads "Fed by pasture 0% · larder 1.7 food/turn".
+	# Invariant: gross × pasture(0) + hay(0) + larder(1.74) == gross(1.74).
 	fixture["pen_radius"] = 1
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = 0.0
+	fixture["pen_larder_bill"] = PEN_UPKEEP_RED_DEER
+	fixture["pen_hay_food"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
 	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
 	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
@@ -4249,8 +4296,9 @@ func _starving_pen_herd_fixture() -> Dictionary:
 	return fixture
 
 ## A SELF-FEEDING pen on lush land (Grazing 2d-γ): a radius-2 fenced footprint (19 tiles) whose grazing
-## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the offset larder bill `pen_upkeep`
-## is 0. The feed-split row reads "Fed by pasture 100% · larder 0.0 food/turn" and the amber Pen-feed
+## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the NET larder bill `pen_larder_bill`
+## is 0 (the GROSS `pen_upkeep` stays 1.74). The feed-split row reads "Fed by pasture 100% · larder 0.0
+## food/turn" and the amber Pen-feed
 ## debit row disappears (nothing left to haul). This is the state the Extend-pen affordance renders on —
 ## a built pen, no ring in flight (`pen_extend_progress` 0), so `_build_herd_assign_controls` shows the
 ## "Extend pen" button.
@@ -4259,7 +4307,11 @@ func _self_feeding_pen_herd_fixture() -> Dictionary:
 	fixture["pen_radius"] = 2
 	fixture["pen_footprint_tiles"] = 19
 	fixture["pen_pasture_fraction"] = 1.0
-	fixture["pen_upkeep"] = 0.0
+	# `pen_upkeep` stays the realistic GROSS (inherited 1.74); the FOOTPRINT grazes the whole demand, so
+	# the net FOOD-larder bill is 0 → "100% · larder 0.0" and the Pen-feed debit row disappears.
+	# Invariant: gross × pasture(1.0) + hay(0) + larder(0) == gross(1.74).
+	fixture["pen_larder_bill"] = 0.0
+	fixture["pen_hay_food"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
 	return fixture
 
@@ -4271,8 +4323,29 @@ func _extending_pen_herd_fixture() -> Dictionary:
 	fixture["pen_radius"] = 1
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = 0.6
-	fixture["pen_upkeep"] = 0.70
+	# `pen_upkeep` stays the realistic GROSS (inherited 1.74); the footprint grazes 60%, so the net
+	# FOOD-larder bill is gross × (1 − 0.6) = 0.696 → "60% · larder 0.7", no hay.
+	# Invariant: gross(1.74) × pasture(0.6) + hay(0) + larder(0.696) == gross(1.74).
+	fixture["pen_larder_bill"] = 0.696
+	fixture["pen_hay_food"] = 0.0
 	fixture["pen_extend_progress"] = 0.6
+	return fixture
+
+## A FODDERED pen (Flora roster F3): the pen knows Foddering and drew hay, so its feed is a THREE-way
+## split, all food units. GROSS demand `pen_upkeep` = 2.0 partitions into: pasture 40%
+## (`pen_pasture_fraction` 0.40 → 0.80 food grazed free), hay 0.90 (`pen_hay_food`, the food it
+## displaced from the larder), and the NET bread bill 0.30 (`pen_larder_bill`). The frame PROVES the
+## sim-pinned invariant, not a hand-picked answer: 0.80 + 0.90 + 0.30 == 2.0 (gross). Feed-split reads
+## "Fed by pasture 40% · hay 0.9 · larder 0.3 food/turn"; the Pen-feed row states the same 0.3 net bill.
+func _foddered_pen_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["pen_radius"] = 1
+	fixture["pen_footprint_tiles"] = 7
+	fixture["pen_upkeep"] = 2.0        # realistic GROSS (upkeep_per_biomass × biomass scale)
+	fixture["pen_pasture_fraction"] = 0.40
+	fixture["pen_hay_food"] = 0.90
+	fixture["pen_larder_bill"] = 0.30  # 2.0 − (2.0 × 0.40) − 0.90 == 0.30
+	fixture["pen_extend_progress"] = 0.0
 	return fixture
 
 ## A base terrain legend (key == "terrain") shaped exactly like
