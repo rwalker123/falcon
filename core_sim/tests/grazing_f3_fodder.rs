@@ -588,3 +588,79 @@ fn the_three_pen_feed_terms_sum_to_the_gross_upkeep() {
         "fully-fed: pasture + hay + larder must equal gross ({gross})"
     );
 }
+
+/// **The F3 escape invariant: an escaped pen drops its hay-delivery rate, so its `K` reverts to
+/// footprint-only.** `fodder_delivery_rate` is the one F3 scratch field `ecological_carrying_capacity`
+/// reads into `K` — added inside the single `K` seam for EVERY herd with `fodder_per_biomass > 0`,
+/// penned or not. When a pen escapes it leaves every band's `kept_pens`, so the labor arm never
+/// re-stamps it; the escape branch of `advance_husbandry` must therefore zero the rate itself, or the
+/// now-mobile pastoral/wild herd carries a stale hay rate and its roam-range `K` stays **inflated by hay
+/// it no longer receives** (breaking the "a wild/unfoddered herd's `K` is byte-identical to its
+/// footprint-only self" invariant). Proven by comparing a pen that carried a stale rate before escaping
+/// against an identical pen that never did: after escape both must read `fodder_delivery_rate == 0` and
+/// a byte-identical footprint-only `K`. (Before the fix the stale pen keeps its rate and reads a larger
+/// `K`, so both assertions fail.)
+#[test]
+fn an_escaped_pen_drops_its_hay_rate_and_reverts_to_footprint_only_k() {
+    /// A plausible sustained hay inflow a keeper's Fields would have stamped while tending the pen.
+    const STALE_RATE: f32 = 20.0;
+
+    // Seat a domesticated herd as a PEN on a REAL graze tile (un-stripped → a footprint-derived `K`),
+    // stamp `stale_rate` hay as the labor arm would for a kept pen, then force it untended so
+    // `advance_husbandry`'s escape branch fires. `corral_at` grants a one-turn grace, so the first
+    // `advance_husbandry` spares the pen (clearing the grace) and the second ESCAPES it. Finally
+    // recompute `K` for the now-mobile herd (the one write lives in `advance_herds`). Returns the app
+    // + herd id.
+    fn escape_with_rate(stale_rate: f32) -> (App, String) {
+        let mut app = base_world();
+        let tile = pen_tile(&app);
+        learn_foddering(&mut app);
+        let id = seat_pen(&mut app, tile, 400.0, 100.0);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            registry
+                .herds
+                .iter_mut()
+                .find(|h| h.id == id)
+                .unwrap()
+                .fodder_delivery_rate = stale_rate;
+        }
+        app.world.run_system_once(advance_husbandry); // grace: spared, flag cleared
+        app.world.run_system_once(advance_husbandry); // untended: escapes
+        app.world.run_system_once(advance_herds); // recompute K for the now-mobile herd
+        (app, id)
+    }
+
+    let (stale_app, stale_id) = escape_with_rate(STALE_RATE);
+    let (ctrl_app, ctrl_id) = escape_with_rate(0.0);
+
+    // The pen genuinely escaped (mobile again), and its hay rate is zeroed.
+    let (stale_rate_after, stale_corralled) = {
+        let herd = stale_app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&stale_id)
+            .unwrap();
+        (herd.fodder_delivery_rate, herd.is_corralled())
+    };
+    assert!(
+        !stale_corralled,
+        "the pen must have escaped (no longer corralled)"
+    );
+    // THE fix: the escape branch zeroes the one K-feeding scratch field. Before the fix this reads
+    // STALE_RATE and the assertion fails.
+    assert_eq!(
+        stale_rate_after, 0.0,
+        "an escaped pen must drop its stale hay-delivery rate (got {stale_rate_after})"
+    );
+
+    // …so its footprint-only `K` is byte-identical to the never-foddered control's — no hay inflation.
+    let stale_k = k_of(&stale_app, &stale_id);
+    let ctrl_k = k_of(&ctrl_app, &ctrl_id);
+    assert_eq!(
+        stale_k.to_bits(),
+        ctrl_k.to_bits(),
+        "an escaped pen's K must be footprint-only, byte-identical to a never-foddered herd on the \
+         same ground (stale {stale_k} vs control {ctrl_k})"
+    );
+}

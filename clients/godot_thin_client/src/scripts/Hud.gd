@@ -348,9 +348,11 @@ const ACTIVITY_GLYPHS := {
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 # The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
-# distinct from the food larder above, in food-equivalent units. Shown as its own stat line beneath
-# Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread bill —
-# `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
+# distinct from the food larder above, in fodder/grass units (the raw `FODDER` `LocalStore` value,
+# `fodder_per_biomass × biomass` scale, ~25× the food scale — NOT comparable to and never summed onto
+# the food larder; only `pen_hay_food` is the food-equivalent conversion). Shown as its own stat line
+# beneath Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread
+# bill — `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 const FOOD_UNLIMITED_GLYPH := "∞"
 # The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the

@@ -2649,6 +2649,18 @@ pub fn advance_husbandry(
                     herd.fodder_draw = 0.0;
                     herd.pen_hay_food = 0.0;
                     herd.pen_larder_bill = 0.0;
+                    // **The one F3 scratch field that feeds `K`, and the reason this reset matters most**
+                    // (Flora Roster F3, §5.3). `fodder_delivery_rate` is the sustained hay inflow the
+                    // labor arm stamps onto a *kept* pen; `ecological_carrying_capacity` adds it inside
+                    // the one `K` seam for *every* herd with `fodder_per_biomass > 0`, penned or not. An
+                    // escaped herd is no longer in any band's `kept_pens`, so the labor arm never
+                    // re-stamps it — without this reset it reverts to a mobile pastoral/wild herd still
+                    // carrying its old hay rate, and its roam-range `K` stays inflated by hay it no
+                    // longer receives (breaking the "a wild/unfoddered herd's `K` is byte-identical to
+                    // its footprint-only self" invariant at `ecological_carrying_capacity`). Logistics
+                    // runs before Population, so a still-kept pen is re-stamped the same turn; only a
+                    // genuinely escaped herd is zeroed here.
+                    herd.fodder_delivery_rate = 0.0;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",

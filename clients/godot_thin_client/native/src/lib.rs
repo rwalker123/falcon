@@ -4323,9 +4323,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // client must never re-derive it by summing the herds' `pen_upkeep`.
     let _ = dict.insert("pen_feed_upkeep", cohort.penFeedUpkeep() as f64);
     // The band's FODDER store (Flora roster F3): hay this band has stockpiled to feed its pens, a second
-    // larder distinct from the food larder above. In food-equivalent units. A pen that knows Foddering
-    // draws from this each turn (`HerdTelemetryState.fodderDraw`) to shrink the bread bill it would
-    // otherwise pay from the food larder. 0 for a forager band with no fodder economy.
+    // larder distinct from the food larder above. Copied verbatim from `cohort.fodderStore()` — the
+    // FODDER `LocalStore` value in fodder/grass units (`fodder_per_biomass × biomass` scale, ~25× the
+    // food scale, no conversion), consistent with `fodder_draw` (grass units) and distinct from
+    // `pen_hay_food` (the food-equivalent term). A pen that knows Foddering draws from this each turn
+    // (`HerdTelemetryState.fodderDraw`) to shrink the bread bill it would otherwise pay from the food
+    // larder. 0 for a forager band with no fodder economy.
     let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
