@@ -207,6 +207,8 @@ pub(crate) fn herd_snapshot_entries(
         .iter()
         .map(|entry| {
             let herd = registry.find(&entry.id);
+            // The species row backing this herd — resolved once for the raw combat components below.
+            let species_def = fauna.species_by_display(&entry.species);
             let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
@@ -328,6 +330,15 @@ pub(crate) fn herd_snapshot_entries(
                 // X.X · larder Y.Y" with no arithmetic of its own.
                 pen_larder_bill: herd.map(|herd| herd.pen_larder_bill).unwrap_or(0.0),
                 pen_hay_food: herd.map(|herd| herd.pen_hay_food).unwrap_or(0.0),
+                // Predators Phase 0 — the RAW combat components of this herd's species
+                // (`docs/plan_predators.md`). Danger is DERIVED client-side, never stored, because
+                // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression.
+                // Resolved by display name (the herd's `species` string); a herd whose species does
+                // not resolve reads all-zeros (harmless).
+                attack: species_def.map(|def| def.combat.attack).unwrap_or(0.0),
+                defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
+                ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
+                aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
             }
         })
         .collect()

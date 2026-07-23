@@ -1,0 +1,8 @@
+{
+  "_comment": "The creatures roster (docs/plan_predators.md). Intrinsic CombatStats for non-fauna units. A human is not wildlife (not fauna_config) and its stats are not resolver tuning (not combat_config). Playtest dials.",
+  "creatures": {
+    "person": {
+      "combat": { "attack": 1.0, "defense": 1.0, "range": "melee" }
+    }
+  }
+}

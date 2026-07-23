@@ -4840,6 +4840,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
+        CommandEventKind::HuntDanger => "Dangerous hunt",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",

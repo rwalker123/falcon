@@ -518,6 +518,19 @@ impl PopulationCohort {
     pub fn sync_size(&mut self) {
         self.size = self.total().to_u32();
     }
+
+    /// **Remove combat dead from the working-age bracket** (Predators Phase 0 — the new casualty
+    /// mortality path, `docs/plan_predators.md`). Hunters and warriors are working-age, so a dangerous
+    /// hunt's `killed` come out of `working` (floored at 0), and `size` is resynced. This is the
+    /// `death_fraction` seam's combat twin — a net-new way people die, beside starvation, cold and
+    /// elder mortality. Casualties are working-age only in Phase 0.
+    pub fn apply_combat_casualties(&mut self, killed: Scalar) {
+        if killed <= scalar_zero() {
+            return;
+        }
+        self.working = (self.working - killed).max(scalar_zero());
+        self.sync_size();
+    }
 }
 
 /// Power node metadata bound to a tile entity.

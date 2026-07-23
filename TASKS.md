@@ -860,10 +860,13 @@ equipment is consumable inventory; you allocate working-age labor across roles.
 - [ ] **Food ledger (client).** Per-band income/outflow breakdown (+forage/+hunt/+network/
   −consumption = net/turn → days to empty) + population-vs-carry-cap readout. Load-bearing
   legibility for the equilibrium/settle loop, not cosmetic.
-- [ ] **M1-threats — minimal predators.** Predator pressure on the band / unguarded foragers &
-  hunters, resolved against Warrior strength (equipped vs bare-handed) → casualties or yield loss.
-  Folded into M1 (cheaper to build the Warrior↔threat interface now than retrofit); distinct slice
-  so M1 can land without it if scope demands. Threat *variety* (barbarians, rival civs) deferred.
+- [ ] **M1-threats — minimal predators. → SUPERSEDED by the Predators arc (`docs/plan_predators.md`).**
+  Predator pressure on the band / unguarded foragers & hunters, resolved against Warrior strength
+  (equipped vs bare-handed) → casualties or yield loss. The Warrior↔threat *interface* is exactly
+  the Predators arc's **Phase 0** (attack/defense/aggression + casualty resolution + live Warrior),
+  built against mammoth/ox first with no predator species yet — so M1 can still land that slice
+  standalone. Full ecological predators (carnivore herds, prey-seeking movement) are the arc's later
+  phases. Threat *variety* (barbarians, rival civs) still deferred.
 - [ ] Deferred (M2+): **Crafter role + crafting** to replenish/upgrade TOEs (the depletion pull);
   **larder spoilage + storage tiers** (spoilage matters once storage lets food sit); richer threats;
   the Settlement arc's Phase 3 improvement catalog (storage improvements consume the carry-cap seam).
@@ -1057,8 +1060,10 @@ to add an animal whose fields fit the existing enums.**
   800/head), and they carry the **only** `pastoral` ceiling in the game. Don't add a duplicate; and don't
   demote them to `wild` — "herd it but never fence it" would become a category with no members, right as
   the Roaming Bands arc goes to depend on it.
-- [ ] **(Optional) Predators / threat fauna.** Wolves/big cats etc. are NOT husbandry — they need the
-  M1 predator-pressure model (see Early-Game Labor → *M1-threats*), not a `SpeciesDef` alone. Scope
+- [ ] **Predators / threat fauna. → OWNED by the Predators arc (`docs/plan_predators.md`).** Wolves/
+  big cats etc. are NOT husbandry: a predator is an ordinary `Herd` in a `diet=carnivore` corner of a
+  four-knob config space (`diet` / `attack` / `aggression` / `defense`) — not a `SpeciesDef` alone,
+  and not a parallel entity. Seed the roster (wolf pack) in the arc's **Phase 1**, not here. Scope
   with that arc, not this one.
 - [ ] **(Optional) Remove the residual hardcoding — only if the roster needs it.** Two enums still bake
   behaviour: `SizeClass` (`fauna_config.rs:29`) fixes the movement cadence + `graze_range_radius` to
@@ -1067,6 +1072,95 @@ to add an animal whose fields fit the existing enums.**
   with a *new* movement style, or biome affinity keyed on raw `TerrainType`, make those config-driven
   (movement fields on `SpeciesDef`; a data table or terrain-keyed affinity). The named roster above
   (bison/horse/caprines/aurochs) needs **none** of this — defer until a species actually requires it.
+
+### Predators & the Danger of the Hunt — DESIGN DONE, NOT STARTED
+
+Design: `docs/plan_predators.md`. Predators are **ordinary `Herd`s** in a `diet=carnivore` corner of a
+four-knob config space (`diet` / `attack` / `aggression` / `defense`) — no parallel entity. "Predator",
+"dangerous hunt" (mammoth), and "runs vs fights back" are all config corners; "gets eaten" derives from
+`attack ≥ defense`, not a flag. Reuses the herd ecology / movement / quantization / snapshot stack; the
+genuinely new work is the rating web, a predation draw-down (transpose of grazing), a band-casualty
+mortality path (via the combat seam), and a shared prey-seeking movement primitive scouting later adopts.
+Two distinct dangers, deliberately: a **hunt** endangers the *hunting party* (answered by the hunters'
+equipment/TOE — Warriors never escort a hunt), while a predator **raid** endangers the *band* (answered
+by **Warriors**, the band-wide guard — the Warrior role's first live consumer, in Phase 1). Supersedes
+*M1-threats* (its Phase 0) and *Predators / threat fauna* (its Phase 1). Every phase independently testable.
+
+- [x] **Phase 0 — The combat seam + ratings + dangerous-hunt casualties (PR #166, not merged).** Stood up a
+  **new `core_sim/src/combat/` subsystem** (own module, DRY/SOLID, no fauna/labor knowledge): the
+  **composition** contract (`FightPayload` / `Force` / `Contingent` / `CombatProfile{attack,defense,range}`
+  / `FightOutcome` / `ContingentResult{killed,wounded}`, shaped for TOE + range + death/wound) +
+  `resolve_fight(payload)` with a **placeholder** per-contingent attrition resolver (ignores range/terrain;
+  real model drops in later without touching callers). **Callers describe composition, never a power
+  scalar** — domains adapt into combat's neutral `CombatProfile`. A combatant = **intrinsic creature ⊕
+  equipment**: one shared `CombatStats{attack,defense,range}` embedded in `SpeciesDef` (animals) + a **1-row
+  `creatures` roster** (base human) — the wolf's `attack` is the SAME one predation reads; equipment is its
+  own table (none in Phase 0 → identity/bare-hands). Added `diet` + `aggression` + `CombatStats` to
+  `SpeciesDef` (defaults keep every species byte-identical). The existing Hunt path is a **thin adapter** —
+  hunting a high-`attack` animal (mammoth/ox; **no predator species yet**) builds a fight whose **band side
+  is the hunters on that herd** (bare-hands person profile), resolves it, and applies `killed` (working-age
+  bracket) + inert `wounded`, on a `hunt_danger` command-feed line (no `.fbs` change). **Warrior is NOT
+  wired in** — a hunt's danger is the hunting party's own, answered by the hunters' equipment (TOE,
+  deferred); Phase 0 *lands the casualties*, the equip-to-survive payoff arrives with TOE. Warrior stays
+  inert until Phase 1. **Verified** fmt+clippy+`cargo test -p core_sim` green.
+  **Test:** hunt a mammoth → `hunt_danger` feed line + working-age population drops; hunt a deer → nobody
+  dies. _Follow-ups: `diet`/`aggression` inert; `wounded` inert; engaged-animal count fixed at 1; no
+  snapshot danger field (feed only); resident-band in-reach hunt only (not expeditions)._
+- [ ] **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down) + the raid trigger.** Add
+  the `Diet` enum; make `ecological_carrying_capacity` sum **prey biomass flow** for carnivores (transpose
+  of `graze_sustainable_flow / fodder_per_biomass` → `prey_sustainable_flow / prey_per_biomass`); add
+  `advance_predation` (abstracted continuous biomass draw from prey herds whose `defense` the predator's
+  `attack` clears). Seed one predator species (wolf pack) in `fauna_config.json`. Movement stays on the
+  existing `roam` primitive this phase. **Warrior goes live here:** a carnivore with `aggression > 0` in
+  range of a band **raids** it (band as Defender, band-side contingent = its **Warriors**) — the second
+  `resolve_fight` trigger and the Warrior role's first live consumer. **Test:** wolves near deer draw the
+  herd down, wolf biomass tracks prey (grows fed, declines + despawns when game is gone); a wolf pack near
+  an under-guarded band costs it people, and staffing Warriors cuts the losses — the predator–prey
+  oscillation shows in
+  telemetry.
+- [ ] **Phase 2 — Shared prey-seeking movement.** Extract `relocate_toward_resource` (+ a `pursue`
+  `RungMovement` primitive) scoring candidate tiles by prey density (`HerdDensityMap`), with a total
+  hasher-independent tie-break (rollback determinism). This is also the deferred **Grazing 2c** dynamic
+  (move toward live food, not just fertile land). Predators now follow the game and relocate when local
+  prey thins. **Test:** move a deer herd across the map; the pack tracks it instead of idling.
+- [x] **Phase 0 cleanup — expedition danger (PR #166).** Expedition hunts resolve combat too, and
+  bloodier — the resident adapter mirrored into `advance_expeditions`' Hunt arm, casualties on the
+  detached party, scaled by a flat `expedition_danger_multiplier` (1.5×, config; the crude stand-in
+  for the deferred combat-modifiers layer). The multiplier is applied *by the caller* scaling
+  `CombatTuning.lethality` — combat is never told "this is an expedition."
+- [ ] **Phase 0 cleanup — the strength/behaviour model + danger view (reworking the first cut).**
+  *(The first cut stored `danger = attack` and displayed fixed word buckets — both wrong: strength ≠
+  danger, and words can't survive the roster. Corrected below.)*
+  (a) **Split strength from behaviour on `SpeciesDef`:** keep `CombatStats {attack, defense, range}`
+  (strength, open-ended, human=1); add **`ferocity`** (0..1, P fights-back) beside the existing
+  **`aggression`** (0..1, P initiates); validate both `0..1`.
+  (b) **Delete the stored `HerdTelemetryState.danger` field; publish the raw components** instead
+  (`attack`/`defense`/`ferocity`/`aggression`) so the client can show them and derive. Danger is
+  **derived, never stored** — hunt-danger `≈ attack × ferocity`, camp-threat `≈ attack × aggression`.
+  (c) **Wire `ferocity` into the hunt casualty adapter** (labor.rs + expeditions.rs): the animal
+  contingent's effective attack is `attack × ferocity`, so a fleeing deer costs nothing and a cornered
+  boar does. (d) **Populate a graduated roster** (attack/defense/ferocity/aggression across the
+  species, playtest dials) so the scale is actually visible.
+  (e) **Client display, Elevation-style:** replace the word buckets with **relative component bars**
+  on the herd/tile card (`attack`/`defense` normalised to the map's range, `ferocity`/`aggression` as
+  native 0..1), **no danger word**; change the map overlay from raw attack to **camp-threat**
+  (`attack × aggression`, relative-normalised so it auto-rebases as stronger units arrive). Verified via
+  `ui_preview` + `map_preview`. Danger is a general per-entity concept ("any animal, later any band").
+- [ ] **Phase 3 — Client legibility.** Threat/casualty events in the command feed; predator presence
+  overlay; Warrior strength & hunt-danger readout on the band panel; yield-forfeited-to-raids on the
+  income line. Free-form snapshot fields only; verify HUD via the *ui_preview* harness. **Test:** the
+  player can see a predator, read a hunt's danger, and watch warriors change the outcome.
+- [ ] **Deferred — the combat-modifiers layer.** Situational factors that tilt a `resolve_fight`
+  toward one side: **proximity-to-home** (local hunt safer near camp, expedition deadlier far away —
+  gives the local hunt a home-advantage discount and **replaces the flat `expedition_danger_multiplier`**),
+  **fatigue**, **supply/provisions**, **terrain cover**, later **morale**. The contract already carries
+  `TerrainContext` + `Posture` as the hooks. This is how "distance / tiredness / hunger make a hunt more
+  dangerous" becomes a real model instead of a constant.
+- [ ] Deferred (own slices): **wolf→dog domestication** (the first domestication — a `carnivore` climbing
+  the `husbandry_ceiling` ladder to a Warrior/Scout *multiplier*, extending the intensification rung
+  engine); **scouting expeditions adopt `relocate_toward_resource`** (auto-explore toward unrevealed
+  value instead of stopping at `AwaitingOrders`); **richer threats** (barbarians / rival civs reuse the
+  casualty interface).
 
 ### Flora Roster & Ecology (named plant species) — NOT YET STARTED
 

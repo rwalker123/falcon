@@ -1429,6 +1429,16 @@ table HerdTelemetryState {
   // cannot sit in the same row as the food-unit pasture/larder terms; this can. 0 when no hay drawn /
   // no Foddering / unpenned.
   penHayFood:float = 0;
+  // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the RAW combat components of this
+  // herd's species, so the client can DERIVE danger itself (danger is never stored server-side, because
+  // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression). `attack`/
+  // `defense` are STRENGTH (open-ended, human = 1); `ferocity` = P(fights back when hunted, vs flees)
+  // and `aggression` = P(initiates a raid unprovoked) are BEHAVIOUR (both 0..1). A harmless animal
+  // (rabbit) is all-zeros. The threat overlay projects the derived value onto tiles client-side.
+  attack:float = 0;
+  defense:float = 0;
+  ferocity:float = 0;
+  aggression:float = 0;
 }
 
 table CommandEventState {

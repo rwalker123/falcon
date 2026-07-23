@@ -991,10 +991,33 @@ func _ready() -> void:
 	# hunters" controls (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
 	# sustain/surplus/market/eradicate policy picker, and the local "Assign Local Hunt" button). A
 	# Thriving herd shows a neutral ecology readout in the drawer.
+	# Push both fixtures as the known-herd roster so the open-ended Attack/Defense bars have a
+	# reference to normalize against (Elevation-style) — the mammoth holds the roster max.
+	_hud.update_herds([_herd_fixture(), _deadly_herd_fixture()])
 	_hud.show_herd_selection(_herd_fixture())
 	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
+	# ASSERT the HARMLESS case: the base Red Deer carries no combat components (all default 0), so its
+	# component rows all read empty — and crucially NO "Harmless"/"Deadly" verdict word appears (words
+	# don't survive the roster). The rows are the raw components, Elevation-style.
+	var deer_lines := _hud._herd_summary_lines(_herd_fixture())
+	assert(_danger_component_rows_present(deer_lines))
+	assert(not _danger_verdict_word_present(deer_lines))
+	assert(_danger_row_value(deer_lines, "Fights back").ends_with("0%"))
+
+	# State 3b-danger — a DEADLY-TO-HUNT herd (a mammoth: attack 8, ferocity 0.9, aggression 0). Its
+	# component rows read high Attack + high Fights back but EMPTY Aggressive — the "deadly to hunt, no
+	# camp threat" story at a glance. Still no verdict word.
+	_hud.show_herd_selection(_deadly_herd_fixture())
+	await _settle()
+	await _save("herd_danger")
+	var mammoth_lines := _hud._herd_summary_lines(_deadly_herd_fixture())
+	assert(_danger_component_rows_present(mammoth_lines))
+	assert(not _danger_verdict_word_present(mammoth_lines))
+	# Fights back 90%, Aggressive 0% — the split that proves strength ≠ danger.
+	assert(_danger_row_value(mammoth_lines, "Fights back").ends_with("90%"))
+	assert(_danger_row_value(mammoth_lines, "Aggressive").ends_with("0%"))
 
 	# State 3b — an overhunted herd: the ecology readout warns "⚠ Collapsing" in red.
 	_hud.show_herd_selection(_collapsing_herd_fixture())
@@ -3956,6 +3979,48 @@ func _herd_fixture() -> Dictionary:
 		},
 		"tile_info": _food_tile_fixture(),
 	}
+
+## A DEADLY-TO-HUNT herd (Predators Phase 0): a woolly mammoth — high attack (8) and high ferocity
+## (0.9, it fights back), but aggression 0 (a grazer never attacks unprovoked). Its drawer shows high
+## Attack + Fights back bars and an EMPTY Aggressive bar — the split that proves strength ≠ danger.
+## Compact tile so the component/husbandry rows land in-frame.
+func _deadly_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["id"] = "game_mammoth_02"
+	fixture["label"] = "Woolly Mammoth (game_mammoth_02)"
+	fixture["species"] = "Woolly Mammoth"
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["attack"] = 8.0
+	fixture["defense"] = 12.0
+	fixture["ferocity"] = 0.9
+	fixture["aggression"] = 0.0
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## Assertion helpers for the Predators component rows. `_danger_component_rows_present` = all four
+## component keys emitted; `_danger_verdict_word_present` = the OLD danger vocabulary must be gone (a
+## word can't survive the roster); `_danger_row_value` extracts a row's value cell for the bar/% check.
+func _danger_component_rows_present(lines: Array) -> bool:
+	for key in ["Attack", "Defense", "Fights back", "Aggressive"]:
+		if _danger_row_value(lines, key) == "":
+			return false
+	return true
+
+func _danger_verdict_word_present(lines: Array) -> bool:
+	for line in lines:
+		var text := String(line)
+		for word in ["Harmless", "Minor", "Dangerous", "Deadly"]:
+			if text.contains(word):
+				return true
+	return false
+
+func _danger_row_value(lines: Array, key: String) -> String:
+	var prefix := "%s: " % key
+	for line in lines:
+		var text := String(line)
+		if text.begins_with(prefix):
+			return text.substr(prefix.length())
+	return ""
 
 ## A WILD-ceiling herd (Grazing 2d-δ): hunt-only. The drawer shows NO husbandry track (no
 ## domestication / corral / pen rows) — just the "Wild game — hunt only" hint — and the hunt policy

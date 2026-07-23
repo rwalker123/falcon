@@ -375,6 +375,22 @@ pub struct HerdTelemetryState {
     /// last (append-only).
     #[serde(default)]
     pub pen_hay_food: f32,
+    /// **The raw combat components of this herd's species** (Predators Phase 0, `docs/plan_predators.md`),
+    /// so the client can DERIVE danger itself — it is never stored server-side, because strength ≠
+    /// danger (hunt-danger ≈ `attack × ferocity`, camp-threat ≈ `attack × aggression`). `attack` /
+    /// [`Self::defense`] are STRENGTH (open-ended, human = 1); [`Self::ferocity`] / [`Self::aggression`]
+    /// are BEHAVIOUR probabilities (0..1). All `0` on a harmless animal. Appended last (append-only).
+    #[serde(default)]
+    pub attack: f32,
+    /// STRENGTH — how hard the animal is to bring down. See [`Self::attack`].
+    #[serde(default)]
+    pub defense: f32,
+    /// BEHAVIOUR — P(fights back when hunted, vs flees); scales hunt-danger. See [`Self::attack`].
+    #[serde(default)]
+    pub ferocity: f32,
+    /// BEHAVIOUR — P(initiates a raid unprovoked); scales camp-threat. See [`Self::attack`].
+    #[serde(default)]
+    pub aggression: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -416,6 +432,10 @@ impl Default for HerdTelemetryState {
             fodder_draw: 0.0,
             pen_larder_bill: 0.0,
             pen_hay_food: 0.0,
+            attack: 0.0,
+            defense: 0.0,
+            ferocity: 0.0,
+            aggression: 0.0,
         }
     }
 }
@@ -4330,6 +4350,12 @@ fn create_herds<'a>(
                 // The render-ready feed split (F3) — appended last (append-only wire).
                 penLarderBill: herd.pen_larder_bill,
                 penHayFood: herd.pen_hay_food,
+                // Raw combat components (Predators Phase 0) — the client derives danger itself.
+                // Appended last (append-only wire).
+                attack: herd.attack,
+                defense: herd.defense,
+                ferocity: herd.ferocity,
+                aggression: herd.aggression,
             },
         );
         entries.push(entry);

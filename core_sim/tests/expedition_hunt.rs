@@ -75,6 +75,10 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::CombatConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
@@ -592,6 +596,21 @@ fn the_raid_forecast_matches_a_real_party_run() {
         ] {
             let mut app = spawn_world();
             let id = pinned_game_herd(&mut app, "big");
+            // Neutralize combat: `hunt_trip_forecast` deliberately does NOT model casualties in
+            // Phase 0, so a dangerous big-game species would shrink the party mid-raid and diverge
+            // the real run from the forecast. This test is about the raid economy, not combat (that
+            // has its own test), so retag to a harmless species (attack 0) while keeping the heavy
+            // body_mass the partial/waste mechanics need. Wiring casualties into the forecast is a
+            // Phase-1+ follow-up.
+            {
+                let mut registry = app.world.resource_mut::<HerdRegistry>();
+                registry
+                    .herds
+                    .iter_mut()
+                    .find(|h| h.id == id)
+                    .unwrap()
+                    .species = "Rabbit Warren".to_string();
+            }
             let (herd_pos, _before, _cap) = seed_herd(&mut app, &id, cap_fraction);
             let home = spawn_home_band(&mut app, herd_pos);
 
@@ -916,6 +935,125 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Predators Phase 0 — a hunting EXPEDITION takes casualties too, and BLOODIER than a local hunt
+// (far from home, unsupported, tired: `expedition_danger_multiplier`). `docs/plan_predators.md`.
+// ---------------------------------------------------------------------------------------------------
+
+/// The mammoth's shipped display name — combat `{ attack 8, defense 12 }`.
+const MAMMOTH: &str = "Thunder Mammoths";
+
+/// Retag a stationary game herd to a chosen species and park it on a fat standing stock.
+fn retag_herd(app: &mut App, species_display: &str) -> String {
+    let id = stationary_game_herd(app);
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.species = species_display.to_string();
+    herd.carrying_capacity = herd.carrying_capacity.max(4000.0);
+    herd.biomass = herd.carrying_capacity;
+    id
+}
+
+fn party_working(app: &App, party: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(party)
+        .expect("party alive")
+        .working
+        .to_f32()
+}
+
+/// A hunting expedition against a mammoth (attack 8) loses party working-age population over an
+/// engagement turn.
+#[test]
+fn a_hunting_expedition_takes_casualties_against_a_mammoth() {
+    let mut app = spawn_world();
+    let id = retag_herd(&mut app, MAMMOTH);
+    let (pos, _b, _cap) = seed_herd(&mut app, &id, 1.0);
+    let home = spawn_home_band(&mut app, pos);
+    // Party ON the herd's tile → in reach, so it engages this turn.
+    let party = spawn_hunt_party(&mut app, home, pos, &id, FollowPolicy::Surplus);
+    let before = party_working(&app, party);
+    app.world.run_system_once(advance_expeditions);
+    let after = party_working(&app, party);
+    assert!(
+        after < before,
+        "a mammoth (attack 8) expedition hunt must cost party working-age: {before} -> {after}"
+    );
+    // ...and it narrates on the command feed.
+    let narrated = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .any(|e| e.kind.as_str() == "hunt_danger");
+    assert!(
+        narrated,
+        "a dangerous expedition hunt pushes a hunt_danger feed line"
+    );
+}
+
+/// The `expedition_danger_multiplier` makes the fight bloodier — a direct `resolve_fight` comparison
+/// (same payload, two tunings) loses strictly more at `> 1` than at `1`.
+#[test]
+fn the_expedition_danger_multiplier_scales_losses() {
+    use core_sim::{
+        resolve_fight, CombatStats, CombatTuning, Contingent, ContingentId, FightPayload, Force,
+        ForceId, Posture, RangeBand,
+    };
+
+    let payload = FightPayload {
+        sides: vec![
+            Force {
+                id: ForceId(0),
+                posture: Posture::Aggressor,
+                contingents: vec![Contingent {
+                    kind: ContingentId::from("person"),
+                    count: 4.0,
+                    profile: CombatStats {
+                        attack: 1.0,
+                        defense: 1.0,
+                        range: RangeBand::Melee,
+                    },
+                }],
+            },
+            Force {
+                id: ForceId(1),
+                posture: Posture::Defender,
+                contingents: vec![Contingent {
+                    kind: ContingentId::from("mammoth"),
+                    count: 1.0,
+                    profile: CombatStats {
+                        attack: 8.0,
+                        defense: 12.0,
+                        range: RangeBand::Melee,
+                    },
+                }],
+            },
+        ],
+        terrain: vec![],
+        seed: 0,
+    };
+
+    let local = CombatTuning {
+        lethality: 1.0,
+        disengage_fraction: 0.5,
+    };
+    let expedition = CombatTuning {
+        lethality: 1.5,
+        disengage_fraction: 0.5,
+    };
+    let band_losses = |tuning: &CombatTuning| -> f32 {
+        let out = resolve_fight(&payload, tuning);
+        out.results
+            .iter()
+            .find(|r| r.force == ForceId(0))
+            .map(|r| r.killed + r.wounded)
+            .unwrap_or(0.0)
+    };
+    assert!(
+        band_losses(&expedition) > band_losses(&local),
+        "a bloodier (>1) expedition multiplier must cost strictly more than a local hunt"
+    );
+}
+
 // The IN-FLIGHT delivery forecast (`expedition_delivery` → the snapshot's
 // `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionRecurring`). The in-flight twin of
 // the pre-launch `huntTripEstimates`, pinned to a REAL driven party run — never to another forecast.
@@ -942,6 +1080,11 @@ fn pin_frozen_full_big_herd(app: &mut App) -> (String, UVec2) {
     herd.fodder_per_biomass = 0.0;
     herd.carrying_capacity = FROZEN_CAP;
     herd.biomass = FROZEN_CAP;
+    // The in-flight delivery forecast does not yet model hunt casualties (Predators Phase 0 — a
+    // dangerous herd's real party shrinks below the casualty-free forecast; flagged for Phase 1+). So
+    // retag to a harmless species (attack 0) while keeping the heavy frozen stock, exactly as the raid
+    // forecast test does, so `delivered == projected` holds here on the delivery mechanics alone.
+    herd.species = "Rabbit Warren".to_string();
     let pos = herd.position();
     (id, pos)
 }
