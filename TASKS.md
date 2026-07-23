@@ -1080,36 +1080,43 @@ four-knob config space (`diet` / `attack` / `aggression` / `defense`) — no par
 "dangerous hunt" (mammoth), and "runs vs fights back" are all config corners; "gets eaten" derives from
 `attack ≥ defense`, not a flag. Reuses the herd ecology / movement / quantization / snapshot stack; the
 genuinely new work is the rating web, a predation draw-down (transpose of grazing), a band-casualty
-mortality path (first live consumer of the inert **Warrior** role), and a shared prey-seeking movement
-primitive scouting later adopts. Supersedes *M1-threats* (its Phase 0) and *Predators / threat fauna*
-(its Phase 1). Every phase independently testable.
+mortality path (via the combat seam), and a shared prey-seeking movement primitive scouting later adopts.
+Two distinct dangers, deliberately: a **hunt** endangers the *hunting party* (answered by the hunters'
+equipment/TOE — Warriors never escort a hunt), while a predator **raid** endangers the *band* (answered
+by **Warriors**, the band-wide guard — the Warrior role's first live consumer, in Phase 1). Supersedes
+*M1-threats* (its Phase 0) and *Predators / threat fauna* (its Phase 1). Every phase independently testable.
 
-- [ ] **Phase 0 — The combat seam + ratings + live Warrior.** Stand up a **new `core_sim/src/combat/`
-  subsystem** (own module, DRY/SOLID, no fauna/labor knowledge): the **composition** contract
-  (`FightPayload` / `Force` / `Contingent` / `CombatProfile{attack,defense,range}` / `FightOutcome` /
-  `ContingentResult{killed,wounded}`, shaped for TOE + range + death/wound) + `resolve_fight(payload)`
-  with a **placeholder** per-contingent attrition resolver (ignores range/terrain; real model drops in
-  later without touching callers). **Callers describe composition, never a power scalar** — domains adapt
-  into combat's neutral `CombatProfile`. A combatant = **intrinsic creature ⊕ equipment**: one shared
-  `CombatStats{attack,defense,range}` value type embedded in `SpeciesDef` (animals) and a **1-row
-  `creatures` roster** (base human) — the wolf's `attack` is the SAME one predation reads; equipment is
-  its own table (none in Phase 0 → identity/bare-hands). Add `diet` + `aggression` + `CombatStats` to
-  `SpeciesDef` (defaults keep every species byte-identical: `attack` 0, `aggression` 0, `defense` low,
-  `range` Melee, `diet` herbivore). Wire the existing Hunt path as a **thin adapter** — hunting a
-  high-`attack` animal (mammoth/ox first — **no predator species yet**) builds a fight (band contingent
-  vs the animal's fighting stock), resolves it, applies `killed` (via the `death_fraction` seam,
-  `systems/population.rs`) + `wounded` (transient capacity dip, or carry-and-defer) mitigated by staffed
-  **Warriors** × equipment tier. Snapshot the danger readout via free-form strings (no `.fbs` change).
-  _Retires the empty `LaborTarget::Warrior` arm; gives `resolve_fight` its first caller._
-  **Test:** hunt a mammoth with 0 vs N warriors → deaths fall (split shifts toward wounded) as
-  warriors/equipment rise.
-- [ ] **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down).** Add the `Diet` enum;
-  make `ecological_carrying_capacity` sum **prey biomass flow** for carnivores (transpose of
-  `graze_sustainable_flow / fodder_per_biomass` → `prey_sustainable_flow / prey_per_biomass`); add
+- [x] **Phase 0 — The combat seam + ratings + dangerous-hunt casualties (PR #166, not merged).** Stood up a
+  **new `core_sim/src/combat/` subsystem** (own module, DRY/SOLID, no fauna/labor knowledge): the
+  **composition** contract (`FightPayload` / `Force` / `Contingent` / `CombatProfile{attack,defense,range}`
+  / `FightOutcome` / `ContingentResult{killed,wounded}`, shaped for TOE + range + death/wound) +
+  `resolve_fight(payload)` with a **placeholder** per-contingent attrition resolver (ignores range/terrain;
+  real model drops in later without touching callers). **Callers describe composition, never a power
+  scalar** — domains adapt into combat's neutral `CombatProfile`. A combatant = **intrinsic creature ⊕
+  equipment**: one shared `CombatStats{attack,defense,range}` embedded in `SpeciesDef` (animals) + a **1-row
+  `creatures` roster** (base human) — the wolf's `attack` is the SAME one predation reads; equipment is its
+  own table (none in Phase 0 → identity/bare-hands). Added `diet` + `aggression` + `CombatStats` to
+  `SpeciesDef` (defaults keep every species byte-identical). The existing Hunt path is a **thin adapter** —
+  hunting a high-`attack` animal (mammoth/ox; **no predator species yet**) builds a fight whose **band side
+  is the hunters on that herd** (bare-hands person profile), resolves it, and applies `killed` (working-age
+  bracket) + inert `wounded`, on a `hunt_danger` command-feed line (no `.fbs` change). **Warrior is NOT
+  wired in** — a hunt's danger is the hunting party's own, answered by the hunters' equipment (TOE,
+  deferred); Phase 0 *lands the casualties*, the equip-to-survive payoff arrives with TOE. Warrior stays
+  inert until Phase 1. **Verified** fmt+clippy+`cargo test -p core_sim` green.
+  **Test:** hunt a mammoth → `hunt_danger` feed line + working-age population drops; hunt a deer → nobody
+  dies. _Follow-ups: `diet`/`aggression` inert; `wounded` inert; engaged-animal count fixed at 1; no
+  snapshot danger field (feed only); resident-band in-reach hunt only (not expeditions)._
+- [ ] **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down) + the raid trigger.** Add
+  the `Diet` enum; make `ecological_carrying_capacity` sum **prey biomass flow** for carnivores (transpose
+  of `graze_sustainable_flow / fodder_per_biomass` → `prey_sustainable_flow / prey_per_biomass`); add
   `advance_predation` (abstracted continuous biomass draw from prey herds whose `defense` the predator's
   `attack` clears). Seed one predator species (wolf pack) in `fauna_config.json`. Movement stays on the
-  existing `roam` primitive this phase. **Test:** wolves near deer draw the herd down, wolf biomass tracks
-  prey (grows fed, declines + despawns when game is gone) — the predator–prey oscillation shows in
+  existing `roam` primitive this phase. **Warrior goes live here:** a carnivore with `aggression > 0` in
+  range of a band **raids** it (band as Defender, band-side contingent = its **Warriors**) — the second
+  `resolve_fight` trigger and the Warrior role's first live consumer. **Test:** wolves near deer draw the
+  herd down, wolf biomass tracks prey (grows fed, declines + despawns when game is gone); a wolf pack near
+  an under-guarded band costs it people, and staffing Warriors cuts the losses — the predator–prey
+  oscillation shows in
   telemetry.
 - [ ] **Phase 2 — Shared prey-seeking movement.** Extract `relocate_toward_resource` (+ a `pursue`
   `RungMovement` primitive) scoring candidate tiles by prey density (`HerdDensityMap`), with a total

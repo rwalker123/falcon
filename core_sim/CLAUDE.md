@@ -2806,14 +2806,14 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   ENEMY power relative to OWN power** (`losses = (power_enemy / power_self) × lethality`, clamped to
   headcount) — so **more/stronger defenders → FEWER own casualties**; the kill/wound split is
   `killed_frac = incoming_per_defender / (incoming_per_defender + own.defense)` with
-  `incoming_per_defender = power_enemy / count_self` — so **more defenders → more wounded** (warriors
-  thin each blow) and **higher own defense → more wounded** (the equip-to-shift-severity lever).
+  `incoming_per_defender = power_enemy / count_self` — so **more defenders → more wounded** (a bigger
+  party thins each blow) and **higher own defense → more wounded** (the equip-to-shift-severity lever).
   `disengaged` iff the loser's losses exceed `disengage_fraction` of its headcount. `range`/`terrain`/
   `posture`/`seed` are accepted and **ignored** (reserved for the real resolver). Casualties stay
   **f32** (whole-unit quantization is a later refinement). **Note:** the design prose spelled the
   split's denominator `power_enemy / count_enemy`; with the enemy a single beast that leaves the split
-  constant regardless of warriors — contradicting Phase 0's whole demonstration — so the seam divides
-  by the **defenders** (`count_self`), which is what makes warriors move severity.
+  constant regardless of party size — contradicting the equip-to-shift-severity thesis — so the seam
+  divides by the **defenders** (`count_self`), which is what makes a stronger party move severity.
 - **`SpeciesDef` gained `combat: CombatStats` + `diet: Diet` (`Herbivore|Carnivore`) + `aggression:
   f32`** (all `#[serde(default)]`, so every existing species is byte-identical: `combat` defaults to
   `{ attack 0, defense 1, range Melee }` → a harmless hunt). `diet` and `aggression` are **inert this
@@ -2823,29 +2823,30 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   `combat.attack ≥ 0` finite, `combat.defense > 0` finite (a denominator), `0 ≤ aggression ≤ 1`.
 - **The hunt-path adapter (`advance_labor_allocation`, the Hunt arm's wild-take branch).** After a wild
   hunt take resolves, a herd whose `species.combat.attack > 0` turns on the party: the adapter builds a
-  `FightPayload` — **band side** (`Aggressor`, one `"person"` contingent, `count = hunters on this herd
-  + all Warriors in the band`, profile = the creatures roster's `person`), **animal side** (`Defender`,
-  one contingent `count = 1.0`, profile = `species.combat`) — with a rollback-stable
-  `seed = map_seed ^ tick ^ herd-id hash` (reserved/unused by the resolver but a real value), and
-  applies **only the band side's** outcome (the take already removed the animal's biomass; applying its
-  casualties too would double-count). `killed` comes out of the cohort's **working-age** bracket via
+  `FightPayload` — **band side** (`Aggressor`, one `"person"` contingent, `count = the hunters assigned
+  to THIS herd`, profile = the creatures roster's `person`), **animal side** (`Defender`, one contingent
+  `count = 1.0`, profile = `species.combat`) — with a rollback-stable `seed = map_seed ^ tick ^ herd-id
+  hash` (reserved/unused by the resolver but a real value), and applies **only the band side's** outcome
+  (the take already removed the animal's biomass; applying its casualties too would double-count).
+  `killed` comes out of the cohort's **working-age** bracket via
   `PopulationCohort::apply_combat_casualties` (the `death_fraction` seam's combat twin — a net-new
   mortality path); `wounded` is **computed and surfaced but mechanically inert this phase** (recovery is
   a later slice). A `CommandEventKind::HuntDanger` (`"hunt_danger"`) feed line fires when casualties
   occur — label names the **species** ("The Thunder Mammoths hunt cost 2 lives"), detail carries the
-  **fractional** `killed=<k> wounded=<w> warriors=<n> species=<s>`.
-- **Warrior is no longer inert.** Its labor arm still produces no yield (it stays a no-op branch), but
-  the band's Warrior head-count is now *consumed* by the hunt-danger resolution above — warriors
-  mitigate purely by adding to the defending count/power (equipment differentiates them in a later
-  phase). **The trigger fires only from the player-hunt path this phase** — the predator-raid trigger
-  (a carnivore with `aggression > 0` raiding a band) is Phase 1.
+  **fractional** `killed=<k> wounded=<w> species=<s>`. **The hunting party answers the danger with its
+  OWN strength** — the hunters' bare-hands `person` profile today; their equipment (TOE, deferred) will
+  compose into that profile with no rework here.
+- **Warrior stays inert in Phase 0.** Warriors are a band-wide **standing guard** (border/camp patrol),
+  not a hunting escort — they do **not** mitigate hunt danger (the hunting party answers that itself,
+  via its own equipment). Its labor arm remains a no-op branch. **Its first live consumer is the
+  Phase 1 predator-raid path** — a carnivore with `aggression > 0` raiding a band, band as Defender.
 - **No snapshot `.fbs` change in Phase 0** — the danger readout rides the command feed; a structured
   per-herd danger field is a later slice.
 
 Tests: `core_sim/src/combat/mod.rs` unit tests (even fight, 5:1, adding-defenders mitigation + wounded
 shift, defense→wounded shift, determinism, zero-attack → zero casualties); `core_sim/tests/predators.rs`
-(a mammoth hunt with 0 vs N warriors loses fewer working-age with warriors + the wounded share rises; a
-deer hunt costs nobody; config-validation rejections).
+(a mammoth hunt costs working-age lives with a killed/wounded split; a deer hunt costs nobody;
+config-validation rejections).
 
 See Also: `docs/plan_predators.md` (the whole arc), "Fauna & Wild Game" (the `SpeciesDef` table + the
 Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam casualties apply at).

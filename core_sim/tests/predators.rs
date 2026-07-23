@@ -1,8 +1,9 @@
 //! Predators Phase 0 — the hunt-danger casualty path (`docs/plan_predators.md`).
 //!
 //! A band hunting a herd whose species can fight back (`combat.attack > 0` — mammoth, ox) takes
-//! **working-age casualties** through the combat subsystem, and **Warriors mitigate them** (the first
-//! live consumer of the long-inert Warrior role). These tests drive a **real**
+//! **working-age casualties** through the combat subsystem — a net-new mortality path. The hunting
+//! party answers the danger itself (via the hunters' own equipment, TOE deferred); Warriors are a
+//! band-wide guard and do **not** mitigate a hunt. These tests drive a **real**
 //! `advance_labor_allocation` turn and assert on the **real cohort brackets** it leaves behind.
 
 use bevy::app::App;
@@ -108,28 +109,21 @@ fn dangerous_herd(app: &mut App, species_display: &str) -> (String, bevy::prelud
     (id, tile)
 }
 
-/// Spawn a hunting band on `tile` with `hunters` on the herd and `warriors` standing.
+/// Spawn a hunting band on `tile` with `hunters` assigned to the herd.
 fn hunting_band(
     app: &mut App,
     tile: bevy::prelude::Entity,
     working: u32,
     fauna_id: &str,
     hunters: u32,
-    warriors: u32,
 ) -> bevy::prelude::Entity {
-    let mut assignments = vec![LaborAssignment {
+    let assignments = vec![LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             policy: FollowPolicy::Surplus,
         },
         workers: hunters,
     }];
-    if warriors > 0 {
-        assignments.push(LaborAssignment {
-            target: LaborTarget::Warrior,
-            workers: warriors,
-        });
-    }
     app.world
         .spawn((
             PopulationCohort {
@@ -195,48 +189,31 @@ const MAMMOTH: &str = "Thunder Mammoths";
 /// A defaulted species (attack 0) — a harmless hunt.
 const DEER: &str = "Red Deer";
 
-/// A band hunting a mammoth with **0 warriors** loses working-age population; the **same hunt with
-/// warriors loses strictly fewer**, and the split shifts toward wounded as the party grows.
+/// A band hunting a **mammoth** (attack 8) loses working-age population over a turn, and the
+/// hunt-danger feed line reports a `killed`/`wounded` split (both modelled from day one).
 #[test]
-fn warriors_reduce_the_deaths_of_a_dangerous_mammoth_hunt() {
-    // --- No warriors: real casualties.
-    let mut bare = spawn_world();
-    let (herd, tile) = dangerous_herd(&mut bare, MAMMOTH);
-    let bare_band = hunting_band(&mut bare, tile, 60, &herd, 4, 0);
-    let before = working_of(&bare, bare_band);
-    bare.world.run_system_once(advance_labor_allocation);
-    let after_bare = working_of(&bare, bare_band);
-    let killed_bare = before - after_bare;
+fn a_dangerous_mammoth_hunt_costs_working_age_lives() {
+    let mut app = spawn_world();
+    let (herd, tile) = dangerous_herd(&mut app, MAMMOTH);
+    let band = hunting_band(&mut app, tile, 60, &herd, 4);
+    let before = working_of(&app, band);
+    app.world.run_system_once(advance_labor_allocation);
+    let after = working_of(&app, band);
+    let killed = before - after;
     assert!(
-        killed_bare > 0.0,
-        "a mammoth (attack 8) hunt with no warriors must cost working-age lives: {killed_bare}"
-    );
-    let (feed_killed_bare, feed_wounded_bare) =
-        last_danger_casualties(&bare).expect("a dangerous hunt pushes a hunt_danger feed line");
-    assert!(feed_killed_bare + feed_wounded_bare > 0.0);
-
-    // --- Many warriors: strictly fewer deaths, more wounded.
-    let mut guarded = spawn_world();
-    let (herd_g, tile_g) = dangerous_herd(&mut guarded, MAMMOTH);
-    let guarded_band = hunting_band(&mut guarded, tile_g, 60, &herd_g, 4, 12);
-    let before_g = working_of(&guarded, guarded_band);
-    guarded.world.run_system_once(advance_labor_allocation);
-    let killed_guarded = before_g - working_of(&guarded, guarded_band);
-
-    assert!(
-        killed_guarded < killed_bare,
-        "warriors must reduce deaths: {killed_bare} (0 warriors) -> {killed_guarded} (12 warriors)"
+        killed > 0.0,
+        "a mammoth (attack 8) hunt must cost working-age lives: {before} -> {after}"
     );
 
-    // The wounded SHARE rises as the party grows (severity shifts toward recoverable) — read from the
-    // fractional feed detail, which the bracket loss (killed) alone cannot show.
-    let (kg, wg) = last_danger_casualties(&guarded).expect("guarded hunt still narrates");
-    let guarded_wound_share = wg / (kg + wg).max(1e-6);
-    let bare_wound_share = feed_wounded_bare / (feed_killed_bare + feed_wounded_bare).max(1e-6);
+    let (feed_killed, feed_wounded) =
+        last_danger_casualties(&app).expect("a dangerous hunt pushes a hunt_danger feed line");
+    assert!(feed_killed > 0.0, "some hunters are killed: {feed_killed}");
     assert!(
-        guarded_wound_share > bare_wound_share,
-        "the wounded share should RISE as warriors rise: bare {bare_wound_share}, guarded {guarded_wound_share}"
+        feed_wounded > 0.0,
+        "some hunters are wounded: {feed_wounded}"
     );
+    // The bracket loss (working-age removal) matches the feed's reported dead.
+    assert!((killed - feed_killed).abs() < 1e-2);
 }
 
 /// A band hunting a **deer** (default `attack 0`) loses **nobody** — byte-identical to today.
@@ -244,7 +221,7 @@ fn warriors_reduce_the_deaths_of_a_dangerous_mammoth_hunt() {
 fn a_harmless_deer_hunt_costs_no_lives() {
     let mut app = spawn_world();
     let (herd, tile) = dangerous_herd(&mut app, DEER);
-    let band = hunting_band(&mut app, tile, 60, &herd, 4, 0);
+    let band = hunting_band(&mut app, tile, 60, &herd, 4);
     let before = working_of(&app, band);
     app.world.run_system_once(advance_labor_allocation);
     let after = working_of(&app, band);

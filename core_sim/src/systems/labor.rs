@@ -29,9 +29,8 @@ pub struct LaborConfigs<'w> {
 ///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
 ///   hunt_leash_tiles` (leashed follow); past that — or if the herd is gone — the assignment lapses
 ///   and its workers return to the pool (feed entry).
-/// - **Scout**: reveals fog outward from the band. **Warrior**: produces no yield, but its head-count
-///   is consumed by the hunt-danger combat resolution (Predators Phase 0) — warriors join a dangerous
-///   hunt's defending party and mitigate casualties.
+/// - **Scout**: reveals fog outward from the band. **Warrior**: inert (band-wide standing guard; it
+///   does not escort or mitigate a hunt — its first consumer is the Phase 1 predator-raid path).
 ///
 /// Husbandry (Phase E) re-homes here, but **Sustain no longer tames** (slice 3a): a `Tame` hunt
 /// fills the herd's domestication meter, while any *stewardship* policy on a **Thriving** source
@@ -59,8 +58,8 @@ pub fn advance_labor_allocation(
     let wellbeing = configs.wellbeing.get();
     // **Predators Phase 0 — the hunt-danger seam** (`docs/plan_predators.md`). The resolver tuning and
     // the base human's intrinsic combat profile, resolved once: a dangerous hunt builds a fight from
-    // the band's people (hunters + warriors) vs the animal's fighting stock and applies the band-side
-    // casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
+    // the hunting party (the hunters on that herd) vs the animal's fighting stock and applies the
+    // band-side casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
     let combat_tuning = configs.combat.get().tuning();
     let person_profile = configs.creatures.get().person();
     let map_seed = sim_config.map_seed;
@@ -122,10 +121,6 @@ pub fn advance_labor_allocation(
         // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
         let mult = output_multiplier(&cohort, &wellbeing);
         let mult_f = mult.to_f32();
-        // **The band's Warriors are now consumed** (Predators Phase 0): they join every dangerous
-        // hunt's defending count, mitigating casualties purely by adding to the party's strength (no
-        // equipment differentiates them yet). Read once — the head-count does not change within a turn.
-        let warriors = allocation.workers_on(&LaborTarget::Warrior);
 
         let mut lapsed: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
@@ -1012,18 +1007,19 @@ pub fn advance_labor_allocation(
                     };
                     // **Predators Phase 0 — the hunt turns dangerous** (`docs/plan_predators.md`).
                     // A herd whose species can fight back (`combat.attack > 0` — mammoth, ox) turns on
-                    // the party after the take resolves. This is the FIRST live consumer of the Warrior
-                    // role: it composes a fight (band's hunters + warriors vs the beast's fighting
-                    // stock), resolves it through the neutral combat subsystem, and applies **only the
-                    // band-side** casualties — the take path already removed the animal's biomass, so
-                    // applying the animal-side result too would double-count (discarded in Phase 0).
+                    // the party after the take resolves. It composes a fight (the hunters assigned to
+                    // this herd vs the beast's fighting stock), resolves it through the neutral combat
+                    // subsystem, and applies **only the band-side** casualties — the take path already
+                    // removed the animal's biomass, so applying the animal-side result too would
+                    // double-count (discarded in Phase 0).
                     if let Some(species) = fauna.species_by_display(&herd.species) {
                         if species.combat.attack > 0.0 {
-                            // The party's defending strength = the hunters ON THIS herd + EVERY warrior
-                            // in the band. Warriors and hunters share the `person` profile this phase;
-                            // warriors mitigate purely by adding to the count/power (equipment
-                            // differentiates them in a later phase).
-                            let party_count = workers as f32 + warriors as f32;
+                            // **The hunting party answers the danger itself** — its defending strength is
+                            // just the hunters assigned to THIS herd (bare-hands `person` profile today).
+                            // Warriors are a band-wide standing guard (border/camp patrol) and do NOT
+                            // mitigate a hunt; the hunters' own equipment (TOE, deferred) will compose
+                            // into this profile when it lands, with no rework here.
+                            let party_count = workers as f32;
                             // A single beast turns on the party each dangerous hunt-turn — a deliberate
                             // Phase-0 simplification (scaling the engaged count with take/party size is a
                             // later refinement). Its intrinsic combat body is the same `attack` predation
@@ -1088,8 +1084,8 @@ pub fn advance_labor_allocation(
                                         species.display_name, killed_r
                                     ),
                                     Some(format!(
-                                        "killed={:.3} wounded={:.3} warriors={} species={}",
-                                        killed_f, wounded_f, warriors, species.display_name
+                                        "killed={:.3} wounded={:.3} species={}",
+                                        killed_f, wounded_f, species.display_name
                                     )),
                                 ));
                             }
@@ -1102,10 +1098,11 @@ pub fn advance_labor_allocation(
                     // and reveal from each, re-marked Active every turn — no work is done here.
                 }
                 LaborTarget::Warrior => {
-                    // Warriors produce no yield of their own, so this arm stays a no-op — but the role
-                    // is **no longer inert** (Predators Phase 0): the band's Warrior head-count is read
-                    // above (`warriors`) and consumed by the hunt-danger resolution, where it joins the
-                    // party's defending strength and mitigates casualties. Do not delete this branch.
+                    // Inert in Phase 0. Warriors are a band-wide standing guard (border/camp patrol),
+                    // not a hunting escort — they do **not** mitigate hunt danger (the hunting party
+                    // answers that itself, via its own equipment). Their first live consumer is the
+                    // **Phase 1 predator-raid path**: a carnivore with `aggression > 0` raiding a band,
+                    // band as Defender. Do not delete this branch.
                 }
             }
         }

@@ -287,26 +287,40 @@ now. When the real combat system lands — ranged pre-phase then melee, terrain 
 only the function body changes; **every caller and the payload/outcome contract stay put.** That is
 the whole point of building the seam first.
 
-### Two triggers, one seam
+### Two triggers, one seam — but different combatants
 
-- **Player-initiated:** a band Hunts a herd with `attack` > 0 (mammoth, ox, or any predator) →
-  build a `FightPayload` (band contingents vs the herd's fighting stock), `resolve_fight`, apply
-  casualties + forfeited take.
-- **Predator-initiated:** a carnivore herd with `aggression` > 0 in range of a band raids its
-  unguarded foragers/hunters → same seam, band as Defender.
+Both triggers call `resolve_fight`; what differs is **who stands on the band's side**, and that
+distinction is load-bearing:
 
-Outcome application: `killed` people are removed from the band cohort at the `death_fraction` seam
-(`systems/population.rs`); `wounded` become a transient capacity dip; forfeited yield is the take
-you lose when driven off; the event narrates in the command feed. Applies to **any** dangerous
-encounter, not just predators — mammoth danger and wolf danger are literally the same code path,
-differing only in the contingents' profiles.
+- **Player-initiated (the hunt):** a band Hunts a herd with `attack` > 0 (mammoth, ox, or any
+  predator) → the band-side contingents are **the hunters on that herd**, and their safety is *their
+  own* — answered by **equipping them (TOE)**, never by a guard. A hunting party that goes after a
+  mammoth defends itself with spears; you do not dispatch the camp's border patrol to escort it, and
+  there is no "assign Warriors to a hunt" affordance because the concept doesn't fit. As TOE lands,
+  the hunters' `CombatProfile` improves (bare hands → spears) and the same hunt comes home whole — no
+  seam change, that is the whole point of intrinsic ⊕ equipment.
+- **Predator-initiated (the raid):** a carnivore herd with `aggression` > 0 in range of a band raids
+  the band / its unguarded foragers → **this** is what **Warriors** defend against, the band-wide
+  guard doing its actual job (band as Defender). It requires a carnivore that initiates, which does
+  not exist until Phase 1 — so **Warrior's first live consumer is Phase 1, not the hunt.**
+
+> **Warriors never enter a hunt.** Warrior is a band-wide standing posture (border/camp patrol);
+> hunt danger is the hunting party's own, mitigated by *its* equipment. Folding the band's Warrior
+> head-count into a hunt would let a border-patrol assignment silently make a mammoth hunt safer —
+> the wrong model. The hunt's only levers are the hunting party: its numbers, and (via TOE) its gear.
+
+Outcome application: `killed` people are removed from the band cohort's working-age bracket;
+`wounded` are computed and surfaced but **mechanically inert** in the first slices (recovery is its
+own later slice); forfeited yield is the take you lose when driven off; the event narrates in the
+command feed. Applies to **any** dangerous encounter — mammoth danger and wolf danger are the same
+code path, differing only in the contingents' profiles.
 
 ## Staging — each phase independently testable
 
 Order matches the approved staging; every phase ships something a tester can exercise, however
 basic.
 
-- **Phase 0 — The combat seam + ratings + live Warrior.**
+- **Phase 0 — The combat seam + ratings + dangerous-hunt casualties.**
   Stand up the `core_sim/src/combat/` subsystem: the composition contract (`FightPayload` / `Force`
   / `Contingent` / `CombatProfile` / `FightOutcome` / `ContingentResult`, shaped for TOE + range +
   death/wound) and `resolve_fight` with a **placeholder** per-contingent attrition resolver (own
@@ -314,23 +328,29 @@ basic.
   defense, range }`** value type; embed it in `SpeciesDef` alongside `aggression` + `diet` (defaults
   keep every existing species byte-identical: `attack` 0, `aggression` 0, `defense` low, `range`
   Melee, `diet` herbivore); add a **1-row `creatures` roster** holding the base human `CombatStats`.
-  **No equipment table yet** — the loadout composes to identity (bare hands), so Warrior mitigation
-  in Phase 0 comes from headcount + posture until TOE lands. Wire the **existing** Hunt path as a
-  thin adapter — hunting a high-`attack` animal (start with mammoth/ox — *no predator species yet*)
-  builds a fight (band contingent vs the animal's fighting stock), resolves it, and applies
-  `killed`/`wounded` (via the `death_fraction` seam). Snapshot the danger readout (free-form
-  strings, no `.fbs` change).
-  **Testable:** assign hunters to a mammoth with 0 vs N warriors; observe deaths fall (and the split
-  shift toward wounded) as warriors rise. Warrior stops being inert; `resolve_fight` has its first
-  caller.
+  Wire the **existing** Hunt path as a thin adapter — hunting a high-`attack` animal (start with
+  mammoth/ox — *no predator species yet*) builds a fight whose **band side is the hunters on that
+  herd** (the person profile), resolves it, and applies `killed` (working-age bracket) + inert
+  `wounded`, narrated on a `hunt_danger` command-feed line (no `.fbs` change). **Warrior is NOT
+  wired in** — a hunt's danger is the hunting party's own; its mitigation is the hunters' equipment,
+  which arrives with **TOE** (see `docs/plan_early_game_labor.md` → Equipment/TOE). **No equipment
+  table yet** — the hunters' loadout composes to identity (bare hands), so Phase 0 *lands the
+  casualties*; the equip-to-survive payoff is a TOE-arc consequence, not this slice. Warrior stays
+  inert until Phase 1's raid path.
+  **Testable:** hunt a mammoth (attack 8) → a `hunt_danger` feed line + working-age population drops;
+  hunt a deer (attack 0) → nobody dies. `resolve_fight` gets its first caller.
 
-- **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down).**
+- **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down) + the raid trigger.**
   Add the `Diet` enum; make `ecological_carrying_capacity` sum prey flow for carnivores; add
   `advance_predation` (abstracted biomass draw from prey herds the predator's `attack` clears).
   Seed one predator species (wolf pack) in `fauna_config.json`. Movement can stay on the existing
   `roam` primitive for this phase (predators wander like any herd) — dynamic pursuit is Phase 2.
+  **This is where Warrior goes live:** a carnivore with `aggression` > 0 in range of a band raids
+  it (band as **Defender**), and the band-side contingent is its **Warriors** — the second
+  `resolve_fight` trigger, and the Warrior role's first real consumer.
   **Testable:** spawn wolves near deer; watch deer biomass drawn down, wolf biomass track prey
-  (grow when fed, decline and despawn when the deer are gone). Predator–prey oscillation visible in
+  (grow when fed, decline and despawn when the deer are gone); a wolf pack near an under-guarded
+  band costs it people, and staffing Warriors cuts the losses. Predator–prey oscillation visible in
   telemetry.
 
 - **Phase 2 — Shared prey-seeking movement.**
@@ -371,7 +391,8 @@ basic.
 | 7 | **Casualties resolve through a first-class combat subsystem** (`resolve_fight`), never a bespoke hunt formula | A predator encounter is just a *fight* — same resolver as future TOE/rival-civ battles. Combat is its own module with no fauna/labor knowledge; callers build payloads (DRY/SOLID, open/closed). Placeholder resolver now; the *seam* is the deliverable, so the real model drops in without touching callers. |
 | 7a | **Callers describe composition, never an aggregate power scalar** | A scalar can't survive TOE (artillery lethal ranged / useless in melee; archers + spearmen ≠ one total). `Force` carries `Contingent`s with per-unit `CombatProfile`s; combat owns aggregation, range-phasing, attrition. |
 | 7b | **A combatant = intrinsic creature ⊕ equipment; one shared `CombatStats`** | Wolf and human are the same combatant; an armored elephant = creature + equipment, identical to human + shield. Intrinsic stats live with the creature (animals → `SpeciesDef`, humans → a `creatures` roster) — the wolf's `attack` is the same one predation reads; equipment lives in its own table; combat composes. Split is *intrinsic vs equipment*, not *animal vs human*. |
-| 7c | **Death vs wounded modelled from day one** | `killed` (permanent) + `wounded` (recoverable capacity dip) per contingent; Warriors/equipment shift the kill↔wound *split*, not just the count — the legible reason to equip, and why bare hands lose to a wolf on severity. |
+| 7c | **Death vs wounded modelled from day one** | `killed` (permanent) + `wounded` (recoverable capacity dip) per contingent; the hunting party's *equipment* (and, secondarily, its numbers) shifts the kill↔wound *split*, not just the count — the legible reason to equip a hunt, and why bare hands lose to a mammoth on severity. |
+| 7d | **Warriors do NOT escort a hunt; equipment does** | Warrior is a band-wide standing guard (border/camp patrol); a hunt's danger is the hunting party's own, answered by equipping the hunters (TOE). Folding band-wide Warriors into a hunt would let a border-patrol assignment silently make a mammoth hunt safer. So Phase 0's hunt path reads only the hunters on that herd; **Warrior's first live consumer is the Phase 1 predator-*raid* trigger** (band as Defender), not the hunt. |
 | 8 | **Build the ecological version, not abstract M1 pressure** | The herd stack makes real predators barely more work than a fake; the *interface* (Phase 0) is identical, so nothing is wasted and nothing is retrofitted. |
 | 9 | **Movement primitive shared from the start** (Phase 2 extract) | The user requires scouting to reuse it; designing `relocate_toward_resource` as shared avoids a rewrite. |
 | 10 | **Defaults keep every existing species byte-identical** | `attack`/`aggression` default 0, `defense` low, `diet` herbivore — no-back-compat rule; the roster is unchanged until a species opts in. |
