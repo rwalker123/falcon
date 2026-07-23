@@ -17,7 +17,10 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 
 mod biome_palette;
 pub mod climate;
+pub mod combat;
+mod combat_config;
 mod components;
+mod creatures_config;
 mod crisis;
 mod crisis_config;
 mod culture;
@@ -80,11 +83,23 @@ use crate::start_profile::{
 };
 use bevy::prelude::*;
 
+pub use combat::{
+    resolve_fight, CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult,
+    FightOutcome, FightPayload, Force, ForceId, Posture, RangeBand, TerrainContext,
+};
+pub use combat_config::{
+    load_combat_config_from_env, CombatConfig, CombatConfigHandle, CombatConfigMetadata,
+    BUILTIN_COMBAT_CONFIG,
+};
 pub use components::{
     available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
     FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
     Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+};
+pub use creatures_config::{
+    load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
+    CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -133,9 +148,9 @@ pub use fauna::{
     HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
-    load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
-    GrazeConfig, HusbandryCeiling, ShoreRequirement, SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG,
-    NO_GRAZE_CAPACITY,
+    load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
+    FaunaConfigMetadata, GrazeConfig, HusbandryCeiling, ShoreRequirement, SizeClass, SpeciesDef,
+    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
 pub use flora_config::{
     load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,
@@ -435,6 +450,10 @@ pub fn build_headless_app() -> App {
     let (expedition_config, expedition_metadata) =
         expedition_config::load_expedition_config_from_env();
     let expedition_handle = expedition_config::ExpeditionConfigHandle::new(expedition_config);
+    let (combat_config, combat_metadata) = combat_config::load_combat_config_from_env();
+    let combat_handle = combat_config::CombatConfigHandle::new(combat_config);
+    let (creatures_config, creatures_metadata) = creatures_config::load_creatures_config_from_env();
+    let creatures_handle = creatures_config::CreaturesConfigHandle::new(creatures_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -518,6 +537,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(sites::DiscoveredSites::default())
         .insert_resource(expedition_handle)
         .insert_resource(expedition_metadata)
+        .insert_resource(combat_handle)
+        .insert_resource(combat_metadata)
+        .insert_resource(creatures_handle)
+        .insert_resource(creatures_metadata)
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)

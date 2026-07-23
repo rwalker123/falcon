@@ -1,5 +1,19 @@
 use super::*;
 
+/// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
+/// system stays under Bevy's 16-parameter ceiling as new configs join it (Predators Phase 0 added
+/// combat + creatures). Each is resolved to its `Arc` once at the top of the system.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct LaborConfigs<'w> {
+    pub fauna: Res<'w, FaunaConfigHandle>,
+    pub labor: Res<'w, LaborConfigHandle>,
+    pub flora: Res<'w, FloraConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub wellbeing: Res<'w, WellbeingConfigHandle>,
+    pub combat: Res<'w, CombatConfigHandle>,
+    pub creatures: Res<'w, CreaturesConfigHandle>,
+}
+
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
 /// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
 /// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
@@ -15,7 +29,9 @@ use super::*;
 ///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
 ///   hunt_leash_tiles` (leashed follow); past that — or if the herd is gone — the assignment lapses
 ///   and its workers return to the pool (feed entry).
-/// - **Scout**: reveals fog outward from the band. **Warrior**: inert (occupies workers only).
+/// - **Scout**: reveals fog outward from the band. **Warrior**: produces no yield, but its head-count
+///   is consumed by the hunt-danger combat resolution (Predators Phase 0) — warriors join a dangerous
+///   hunt's defending party and mitigate casualties.
 ///
 /// Husbandry (Phase E) re-homes here, but **Sustain no longer tames** (slice 3a): a `Tame` hunt
 /// fills the herd's domestication meter, while any *stewardship* policy on a **Thriving** source
@@ -31,20 +47,23 @@ pub fn advance_labor_allocation(
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
     sim_config: Res<SimulationConfig>,
-    fauna_config: Res<FaunaConfigHandle>,
-    labor_config: Res<LaborConfigHandle>,
-    flora_config: Res<FloraConfigHandle>,
-    ladder_config: Res<LadderConfigHandle>,
-    wellbeing_config: Res<WellbeingConfigHandle>,
+    configs: LaborConfigs,
     tiles: Query<&Tile>,
     food_modules: Query<&FoodModuleTag>,
     mut cohorts: Query<(&mut PopulationCohort, &mut LaborAllocation)>,
 ) {
-    let fauna = fauna_config.get();
-    let labor = labor_config.get();
-    let flora = flora_config.get();
-    let ladder = ladder_config.get();
-    let wellbeing = wellbeing_config.get();
+    let fauna = configs.fauna.get();
+    let labor = configs.labor.get();
+    let flora = configs.flora.get();
+    let ladder = configs.ladder.get();
+    let wellbeing = configs.wellbeing.get();
+    // **Predators Phase 0 — the hunt-danger seam** (`docs/plan_predators.md`). The resolver tuning and
+    // the base human's intrinsic combat profile, resolved once: a dangerous hunt builds a fight from
+    // the band's people (hunters + warriors) vs the animal's fighting stock and applies the band-side
+    // casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
+    let combat_tuning = configs.combat.get().tuning();
+    let person_profile = configs.creatures.get().person();
+    let map_seed = sim_config.map_seed;
     let hunt = &fauna.hunt;
     let husbandry = &fauna.husbandry;
     let market = &fauna.market;
@@ -103,6 +122,10 @@ pub fn advance_labor_allocation(
         // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
         let mult = output_multiplier(&cohort, &wellbeing);
         let mult_f = mult.to_f32();
+        // **The band's Warriors are now consumed** (Predators Phase 0): they join every dangerous
+        // hunt's defending count, mitigating casualties purely by adding to the party's strength (no
+        // equipment differentiates them yet). Read once — the head-count does not change within a turn.
+        let warriors = allocation.workers_on(&LaborTarget::Warrior);
 
         let mut lapsed: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
@@ -987,6 +1010,91 @@ pub fn advance_labor_allocation(
                         realized: hunt_realized,
                         arrivals,
                     };
+                    // **Predators Phase 0 — the hunt turns dangerous** (`docs/plan_predators.md`).
+                    // A herd whose species can fight back (`combat.attack > 0` — mammoth, ox) turns on
+                    // the party after the take resolves. This is the FIRST live consumer of the Warrior
+                    // role: it composes a fight (band's hunters + warriors vs the beast's fighting
+                    // stock), resolves it through the neutral combat subsystem, and applies **only the
+                    // band-side** casualties — the take path already removed the animal's biomass, so
+                    // applying the animal-side result too would double-count (discarded in Phase 0).
+                    if let Some(species) = fauna.species_by_display(&herd.species) {
+                        if species.combat.attack > 0.0 {
+                            // The party's defending strength = the hunters ON THIS herd + EVERY warrior
+                            // in the band. Warriors and hunters share the `person` profile this phase;
+                            // warriors mitigate purely by adding to the count/power (equipment
+                            // differentiates them in a later phase).
+                            let party_count = workers as f32 + warriors as f32;
+                            // A single beast turns on the party each dangerous hunt-turn — a deliberate
+                            // Phase-0 simplification (scaling the engaged count with take/party size is a
+                            // later refinement). Its intrinsic combat body is the same `attack` predation
+                            // will one day read.
+                            // Deterministic, rollback-stable seed (reserved/unused by the placeholder
+                            // resolver, but a real value): map_seed ^ tick ^ herd-id hash.
+                            let mut hasher = crate::hashing::FnvHasher::new();
+                            std::hash::Hash::hash(&herd.id, &mut hasher);
+                            let seed = map_seed ^ tick.0 ^ std::hash::Hasher::finish(&hasher);
+                            let payload = FightPayload {
+                                sides: vec![
+                                    Force {
+                                        id: ForceId(0),
+                                        posture: Posture::Aggressor,
+                                        contingents: vec![Contingent {
+                                            kind: ContingentId::from("person"),
+                                            count: party_count,
+                                            profile: person_profile,
+                                        }],
+                                    },
+                                    Force {
+                                        id: ForceId(1),
+                                        posture: Posture::Defender,
+                                        contingents: vec![Contingent {
+                                            kind: ContingentId(herd.species.clone()),
+                                            count: 1.0,
+                                            profile: species.combat,
+                                        }],
+                                    },
+                                ],
+                                terrain: vec![TerrainContext {
+                                    hex: (band_pos.x, band_pos.y),
+                                }],
+                                seed,
+                            };
+                            let outcome = resolve_fight(&payload, &combat_tuning);
+                            // Apply ONLY the band side (`ForceId(0)`); discard the animal side.
+                            let band_side = outcome
+                                .results
+                                .iter()
+                                .find(|r| r.force == ForceId(0))
+                                .map(|r| (r.killed, r.wounded))
+                                .unwrap_or((0.0, 0.0));
+                            let (killed_f, wounded_f) = band_side;
+                            if killed_f + wounded_f > 0.0 {
+                                // `killed` come out of the working-age bracket (the new casualty
+                                // mortality path); `wounded` is **computed and surfaced but mechanically
+                                // inert this phase** — no capacity/recovery effect yet (a later slice).
+                                cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+                                // The prose rounds `killed` for a readable "cost N lives"; the **detail
+                                // carries the fractional truth** (casualties are `Scalar`-fractional by
+                                // design — a well-guarded party takes a fraction of a death), so a
+                                // consumer reads precise killed/wounded rather than a rounded 0.
+                                let killed_r = killed_f.round() as u32;
+                                event_log.push(CommandEventEntry::new(
+                                    tick.0,
+                                    CommandEventKind::HuntDanger,
+                                    faction,
+                                    // Human text names the SPECIES, never the internal herd id.
+                                    format!(
+                                        "The {} hunt cost {} lives",
+                                        species.display_name, killed_r
+                                    ),
+                                    Some(format!(
+                                        "killed={:.3} wounded={:.3} warriors={} species={}",
+                                        killed_f, wounded_f, warriors, species.display_name
+                                    )),
+                                ));
+                            }
+                        }
+                    }
                 }
                 LaborTarget::Scout => {
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
@@ -994,7 +1102,10 @@ pub fn advance_labor_allocation(
                     // and reveal from each, re-marked Active every turn — no work is done here.
                 }
                 LaborTarget::Warrior => {
-                    // Inert this slice — the predator slice consumes Warrior strength.
+                    // Warriors produce no yield of their own, so this arm stays a no-op — but the role
+                    // is **no longer inert** (Predators Phase 0): the band's Warrior head-count is read
+                    // above (`warriors`) and consumed by the hunt-danger resolution, where it joins the
+                    // party's defending strength and mitigates casualties. Do not delete this branch.
                 }
             }
         }
@@ -1362,6 +1473,8 @@ mod labor_yield_tests {
         world.insert_resource(crate::flora_config::FloraConfigHandle::default());
         world.insert_resource(LadderConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
+        world.insert_resource(crate::combat_config::CombatConfigHandle::default());
+        world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());

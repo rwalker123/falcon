@@ -21,7 +21,42 @@ use sim_runtime::TerrainType;
 
 use thiserror::Error;
 
+use crate::combat::CombatStats;
+
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
+
+/// **What an animal eats** — the trophic knob (`docs/plan_predators.md`). A `Herbivore` grazes the
+/// land (the graze layer); a `Carnivore` eats prey biomass. The **only** knob that changes the
+/// food/carrying-capacity layer — and it does so in **Phase 1**, not here. `#[serde(default)]` =
+/// `Herbivore`, persisted-enum convention (`as_str` / `from_key`), so every existing species is
+/// byte-identical and this field is **inert this phase**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Diet {
+    /// Grazes the land. The default.
+    #[default]
+    Herbivore,
+    /// Eats prey biomass — a predator.
+    Carnivore,
+}
+
+impl Diet {
+    /// Stable string key (the JSON spelling and any future snapshot field).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Diet::Herbivore => "herbivore",
+            Diet::Carnivore => "carnivore",
+        }
+    }
+
+    /// Parse the stable key back (inverse of [`Diet::as_str`]); unknown/empty → [`Diet::Herbivore`].
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "carnivore" => Diet::Carnivore,
+            _ => Diet::Herbivore,
+        }
+    }
+}
 
 /// Coarse size band. Drives roaming range + group size; also lets Phase B/C offer
 /// the right verbs (big/small game are huntable one-shot; migratory herds follow).
@@ -328,6 +363,25 @@ pub struct SpeciesDef {
     /// `display_name`. Same rationale as [`SpeciesDef::plural`].
     #[serde(default)]
     pub adjective: Option<String>,
+    /// **The species' intrinsic combat body** — the neutral [`CombatStats`] the combat subsystem
+    /// reads (`docs/plan_predators.md`). The *same* `attack` predation will one day read for "who can
+    /// it eat" and the hunt path reads for "how dangerous is this to hunt" — intrinsic combat stats
+    /// and predation stats are one thing. `#[serde(default)]` = `{ attack: 0, defense: 1, range:
+    /// Melee }`, so every species that omits it is a **harmless** hunt (attack 0 → zero casualties)
+    /// and byte-identical. Validated: `attack >= 0` finite, `defense > 0` finite (it is a denominator
+    /// in the kill/wound split).
+    #[serde(default)]
+    pub combat: CombatStats,
+    /// **What this species eats** — herbivore (grazes) vs carnivore (eats prey). `#[serde(default)]` =
+    /// `Herbivore`. **Inert this phase** — Phase 1 makes `ecological_carrying_capacity` sum prey flow
+    /// for carnivores.
+    #[serde(default)]
+    pub diet: Diet,
+    /// **Does it initiate?** `0..1` — will it raid unguarded foragers unprovoked (`> 0`), or only
+    /// fight back when hunted (`0`)? `#[serde(default)]` = `0.0`. **Inert this phase** — Phase 1's
+    /// predator-raid trigger consumes it. Validated finite & in `[0, 1]`.
+    #[serde(default)]
+    pub aggression: f32,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -1115,6 +1169,14 @@ impl FaunaConfig {
             // so an older config that omits them stays valid.
             require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
             require_at_least_one(species_field("pen_density"), def.pen_density)?;
+            // **The intrinsic combat body** (Predators Phase 0, `docs/plan_predators.md`). `attack` may
+            // be `0` (most prey just runs — a harmless hunt), but `defense` is a **denominator** in the
+            // kill/wound split (`combat::resolve_fight`): at `0` the split is `0/0` and a species would
+            // be un-fightable. `aggression` is a `[0, 1]` probability of initiating a raid (inert this
+            // phase). All finite — a NaN would poison the fight arithmetic.
+            require_non_negative_finite(species_field("combat.attack"), def.combat.attack)?;
+            require_positive_finite(species_field("combat.defense"), def.combat.defense)?;
+            require_in_unit_range(species_field("aggression"), def.aggression)?;
             // **The shore predicate is only applied on the short-range game path.** The migratory
             // placement path (`suitable_tiles_for` / `build_migratory_route`) picks its loiter
             // anchors off `host_biomes` alone and never consults the site rule, so a migratory

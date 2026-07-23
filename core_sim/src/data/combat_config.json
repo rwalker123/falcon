@@ -1,0 +1,5 @@
+{
+  "_comment": "Combat resolver tuning (docs/plan_predators.md). Severity constants the placeholder resolver reads; NOT creature identity (that lives on fauna_config/creatures). Playtest dials.",
+  "lethality": 1.0,
+  "disengage_fraction": 0.5
+}

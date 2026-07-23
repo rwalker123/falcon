@@ -1172,6 +1172,10 @@ pub enum CommandEventKind {
     /// different rungs the player chooses between (the animal side's `Tame` set the precedent).
     Sow,
     Corral,
+    /// A **dangerous hunt** cost the band lives (Predators Phase 0, `docs/plan_predators.md`). The
+    /// hunt-danger combat resolution pushes this when hunting a high-`attack` animal (mammoth, ox)
+    /// produces casualties — the first live consumer of the Warrior role's mitigation.
+    HuntDanger,
     CancelOrder,
     SedentarizationPrompt,
     SiteDiscovered,
@@ -1203,6 +1207,7 @@ impl CommandEventKind {
             CommandEventKind::Cultivate => "cultivate",
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
+            CommandEventKind::HuntDanger => "hunt_danger",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",

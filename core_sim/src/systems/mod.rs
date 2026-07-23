@@ -13,6 +13,11 @@ use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     biome_palette::BiomePalette,
+    combat::{
+        resolve_fight, Contingent, ContingentId, FightPayload, Force, ForceId, Posture,
+        TerrainContext,
+    },
+    combat_config::CombatConfigHandle,
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
         Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
@@ -20,6 +25,7 @@ use crate::{
         MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
         StartingUnit, Tile, TradeLink, FOOD,
     },
+    creatures_config::CreaturesConfigHandle,
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
         CultureTensionEvent, CultureTensionKind, CultureTensionRecord, CultureTraitAxis,
