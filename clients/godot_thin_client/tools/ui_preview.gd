@@ -2157,7 +2157,7 @@ func _ready() -> void:
 	# State F2 — the SAME fork in the other register. Verifies the toggle and that the noticeably
 	# shorter/looser `warm` copy lays out as well as the long `mythic` one. The registers come from
 	# the fork itself, never a hardcoded list.
-	_hud._fork_panel._on_register_picked(FORK_REGISTER_WARM)
+	_hud._turnorb._fork_panel._on_register_picked(FORK_REGISTER_WARM)
 	await _settle()
 	await _save("narrative_fork_panel_warm")
 
@@ -2165,7 +2165,7 @@ func _ready() -> void:
 	# fork seeded, an orb-face click must NOT advance the turn (it opens the reasons popover
 	# instead), and the popover's Advance button must be DISABLED and wear the reason. This is the
 	# exact inverse of `turn_orb_clear_click_advances`.
-	_hud._fork_panel.close()
+	_hud._turnorb._fork_panel.close()
 	NarrativeForkPanel.save_voice_register(FORK_REGISTER_MYTHIC)
 	var fork_advance_hits := [0]
 	var fork_advance_cb := func() -> void: fork_advance_hits[0] += 1
