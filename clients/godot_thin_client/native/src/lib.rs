@@ -762,7 +762,11 @@ fn snapshot_dict(
                 .get("y")
                 .and_then(|v| v.try_to::<i64>().ok())
                 .unwrap_or(-1);
-            if x < 0 || y < 0 {
+            // In-bounds on BOTH axes before computing idx: flooring at 0 is not enough — a herd
+            // off the right/bottom edge (x >= width / y >= height) would wrap into the wrong tile's
+            // slot (idx = y*width + x row-wraps), and the `idx < len` guard only catches full OOB,
+            // never a row-wrap. Skip the herd entirely if either axis is out of range.
+            if x < 0 || y < 0 || x >= grid_size.width as i64 || y >= grid_size.height as i64 {
                 continue;
             }
             let idx = (y as usize)

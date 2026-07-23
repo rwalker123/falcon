@@ -3991,7 +3991,7 @@ func _deadly_herd_fixture() -> Dictionary:
 	fixture["species"] = "Woolly Mammoth"
 	fixture["husbandry_ceiling"] = "wild"
 	fixture["attack"] = 8.0
-	fixture["defense"] = 6.0
+	fixture["defense"] = 12.0
 	fixture["ferocity"] = 0.9
 	fixture["aggression"] = 0.0
 	fixture["tile_info"] = _compact_herd_tile_fixture()

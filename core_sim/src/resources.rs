@@ -1172,9 +1172,11 @@ pub enum CommandEventKind {
     /// different rungs the player chooses between (the animal side's `Tame` set the precedent).
     Sow,
     Corral,
-    /// A **dangerous hunt** cost the band lives (Predators Phase 0, `docs/plan_predators.md`). The
-    /// hunt-danger combat resolution pushes this when hunting a high-`attack` animal (mammoth, ox)
-    /// produces casualties — the first live consumer of the Warrior role's mitigation.
+    /// A **dangerous hunt** produced band casualties (Predators Phase 0, `docs/plan_predators.md`). The
+    /// hunt-danger combat resolution pushes this whenever hunting an animal that fights back
+    /// (`attack × ferocity > 0` — mammoth, ox) costs the party casualties (killed and/or wounded; the
+    /// event fires on `killed + wounded > 0`, so a wound-only hunt narrates too). The hunting party
+    /// answers the danger with its own hunters — **Warriors do NOT mitigate a hunt**.
     HuntDanger,
     CancelOrder,
     SedentarizationPrompt,
