@@ -383,6 +383,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("expedition_hunt_returning")
 
+	# State 1j2 — a MARKET hunt party in flight: Market relaunches for repeated trips, so its
+	# "Next delivery" line wears the recurring ↻ marker. That ↻ must read distinct from the Market
+	# policy glyph (⇄) elsewhere in the panel — the whole point of the marker choice.
+	var market_hunt := _hunt_expedition_fixture()
+	market_hunt["expedition_hunt_policy"] = "market"
+	market_hunt["expedition_eta_turns"] = 9
+	market_hunt["expedition_projected_delivery"] = 16.0
+	market_hunt["expedition_recurring"] = true
+	_hud.show_unit_selection(market_hunt)
+	await _settle()
+	await _save("expedition_hunt_recurring")
+
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt
 	# POLICY radio (MARKET selected) with its EXPEDITION hint. The expedition hints must promise
@@ -2897,6 +2909,11 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"expedition_target_herd": "game_deer_07",
 		"expedition_hunt_policy": "surplus",
 		"expedition_carry_cap": 16.0,
+		# In-flight next-delivery forecast: 12 food arrives in 6 turns. Surplus is one-shot, so the
+		# party folds home after delivering → not recurring (no ↻).
+		"expedition_eta_turns": 6,
+		"expedition_projected_delivery": 12.0,
+		"expedition_recurring": false,
 		"tile_info": {
 			"x": 64, "y": 22,
 			"terrain_label": "Prairie Steppe",

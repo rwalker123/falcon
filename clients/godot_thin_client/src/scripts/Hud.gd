@@ -1178,6 +1178,16 @@ const EXPEDITION_PHASE_LABELS := {
 # (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
+# Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Market
+# policy). Distinct from the Market policy glyph already shown (`FoodIcons.for_policy("market")` = ⇄),
+# so the two never read as duplicated: ↻ = "this trip repeats", ⇄ = "the take is sold as trade goods".
+const EXPEDITION_RECURRING_GLYPH := "↻"
+# "Next delivery" lines for the two ways a projected-0 forecast can arise, disambiguated on the
+# party's own `expedition_target_herd` (which MIGRATES and is often NOT the herd the player is
+# looking at). Target still in the herd telemetry but forecast projects 0 → it is at/below its
+# policy floor; target absent from telemetry → the herd was lost/replaced and the party is coming home.
+const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target herd has no surplus to raid"
+const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
 const SEND_EXPEDITION_BUTTON := "Send scouting party…"
 # Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
@@ -1397,6 +1407,9 @@ const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
 const WORK_INSPECT_JUMP := "Jump to source"
 const WORK_INSPECT_POLICY := "Change policy"
 const WORK_INSPECT_UNASSIGN := "Unassign"
+## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign).
+const PARTY_INSPECT_JUMP := "Jump to party"
+const PARTY_INSPECT_RECALL := "Recall"
 const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
@@ -1421,6 +1434,18 @@ const PARTY_RECALL_REST_ALPHA := 0.45
 const PARTY_RECALL_ALL_FORMAT := "Recall all parties (%d)"
 const PARTY_RECALL_CONFIRM_FORMAT := "Recall all %d parties? They walk home carrying what they have."
 const PARTY_RECALL_CONFIRM_OK := "Recall all"
+## Single-party recall confirm — wraps each BUTTON handler (row ✕, inspector Recall, drawer Recall), NOT
+## the shared emit `_on_recall_expedition_pressed` (which "Recall all" already loops under its OWN one
+## confirm — confirming inside the emit would pop N prompts after a confirmed "Recall all").
+const PARTY_RECALL_ONE_CONFIRM_FORMAT := "Recall the %s party? It walks home carrying what it has."
+const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
+## The %s a scout party fills into the recall prompt — a bare word, since "Recall the Scouting
+## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
+const PARTY_RECALL_SCOUT_LABEL := "scouting"
+## The parties inspector strip is DENSER than the work inspector (up to 6 detail lines vs ~1), and the
+## T/B parties zone is height-capped at ~300px, so its detail lines are tightened a touch below
+## ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer inside the box.
+const PARTIES_INSPECTOR_LINE_SEPARATION := 4
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 
 ## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
@@ -1698,6 +1723,9 @@ var _work_page: int = 0
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
 var _work_open_key: String = ""
 var _work_policy_open: bool = false
+## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
+## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
+var _party_open_key: String = ""
 ## The live work-zone column + its band, so `zones_resized` can RE-PAGE the board in place instead of
 ## re-rendering all three zones.
 var _work_zone_host: VBoxContainer = null
@@ -5305,12 +5333,82 @@ func _build_parties_zone_content(band: Dictionary) -> VBoxContainer:
     else:
         for exp in parties:
             col.add_child(_build_party_row(exp))
+    # Order: rows → inspector (if open) → an EXPAND_FILL spacer → footer, so the Scout/Hunt footer
+    # stays pinned to the BOTTOM of the zone with the strip sitting under the clicked row (the strip is
+    # a row → detail disclosure, the parties twin of the work board's inspector). Drop a strip pinned to
+    # a party that has left the list (recalled, moved to another band), mirroring `_fill_work_zone`'s
+    # stale-key clear. The strip's own line separation is tightened (PARTIES_INSPECTOR_LINE_SEPARATION)
+    # so strip + a row + the pinned footer still fit the height-capped T/B parties zone.
+    var inspected := _party_by_open_key(parties)
+    if inspected.is_empty():
+        _party_open_key = ""
+    else:
+        col.add_child(_build_parties_inspector(inspected))
     var spacer := Control.new()
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     col.add_child(spacer)
     col.add_child(_build_party_footer(band))
     return col
+
+## The party in `parties` whose entity matches `_party_open_key`, or `{}` when none is open / the open
+## one has left the list (the caller then clears the stale key).
+func _party_by_open_key(parties: Array) -> Dictionary:
+    if _party_open_key == "":
+        return {}
+    for exp_variant in parties:
+        if exp_variant is Dictionary:
+            var exp: Dictionary = exp_variant
+            if str(int(exp.get("entity", -1))) == _party_open_key:
+                return exp
+    return {}
+
+## Toggle the parties inspector strip open/closed for `key` (an expedition entity as a string), then
+## re-render the parties zone in place — the same path the footer mission buttons already drive.
+func _toggle_parties_inspector(key: String) -> void:
+    _party_open_key = "" if _party_open_key == key else key
+    _rerender_panel_allocation()
+
+## The parties inspector strip — the full Mission/Target/Policy/Phase/Carried/Next-delivery/Position
+## detail for one party, opened by a row click. Mirrors `_build_work_inspector`: a titled header with a
+## close `✕`, the detail lines as dim status parts, and inline Jump/Recall links.
+func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
+    var strip := PanelContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", PARTIES_INSPECTOR_LINE_SEPARATION)
+    strip.add_child(col)
+    var entity := int(exp.get("entity", -1))
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    var title := Label.new()
+    title.text = _panel_expedition_summary(exp)
+    title.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    title.clip_text = true
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var close := Button.new()
+    close.text = INSPECTOR_CLOSE_GLYPH
+    close.focus_mode = Control.FOCUS_NONE
+    close.tooltip_text = INSPECTOR_CLOSE_TOOLTIP
+    HudStyle.apply_button(close, "ghost")
+    _compact_control(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
+    close.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
+    head.add_child(close)
+    col.add_child(head)
+    for line in _expedition_summary_lines(exp):
+        col.add_child(_build_status_part(line, HudStyle.INK_DIM))
+    var links := HBoxContainer.new()
+    links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
+    links.add_child(_build_inline_link(PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
+        _on_panel_expedition_selected(entity, x, y)))
+    links.add_child(_build_inline_link(PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
+        _confirm_recall_expedition(exp)))
+    col.add_child(links)
+    return strip
 
 ## The player expeditions this band detached (grouped by `home_band_entity`).
 func _band_parties(band: Dictionary) -> Array:
@@ -5329,8 +5427,8 @@ func _band_party_workers(band: Dictionary) -> int:
     return total
 
 ## One party row: mission glyph · subject · phase chip · an always-visible recall `✕` (dimmed at rest,
-## bright on hover). Parties carry no stepper and no inspector, so the `✕` is their only removal path.
-## Clicking the row BODY keeps the existing behaviour: focus + select the expedition on the map.
+## bright on hover) as the quick removal path. Clicking the row BODY toggles the parties inspector
+## strip (the full Mission/Target/…/Next-delivery detail), mirroring the work board's row → inspector.
 func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var phase := _expedition_phase_key(exp)
     var row := HBoxContainer.new()
@@ -5347,9 +5445,7 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
         body.add_theme_color_override("font_color", HudStyle.WARN)
     body.tooltip_text = _expedition_row_tooltip(exp, phase)
     var entity := int(exp.get("entity", -1))
-    var x := int(exp.get("current_x", -1))
-    var y := int(exp.get("current_y", -1))
-    body.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
+    body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
     var recall := Button.new()
     recall.text = PARTY_RECALL_GLYPH
@@ -5357,12 +5453,24 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     recall.tooltip_text = PARTY_RECALL_TOOLTIP
     recall.custom_minimum_size = Vector2(PARTY_RECALL_WIDTH, 0.0)
     HudStyle.apply_button(recall, "ghost")
-    recall.modulate.a = PARTY_RECALL_REST_ALPHA
-    recall.mouse_entered.connect(func() -> void: recall.modulate.a = 1.0)
-    recall.mouse_exited.connect(func() -> void: recall.modulate.a = PARTY_RECALL_REST_ALPHA)
-    recall.pressed.connect(func() -> void: _on_recall_expedition_pressed(exp))
+    # DANGER-red like the Work inspector's destructive "Unassign" link — it removes a party. The steady
+    # red already reads as destructive, so it rests at full opacity (no alpha dim) and brightens no
+    # further on hover. Confirms before recalling (its own single-party prompt, NOT the raw emit).
+    recall.add_theme_color_override("font_color", HudStyle.DANGER)
+    recall.pressed.connect(func() -> void: _confirm_recall_expedition(exp))
     row.add_child(recall)
     return row
+
+## Confirm a SINGLE party's recall, then emit. Wraps the button handlers (row ✕, inspector Recall,
+## drawer Recall) — NOT the shared `_on_recall_expedition_pressed` emit, which "Recall all" loops under
+## its own one confirm. The prompt names the party (hunt → its herd, scout → the mission word).
+func _confirm_recall_expedition(exp: Dictionary) -> void:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
+        if mission == EXPEDITION_MISSION_HUNT \
+        else PARTY_RECALL_SCOUT_LABEL
+    _confirm_destructive(PARTY_RECALL_ONE_CONFIRM_FORMAT % label, PARTY_RECALL_ONE_CONFIRM_OK,
+        func() -> void: _on_recall_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
@@ -5689,7 +5797,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     recall_btn.tooltip_text = "Heading home — folds workers + provisions back on arrival." if returning \
         else "Order the expedition home (folds workers + provisions back on arrival)."
     recall_btn.disabled = returning
-    recall_btn.pressed.connect(_on_recall_expedition_pressed.bind(expedition))
+    recall_btn.pressed.connect(func() -> void: _confirm_recall_expedition(expedition))
     actions.add_child(recall_btn)
     allocation_panel.add_child(actions)
 
@@ -8140,14 +8248,53 @@ func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
         policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
     return _join_tooltip_lines([
         _expedition_mission_label(mission), policy_hint,
-        _status_tooltip_line(phase), EXPEDITION_ROW_FOCUS_HINT])
+        _status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission),
+        EXPEDITION_ROW_FOCUS_HINT])
+
+## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
+## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
+## drawer's `_expedition_summary_lines` prints. Empty (dropped by `_join_tooltip_lines`) for a scout
+## party or a party not yet projecting a delivery.
+func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String) -> String:
+    if mission != EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
+        return ""
+    return _expedition_next_delivery_line(exp)
+
+## The robust "Next delivery: …" wording, shared by the parties inspector strip
+## (`_expedition_summary_lines`) and the row tooltip (`_expedition_delivery_tooltip_line`) so the two
+## can never disagree. Caller has already confirmed this is a hunt party carrying the field. A projected
+## 0 is a REAL answer, but it means one of TWO things — and the party's TARGET herd (which migrates and
+## is often NOT the herd the player is inspecting) tells them apart: if the target id is still in the
+## herd telemetry the raid returns empty because that herd is at/below its policy floor; if the id is
+## absent the target was lost/replaced and the party is coming home. Never blank the line as if there
+## were no forecast at all, and never imply it is the herd on the tile the player is looking at.
+func _expedition_next_delivery_line(exp: Dictionary) -> String:
+    var delivery := float(exp.get("expedition_projected_delivery", 0.0))
+    if delivery <= 0.0:
+        var target_id := String(exp.get("expedition_target_herd", "")).strip_edges()
+        var target := _find_world_herd(target_id) if target_id != "" else {}
+        if target.is_empty():
+            return EXPEDITION_NEXT_DELIVERY_TARGET_LOST
+        return EXPEDITION_NEXT_DELIVERY_NO_SURPLUS
+    var amount := int(round(delivery))
+    var eta := int(exp.get("expedition_eta_turns", 0))
+    var line := ""
+    if eta > 0:
+        var turns_word := "turn" if eta == 1 else "turns"
+        line = "Next delivery: ~%d food in %d %s" % [amount, eta, turns_word]
+    else:
+        line = "Next delivery: ~%d food (raid underway)" % amount
+    if bool(exp.get("expedition_recurring", false)):
+        line += "  %s" % EXPEDITION_RECURRING_GLYPH
+    return line
 
 ## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
 ## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
 ## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
 ## live in the tooltip. A scout has no policy → `for_policy` returns "" → `_row_glyph_suffix` emits
 ## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
-## its words (`_expedition_phase_suffix`).
+## its words (`_expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
+## parties inspector strip a row click opens (`_build_parties_inspector` → `_expedition_summary_lines`).
 func _panel_expedition_summary(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
@@ -8155,7 +8302,8 @@ func _panel_expedition_summary(exp: Dictionary) -> String:
         FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
     if mission == EXPEDITION_MISSION_HUNT:
         var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-        return "%s %s%s%s" % [PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
+        return "%s %s%s%s" % [
+            PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [
@@ -8490,9 +8638,21 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     lines.append("Mission: %s" % _expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
+        # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
+        # at, so when the target is still in the telemetry with a live position we append it — the
+        # player can then tell "my party is bound to a boar at (68, 30)" from a healthy boar nearby.
+        # When the target is absent (lost/replaced), the delivery line already says so, so we leave
+        # the row as just the species/id.
         var herd_id := String(unit_data.get("expedition_target_herd", "")).strip_edges()
         if herd_id != "":
-            lines.append("Target: %s" % _herd_label_for_id(herd_id))
+            var target_line := "Target: %s" % _herd_label_for_id(herd_id)
+            var target_herd := _find_world_herd(herd_id)
+            if not target_herd.is_empty():
+                var tx := int(target_herd.get("x", -1))
+                var ty := int(target_herd.get("y", -1))
+                if tx >= 0 and ty >= 0:
+                    target_line += " (%d, %d)" % [tx, ty]
+            lines.append(target_line)
         # The launched take policy (Sustain/Surplus/Market/Eradicate).
         var policy := String(unit_data.get("expedition_hunt_policy", "")).strip_edges()
         if policy != "":
@@ -8524,6 +8684,14 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
             lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_turns_text(turns), full_badge])
         else:
             lines.append("Carried: %d  (%s)" % [carried, _food_turns_text(turns)])
+        # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
+        # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
+        # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
+        # hide. The gate is `has(...)`, not `> 0`: the native decoder always inserts the field now, so
+        # present-and-0 is a genuine no-surplus; an ABSENT key (older build) renders nothing rather
+        # than a false "none".
+        if unit_data.has("expedition_projected_delivery"):
+            lines.append(_expedition_next_delivery_line(unit_data))
     else:
         lines.append("Provisions: %d  (%s)" % [carried, _food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))

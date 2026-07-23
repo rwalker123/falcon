@@ -2358,11 +2358,23 @@ pub struct PopulationCohortState {
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
+    /// In-flight hunt-party delivery forecast — the in-flight twin of the pre-launch
+    /// `hunt_trip_estimates`. Turns until the carried food reaches the home larder (`0` = unknown /
+    /// n/a). Computed at capture by `systems::expeditions::expedition_delivery`. Appended.
+    #[serde(default)]
+    pub expedition_eta_turns: u32,
+    /// The food that in-flight delivery will contain (carried + still-to-take, pack-capped). `0` for a
+    /// scout, a normal band, or a party whose delivery can't be projected. Appended.
+    #[serde(default)]
+    pub expedition_projected_delivery: f32,
+    /// Whether the party relaunches for repeated trips after delivering (only `Market`). Appended.
+    #[serde(default)]
+    pub expedition_recurring: bool,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
     /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
-    /// draws it, and it never converts to provisions. Appended (append-only). (The deprecated
-    /// `foodIncomeAverage` slot sits between this and `bandMoveTilesPerTurn` on the wire but is not
-    /// carried on the Rust side.)
+    /// draws it, and it never converts to provisions. Appended (append-only) after #165's expedition
+    /// trio. (The deprecated `foodIncomeAverage` slot sits earlier on the wire but is not carried on
+    /// the Rust side.)
     #[serde(default)]
     pub fodder_store: f32,
 }
@@ -4885,9 +4897,12 @@ fn create_populations<'a>(
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
-                    // (`foodIncomeAverage` sits here on the wire but is `(deprecated)`, so flatc omits
-                    // it from the generated Args — nothing to set.)
-                    // The band's hay reserve (F3) — appended (append-only wire).
+                    expeditionEtaTurns: cohort.expedition_eta_turns,
+                    expeditionProjectedDelivery: cohort.expedition_projected_delivery,
+                    expeditionRecurring: cohort.expedition_recurring,
+                    // (`foodIncomeAverage` sits earlier on the wire but is `(deprecated)`, so flatc
+                    // omits it from the generated Args — nothing to set.)
+                    // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
                     fodderStore: cohort.fodder_store,
                 },
             )
