@@ -195,7 +195,7 @@ func _ready() -> void:
 
 	# The labor-allocation UI (Early-Game Labor slice 3b) targets the single player band;
 	# seed it so the herd/tile "assign" controls resolve a band to staff.
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_band = _band_fixture()
 	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row reads the herd's
 	# species from here and, when clicked, jumps to its LIVE tile (it has migrated away from the hunt
 	# assignment's launch target).
@@ -316,7 +316,7 @@ func _ready() -> void:
 	# tile) is in flight before the snapshot confirms. The panel shows an amber "· pending"
 	# Forage row and the Idle count reflects it immediately (16 − [5+4+2+2+6=19] clamps to 0).
 	# (Seeds the HUD-local pending map directly to mimic a just-issued assign_labor.)
-	_hud._pending_labor = {
+	_hud._band_labor._pending_labor = {
 		904: {
 			"turn": 0,
 			"assign": {"forage:64,20": {"kind": "forage", "workers": 6, "x": 64, "y": 20, "herd_id": "", "policy": ""}},
@@ -325,7 +325,7 @@ func _ready() -> void:
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
 	await _save("band_pending")
-	_hud._pending_labor = {}
+	_hud._band_labor._pending_labor = {}
 
 	# State 1e — a scouting expedition selected in its awaiting-orders phase: the drawer shows the
 	# dedicated expedition readout (Mission / Phase "Awaiting orders" / Party / Provisions) and the
@@ -450,8 +450,8 @@ func _ready() -> void:
 
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
-	_hud._player_band = _forage_range_bands()[0]
-	_hud._player_bands = []
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_bands = []
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 
@@ -493,14 +493,14 @@ func _ready() -> void:
 	# the note differs from the usefulness-bound `forage_forecast_cap` above.
 	var forage_labor_band: Dictionary = _forage_range_bands()[0].duplicate(true)
 	forage_labor_band["idle_workers"] = 2
-	_hud._player_band = forage_labor_band
+	_hud._band_labor._player_band = forage_labor_band
 	_hud._forage_assign_band = -1
 	_hud._forage_assign_count = 2
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_labor_bound")
 	# Restore the 10-idle range band + count for the states that follow.
-	_hud._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_band = _forage_range_bands()[0]
 	_hud._forage_assign_band = -1
 	_hud._forage_assign_count = 3
 
@@ -713,7 +713,7 @@ func _ready() -> void:
 	# drops the "Preparing: +0.00 → then +1.20" promise (an unstaffed build meter never advances, so
 	# that sequence cannot arrive) and states the payoff as a condition instead. The payoff NUMBER stays
 	# — it is how the player decides the tile is worth staffing at all.
-	_hud._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_band = _forage_range_bands()[0]
 	_hud._forage_assign_key = ""
 	_hud.show_tile_selection(_food_tile_fixture())
 	# The FIRST compose settles the source key; the policy and count must be set after it, because a
@@ -736,7 +736,7 @@ func _ready() -> void:
 	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
 	# gone — it would contradict the button. What abandoning costs is already on the card in the
 	# Cultivate policy hint ("It must stay staffed or it goes feral").
-	_hud._player_band = _cultivating_forage_band_fixture()
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
 	_hud._forage_assign_key = ""
 	_hud.show_tile_selection(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
@@ -752,7 +752,7 @@ func _ready() -> void:
 		not _has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
 	# Restore the unassigned near band for the frames that follow.
-	_hud._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_band = _forage_range_bands()[0]
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_count = 1
 
@@ -948,8 +948,8 @@ func _ready() -> void:
 	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
 	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
 	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's forage range (2)").
-	_hud._player_band = _forage_range_bands()[1]
-	_hud._player_bands = []
+	_hud._band_labor._player_band = _forage_range_bands()[1]
+	_hud._band_labor._player_bands = []
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -959,8 +959,8 @@ func _ready() -> void:
 
 	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
 	# away ≤ range 2): enabled **Forage**. The band-picker selection — not the tile — drives it.
-	_hud._player_bands = _forage_range_bands()
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = _forage_range_bands()
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -976,14 +976,14 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_forage_band_far")
 	# Reset so later states resolve their usual band.
-	_hud._player_bands = []
+	_hud._band_labor._player_bands = []
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 
 	# band_alerts (above) overwrote _player_band with alert-fixture bands (which carry no hunt_reach);
 	# re-seed the reference band so the herd assign controls resolve a proper band with a hunt reach.
-	_hud._player_band = _band_fixture()
-	_hud._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 
@@ -1261,8 +1261,8 @@ func _ready() -> void:
 	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
 	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
 	# the Hunters count is dialed up to 8 (< cap 12, so + stays enabled).
-	_hud._player_bands = _two_player_bands()
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = _two_player_bands()
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""   # force a fresh seed so the default selection = resolved band
 	_hud.show_herd_selection(_herd_fixture())
 	_hud._hunt_assign_count = 8
@@ -1281,15 +1281,15 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_band_picker_b")
 	# Reset so later states render their usual single-band dropdown.
-	_hud._player_bands = []
+	_hud._band_labor._player_bands = []
 	_hud._hunt_assign_key = ""
 
 	# State 3h — distance-aware herd-hunt, SINGLE far band: a lone band ~27 tiles from the herd (beyond
 	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send Hunting
 	# Expedition", a distance hint shows, the stepper reads "Party", and Assign emits
 	# send_hunt_expedition (party = the stepper), NOT assign_labor.
-	_hud._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_hunt_distance_herd())
@@ -1300,8 +1300,8 @@ func _ready() -> void:
 	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
 	# the herd (distance 0 ≤ reach 7) → "Assign Local Hunt" + assign_labor. The band-picker selection —
 	# not the herd — drives it (the resolved/default band is the near one here).
-	_hud._player_bands = _hunt_distance_bands()
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = _hunt_distance_bands()
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_hunt_distance_herd())
@@ -1317,8 +1317,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_band_far")
 	# Reset so later states render their usual single-band dropdown + default band.
-	_hud._player_bands = []
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 
@@ -1342,8 +1342,8 @@ func _ready() -> void:
 	#   3o eradicate   — a healthy Red Deer on Eradicate: the sim marks the cell `delivers_food = false`
 	#                    → amber DENIAL line + "Send (delivers no food)". Intent, not failure.
 	# Never disabled, never a confirm dialog: the player can always send; this is a price tag, not a gate.
-	_hud._player_bands = [_hunt_preview_far_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	for state: Dictionary in _hunt_assign_forecast_states():
 		var far_herd: Dictionary = state["herd"]
 		_hud._hunt_assign_key = ""    # force a fresh seed (band = resolved, policy = the herd's current)
@@ -1403,8 +1403,8 @@ func _ready() -> void:
 	# party 2 the readout reads "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food",
 	# and the stepper still caps at the animalsTaken plateau (2). `band_move_tiles_per_turn` now ships on the
 	# wire (schema slot 124) and is decoded onto the band; this fixture carries it exactly as the decoder does.
-	_hud._player_bands = [_raid_travel_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_raid_travel_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(boar)
@@ -1413,8 +1413,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_raid_travel")
 	# Restore the far band (no move rate) for the remaining raid states.
-	_hud._player_bands = [_hunt_preview_far_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 
 	var lean := _no_surplus_herd()
 	_hud._hunt_assign_key = ""
@@ -1443,8 +1443,8 @@ func _ready() -> void:
 	var bison := _labor_bound_raid_herd()
 	var bound_band: Dictionary = _hunt_preview_far_band().duplicate(true)
 	bound_band["idle_workers"] = 3           # below Sustain's plateau of 4 AND Market's of 7 → labor-bound
-	_hud._player_bands = [bound_band]
-	_hud._player_band = bound_band
+	_hud._band_labor._player_bands = [bound_band]
+	_hud._band_labor._player_band = bound_band
 	#   3t Sustain — idle 3 < plateau 4 → "3 of 4 useful — free up idle workers to send more", + dead at 3.
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
@@ -1466,8 +1466,8 @@ func _ready() -> void:
 	var party_capped: Dictionary = _hunt_preview_far_band().duplicate(true)
 	party_capped["idle_workers"] = 6
 	party_capped["max_expedition_party_size"] = 2
-	_hud._player_bands = [party_capped]
-	_hud._player_band = party_capped
+	_hud._band_labor._player_bands = [party_capped]
+	_hud._band_labor._player_band = party_capped
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(bison)
@@ -1477,8 +1477,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_party_size_bound")
 	# Restore the far band + sustain for the states that follow.
-	_hud._player_bands = [_hunt_preview_far_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_policy = "sustain"
 
 	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). The preview line reads the
@@ -1493,8 +1493,8 @@ func _ready() -> void:
 	# arithmetic; expedition = lookup.)
 	var local_herd := _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
 		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
-	_hud._player_bands = [_hunt_preview_local_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_preview_local_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(local_herd)
@@ -1514,8 +1514,8 @@ func _ready() -> void:
 	# kill-credit bank; food_per_animal 1.6 outweighs one hunter's carry (per_worker 0.80), so the cap is
 	# the CARRIERS needed to haul the peak-turn drop, not ceil(smoothed-rate / per_worker). Sustain
 	# (ceiling 0.74) used to read "max 1 useful" (the bug: ceil(0.74/0.80)=1) — it must now read "max 2".
-	_hud._player_bands = [_hunt_preview_local_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_preview_local_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud._hunt_assign_policy = "sustain"
@@ -1537,8 +1537,8 @@ func _ready() -> void:
 	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST
 	# delivered take in animals, not the unquantized food rate the crew could never carry; the policy
 	# buttons read "up to X/turn" (the herd's cap, worker-independent).
-	_hud._player_bands = [_delivered_oracle_band()]
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_delivered_oracle_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 
 	# 3s — 2 hunters land exactly one whole 1.23 deer/turn, no waste → "≈1 Red Deer/turn · renewable",
 	# and the four ascending "up to +2.33 / +3.50 / +5.00 / +7.00 /turn" cap buttons.
@@ -1595,8 +1595,8 @@ func _ready() -> void:
 	await _save("herd_hunt_big_game_window")
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
-	_hud._player_bands = []
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud._hunt_assign_policy = "sustain"
@@ -1626,9 +1626,9 @@ func _ready() -> void:
 		{"kind": "hunt", "workers": OCCUPANTS_HUNT_LOCAL_WORKERS, "fauna_id": "game_bison_02",
 			"policy": "sustain", "target_x": 58, "target_y": 24},
 	]
-	_hud._player_bands = hunted_bands
-	_hud._player_band = hunted_bands[0]
-	_hud._player_expeditions = [
+	_hud._band_labor._player_bands = hunted_bands
+	_hud._band_labor._player_band = hunted_bands[0]
+	_hud._band_labor._player_expeditions = [
 		{"id": "Party Fen", "entity": 401, "home_band_entity": 301,
 			"size": OCCUPANTS_HUNT_PARTY_WORKERS, "expedition_mission": "hunt",
 			"expedition_target_herd": "game_bison_02", "expedition_phase": "outbound",
@@ -1637,17 +1637,17 @@ func _ready() -> void:
 	_hud.show_herd_selection(_occupied_herd_fixture())
 	await _settle()
 	await _save("occupants_herd_staffed")
-	_hud._player_bands = []
-	_hud._player_band = _band_fixture()
-	_hud._player_expeditions = []
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_expeditions = []
 
 	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
 	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its
 	# first row, and one height-capped drawer that whichever row is lit fills. These six states are
 	# the layout's own frames — every other tile/herd/forage state above exercises the same builders
 	# through it, which is why their framing changed with this arc.
-	_hud._player_band = _forage_range_bands()[0]
-	_hud._player_bands = []
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_bands = []
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud._forage_assign_count = 3
@@ -1667,7 +1667,7 @@ func _ready() -> void:
 
 	# tile_panel_herd — a herd row lit: the land row is STILL in the list above it (the land never
 	# leaves), and the hunt compose block fills the one drawer.
-	_hud._player_band = _hunt_preview_local_band()
+	_hud._band_labor._player_band = _hunt_preview_local_band()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_occupied_herd_fixture())
@@ -1681,7 +1681,7 @@ func _ready() -> void:
 	# hex — so the land row must report the hex's STAFFING (`5 🌾`), not restate the module name the
 	# drawer and the sheet header already carry (§20). Leaving `_player_bands` empty made the row
 	# fall back to the module label and ellipsise it, which is the defect, not the fixture's intent.
-	_hud._player_bands = _crowded_bands_fixture()
+	_hud._band_labor._player_bands = _crowded_bands_fixture()
 	_hud.show_tile_selection(_crowded_tile_fixture())
 	await _settle()
 	await _save("tile_panel_crowded")
@@ -1700,8 +1700,8 @@ func _ready() -> void:
 	# stepper + forecast + button, floating beside the selection card. The MAP MUST STILL BE VISIBLE
 	# behind it — an assignment is composed AGAINST the map (work-range ring, hunt reach), so unlike
 	# NarrativeForkPanel this sheet draws NO scrim.
-	_hud._player_band = _forage_range_bands()[0]
-	_hud._player_bands = []
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_bands = []
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -1712,8 +1712,8 @@ func _ready() -> void:
 
 	# tile_panel_compose_herd — the herd sheet on the EXPEDITION branch (the band is beyond hunt
 	# reach): the raid forecast + "Send Hunting Expedition" must survive the move to the sheet intact.
-	_hud._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
-	_hud._player_band = _hud._player_bands[0]
+	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_hunt_distance_herd())
@@ -1727,8 +1727,8 @@ func _ready() -> void:
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35,
 	}])
-	_hud._player_bands = []
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
@@ -1814,8 +1814,8 @@ func _ready() -> void:
 	# parts a Band-panel Current-actions row does — the policy glyph + crew + rate, the ⚠ overdraw
 	# flag (ecological) and the "· only N of M working" overstaff note (labor). This fixture crosses
 	# the two deliberately: a Market patch that DOES overdraw, staffed 4 where only 2 are needed.
-	_hud._player_bands = []
-	_hud._player_band = _standing_forage_band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _standing_forage_band_fixture()
 	_hud._forage_assign_key = ""
 	_hud._forage_assign_band = -1
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -1849,7 +1849,7 @@ func _ready() -> void:
 	_assert_hud("land row clears MapView's occupant selection (payload is not \"unit\")",
 		String(sticky_payload.get("kind", "")) != "unit")
 	_assert_hud("land selection survives the next snapshot on a crowded hex",
-		_hud._selected_subject == "land" and _hud._selected_unit.is_empty() and _hud._selected_herd.is_empty())
+		_hud._selection._selected_subject == "land" and _hud._selection._selected_unit.is_empty() and _hud._selection._selected_herd.is_empty())
 	await _save("tile_panel_land_sticky")
 	sticky_map.tile_selected.disconnect(_hud.show_tile_selection)
 	sticky_map.unit_selected.disconnect(_hud.show_unit_selection)
@@ -1881,8 +1881,8 @@ func _ready() -> void:
 	# list has selected" and "the faction's default band" are DIFFERENT answers, which is the only
 	# configuration in which the Move assertion below can fail (§18).
 	var tile_panel_band_roster: Array = _crowded_bands_fixture()
-	_hud._player_bands = tile_panel_band_roster
-	_hud._player_band = tile_panel_band_roster[0]
+	_hud._band_labor._player_bands = tile_panel_band_roster
+	_hud._band_labor._player_band = tile_panel_band_roster[0]
 	var tile_panel_band_subject: Dictionary = tile_panel_band_roster[0]
 	tile_panel_band_subject["tile_info"] = _crowded_tile_fixture()
 	_hud.show_unit_selection(tile_panel_band_subject)
@@ -1922,8 +1922,8 @@ func _ready() -> void:
 	await _settle()
 
 	# Restore the single-band compose context the states below assume.
-	_hud._player_bands = []
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _band_fixture()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_band = -1
 	_hud._hunt_assign_policy = "sustain"
@@ -1948,7 +1948,7 @@ func _ready() -> void:
 	# no-opping. Seed a fully-staffed band (0 idle) so the note renders in the Command Feed.
 	var staffed_band := _band_fixture()
 	staffed_band["idle_workers"] = 0
-	_hud._player_band = staffed_band
+	_hud._band_labor._player_band = staffed_band
 	_hud.show_tile_selection(_food_tile_fixture())
 	_hud.quick_assign_hunters("game_bison_02")
 	await _settle()
@@ -2192,7 +2192,7 @@ func _ready() -> void:
 	# `clear_selection()` deliberately KEEPS the tile card (deselecting an occupant should not
 	# forget the hex), so the tile info has to go first or the Tile card fills the dock and both
 	# narrative cards get squeezed out of the frame entirely.
-	_hud._selected_tile_info.clear()
+	_hud._selection._selected_tile_info.clear()
 	_hud.clear_selection()
 	_hud.reset_command_feed()
 	_hud._telling.reset()
@@ -2407,7 +2407,7 @@ func _ready() -> void:
 	# A compact NON-food tile so the herd drawer (not a full forage tile card) lands in-frame.
 	var picker_herd := _herd_fixture()
 	picker_herd["tile_info"] = _compact_herd_tile_fixture()
-	_hud._player_band = _band_fixture()
+	_hud._band_labor._player_band = _band_fixture()
 	_hud._hunt_assign_key = ""
 	_hud._hunt_assign_policy = "sustain"
 	_hud._hunt_assign_count = 3

@@ -300,11 +300,13 @@ const ROSTER_ACCENT_WIDTH := 3.0
 const ROSTER_HEADER_FONT_SIZE := 10
 # ---- The subject list: the land is the FIRST ROW, not a card above the occupants ---------------
 # The land is the same KIND of thing a band or a herd is — a subject on this hex you can put
-# workers on — so it is a row, and selecting it fills the same one drawer. `_selected_subject` says
-# only which KIND of row is lit; `_selected_unit` / `_selected_herd` stay authoritative for WHICH.
-const SUBJECT_LAND := "land"
-const SUBJECT_UNIT := "unit"
-const SUBJECT_HERD := "herd"
+# workers on — so it is a row, and selecting it fills the same one drawer. `_selection.subject()` says
+# only which KIND of row is lit; `_selection.unit()` / `_selection.herd()` stay authoritative for WHICH.
+# The subject-kind vocabulary lives on HudSelectionState (the selection model owns it); these
+# aliases keep every existing `SUBJECT_*` reference in this file working unchanged.
+const SUBJECT_LAND := HudSelectionState.SUBJECT_LAND
+const SUBJECT_UNIT := HudSelectionState.SUBJECT_UNIT
+const SUBJECT_HERD := HudSelectionState.SUBJECT_HERD
 # `roster_occupant_selected`'s id for the LAND kind: the land has no entity, and the signal's id is
 # a Variant, so it carries the same "no occupant" sentinel the rest of the client uses.
 const LAND_SUBJECT_ID := -1
@@ -384,34 +386,17 @@ var _victory_suppressed: bool = PANEL_SUPPRESSED_BY_DEFAULT
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
-# Previous per-band size (entity id -> size) so we can detect population loss
-# across snapshots for the "losing population" alert.
-var _prev_band_sizes: Dictionary = {}
-var _selected_tile_info: Dictionary = {}
-var _selected_unit: Dictionary = {}
-var _selected_herd: Dictionary = {}
-# Which KIND of subject row is lit (SUBJECT_LAND | SUBJECT_UNIT | SUBJECT_HERD). The two dicts
-# above stay authoritative for WHICH unit/herd; this only picks the drawer.
-var _selected_subject: String = SUBJECT_LAND
-# The hex the player last EXPLICITLY chose a subject on (a row click), so the auto-select rule can
-# tell "a fresh hex, pick a default" from "the player already decided here". Without it, choosing
-# the LAND row on an occupied hex cleared both occupant dicts and the next snapshot's
-# `reapply_selection("tile", …)` re-ran the default and stole the selection back to the first band.
-# `(-1, -1)` = no choice yet, which no real hex matches.
-var _subject_choice_tile: Vector2i = Vector2i(-1, -1)
+# "What the player is looking at" — the selection triplet, lit-row kind, roster, sticky-selection
+# guard. Every former `_selected_*` / `_roster_*` / `_selection.choice_tile()` member lives here now.
+var _selection: HudSelectionState = null
+# "The digested per-snapshot player world + the optimistic pending overlay" — player bands /
+# expeditions, world herds, the forage-patch / food-module lookups, grid scalars, the
+# losing-population diff, the snapshot turn, and pending labor. Former `_player_*` / `_band_labor.panel_band()` /
+# `_band_labor.world_herds()` / `_band_labor.pending_labor()` / `_band_labor.current_turn()` / `_grid_*` / `_band_labor.prev_band_sizes()` /
+# `_band_labor.forage_patch_lookup()` / `_band_labor.food_module_by_tile()` members live here now.
+var _band_labor: HudBandLaborState = null
 # One drawer fit in flight at a time — see `_fit_subject_drawer`.
 var _subject_fit_pending: bool = false
-# The assembled Occupants roster for the current hex: full unit markers and herd
-# dicts (from `_selected_tile_info`, plus the selected occupant if the tile_info
-# doesn't list it — e.g. an inspector-driven herd selection). Rebuilt each render.
-var _roster_units: Array = []
-var _roster_herds: Array = []
-# Every herd in the snapshot (`snapshot["herds"]`, pushed by Main each turn). The roster above only
-# holds the SELECTED hex's herds, so it can't answer "where is the herd this band hunts?" — herds
-# MIGRATE, so a hunt assignment's `target_x/target_y` is a stale launch position. This is the live
-# position + label source for the Current-actions Hunt row (label + jump), mirroring
-# `MapView.herds` / `MapView._herd_by_id`, which the hunted-herd ring already resolves through.
-var _world_herds: Array = []
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
@@ -776,7 +761,7 @@ const HERD_SIZE_CLASS_FORMAT := "%s game"
 # to HUNT (high attack × ferocity) yet no camp THREAT (aggression 0) — so the drawer shows the four RAW
 # components Elevation-style (a relative bar + the raw value, no verdict word: a word can't survive the
 # roster, since a mammoth and later mech-infantry can't both be "Deadly"). Attack / Defense are
-# open-ended, so their bars normalize against the max across the known herds (`_world_herds`); Ferocity
+# open-ended, so their bars normalize against the max across the known herds (`_band_labor.world_herds()`); Ferocity
 # / Aggression are native 0..1, shown as a bar + %. Keys ≤ 16 chars so `_split_detail_kv` aligns them.
 const DANGER_ATTACK_ROW := "Attack"
 const DANGER_DEFENSE_ROW := "Defense"
@@ -1070,7 +1055,7 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
 # Two dict shapes carry them BARE and so share one prefix: a herd dict, and the RAW wire
-# forage-patch dict (decoded in native `forage_patches_to_array`, stored in `_forage_patch_lookup`,
+# forage-patch dict (decoded in native `forage_patches_to_array`, stored in `_band_labor.forage_patch_lookup()`,
 # and read by the Current-actions Forage row). Only `tile_info` carries the patch's fields under a
 # `patch_` prefix, because that is a cross-ref MapView stamps on in `_tile_info_at`.
 #
@@ -1714,20 +1699,8 @@ const STATUS_HINTS := {
 	EXPEDITION_PHASE_RETURNING: "heading home",
 }
 const STATUS_HINT_FORMAT := "%s — %s"
-# The single player band, captured from the latest snapshot populations (there is exactly
-# one player band in the current start). assign_labor / move_band / clear-all target it; the
-# herd/tile assign controls also read its labor_assignments to show the current staffing.
-var _player_band: Dictionary = {}
-# Every player-faction band from the latest snapshot (in roster order; first == _player_band).
-# The assign controls' band-picker dropdown lists these so an assignment explicitly names WHICH
-# band supplies the workers. One entry today (multi-band split is deferred), but built for N.
-# EXCLUDES expeditions (detached scout/hunt parties are cohorts in the same populations[] array) —
-# they are never a labor actor band and must not be counted by the panel cycler.
-var _player_bands: Array = []
-# The player-faction expedition cohorts (is_expedition) captured each snapshot, split out of
-# `_player_bands`. The Band/City panel's "Active expeditions" section lists the ones whose
-# `home_band_entity` matches the shown band.
-var _player_expeditions: Array = []
+# The player-faction split (single player band, all player bands, expeditions) captured each
+# snapshot lives on `_band_labor` — see `player_band()` / `player_bands()` / `player_expeditions()`.
 
 # ---- Band/City zone state (persists across renders, so a filter/tab/page survives a snapshot) ----
 ## Which sources the work board shows, how it orders them, and which page is on screen.
@@ -1753,30 +1726,15 @@ var _party_compose_open: bool = false
 var _party_compose_mission: String = ""
 # The dockable Band/City command center (docs/plan_band_city_dock.md §3), injected by Main. When
 # present, a selected player band's detail (summary + labor allocation) renders into IT rather than
-# the Occupants card, and the panel persists across selection changes showing `_panel_band`.
+# the Occupants card, and the panel persists across selection changes showing the panel band. The
+# panel band itself (re-resolved by entity each snapshot) lives on `_band_labor.panel_band()`.
 var _band_city_panel: BandCityPanel = null
-# The band currently shown in the panel — synced from map/roster selection and the cycler, and
-# re-resolved against each snapshot so its steppers/idle stay live. Empty when no player bands.
-var _panel_band: Dictionary = {}
-# Map grid dimensions (width/height/horizontal-wrap), captured each snapshot from the `grid` key
-# (Main forwards it via set_grid_dimensions). Feed the wrap-aware hex distance the herd-hunt
-# affordance keys its LOCAL-hunt-vs-hunting-EXPEDITION decision off. Grid rides full snapshots only;
-# it persists across deltas. Defaults to no-wrap until the first snapshot.
-var _grid_width: int = 0
-var _grid_height: int = 0
+# Horizontal-wrap flag from the snapshot `grid` key (Main forwards it via set_grid_dimensions). The
+# grid width/height it accompanies live on `_band_labor` (they are shared hex-math state); wrap is
+# cluster-private to the distance helpers here. Defaults to no-wrap until the first snapshot.
 var _grid_wrap_horizontal: bool = false
-# The authoritative snapshot turn (header tick), set from update_overlay each snapshot. Used
-# to reconcile optimistic pending actions (a newer turn means the server has processed them).
-var _current_turn: int = -1
-# Optimistic pending labor actions per band entity (Early-Game Labor slice 3b UX): assign/move
-# clicks show immediately in the panel AND on the map, then reconcile when a newer-turn snapshot
-# confirms them (the snapshot is authoritative — this cleanly absorbs server-side clamping).
-#   _pending_labor[entity] = {
-#     "turn": <snapshot turn at issue>,
-#     "assign": { key -> {kind, workers, x, y, herd_id, policy} },   # key via _pending_key
-#     "move": {x, y},                                                # optional
-#   }
-var _pending_labor: Dictionary = {}
+# The authoritative snapshot turn, the grid scalars, and the optimistic pending-labor overlay all
+# live on `_band_labor` (`current_turn()` / `grid_width()` / `grid_height()` / `pending_labor()`).
 # Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the
 # band dict whose move is being targeted.
 var _pending_move_band: Dictionary = {}
@@ -1848,7 +1806,7 @@ var _reservations: Dictionary = {}
 # The player faction's pending forks + stance axes, cached from the snapshot. `_band_attention` is
 # the band/expedition half of the orb registry, cached so a fork arriving on its own delta can
 # rebuild the registry WITHOUT re-running the band producers (set_attention is a full replace, and
-# _prev_band_sizes is consumed by the losing-population producer, so re-invoking update_band_alerts
+# _band_labor.prev_band_sizes() is consumed by the losing-population producer, so re-invoking update_band_alerts
 # would silently eat that alert).
 var _pending_forks: Array = []
 var _stance_axes: Array = []
@@ -1869,6 +1827,8 @@ var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
 
 func _ready() -> void:
+    _selection = HudSelectionState.new()
+    _band_labor = HudBandLaborState.new()
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
@@ -2485,7 +2445,7 @@ func update_victory_state(state: Dictionary) -> void:
 func update_overlay(turn: int, metrics: Dictionary) -> void:
     # Authoritative snapshot turn — drives optimistic-pending reconciliation (see
     # _reconcile_pending, called from update_band_alerts later in the same snapshot cycle).
-    _current_turn = turn
+    _band_labor.set_turn(turn)
     turn_label.text = "Turn %d" % turn
     if turn_orb != null:
         turn_orb.set_turn(turn)
@@ -3081,17 +3041,17 @@ func _on_turn_orb_advance() -> void:
 ## it is a player band; otherwise the single player band captured from the snapshot (so
 ## herd/tile assign controls still target it while a herd/tile is selected). {} if none.
 func _resolve_assign_band() -> Dictionary:
-    if not _selected_unit.is_empty() and _is_player_unit(_selected_unit):
-        return _selected_unit
-    return _player_band
+    if not _selection.unit().is_empty() and _is_player_unit(_selection.unit()):
+        return _selection.unit()
+    return _band_labor.player_band()
 
-## The player bands the band-picker lists. Normally `_player_bands` (captured each snapshot);
-## falls back to `[_player_band]` when only the single band was seeded (e.g. the ui_preview
+## The player bands the band-picker lists. Normally `_band_labor.player_bands()` (captured each snapshot);
+## falls back to `[_band_labor.player_band()]` when only the single band was seeded (e.g. the ui_preview
 ## harness, or before the first alerts pass) so the dropdown is always populated.
 func _current_player_bands() -> Array:
-    if not _player_bands.is_empty():
-        return _player_bands
-    return [_player_band] if not _player_band.is_empty() else []
+    if not _band_labor.player_bands().is_empty():
+        return _band_labor.player_bands()
+    return [_band_labor.player_band()] if not _band_labor.player_band().is_empty() else []
 
 ## Resolve a listed player band by its entity id; {} if it is no longer present.
 func _player_band_by_entity(entity: int) -> Dictionary:
@@ -3116,8 +3076,7 @@ func set_grid_dimensions(grid: Variant) -> void:
     if not (grid is Dictionary):
         return
     var g: Dictionary = grid
-    _grid_width = int(g.get("width", _grid_width))
-    _grid_height = int(g.get("height", _grid_height))
+    _band_labor.set_grid(int(g.get("width", _band_labor.grid_width())), int(g.get("height", _band_labor.grid_height())))
     _grid_wrap_horizontal = bool(g.get("wrap_horizontal", _grid_wrap_horizontal))
 
 ## The world's herds captured each snapshot (Main forwards the snapshot `herds` key, the same array
@@ -3126,61 +3085,29 @@ func set_grid_dimensions(grid: Variant) -> void:
 func update_herds(herds_variant: Variant) -> void:
     if not (herds_variant is Array):
         return
-    _world_herds = herds_variant
+    _band_labor.set_world_herds(herds_variant)
 
 ## The snapshot herd with this id, wherever it is on the map; {} when unknown.
 ## Mirrors `MapView._herd_by_id` (the hunted-herd ring's resolver).
 func _find_world_herd(herd_id: String) -> Dictionary:
     if herd_id == "":
         return {}
-    for herd in _world_herds:
+    for herd in _band_labor.world_herds():
         if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
             return herd
     return {}
 
-## The world's food modules captured each snapshot (Main forwards MapView's ingested food sites —
-## the same dicts in `MapView.food_site_lookup`, each stamped with `terrain_id`). Keyed by tile so a
-## forage assignment's `target_x/target_y` resolves to the module the map draws there — that's how a
-## Current-actions Forage row shows the SAME resource glyph as the map marker (`FoodIcons.for_site`,
-## including the riverine_delta fish↔reeds split that reads the stamped `terrain_id`).
-var _food_module_by_tile: Dictionary = {}
-
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
-## the Forage row reads, so its glyph matches the map marker (riverine split included).
+## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
+## lookup lives on `_band_labor` (`food_module_by_tile()`).
 func update_food_modules(modules_variant: Variant) -> void:
-    if not (modules_variant is Array):
-        return
-    _food_module_by_tile.clear()
-    for entry in modules_variant:
-        if not (entry is Dictionary):
-            continue
-        var site: Dictionary = entry
-        var sx := int(site.get("x", -1))
-        var sy := int(site.get("y", -1))
-        if sx >= 0 and sy >= 0:
-            _food_module_by_tile[Vector2i(sx, sy)] = site
-
-## The world's forage patches captured each snapshot (Main forwards the snapshot `forage_patches`
-## array — the same dicts in `MapView.forage_patch_lookup`), keyed by tile. A Current-actions Forage
-## row reads the patch here to forecast its max-useful worker cap (the compose control gets the same
-## forecast off `tile_info`'s `patch_`-prefixed cross-ref; the RAW wire dict here carries the fields
-## BARE — see `BARE_FORECAST_PREFIX`).
-var _forage_patch_lookup: Dictionary = {}
+    _band_labor.set_food_modules(modules_variant)
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
-## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest.
+## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest. The
+## per-tile lookup lives on `_band_labor` (`forage_patch_lookup()`).
 func update_forage_patches(patches_variant: Variant) -> void:
-    if not (patches_variant is Array):
-        return
-    _forage_patch_lookup.clear()
-    for entry in patches_variant:
-        if not (entry is Dictionary):
-            continue
-        var patch: Dictionary = entry
-        var px := int(patch.get("x", -1))
-        var py := int(patch.get("y", -1))
-        if px >= 0 and py >= 0:
-            _forage_patch_lookup[Vector2i(px, py)] = patch
+    _band_labor.set_forage_patches(patches_variant)
 
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.
@@ -3191,7 +3118,7 @@ func _source_icon_prefix(icon: String) -> String:
 ## there. "" when the tile has no known module (undiscovered), so the row renders
 ## bare rather than with a misleading fallback sprig.
 func _food_module_icon(x: int, y: int) -> String:
-    var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
+    var site: Variant = _band_labor.food_module_by_tile().get(Vector2i(x, y), null)
     if not (site is Dictionary):
         return ""
     var module_key := String((site as Dictionary).get("module", ""))
@@ -3211,13 +3138,13 @@ func _band_tile(band: Dictionary) -> Vector2i:
     return Vector2i(-1, -1)
 
 ## The player's starting band tile (col,row) — the first player-faction band captured this snapshot
-## into `_player_band` (via update_band_alerts). Returns (-1,-1) when there is no player band, so a
+## into `_band_labor.player_band()` (via update_band_alerts). Returns (-1,-1) when there is no player band, so a
 ## caller (Main's startup-view centering) can defensively skip the focus. Reads the same `current_x/y`
 ## cohort fields `_band_tile` does.
 func get_player_band_tile() -> Vector2i:
-    if _player_band.is_empty():
+    if _band_labor.player_band().is_empty():
         return Vector2i(-1, -1)
-    return _band_tile(_player_band)
+    return _band_tile(_band_labor.player_band())
 
 ## Shortest signed column delta from→to honoring horizontal wrap (mirrors MapView._wrapped_col_delta),
 ## so a herd across the seam measures by its short wrapped distance, not the long way across the map.
@@ -3227,13 +3154,13 @@ func get_player_band_tile() -> Vector2i:
 ## half-away-from-zero — kept consistent with MapView._wrapped_col_delta.
 func _wrapped_col_delta(from_col: int, to_col: int) -> int:
     var d := to_col - from_col
-    if _grid_wrap_horizontal and _grid_width > 0:
+    if _grid_wrap_horizontal and _band_labor.grid_width() > 0:
         # Integer half-width mirrors the sim's `w / 2` truncation.
-        var half_width := _grid_width / 2
+        var half_width := _band_labor.grid_width() / 2
         if d > half_width:
-            d -= _grid_width
+            d -= _band_labor.grid_width()
         elif d < -half_width:
-            d += _grid_width
+            d += _band_labor.grid_width()
     return d
 
 ## odd-r offset (col,row) → axial (mirrors MapView._offset_to_axial).
@@ -3357,8 +3284,8 @@ func _herd_label_for_id(herd_id: String) -> String:
     var herd := _find_roster_herd(herd_id)
     if not herd.is_empty():
         return String(herd.get("species", herd.get("label", herd_id)))
-    if String(_selected_herd.get("id", "")) == herd_id:
-        return String(_selected_herd.get("species", _selected_herd.get("label", herd_id)))
+    if String(_selection.herd().get("id", "")) == herd_id:
+        return String(_selection.herd().get("species", _selection.herd().get("label", herd_id)))
     var world_herd := _find_world_herd(herd_id)
     if not world_herd.is_empty():
         return String(world_herd.get("species", world_herd.get("label", herd_id)))
@@ -3386,158 +3313,53 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "policy": policy,
         "species": species,
     })
-    _record_pending_assign(bits, kind, clamped, x, y, herd_id, policy)
+    _band_labor.record_pending_assign(bits, kind, clamped, x, y, herd_id, policy)
     _after_pending_change()
 
 # ---- Optimistic pending labor (slice 3b UX) --------------------------------
-
-## Stable key identifying a source/role within a band's assignment set.
-func _pending_key(kind: String, x: int, y: int, herd_id: String) -> String:
-    match kind:
-        LABOR_KIND_FORAGE:
-            return "forage:%d,%d" % [x, y]
-        LABOR_KIND_HUNT:
-            return "hunt:%s" % herd_id
-        _:
-            return kind  # scout / warrior — one band-wide role each
-
-func _record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
-    if entity < 0:
-        return
-    var entry: Dictionary = _pending_labor.get(entity, {})
-    entry["turn"] = _current_turn
-    var assigns: Dictionary = entry.get("assign", {})
-    assigns[_pending_key(kind, x, y, herd_id)] = {
-        "kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id, "policy": policy,
-    }
-    entry["assign"] = assigns
-    _pending_labor[entity] = entry
-
-func _record_pending_move(entity: int, x: int, y: int) -> void:
-    if entity < 0:
-        return
-    var entry: Dictionary = _pending_labor.get(entity, {})
-    entry["turn"] = _current_turn
-    entry["move"] = {"x": x, "y": y}
-    _pending_labor[entity] = entry
+# The pending-overlay DATA (record / reconcile / the effective-worker maps + `as_schedule`) lives on
+# `_band_labor`; the HUD keeps only the orchestration around it — the re-render and the
+# `labor_pending_changed` push to MapView.
 
 ## Re-render the current selection (so pending shows in the Occupants/Tile cards) and push the
 ## pending map to MapView (so pending hexes show), after any optimistic change. Also re-render the
-## Band/City panel keyed off `_panel_band` — a worker-stepper edit in the panel must show its
+## Band/City panel keyed off the panel band — a worker-stepper edit in the panel must show its
 ## optimistic pending even when the current selection is a foreign hex (never blank it).
 func _after_pending_change() -> void:
-    if not _selected_tile_info.is_empty() or not _selected_unit.is_empty() or not _selected_herd.is_empty():
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    if not _selection.tile_info().is_empty() or not _selection.unit().is_empty() or not _selection.herd().is_empty():
+        _render_selection_panel(_selection.tile_info(), _selection.unit(), _selection.herd())
     _rerender_panel_allocation()
-    emit_signal("labor_pending_changed", _pending_labor)
+    emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
-## Drop pending entries the server has already processed: a snapshot with a turn NEWER than
-## the entry's issue turn is authoritative confirmation (and reflects any clamping). Called
-## each snapshot from update_band_alerts, after update_overlay has set _current_turn.
+## Drop pending entries the server has already processed: a snapshot with a turn NEWER than the
+## entry's issue turn is authoritative confirmation (and reflects any clamping). Called each snapshot
+## from update_band_alerts, after update_overlay has set the turn. The DATA drop lives on the model;
+## the HUD pushes the pruned overlay to MapView when the model reports anything changed.
 func _reconcile_pending() -> void:
-    if _pending_labor.is_empty():
-        return
-    var changed := false
-    for entity in _pending_labor.keys():
-        var entry: Dictionary = _pending_labor[entity]
-        if int(entry.get("turn", -1)) < _current_turn:
-            _pending_labor.erase(entity)
-            changed = true
-    if changed:
-        emit_signal("labor_pending_changed", _pending_labor)
-
-func _pending_assigns_for(entity: int) -> Dictionary:
-    var e: Variant = _pending_labor.get(entity, {})
-    if not (e is Dictionary):
-        return {}
-    var a: Variant = (e as Dictionary).get("assign", {})
-    return a if a is Dictionary else {}
-
-## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
-## Each value: {kind, workers, x, y, herd_id, policy, pending: bool}.
-func _effective_worker_map(band: Dictionary) -> Dictionary:
-    var merged: Dictionary = {}
-    for a in _labor_assignments_of(band):
-        if not (a is Dictionary):
-            continue
-        var kind := String((a as Dictionary).get("kind", "")).strip_edges().to_lower()
-        var key := _pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)), String(a.get("fauna_id", "")))
-        merged[key] = {
-            "kind": kind, "workers": int(a.get("workers", 0)),
-            "x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
-            "herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")), "pending": false,
-            # Per-source yields (food/turn) for the row headline/tooltip/overhunt flag. `has_yield`
-            # gates the readout — a confirmed assignment carries them; a pending one (below) does not.
-            "actual_yield": float(a.get("actual_yield", 0.0)),
-            "sustainable_yield": float(a.get("sustainable_yield", 0.0)),
-            "has_yield": a.has("actual_yield"),
-            # Min workers that produced this turn's take — drives the overstaffing note.
-            "workers_needed": int(a.get("workers_needed", 0)),
-            # Provisions offered but not collected (under-crewed) — drives the muted "· N wasted" note.
-            "wasted_yield": float(a.get("wasted_yield", 0.0)),
-            # WHEN this source's food lands (index i = i+1 turns from now) — drives the row's arrival
-            # tick strip. Empty = "not projected", which renders no strip (never a famine).
-            "arrival_schedule": _as_schedule(a.get("arrival_schedule", null)),
-        }
-    var pend := _pending_assigns_for(int(band.get("entity", -1)))
-    for key in pend:
-        var pd: Dictionary = pend[key]
-        merged[key] = {
-            "kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
-            "x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
-            "herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
-            # A pending (optimistic) assign has no confirmed yield yet — render no yield number.
-            # Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
-            # the next snapshot resolves what the source actually used.
-            "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
-            "workers_needed": 0,
-            # Nor any projected arrivals — the schedule comes from the sim's forward run, so an
-            # un-acknowledged edit shows no strip until the next snapshot projects it.
-            "arrival_schedule": PackedFloat32Array(),
-        }
-    return merged
-
-## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
-## packed array; a fixture (or an absent field) may hand over a plain Array or null, and this is the
-## one place that difference is absorbed.
-func _as_schedule(value: Variant) -> PackedFloat32Array:
-    if value is PackedFloat32Array:
-        return value
-    var packed := PackedFloat32Array()
-    if value is Array:
-        for amount in (value as Array):
-            packed.push_back(float(amount))
-    return packed
+    if _band_labor.reconcile_pending(_band_labor.current_turn()):
+        emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
 ## Effective worker count for one role/source, overlaying any pending value.
 func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
-    var key := _pending_key(kind, -1, -1, "")
-    var pend := _pending_assigns_for(int(band.get("entity", -1)))
+    var key := _band_labor.pending_key(kind, -1, -1, "")
+    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
     if pend.has(key):
         return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
     return {"workers": _workers_for_role(band, kind), "pending": false}
 
 func _effective_forage_workers(band: Dictionary, x: int, y: int) -> int:
-    var pend := _pending_assigns_for(int(band.get("entity", -1)))
-    var key := _pending_key(LABOR_KIND_FORAGE, x, y, "")
+    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
+    var key := _band_labor.pending_key(LABOR_KIND_FORAGE, x, y, "")
     if pend.has(key):
         return int((pend[key] as Dictionary).get("workers", 0))
     return _workers_for_forage(band, x, y)
 
 func _effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
-    var pend := _pending_assigns_for(int(band.get("entity", -1)))
-    var key := _pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
+    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
+    var key := _band_labor.pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
     if pend.has(key):
         return int((pend[key] as Dictionary).get("workers", 0))
     return _workers_for_hunt(band, herd_id)
-
-## Optimistic idle = working-age minus the sum of effective worker counts.
-func _effective_idle(band: Dictionary) -> int:
-    var assigned := 0
-    var merged := _effective_worker_map(band)
-    for key in merged:
-        assigned += int((merged[key] as Dictionary).get("workers", 0))
-    return max(0, int(band.get("working_age", 0)) - assigned)
 
 ## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
 ## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
@@ -3710,7 +3532,7 @@ func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool,
         strip_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         strip_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
         var strip := ArrivalStrip.new()
-        strip.set_schedule(arrival_schedule, _current_turn)
+        strip.set_schedule(arrival_schedule, _band_labor.current_turn())
         strip_margin.add_child(strip)
         col.add_child(strip_margin)
     return col
@@ -4270,8 +4092,8 @@ func _refresh_breakdown_popover_text() -> void:
 ## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
 ## hosts, unconditionally — that is the `is_panel` fork this change exists to remove.
 func _refresh_disclosure_hosts() -> void:
-    if _band_city_panel != null and not _panel_band.is_empty():
-        _render_band_into_panel(_panel_band)
+    if _band_city_panel != null and not _band_labor.panel_band().is_empty():
+        _render_band_into_panel(_band_labor.panel_band())
     _render_subject_drawer()
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
@@ -4291,7 +4113,7 @@ func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
     for a in _labor_assignments_of(band):
         if not (a is Dictionary):
             continue
-        var schedule := _as_schedule((a as Dictionary).get("arrival_schedule", null))
+        var schedule := HudBandLaborState.as_schedule((a as Dictionary).get("arrival_schedule", null))
         if schedule.is_empty():
             continue
         if merged.size() < schedule.size():
@@ -4317,7 +4139,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
     chart.set_projection(
         _band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _current_turn)
+        float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _band_labor.current_turn())
     # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
     # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
     if compact:
@@ -4684,10 +4506,10 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
 ## "WORKFORCE" — what the band DOES: a stacked Forage/Hunt/Roles/Parties/Idle bar, its key, and the
 ## two standing-role CARDS. Saturated against People's muted palette (see `_build_people_block`).
 func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContainer:
-    var idle := _effective_idle(band)
+    var idle := _band_labor.effective_idle(band)
     var forage_workers := 0
     var hunt_workers := 0
-    var merged := _effective_worker_map(band)
+    var merged := _band_labor.effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
         var workers := int(m.get("workers", 0))
@@ -4815,7 +4637,7 @@ func _repage_work_zone() -> void:
     _fill_work_zone(_work_zone_host, _work_zone_band)
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
-    var idle := _effective_idle(band)
+    var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     var income := 0.0
     for m in models:
@@ -5114,7 +4936,7 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         var arrivals := ArrivalStrip.new()
-        arrivals.set_schedule(schedule, _current_turn)
+        arrivals.set_schedule(schedule, _band_labor.current_turn())
         col.add_child(arrivals)
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
@@ -5176,11 +4998,11 @@ func _build_inline_link(text: String, ink: Color, on_press: Callable) -> Button:
 # ---- work-zone models + state ----------------------------------------------
 
 ## One dict per worked source, carrying everything the row, the chips and the inspector need — built
-## ONCE per render off `_effective_worker_map` (confirmed + optimistic pending), so the board, the
+## ONCE per render off `_band_labor.effective_worker_map` (confirmed + optimistic pending), so the board, the
 ## chip counts and the totals can never disagree.
 func _work_source_models(band: Dictionary, idle: int) -> Array:
     var models: Array = []
-    var merged := _effective_worker_map(band)
+    var merged := _band_labor.effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
@@ -5207,7 +5029,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             icon = _food_module_icon(x, y)
             label = WORK_ROW_FORAGE_FORMAT % [x, y]
             cap = _source_worker_cap_state(_forecast_inputs(
-                _forage_patch_lookup.get(Vector2i(x, y), {}), SOURCE_KIND_FORAGE,
+                _band_labor.forage_patch_lookup().get(Vector2i(x, y), {}), SOURCE_KIND_FORAGE,
                 BARE_FORECAST_PREFIX, policy), workers, idle)
         else:
             if not (policy in HUNT_POLICY_OPTIONS):
@@ -5215,7 +5037,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
             label = WORK_ROW_HUNT_FORMAT % herd_label
-            # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_world_herds` rather than the
+            # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             cap = _source_worker_cap_state(_forecast_inputs(
                 _find_world_herd(herd_id), SOURCE_KIND_HERD,
@@ -5231,7 +5053,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
-            "schedule": _as_schedule(m.get("arrival_schedule", null)),
+            "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": _join_tooltip_lines([String(yld.get("tooltip", "")),
                 _policy_hint(kind, policy), String(cap.get("note", "")), WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
@@ -5429,7 +5251,7 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
 func _band_parties(band: Dictionary) -> Array:
     var band_entity := int(band.get("entity", -1))
     var rows: Array = []
-    for exp_variant in _player_expeditions:
+    for exp_variant in _band_labor.player_expeditions():
         if exp_variant is Dictionary and int((exp_variant as Dictionary).get("home_band_entity", 0)) == band_entity:
             rows.append(exp_variant)
     return rows
@@ -5502,7 +5324,7 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
 ## buttons stay VISIBLE and DISABLED with their reason — the section vanishing is what made
 ## expeditions look like they had been removed from the game.
 func _build_party_footer(band: Dictionary) -> VBoxContainer:
-    var idle := _effective_idle(band)
+    var idle := _band_labor.effective_idle(band)
     var foot := _make_zone_block()
     if _party_compose_open and _party_compose_mission != "" and idle > 0:
         foot.add_child(_build_compose_sheet(band, idle))
@@ -5731,7 +5553,7 @@ func _close_party_compose() -> void:
 func _push_zone_badges(band: Dictionary) -> void:
     if _band_city_panel == null:
         return
-    var models := _work_source_models(band, _effective_idle(band))
+    var models := _work_source_models(band, _band_labor.effective_idle(band))
     var attention: Array = models.filter(func(m): return bool(m["attention"]))
     _band_city_panel.set_tab_badge(BandCityPanel.ZONE_BAND, "", false)
     _band_city_panel.set_tab_badge(BandCityPanel.ZONE_WORK,
@@ -5889,7 +5711,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _hunt_assign_policy = _policy_for_hunt(band, herd_id)
     # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_hunt_workers(band, herd_id)
-    var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
+    var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
     # The sheet's own header already names the verb ("ASSIGN HERDERS") and the herd, so this line
     # carries only what the header cannot: the standing staffing being edited.
     if current > 0 or pending:
@@ -6703,7 +6525,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_assign_species = ""
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_forage_workers(band, x, y)
-    var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_FORAGE, x, y, ""))
+    var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_FORAGE, x, y, ""))
     # The sheet's own header already names the verb and the subject ("ASSIGN FORAGERS  Nut Grove"),
     # so this line carries only what the header cannot: the standing staffing being edited.
     if current > 0 or pending:
@@ -6941,27 +6763,27 @@ func _refresh_compose_sheet() -> void:
         return
     match _compose_kind:
         COMPOSE_KIND_FORAGE:
-            if _forage_source_key(_selected_tile_info) != _compose_subject \
-                    or not _forage_compose_available(_selected_tile_info):
+            if _forage_source_key(_selection.tile_info()) != _compose_subject \
+                    or not _forage_compose_available(_selection.tile_info()):
                 close_compose_sheet()
                 return
-            _build_forage_assign_controls(_selected_tile_info, _compose_sheet.content())
+            _build_forage_assign_controls(_selection.tile_info(), _compose_sheet.content())
         COMPOSE_KIND_HERD:
-            if String(_selected_herd.get("id", "")) != _compose_subject \
-                    or not _herd_compose_available(_selected_herd):
+            if String(_selection.herd().get("id", "")) != _compose_subject \
+                    or not _herd_compose_available(_selection.herd()):
                 close_compose_sheet()
                 return
-            _build_herd_assign_controls(_selected_herd, _compose_sheet.content())
+            _build_herd_assign_controls(_selection.herd(), _compose_sheet.content())
         _:
             close_compose_sheet()
 
 ## Re-render whichever subject's drawer actions are showing (the standing summary + the `Assign … ▸`
 ## button), so a turn's staffing change lands in the read state as well as in the open sheet.
 func _refresh_drawer_actions() -> void:
-    if not _selected_herd.is_empty():
-        _build_herd_drawer_actions(_selected_herd)
-    elif not _selected_tile_info.is_empty() and _selected_unit.is_empty():
-        _build_forage_drawer_actions(_selected_tile_info)
+    if not _selection.herd().is_empty():
+        _build_herd_drawer_actions(_selection.herd())
+    elif not _selection.tile_info().is_empty() and _selection.unit().is_empty():
+        _build_forage_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
 ## patch) and the `Assign foragers ▸` button that opens the sheet. Fills `%ForageAssignControls`,
@@ -7025,10 +6847,10 @@ func _build_compose_open_button(noun: String, subject_key: String, on_press: Cal
     return button
 
 ## The player faction's standing assignment on a source, across every player band — `{}` when
-## nobody works it. Scans `_player_bands` (the full player-faction list) and falls back to the
-## single `_player_band` the one-band case (and the HUD-only preview harness) carries.
+## nobody works it. Scans `_band_labor.player_bands()` (the full player-faction list) and falls back to the
+## single `_band_labor.player_band()` the one-band case (and the HUD-only preview harness) carries.
 func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dictionary:
-    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
     for band_variant in bands:
         if not (band_variant is Dictionary):
             continue
@@ -7044,7 +6866,7 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
 ## SAME `_source_yield_readout` call. The rate is never recomputed here.
 func _build_standing_summary(assignment: Dictionary, kind: String, noun: String) -> Control:
     # `has_yield` is the ONE key `_source_yield_readout` reads that is not on the wire assignment —
-    # it gates the rate on a CONFIRMED source (`_effective_worker_map` sets it false for a pending,
+    # it gates the rate on a CONFIRMED source (`_band_labor.effective_worker_map` sets it false for a pending,
     # yield-less optimistic assign). Everything else — actual/sustainable/realized, `overdraws`,
     # `workers_needed`, `wasted_yield` — is read straight off the assignment the sim sent.
     var m := assignment.duplicate()
@@ -7111,7 +6933,7 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
     _pending_move_band = {}
     _refresh_targeting()
     # Optimistic feedback: mark the destination pending until a newer-turn snapshot confirms.
-    _record_pending_move(bits, x, y)
+    _band_labor.record_pending_move(bits, x, y)
     _after_pending_change()
 
 ## Send-expedition: outfit `band` with `party_workers` and enter tile-targeting; the next tile
@@ -7328,15 +7150,12 @@ func reset_command_feed() -> void:
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
-    _selected_tile_info = tile_info.duplicate(true) if tile_info is Dictionary else {}
-    _selected_unit.clear()
-    _selected_herd.clear()
-    _selected_subject = SUBJECT_LAND
-    _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
-    _render_selection_panel(_selected_tile_info, {}, {})
-    _try_dispatch_pending_move_band(_selected_tile_info)
-    _try_dispatch_pending_send_expedition(_selected_tile_info)
-    _try_pick_quarry(_selected_tile_info)
+    _selection.select_tile(tile_info.duplicate(true) if tile_info is Dictionary else {})
+    _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
+    _render_selection_panel(_selection.tile_info(), {}, {})
+    _try_dispatch_pending_move_band(_selection.tile_info())
+    _try_dispatch_pending_send_expedition(_selection.tile_info())
+    _try_pick_quarry(_selection.tile_info())
 
 func notify_hex_selected(tile_info: Dictionary) -> void:
     if tile_info.is_empty():
@@ -7353,13 +7172,11 @@ func show_unit_selection(unit_data: Dictionary) -> void:
     if tile_variant is Dictionary:
         tile_info = (tile_variant as Dictionary).duplicate(true)
     else:
-        tile_info = _selected_tile_info
-    _selected_tile_info = tile_info
-    _selected_unit = unit_data.duplicate(true)
-    _selected_herd.clear()
-    _selected_subject = SUBJECT_UNIT
+        tile_info = _selection.tile_info()
+    _selection.set_tile_info(tile_info)
+    _selection.select_unit(unit_data.duplicate(true))
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
-    _render_selection_panel(tile_info, _selected_unit, {})
+    _render_selection_panel(tile_info, _selection.unit(), {})
 
 func show_herd_selection(herd_data: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -7373,21 +7190,19 @@ func show_herd_selection(herd_data: Dictionary) -> void:
         # both a gather module and a fauna group): surface Harvest alongside the
         # herd verbs. A herd picked from the inspector (no tile_info, unrelated tile
         # selected) falls through to herd-only so Harvest can't mis-target.
-        tile_info = _selected_tile_info
-    _selected_tile_info = tile_info
-    _selected_herd = herd_data.duplicate(true)
-    _selected_unit.clear()
-    _selected_subject = SUBJECT_HERD
+        tile_info = _selection.tile_info()
+    _selection.set_tile_info(tile_info)
+    _selection.select_herd(herd_data.duplicate(true))
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
-    _render_selection_panel(tile_info, {}, _selected_herd)
+    _render_selection_panel(tile_info, {}, _selection.herd())
 
 ## True when the currently-selected tile is the same hex the herd occupies, so it
 ## is safe to keep showing that tile's Harvest verb alongside the herd verbs.
 func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
-    if _selected_tile_info.is_empty():
+    if _selection.tile_info().is_empty():
         return false
-    return int(_selected_tile_info.get("x", -1)) == int(herd_data.get("x", -2)) \
-        and int(_selected_tile_info.get("y", -1)) == int(herd_data.get("y", -2))
+    return int(_selection.tile_info().get("x", -1)) == int(herd_data.get("x", -2)) \
+        and int(_selection.tile_info().get("y", -1)) == int(herd_data.get("y", -2))
 
 ## Coordinator: render both left-dock cards from the current selection state.
 ## The two cards are two scene nodes driven by one script — the Tile card is the
@@ -7404,42 +7219,33 @@ func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
 func reapply_selection(kind: String, data: Dictionary) -> void:
     match kind:
         "unit":
-            _selected_unit = data.duplicate(true) if data is Dictionary else {}
-            _selected_herd.clear()
-            _selected_subject = SUBJECT_UNIT
-            _adopt_tile_info_from(_selected_unit)
-            _render_selection_panel(_selected_tile_info, _selected_unit, {})
+            _selection.select_unit(data.duplicate(true) if data is Dictionary else {})
+            _adopt_tile_info_from(_selection.unit())
+            _render_selection_panel(_selection.tile_info(), _selection.unit(), {})
         "herd":
-            _selected_herd = data.duplicate(true) if data is Dictionary else {}
-            _selected_unit.clear()
-            _selected_subject = SUBJECT_HERD
-            _adopt_tile_info_from(_selected_herd)
-            _render_selection_panel(_selected_tile_info, {}, _selected_herd)
+            _selection.select_herd(data.duplicate(true) if data is Dictionary else {})
+            _adopt_tile_info_from(_selection.herd())
+            _render_selection_panel(_selection.tile_info(), {}, _selection.herd())
         "tile":
-            _selected_tile_info = data.duplicate(true) if data is Dictionary else {}
-            _selected_unit.clear()
-            _selected_herd.clear()
-            _selected_subject = SUBJECT_LAND
-            _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
-            _render_selection_panel(_selected_tile_info, {}, {})
+            _selection.select_tile(data.duplicate(true) if data is Dictionary else {})
+            _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
+            _render_selection_panel(_selection.tile_info(), {}, {})
         _:
             # Selected occupant vanished (e.g. the band expired). Drop to its last tile
             # if known, else hide the card. Intentionally does not touch pending state.
-            _selected_unit.clear()
-            _selected_herd.clear()
-            _selected_subject = SUBJECT_LAND
-            if _selected_tile_info.is_empty():
+            _selection.select_land()
+            if _selection.tile_info().is_empty():
                 _hide_selection_card()
             else:
-                _render_selection_panel(_selected_tile_info, {}, {})
+                _render_selection_panel(_selection.tile_info(), {}, {})
 
 ## Pull the fresh tile_info a refresh payload carries alongside the occupant, so the tile
 ## card + roster render against the same snapshot the occupant came from.
 func _adopt_tile_info_from(occupant: Dictionary) -> void:
     var ti_variant: Variant = occupant.get("tile_info", {})
     if ti_variant is Dictionary and not (ti_variant as Dictionary).is_empty():
-        _selected_tile_info = (ti_variant as Dictionary).duplicate(true)
-    _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
+        _selection.set_tile_info((ti_variant as Dictionary).duplicate(true))
+    _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
 
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
@@ -7449,8 +7255,8 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
-    _assemble_roster(_selected_tile_info)
-    _render_tile_card(_selected_tile_info)
+    _assemble_roster(_selection.tile_info())
+    _render_tile_card(_selection.tile_info())
     _resolve_auto_selected_subject()
     _rebuild_subject_list()
     _render_subject_drawer()
@@ -7474,8 +7280,9 @@ func _hide_drawer_blocks() -> void:
 ## ensure the currently-selected occupant is represented even when the tile_info
 ## doesn't list it (an inspector-driven herd selection carries an empty tile_info).
 func _assemble_roster(tile_info: Dictionary) -> void:
-    _roster_units = []
-    _roster_herds = []
+    # Reset then build in place: the roster arrays are mutated by reference (like the old members),
+    # so `_find_roster_unit` / `_find_roster_herd` see the in-progress roster during assembly.
+    _selection.set_roster([], [])
     # Occupants are LIVE state, so on a hex the player cannot currently see they are redacted — MapView
     # fog-gates them out of `tile_info` at source, and this re-reads the SAME state flag it tagged (not
     # a second visibility test) so the roster stays honest no matter who feeds it.
@@ -7488,18 +7295,18 @@ func _assemble_roster(tile_info: Dictionary) -> void:
     if units_variant is Array:
         for entry in units_variant:
             if entry is Dictionary and (not unseen or _is_player_unit(entry as Dictionary)):
-                _roster_units.append(entry)
+                _selection.roster_units().append(entry)
     # Wildlife is never ours — an unseen hex lists no herds at all.
     if not unseen:
         var herds_variant: Variant = tile_info.get("herds", [])
         if herds_variant is Array:
             for entry in herds_variant:
                 if entry is Dictionary:
-                    _roster_herds.append(entry)
-    if not _selected_unit.is_empty() and _find_roster_unit(int(_selected_unit.get("entity", -1))).is_empty():
-        _roster_units.append(_selected_unit)
-    if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
-        _roster_herds.append(_selected_herd)
+                    _selection.roster_herds().append(entry)
+    if _selection.has_unit() and _find_roster_unit(int(_selection.unit().get("entity", -1))).is_empty():
+        _selection.roster_units().append(_selection.unit())
+    if _selection.has_herd() and _find_roster_herd(String(_selection.herd().get("id", ""))).is_empty():
+        _selection.roster_herds().append(_selection.herd())
 
 ## The card's chrome: the coordinates as the title, and the pinned chip strip. The terrain ROWS
 ## are no longer here — they are the land subject's drawer content, rendered by
@@ -7614,7 +7421,7 @@ func _tile_contents_unseen(tile_info: Dictionary) -> bool:
 
 ## The selected hex's coordinates, as the one key an explicit subject choice is remembered against.
 func _selected_tile_coords() -> Vector2i:
-    return Vector2i(int(_selected_tile_info.get("x", -1)), int(_selected_tile_info.get("y", -1)))
+    return Vector2i(int(_selection.tile_info().get("x", -1)), int(_selection.tile_info().get("y", -1)))
 
 ## Auto-select the subject whose drawer opens on a fresh tile click.
 ##
@@ -7625,7 +7432,7 @@ func _selected_tile_coords() -> Vector2i:
 ## …)`, which moves no ring (the hex outline already marks the tile) but CLEARS MapView's occupant
 ## selection — see `_on_land_row_selected`.
 func _resolve_auto_selected_subject() -> void:
-    if not _selected_unit.is_empty() or not _selected_herd.is_empty():
+    if not _selection.unit().is_empty() or not _selection.herd().is_empty():
         return
     # THE DEFAULT ONLY APPLIES WHERE THE PLAYER HAS NOT ALREADY CHOSEN. Both occupant dicts are
     # empty either because this is a fresh hex (auto-select) or because the player picked the LAND
@@ -7633,24 +7440,22 @@ func _resolve_auto_selected_subject() -> void:
     # per-snapshot `reapply_selection("tile", …)` re-ran the default every turn and stole a
     # deliberately-chosen land selection back to the first band. A genuinely new hex has different
     # coords, so today's first-band → first-herd → land default is preserved exactly.
-    if not _selected_tile_info.is_empty() and _subject_choice_tile == _selected_tile_coords():
-        _selected_subject = SUBJECT_LAND
+    if not _selection.tile_info().is_empty() and _selection.choice_tile() == _selected_tile_coords():
+        _selection.set_subject(SUBJECT_LAND)
         return
-    if not _roster_units.is_empty():
-        _selected_unit = (_roster_units[0] as Dictionary).duplicate(true)
-        _selected_subject = SUBJECT_UNIT
-        emit_signal("roster_occupant_selected", "unit", int(_selected_unit.get("entity", -1)))
-    elif not _roster_herds.is_empty():
-        _selected_herd = (_roster_herds[0] as Dictionary).duplicate(true)
-        _selected_subject = SUBJECT_HERD
-        emit_signal("roster_occupant_selected", "herd", String(_selected_herd.get("id", "")))
+    if not _selection.roster_units().is_empty():
+        _selection.select_unit((_selection.roster_units()[0] as Dictionary).duplicate(true))
+        emit_signal("roster_occupant_selected", "unit", int(_selection.unit().get("entity", -1)))
+    elif not _selection.roster_herds().is_empty():
+        _selection.select_herd((_selection.roster_herds()[0] as Dictionary).duplicate(true))
+        emit_signal("roster_occupant_selected", "herd", String(_selection.herd().get("id", "")))
     else:
-        _selected_subject = SUBJECT_LAND
+        _selection.set_subject(SUBJECT_LAND)
 
 ## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
 ## paths is visible at a time — that is what bounds the card's height.
 func _render_subject_drawer() -> void:
-    if _selected_subject == SUBJECT_LAND:
+    if _selection.subject() == SUBJECT_LAND:
         _render_land_drawer()
     else:
         _render_occupant_drawer()
@@ -7667,8 +7472,8 @@ func _render_land_drawer() -> void:
     if tile_detail == null:
         return
     tile_detail.visible = true
-    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(_selected_tile_info))
-    _build_forage_drawer_actions(_selected_tile_info)
+    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(_selection.tile_info()))
+    _build_forage_drawer_actions(_selection.tile_info())
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
@@ -7684,15 +7489,15 @@ func _render_land_drawer() -> void:
 func _render_unknown_contents_note() -> void:
     if occupant_detail == null:
         return
-    var unseen := _tile_contents_unseen(_selected_tile_info)
-    var roster_empty := _roster_units.is_empty() and _roster_herds.is_empty()
+    var unseen := _tile_contents_unseen(_selection.tile_info())
+    var roster_empty := _selection.roster_units().is_empty() and _selection.roster_herds().is_empty()
     if not unseen or not roster_empty:
         occupant_detail.visible = false
         occupant_detail.text = ""
         return
     occupant_detail.visible = true
     var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
-        if String(_selected_tile_info.get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
+        if String(_selection.tile_info().get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
         else OCCUPANTS_UNKNOWN_REMEMBERED
     occupant_detail.text = _format_detail_bbcode([message])
 
@@ -7846,19 +7651,19 @@ func _rebuild_subject_list() -> void:
         return
     for child in subject_list.get_children():
         child.queue_free()
-    if not _selected_tile_info.is_empty():
-        subject_list.add_child(_build_land_row(_selected_tile_info))
-    if not _roster_units.is_empty():
-        subject_list.add_child(_roster_group_header("Bands", _roster_units.size()))
-        for unit in _roster_units:
+    if not _selection.tile_info().is_empty():
+        subject_list.add_child(_build_land_row(_selection.tile_info()))
+    if not _selection.roster_units().is_empty():
+        subject_list.add_child(_roster_group_header("Bands", _selection.roster_units().size()))
+        for unit in _selection.roster_units():
             subject_list.add_child(_build_band_row(unit))
-    if not _roster_herds.is_empty():
-        subject_list.add_child(_roster_group_header("Wildlife", _roster_herds.size()))
-        for herd in _roster_herds:
+    if not _selection.roster_herds().is_empty():
+        subject_list.add_child(_roster_group_header("Wildlife", _selection.roster_herds().size()))
+        for herd in _selection.roster_herds():
             subject_list.add_child(_build_herd_row(herd))
     # Reached only when your OWN unit is on a hex you can't see (everything else was redacted): say so,
     # or the lone row would read as "and nothing else is here" — which we cannot know.
-    if _tile_contents_unseen(_selected_tile_info) and not (_roster_units.is_empty() and _roster_herds.is_empty()):
+    if _tile_contents_unseen(_selection.tile_info()) and not (_selection.roster_units().is_empty() and _selection.roster_herds().is_empty()):
         subject_list.add_child(_alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT))
 
 ## The LAND row — the same shape as a band/herd row, because the land is the same KIND of thing:
@@ -7869,7 +7674,7 @@ func _rebuild_subject_list() -> void:
 ## map marker draws, so a source reads identically in the panel and on the map — else the neutral
 ## `◈`. Dot = the patch's ecology tier, the same vitality vocabulary as the band/herd dots.
 func _build_land_row(tile_info: Dictionary) -> Button:
-    var selected := _selected_subject == SUBJECT_LAND
+    var selected := _selection.subject() == SUBJECT_LAND
     var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
     var dot_color := _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT
     var module_key := String(tile_info.get("food_module", "")).strip_edges()
@@ -7908,7 +7713,7 @@ func _forage_workers_on_tile(x: int, y: int) -> int:
     if x < 0 or y < 0:
         return 0
     var total := 0
-    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
     for band_variant in bands:
         if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
             total += _workers_for_forage(band_variant, x, y)
@@ -7924,10 +7729,8 @@ func _forage_workers_on_tile(x: int, y: int) -> int:
 func _on_land_row_selected() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
-    _subject_choice_tile = _selected_tile_coords()
-    _selected_unit = {}
-    _selected_herd = {}
-    _selected_subject = SUBJECT_LAND
+    _selection.note_choice_tile(_selected_tile_coords())
+    _selection.select_land()
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
@@ -7948,7 +7751,7 @@ func _roster_group_header(title: String, count: int) -> Label:
 func _build_band_row(unit: Dictionary) -> Button:
     var entity_id := int(unit.get("entity", -1))
     var is_player := _is_player_unit(unit)
-    var selected := not _selected_unit.is_empty() and int(_selected_unit.get("entity", -1)) == entity_id
+    var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
     # Neutral tint for a non-player band's vitality dot (we can't see their larder).
     var dot_color := HudStyle.INK_FAINT
     var glyph := ""
@@ -7974,7 +7777,7 @@ func _build_band_row(unit: Dictionary) -> Button:
 ## the hunters on it. Selecting it drives the drawer + the map ring to the herd.
 func _build_herd_row(herd: Dictionary) -> Button:
     var herd_id := String(herd.get("id", ""))
-    var selected := not _selected_herd.is_empty() and String(_selected_herd.get("id", "")) == herd_id
+    var selected := not _selection.herd().is_empty() and String(_selection.herd().get("id", "")) == herd_id
     var dot_color := _ecology_tier_color(String(herd.get("ecology_phase", "")))
     var button := _make_roster_button(selected)
     var row := _make_roster_row(selected, dot_color)
@@ -8016,11 +7819,11 @@ func _hunt_workers_on_herd(herd_id: String) -> int:
     if herd_id == "":
         return 0
     var total := 0
-    var bands: Array = _player_bands if not _player_bands.is_empty() else [_player_band]
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
     for band_variant in bands:
         if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
             total += _workers_for_hunt(band_variant, herd_id)
-    for exp_variant in _player_expeditions:
+    for exp_variant in _band_labor.player_expeditions():
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
@@ -8111,7 +7914,7 @@ func _ecology_tier_color(phase: String) -> Color:
     return HudStyle.HEALTHY
 
 func _find_roster_unit(entity_id: int) -> Dictionary:
-    for unit in _roster_units:
+    for unit in _selection.roster_units():
         if unit is Dictionary and int((unit as Dictionary).get("entity", -1)) == entity_id:
             return unit
     return {}
@@ -8119,7 +7922,7 @@ func _find_roster_unit(entity_id: int) -> Dictionary:
 func _find_roster_herd(herd_id: String) -> Dictionary:
     if herd_id == "":
         return {}
-    for herd in _roster_herds:
+    for herd in _selection.roster_herds():
         if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
             return herd
     return {}
@@ -8133,15 +7936,11 @@ func _on_roster_row_selected(kind: String, id: Variant) -> void:
 func _select_roster_occupant(kind: String, id: Variant) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
-    _subject_choice_tile = _selected_tile_coords()
+    _selection.note_choice_tile(_selected_tile_coords())
     if kind == "unit":
-        _selected_unit = _find_roster_unit(int(id)).duplicate(true)
-        _selected_herd = {}
-        _selected_subject = SUBJECT_UNIT
+        _selection.select_unit(_find_roster_unit(int(id)).duplicate(true))
     else:
-        _selected_herd = _find_roster_herd(String(id)).duplicate(true)
-        _selected_unit = {}
-        _selected_subject = SUBJECT_HERD
+        _selection.select_herd(_find_roster_herd(String(id)).duplicate(true))
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
@@ -8160,16 +7959,16 @@ func _render_occupant_drawer() -> void:
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
-    var is_band := not _selected_unit.is_empty()
-    var is_herd := not _selected_herd.is_empty()
-    var is_expedition := is_band and bool(_selected_unit.get("is_expedition", false))
-    var is_player_band := is_band and not is_expedition and _is_player_unit(_selected_unit)
+    var is_band := not _selection.unit().is_empty()
+    var is_herd := not _selection.herd().is_empty()
+    var is_expedition := is_band and bool(_selection.unit().get("is_expedition", false))
+    var is_player_band := is_band and not is_expedition and _is_player_unit(_selection.unit())
     # A selected player band is the panel's subject: its detail + labor allocation render into the
     # dockable Band/City panel (docs/plan_band_city_dock.md §3), and the Occupants card shows NO
     # band detail (the roster still lists it). Falls back to the legacy in-card drawer only when no
     # panel is injected (e.g. the HUD-only ui_preview harness).
     if is_player_band and _band_city_panel != null:
-        _render_band_into_panel(_selected_unit)
+        _render_band_into_panel(_selection.unit())
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         occupant_detail.visible = true
@@ -8185,19 +7984,19 @@ func _render_occupant_drawer() -> void:
     # assign-hunters controls. All mutually exclusive with the current selection.
     occupant_detail.visible = true
     var lines: Array[String] = []
-    if not _selected_unit.is_empty():
-        lines = _unit_summary_lines(_selected_unit)
-    elif not _selected_herd.is_empty():
-        lines = _herd_summary_lines(_selected_herd)
+    if not _selection.unit().is_empty():
+        lines = _unit_summary_lines(_selection.unit())
+    elif not _selection.herd().is_empty():
+        lines = _herd_summary_lines(_selection.herd())
     occupant_detail.text = _format_detail_bbcode(lines)
     if is_expedition:
-        _build_expedition_panel(_selected_unit)
+        _build_expedition_panel(_selection.unit())
     elif is_player_band:
-        _build_allocation_panel(_selected_unit)
+        _build_allocation_panel(_selection.unit())
     elif allocation_panel != null:
         allocation_panel.visible = false
     if is_herd:
-        _build_herd_drawer_actions(_selected_herd)
+        _build_herd_drawer_actions(_selection.herd())
     elif herd_assign_controls != null:
         herd_assign_controls.visible = false
 
@@ -8210,14 +8009,14 @@ func _render_band_into_panel(unit: Dictionary) -> void:
         return
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
     # cycler swapping the panel subject must not carry one across.
-    if int(unit.get("entity", -1)) != int(_panel_band.get("entity", -1)):
+    if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
         _send_party_quarry_id = ""
-    # DEEP-COPY the subject: `_panel_band` must NOT alias `_selected_unit` (the selection
-    # path passes it in), because selecting a foreign tile calls `_selected_unit.clear()` —
-    # which would empty a shared dict and blank the panel on its next stepper rebuild. The
-    # zone closures below also capture this stable copy, so they keep targeting the panel band
-    # regardless of the current selection.
-    _panel_band = unit.duplicate(true)
+    # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
+    # selection path passes it in). The panel persists across selection changes, so it needs its
+    # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)
+    # must not mutate or blank it. The zone closures below also capture this stable copy, so they
+    # keep targeting the panel band regardless of the current selection.
+    _band_labor.set_panel_band(unit.duplicate(true))
     # The vitals RichTextLabel rebuilds the food/morale/output tint context from scratch each render.
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
@@ -8225,19 +8024,19 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # The three zone contents. Ownership passes to the panel, which frees the previous render's zones
     # and parents these into whichever shell (wide columns / narrow tabs) its width selected.
     _band_city_panel.set_zones(
-        _wrap_zone(_build_band_zone_content(_panel_band)),
-        _wrap_zone(_build_work_zone_content(_panel_band)),
-        _wrap_zone(_build_parties_zone_content(_panel_band)))
-    _push_zone_badges(_panel_band)
+        _wrap_zone(_build_band_zone_content(_band_labor.panel_band())),
+        _wrap_zone(_build_work_zone_content(_band_labor.panel_band())),
+        _wrap_zone(_build_parties_zone_content(_band_labor.panel_band())))
+    _push_zone_badges(_band_labor.panel_band())
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
-    var stage_id := String(_panel_band.get("settlement_stage_id", "")).strip_edges()
-    var glyph := String(_panel_band.get("settlement_stage_icon", "")).strip_edges()
-    var stage_label := String(_panel_band.get("settlement_stage_label", "")).strip_edges()
-    var index := _index_of_player_band(int(_panel_band.get("entity", -1)))
-    _band_city_panel.set_header(stage_id, glyph, _band_display_name(_panel_band, index + 1), stage_label)
-    _band_city_panel.set_cycler(index, _player_bands.size())
+    var stage_id := String(_band_labor.panel_band().get("settlement_stage_id", "")).strip_edges()
+    var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
+    var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
+    var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
+    _band_city_panel.set_header(stage_id, glyph, _band_display_name(_band_labor.panel_band(), index + 1), stage_label)
+    _band_city_panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _band_city_panel.set_shown(true)
 
@@ -8381,7 +8180,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
 ## test the herd drawer and the map badge ask, so the three surfaces cannot disagree.
 ##
 ## The pens are found through the band's OWN Corral labor assignments: the client has no owner field
-## on a herd, so scanning `_world_herds` would happily alarm on a RIVAL's starving pen.
+## on a herd, so scanning `_band_labor.world_herds()` would happily alarm on a RIVAL's starving pen.
 func _starving_pen_attention(band: Dictionary) -> Array:
     var items: Array = []
     for a_variant in _labor_assignments_of(band):
@@ -8412,7 +8211,7 @@ func _starving_pen_attention(band: Dictionary) -> Array:
 ## The starving pen (if any) standing on `(x, y)`, for the orb's jump routing — the herd twin of
 ## `_awaiting_expedition_at`. Only pens the player's own bands keep, via the same producer path.
 func _starving_pen_at(x: int, y: int) -> String:
-    for band_variant in _player_bands:
+    for band_variant in _band_labor.player_bands():
         if not (band_variant is Dictionary):
             continue
         for a_variant in _labor_assignments_of(band_variant):
@@ -8432,7 +8231,7 @@ func _starving_pen_at(x: int, y: int) -> String:
     return ""
 
 func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
-    for exp_variant in _player_expeditions:
+    for exp_variant in _band_labor.player_expeditions():
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
@@ -8448,13 +8247,13 @@ func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
 ## panel itself stays on its band (expeditions detail in the Occupants card, per the existing split);
 ## a co-located band auto-select can't hijack it — we restore the panel band if it changed.
 func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
-    var panel_band_keep: Dictionary = _panel_band.duplicate(true) if not _panel_band.is_empty() else {}
+    var panel_band_keep: Dictionary = _band_labor.panel_band().duplicate(true) if not _band_labor.panel_band().is_empty() else {}
     if x >= 0 and y >= 0:
         emit_signal("alert_focus_requested", x, y)
     if not _find_roster_unit(entity).is_empty():
         _select_roster_occupant("unit", entity)
         emit_signal("roster_occupant_selected", "unit", entity)
-    if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
+    if not panel_band_keep.is_empty() and int(_band_labor.panel_band().get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
 
 ## A Current-actions row's label was clicked: show the source the band is working. Recenter + select
@@ -8466,13 +8265,13 @@ func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
 func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
     if x < 0 or y < 0:
         return
-    var panel_band_keep: Dictionary = _panel_band.duplicate(true) if not _panel_band.is_empty() else {}
+    var panel_band_keep: Dictionary = _band_labor.panel_band().duplicate(true) if not _band_labor.panel_band().is_empty() else {}
     emit_signal("alert_focus_requested", x, y)
     # The focus above rebuilt the hex's roster, so the herd is resolvable now.
     if herd_id != "" and not _find_roster_herd(herd_id).is_empty():
         _select_roster_occupant("herd", herd_id)
         emit_signal("roster_occupant_selected", "herd", herd_id)
-    if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
+    if not panel_band_keep.is_empty() and int(_band_labor.panel_band().get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
 
 ## Show a hunted herd. Herds MIGRATE each turn, so the hunt assignment's `target_x/target_y` is a
@@ -8485,22 +8284,22 @@ func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> vo
     var y := int(herd.get("y", fallback_y))
     _focus_labor_source(x, y, herd_id)
 
-## Re-render the panel band into the panel container, keyed off `_panel_band` (never the current
+## Re-render the panel band into the panel container, keyed off `_band_labor.panel_band()` (never the current
 ## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so
 ## they stay pinned to the panel's subject even when a foreign hex is selected.
 func _rerender_panel_allocation() -> void:
-    if _band_city_panel == null or _panel_band.is_empty():
+    if _band_city_panel == null or _band_labor.panel_band().is_empty():
         return
-    _render_band_into_panel(_panel_band)
+    _render_band_into_panel(_band_labor.panel_band())
 
 ## Keep the panel a live, persistent command center each snapshot: hide it when there are no
 ## player bands, else re-resolve the shown band against the fresh snapshot (so steppers/idle stay
-## current) and re-render it. Called from update_band_alerts after _player_band(s) refresh.
+## current) and re-render it. Called from update_band_alerts after _band_labor.player_band()(s) refresh.
 func _refresh_panel_band() -> void:
     if _band_city_panel == null:
         return
-    if _player_bands.is_empty():
-        _panel_band = {}
+    if _band_labor.player_bands().is_empty():
+        _band_labor.set_panel_band({})
         _band_city_panel.set_band_present(false)
         _band_city_panel.set_shown(false)
         return
@@ -8509,17 +8308,17 @@ func _refresh_panel_band() -> void:
 ## The band the panel should show: the same one across snapshots (re-fetched live by entity), or
 ## the first player band (the default actor) when the shown band is gone / unset.
 func _resolve_panel_band() -> Dictionary:
-    if not _panel_band.is_empty():
-        var entity := int(_panel_band.get("entity", -1))
-        for b in _player_bands:
+    if not _band_labor.panel_band().is_empty():
+        var entity := int(_band_labor.panel_band().get("entity", -1))
+        for b in _band_labor.player_bands():
             if b is Dictionary and int((b as Dictionary).get("entity", -1)) == entity:
                 return b
-    return _player_bands[0] if not _player_bands.is_empty() else {}
+    return _band_labor.player_bands()[0] if not _band_labor.player_bands().is_empty() else {}
 
-## Index of a band (by entity) within `_player_bands`, or -1 if absent.
+## Index of a band (by entity) within `_band_labor.player_bands()`, or -1 if absent.
 func _index_of_player_band(entity: int) -> int:
-    for i in range(_player_bands.size()):
-        if int((_player_bands[i] as Dictionary).get("entity", -1)) == entity:
+    for i in range(_band_labor.player_bands().size()):
+        if int((_band_labor.player_bands()[i] as Dictionary).get("entity", -1)) == entity:
             return i
     return -1
 
@@ -8537,20 +8336,20 @@ func set_band_city_panel(panel: BandCityPanel) -> void:
 ## click uses — recenter + select the band's hex (rebuilding that hex's roster), then pin the exact
 ## band — so the map ring, Tile card, roster, and this panel all land on the cycled band.
 func cycle_panel_band(delta: int) -> void:
-    if _band_city_panel == null or _player_bands.size() <= 1:
+    if _band_city_panel == null or _band_labor.player_bands().size() <= 1:
         return
-    var idx := _index_of_player_band(int(_panel_band.get("entity", -1)))
+    var idx := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
     if idx < 0:
         idx = 0
-    var n := _player_bands.size()
-    var next_band: Dictionary = _player_bands[((idx + delta) % n + n) % n]
+    var n := _band_labor.player_bands().size()
+    var next_band: Dictionary = _band_labor.player_bands()[((idx + delta) % n + n) % n]
     _select_band_on_map(next_band)
 
 ## Jump to the panel band on the map (the header title is a "jump to my band" affordance): recenter
 ## + select its hex and move the ring, WITHOUT changing which band the panel shows (it's already
-## `_panel_band`). No-op when there is no panel band.
+## `_band_labor.panel_band()`). No-op when there is no panel band.
 func focus_panel_band() -> void:
-    _select_band_on_map(_panel_band)
+    _select_band_on_map(_band_labor.panel_band())
 
 ## Select a band's hex on the map — recenter + select the hex (rebuilding its roster) via
 ## `alert_focus_requested` (→ MapView.focus_and_select_tile) then pin the exact band so the map ring,
@@ -8642,7 +8441,7 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
 ## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
-## `_roster_units` path as a band, so its roster row (`_build_band_row`) already shows the very
+## `_selection.roster_units()` path as a band, so its roster row (`_build_band_row`) already shows the very
 ## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
 ## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
 ## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
@@ -8776,7 +8575,7 @@ func _band_morale_line(unit_data: Dictionary) -> String:
             var cause_label := _morale_cause_label(cause)
             if cause_label != "":
                 if cause == MORALE_CAUSE_TERRAIN:
-                    var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+                    var terrain_label := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
                     if terrain_label != "":
                         cause_label = "%s (%s)" % [cause_label, terrain_label]
                 text += " — %s" % cause_label
@@ -8810,7 +8609,7 @@ func _morale_is_concerning(unit_data: Dictionary) -> bool:
 ## "recover"). Returns [] when there is nothing to disclose (no contribution + not concerning).
 func _morale_breakdown_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+    var terrain_label := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
     var terrain_row_label := MORALE_CAUSE_LABEL_TERRAIN
     if terrain_label != "":
         terrain_row_label = "%s (%s)" % [MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
@@ -9102,7 +8901,7 @@ func _ecology_value_hex(value: String) -> String:
 
 ## Append the Predators combat-component rows (Attack / Defense / Fights back / Aggressive) plus the
 ## compact derived-danger summary. Attack + Defense are open-ended, so their bars normalize against the
-## max across the KNOWN herds (`_world_herds`), Elevation-style — a herd reads relative to the roster,
+## max across the KNOWN herds (`_band_labor.world_herds()`), Elevation-style — a herd reads relative to the roster,
 ## and falls back to a full bar if it IS the reference (no other herds, or it holds the max). Ferocity +
 ## Aggression are native 0..1 → bar + %, using the readable behaviour labels the player parses.
 func _append_danger_component_lines(lines: Array[String], herd_data: Dictionary) -> void:
@@ -9120,7 +8919,7 @@ func _append_danger_component_lines(lines: Array[String], herd_data: Dictionary)
     ]])
 
 ## An OPEN-ENDED component (attack/defense): a bar relative to the roster max + the raw value. The bar
-## normalizes against the biggest value of that component across `_world_herds`; with no reference (max
+## normalizes against the biggest value of that component across `_band_labor.world_herds()`; with no reference (max
 ## 0 / no herds) it degrades to the bare value with no bar, since a lone herd has nothing to compare to.
 func _danger_open_row(value: float, key: String) -> String:
     var reference := _world_herd_component_max(key)
@@ -9137,7 +8936,7 @@ func _danger_unit_row(value: float) -> String:
 ## Attack/Defense bars normalize against (the Elevation-view idiom for an unbounded field).
 func _world_herd_component_max(key: String) -> float:
     var reference := 0.0
-    for herd in _world_herds:
+    for herd in _band_labor.world_herds():
         if herd is Dictionary:
             reference = maxf(reference, float((herd as Dictionary).get(key, 0.0)))
     return reference
@@ -9479,16 +9278,14 @@ func _split_detail_kv(line: String) -> Array:
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
-    _selected_unit.clear()
-    _selected_herd.clear()
-    _selected_subject = SUBJECT_LAND
+    _selection.select_land()
     _selected_food_module = ""
     _selected_food_is_hunt = false
     # Keep pending move-band so the user can still choose a destination after deselecting.
-    if _selected_tile_info.is_empty():
+    if _selection.tile_info().is_empty():
         _hide_selection_card()
     else:
-        _render_selection_panel(_selected_tile_info, {}, {})
+        _render_selection_panel(_selection.tile_info(), {}, {})
 
 func _travel_eta_hint(tile_info: Dictionary) -> String:
     var distance := int(tile_info.get("nearest_unit_distance", -1))
@@ -9558,7 +9355,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var attention: Array = []
     # Bands-only counter: increments for resident bands, NOT expeditions, so the "Band N"
     # attention labels match the band-picker (`_build_band_picker`, `i + 1`) and the panel
-    # header (`_index_of_player_band` + 1) — all number positionally within `_player_bands`.
+    # header (`_index_of_player_band` + 1) — all number positionally within `_band_labor.player_bands()`.
     var band_number := 0
     # Capture the player bands each snapshot; the labor-allocation UI targets them (assign/move/
     # clear) and reads their labor_assignments for the herd/tile assign controls. `player_band`
@@ -9603,7 +9400,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "x": x, "y": y,
             })
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
-        if _prev_band_sizes.has(entity) and size < int(_prev_band_sizes[entity]):
+        if _band_labor.prev_band_sizes().has(entity) and size < int(_band_labor.prev_band_sizes()[entity]):
             attention.append({
                 "kind": ATTENTION_KIND_LOSING_POPULATION,
                 "severity": ATTENTION_SEVERITY_WARN,
@@ -9631,10 +9428,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
     # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
     attention.append_array(_awaiting_orders_attention(player_expeditions))
-    _prev_band_sizes = new_sizes
-    _player_band = player_band
-    _player_bands = player_bands
-    _player_expeditions = player_expeditions
+    _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
     # Cache the band/expedition half and push the whole registry (bands + the fork producer) as
     # ONE replace — set_attention is wholesale, so a separate call would wipe these rows.
     _band_attention = attention
@@ -9643,11 +9437,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # processed (issued on an older turn), then let the panels render the confirmed state.
     _reconcile_pending()
     # Keep the dockable Band/City panel a persistent, live command center: shown whenever ≥1
-    # player band exists, re-rendering the current _panel_band so its steppers/idle stay current.
+    # player band exists, re-rendering the current _band_labor.panel_band() so its steppers/idle stay current.
     _refresh_panel_band()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
-    # a herd/tile selection reads _player_band, which only just refreshed here).
+    # a herd/tile selection reads _band_labor.player_band(), which only just refreshed here).
     _refresh_drawer_actions()
     # An OPEN compose sheet re-renders IN PLACE against the fresh subject — it must not close on a
     # snapshot, or it would be unusable under autoplay (§15). It closes only if its subject is gone.

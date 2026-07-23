@@ -152,7 +152,7 @@ func _ready() -> void:
 	])
 	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
-		_hud._player_bands.size(), _hud._player_expeditions.size()])
+		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])
 
 	# Dock to each edge and render.
 	_panel.set_collapsed(false)
@@ -191,8 +191,8 @@ func _ready() -> void:
 	# assign on the panel band (the worker-stepper path → `_after_pending_change`): the panel must
 	# stay populated (never blank) and show the optimistic "· pending".
 	_hud.show_tile_selection({"x": 5, "y": 5, "terrain_label": "Prairie Steppe", "visibility_state": "active"})
-	print("band_panel_preview: bug2 — _panel_band empty after foreign select? ", _hud._panel_band.is_empty())
-	_hud._emit_assign_labor(_hud._panel_band, "forage", 6, 71, 18, "", "")
+	print("band_panel_preview: bug2 — _panel_band empty after foreign select? ", _hud._band_labor._panel_band.is_empty())
+	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 6, 71, 18, "", "")
 	await _settle()
 	await _save("band_panel_stepper_foreign")
 
@@ -246,9 +246,9 @@ func _ready() -> void:
 	_hud.show_tile_selection({})   # clear the foreign selection so the panel band is the subject
 	# Drop the earlier bug-2 pending assign (it targets the same tile as the confirmed forage row and
 	# would mask it) so this frame shows a CONFIRMED row and a PENDING row side by side.
-	_hud._pending_labor.clear()
+	_hud._band_labor._pending_labor.clear()
 	_hud.update_band_alerts([_band_fixture()] + _phase_expedition_fixtures())
-	_hud._emit_assign_labor(_hud._panel_band, "forage", 4, 72, 19, "", "surplus")
+	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 4, 72, 19, "", "surplus")
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_status_glyphs")
@@ -274,7 +274,7 @@ func _ready() -> void:
 	# available the two AT-cap rows' `+` must be DISABLED (capped per source), the below-cap row's `+`
 	# ENABLED, and Scout's `+` still tracks idle. The forecast fields ride the pushed herds/patches.
 	_hud.show_tile_selection({})
-	_hud._pending_labor.clear()
+	_hud._band_labor._pending_labor.clear()
 	_hud.update_herds(_cap_demo_herd_fixtures())
 	_hud.update_forage_patches(_cap_demo_patch_fixtures())
 	_hud.update_band_alerts([_cap_demo_band_fixture()])
@@ -286,7 +286,7 @@ func _ready() -> void:
 	# so the strip's cell tooltips + the chart's "empty ~turn N" marker read as absolute turns.
 	_hud.update_overlay(ARRIVAL_PREVIEW_TURN, {})
 	_hud.show_tile_selection({})
-	_hud._pending_labor.clear()
+	_hud._band_labor._pending_labor.clear()
 
 	# (a) A LUMPY hunt (gaps) beside a CONTINUOUS forage (every slot positive). The hunt row must gain a
 	# tick strip with visible gaps; the forage row must gain NONE (the gap rule); the merged projection
@@ -352,7 +352,7 @@ func _ready() -> void:
 	map_path_view.queue_free()
 	await get_tree().process_frame
 	await _settle()
-	_assert_people_sum_matches_size(_hud._selected_unit, "band_panel_people_map_path")
+	_assert_people_sum_matches_size(_hud._selection._selected_unit, "band_panel_people_map_path")
 	await _save("band_panel_people_map_path")
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
 	_hud.update_band_alerts([_band_fixture()])
@@ -379,7 +379,7 @@ func _ready() -> void:
 
 	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
 	_panel.set_dock(SIDE_LEFT)
-	_hud._toggle_work_inspector(_hud._work_source_models(_hud._panel_band, 0)[0]["key"])
+	_hud._toggle_work_inspector(_hud._work_source_models(_hud._band_labor._panel_band, 0)[0]["key"])
 	await _settle()
 	await _save("band_panel_inspector")
 	_assert_zones_within_bounds()
@@ -388,7 +388,7 @@ func _ready() -> void:
 	_hud._toggle_work_inspector(_hud._work_open_key)
 
 	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
-	_hud._on_work_unassign_all_pressed(_hud._panel_band, 34)
+	_hud._on_work_unassign_all_pressed(_hud._band_labor._panel_band, 34)
 	await _settle()
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
@@ -450,7 +450,7 @@ func _ready() -> void:
 	# PARTIES INSPECTOR STRIP — a row click opens the full Mission/Target/Policy/Phase/Carried/
 	# Next-delivery detail, mirroring the work board's row → inspector.
 	_hud.show_tile_selection({})
-	_hud._pending_labor.clear()
+	_hud._band_labor._pending_labor.clear()
 	_hud.update_herds(_herd_fixtures())
 
 	# (a) WIDE shell (bottom dock): the strip renders in the height-capped T/B shell too → the
@@ -563,7 +563,7 @@ func _ready() -> void:
 
 ## GUARD (FIX 4): the Next-delivery line must reach the DETAIL PANEL through the MARKER, not only the
 ## raw `_player_expeditions` dict. Push a hunt party through a REAL MapView (display_snapshot →
-## _rebuild_unit_markers), click its hex to set `_hud._selected_unit`, and assert the marker-sourced
+## _rebuild_unit_markers), click its hex to set `_hud._selection._selected_unit`, and assert the marker-sourced
 ## drawer line reads "Next delivery: ~15 food in 6 turns" (14.5 → 15). Verified to FAIL before the
 ## marker copy carried the three fields.
 func _assert_detail_panel_delivery() -> void:
@@ -587,7 +587,7 @@ func _assert_detail_panel_delivery() -> void:
 	view.unit_selected.connect(_hud.show_unit_selection)
 	view.handle_hex_click(tile.x, tile.y, MOUSE_BUTTON_LEFT)
 	view.unit_selected.disconnect(_hud.show_unit_selection)
-	var lines: Array = _hud._expedition_summary_lines(_hud._selected_unit)
+	var lines: Array = _hud._expedition_summary_lines(_hud._selection._selected_unit)
 	var want := "Next delivery: ~15 food in 6 turns"
 	if lines.has(want):
 		print("band_panel_preview: assert OK — detail panel (marker path) renders '%s'" % want)
