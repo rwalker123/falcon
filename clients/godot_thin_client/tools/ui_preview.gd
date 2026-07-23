@@ -1691,6 +1691,54 @@ func _ready() -> void:
 	_assert_hud("the no-panel fallback shows exactly ONE Move button",
 		_count_buttons_by_text(_hud.allocation_panel, MOVE_BUTTON_TEXT) == 1)
 
+	# tile_panel_no_flash — THE FLASH-MECHANISM GUARD (docs/plan_hud_decomposition.md §2a). The
+	# tile-inspector "flash" on every turn-advance was `_render_selection_panel` UNCONDITIONALLY
+	# tearing down + recreating the card's chips / roster rows / drawer actions even on a same-tile
+	# restate where only numbers moved. That teardown is a transient the static PNG harness cannot
+	# capture, so this proves the MECHANISM instead: a same-tile restate with CHANGED NUMBERS, fed
+	# through the REAL per-snapshot `reapply_selection("tile", …)` path, must PATCH the existing nodes
+	# in place — SAME instances, values updated — never free + rebuild them; while a genuine identity
+	# change (a band entering the hex) still DOES rebuild, so the diff cannot mask a real update.
+	# Proven to FAIL against the pre-fix teardown code.
+	_hud.clear_selection()
+	_hud._band_labor._player_bands = []
+	_hud._band_labor._player_band = _no_flash_band_fixture(3, 0.90)
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud.show_tile_selection(_no_flash_tile_fixture(0.01, 84.0))
+	await _settle()
+	var flash_chip_ids := _child_instance_ids(_hud.tile_chips)
+	var flash_row_ids := _child_instance_ids(_hud.subject_list)
+	var flash_action_ids := _child_instance_ids(_hud.forage_assign_controls)
+	var flash_chip_before := _chip_text(_hud.tile_chips, 1)          # the habitability chip
+	var flash_summary_before := _forage_summary_text()
+	# A SECOND snapshot of the SAME tile with different numbers (habitability rating, patch biomass,
+	# forage worker count + rate), replayed the way Main replays MapView's payload every turn.
+	_hud._band_labor._player_band = _no_flash_band_fixture(5, 1.40)
+	_hud.reapply_selection("tile", _no_flash_tile_fixture(0.06, 61.0))
+	await _settle()
+	await _save("tile_panel_no_flash")
+	_assert_hud("same-tile restate REUSES the chip nodes (no teardown)",
+		_child_instance_ids(_hud.tile_chips) == flash_chip_ids and not flash_chip_ids.is_empty())
+	_assert_hud("same-tile restate REUSES the roster-row nodes (no teardown)",
+		_child_instance_ids(_hud.subject_list) == flash_row_ids and not flash_row_ids.is_empty())
+	_assert_hud("same-tile restate REUSES the forage drawer-action nodes (no teardown)",
+		_child_instance_ids(_hud.forage_assign_controls) == flash_action_ids and not flash_action_ids.is_empty())
+	_assert_hud("…and the reused chip's value updated to the new number (Hospitable → Harsh)",
+		_chip_text(_hud.tile_chips, 1) != flash_chip_before and _chip_text(_hud.tile_chips, 1) != "")
+	_assert_hud("…and the reused drawer summary updated to the new worker count/rate",
+		_forage_summary_text() != flash_summary_before and _forage_summary_text() != "")
+	# The identity-change half: a band ENTERING the hex must rebuild the roster, so a masked-update
+	# bug in the diff cannot survive here.
+	var flash_tile_with_band := _no_flash_tile_fixture(0.06, 61.0)
+	flash_tile_with_band["units"] = [_no_flash_band_fixture(5, 1.40)]
+	_hud.reapply_selection("tile", flash_tile_with_band)
+	await _settle()
+	_assert_hud("a band entering the hex REBUILDS the roster (membership changed)",
+		_child_instance_ids(_hud.subject_list) != flash_row_ids)
+	_hud.clear_selection()
+	_hud._band_labor._player_band = {}
+
 	# ---- PART 2: THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§17) ----------------------
 	# The two ~270px compose blocks left the drawer for a floating sheet. The states above are now the
 	# READ state (a standing summary + `Assign … ▸`, and the drawer is visibly shorter for it); these
@@ -2732,6 +2780,38 @@ func _assert_turn_orb(label: String, ok: bool) -> void:
 	else:
 		push_error("ui_preview: FAIL turn-orb — %s" % label)
 
+## The instance ids of a container's direct children, so an assertion can prove a restate REUSED the
+## same nodes (in-place patch) rather than freeing + recreating them (teardown).
+func _child_instance_ids(node: Node) -> Array:
+	var ids: Array = []
+	if node != null:
+		for child in node.get_children():
+			ids.append(child.get_instance_id())
+	return ids
+
+## The face text of the chip at `index` in the pinned chip strip (each chip is a PanelContainer whose
+## first child is its Label).
+func _chip_text(strip: Node, index: int) -> String:
+	if strip == null or index < 0 or index >= strip.get_child_count():
+		return ""
+	var chip := strip.get_child(index)
+	if chip.get_child_count() == 0:
+		return ""
+	var label := chip.get_child(0) as Label
+	return label.text if label != null else ""
+
+## The forage drawer's standing-summary text (the first child of `%ForageAssignControls` is the
+## summary HFlowContainer; its first child is the main status Label).
+func _forage_summary_text() -> String:
+	var controls := _hud.forage_assign_controls
+	if controls == null or controls.get_child_count() == 0:
+		return ""
+	var flow := controls.get_child(0)
+	if flow.get_child_count() == 0:
+		return ""
+	var label := flow.get_child(0) as Label
+	return label.text if label != null else ""
+
 ## A NON-player band (faction 1): what a rival's cohort actually looks like on the wire — an identity,
 ## a size, a position, and nothing of ours to read (no morale/output/labor/flow fields). Backs the
 ## `band_foreign` state, which exists to prove the drawer doesn't collapse to an empty card now that
@@ -3413,6 +3493,58 @@ func _big_game_window_herd() -> Dictionary:
 			"sustain": 2.4, "surplus": 3.6, "market": 5.0, "eradicate": 7.0,
 		},
 		"tile_info": _plain_herd_tile_info(),
+	}
+
+## THE FLASH GUARD's tile (docs/plan_hud_decomposition.md §2a): an active, foraged prairie hex with
+## the full chip set (sight · habitability · climate · tags · site) and a standing forage patch, so a
+## restate with a different `habitability` (Hospitable → Harsh) and `patch_biomass` proves the chips +
+## land row + drawer patch in place instead of tearing down. Same coords across restates — the same
+## HEX, only its numbers move.
+func _no_flash_tile_fixture(habitability: float, biomass: float) -> Dictionary:
+	return {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"habitability": habitability,
+		"temperature": 18.0,
+		"food_module": "savanna_grassland",
+		"food_module_label": "Savanna Grassland",
+		"site_name": "Verdant Basin",
+		"patch_ecology_phase": "thriving",
+		"patch_biomass": biomass,
+		"patch_carrying_capacity": 120.0,
+		"patch_per_worker_yield": 0.32,
+		"patch_ceiling_sustain": 0.96,
+		"patch_ceiling_surplus": 1.92,
+		"patch_ceiling_market": 2.88,
+		"patch_ceiling_eradicate": 4.80,
+	}
+
+## THE FLASH GUARD's band: a player band foraging the no-flash hex with `workers` on it at `yield_val`
+## food/turn, so the drawer renders a standing summary (`♻ N foragers · +X /turn`) and the land row a
+## `N 🌾` staffing meta — both of which must UPDATE in place (not rebuild) when the numbers change.
+## Sustain + `overdraws:false` and no `workers_needed` keep the summary's SHAPE stable across restates
+## (no warn/overstaff labels appear/disappear), so only values move.
+func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
+	return {
+		"id": "Band Steady",
+		"size": 30,
+		"entity": 909,
+		"faction": 0,
+		"pos": [66, 10],
+		"current_x": 66, "current_y": 10,
+		"activity": "forage",
+		"working_age": 16,
+		"idle_workers": maxi(0, 16 - workers),
+		"work_range": 3,
+		"settlement_stage_icon": "⛺",
+		"settlement_stage_label": "Nomadic band",
+		"output_multiplier": 1.0,
+		"labor_assignments": [
+			{"kind": "forage", "workers": workers, "target_x": 66, "target_y": 10,
+				"policy": "sustain", "actual_yield": yield_val, "sustainable_yield": yield_val, "overdraws": false},
+		],
 	}
 
 func _food_tile_fixture() -> Dictionary:

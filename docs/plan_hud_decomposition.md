@@ -30,12 +30,27 @@ is dissolved **first**, in place, before any code moves files.
     `_on_turn_orb_focus` routes into band-panel helpers, and `_band_attention` is
     written by `update_band_alerts` and only read by the orb. Done with a
     `set_band_attention()` seam + relayed signals — its own focused PR.
-- **Phase 2 — The selection core.** Extract the SelectionCard (chips / subject
-  list / drawer) and the drawer/allocation builders it calls, reacting to the
-  Phase-0 selection model's `changed` signal instead of being imperatively
-  re-rendered. **The tile-inspector flash fix lands here**, as a property of the
-  new `apply_update`-style contract (diff-and-update) rather than the current
-  unconditional teardown-and-rebuild.
+- **Phase 2 — The selection core**, split into two PRs after the render-path map
+  showed the flash is independent of the ~2,000-line compose/allocation builder
+  mass, and that extract-first is the *harder* path (the ~850-line core is welded
+  to the builders by a large Callable web):
+  - **2a — Fix the flash in place.** `_render_selection_panel` runs every snapshot
+    and unconditionally tears down + recreates the card sub-widgets (chips,
+    subject rows, forage/herd drawer actions) + reassigns `tile_detail` +
+    schedules a deferred fit — a visible reflow on every turn-advance even when
+    only numbers moved. Make each rebuild loop **update existing nodes in place
+    when the structure is unchanged**, rebuilding only on a structural change
+    (chip-slot set, roster membership, action shape). No extraction. The
+    smaller, safer PR, and it delivers the original bug report.
+  - **2b — Extract the SelectionCard.** The now-diff-based core (chips / subject
+    list / drawer host / `tile_detail`) becomes a controller, severing the
+    core↔builder Callable web. Structural cleanup; no behaviour change.
+  - **Verification caveat:** the flash is a *transient* during turn-advance; the
+    static ui_preview PNG harness cannot capture it. 2a is guarded by (i) settled
+    frames staying pixel-identical and (ii) a new behavioural assertion that the
+    chip/row/action **nodes are the same instances** across a same-tile restate
+    (proven to fail against the current teardown). The actual flash is confirmed
+    by the human in the running app.
 - **Phase 3+ — Band panel bridge, labor model, targeting.** As they come.
 
 Phases 1–3 are sketched at the end; the body below specifies **Phase 0**.

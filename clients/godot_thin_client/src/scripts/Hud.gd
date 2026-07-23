@@ -369,6 +369,20 @@ var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
 # One drawer fit in flight at a time — see `_fit_subject_drawer`.
 var _subject_fit_pending: bool = false
+# ---- Selection-card in-place update caches (docs/plan_hud_decomposition.md §2a) --------------
+# The selection card re-renders on EVERY snapshot; to avoid a one-frame teardown/reflow flash each
+# of these caches the last-rendered STRUCTURE of its widget, so an unchanged restate PATCHES the
+# existing nodes in place instead of freeing + rebuilding them (rebuild only on a structural change).
+# `_tile_chip_slots` = the ordered chip-slot keys; `_subject_row_keys` = the ordered roster-row keys
+# (identity + structural flags); `_forage_drawer_shape`/`_herd_drawer_shape` = the drawer-actions
+# shape signatures; `_tile_detail_lines_cache` = the last land-drawer BBCode line array;
+# `_subject_fit_last_height` = the last-applied drawer content height (skips a same-height reflow).
+var _tile_chip_slots: Array = []
+var _subject_row_keys: Array = []
+var _forage_drawer_shape: Array = []
+var _herd_drawer_shape: Array = []
+var _tile_detail_lines_cache: Array = []
+var _subject_fit_last_height: float = NAN
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
@@ -1818,8 +1832,9 @@ func _ready() -> void:
     # SCROLL's minimum, which is outside the body it measures.
     if subject_body != null:
         subject_body.minimum_size_changed.connect(_fit_subject_drawer)
-    # A window resize changes the dock's height, hence the room the drawer may claim.
-    get_viewport().size_changed.connect(_fit_subject_drawer)
+    # A window resize changes the dock's height, hence the room the drawer may claim — force the
+    # refit past the same-height gate (the content is unchanged, but the room it fits into is not).
+    get_viewport().size_changed.connect(_fit_subject_drawer.bind(true))
 
 ## Apply the shared HudStyle console look to the selection panel: restyle its
 ## action buttons, tint the detail text, and bring the two plain PanelContainers
@@ -6264,21 +6279,45 @@ func _refresh_drawer_actions() -> void:
 func _build_forage_drawer_actions(tile_info: Dictionary) -> void:
     if forage_assign_controls == null:
         return
-    for child in forage_assign_controls.get_children():
-        child.queue_free()
     var available := _forage_compose_available(tile_info)
     forage_assign_controls.visible = available
     if not available:
+        _clear_forage_drawer()
         return
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
     var standing := _standing_assignment(LABOR_KIND_FORAGE, x, y, "")
+    var summary_model: Dictionary = {}
     if not standing.is_empty():
-        forage_assign_controls.add_child(_build_standing_summary(
-            standing, LABOR_KIND_FORAGE, FORAGE_CREW_LABEL.to_lower()))
+        summary_model = _standing_summary_model(standing, LABOR_KIND_FORAGE, FORAGE_CREW_LABEL.to_lower())
+    var subject_key := _forage_source_key(tile_info)
+    var shape := _standing_actions_shape(summary_model)
+    var expected_children := (1 if not summary_model.is_empty() else 0) + 1
+    # Same shape (summary present + its warn/note structure) → patch the summary + compose button in
+    # place, so the per-snapshot restate never tears down the drawer (the "worst around Forage" flash).
+    # The compose button's primary/ghost flip lands in place too.
+    if shape == _forage_drawer_shape and forage_assign_controls.get_child_count() == expected_children:
+        var idx := 0
+        if not summary_model.is_empty():
+            _update_standing_summary(forage_assign_controls.get_child(idx) as HFlowContainer, summary_model)
+            idx += 1
+        _update_compose_open_button(forage_assign_controls.get_child(idx) as Button, FORAGE_CREW_LABEL, subject_key)
+        return
+    _clear_forage_drawer()
+    if not summary_model.is_empty():
+        forage_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     forage_assign_controls.add_child(_build_compose_open_button(
-        FORAGE_CREW_LABEL, _forage_source_key(tile_info),
+        FORAGE_CREW_LABEL, subject_key,
         func() -> void: _open_forage_compose(tile_info)))
+    _forage_drawer_shape = shape
+
+## Free the forage drawer-actions and forget its shape, so the next build always rebuilds.
+func _clear_forage_drawer() -> void:
+    if forage_assign_controls == null:
+        return
+    for child in forage_assign_controls.get_children():
+        child.queue_free()
+    _forage_drawer_shape = []
 
 ## The HERD drawer's read state: the Extend-pen action (a one-click standing action on a built pen —
 ## NOT a compose, so it stays here rather than hiding behind a sheet), the standing hunt summary, and
@@ -6286,25 +6325,86 @@ func _build_forage_drawer_actions(tile_info: Dictionary) -> void:
 func _build_herd_drawer_actions(herd: Dictionary) -> void:
     if herd_assign_controls == null:
         return
-    for child in herd_assign_controls.get_children():
-        child.queue_free()
     var corralled := bool(herd.get("corralled", false))
     var available := _herd_compose_available(herd)
     # A penned herd always offers Extend-pen, even if it is no longer huntable — so the container
     # stays visible for a pen OR a composable herd.
     herd_assign_controls.visible = available or corralled
-    if corralled:
-        _build_extend_pen_control(herd, herd_assign_controls)
-    if not available:
+    if not (available or corralled):
+        _clear_herd_drawer()
         return
+    var extending := corralled and float(herd.get("pen_extend_progress", 0.0)) > 0.0
     var herd_id := String(herd.get("id", ""))
     var noun := _herd_crew_noun(herd)
-    var standing := _standing_assignment(LABOR_KIND_HUNT, -1, -1, herd_id)
-    if not standing.is_empty():
-        herd_assign_controls.add_child(_build_standing_summary(
-            standing, LABOR_KIND_HUNT, noun.to_lower()))
-    herd_assign_controls.add_child(_build_compose_open_button(
-        noun, herd_id, func() -> void: _open_herd_compose(herd)))
+    var summary_model: Dictionary = {}
+    if available:
+        var standing := _standing_assignment(LABOR_KIND_HUNT, -1, -1, herd_id)
+        if not standing.is_empty():
+            summary_model = _standing_summary_model(standing, LABOR_KIND_HUNT, noun.to_lower())
+    var shape := _herd_actions_shape(corralled, extending, available, summary_model)
+    var expected_children := (1 if corralled else 0) + (1 if not summary_model.is_empty() else 0) + (1 if available else 0)
+    # Same shape (extend kind + summary structure + compose button presence) → patch each part in
+    # place, so a per-snapshot restate never tears the herd drawer down.
+    if shape == _herd_drawer_shape and herd_assign_controls.get_child_count() == expected_children:
+        var idx := 0
+        if corralled:
+            _update_extend_pen_control(herd_assign_controls.get_child(idx), herd)
+            idx += 1
+        if not summary_model.is_empty():
+            _update_standing_summary(herd_assign_controls.get_child(idx) as HFlowContainer, summary_model)
+            idx += 1
+        if available:
+            _update_compose_open_button(herd_assign_controls.get_child(idx) as Button, noun, herd_id)
+        return
+    _clear_herd_drawer()
+    if corralled:
+        _build_extend_pen_control(herd, herd_assign_controls)
+    if not summary_model.is_empty():
+        herd_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
+    if available:
+        herd_assign_controls.add_child(_build_compose_open_button(
+            noun, herd_id, func() -> void: _open_herd_compose(herd)))
+    _herd_drawer_shape = shape
+
+## Free the herd drawer-actions and forget its shape, so the next build always rebuilds.
+func _clear_herd_drawer() -> void:
+    if herd_assign_controls == null:
+        return
+    for child in herd_assign_controls.get_children():
+        child.queue_free()
+    _herd_drawer_shape = []
+
+## The forage drawer-actions shape: `[has_summary, warn, has_note, has_muted]` — the full set of
+## optional child slots, so any structural change (summary appearing/disappearing, a warn/note/muted
+## label appearing) moves the signature and forces a rebuild rather than a stale positional patch.
+func _standing_actions_shape(summary_model: Dictionary) -> Array:
+    if summary_model.is_empty():
+        return [false, false, false, false]
+    return [true, bool(summary_model["warn"]),
+        String(summary_model["note"]) != "", String(summary_model["muted_note"]) != ""]
+
+## The herd drawer-actions shape: the extend control's kind + the summary structure + whether the
+## compose button is present. Any change forces a rebuild rather than a positional patch.
+func _herd_actions_shape(corralled: bool, extending: bool, available: bool, summary_model: Dictionary) -> Array:
+    return [corralled, extending, available] + _standing_actions_shape(summary_model)
+
+## Patch an extend-pen control in place. It is a Fencing-N% BADGE while a ring is in flight, else a
+## plain button; WHICH one rides the shape signature (`extending`), so here it is only ever the same
+## kind — only the badge carries a live number to refresh.
+func _update_extend_pen_control(node: Node, herd: Dictionary) -> void:
+    var badge := node as Label
+    if badge != null:
+        badge.text = PEN_FENCING_LABEL % int(round(float(herd.get("pen_extend_progress", 0.0)) * PROGRESS_PERCENT_SCALE))
+
+## Patch the `Assign … ▸` button in place: its noun (herders vs hunters can flip as a herd is tamed)
+## and its primary/ghost lit-while-composing state, without freeing the button (whose `pressed`
+## connection we keep intact).
+func _update_compose_open_button(button: Button, noun: String, subject_key: String) -> void:
+    if button == null:
+        return
+    button.text = COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
+    var composing := is_compose_sheet_open() and _compose_subject == subject_key
+    HudStyle.apply_button(button, "primary" if composing else "ghost")
 
 ## The `Assign … ▸` button. It lights "primary" (SIGNAL cyan — this HUD's LIVE state, as on the
 ## Sight chip and the selection accent) while ITS sheet is the open one, so the drawer shows which
@@ -6336,20 +6436,16 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
 ## The drawer's one-line standing-assignment summary: `♻ 3 foragers · +2.74 /turn`, with the SAME
 ## warn/overdraw and overstaff/wasted flags the Band panel's Current-actions rows render, from the
 ## SAME `_source_yield_readout` call. The rate is never recomputed here.
-func _build_standing_summary(assignment: Dictionary, kind: String, noun: String) -> Control:
+## The standing-summary's display model — the values `_build_standing_summary_from_model` renders,
+## computed ONCE so the drawer-actions shape signature and the in-place patch read one computation.
+func _standing_summary_model(assignment: Dictionary, kind: String, noun: String) -> Dictionary:
     # `has_yield` is the ONE key `_source_yield_readout` reads that is not on the wire assignment —
-    # it gates the rate on a CONFIRMED source (`_band_labor.effective_worker_map` sets it false for a pending,
-    # yield-less optimistic assign). Everything else — actual/sustainable/realized, `overdraws`,
-    # `workers_needed`, `wasted_yield` — is read straight off the assignment the sim sent.
+    # it gates the rate on a CONFIRMED source (`_band_labor.effective_worker_map` sets it false for a
+    # pending, yield-less optimistic assign). Everything else — actual/sustainable/realized,
+    # `overdraws`, `workers_needed`, `wasted_yield` — is read straight off the assignment the sim sent.
     var m := assignment.duplicate()
     m["has_yield"] = assignment.has("actual_yield")
     var readout := _source_yield_readout(m, kind)
-    var tooltip := String(readout["tooltip"])
-    var flow := HFlowContainer.new()
-    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
-    if tooltip != "":
-        flow.tooltip_text = tooltip
     var text := STANDING_SUMMARY_FORMAT % [
         FoodIcons.for_policy(String(assignment.get("policy", ""))),
         int(assignment.get("workers", 0)),
@@ -6358,18 +6454,62 @@ func _build_standing_summary(assignment: Dictionary, kind: String, noun: String)
     var suffix := String(readout["label_suffix"])
     if suffix != "":
         text += STANDING_SUMMARY_SEPARATOR + suffix
-    flow.add_child(_build_status_part(text.strip_edges(), HudStyle.INK))
+    return {
+        "text": text.strip_edges(),
+        "tooltip": String(readout["tooltip"]),
+        "warn": bool(readout["warn"]),
+        "note": String(readout["note"]),
+        "muted_note": String(readout["muted_note"]),
+    }
+
+## Build the drawer's one-line standing-assignment summary (`♻ 3 foragers · +2.74 /turn`) from a
+## precomputed model. Same warn/overdraw + overstaff/wasted flags a Band-panel Current-actions row
+## renders, same three colours.
+func _build_standing_summary_from_model(model: Dictionary) -> Control:
+    var tooltip := String(model["tooltip"])
+    var flow := HFlowContainer.new()
+    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
+    if tooltip != "":
+        flow.tooltip_text = tooltip
+    flow.add_child(_build_status_part(String(model["text"]), HudStyle.INK))
     # ⚠ = ecological (the take outruns regrowth); the notes = labor (extra workers idle here / the
     # crew could not carry what the source offered). Same three parts, same three colours as a row.
-    if bool(readout["warn"]):
+    if bool(model["warn"]):
         flow.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, tooltip))
-    var note := String(readout["note"])
+    var note := String(model["note"])
     if note != "":
         flow.add_child(_build_row_note_label(note, HudStyle.WARN, tooltip))
-    var muted_note := String(readout["muted_note"])
+    var muted_note := String(model["muted_note"])
     if muted_note != "":
         flow.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, tooltip))
     return flow
+
+## Patch an existing standing-summary flow in place. Child 0 is the main status part; the optional
+## warn/note/muted labels follow in that order and their PRESENCE is fixed by the shape signature, so
+## positions are stable here (their text/colour is constant per position, only the value moves).
+func _update_standing_summary(flow: HFlowContainer, model: Dictionary) -> void:
+    if flow == null:
+        return
+    var tooltip := String(model["tooltip"])
+    flow.tooltip_text = tooltip
+    var idx := 0
+    (flow.get_child(idx) as Label).text = String(model["text"])
+    idx += 1
+    if bool(model["warn"]):
+        _set_label_tooltip(flow.get_child(idx) as Label, tooltip)  # OVERHUNT_FLAG face is constant
+        idx += 1
+    var note := String(model["note"])
+    if note != "":
+        var note_label := flow.get_child(idx) as Label
+        note_label.text = note
+        _set_label_tooltip(note_label, tooltip)
+        idx += 1
+    var muted_note := String(model["muted_note"])
+    if muted_note != "":
+        var muted_label := flow.get_child(idx) as Label
+        muted_label.text = muted_note
+        _set_label_tooltip(muted_label, tooltip)
 
 ## Move-band: enter tile-targeting; the destination click emits move_band_requested.
 func _on_move_band_pressed() -> void:
@@ -6834,35 +6974,81 @@ func _sight_value_color(value: String) -> Color:
 func _build_tile_chips(tile_info: Dictionary) -> void:
     if tile_chips == null:
         return
-    for child in tile_chips.get_children():
-        child.queue_free()
     if tile_info.is_empty():
+        for child in tile_chips.get_children():
+            child.queue_free()
+        _tile_chip_slots = []
         tile_chips.visible = false
         return
     tile_chips.visible = true
+    var descriptors := _tile_chip_descriptors(tile_info)
+    var slots: Array = []
+    for descriptor in descriptors:
+        slots.append(descriptor["key"])
+    # Same SET of chip slots as last render → patch each chip's face/tint/tooltip in place, so a
+    # per-snapshot restate never frees + recreates the strip (the reflow that flashes). A slot
+    # appearing or disappearing moves the signature → full rebuild.
+    if slots == _tile_chip_slots and tile_chips.get_child_count() == descriptors.size():
+        for i in range(descriptors.size()):
+            _update_chip(tile_chips.get_child(i) as PanelContainer, descriptors[i])
+        return
+    for child in tile_chips.get_children():
+        child.queue_free()
+    for descriptor in descriptors:
+        tile_chips.add_child(_make_chip(descriptor["text"], descriptor["tint"], descriptor["tooltip"]))
+    _tile_chip_slots = slots
+
+## The ordered chip descriptors for a tile — one entry per PRESENT slot, each carrying a stable `key`
+## (so a render can diff the SET of slots) plus the face/tint/tooltip the chip shows. Mirrors the
+## build order EXACTLY: sight → habitability → climate → tags → site, each skipped when its field is
+## absent, exactly as the equivalent row is.
+func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
+    var out: Array = []
     var visibility_state := String(tile_info.get("visibility_state", ""))
     var sight_value := _tile_sight_value(visibility_state)
     if sight_value != "":
         # Short face, full sentence on hover — same value behind both, so they cannot disagree.
-        tile_chips.add_child(_make_chip(
-            _tile_sight_chip_value(sight_value), _sight_value_color(sight_value), sight_value
-        ))
+        out.append({"key": "sight", "text": _tile_sight_chip_value(sight_value),
+            "tint": _sight_value_color(sight_value), "tooltip": sight_value})
     # Nothing else is knowable on ground nobody has stood on — not even its biome.
     if visibility_state == VISIBILITY_UNEXPLORED:
-        return
+        return out
     if tile_info.has("habitability"):
-        var rating := TileHabitability.rating_for(float(tile_info["habitability"]))
-        tile_chips.add_child(_make_chip(rating, TileHabitability.color_for(float(tile_info["habitability"]))))
+        var habitability := float(tile_info["habitability"])
+        out.append({"key": "habitability", "text": TileHabitability.rating_for(habitability),
+            "tint": TileHabitability.color_for(habitability), "tooltip": ""})
     # Climate is INFORMATIONAL, so it wears neutral ink and never the warning palette; the cut
     # points are the SIM's, so until they are published there is no chip rather than a guess.
     if tile_info.has("temperature") and TileClimate.has_bands():
-        tile_chips.add_child(_make_chip(TileClimate.band_for(float(tile_info["temperature"])), HudStyle.INK_DIM))
+        out.append({"key": "climate", "text": TileClimate.band_for(float(tile_info["temperature"])),
+            "tint": HudStyle.INK_DIM, "tooltip": ""})
     var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
     if tags_text != "" and tags_text.to_lower() != CHIP_TAGS_NONE:
-        tile_chips.add_child(_make_chip(tags_text, HudStyle.INK_DIM))
+        out.append({"key": "tags", "text": tags_text, "tint": HudStyle.INK_DIM, "tooltip": ""})
     var site_name := String(tile_info.get("site_name", "")).strip_edges()
     if site_name != "":
-        tile_chips.add_child(_make_chip(site_name, HudStyle.INK_DIM))
+        out.append({"key": "site", "text": site_name, "tint": HudStyle.INK_DIM, "tooltip": ""})
+    return out
+
+## Patch an existing chip in place to a new descriptor — the same node the slot held last render, so
+## a restate updates the FACE without a teardown. Mirrors `_make_chip`'s tooltip/mouse-filter rule.
+func _update_chip(chip: PanelContainer, descriptor: Dictionary) -> void:
+    if chip == null:
+        return
+    var tint: Color = descriptor["tint"]
+    var text: String = descriptor["text"]
+    var tooltip: String = descriptor["tooltip"]
+    chip.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(tint))
+    if tooltip != "" and tooltip != text:
+        chip.tooltip_text = tooltip
+        chip.mouse_filter = Control.MOUSE_FILTER_STOP
+    else:
+        chip.tooltip_text = ""
+        chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var label := chip.get_child(0) as Label
+    if label != null:
+        label.text = text
+        label.add_theme_color_override("font_color", tint)
 
 ## One chip: a pill wearing the palette's chip chrome, tinted by the condition it states. An
 ## optional `tooltip` carries the long form of a condition whose face had to be short; a chip
@@ -6944,7 +7130,13 @@ func _render_land_drawer() -> void:
     if tile_detail == null:
         return
     tile_detail.visible = true
-    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(_selection.tile_info()))
+    # Skip the `.text` reassignment (and its implicit BBCode reparse + `minimum_size_changed`) when
+    # the terrain lines are identical to last render — the common per-snapshot restate of the same
+    # hex, where only numbers on OTHER widgets moved.
+    var lines := _tile_terrain_lines(_selection.tile_info())
+    if lines != _tile_detail_lines_cache:
+        tile_detail.text = _format_detail_bbcode(lines)
+        _tile_detail_lines_cache = lines.duplicate()
     _build_forage_drawer_actions(_selection.tile_info())
     if allocation_panel != null:
         allocation_panel.visible = false
@@ -6983,7 +7175,7 @@ func _render_unknown_contents_note() -> void:
 ## the height and the drawer caps short with a scrollbar over content that would have fit. A
 ## deferred call is flushed inside the same frame and is not enough; one `process_frame` is.
 ## Coalesced, so the render + the body's own `minimum_size_changed` collapse into one fit.
-func _fit_subject_drawer() -> void:
+func _fit_subject_drawer(force: bool = false) -> void:
     if subject_scroll == null or subject_body == null or _subject_fit_pending:
         return
     _subject_fit_pending = true
@@ -6991,9 +7183,17 @@ func _fit_subject_drawer() -> void:
     _subject_fit_pending = false
     if subject_scroll == null or subject_body == null:
         return
+    # Once the teardown/rebuild flash is gone, a same-structure restate settles to the SAME content
+    # height, so the awaited resize (which reflows the drawer) is pure churn — skip it unless the
+    # height actually moved, or a caller FORCES it because the dock ROOM changed (window resize, feed
+    # toggle) while the content did not.
+    var content_height := subject_body.get_combined_minimum_size().y
+    if not force and is_equal_approx(content_height, _subject_fit_last_height):
+        return
+    _subject_fit_last_height = content_height
     DockScrollFit.fit_height(
         subject_scroll,
-        subject_body.get_combined_minimum_size().y,
+        content_height,
         left_dock_scroll,
         SUBJECT_DRAWER_MIN_HEIGHT,
         SUBJECT_DRAWER_BOTTOM_MARGIN,
@@ -7121,22 +7321,74 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
 func _rebuild_subject_list() -> void:
     if subject_list == null:
         return
+    var descriptors := _subject_row_descriptors()
+    var keys: Array = []
+    for descriptor in descriptors:
+        keys.append(descriptor["key"])
+    # Membership (the ordered set of row identities + their structural flags) unchanged → patch every
+    # row in place, so a per-snapshot restate updates names/sizes/dots/selection without freeing the
+    # Buttons (whose `pressed` bindings we keep intact). A band/herd entering or leaving the hex — or a
+    # row's own structure changing — moves a key, so the whole list rebuilds.
+    if keys == _subject_row_keys and subject_list.get_child_count() == descriptors.size():
+        for i in range(descriptors.size()):
+            _update_subject_row(subject_list.get_child(i), descriptors[i])
+        return
     for child in subject_list.get_children():
         child.queue_free()
+    for descriptor in descriptors:
+        subject_list.add_child(_build_subject_row(descriptor))
+    _subject_row_keys = keys
+
+## The ordered subject-row descriptors: the LAND first, then a `Bands (N)` sub-group and a
+## `Wildlife (N)` sub-group, then the unseen-hint. Each carries a stable `key` — the row's identity
+## PLUS the structural flags that decide its optional child nodes (a band's activity glyph, a herd's
+## staffing meta) — so a key change is exactly the case that must rebuild rather than patch.
+func _subject_row_descriptors() -> Array:
+    var rows: Array = []
     if not _selection.tile_info().is_empty():
-        subject_list.add_child(_build_land_row(_selection.tile_info()))
+        rows.append({"key": ["land"], "kind": "land"})
     if not _selection.roster_units().is_empty():
-        subject_list.add_child(_roster_group_header("Bands", _selection.roster_units().size()))
+        rows.append({"key": ["header", "bands"], "kind": "header",
+            "title": "Bands", "count": _selection.roster_units().size()})
         for unit in _selection.roster_units():
-            subject_list.add_child(_build_band_row(unit))
+            var u: Dictionary = unit
+            rows.append({"key": ["band", int(u.get("entity", -1)), _is_player_unit(u)], "kind": "band", "data": u})
     if not _selection.roster_herds().is_empty():
-        subject_list.add_child(_roster_group_header("Wildlife", _selection.roster_herds().size()))
+        rows.append({"key": ["header", "wildlife"], "kind": "header",
+            "title": "Wildlife", "count": _selection.roster_herds().size()})
         for herd in _selection.roster_herds():
-            subject_list.add_child(_build_herd_row(herd))
+            var h: Dictionary = herd
+            rows.append({"key": ["herd", String(h.get("id", "")), _herd_row_meta(h) != ""], "kind": "herd", "data": h})
     # Reached only when your OWN unit is on a hex you can't see (everything else was redacted): say so,
     # or the lone row would read as "and nothing else is here" — which we cannot know.
     if _tile_contents_unseen(_selection.tile_info()) and not (_selection.roster_units().is_empty() and _selection.roster_herds().is_empty()):
-        subject_list.add_child(_alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT))
+        rows.append({"key": ["hint"], "kind": "hint"})
+    return rows
+
+## Build the node for one subject-row descriptor.
+func _build_subject_row(descriptor: Dictionary) -> Control:
+    match String(descriptor["kind"]):
+        "land":
+            return _build_land_row(_selection.tile_info())
+        "header":
+            return _roster_group_header(String(descriptor["title"]), int(descriptor["count"]))
+        "band":
+            return _build_band_row(descriptor["data"])
+        "herd":
+            return _build_herd_row(descriptor["data"])
+        _:
+            return _alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT)
+
+## Patch one existing subject-row node in place. Headers + the hint are static once membership is
+## fixed (their counts are implied by it), so only the three selectable rows carry an updater.
+func _update_subject_row(node: Node, descriptor: Dictionary) -> void:
+    match String(descriptor["kind"]):
+        "land":
+            _update_land_row(node as Button, _selection.tile_info())
+        "band":
+            _update_band_row(node as Button, descriptor["data"])
+        "herd":
+            _update_herd_row(node as Button, descriptor["data"])
 
 ## The LAND row — the same shape as a band/herd row, because the land is the same KIND of thing:
 ## a subject on this hex you can put workers on.
@@ -7156,13 +7408,31 @@ func _build_land_row(tile_info: Dictionary) -> Button:
     var button := _make_roster_button(selected)
     var row := _make_roster_row(selected, dot_color)
     var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
-    row.add_child(_roster_name_label("%s %s" % [glyph, terrain_label], selected))
+    var name_label := _roster_name_label("%s %s" % [glyph, terrain_label], selected)
+    row.add_child(name_label)
     var meta := _land_row_meta(tile_info)
+    var meta_label: Label = null
     if meta != "":
-        row.add_child(_roster_meta_label(meta))
+        meta_label = _roster_meta_label(meta)
+        row.add_child(meta_label)
     button.add_child(row)
     button.pressed.connect(_on_land_row_selected)
+    _store_row_refs(button, row, name_label, meta_label, null)
     return button
+
+## The land row's meta is never empty (`_land_row_meta` returns `No forage` at minimum), so its label
+## always exists — the `_update_land_row` patch relies on that.
+func _update_land_row(button: Button, tile_info: Dictionary) -> void:
+    var selected := _selection.subject() == SUBJECT_LAND
+    _apply_row_selection(button, selected)
+    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
+    _set_row_dot(button, _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT)
+    var module_key := String(tile_info.get("food_module", "")).strip_edges()
+    var glyph := LAND_ROW_GLYPH
+    if module_key != "":
+        glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
+    _set_row_name(button, "%s %s" % [glyph, String(tile_info.get("terrain_label", "Unknown"))], selected)
+    _set_row_meta(button, _land_row_meta(tile_info))
 
 ## The land row's meta, shortest true form: the foragers on this hex · else that the patch is
 ## unworked · else that there is nothing to gather here.
@@ -7232,10 +7502,14 @@ func _build_band_row(unit: Dictionary) -> Button:
         glyph = _activity_glyph(String(unit.get("activity", "")))
     var button := _make_roster_button(selected)
     var row := _make_roster_row(selected, dot_color)
-    row.add_child(_roster_name_label(String(unit.get("id", "Band")), selected))
-    row.add_child(_roster_meta_label(str(int(unit.get("size", 0)))))
+    var name_label := _roster_name_label(String(unit.get("id", "Band")), selected)
+    row.add_child(name_label)
+    var meta_label := _roster_meta_label(str(int(unit.get("size", 0))))
+    row.add_child(meta_label)
+    var glyph_label: Label = null
     if glyph != "":
-        row.add_child(_roster_glyph_label(glyph, String(unit.get("activity", "")) == BAND_ACTIVITY_IDLE))
+        glyph_label = _roster_glyph_label(glyph, String(unit.get("activity", "")) == BAND_ACTIVITY_IDLE)
+        row.add_child(glyph_label)
     # Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
     # the band has no resolved stage (pre-stage / missing snapshot).
     var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
@@ -7243,7 +7517,29 @@ func _build_band_row(unit: Dictionary) -> Button:
         button.tooltip_text = stage_label
     button.add_child(row)
     button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
+    _store_row_refs(button, row, name_label, meta_label, glyph_label)
     return button
+
+## Patch a band row in place. `is_player` (hence the glyph's presence) is stable per entity and rides
+## the row key, so the glyph label is present here exactly when it was built.
+func _update_band_row(button: Button, unit: Dictionary) -> void:
+    var entity_id := int(unit.get("entity", -1))
+    var is_player := _is_player_unit(unit)
+    var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
+    _apply_row_selection(button, selected)
+    var dot_color := HudStyle.INK_FAINT
+    if is_player:
+        dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
+    _set_row_dot(button, dot_color)
+    _set_row_name(button, String(unit.get("id", "Band")), selected)
+    _set_row_meta(button, str(int(unit.get("size", 0))))
+    if is_player and button.has_meta("glyph_label"):
+        var activity := String(unit.get("activity", ""))
+        var glyph_label := button.get_meta("glyph_label") as Label
+        glyph_label.text = _activity_glyph(activity)
+        glyph_label.add_theme_color_override("font_color",
+            HudStyle.INK_FAINT if activity == BAND_ACTIVITY_IDLE else HudStyle.INK_DIM)
+    button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()
 
 ## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
 ## the hunters on it. Selecting it drives the drawer + the map ring to the herd.
@@ -7256,19 +7552,36 @@ func _build_herd_row(herd: Dictionary) -> Button:
     var label := String(herd.get("label", herd.get("id", "Herd")))
     var glyph := FoodIcons.for_herd(label)
     var name_text := String(herd.get("species", label))
-    row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
+    var name_label := _roster_name_label("%s %s" % [glyph, name_text], selected)
+    row.add_child(name_label)
     # The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
     # code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
     # `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
     # shows the species and, as its meta, how many hunters are on it; the size class reads in the
     # drawer.
     var meta := _herd_row_meta(herd)
+    var meta_label: Label = null
     if meta != "":
-        row.add_child(_roster_meta_label(meta))
+        meta_label = _roster_meta_label(meta)
+        row.add_child(meta_label)
     button.tooltip_text = label
     button.add_child(row)
     button.pressed.connect(_on_roster_row_selected.bind("herd", herd_id))
+    _store_row_refs(button, row, name_label, meta_label, null)
     return button
+
+## Patch a herd row in place. The meta's presence (huntable-or-staffed) is stable per herd and rides
+## the row key, so the meta label is present here exactly when it was built.
+func _update_herd_row(button: Button, herd: Dictionary) -> void:
+    var herd_id := String(herd.get("id", ""))
+    var selected := not _selection.herd().is_empty() and String(_selection.herd().get("id", "")) == herd_id
+    _apply_row_selection(button, selected)
+    _set_row_dot(button, _ecology_tier_color(String(herd.get("ecology_phase", ""))))
+    var label := String(herd.get("label", herd.get("id", "Herd")))
+    var glyph := FoodIcons.for_herd(label)
+    _set_row_name(button, "%s %s" % [glyph, String(herd.get("species", label))], selected)
+    _set_row_meta(button, _herd_row_meta(herd))
+    button.tooltip_text = label
 
 ## The herd row's meta — the deliberate twin of `_land_row_meta`'s rule: a workable source states
 ## its staffing, anything else states nothing. A huntable herd with nobody on it reads `0 🏹`,
@@ -7336,7 +7649,43 @@ func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
     dot.color = dot_color
     dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
     row.add_child(dot)
+    # Stash the accent + dot so an in-place row update can reach them without indexing children.
+    row.set_meta("accent", accent)
+    row.set_meta("dot", dot)
     return row
+
+## Stash a row's inner widgets on its Button, so `_update_*_row` patches them without positional
+## child indexing (whose offsets vary with the optional meta/glyph labels). The accent + dot live on
+## the row HBox; the caller passes the labels it built (a null one is simply not stored).
+func _store_row_refs(button: Button, row: HBoxContainer, name_label: Label, meta_label, glyph_label) -> void:
+    button.set_meta("accent", row.get_meta("accent"))
+    button.set_meta("dot", row.get_meta("dot"))
+    button.set_meta("name_label", name_label)
+    if meta_label != null:
+        button.set_meta("meta_label", meta_label)
+    if glyph_label != null:
+        button.set_meta("glyph_label", glyph_label)
+
+## Re-apply a row's selection styling in place: the button's primary/ghost chrome + the left accent.
+func _apply_row_selection(button: Button, selected: bool) -> void:
+    HudStyle.apply_button(button, "primary" if selected else "ghost")
+    if button.has_meta("accent"):
+        (button.get_meta("accent") as ColorRect).color = HudStyle.SIGNAL if selected else Color(0, 0, 0, 0)
+
+func _set_row_dot(button: Button, color: Color) -> void:
+    if button.has_meta("dot"):
+        (button.get_meta("dot") as ColorRect).color = color
+
+func _set_row_name(button: Button, text: String, selected: bool) -> void:
+    if not button.has_meta("name_label"):
+        return
+    var label := button.get_meta("name_label") as Label
+    label.text = text
+    label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
+
+func _set_row_meta(button: Button, text: String) -> void:
+    if button.has_meta("meta_label"):
+        (button.get_meta("meta_label") as Label).text = text
 
 ## The row's IDENTITY — never elastic, never truncated. It takes its natural width and the meta
 ## beside it absorbs whatever is left (see `_roster_meta_label`).
@@ -9053,7 +9402,8 @@ func _refit_left_dock() -> void:
     if _command_feed != null:
         _command_feed.refit()
     await get_tree().process_frame
-    _fit_subject_drawer()
+    # The feed just changed the room the drawer may claim, so force past the same-height gate.
+    _fit_subject_drawer(true)
 
 # ---- dock-card visibility persistence --------------------------------------
 
