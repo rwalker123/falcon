@@ -67,30 +67,24 @@ const DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
 const DEFAULT_FORAGE_MARKET_TRADE_GOODS_PER_BIOMASS: f32 = 0.005;
 const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 
-/// **The tended rung's growth multiplier — the plant twin of `fauna_config`'s `pastoral_gain`**
-/// (intensification ladder slice 7). A tended patch is **still a wild stand, better cared for**: it
-/// grows `tended_regrowth_gain ×` as fast as the same patch would wild, and that faster curve is
-/// **the whole payoff** — exactly as a tamed herd's payoff is `wild_r × pastoral_gain`. Folded in by
+/// **The tended rung's growth multiplier** — folded into a committed patch's `r` by
 /// [`crate::forage::patch_ecology`], the plant mirror of `fauna::herd_ecology` and the one seam any
 /// consumer resolves a patch's ecology through.
 ///
-/// **Why a gain and not a flat managed rate.** The retired `tended_provisions_per_biomass` (0.01) paid
-/// `biomass × rate` **without drawing the patch down** and **regardless of policy**, which made rung 2
-/// a *managed* rung a full step earlier than the animal side's — a tended patch could not be
-/// over-farmed, and Sustain/Surplus/Market/Eradicate all paid the identical number (the playtest's
-/// "every policy forecasts +0.66"). A gain restores the symmetry: rung 2 is policy-live, worker-capped
-/// and draws down on **both** webs; only rung 3 (Field / Pen) collapses the policy axis, because at
-/// rung 3 the source is yours.
+/// **Neutral at `1.0` since Flora Roster S2** (`docs/plan_flora_roster.md` §4.3). It began as the plant
+/// twin of `fauna_config`'s `pastoral_gain` — a tended stand "grows faster toward its own ceiling,
+/// freed from competitors". But S1 made that competitor-removal **explicit** as *concentration*
+/// (redistributing the tile's `K`), so a growth-rate boost **double-counts** it. S2 retires the boost:
+/// tending now pays purely through **concentration** (a high-share crop monopolising the tile's `K`)
+/// plus **conversion** (the committed species' `yield.provisions_per_biomass` exceeding the wild base),
+/// and the rung-2 "wild < tended" guarantee moved to the roster's own bar
+/// (`core_sim/tests/flora_roster.rs`). At `1.0` a tended stand regrows exactly as fast as wild.
 ///
-/// **Tuning — a tended patch must out-yield the same patch's wild Sustain (the intensification
-/// incentive).** Both are MSY = `r × K/4 × provisions_per_biomass` against their own `r`, so the
-/// incentive is exactly this gain and is **scale-free**: it holds on every biome in
-/// `capacity_by_biome` at every biomass. Keep it `> 1.0`. Shipped at **1.5**, mirroring
-/// `husbandry.pastoral_gain` verbatim — and it lands almost exactly on the retired rate's measured
-/// operating point (on `K` = 130 at `B` = K/2 the old flat rung paid 0.65/turn; the boosted MSY pays
-/// `1.5 × 0.25 × 130/4 × 0.05` = **0.61**), so the ladder's *shape* survives the change while the
-/// policy axis comes back. A **playtest dial**.
-const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.5;
+/// **The lever stays** (it is not deleted): `1.0` is neutral, and a small boost can be dialed back in
+/// for playtest if the roster ever wants tending to also quicken regrowth. `validate()` forbids only a
+/// gain **below** `1.0` — tending making a stand grow *slower* than wild is incoherent whatever the
+/// crop. A **playtest dial**.
+const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.0;
 
 /// The **Field**-harvest rate (the plant ladder's rung 3, slice 5): a sown Field pays its workers
 /// `biomass × this` provisions/turn on its full standing crop, without being drawn down — **the one
@@ -164,9 +158,10 @@ const DEFAULT_CULTIVATION_FIELD_CONCENTRATION_GAIN: f32 = 2.5;
 #[serde(default)]
 pub struct CultivationConfig {
     /// **The tended rung's growth multiplier** — a tended patch's stock regrows `this ×` as fast as
-    /// the same patch would wild, which *is* the rung's payoff (its MSY, and so every policy ceiling
-    /// on it, scales with it). The plant twin of `fauna_config`'s `husbandry.pastoral_gain`; folded
-    /// in by [`crate::forage::patch_ecology`]. Must be `> 1.0` or cultivating buys nothing — see
+    /// the same patch would wild; folded in by [`crate::forage::patch_ecology`]. **Neutral at `1.0`
+    /// since Flora Roster S2**: tending pays through concentration + conversion, not this boost, so a
+    /// gain of `1.0` (regrows as fast as wild) is valid — only a gain *below* `1.0` is rejected (it
+    /// would make tending grow a stand *slower* than wild). See
     /// [`DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN`].
     pub tended_regrowth_gain: f32,
     /// **Field-harvest** rate (rung 3): a sown Field *produces* `biomass × this` provisions/turn on
@@ -542,8 +537,8 @@ fn validate_forage_capacity_table(forage: &ForageLaborConfig) -> Result<(), Labo
 }
 
 /// **The wild rung's growth multiplier** — a wild patch grows at exactly its ecology's `regrowth_rate`,
-/// so it is the identity, and it is the bar `cultivation.tended_regrowth_gain` must clear. Named
-/// rather than a bare `1.0` because it states *which* rung the comparison is against.
+/// so it is the identity, and it is the floor `cultivation.tended_regrowth_gain` may not fall below.
+/// Named rather than a bare `1.0` because it states *which* rung the comparison is against.
 const WILD_REGROWTH_GAIN: f32 = 1.0;
 
 /// **The plant ladder must be monotone, or climbing it buys nothing** — the payoff twin of
@@ -552,26 +547,37 @@ const WILD_REGROWTH_GAIN: f32 = 1.0;
 /// payoff sits at or below the rung beneath it is not a design choice, it is a config that has
 /// silently deleted a rung.
 ///
-/// Two claims, both **scale-free** (every term is linear in the tile's `K`, so they hold on every biome
-/// in `capacity_by_biome` at once — which is exactly why the per-biome table can be retuned without
-/// re-deriving any of this):
-/// - **wild < tended** — both rungs are gathered under the same policy axis off the same MSY curve, so
-///   the whole comparison *is* `tended_regrowth_gain > 1`.
+/// Two checks:
+/// - **`tended_regrowth_gain >= 1.0`** — this is a *coherence* floor, **not** the "wild < tended"
+///   guarantee it used to be (Flora Roster S2, `docs/plan_flora_roster.md` §4.3). Since S1 made
+///   *concentration* explicit, a tended patch's payoff is `concentration × conversion`, not this
+///   regrowth boost — so a neutral gain of `1.0` still pays (a good crop on good ground beats wild
+///   through conversion), and a marginal-share crop is *supposed* to lose. The scale-free "wild <
+///   tended" invariant is retired by design; whether a *committed* crop is worth tending is now
+///   guaranteed by the roster's own bar (`core_sim/tests/flora_roster.rs`, "worth on best country,
+///   not worst"), which sees concentration and conversion where this config check — blind to both —
+///   cannot. All this check forbids is the **incoherent** case: a gain *below* `1.0` would make
+///   tending a stand grow **slower** than wild, which is nonsense whatever the crop.
 /// - **tended < field** — a Field is never drawn down, so it settles at `K` and produces
-///   `K × field_provisions_per_biomass`; a tended patch pays its boosted MSY,
-///   `gain × (r·K/4) × provisions_per_biomass`. Divide both by `K`. The `r·K/4` factor comes from the
-///   **shared** [`peak_regrowth`] curve evaluated at unit capacity — never a second copy of the model.
+///   `K × field_provisions_per_biomass`; a tended patch pays its MSY,
+///   `gain × (r·K/4) × provisions_per_biomass`. Divide both by `K`. This is **scale-free** (linear in
+///   the tile's `K`, so it holds on every biome in `capacity_by_biome` at once). The `r·K/4` factor
+///   comes from the **shared** [`peak_regrowth`] curve at unit capacity — never a second copy of the
+///   model. At the neutral gain the tended term *shrinks*, so this holds with more margin, not less.
 fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), LaborConfigError> {
     let cultivation = &forage.cultivation;
     if !cultivation.tended_regrowth_gain.is_finite()
-        || cultivation.tended_regrowth_gain <= WILD_REGROWTH_GAIN
+        || cultivation.tended_regrowth_gain < WILD_REGROWTH_GAIN
     {
         return Err(LaborConfigError::Invalid {
             field: "forage.cultivation.tended_regrowth_gain",
             constraint: format!(
-                "be finite and greater than {WILD_REGROWTH_GAIN} (the wild curve) — a tended patch \
-                 that grows no faster than the wild stand pays exactly what the wild stand pays, so \
-                 Cultivate would cost 25 turns for nothing"
+                "be finite and at least {WILD_REGROWTH_GAIN} (the wild curve) — a gain BELOW it \
+                 would make tending a stand grow SLOWER than leaving it wild, which is incoherent. \
+                 A neutral gain of exactly {WILD_REGROWTH_GAIN} is valid: since Flora Roster S1 \
+                 (docs/plan_flora_roster.md §4.3) tending pays through concentration + conversion, \
+                 not this boost, and whether a committed crop is worth tending is guaranteed by the \
+                 roster's own bar (core_sim/tests/flora_roster.rs), not by this scale-free check"
             ),
             value: cultivation.tended_regrowth_gain.to_string(),
         });
@@ -587,7 +593,8 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
         });
     }
     // The tended rung's MSY per unit of the tile's `K`, in provisions: the shared peak-regrowth curve
-    // at unit capacity (`r/4`), on the tended rung's boosted `r`, through the gather conversion.
+    // at unit capacity (`r/4`), on the tended rung's `r` (`× tended_regrowth_gain`), through the gather
+    // conversion. At the neutral gain this is just the wild MSY, which the Field must still clear.
     let tended_rate = cultivation.tended_regrowth_gain
         * peak_regrowth_per_capacity(&forage.ecology)
         * forage.provisions_per_biomass;
@@ -595,7 +602,7 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
         return Err(LaborConfigError::Invalid {
             field: "forage.cultivation.field_provisions_per_biomass",
             constraint: format!(
-                "exceed what the same patch pays one rung down — the tended rung's boosted MSY of \
+                "exceed what the same patch pays one rung down — the tended rung's MSY of \
                  {tended_rate} per unit of the tile's carrying capacity — or sowing a Field buys \
                  nothing"
             ),
@@ -793,7 +800,9 @@ mod tests {
         // where `LadderConfig::validate` bounds them on every load path; the payoffs' own
         // monotonicity now rides `LaborConfig::validate`, asserted directly below so the *builtin*
         // is pinned to the shipped shape rather than merely to the bound.)
-        assert!(config.forage.cultivation.tended_regrowth_gain > 1.0);
+        // S2: the tended regrowth boost is retired to a NEUTRAL 1.0 (tending pays through
+        // concentration + conversion, not this gain); `>= 1.0` is the coherence floor, not `> 1.0`.
+        assert!(config.forage.cultivation.tended_regrowth_gain >= 1.0);
         assert!(config.forage.cultivation.field_provisions_per_biomass > 0.0);
         assert!(config.validate().is_ok());
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
@@ -857,20 +866,35 @@ mod tests {
         assert_rejects_field(err, "forage.capacity_by_biome");
     }
 
-    /// **A tended patch that grows no faster than the wild stand is not a rung.** Rung 2's entire
-    /// payoff is its curve (slice 7), so a gain at or below the wild `1.0` makes Cultivate a 25-turn
-    /// investment that buys literally nothing — while parsing perfectly. The plant twin of
-    /// `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1` ladder check, and enforced on every
-    /// load path for the same reason.
+    /// **A tended patch that grows SLOWER than the wild stand is incoherent** (Flora Roster S2). The
+    /// gain is neutral at `1.0` — since S1 made concentration explicit, tending pays through
+    /// concentration + conversion, not this boost — so `1.0` is valid (see
+    /// [`validate_accepts_a_neutral_tended_regrowth_gain`]) and only a gain *below* `1.0` is rejected:
+    /// tending making a stand grow slower than leaving it wild is nonsense whatever the crop.
     /// (Non-finite gains are guarded in code but not exercised here — JSON cannot express NaN or
     /// infinity, so a config file can never carry one; `serde` rejects those spellings first.)
     #[test]
-    fn validate_rejects_a_tended_gain_that_buys_nothing() {
-        for gain in [1.0, 0.5, -1.0] {
+    fn validate_rejects_a_tended_gain_below_the_wild_curve() {
+        for gain in [0.9, 0.5, -1.0] {
             let err =
                 reject(|json| json["forage"]["cultivation"]["tended_regrowth_gain"] = gain.into());
             assert_rejects_field(err, "forage.cultivation.tended_regrowth_gain");
         }
+    }
+
+    /// **A neutral tended regrowth gain of exactly `1.0` is valid** (Flora Roster S2). The old check
+    /// rejected `<= 1.0` on the now-retired "wild < tended" invariant; S2 moved that guarantee to the
+    /// roster's own bar (`core_sim/tests/flora_roster.rs`), which sees concentration and conversion.
+    /// A tended stand that regrows exactly as fast as wild still pays — through the crop it commits to.
+    #[test]
+    fn validate_accepts_a_neutral_tended_regrowth_gain() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_LABOR_CONFIG).expect("builtin parses");
+        json["forage"]["cultivation"]["tended_regrowth_gain"] = (1.0).into();
+        assert!(
+            LaborConfig::from_json_str(&json.to_string()).is_ok(),
+            "a neutral tended_regrowth_gain of 1.0 must be accepted"
+        );
     }
 
     /// **The plant ladder must be monotone.** A Field that out-produces nothing is a rung the player
@@ -878,9 +902,18 @@ mod tests {
     /// check above guards one rung down.
     #[test]
     fn validate_rejects_a_field_that_does_not_beat_the_tended_patch_below_it() {
-        // The shipped tended rung's boosted MSY per unit K: 1.5 × 0.25/4 × 0.05 ≈ 0.0047 — so a Field
-        // rate at or under it pays no more than simply cultivating the same ground.
-        for rate in [0.004, 0.0, -0.02] {
+        // **Derived from the loaded config, never a baked literal** — the tended rung's MSY per unit K
+        // (`gain × r/4 × provisions_per_biomass`) is exactly the bar the Field must clear, and the
+        // validator computes it the same way, so the boundary can never silently drift from the check.
+        // (At the S2 neutral gain of 1.0 this is just the wild MSY.)
+        let forage = &LaborConfig::builtin().forage;
+        let tended_rate = f64::from(
+            forage.cultivation.tended_regrowth_gain
+                * peak_regrowth_per_capacity(&forage.ecology)
+                * forage.provisions_per_biomass,
+        );
+        // `== tended_rate` (Field ties tended), a lower rate, and a negative rate are all rejected.
+        for rate in [tended_rate, tended_rate * 0.5, -0.02] {
             let err = reject(|json| {
                 json["forage"]["cultivation"]["field_provisions_per_biomass"] = rate.into()
             });
@@ -892,6 +925,12 @@ mod tests {
     /// payoff is linear in the tile's `K`, so the monotonicity `validate` enforces per-biomass must
     /// hold at *every* capacity in the shipped table at once. That is what lets the per-biome table be
     /// retuned without re-deriving the ladder.
+    ///
+    /// **Since Flora Roster S2 `wild ≤ tended`, not `wild < tended`.** The regrowth boost is retired to
+    /// a neutral `1.0`, so an *uncommitted* tended stand regrows exactly as fast as wild — tending's
+    /// payoff now comes from concentration + conversion (a committed crop), which this scale-free,
+    /// crop-blind check cannot see and does not assert. What survives here is the strict `tended <
+    /// field` step, which the neutral gain only widens.
     #[test]
     fn the_plant_ladder_is_monotone_on_every_biome() {
         let forage = &LaborConfig::builtin().forage;
@@ -909,7 +948,7 @@ mod tests {
             let tended_msy = cultivation.tended_regrowth_gain * wild_msy;
             let field = capacity * cultivation.field_provisions_per_biomass;
             assert!(
-                wild_msy < tended_msy && tended_msy < field,
+                wild_msy <= tended_msy && tended_msy < field,
                 "the ladder must climb on {terrain:?} (K = {capacity}): wild {wild_msy} → tended \
                  {tended_msy} → field {field}"
             );

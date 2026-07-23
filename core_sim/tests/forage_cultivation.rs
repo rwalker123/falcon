@@ -15,17 +15,17 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
-    default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_world, tile_flora_composition, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
+    advance_cultivation, advance_forage_regrowth, advance_labor_allocation, commit_payoff,
+    commit_yield_ratio, default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero,
+    spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
+    wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
+    FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
+    TileRegistry, WellbeingConfigHandle, CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger — the gate the
@@ -95,10 +95,17 @@ fn spawn_world() -> App {
 /// with regrowth headroom) so the take is a clean MSY skim. Returns the tile entity + its coord.
 fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let coord = {
-        // The tile must also grow something the **tended** rung can commit to (Flora Roster S1):
-        // a basket whose whole `cultivation_ceiling` is `wild` — an open-water fishery, an alpine
-        // peak — is legitimately uncultivable, so a fixture that grabbed the first seeded patch
-        // would be testing the refusal rather than the rung.
+        // The tile must grow something the **tended** rung can commit to (Flora Roster S1): a basket
+        // whose whole `cultivation_ceiling` is `wild` is legitimately uncultivable, so a fixture that
+        // grabbed the first seeded patch would test the refusal rather than the rung.
+        //
+        // **And since S2 the default crop must actually WIN there** (`docs/plan_flora_roster.md` §4.3).
+        // The tended regrowth boost is retired to a neutral `1.0`, so tending pays only through
+        // concentration + conversion — which loses on marginal ground (a low-share crop, e.g. hazel on
+        // RollingHills at ~0.68×). The tests below assert `tended > wild`, so the fixture is pinned to
+        // ground where the default crop's Cultivate ratio exceeds `1.0` — computed with the sim's own
+        // payoff functions, so "the crop wins" is the sim's verdict, not a re-derivation. On the
+        // standard map this lands on rich river-lowland (AlluvialPlain ~1.35×).
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
         let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
@@ -108,10 +115,31 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
             .filter(|(tile, _)| registry.patch(tile.position).is_some())
             .find(|(tile, _)| {
                 let composition = tile_flora_composition(&flora, &labor.forage, tile);
-                default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+                let Some(species) =
+                    default_species_for_rung(&composition, &flora, RungKey::PlantTended)
+                else {
+                    return false;
+                };
+                let share = composition
+                    .iter()
+                    .find(|entry| entry.species == species)
+                    .map_or(0.0, |entry| entry.share);
+                let capacity = tile_forage_capacity(&labor.forage, tile);
+                let payoff = commit_payoff(
+                    tile.position,
+                    capacity,
+                    &species,
+                    share,
+                    &flora,
+                    &labor.forage,
+                    1.0,
+                    RungKey::PlantTended,
+                );
+                let wild = wild_payoff(tile.position, capacity, &flora, &labor.forage, 1.0);
+                commit_yield_ratio(payoff, wild) > 1.0
             })
             .map(|(tile, _)| tile.position)
-            .expect("a FoodModuleTag tile whose basket carries a cultivable plant")
+            .expect("a FoodModuleTag tile whose default crop out-yields the wild basket")
     };
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
