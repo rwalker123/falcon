@@ -120,7 +120,8 @@ fn lake_fraction(world: &World, w: u32, h: u32) -> f32 {
                 TerrainType::DeepOcean
                 | TerrainType::ContinentalShelf
                 | TerrainType::CoralShelf
-                | TerrainType::HydrothermalVentField => {}
+                | TerrainType::HydrothermalVentField
+                | TerrainType::NavigableRiver => {}
                 _ => land += 1,
             }
         }
