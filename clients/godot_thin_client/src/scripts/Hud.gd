@@ -1062,6 +1062,12 @@ const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 # policy). Distinct from the Market policy glyph already shown (`FoodIcons.for_policy("market")` = ⇄),
 # so the two never read as duplicated: ↻ = "this trip repeats", ⇄ = "the take is sold as trade goods".
 const EXPEDITION_RECURRING_GLYPH := "↻"
+# "Next delivery" lines for the two ways a projected-0 forecast can arise, disambiguated on the
+# party's own `expedition_target_herd` (which MIGRATES and is often NOT the herd the player is
+# looking at). Target still in the herd telemetry but forecast projects 0 → it is at/below its
+# policy floor; target absent from telemetry → the herd was lost/replaced and the party is coming home.
+const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target herd has no surplus to raid"
+const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
 const SEND_EXPEDITION_BUTTON := "Send scouting party…"
 # Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
@@ -7878,12 +7884,19 @@ func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String) -> Stri
 ## The robust "Next delivery: …" wording, shared by the parties inspector strip
 ## (`_expedition_summary_lines`) and the row tooltip (`_expedition_delivery_tooltip_line`) so the two
 ## can never disagree. Caller has already confirmed this is a hunt party carrying the field. A projected
-## 0 is a REAL answer — the herd is at/below its policy floor, so a raid returns empty — and must read
-## as "none — the herd has no surplus to raid", never be blanked as if there were no forecast at all.
+## 0 is a REAL answer, but it means one of TWO things — and the party's TARGET herd (which migrates and
+## is often NOT the herd the player is inspecting) tells them apart: if the target id is still in the
+## herd telemetry the raid returns empty because that herd is at/below its policy floor; if the id is
+## absent the target was lost/replaced and the party is coming home. Never blank the line as if there
+## were no forecast at all, and never imply it is the herd on the tile the player is looking at.
 func _expedition_next_delivery_line(exp: Dictionary) -> String:
     var delivery := float(exp.get("expedition_projected_delivery", 0.0))
     if delivery <= 0.0:
-        return "Next delivery: none — the herd has no surplus to raid"
+        var target_id := String(exp.get("expedition_target_herd", "")).strip_edges()
+        var target := _find_world_herd(target_id) if target_id != "" else {}
+        if target.is_empty():
+            return EXPEDITION_NEXT_DELIVERY_TARGET_LOST
+        return EXPEDITION_NEXT_DELIVERY_NO_SURPLUS
     var amount := int(round(delivery))
     var eta := int(exp.get("expedition_eta_turns", 0))
     var line := ""
@@ -8241,9 +8254,21 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     lines.append("Mission: %s" % _expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
+        # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
+        # at, so when the target is still in the telemetry with a live position we append it — the
+        # player can then tell "my party is bound to a boar at (68, 30)" from a healthy boar nearby.
+        # When the target is absent (lost/replaced), the delivery line already says so, so we leave
+        # the row as just the species/id.
         var herd_id := String(unit_data.get("expedition_target_herd", "")).strip_edges()
         if herd_id != "":
-            lines.append("Target: %s" % _herd_label_for_id(herd_id))
+            var target_line := "Target: %s" % _herd_label_for_id(herd_id)
+            var target_herd := _find_world_herd(herd_id)
+            if not target_herd.is_empty():
+                var tx := int(target_herd.get("x", -1))
+                var ty := int(target_herd.get("y", -1))
+                if tx >= 0 and ty >= 0:
+                    target_line += " (%d, %d)" % [tx, ty]
+            lines.append(target_line)
         # The launched take policy (Sustain/Surplus/Market/Eradicate).
         var policy := String(unit_data.get("expedition_hunt_policy", "")).strip_edges()
         if policy != "":

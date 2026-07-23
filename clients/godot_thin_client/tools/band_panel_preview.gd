@@ -65,6 +65,8 @@ const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 # The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
 const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
+# A hunt party whose target herd has DROPPED OUT of `_world_herds` (lost/replaced), projecting 0.
+const HUNT_LOST_ENTITY := 954
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
@@ -482,6 +484,29 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_hud._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
 
+	# (b2) NEXT-DELIVERY DISAMBIGUATION on a projected-0 forecast. A hunt party is bound to ONE herd
+	# (its `expedition_target_herd`) that MIGRATES and is often NOT the herd on the tile the player is
+	# looking at, so a projected 0 means one of two things and the party's target tells them apart:
+	# still in `_world_herds` → at/below its policy floor (no surplus); absent → lost/replaced (returning
+	# home). The Target row also carries the target's live position so the player can SEE which herd the
+	# party is bound to. Render all three parties + assert every line. `_world_herds` = _herd_fixtures():
+	# game_deer_07 (@68,15) + game_deer_79 (@64,11); the LOST party targets an absent id.
+	_hud.update_herds(_herd_fixtures())
+	_hud.update_band_alerts([
+		_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
+		_lost_hunt_expedition_fixture(),
+	])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"parties")
+	_hud._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
+	await _settle()
+	await _save("band_panel_next_delivery_disambiguation")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_next_delivery_disambiguation()
+	_hud._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
+
 	# (c) DETAIL-PANEL via the MARKER path — the FIX-4 regression. The Occupants-card drawer reads
 	# `_expedition_summary_lines(_selected_unit)`, and `_selected_unit` is the MapView unit MARKER, not
 	# a raw `_player_expeditions` dict. Drive the REAL marker path (display_snapshot →
@@ -570,6 +595,43 @@ func _assert_detail_panel_delivery() -> void:
 		push_error("band_panel_preview: detail panel MISSING '%s' — marker path dropped the field. Got: %s" % [
 			want, str(lines)])
 	view.queue_free()
+
+## GUARD: a projected-0 next-delivery forecast must disambiguate on the party's TARGET herd, and the
+## Target row must carry the target's live position. Requires `_world_herds` already set to
+## `_herd_fixtures()`. Drives the shared `_expedition_next_delivery_line` / `_expedition_summary_lines`
+## helpers directly (the same ones the strip, the drawer and the row tooltip use) and prints every
+## rendered line. Verified to FAIL before the target-based branch (a lost target reading "no surplus").
+func _assert_next_delivery_disambiguation() -> void:
+	# (1) target FOUND in telemetry, projects 0 → "no surplus", Target row shows the herd's position.
+	var lean := _lean_hunt_expedition_fixture()
+	var lean_delivery := _hud._expedition_next_delivery_line(lean)
+	var lean_target := _summary_target_line(lean)
+	_check_line("no-surplus delivery", lean_delivery, _hud.EXPEDITION_NEXT_DELIVERY_NO_SURPLUS)
+	_check_line("no-surplus target", lean_target, "Target: Red Deer (68, 15)")
+	# (2) target ABSENT from telemetry, projects 0 → "target herd lost".
+	var lost := _lost_hunt_expedition_fixture()
+	var lost_delivery := _hud._expedition_next_delivery_line(lost)
+	_check_line("lost delivery", lost_delivery, _hud.EXPEDITION_NEXT_DELIVERY_TARGET_LOST)
+	# (3) projecting party (delivery > 0) → the ETA line, Target row shows the herd's position.
+	var live := _hunt_expedition_fixture()
+	var live_delivery := _hud._expedition_next_delivery_line(live)
+	var live_target := _summary_target_line(live)
+	_check_line("projecting delivery", live_delivery, "Next delivery: ~14 food in 6 turns")
+	_check_line("projecting target", live_target, "Target: Roe Deer (64, 11)")
+
+## The `Target: …` line `_expedition_summary_lines` emits for a party ("" if none).
+func _summary_target_line(party: Dictionary) -> String:
+	for line in _hud._expedition_summary_lines(party):
+		if String(line).begins_with("Target:"):
+			return String(line)
+	return ""
+
+## Assert a rendered line equals what we want, printing the exact string either way.
+func _check_line(label: String, got: String, want: String) -> void:
+	if got == want:
+		print("band_panel_preview: assert OK — %s renders '%s'" % [label, got])
+	else:
+		push_error("band_panel_preview: %s expected '%s' but got '%s'" % [label, want, got])
 
 ## GUARD: the row ✕ (single-party recall) must route through the CONFIRM dialog, not fire the recall
 ## emit immediately — mirroring "Recall all". Build a real party row, press its recall Button, and
@@ -1258,6 +1320,30 @@ func _lean_hunt_expedition_fixture() -> Dictionary:
 		"expedition_mission": "hunt",
 		"expedition_phase": "hunting",
 		"expedition_target_herd": "game_deer_07",
+		"expedition_hunt_policy": "sustain",
+		"home_band_entity": 904,
+		"expedition_eta_turns": 0,
+		"expedition_projected_delivery": 0.0,
+		"expedition_recurring": false,
+	}
+
+## A hunt party whose target herd is GONE from `_world_herds` (lost/replaced) — a projected-0 forecast
+## that is NOT "no surplus": `_find_world_herd` returns {} for the target id, so the delivery line must
+## read "target herd lost — the party is returning home", distinct from the at-floor no-surplus case.
+func _lost_hunt_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 3",
+		"entity": HUNT_LOST_ENTITY,
+		"faction": 0,
+		"size": 5,
+		"current_x": 62,
+		"current_y": 9,
+		"turns_of_food": 6.0,
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "returning",
+		# NOT in `_herd_fixtures()` — the target the party launched at is no longer in the telemetry.
+		"expedition_target_herd": "game_deer_gone",
 		"expedition_hunt_policy": "sustain",
 		"home_band_entity": 904,
 		"expedition_eta_turns": 0,

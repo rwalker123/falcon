@@ -3300,9 +3300,18 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (DANGER) inline links. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
   strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
   the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
-  (`↻` appended for a recurring/Market party), `~N food (raid underway)` when the ETA is unknown, and
-  `none — the herd has no surplus to raid` when the projection is genuinely `0` (an at-floor herd) — the
-  honest zero, never a silently blank line. `_build_parties_zone_content` orders
+  (`↻` appended for a recurring/Market party), `~N food (raid underway)` when the ETA is unknown, and —
+  when the projection is `0` — a line that **disambiguates on the party's own TARGET, not the tile's
+  herd**. A hunt party is bound to ONE specific herd (`expedition_target_herd`) chosen at launch, and a
+  projected `0` over a **healthy** herd is structurally impossible (the sim proves it — the in-flight
+  forecast byte-equals the pre-launch estimate), so a `0` means the target is *elsewhere*: `none — its
+  target herd has no surplus to raid` when `_find_world_herd(expedition_target_herd)` **is** in telemetry
+  (a different, at-floor herd — NOT the boar the player is inspecting), or `target herd lost — the party
+  is returning home` when it is **absent** (lost/replaced). This is the fix for the live "reads no-surplus
+  next to a thriving boar" report — the target was a different herd. To make that visible, the drawer's
+  **`Target:` row appends the target herd's live `(x, y)`** (read from `_world_herds`, keyed `x`/`y` — a
+  migrating target is usually NOT the herd on the current tile). Never a silently blank line.
+  `_build_parties_zone_content` orders
   `head → rows → inspector(if open) → EXPAND_FILL spacer → footer`, so the Scout/Hunt footer stays
   bottom-pinned with the strip under the clicked row; the strip's detail-line separation is tightened to
   `PARTIES_INSPECTOR_LINE_SEPARATION` to keep row + strip + pinned footer inside the height-capped T/B
