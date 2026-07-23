@@ -748,6 +748,18 @@ const HERD_RANGE_ROW := "Range"
 # `_split_detail_kv` renders it as an aligned table row above Biomass.
 const HERD_SIZE_ROW := "Size"
 const HERD_SIZE_CLASS_FORMAT := "%s game"
+# Herd drawer Danger row (Predators Phase 0): the species' `danger` scalar (the sim-computed "attack"
+# — how dangerous this animal is) mapped to a qualitative word. The value reads against the
+# human-strength anchor of 1.0 (a bare human), so a deer is Harmless, an aurochs (~4) Dangerous, a
+# mammoth (~8) Deadly. Shown for EVERY herd — the player learns which animals are safe. Key ≤ 16 chars
+# so `_split_detail_kv` aligns it as a table row; tinted by `_danger_value_hex` (green→amber→red).
+const DANGER_ROW := "Danger"
+const DANGER_MINOR_THRESHOLD := 2.0
+const DANGER_DANGEROUS_THRESHOLD := 6.0
+const DANGER_HARMLESS_LABEL := "Harmless"
+const DANGER_MINOR_LABEL := "Minor"
+const DANGER_DANGEROUS_LABEL := "Dangerous"
+const DANGER_DEADLY_LABEL := "Deadly"
 # Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
 # range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
 # of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
@@ -8762,6 +8774,9 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
+    # Danger (Predators Phase 0): the species' threat, shown for EVERY herd (including harmless ones,
+    # so the player learns which animals are safe). A pure map of one sim-provided scalar to a word.
+    lines.append("%s: %s" % [DANGER_ROW, _danger_label(float(herd_data.get("danger", 0.0)))])
     # Grazing 2d-δ — how far up the husbandry ladder THIS species can climb gates the whole section.
     # A WILD-ceiling herd shows NO husbandry track at all (just the hunt-only hint); a PASTORAL one
     # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
@@ -8851,6 +8866,29 @@ func _ecology_value_hex(value: String) -> String:
         return HudStyle.DANGER_HEX
     if normalized.contains("stress"):
         return HudStyle.WARN_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing danger word for a herd's `danger` scalar (0 = harmless deer … ~8 = mammoth), read
+## against the human-strength anchor of 1.0. Buckets: 0 → Harmless, >0..<2 → Minor, 2..<6 →
+## Dangerous, >=6 → Deadly. `_format_detail_bbcode` tints the value via `_danger_value_hex`.
+func _danger_label(danger: float) -> String:
+    if danger <= 0.0:
+        return DANGER_HARMLESS_LABEL
+    if danger < DANGER_MINOR_THRESHOLD:
+        return DANGER_MINOR_LABEL
+    if danger < DANGER_DANGEROUS_THRESHOLD:
+        return DANGER_DANGEROUS_LABEL
+    return DANGER_DEADLY_LABEL
+
+## BBCode hex for a "Danger" value, mirroring `_ecology_value_hex`: Deadly red, Dangerous amber,
+## Harmless a calm green, Minor neutral ink — a green→amber→red ramp keyed on the label word.
+func _danger_value_hex(value: String) -> String:
+    if value == DANGER_DEADLY_LABEL:
+        return HudStyle.DANGER_HEX
+    if value == DANGER_DANGEROUS_LABEL:
+        return HudStyle.WARN_HEX
+    if value == DANGER_HARMLESS_LABEL:
+        return HudStyle.HEALTHY_HEX
     return HudStyle.INK_HEX
 
 ## Tile-count label for a herd's grazing range from its hex radius — "the ground this herd grazes".
@@ -9119,6 +9157,9 @@ func _format_detail_bbcode(lines: Array) -> String:
                 # row keeps its own KEY only so a forage tile doesn't print two rows named "Ecology";
                 # the styling path is deliberately not forked.
                 value_hex = _ecology_value_hex(String(kv[1]))
+            elif String(kv[0]) == DANGER_ROW:
+                # The herd's threat rating tints green→amber→red, mirroring the Ecology case.
+                value_hex = _danger_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
             elif String(kv[0]) == HERDERS_ROW:

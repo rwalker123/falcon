@@ -816,6 +816,27 @@ func _ready() -> void:
 	await _save("map_forage")
 	print("map_preview: forage legend = ", _map._legend_for_current_view())
 
+	# State "danger" (Predators Phase 0) — the DANGER overlay, projected client-side from herd
+	# positions × their `danger` scalar. A DEADLY mammoth (danger 8) and a HARMLESS deer (danger 0)
+	# on the earthlike shape: the mammoth's hex must glow the threat red while the deer's hex — and all
+	# empty ground — stays grid-colored (the generic lerp path, not a two-tone ramp). The legend is the
+	# generic scalar one, printed here since this harness has no HUD.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	get_window().size = PASTURE_WINDOW_SIZE
+	await _settle()
+	_map.display_snapshot(_snapshot_danger())
+	_map.set_overlay_channel(DANGER_OVERLAY_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_danger")
+	print("map_preview: danger legend = ", _map._legend_for_current_view())
+
 	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
 	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
 	# is fed by the Major edge river, and drains to the sea through a delta lobe — with a real InlandSea
@@ -1213,6 +1234,86 @@ func _snapshot_forage() -> Dictionary:
 		"tiles": tiles,
 		"populations": [],
 		"herds": [],
+	}
+
+## The DANGER snapshot (Predators Phase 0). Danger is a per-ENTITY property, so the native decoder
+## projects it onto tiles from herd positions × their `danger` scalar; this hand-built harness snapshot
+## reproduces that projection: a zero-init grid, `max(existing, danger)` stamped at each herd's tile,
+## normalized against the deadliest tile. It reuses the pasture terrain SHAPE so the frame reads like
+## an ordinary map, then drops a DEADLY mammoth (danger 8) and a HARMLESS deer (danger 0) on it — the
+## deadly hex must glow the threat red while the deer's hex (and all empty ground) stays grid-colored.
+const DANGER_OVERLAY_KEY := "danger"   # mirrors MapView.DANGER_OVERLAY_KEY / the decoder's channel key
+const DANGER_DEADLY_COL := 9
+const DANGER_DEADLY_ROW := 7
+const DANGER_HARMLESS_COL := 16
+const DANGER_HARMLESS_ROW := 9
+func _snapshot_danger() -> Dictionary:
+	var ids := _pasture_terrain()
+	var total := PASTURE_GRID_W * PASTURE_GRID_H
+	var herds := [
+		{
+			"id": "game_mammoth_02",
+			"label": "Woolly Mammoth (game_mammoth_02)",
+			"species": "Woolly Mammoth",
+			"size_class": "big",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"x": DANGER_DEADLY_COL, "y": DANGER_DEADLY_ROW,
+			"biomass": 900.0,
+			"danger": 8.0,
+		},
+		{
+			"id": "game_deer_09",
+			"label": "Red Deer (game_deer_09)",
+			"species": "Red Deer",
+			"size_class": "big",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"x": DANGER_HARMLESS_COL, "y": DANGER_HARMLESS_ROW,
+			"biomass": 820.0,
+			"danger": 0.0,
+		},
+	]
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var danger_max := 0.0
+	for herd in herds:
+		var danger := float(herd.get("danger", 0.0))
+		if danger <= 0.0:
+			continue
+		var idx := int(herd["y"]) * PASTURE_GRID_W + int(herd["x"])
+		if idx >= 0 and idx < total:
+			raw[idx] = maxf(raw[idx], danger)
+			danger_max = maxf(danger_max, raw[idx])
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	for i in total:
+		normalized[i] = (raw[i] / danger_max if danger_max > 0.0 else 0.0)
+	var tiles: Array = []
+	for i in total:
+		tiles.append({
+			"entity": i,
+			"x": i % PASTURE_GRID_W,
+			"y": i / PASTURE_GRID_W,
+			"terrain": int(ids[i]),
+		})
+	return {
+		"grid": {"width": PASTURE_GRID_W, "height": PASTURE_GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": ids,
+			"channels": {
+				DANGER_OVERLAY_KEY: {
+					"label": "Danger",
+					"description": "How dangerous the wildlife on this tile is.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([DANGER_OVERLAY_KEY]),
+		},
+		"tiles": tiles,
+		"populations": [],
+		"herds": herds,
 	}
 
 func _terrain_array() -> Array:

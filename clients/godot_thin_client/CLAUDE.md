@@ -3640,8 +3640,26 @@ Raster overlays streamed from `core_sim`:
 | `terrain_tags` | Blended | Per-tag colors averaged |
 | `pasture` | Straw→grass ramp, **+ two off-ramp barren tones** | The GRAZE layer's per-tile **capacity** (`TileState.grazeCapacity`) |
 | `forage` | Wheat→green ramp, **+ one off-ramp barren tone** | The FORAGE (human food) layer's per-tile **capacity** (`TileState.forageCapacity`) |
+| `danger` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side from herd positions × `HerdTelemetryState.danger` (see below) |
 
 Legend rendering: min/avg/max values + channel description.
+
+**`danger` — the wildlife-threat overlay (Predators Phase 0).** Danger is a **per-ENTITY** property
+(a herd's `danger` scalar = the species' `attack`; 0 = harmless deer … ~4 = aurochs … ~8 = mammoth,
+against the human-strength anchor of 1.0), NOT a per-tile wire field — so the **native decoder projects
+it onto tiles** (`snapshot_dict`, beside the pasture/forage blocks): a grid-sized zero-init `danger`
+array, `max(existing, herd.danger)` stamped at each herd's tile index, normalized against the map's
+deadliest tile. **Guarded on `danger_max > 0`** so a placid map omits the channel entirely (no dead
+selector entry). Unlike pasture/forage it is **not** a two-tone ramp: MapView's `_color_for_tile` uses
+the generic `GRID_COLOR.lerp(DANGER_OVERLAY_COLOR, value)` path — empty ground stays grid-colored, a hex
+with a deadly herd glows the threat red — and the generic scalar legend handles it automatically (no
+bespoke builder). The overlay selector + legend are data-driven off `channel_order`, so the channel
+appears with no OverlayPanel edit. Also surfaced as a **`Danger` row** in the herd drawer
+(`Hud._herd_summary_lines`, after Ecology): `_danger_label` buckets the scalar into Harmless / Minor /
+Dangerous / Deadly (thresholds 2 / 6), shown for EVERY herd so the player learns which animals are safe;
+`_danger_value_hex` tints it green→ink→amber→red via `_format_detail_bbcode`'s shared registry (the
+Ecology case's twin). Verify via `map_preview` state **"danger"** (`map_danger.png` + the printed legend)
+and `ui_preview` `herd_verbs` (Harmless deer, green) / `herd_danger` (Deadly mammoth, red).
 
 **`pasture` — the graze (pasture) layer, Grazing Phase 2a** (`docs/plan_grazing_foundation.md`;
 `core_sim/CLAUDE.md` → The Graze (Pasture) Layer). Graze is the **animal-edible** vegetal stock

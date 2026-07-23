@@ -1389,6 +1389,12 @@ table HerdTelemetryState {
   // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
   // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
   pastoralYield:float = 0;
+  // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the per-species DANGER of
+  // hunting this herd, for the client's band-panel readout + a threat overlay. A single server-derived
+  // scalar so it can become a composite (defense, aggression, pack size) later WITHOUT a wire change.
+  // Today it is the species' combat `attack` — the casualty driver: 0 = a harmless hunt (deer), high =
+  // deadly big game (mammoth 8). The overlay projects this per-herd value onto tiles client-side.
+  danger:float = 0;
 }
 
 table CommandEventState {

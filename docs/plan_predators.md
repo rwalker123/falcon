@@ -299,6 +299,13 @@ distinction is load-bearing:
   there is no "assign Warriors to a hunt" affordance because the concept doesn't fit. As TOE lands,
   the hunters' `CombatProfile` improves (bare hands → spears) and the same hunt comes home whole — no
   seam change, that is the whole point of intrinsic ⊕ equipment.
+  - **Both the resident-band hunt and the detached hunting *expedition* resolve here** — same seam,
+    same person-vs-beast contingents. The **expedition is bloodier**: far from home, no relief, tired
+    and hungry. Phase 0 models that crudely with a flat `expedition_danger_multiplier` (scales the
+    fight's lethality). The principled version — a **combat-modifiers layer** (proximity-to-home,
+    fatigue, supply, terrain) that tilts a fight toward one side, and which is *also* how a local hunt
+    earns its **home-advantage discount** — is deferred (see below); the flat multiplier is a stopgap
+    it supersedes.
 - **Predator-initiated (the raid):** a carnivore herd with `aggression` > 0 in range of a band raids
   the band / its unguarded foragers → **this** is what **Warriors** defend against, the band-wide
   guard doing its actual job (band as Defender). It requires a carnivore that initiates, which does
@@ -368,6 +375,13 @@ basic.
   change the outcome — the loop is legible (the *ui_preview* harness verifies the HUD).
 
 **Deferred (own slices, noted so the interface is built to accept them):**
+- **Combat-modifiers layer.** A set of situational factors that tilt a `resolve_fight` toward one
+  side — **proximity to home** (a local hunt is safer near camp; an expedition, far away, is
+  deadlier), **fatigue**, **supply/provisions**, **terrain cover**, later **morale**. Fed into the
+  fight (a modifier on the side's effective strength or the fight's lethality), it **replaces the
+  flat `expedition_danger_multiplier`** and gives the local hunt its home-advantage discount. This is
+  where "distance/tiredness/hunger make a hunt more dangerous" becomes a real model rather than a
+  constant. The combat contract already carries `TerrainContext` and `Posture` as hooks for it.
 - **Predator domestication → dogs.** Wolf `(carnivore)` climbing a husbandry ladder to a tamed
   companion — historically the *first* domestication, and it fits the existing
   `husbandry_ceiling` grammar. A dog is then a Warrior/Scout *multiplier* rather than a food herd —
@@ -396,6 +410,8 @@ basic.
 | 8 | **Build the ecological version, not abstract M1 pressure** | The herd stack makes real predators barely more work than a fake; the *interface* (Phase 0) is identical, so nothing is wasted and nothing is retrofitted. |
 | 9 | **Movement primitive shared from the start** (Phase 2 extract) | The user requires scouting to reuse it; designing `relocate_toward_resource` as shared avoids a rewrite. |
 | 10 | **Defaults keep every existing species byte-identical** | `attack`/`aggression` default 0, `defense` low, `diet` herbivore — no-back-compat rule; the roster is unchanged until a species opts in. |
+| 11 | **Combat-strength magnitude is open-ended, anchored to *bare-handed human = 1.0*** | `attack`/`defense` are relative — only ratios carry meaning (mammoth 8 vs human 1 = 8:1), like the graze table. No ceiling; `f32` scales as far as history does (bronze, iron, tanks). The single discipline is the shared anchor so the whole future roster — animals, equipped humans, mounts — stays comparable on one scale. |
+| 12 | **`danger` is a single server-computed scalar per entity** | The player-facing "how dangerous is this thing" number, published per herd (`= attack` now, a composite later — no wire change), and generalizing to bands/rivals. The client shows it as a panel line + a map overlay; danger is single-sourced on the entity and *projected* onto tiles, never a second per-tile field. |
 
 ## Open tuning dials (ship, measure, retune — playtest)
 

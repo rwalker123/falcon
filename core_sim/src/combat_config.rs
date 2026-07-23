@@ -30,6 +30,13 @@ pub struct CombatConfig {
     /// A loser whose losses exceed this fraction of its headcount is driven off (`disengaged`) rather
     /// than annihilated. Ships **0.5**.
     pub disengage_fraction: f32,
+    /// **How much bloodier a hunt is when a detached expedition fights it** — a multiplier on
+    /// `lethality` applied only in the expedition-hunt adapter (`advance_expeditions`), never the
+    /// resident-band path. A hunting party is far from home, unsupported and tired, so the same beast
+    /// costs it more. Ships **1.5**. A deferred general combat-modifiers layer (proximity / fatigue /
+    /// supply, plus a *home-advantage* discount for local hunts) will supersede this flat dial. Ships
+    /// finite & `> 0`.
+    pub expedition_danger_multiplier: f32,
 }
 
 impl CombatConfig {
@@ -68,6 +75,10 @@ impl CombatConfig {
     /// could ever be flagged as merely driven off).
     pub fn validate(&self) -> Result<(), CombatConfigError> {
         require_positive_finite("lethality", self.lethality)?;
+        require_positive_finite(
+            "expedition_danger_multiplier",
+            self.expedition_danger_multiplier,
+        )?;
         require_positive_finite("disengage_fraction", self.disengage_fraction)?;
         if self.disengage_fraction > MAX_FRACTION {
             return Err(CombatConfigError::Invalid {
@@ -215,6 +226,20 @@ mod tests {
         let config = CombatConfig::builtin();
         assert_eq!(config.lethality, 1.0);
         assert_eq!(config.disengage_fraction, 0.5);
+        assert_eq!(config.expedition_danger_multiplier, 1.5);
+    }
+
+    #[test]
+    fn validate_rejects_a_non_positive_expedition_danger_multiplier() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.expedition_danger_multiplier = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "expedition_danger_multiplier",
+                ..
+            })
+        ));
     }
 
     #[test]

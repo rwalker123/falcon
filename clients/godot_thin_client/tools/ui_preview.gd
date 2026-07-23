@@ -972,6 +972,21 @@ func _ready() -> void:
 	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
+	# ASSERT the harmless case renders + tints green: the base Red Deer fixture carries no `danger`
+	# (defaults to 0.0), so its drawer must read a green "Danger: Harmless" — the proof a safe animal
+	# is labelled as such, not omitted.
+	assert(_hud._danger_label(0.0) == "Harmless")
+	assert(_hud._danger_value_hex("Harmless") == HudStyle.HEALTHY_HEX)
+
+	# State 3b-danger — a DEADLY herd (a mammoth, danger ~8): the drawer's Danger row reads "Deadly"
+	# in red, the tinted counterpart to the base Red Deer's green "Harmless". Every herd shows the
+	# row, so the player learns which animals are safe and which are not.
+	_hud.show_herd_selection(_deadly_herd_fixture())
+	await _settle()
+	await _save("herd_danger")
+	# ASSERT the deadly end of the ramp maps + tints red, so the row can never silently go neutral.
+	assert(_hud._danger_label(8.0) == "Deadly")
+	assert(_hud._danger_value_hex("Deadly") == HudStyle.DANGER_HEX)
 
 	# State 3b — an overhunted herd: the ecology readout warns "⚠ Collapsing" in red.
 	_hud.show_herd_selection(_collapsing_herd_fixture())
@@ -3896,6 +3911,19 @@ func _herd_fixture() -> Dictionary:
 		},
 		"tile_info": _food_tile_fixture(),
 	}
+
+## A DEADLY herd (Predators Phase 0): a woolly mammoth carrying `danger` ~8 — the top of the threat
+## ramp. Its drawer's Danger row reads "Deadly" in red, the tinted counterpart to the base Red Deer's
+## green "Harmless". Compact tile so the husbandry/danger rows land in-frame.
+func _deadly_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["id"] = "game_mammoth_02"
+	fixture["label"] = "Woolly Mammoth (game_mammoth_02)"
+	fixture["species"] = "Woolly Mammoth"
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["danger"] = 8.0
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
 
 ## A WILD-ceiling herd (Grazing 2d-δ): hunt-only. The drawer shows NO husbandry track (no
 ## domestication / corral / pen rows) — just the "Wild game — hunt only" hint — and the hunt policy

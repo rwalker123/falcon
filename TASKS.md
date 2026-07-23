@@ -1123,10 +1123,26 @@ by **Warriors**, the band-wide guard — the Warrior role's first live consumer,
   hasher-independent tie-break (rollback determinism). This is also the deferred **Grazing 2c** dynamic
   (move toward live food, not just fertile land). Predators now follow the game and relocate when local
   prey thins. **Test:** move a deer herd across the map; the pack tracks it instead of idling.
+- [ ] **Phase 0 cleanup (PR #166, in progress) — expedition danger + the species danger view.**
+  (a) **Expedition hunts resolve combat too, and bloodier** — mirror the resident-band adapter into
+  `advance_expeditions`' Hunt arm, casualties applied to the detached party, scaled by a flat
+  `expedition_danger_multiplier` (~1.5×, config; the crude stand-in for the deferred combat-modifiers
+  layer). (b) **Publish `HerdTelemetryState.danger:float`** (server-computed `= attack`, append-only) so
+  the client can show it. (c) **Client danger view** — a **Danger** line on the herd/tile card
+  (`_herd_summary_lines`) *and* a **Danger map overlay** projecting per-herd danger onto tiles
+  (Pasture/Forage channel pattern, not Elevation's raster), verified via `ui_preview` + `map_preview`.
+  Danger is a general per-entity property ("any animal, and later any band"), single-sourced, not a
+  hunting concept.
 - [ ] **Phase 3 — Client legibility.** Threat/casualty events in the command feed; predator presence
   overlay; Warrior strength & hunt-danger readout on the band panel; yield-forfeited-to-raids on the
   income line. Free-form snapshot fields only; verify HUD via the *ui_preview* harness. **Test:** the
   player can see a predator, read a hunt's danger, and watch warriors change the outcome.
+- [ ] **Deferred — the combat-modifiers layer.** Situational factors that tilt a `resolve_fight`
+  toward one side: **proximity-to-home** (local hunt safer near camp, expedition deadlier far away —
+  gives the local hunt a home-advantage discount and **replaces the flat `expedition_danger_multiplier`**),
+  **fatigue**, **supply/provisions**, **terrain cover**, later **morale**. The contract already carries
+  `TerrainContext` + `Posture` as the hooks. This is how "distance / tiredness / hunger make a hunt more
+  dangerous" becomes a real model instead of a constant.
 - [ ] Deferred (own slices): **wolf→dog domestication** (the first domestication — a `carnivore` climbing
   the `husbandry_ceiling` ladder to a Warrior/Scout *multiplier*, extending the intensification rung
   engine); **scouting expeditions adopt `relocate_toward_resource`** (auto-explore toward unrevealed

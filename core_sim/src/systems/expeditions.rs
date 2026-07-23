@@ -1,6 +1,20 @@
 use super::*;
 use crate::fauna::AnimalTake;
 
+/// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
+/// stays under Bevy's 16-parameter ceiling once the combat + creatures handles join it (Predators
+/// Phase 0 — the expedition-hunt danger adapter).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ExpeditionConfigs<'w> {
+    pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    pub visibility: Res<'w, crate::visibility_config::VisibilityConfigHandle>,
+    pub fauna: Res<'w, FaunaConfigHandle>,
+    pub labor: Res<'w, LaborConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub combat: Res<'w, CombatConfigHandle>,
+    pub creatures: Res<'w, CreaturesConfigHandle>,
+}
+
 /// Advance any `move_band` order one step toward its target. The band travels at
 /// `band_move_tiles_per_turn` tiles/turn; `current_tile` (and `home`, since a nomad band has no
 /// fixed origin) follow it so labor reads the updated in-range source set, and on arrival the
@@ -63,11 +77,7 @@ pub fn advance_band_movement(
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_expeditions(
     mut commands: Commands,
-    expedition_config: Res<crate::expedition_config::ExpeditionConfigHandle>,
-    visibility_config: Res<crate::visibility_config::VisibilityConfigHandle>,
-    fauna_config: Res<FaunaConfigHandle>,
-    labor_config: Res<LaborConfigHandle>,
-    ladder_config: Res<LadderConfigHandle>,
+    configs: ExpeditionConfigs,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tick: Res<SimulationTick>,
@@ -94,11 +104,20 @@ pub fn advance_expeditions(
     let Some(elevation) = elevation else {
         return;
     };
-    let cfg = expedition_config.get();
-    let fauna = fauna_config.get();
-    let labor = labor_config.get();
-    let ladder = ladder_config.get();
-    let vis_cfg = visibility_config.0.as_ref();
+    let cfg = configs.expedition.get();
+    let fauna = configs.fauna.get();
+    let labor = configs.labor.get();
+    let ladder = configs.ladder.get();
+    let vis_cfg = configs.visibility.0.as_ref();
+    // **Predators Phase 0 — the expedition-hunt danger seam** (`docs/plan_predators.md`). A hunting
+    // party takes casualties like a resident band, but **bloodier**: far from home and unsupported, so
+    // the same beast costs it more. The resolver tuning is scaled by `expedition_danger_multiplier`;
+    // the base human's intrinsic profile is the same `person` the resident band fields. Resolved once.
+    let combat_config = configs.combat.get();
+    let mut combat_tuning = combat_config.tuning();
+    combat_tuning.lethality *= combat_config.expedition_danger_multiplier;
+    let person_profile = configs.creatures.get().person();
+    let map_seed = sim_config.map_seed;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     let grid_width = tile_registry.width;
     let current_turn = tick.0;
@@ -377,6 +396,71 @@ pub fn advance_expeditions(
                         // The herd loses every animal killed, carried home or not (slice 8).
                         herd.biomass -= take.killed_biomass();
                         let herd_biomass_after = herd.biomass;
+                        // **Predators Phase 0 — the hunt turns dangerous, bloodier for a detached
+                        // party** (`docs/plan_predators.md`). After the take, a herd whose species can
+                        // fight back (`combat.attack > 0` — mammoth, ox) turns on the party. The
+                        // expedition answers with its OWN hunters (bare-hands `person` today), at the
+                        // expedition-scaled lethality, and applies **only the band side's** casualties
+                        // (the take already removed the animal's biomass). Fires only on an engagement
+                        // turn (inside the `in_reach` guard).
+                        if let Some(species) = fauna.species_by_display(&herd.species) {
+                            if species.combat.attack > 0.0 {
+                                let mut hasher = crate::hashing::FnvHasher::new();
+                                std::hash::Hash::hash(&herd.id, &mut hasher);
+                                let seed =
+                                    map_seed ^ current_turn ^ std::hash::Hasher::finish(&hasher);
+                                let payload = FightPayload {
+                                    sides: vec![
+                                        Force {
+                                            id: ForceId(0),
+                                            posture: Posture::Aggressor,
+                                            contingents: vec![Contingent {
+                                                kind: ContingentId::from("person"),
+                                                count: workers as f32,
+                                                profile: person_profile,
+                                            }],
+                                        },
+                                        Force {
+                                            id: ForceId(1),
+                                            posture: Posture::Defender,
+                                            contingents: vec![Contingent {
+                                                kind: ContingentId(herd.species.clone()),
+                                                count: 1.0,
+                                                profile: species.combat,
+                                            }],
+                                        },
+                                    ],
+                                    terrain: vec![TerrainContext {
+                                        hex: (exp_pos.x, exp_pos.y),
+                                    }],
+                                    seed,
+                                };
+                                let outcome = resolve_fight(&payload, &combat_tuning);
+                                let (killed_f, wounded_f) = outcome
+                                    .results
+                                    .iter()
+                                    .find(|r| r.force == ForceId(0))
+                                    .map(|r| (r.killed, r.wounded))
+                                    .unwrap_or((0.0, 0.0));
+                                if killed_f + wounded_f > 0.0 {
+                                    cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+                                    let killed_r = killed_f.round() as u32;
+                                    event_log.push(CommandEventEntry::new(
+                                        current_turn,
+                                        CommandEventKind::HuntDanger,
+                                        faction,
+                                        format!(
+                                            "The {} hunt cost the expedition {} lives",
+                                            species.display_name, killed_r
+                                        ),
+                                        Some(format!(
+                                            "killed={:.3} wounded={:.3} species={}",
+                                            killed_f, wounded_f, species.display_name
+                                        )),
+                                    ));
+                                }
+                            }
+                        }
                         if policy.delivers_food() {
                             let carried = cohort.stores.get(FOOD);
                             let room = (cap - carried).max(scalar_zero());

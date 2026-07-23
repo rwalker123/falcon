@@ -317,6 +317,14 @@ pub(crate) fn herd_snapshot_entries(
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield,
+                // Predators Phase 0 — the per-species DANGER of hunting this herd (`docs/plan_predators.md`).
+                // A server-derived scalar so it can become a composite later without a wire change;
+                // today it is the species' combat `attack`, the casualty driver (0 = harmless, mammoth
+                // = 8). Resolved by display name — the herd's `species` string.
+                danger: fauna
+                    .species_by_display(&entry.species)
+                    .map(|def| def.combat.attack)
+                    .unwrap_or(0.0),
             }
         })
         .collect()

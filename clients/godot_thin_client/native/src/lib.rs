@@ -728,6 +728,58 @@ fn snapshot_dict(
         vec![0.0f32; forage_base.len()]
     };
 
+    // Danger (Predators Phase 0). Danger is a per-ENTITY property (a herd's `danger` scalar), NOT a
+    // per-tile wire field — so we project it onto tiles CLIENT-SIDE here: stamp each herd's danger
+    // onto its own tile index and take the MAX where herds overlap. `herds` is the already-decoded
+    // VarArray of herd dicts (each carrying `x` / `y` / `danger`); it is read by reference so the
+    // later `insert("herds", …)` still moves it. Normalized against the map's MOST dangerous tile,
+    // like pasture/forage, so the ramp's top is "the deadliest thing on THIS map".
+    let mut danger_base = vec![0.0f32; size];
+    if let Some(herd_arr) = herds.as_ref() {
+        for item in herd_arr.iter_shared() {
+            let Ok(herd_dict) = item.try_to::<VarDictionary>() else {
+                continue;
+            };
+            let danger = herd_dict
+                .get("danger")
+                .and_then(|v| v.try_to::<f64>().ok())
+                .unwrap_or(0.0) as f32;
+            if danger <= 0.0 {
+                continue;
+            }
+            let x = herd_dict
+                .get("x")
+                .and_then(|v| v.try_to::<i64>().ok())
+                .unwrap_or(-1);
+            let y = herd_dict
+                .get("y")
+                .and_then(|v| v.try_to::<i64>().ok())
+                .unwrap_or(-1);
+            if x < 0 || y < 0 {
+                continue;
+            }
+            let idx = (y as usize)
+                .saturating_mul(grid_size.width as usize)
+                .saturating_add(x as usize);
+            if idx < danger_base.len() {
+                danger_base[idx] = danger_base[idx].max(danger);
+            }
+        }
+    }
+    let danger_max: f32 = danger_base
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold(0.0f32, f32::max);
+    let danger_normalized: Vec<f32> = if danger_max > 0.0 {
+        danger_base
+            .iter()
+            .map(|v| (v / danger_max).clamp(0.0, 1.0))
+            .collect()
+    } else {
+        vec![0.0f32; danger_base.len()]
+    };
+
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
         let v = *value;
@@ -796,6 +848,8 @@ fn snapshot_dict(
     let pasture_raw_array = packed_from_slice(&pasture_base);
     let forage_array = packed_from_slice(&forage_normalized);
     let forage_raw_array = packed_from_slice(&forage_base);
+    let danger_array = packed_from_slice(&danger_normalized);
+    let danger_raw_array = packed_from_slice(&danger_base);
 
     let elevation_placeholder = elevation_array.is_empty();
     let moisture_placeholder = overlays.moisture.is_empty();
@@ -992,6 +1046,28 @@ fn snapshot_dict(
                 raw: &forage_raw_array,
                 // No separate contrast curve: the capacity ramp IS the signal being read.
                 contrast: &forage_array,
+                placeholder: false,
+            },
+        );
+    }
+    // Danger (Predators Phase 0) — projected client-side from herd positions × their danger scalar
+    // (see the danger_base build above). Published ONLY when the map actually carries a dangerous
+    // animal (danger_max > 0), so a placid map omits the channel entirely and the data-driven
+    // overlay selector shows no dead entry. The generic scalar legend handles it automatically.
+    if danger_max > 0.0 {
+        insert_overlay_channel(
+            &mut channels,
+            &mut channel_order,
+            OverlayChannelParams {
+                key: "danger",
+                label: "Danger",
+                description: Some(
+                    "How dangerous the wildlife on this tile is — the deadliest animal standing here, from harmless deer through aurochs to mammoth. A general per-entity threat; empty ground reads as no danger.",
+                ),
+                normalized: &danger_array,
+                raw: &danger_raw_array,
+                // No separate contrast curve: the threat ramp IS the signal being read.
+                contrast: &danger_array,
                 placeholder: false,
             },
         );
@@ -3372,6 +3448,11 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // Danger (Predators Phase 0) — the species' `attack`, a server-computed "how dangerous is
+        // this animal" scalar (0 = harmless like deer, ~4 = aurochs, ~8 = mammoth; the human-strength
+        // anchor is 1.0). A general per-entity property, not a hunting concept. This decoder has a
+        // history of silently dropping appended fields, so decode it beside the other scalars.
+        let _ = dict.insert("danger", herd.danger());
         // Grazing 2d-δ — how far up the husbandry ladder THIS species can climb ("wild" hunt-only /
         // "pastoral" tame+roam-but-never-penned / "pen" the full ladder). Empty/absent ⇒ the client
         // treats it as "pen" (the full ladder). Same string convention as `species`/`ecologyPhase`;

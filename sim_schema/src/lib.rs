@@ -352,6 +352,12 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
+    /// **The per-species danger of hunting this herd** (Predators Phase 0, `docs/plan_predators.md`) —
+    /// a server-derived scalar (today the species' combat `attack`, the casualty driver) for the
+    /// client's band-panel readout + threat overlay. `0` = a harmless hunt. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub danger: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -390,6 +396,7 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
+            danger: 0.0,
         }
     }
 }
@@ -4274,6 +4281,8 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
+                // Per-species hunt danger (Predators Phase 0) — appended last (append-only wire).
+                danger: herd.danger,
             },
         );
         entries.push(entry);
