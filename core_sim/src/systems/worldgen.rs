@@ -176,7 +176,6 @@ pub fn spawn_initial_world(
             &preset.macro_land,
             &preset.shelf,
             &preset.islands,
-            &preset.inland_sea,
             &preset.ocean,
             preset.moisture_scale,
             &preset.biomes,
@@ -3031,7 +3030,6 @@ mod terrain_tag_tests {
                     "mountain_scale": 0.5,
                     "moisture_scale": 1.0,
                     "river_density": 0.0,
-                    "lake_chance": 0.0,
                     "climate_band_weights": {},
                     "terrain_tag_targets": {"Highland": 0.25},
                     "biome_weights": {},
@@ -3042,7 +3040,6 @@ mod terrain_tag_tests {
                     "macro_land": {},
                     "shelf": {},
                     "islands": {},
-                    "inland_sea": {},
                     "ocean": {},
                     "biomes": {}
                 }
@@ -3150,7 +3147,6 @@ mod terrain_tag_tests {
                     "mountain_scale": 0.2,
                     "moisture_scale": 0.6,
                     "river_density": 0.0,
-                    "lake_chance": 0.0,
                     "climate_band_weights": {},
                     "terrain_tag_targets": {"Fertile": 0.25},
                     "biome_weights": {},
@@ -3161,7 +3157,6 @@ mod terrain_tag_tests {
                     "macro_land": {},
                     "shelf": {},
                     "islands": {},
-                    "inland_sea": {},
                     "ocean": {},
                     "biomes": {}
                 }

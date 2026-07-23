@@ -124,10 +124,19 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 > express one. `target_land_pct` is met by *shaping the field* (`anchor_contour_to_sea_level`), and
 > `continents` by the continental bias term — never by repainting tiles.
 >
-> Consequences a new stage must respect: `place_islands` raises a seamount above sea level;
-> `connect_inland_seas_via_straits` lowers a corridor below it; both then re-derive. There is no
-> `rebalance_land_ratio` and no tag-solver water branch — both were deleted because they corrected a
-> quota by repainting the output. Design: `docs/plan_elevation_authority.md`.
+> Consequences a new stage must respect: `place_islands` raises a seamount above sea level and then
+> re-derives — it is now the **only** stage that edits a coastline. There is no
+> `rebalance_land_ratio`, no tag-solver water branch and no `connect_inland_seas_via_straits` — all
+> three were deleted because they corrected an outcome by repainting the map. Design:
+> `docs/plan_elevation_authority.md`.
+>
+> **Legal is not the same as emergent, and the strait carver is why that distinction is written
+> down.** `connect_inland_seas_via_straits` found landlocked water and *lowered land until it wasn't*.
+> It obeyed the rule above to the letter — it wrote elevation and re-derived — and it was still the
+> wrong shape: nothing in the terrain asked for that channel. It was a **topology-repair pass**, the
+> same species as the two deletions beside it, and the arc that introduced this callout ported its
+> mechanism without re-examining its premise. A stage that decides an outcome and edits the field to
+> reach it is repainting, however it writes.
 
 ### Pipeline Stages
 1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
@@ -135,7 +144,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 3. **Polar microplates** - Subdivide polar tiles, converging vectors raise fold strength
 4. **Heightfield** - Multi-octave height raster with erosion smoothing → `elevation_m`
 5. **Coastal smoothing** - Blend shoreline tiles via 3×3 blur
-6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; inland seas. See "Continental shelf width" below — the shelf is a continuous ≥1-tile ring off gentle coasts, gated to deep water at steep/cliff coasts. A **final reconciliation post-pass** (`reconcile_coastal_shelf`, Startup chain after hydrology + tag solver + palette clamp) restamps the shelf so no Deep Ocean touches gentle land on the *final* map, covering coasts created later by deltas/marshes/solver tundra.
+6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; plus `InlandSea` for any water the mask leaves unconnected to the ocean — a lake is *classified*, never placed or repaired (see "Lakes are emergent" below). See "Continental shelf width" below — the shelf is a continuous ≥1-tile ring off gentle coasts, gated to deep water at steep/cliff coasts. A **final reconciliation post-pass** (`reconcile_coastal_shelf`, Startup chain after hydrology + tag solver + palette clamp) restamps the shelf so no Deep Ocean touches gentle land on the *final* map, covering coasts created later by deltas/marshes/solver tundra.
 7. **Climate** - Temperature (latitude base − elevation lapse + jitter) is computed **first** and the biome band is derived from it via `climate::climate_band_for_temperature` — see "Temperature is the climate authority" below. Latitude is an input to temperature, never a parallel biome gate.
 8. **Hydrology** - Rivers on hex **edges** + navigable rivers as water **hexes**. See "Rivers" below. `RiverDelta` is stamped **only here**, at the last **gentle-coast** land hex of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth hex must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's **reduction *and* addition** passes so genuine river mouths survive — every branch that would restamp a tile carries a `terrain != RiverDelta` guard. This includes the **Fertile-add** branch (both its primary candidate filter and its fallback loop): a delta cut through a **polar/non-fertile** biome lacks the `Fertile` tag, so it is not caught by the Fertile/Water skips and was the one path that clobbered a real mouth back to `AlluvialPlain` (orphaning its `river_channel` bit on dry land). Guarded by `core_sim/tests/navigable_mouth_delta.rs` — the invariant *no hex carries a `river_channel` bit while rendering non-`NavigableRiver`/non-`RiverDelta` terrain*, run through the **real** Startup chain (hydrology → tag solver → palette clamp → reconcile) via `build_headless_app`, so a later-pass clobber cannot hide the way it does in the hydrology-last `hydrology_earthlike.rs` harness.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
@@ -732,6 +741,7 @@ every one of these is honored by *shaping the heightfield*, never by editing the
 | `continental_tilt_strength` | **0.0 (off)** | **Per-continent tilt** — a directional gradient across each centre, its heading hashed per centre from the world seed, windowed by `1 − t^4` so it vanishes at the rim. A dome sheds water in every direction; a *tilted* surface drains one way. Ships as a **tilted trough**, not a tilted plane: `heightfield::CONTINENT_TROUGH_GAIN` (0.5) lifts the ground away from the drainage axis, because a bare tilt gives **parallel** flow (many short rivers) rather than convergence onto a trunk. **Both presets ship it at `0.0`**: at `2.0` it buys one extra seed-with-a-river in six but fuses continents into a supercontinent, collapsing `polar_contrast`'s fold belts by 85% (see the note below). The machinery is retained, live and inert at zero — raising it is how you get the drainage back, at that cost. |
 | `continental_spine_amplitude` | 0.35 | **Ridged spine** — ridged noise gated to the continent interiors (`clamp(bias, 0, 1)`), so a landmass carries an internal **divide** with two drainage sides instead of one summit. Also the term that keeps mountain ranges narrow (see below). |
 | `continental_spine_frequency` | 2.2 | Cycles of spine noise across the map — roughly how many range-scale divides a continent can carry. |
+| `continental_basin_amplitude` | **0.4** (earthlike; polar_contrast 0.0/off) | **The lake lever.** How far the continent *interior* is planed down toward the coastline contour (`bias -= amplitude × bias.clamp(0, 1)`) — a broad near-sea-level interior plateau where the field's own fine-scale noise makes many small **enclosed** lakes. Gated to the interior (`bias ≤ 0` untouched), so it raises lake share **without** eroding the coast — unlike `continental_weight`, which lowers everything and costs cold-ocean seal habitat. `0.0` is byte-identical to no term. Earthlike median lake share ~1.5% → ~2.7%. See "Lakes are emergent" → "Abundance is the interior sink". |
 | `coastline_roughness` | 0.05 | High-frequency shoreline raggedness, applied to the field **before** `land_contour`. Replaces the retired `macro_land.jitter`, which perturbed the mask's *ranking* instead of the field and thereby decoupled the two. |
 
 > `macro_land.jitter` **no longer exists** and must not be reintroduced — it is the specific lever
@@ -776,13 +786,83 @@ every one of these is honored by *shaping the heightfield*, never by editing the
 >   was introduced to prevent — the window mitigates it but does not eliminate it on this preset.
 >   Measurement: `mapgen::tests::polar_contrast_fold_investigation`.
 
-**Coastline-editing levers** — the two stages permitted to move a coastline, both of which write
-elevation and re-derive:
+**Coastline-editing lever** — `place_islands` is the one stage permitted to move a coastline, and it
+writes elevation and re-derives:
 
 | Key | Block | Default | Meaning |
 |---|---|---|---|
 | `island_peak_margin` | `islands` | 0.06 | How far above `sea_level` an island's peak is raised. `place_islands` raises a radial dome and the mask is re-derived; this margin is what makes the dome *become* land. Placement (`continental_density`, `oceanic_density`, `min_distance_from_continent`) is unchanged. |
-| `strait_depth_margin` | `inland_sea` | 0.02 | How far **below** `sea_level` a strait corridor is cut by `connect_inland_seas_via_straits`. Deep enough to read as water on the re-derive, shallow enough to read as a channel and not a trench. |
+
+> #### Lakes are emergent, and the whole `inland_sea` config block is GONE
+>
+> A lake is a closed basin the heightfield produced whose floor is below `sea_level` and which the
+> mask does not connect to the ocean. **Nothing places one, and nothing repairs one.**
+>
+> `connect_inland_seas_via_straits` (and with it `InlandSeaConfig`: `merge_strait_width`,
+> `strait_depth_margin`, the always-dead `min_area`, plus the always-dead `lake_chance`) is
+> **deleted**. It BFS'd from every landlocked water tile through up to `merge_strait_width` tiles of
+> land to the sea and sank the corridor, so any basin within two tiles of a coast stopped being a
+> lake. Because a large body has more perimeter, it had more chances to be caught — the carver ate
+> the *big* lakes preferentially and left the specks.
+>
+> **Why it existed, and why that reason expired.** It dates from the pipeline's first commit
+> (2025-11-02), when a lake was a river **terminus** (`TerminationClass::Lake`) and the outlet below
+> it was *fabricated* — `lake_heads` spawned fresh river sources on the lakeshore under
+> `SourceCategory::LakeOutlet`, with no upstream catchment. An inland sea genuinely was a drainage
+> dead-end, and converting it to ocean was one way out. The drainage-network rewrite (`2ad0923`,
+> 2026-07-14) made **lakes flow through** — only the ocean is a sink, the fill raises a lake corner
+> to its saddle and it spills — and deleted `lake_heads`. The carver was a workaround that outlived
+> its problem by a week, then survived `elevation-authority` because that arc changed *how* stages
+> edit the map, not *whether* this one should.
+>
+> **Measured on deletion** (5 seeds each): 80x52 earthlike lake area **43 → 229 tiles**
+> (0.53% → 2.8% of land), largest body **8 → 90 hexes**, bodies of ≥5 tiles **2 → 8**, and the share
+> of lakes touching a river **21% → 39%**. 192x128: **402 → 1053** tiles. Land holds at 39.2% → 39.7%
+> and shelf at 16.7% → 15.3% of ocean, with every `shelf_ratio` / `elevation_authority` /
+> `hydrology_earthlike` / `navigable_mouth_delta` invariant unchanged.
+>
+> **The river-connection rate is a SIZE effect, not a separate defect** — measured across 15 maps,
+> one-tile bodies touch a river 21% of the time, 5–19 tile bodies **89%**. A one-hex lake has a
+> one-hex catchment, which is below `river_channel_min_discharge` (3.0), so no channel is drawn. That
+> is honest hydrology. **Do not lower a discharge threshold to put rivers on puddles** — grow the
+> lakes and the rivers follow.
+>
+> #### Abundance is the interior sink, not a repair pass
+>
+> Deleting the carver stopped SUBTRACTING lakes; it did not make the heightfield PRODUCE enough. The
+> per-seed distribution stayed heavily right-skewed — **median ~1.5% of land, a third of maps under
+> 1%** — so a playtester still read the map as lake-poor. The abundance lever is
+> **`macro_land.continental_basin_amplitude`** (`heightfield::apply_continental_bias` step 4,
+> earthlike **0.4**): it planes the continent *interior* down toward the coastline contour
+> (`bias -= amplitude × bias.clamp(0, 1)`), so the top of the dome becomes a broad near-sea-level
+> plateau where the field's own fine-scale fbm dips below the contour in many small **enclosed** pools.
+> Median lake share rises to **~2.7% (mean ~3.4%, 24 seeds)** with **0 dry maps**.
+>
+> **Why the interior sink and not one of the obvious alternatives — all measured, all rejected:**
+> - **The strait carver's inverse (carve discrete bowls).** This is the shape the term *started* as,
+>   and the config name still says "basin". A bowl gouged into high interior drains to the sea and
+>   reads as a coastal inlet (ocean), not a lake — it barely moved the lake count at any depth or
+>   frequency. A lake needs a broad near-contour *area*, not a deep pit.
+> - **Lowering `continental_weight`.** It works (it lowers the interior, the same mechanism) — but it
+>   scales the *whole* envelope, so it also flattens the cold-ocean coastline, which **halved seal
+>   spawns** (`fauna_coastal_habitat` measured 14 → ~6, under its guard). The interior sink's
+>   `bias.clamp(0, 1)` gate pins the coast (`bias ≤ 0` untouched), so it raises lakes with seals and
+>   `realized_land_fraction` both **unchanged and green** — that gate is the whole reason it is a
+>   separate term.
+> - **Raising `sea_level` / lowering `target_land_pct`.** Inert / just adds ocean — the contour anchor
+>   holds the land∶water split regardless, and extra water goes to the sea, not enclosed basins.
+>
+> Guarded by `core_sim/tests/lake_abundance.rs` (sweep-median floor, the lake analog of the seal
+> pinhole guard) — the tripwire the carver era lacked.
+>
+> **The tectonic baselines moved twice and were re-pinned** — for the carver deletion and again for
+> the interior sink (both earthlike-only; `polar_contrast` carries neither). Not incidental: plates are
+> area-bucketed from land **connected-components**, so anything that changes how land coheres — cutting
+> straits, or planing the interior toward the contour — moves the fold/fault/uplift network downstream
+> of it. The re-pinned centres are the tuned seed's deterministic output and the single-seed counts are
+> high-variance, so read no *direction* into them; the stable guards are the continent *count* (median
+> 3 at large/huge), seals, and land fraction, each in its own test. Same coupling the
+> `continental_tilt_strength` note describes from the other direction.
 
 The active preset's `sea_level` is carried on the `ElevationField` resource, attached at the field's origin in `build_elevation_field` and propagated through `restamp_elevation` (`heightfield.rs` / `mapgen.rs`; falls back to `DEFAULT_SEA_LEVEL` = 0.6 only when no preset resolves — which also logs a `warn`, because a preset-less field skips erosion and the contour anchor entirely). It is exported in the snapshot as `ElevationOverlay.seaLevel` — **normalized to the overlay's [minValue, maxValue] sample scale AND quantized onto the same u16 lattice as the samples** (`snapshot/map.rs` `elevation_overlay_from_field`, `ELEVATION_SAMPLE_SCALE`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
 
