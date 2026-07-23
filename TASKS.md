@@ -1130,19 +1130,31 @@ could only ever match wild, never beat it, and tending would have been a strict 
 flat managed rate is right and the `labor_config.rs` monotonicity guard is policing a legitimate
 difference — an earlier draft proposed unifying it; that is **withdrawn**).
 
-- [ ] **S1 — species commitment + concentration + conversion.** `ForagePatch.species` (persisted,
-  cleared on lapse), `Cultivate`/`Sow` carry the choice, `concentration = min(1, share × gain)`,
-  per-species conversion rates. **Rung payoff dials untouched** so any balance movement is
-  attributable to the roster alone. Playtest before S2.
-- [ ] **S2 — retune rung 2 now that competitor-removal is explicit.** `tended_regrowth_gain` (2.0)
-  down — it is *half* right, not fake: a stand freed from competitors genuinely does regrow faster,
-  but part of what the 2.0 stood in for is now double-counted. Restore a rung-2 conversion gain
-  **without** collapsing the drawdown axis — which is precisely why the retired
-  `tended_provisions_per_biomass` failed (it made rung 2 a flat *managed* rate a full rung before the
-  animal side). A conversion gain and a managed rate are separable. Measure against S1's numbers.
+- [x] **S1 — species commitment + concentration + conversion. SHIPPED** (PR #160, merged).
+  `ForagePatch.species` (persisted, cleared on lapse), `Cultivate`/`Sow` carry the choice,
+  `concentration = min(1, share × gain)`, per-species conversion rates, crop picker + per-tile
+  tend-vs-wild ratio. **Rung payoff dials were left untouched** so the roster alone moved balance.
+  Playtest caught a ratio bug (the quote dropped the `tended_regrowth_gain` term, halving every
+  Cultivate ratio); fixed by defining the ratio as the real payoffs divided.
+- [x] **S2 — retire the tended-regrowth boost. `tended_regrowth_gain` 2.0 → 1.0.** The measurement S1
+  produced settled it: with the boost in, best-country ratios run 2.3–2.7× and only 2 of 37 crop×biome
+  entries lose anywhere — the double-count §4.3 predicted, now measured. The ruling (decided
+  deliberately, not from the shipped value): **the boost models nothing the model doesn't already
+  have.** Tending a stand "regrows faster" is either competitor-removal (now explicit as concentration)
+  or an input like watering (rung 4, Worked Land) — no legitimate residual, so it goes to neutral 1.0
+  and tending pays purely through concentration + conversion. Two payoffs from S2 beyond "smaller
+  number": it makes §4.3's stated bar (`concentration × rate > base`) **the number the player is
+  shown** (the regrowth term drops out), reconciling the doc with the screen; and its harshness is
+  on-theme — the 7 tend-only biomes that now lose their best crop are thin ground (Tundra, boreal,
+  MixedWoodland, …) the manual already says stays gather-only until rung 4, while willing ground
+  (floodplain/alluvium/oasis) is **sown directly** (§4.3: `Sow` needs no prior Cultivate) and pays
+  2.5–6×. The lever is kept at 1.0 (reversible) — the deep "is a less-abundant crop ever worth it"
+  question waits on F4 giving a *reason* to pick one. Requires relaxing `validate_plant_ladder_payoffs`
+  (`gain > 1` → `gain >= 1`): the "wild < tended" guarantee moved from that scale-free config check to
+  the roster's own "worth on best country, not worst" bar, which sees concentration + conversion.
 - [ ] **S3 — a question, not a task.** Revisit rung 3's currency only if S1/S2 data says it is wrong.
-  Expectation after the withdrawal above: this slice never happens. Close it rather than carry it if
-  the data agrees.
+  After the S1 withdrawal (rung 3's flat managed rate is correct, not a smell), the expectation is that
+  this slice never happens. Close it rather than carry it if the F3/F4 data agrees.
 - [ ] **F3 — fodder, both halves.** Fodder store + fodder Field (plant side, no new plant knowledge —
   `Sow` already exists), then the animal rung 4: `Foddering` (discovery id **2007**, next free) and
   the `delivered_fodder_flow` term in `K_pen`. Measure: a fed pen on thin pasture is survivable but

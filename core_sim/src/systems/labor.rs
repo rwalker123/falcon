@@ -2627,15 +2627,16 @@ mod labor_yield_tests {
     /// tended_regrowth_gain` — strictly more than the same patch wild: the intensification incentive),
     /// it **draws down** like any wild stand, and it is marked tended-this-turn.
     ///
-    /// **Retargeted, not weakened.** It used to be
-    /// `tended_patch_pays_tending_band_above_msy_no_drawdown` and asserted `paid == biomass ×
-    /// tended_provisions_per_biomass` with `biomass` **unchanged** — i.e. it pinned rung 2 as a
-    /// managed rung, which is the defect: a source that is never drawn down cannot be over-farmed, so
-    /// `actual == sustainable` was true by construction and the overdraw ⚠ could never fire. The
-    /// incentive claim it made (`tended > wild MSY`) survives intact — it is just carried by the curve
-    /// now instead of a flat rate.
+    /// **Retargeted twice.** It once pinned rung 2 as a flat managed rate (no draw-down); slice 7 made
+    /// it a boosted MSY curve; **Flora Roster S2 retired the boost** (`tended_regrowth_gain` → neutral
+    /// `1.0`). So a *bare* tended patch — one with no committed crop — now regrows and yields **exactly
+    /// as fast as wild**: this test pins that neutrality plus the rung mechanics that survive it (it
+    /// draws down, marks the patch worked, and its Sustain take is honestly sustainable). Tending's
+    /// payoff over wild moved to **concentration + conversion** — a committed crop — and is pinned by
+    /// the roster's own bar (`core_sim/tests/flora_roster.rs`) and `flora_commitment.rs`, which see the
+    /// crop this scale-free rung mechanic cannot.
     #[test]
-    fn a_tended_patch_out_yields_the_wild_stand_and_draws_down() {
+    fn a_bare_tended_patch_is_neutral_versus_wild_and_draws_down() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
         let forage = cfg.forage.clone();
@@ -2661,8 +2662,9 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        // The rung's payoff, stated as the curve: the tended Sustain ceiling is the wild one × the
-        // gain. `WORKERS` is enough hands to reach it, so the ceiling — not the crew — binds.
+        // At the neutral gain a bare tended patch reads the same MSY curve as wild — the boost is
+        // retired, and no committed crop means no conversion. `WORKERS` is enough hands to reach the
+        // ceiling, so the ceiling — not the crew — binds.
         let expected = wild_msy * forage.cultivation.tended_regrowth_gain;
         let paid = world
             .get::<PopulationCohort>(band)
@@ -2672,12 +2674,12 @@ mod labor_yield_tests {
             .to_f32();
         assert!(
             (paid - expected).abs() < 1e-3,
-            "tended band gathers its boosted MSY: {paid} vs {expected}"
+            "bare tended band gathers the neutral MSY: {paid} vs {expected}"
         );
         assert!(
-            paid > wild_msy,
-            "tending must still out-yield the same patch wild — the whole reason to cultivate: \
-             {paid} vs {wild_msy}"
+            (paid - wild_msy).abs() < 1e-3,
+            "with the boost retired and no crop committed, a bare tended patch pays exactly wild — \
+             the payoff moved to concentration + conversion: {paid} vs {wild_msy}"
         );
         // **It draws down** — the correction. A tended patch is a wild stand, so gathering it takes
         // biomass out of it, which is what makes over-farming it possible at all.
@@ -2704,12 +2706,11 @@ mod labor_yield_tests {
     /// finally fire on the plant web's rung 2. Before slice 7 the managed branch recorded
     /// `sustainable == actual` by construction, so `actual > sustainable` was unreachable here.
     ///
-    /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately: at
-    /// `tended_regrowth_gain` 2.0 the boosted MSY is high enough that Surplus (`1.6 × MSY`, riding the
-    /// *whole* K) equals a 20% Market skim at the exact biomass `B = K` (`1.6 × r_tended/4 = 0.20 =
-    /// market.take_fraction`) — a knife-edge tie at full patch only. Below capacity the two separate
-    /// cleanly, and the boosted sustainable Surplus **overtakes** the flat Market skim: the middle two
-    /// swap versus the pre-retune ladder, which is the true gain-2.0 behaviour.
+    /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately.
+    /// **Since Flora Roster S2 the gain is neutral (`1.0`)**, so a tended patch reads the same curve as
+    /// a wild one and the policies fall in their natural order: Sustain (MSY) < Surplus (`1.6 × MSY`) <
+    /// Market (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
+    /// past the flat Market skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
         let extractive = [
@@ -2773,10 +2774,9 @@ mod labor_yield_tests {
                 );
             }
         }
-        // ...and ordered as the axis means: restraint takes least, denial takes most. On the boosted
-        // tended curve the sustainable Surplus (1.6 × MSY) now out-takes the flat 20% Market skim
-        // below capacity — the middle two swap versus a wild patch, the true gain-2.0 behaviour — but
-        // the endpoints hold: Sustain the leanest, Eradicate the deepest.
+        // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
+        // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
+        // the leanest, then the boosted Surplus, then the flat Market skim, Eradicate the deepest.
         let take_of = |wanted: FollowPolicy| {
             takes
                 .iter()
@@ -2784,9 +2784,9 @@ mod labor_yield_tests {
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Market));
-        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
+        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction

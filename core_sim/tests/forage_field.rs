@@ -507,18 +507,17 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     );
 }
 
-/// **THE LADDER MUST CLIMB: wild < tended < Field.** Same tile, same biomass, same workers, same
-/// policy — the only difference is which rung the patch stands on. Runs the labor arm alone (no
-/// Logistics pass), so neither regrowth nor the feral decay can move one rung relative to another.
+/// **THE LADDER MUST CLIMB: wild ≤ tended < Field** (on a *bare* patch). Same tile, same biomass,
+/// same workers, same policy — the only difference is which rung the patch stands on. Runs the labor
+/// arm alone (no Logistics pass), so neither regrowth nor the feral decay can move one rung.
 ///
-/// **Retargeted, not weakened** (slice 7). This test used to assert `field / tended == 2.0` exactly.
-/// That ratio was never a design claim — it was an artifact of the two rungs sharing a *shape* (both
-/// paid `biomass × rate`, so the ratio was the ratio of two levers). Rung 2 is now a **wild stand on
-/// a boosted curve** and rung 3 a **managed rate**, so the ratio is a function of `B/K` rather than a
-/// config identity, and pinning it would pin the very conflation this slice removed. In its place each
-/// rung is pinned against **its own model** — strictly sharper than the ratio was — plus the
-/// monotonicity, which is the actual claim. The wild rung joins them: the ladder's bottom step was
-/// never covered here, and "tended beats wild" is exactly the incentive to cultivate at all.
+/// **Retargeted twice.** It once pinned `field / tended == 2.0`; slice 7 replaced that with each rung
+/// against its own model (rung 2 a curve, rung 3 a managed rate). **Flora Roster S2 then retired the
+/// tended regrowth boost** (`tended_regrowth_gain` → neutral `1.0`), so a *bare* tended patch — no crop
+/// committed here — now regrows exactly as fast as wild: the wild↔tended step is `≤`, not `<`.
+/// Tending's payoff over wild moved to **concentration + conversion** (a committed crop), pinned by
+/// `flora_commitment.rs` / `flora_roster.rs`; this bare-rung test keeps the strict `tended < Field`
+/// step (which the neutral gain only widens) and each rung against its own model.
 #[test]
 fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     /// One turn's Sustain harvest from the same primed patch, standing on the given rung, plus the
@@ -555,15 +554,14 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     // **Each rung against its own model — stated as what its config lever MEANS.**
     //
     // Rungs 1–2 are both *gathered*, off the same MSY curve at the same biomass, so the only thing
-    // between them is the tended curve's `r` multiplier: the rung-2 payoff **is** the gain, exactly and
-    // scale-freely. (Asserting the two absolute MSYs instead would need a second copy of the logistic
-    // curve out here — and pinning them against the forecast's own numbers would be two copies
-    // agreeing with each other while both disagree with the take, which this repo has paid for once.)
+    // between them is the tended curve's `r` multiplier: the bare rung-2 payoff **is** the gain, exactly
+    // and scale-freely. Since S2 that gain is neutral (`1.0`), so a bare tended patch reads exactly wild
+    // here — tending's payoff over wild is carried by a committed crop (conversion), not this curve.
     assert!(wild > 0.0, "baseline wild skim must be positive");
     assert!(
         (tended - gain * wild).abs() < 1e-3,
-        "a tended patch skims exactly `tended_regrowth_gain ×` the same patch wild — the rung's whole \
-         payoff, and the intensification incentive: {tended} vs {} (gain {gain})",
+        "a bare tended patch skims exactly `tended_regrowth_gain ×` the same patch wild — neutral at \
+         S2's gain of {gain}: {tended} vs {}",
         gain * wild
     );
     // Rung 3 is *managed*: a flat rate on the standing crop, drawn from no curve at all.
@@ -573,9 +571,11 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
         biomass * forage.cultivation.field_provisions_per_biomass
     );
 
-    // **And the ladder climbs.** This is the claim; the three pins above are how it is bought.
+    // **And the ladder climbs.** This is the claim; the three pins above are how it is bought. Since S2
+    // the bare wild↔tended step is `≤` (a neutral tended patch with no crop equals wild); the strict
+    // climb to the Field survives and the neutral gain only widens it.
     assert!(
-        wild < tended && tended < field,
+        wild <= tended && tended < field,
         "the plant ladder must be monotone: wild {wild} → tended {tended} → field {field}"
     );
 }
