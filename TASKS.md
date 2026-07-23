@@ -1155,10 +1155,26 @@ difference — an earlier draft proposed unifying it; that is **withdrawn**).
 - [ ] **S3 — a question, not a task.** Revisit rung 3's currency only if S1/S2 data says it is wrong.
   After the S1 withdrawal (rung 3's flat managed rate is correct, not a smell), the expectation is that
   this slice never happens. Close it rather than carry it if the F3/F4 data agrees.
-- [ ] **F3 — fodder, both halves.** Fodder store + fodder Field (plant side, no new plant knowledge —
-  `Sow` already exists), then the animal rung 4: `Foddering` (discovery id **2007**, next free) and
-  the `delivered_fodder_flow` term in `K_pen`. Measure: a fed pen on thin pasture is survivable but
-  *expensive*, never free.
+- [x] **F3 — fodder, the whole loop. SIM DONE** (worktree `flora-f3`; client half remains). The
+  contradiction in the design's §5 (the formula raised the *ceiling*, the properties described the
+  *feed bill* — different mechanisms) was resolved at planning: **fodder is delivered graze-flow** —
+  one term that raises `K_pen` **and** pays down the lossy provisions bill, because hay *is* feed.
+  Shipped whole: `hay_grass` (a fodder-dominant Field crop), a `FODDER` key on the existing band
+  `LocalStore` (persists free), the harvest routing **each yield-vector component to its own account**
+  (grain→FOOD, hay→FODDER, no `role` branch — §3 finally paying off), `Foddering` (discovery **2007**,
+  earned by *running a pen* — `animal:pen.earns_knowledge`), and the pen's hay draw. **The
+  convergence trap was the load-bearing risk:** `K` reads the *sustained field-output flow*, never the
+  store *stock* (a buffer reading would spike-then-collapse `K` and oscillate the coupled loop); the
+  *stock* only buffers the feed/overwinter. Proven: a barren feedlot converges to the same fixed point
+  (biomass 100, K 200) from over- and under-stocked starts. "Provisions stays lossy" holds (hay drawn
+  *before* the larder; `FODDER` never converts to `FOOD`), the pen net-positive floor needed **no**
+  change, and the ledger identity reconciles with a hayed pen's collapsed `penFeedUpkeep`. "Dead tile
+  can't hold a pen" was **deliberately relaxed** — a hay-fed drylot is real; land-relevance moves to
+  the *fields* (hay must be grown on farmland, delivered in range). Tuning flag for a later balance
+  pass: hay host weights kept **light** (0.15–0.30) because heavier presence flipped the staples'
+  rung-2 commit economics on their own flagship tiles. **Client half:** `fodderStore` on the band
+  panel, `fodderDraw` as "fed by hay" beside the bread bill, and `sowFodderPayoff` in the crop picker
+  (a hay crop reads `0×` on the provisions-only ratio without it).
 - [ ] **F4 — cash crops.** Trade-dominant vectors replacing the flat `trade_goods_per_biomass`; the
   calories-or-cash tension on rung 3's already-scarce good ground.
 - [ ] **F5 — mass-fill + client.** Full roster across all non-zero biomes, icons, labels, composition

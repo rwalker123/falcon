@@ -454,6 +454,10 @@ pub(crate) fn population_state(
             .as_ref()
             .map(|d| d.recurring)
             .unwrap_or(false),
+        // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
+        // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
+        // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
+        fodder_store: cohort.stores.get(FODDER).to_f32(),
     }
 }
 

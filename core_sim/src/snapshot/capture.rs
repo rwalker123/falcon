@@ -1462,6 +1462,19 @@ pub fn capture_snapshot(
                         // ratio can never disagree with the numbers it relates.
                         cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
                         sow_yield_ratio: commit_yield_ratio(sow, wild),
+                        // **What a hay Field of this plant would pay into the FODDER account** (F3) —
+                        // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays
+                        // with, so the picker can show hay's value where `sow_yield_ratio` reads 0×.
+                        // `0` for a staple (no fodder in its vector) or a plant that cannot Sow here.
+                        sow_fodder_payoff: commit_fodder_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        ),
                     }
                 })
                 .collect();

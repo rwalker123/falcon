@@ -78,6 +78,22 @@ pub const HERDING_DISCOVERY_ID: u32 = 2004;
 /// never be fenced. Next free id after `seed_selection` (2005).
 pub const PENNING_DISCOVERY_ID: u32 = 2006;
 
+/// Discovery id for the faction-level **Foddering** knowledge — the pen's *fodder-draw* unlock (Flora
+/// Roster F3, `docs/plan_flora_roster.md` §5.2). It is **NOT a new ladder rung**: a pen already
+/// exists, and Foddering only unlocks a penned herd's ability to draw the band's `FODDER` store as
+/// delivered graze-flow (the feed term, `advance_labor_allocation`, and the `K_pen` fodder term,
+/// `ecological_carrying_capacity`). Until a faction knows it a pen is byte-identical to its pre-F3
+/// footprint-only self.
+///
+/// **Earned by running a pen**: the `animal:pen` rung's `earns_knowledge` (`null` pre-F3) is now
+/// `foddering`, so working a *penned* herd under a stewardship policy teaches it via the existing
+/// `RungDef::knowledge_earned` seam — *you learn to hay a herd by keeping one*. Declared as a
+/// start-profile knowledge tag (`foddering` → this id in `data/start_profile_knowledge_tags.json`)
+/// purely so it is mappable, and deliberately **not** listed in any start profile's
+/// `starting_knowledge_tags` — nothing on the ladder is start-granted. Next free id after `penning`
+/// (2006).
+pub const FODDERING_DISCOVERY_ID: u32 = 2007;
+
 /// Coarse ecological health band derived from a group's biomass vs its carrying
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
 /// overhunting warning, and the seam the later domestication / industrialized-hunting
@@ -329,6 +345,40 @@ pub struct Herd {
     /// = the pasture feeds the pen for free; `0.0` = a barren footprint pays the full larder bill.
     /// Exported as `penPastureFraction`. `0.0` for an unpenned herd. **Not** snapshot-persisted.
     pub pen_pasture_fraction: f32,
+    /// Transient per-turn scratch: the hay this pen drew from its keeper band's `FODDER` store last
+    /// FEED (Flora Roster F3, §5.2), in fodder units. Written by the corral-tend branch of
+    /// `advance_labor_allocation` (Population); `0.0` for an unpenned herd, a keeper who does not know
+    /// Foddering, or a pen whose footprint already fed it. Exported as `fodderDraw` so the client can
+    /// show "fed by hay" beside the `penUpkeep` "fed by bread". **Not** snapshot-persisted (recomputed
+    /// each turn; the *store* itself rides `LocalStore`, which is persisted).
+    pub fodder_draw: f32,
+    /// Transient per-turn scratch: the **net** food/turn this pen's keeper hauls from the `FOOD` larder,
+    /// *after* the footprint's pasture and any drawn hay have paid their share (Flora Roster F3) — the
+    /// corral-tend branch's own `demand` local (`gross pen_upkeep × (1 − land_hay_fraction)`), in
+    /// **food** units and the exact number the branch bills. `0.0` when pasture and hay fully feed the
+    /// pen, or for an unpenned herd. Exported as `penLarderBill` — the render-ready larder term of the
+    /// "pasture NN% · hay X.X · larder Y.Y" feed split, so the client sums nothing. **Not**
+    /// snapshot-persisted (recomputed each turn, like `fodder_draw`/`pen_pasture_fraction`).
+    pub pen_larder_bill: f32,
+    /// Transient per-turn scratch: hay's contribution to this pen's feed, converted to
+    /// **food-equivalent** units — the food it *displaced* from the larder (`gross pen_upkeep ×
+    /// fodder_draw / grass_demand`, Flora Roster F3). [`Self::fodder_draw`] itself is in grass units
+    /// (~25× the food scale) and cannot share a row with the food-unit pasture/larder terms; this can.
+    /// `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is unpenned. Exported as
+    /// `penHayFood` — the hay term of the feed split. Written beside `fodder_draw`; **not**
+    /// snapshot-persisted. The three terms partition the gross bill:
+    /// `gross × pen_pasture_fraction + pen_hay_food + pen_larder_bill == gross` (± f32 epsilon).
+    pub pen_hay_food: f32,
+    /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's keeper band
+    /// — the per-turn hay output of the band's fodder Fields (Flora Roster F3, §5.3). Written *after*
+    /// the assignment loop in `advance_labor_allocation` (Population) and read the **next** turn by
+    /// `ecological_carrying_capacity` (Logistics) as the `K_pen` fodder-flow term. It is the **flow**,
+    /// deliberately NOT the store's **stock**: raising `K` off a built-up buffer would spike K → the
+    /// herd grows → the store empties → K collapses → starvation, an oscillation. The flow is what the
+    /// farming sustainably delivers, so the loop settles. `0.0` for an unpenned herd or one no hay
+    /// reaches. **Not** snapshot-persisted (derived) — a rehydrated pen reads `0.0` until its keeper
+    /// works a turn, so a rollback can only *shrink* K for a turn, never inflate it.
+    pub fodder_delivery_rate: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
@@ -457,6 +507,10 @@ impl Herd {
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
+            fodder_draw: 0.0,
+            pen_larder_bill: 0.0,
+            pen_hay_food: 0.0,
+            fodder_delivery_rate: 0.0,
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
             herded_fraction: FULLY_HERDED,
@@ -1185,6 +1239,12 @@ fn herd_from_state(state: &HerdState) -> Herd {
         // ExtendPen ring. The grace spares exactly that turn; a truly abandoned pen still escapes next.
         footprint_intake: 0.0,
         pen_pasture_fraction: 0.0,
+        // Transient F3 scratch — a rehydrated pen reads no hay draw and no fodder inflow until its
+        // keeper works a turn (so a rollback can only *shrink* K/feed for a turn, never inflate them).
+        fodder_draw: 0.0,
+        pen_larder_bill: 0.0,
+        pen_hay_food: 0.0,
+        fodder_delivery_rate: 0.0,
         corralled_tended_this_turn: true,
         pen_fed_fraction: PEN_FULLY_FED,
         herded_fraction: FULLY_HERDED,
@@ -1797,6 +1857,17 @@ fn ecological_carrying_capacity(
             );
         }
     }
+    // **The fodder-flow term** (Flora Roster F3, §5.3): delivered hay enters `K` at exactly the point
+    // graze does, because hay *is* feed. `fodder_delivery_rate` is the SUSTAINED inflow of the keeper
+    // band's hay Fields (written by `advance_labor_allocation`), NOT the store's stock — reading a
+    // built-up buffer would spike K and oscillate the coupled loop, while the flow is what the farming
+    // sustainably delivers, so it settles. It is `0.0` unless the keeper knows Foddering AND the herd
+    // is penned (the labor arm gates and stamps it), so a wild/unfoddered herd's `K` is byte-identical
+    // to its footprint-only self. Added to the graze flow BEFORE the density gain and the
+    // fodder-per-biomass division, so `K_pen = (footprint_flow + fodder_flow) / fodder_per_biomass`,
+    // which relaxes "a dead tile cannot hold a pen" into an honest feedlot: a barren footprint
+    // (`flow = 0`) carried entirely by delivered hay.
+    flow += herd.fodder_delivery_rate.max(0.0);
     // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the land
     // hold *more* animals, non-linearly by species — a corralled goat's fenced pasture supports
     // `pen_density ×` the animals a wild goat's would. Orthogonal to the r-gains `herd_ecology` folds
@@ -2569,6 +2640,27 @@ pub fn advance_husbandry(
                     // needs no reset — it is recomputed for every herd each turn in `advance_herd_grazing`
                     // and is not on the wire.)
                     herd.pen_pasture_fraction = 0.0;
+                    // Same reasoning for the F3 feed-split scratch (`fodder_draw` and its two derived
+                    // food-unit terms), all written ONLY in the corral-tend branch: clear them so an
+                    // escaped, now-mobile herd exports `0` for the whole "fed by pasture/hay/larder"
+                    // split — each of `fodderDraw`/`penHayFood`/`penLarderBill` reads "0 for an unpenned
+                    // herd" on the wire. (`fodder_draw` previously kept its stale value here; resetting
+                    // it alongside `pen_pasture_fraction` closes that gap.)
+                    herd.fodder_draw = 0.0;
+                    herd.pen_hay_food = 0.0;
+                    herd.pen_larder_bill = 0.0;
+                    // **The one F3 scratch field that feeds `K`, and the reason this reset matters most**
+                    // (Flora Roster F3, §5.3). `fodder_delivery_rate` is the sustained hay inflow the
+                    // labor arm stamps onto a *kept* pen; `ecological_carrying_capacity` adds it inside
+                    // the one `K` seam for *every* herd with `fodder_per_biomass > 0`, penned or not. An
+                    // escaped herd is no longer in any band's `kept_pens`, so the labor arm never
+                    // re-stamps it — without this reset it reverts to a mobile pastoral/wild herd still
+                    // carrying its old hay rate, and its roam-range `K` stays inflated by hay it no
+                    // longer receives (breaking the "a wild/unfoddered herd's `K` is byte-identical to
+                    // its footprint-only self" invariant at `ecological_carrying_capacity`). Logistics
+                    // runs before Population, so a still-kept pen is re-stamped the same turn; only a
+                    // genuinely escaped herd is zeroed here.
+                    herd.fodder_delivery_rate = 0.0;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",
