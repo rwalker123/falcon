@@ -8011,11 +8011,11 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # cycler swapping the panel subject must not carry one across.
     if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
         _send_party_quarry_id = ""
-    # DEEP-COPY the subject: the panel band must NOT alias `_selection.unit()` (the selection
-    # path passes it in), because selecting a foreign tile calls `_selection.unit().clear()` —
-    # which would empty a shared dict and blank the panel on its next stepper rebuild. The
-    # zone closures below also capture this stable copy, so they keep targeting the panel band
-    # regardless of the current selection.
+    # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
+    # selection path passes it in). The panel persists across selection changes, so it needs its
+    # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)
+    # must not mutate or blank it. The zone closures below also capture this stable copy, so they
+    # keep targeting the panel band regardless of the current selection.
     _band_labor.set_panel_band(unit.duplicate(true))
     # The vitals RichTextLabel rebuilds the food/morale/output tint context from scratch each render.
     _selected_band_food_turns = NAN

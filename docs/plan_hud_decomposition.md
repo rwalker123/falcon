@@ -46,9 +46,9 @@ state objects so that (a) every state transition happens in exactly one place, a
 to instead of being called imperatively.
 
 **Non-goals — Phase 0 changes no behaviour.**
-- No file is split; both models live in `Hud.gd` (as inner `class_name`d
-  `RefCounted`s in their own small scripts under `src/scripts/ui/hud/`, held as
-  members of `HudLayer`). See "Where the models live".
+- `Hud.gd` itself is not carved up. The two models are new small `RefCounted`
+  scripts under `src/scripts/ui/hud/`, held as members of `HudLayer`. See "Where
+  the models live".
 - The `changed` signal is **emitted but not yet consumed.** The existing
   direct-call refresh path (`_render_selection_panel`, `update_band_alerts`) is
   untouched. Consuming the signal to decouple refresh — and fix the flash — is
