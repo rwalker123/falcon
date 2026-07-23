@@ -289,13 +289,27 @@ func _ready() -> void:
 	# (a) A LUMPY hunt (gaps) beside a CONTINUOUS forage (every slot positive). The hunt row must gain a
 	# tick strip with visible gaps; the forage row must gain NONE (the gap rule); the merged projection
 	# must sawtooth upward (hauls > flat drain).
+	# `_arrivals_band_fixture` is the fixture that actually RENDERS the FOOD OUTLOOK chart (it carries
+	# `arrival_schedule`s; the plain `_band_fixture` does not, so its band zone has no chart at all).
+	# The TALL (L) shell shows the full chart; the height-capped T/B shells (top + bottom) land the band
+	# zone in the SHORT tier, where the chart is DROPPED and the role cards go hint-less. The
+	# content-fits assertion on the T/B frames is what proves that drop keeps the zone inside its box:
+	# ungated (the chart rendered at full height in the SHORT tier) it overruns the ~300px T/B cap by
+	# 115px, which is exactly the overflow the tier gating exists to prevent — and which the work-heavy
+	# `band_panel_work_wide` / `band_panel_parties_inspector_wide` states cannot catch (their big band's
+	# vitals carry no chart either).
 	_hud.update_band_alerts([_arrivals_band_fixture()])
+	_panel.set_active_tab(&"band")   # the narrow (L) shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_arrivals_left"},
-			{"edge": SIDE_TOP, "name": "band_panel_arrivals_top"}]:
+			{"edge": SIDE_TOP, "name": "band_panel_arrivals_top"},
+			{"edge": SIDE_BOTTOM, "name": "band_panel_arrivals_bottom"}]:
 		_panel.set_dock(state["edge"])
 		await _settle()
 		await _settle()   # let the deferred fit_content re-pack settle before capture
 		await _save(state["name"])
+		_assert_zones_within_bounds()
+		_assert_work_zone_readable()
+		_assert_zone_content_fits()
 
 	# (b) A band whose larder EMPTIES inside the horizon: sparse lumpy hauls under a heavy drain, so the
 	# walk hits 0 and the chart draws the dashed DANGER "empty ~turn N" marker.
@@ -438,10 +452,11 @@ func _ready() -> void:
 	_hud.update_herds(_herd_fixtures())
 
 	# (a) WIDE shell (bottom dock): the strip renders in the height-capped T/B shell too → the
-	# DELIVERING party's "Next delivery: ~14 food in 6 turns". Uses the work-heavy band fixture (the
-	# `band_panel_work_wide` config, whose band zone provably fits the ~300px T/B cap — `_band_fixture`'s
-	# richer FOOD OUTLOOK vitals do NOT, independent of the parties feature). The strip + a party row +
-	# footer fit because the strip replaces the bottom spacer (see `_build_parties_zone_content`).
+	# DELIVERING party's "Next delivery: ~14 food in 6 turns". Reuses the work-heavy band fixture (the
+	# `band_panel_work_wide` config) so the board is populated; its band zone fits the ~300px T/B cap
+	# for the same reason `_band_fixture`'s does — the SHORT tier drops the FOOD OUTLOOK chart (that
+	# gating is what `band_panel_arrivals_top`/`_bottom` guard with a chart-bearing fixture). The strip
+	# + a party row + footer fit because the strip replaces the bottom spacer (`_build_parties_zone_content`).
 	_hud.update_food_modules(_many_forage_modules())
 	_hud.update_band_alerts([_many_sources_band_fixture(), _hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_BOTTOM)

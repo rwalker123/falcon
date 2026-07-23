@@ -2988,7 +2988,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `expedition_target_herd` / `expedition_hunt_policy` / `expedition_carry_cap` and flowed onto the
   marker; `expedition_mission` also takes `"hunt"`, `expedition_phase` also takes
   `"hunting"`/`"delivering"`). A hunt party follows a migratory herd, accumulates food up to a carry
-  cap, and drops it at the band — the second verb on the same expedition machinery. Surfaced:
+  cap, and drops it at the band — the second verb on the same expedition machinery.
+  **The in-flight next-delivery forecast** (`PopulationCohortState.expeditionEtaTurns` /
+  `expeditionProjectedDelivery` / `expeditionRecurring`, decoded in `native/src/lib.rs` as
+  `expedition_eta_turns` / `expedition_projected_delivery` / `expedition_recurring`) is the client's
+  "Next delivery: ~N food in M turns" readout — see the parties inspector strip under Band/City. **All
+  three MUST be copied onto the unit marker in `MapView._rebuild_unit_markers`** (beside
+  `expedition_target_herd` / `expedition_carry_cap`), because the Occupants **detail panel** reads
+  `_selected_unit` — which is the marker, NOT the raw population dict — so a field the marker drops
+  renders the panel blank even while the Parties ROW (which reads the raw dict) shows it. This is the
+  drop-prone-marker-field bug class: `expedition_projected_delivery` is in `marker_field_guard`'s
+  `FRACTIONAL_ROUND_TRIP_KEYS` (a continuous float, must not `int()`-narrow), all three in
+  `PANEL_CONSUMED_KEYS`. Surfaced:
   (1) **Distinct map marker** (`MapView._draw_expedition_body`): a hollow 🏹 **bow disc** (vs the
   scout's ⚑ flag), keyed on `expedition_mission == "hunt"`. Phase read: `hunting` (gathering) draws a
   small red "working" cue ring; `delivering`/`returning` (hauling home) draw a green food pip.
@@ -3273,10 +3284,29 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   hover `✕` beside the `−` stepper would be a mis-click hazard, this is the labelled version. One row
   open at a time, and it COSTS board rows, which is why the capacity maths subtracts it.
 - **Zone `parties`** (`_build_parties_zone_content`): head + a `⋯` menu (`Recall all parties (n)`,
-  behind the same confirm), one row per party (mission glyph · subject · phase · an always-visible
-  recall `✕` at `PARTY_RECALL_REST_ALPHA`, brightening on hover — parties have no stepper and no
-  inspector, so it is their only removal path; the row BODY keeps the existing focus+select), and the
-  footer. The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
+  behind the same confirm), one row per party (mission glyph · subject · phase · a **DANGER-red**
+  recall `✕` — steady, full-opacity, reading as a destructive control like the Work inspector's
+  Unassign), an **inspector strip** the row body opens, and the footer.
+  **The row `✕` CONFIRMS before recalling** — `_confirm_recall_expedition(exp)` names the party
+  (`_herd_label_for_id` for a hunt, "scouting" for a scout) through the shared `_confirm_destructive`,
+  and every SINGLE-recall entry point (the row `✕`, the strip's Recall link, the Occupants drawer's
+  Recall button) routes through it; `_on_recall_expedition_pressed` stays the RAW emit, so "Recall all"
+  loops it under its OWN one confirm and never pops N prompts.
+  **The row BODY opens an inspector strip** (`_toggle_parties_inspector(str(entity))` → `_party_open_key`
+  → `_rerender_panel_allocation`, the exact `_work_open_key`/`_build_work_inspector` pattern): a bottom
+  `PanelContainer` (reusing `_work_inspector_stylebox`) with a titled header + close `✕`, the full
+  `_expedition_summary_lines` detail as dim status parts (Mission / Target / Policy / Phase / Carried /
+  **Next delivery** / Position — so the strip IS the detail panel), and `Jump to party` (INK) / `Recall`
+  (DANGER) inline links. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
+  strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
+  the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
+  (`↻` appended for a recurring/Market party), `~N food (raid underway)` when the ETA is unknown, and
+  `none — the herd has no surplus to raid` when the projection is genuinely `0` (an at-floor herd) — the
+  honest zero, never a silently blank line. `_build_parties_zone_content` orders
+  `head → rows → inspector(if open) → EXPAND_FILL spacer → footer`, so the Scout/Hunt footer stays
+  bottom-pinned with the strip under the clicked row; the strip's detail-line separation is tightened to
+  `PARTIES_INSPECTOR_LINE_SEPARATION` to keep row + strip + pinned footer inside the height-capped T/B
+  zone. The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
   and **both stay VISIBLE and DISABLED with their reason when idle == 0** (the section vanishing is
   what made expeditions look removed from the game). Pressing one swaps in the **compose sheet already
   on that mission**, titled `Setup a scouting/hunting party…`, with the `✕` as the only way back. The
@@ -3372,10 +3402,17 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus one Active-expeditions row per
   phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning / `▮▮ Awaiting orders` in amber)
   — read it at true size whenever a glyph changes. States `band_panel_arrivals_left` /
-  `band_panel_arrivals_top` are the **arrival-schedule** frame (a lumpy hunt row with a gappy tick strip
-  beside a continuous forage row that draws NONE, + the rising `FOOD OUTLOOK` sawtooth chart, tall and
-  wide), and `band_panel_arrivals_empty` is the emptying-larder case (the descending chart's dashed
-  `empty ~turn N` marker).
+  `band_panel_arrivals_top` / **`band_panel_arrivals_bottom`** are the **arrival-schedule** frame (a
+  lumpy hunt row with a gappy tick strip beside a continuous forage row that draws NONE, + the rising
+  `FOOD OUTLOOK` sawtooth chart, tall and wide), and `band_panel_arrivals_empty` is the emptying-larder
+  case (the descending chart's dashed `empty ~turn N` marker). **The T/B (`_top`/`_bottom`) frames are
+  the band-zone HEIGHT guard** — they render the chart-bearing `_arrivals_band_fixture` (NOT the
+  chartless `_band_fixture`) through `_assert_zone_content_fits`, so the SHORT-tier chart drop
+  (`_build_band_zone_content` gates `_build_food_outlook_block` behind `_band_zone_tier !=
+  BAND_ZONE_TIER_SHORT`) is actually asserted: forcing the chart ungated needs 415px in the ~300px T/B
+  box (115px over), and the tier gate is what makes it fit at 0 overflow while the tall L shell keeps the
+  full chart. Without a chart-bearing fixture in a T/B dock, `content-fits` was vacuously green (the
+  chartless fixtures never overflow).
 
 ## Inspector Panels
 

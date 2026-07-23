@@ -3543,6 +3543,31 @@ running after a rollback. `PopulationCohortState` also echoes `maxExpeditionPart
 per-band, populated for every cohort) so the client outfit stepper pre-clamps to
 `min(idle_workers, max_expedition_party_size)`.
 
+**In-flight next-delivery forecast — the twin of the pre-launch estimate, for a party already on the
+map** (`systems::expeditions::expedition_delivery`). The pre-launch `huntTripEstimates` answer "if I
+launch, what comes back?"; this answers "the party I already sent — when does its food land, and how
+much?" It reuses the SAME raid forward-sim: `hunt_trip_forecast_seeded(.., initial_larder)` is the
+existing `hunt_trip_forecast` body with a seedable starting larder (the public
+`hunt_trip_forecast` is now a thin zero-seed wrapper, so its callers are byte-identical), seeded with
+the party's current haul and run against the herd's REAL state (the forecast clones the herd, so it
+already starts from the live `hunt_credit`) — **forecast == actual, no second copy of the model.** The
+ETA decomposes by `ExpeditionPhase`: `Returning`/`Delivering` → the walk home with what it carries;
+`Hunting`/`Outbound`/`Awaiting` → remaining travel-to-herd + the seeded raid's `turns_to_fill` + the
+walk home. It is a deliberate **approximation** (the home band is nomadic, and travel is measured as
+`hex_distance / band_move_tiles_per_turn` while `advance_band_movement` steps the axes independently)
+— honest for a "~N turns" readout, not turn-perfect; the pin test (`expedition_hunt.rs`) puts the home
+band on the herd's row so the return leg is exact. Scouts deliver map data, not food → `None`.
+Computed at snapshot capture (which has the `HerdRegistry`, the configs, and a cohort→tile map for the
+home band's live position) and exported as three **append-only** `PopulationCohortState` fields
+(placed after the last field, `foodIncomeAverage`, to keep FlatBuffers ids stable):
+**`expeditionEtaTurns:uint`** (turns until the carried food reaches the home larder; `0` =
+unknown/n-a — a scout, a normal band, or a trickle-fill raid with no finite ETA),
+**`expeditionProjectedDelivery:float`** (`carried + still-to-take`, pack-capped — `0` means the herd
+is at/below the policy floor with no surplus to raid), and **`expeditionRecurring:bool`**
+(`FollowPolicy::expedition_recurring()` — the single source, `matches!(self, Market)`, since Market is
+the only policy that relaunches for repeated trips; Sustain/Surplus/Eradicate fold home after one).
+Client-consumed only (not persisted). See the client's parties inspector strip + "Next delivery" line.
+
 **Pre-launch export — the client does ZERO arithmetic.** The launch forecast above only rides the
 *post-commit* `ExpeditionSent` feed line; the outfit UI needs the trip's economics **before** the
 player commits workers, as they pick party size / herd / policy. The expedition's trip length is **not
