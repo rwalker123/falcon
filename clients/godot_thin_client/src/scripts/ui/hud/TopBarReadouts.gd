@@ -1,12 +1,10 @@
 class_name TopBarReadouts
 extends RefCounted
 
-## Owns the TOP-BAR FACTION READOUTS cluster (HUD decomposition Phase 1a,
-## docs/plan_hud_decomposition.md): the Sedentarization meter, the demographics line, the discovered
-## Wondrous-Sites strip, the intensification-ladder knowledge strip, and the left-dock stockpile panel.
-## Extracted from HudLayer on the LegendController/CommandFeedController idiom — Hud holds one of these
-## as `_topbar` and delegates the snapshot `update_*` handlers to it. Behaviour is unchanged; only the
-## ownership moved.
+## Owns the TOP-BAR FACTION READOUTS cluster (docs/plan_hud_decomposition.md): the Sedentarization
+## meter, the demographics line, the discovered Wondrous-Sites strip, the intensification-ladder
+## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
+## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
 ## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Three helpers stay
 ## on HudLayer because they are shared beyond this cluster and are passed in as Callables: `_meter_bar`

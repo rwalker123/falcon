@@ -1769,7 +1769,7 @@ func _ready() -> void:
     _band_labor = HudBandLaborState.new()
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    # Top-bar faction readouts (Phase 1a) — constructed AFTER _command_feed so it can route the
+    # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
     # knowledge-unlock nudge straight through it. The three shared-beyond-cluster helpers (_meter_bar,
     # _format_stockpile_label, _progress_percent) stay on HudLayer and are passed as Callables.
     _topbar = TopBarReadouts.new(
