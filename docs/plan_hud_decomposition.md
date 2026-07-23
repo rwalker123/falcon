@@ -20,10 +20,16 @@ is dissolved **first**, in place, before any code moves files.
   god-variables into two encapsulated `RefCounted` state models, *in place* inside
   `Hud.gd`. No file split, no behaviour change. This is the durable artifact every
   later phase consumes, and the one piece that is never rewritten by extraction.
-- **Phase 1 — Low-friction controllers.** Extract the self-contained readout
-  clusters (top-bar readouts; turn-orb / attention / fork) into `RefCounted`
-  controllers on the established `LegendController` idiom. ~600 lines out, near-zero
-  risk, proves the pattern on this file.
+- **Phase 1 — Low-friction controllers**, split into two PRs after the cluster map
+  showed the turn-orb cluster is more coupled than the readouts:
+  - **1a — Top-bar readouts.** Sedentarization / demographics / discoveries /
+    intensification / stockpiles → one `RefCounted` controller on the
+    `LegendController` idiom. Genuinely self-contained; the pattern-proving PR.
+  - **1b — Turn orb / attention / fork.** The orb + fork panel + attention
+    *assembly* extract, but the cluster keeps two seams to band/labor:
+    `_on_turn_orb_focus` routes into band-panel helpers, and `_band_attention` is
+    written by `update_band_alerts` and only read by the orb. Done with a
+    `set_band_attention()` seam + relayed signals — its own focused PR.
 - **Phase 2 — The selection core.** Extract the SelectionCard (chips / subject
   list / drawer) and the drawer/allocation builders it calls, reacting to the
   Phase-0 selection model's `changed` signal instead of being imperatively
@@ -262,12 +268,22 @@ this lands on the `hud-decompose-phase0-state` branch already cut for it.)
 
 ## Phases 1–3 (sketch — specified when their turn comes)
 
-- **Phase 1 — low-friction controllers.** Top-bar readouts (sedentarization,
-  demographics, discoveries, stockpiles, intensification strip) and the turn-orb /
-  attention / fork cluster each become a `RefCounted` controller handed its nodes
-  in a constructor, `HudLayer` keeping a thin delegating method (the
-  `LegendController` template). ~600 lines out; near-zero shared state; the
-  `_band_attention` plumbing from invariant 8 settles here.
+- **Phase 1 — low-friction controllers (two PRs).** The cluster map showed the
+  turn-orb cluster is more coupled to band/labor than the readouts, so:
+  - **1a** — top-bar readouts (sedentarization, demographics, discoveries,
+    intensification strip, stockpiles) → one `RefCounted` controller handed its
+    top-bar label nodes in a constructor, `HudLayer` keeping thin delegators (the
+    `LegendController` template). The build-stamp overlay and zoom rail stay on
+    `HudLayer` (node-lifecycle / HudLayer-signal-bound; distinct concerns).
+    `update_overlay` stays a `HudLayer` fan-out (labels via the controller, plus
+    `_band_labor.set_turn` + `turn_orb.set_turn`).
+  - **1b** — turn orb / attention / fork. The controller owns the orb wiring, the
+    fork panel, and the attention *assembly* (`_push_attention` /
+    `_pending_fork_attention`); `update_band_alerts` stays on `HudLayer` and feeds
+    the band half via `set_band_attention()`; the orb's outward signals
+    (`answer_fork_requested`, `next_turn_requested`, focus routing into the
+    band-panel helpers) are relayed through `HudLayer`. The `_band_attention`
+    plumbing from Phase-0 invariant 8 settles here.
 - **Phase 2 — the selection core + the flash fix.** The SelectionCard (chips /
   subject list / drawer) and the drawer/allocation builders extract into a
   controller that **subscribes to `HudSelectionState.changed`** and updates
