@@ -1280,6 +1280,14 @@ impl FollowPolicy {
         !matches!(self, FollowPolicy::Eradicate)
     }
 
+    /// Does an expedition under this policy **relaunch** for repeated trips after each delivery,
+    /// rather than folding home after one? Only `Market` relaunches — see the `relaunch` arm of
+    /// `advance_expeditions` (Population). Stated here as the single source so the snapshot's
+    /// in-flight delivery forecast can't drift from the phase machine.
+    pub fn expedition_recurring(&self) -> bool {
+        matches!(self, FollowPolicy::Market)
+    }
+
     /// Policies a **Forage** assignment accepts: the four extractive rungs plus the plant branch's
     /// two investment rungs, `Cultivate` (rung 2) and `Sow` (rung 3). `Tame`/`Corral` are animal-only
     /// investments — a forage assignment carrying one is rejected at `assign_labor` (and defensively

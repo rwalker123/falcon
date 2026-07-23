@@ -664,6 +664,13 @@ table PopulationCohortState {
   // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
   // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
   foodIncomeAverage:float = 0 (deprecated);
+  // In-flight hunt-party delivery forecast (the client's "Next delivery: ~X food in ~N turns" drawer
+  // line) — the in-flight twin of the pre-launch `huntTripEstimates`. Computed at capture by
+  // `systems::expeditions::expedition_delivery`. All three are 0/false for a scout, a normal band, or
+  // a party whose delivery can't be projected. Append-only.
+  expeditionEtaTurns:uint = 0;           // turns until the carried food reaches the home larder; 0 = unknown / n/a
+  expeditionProjectedDelivery:float = 0; // food that delivery will contain (carried + still-to-take, pack-capped)
+  expeditionRecurring:bool = false;      // party relaunches for repeated trips after delivering (Market)
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

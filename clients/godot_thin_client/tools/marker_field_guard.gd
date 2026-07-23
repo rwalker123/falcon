@@ -70,6 +70,9 @@ const PANEL_CONSUMED_KEYS := [
 	"expedition_target_herd", # hunt expedition target herd (panel + marker)
 	"expedition_hunt_policy", # hunt expedition policy (panel readout)
 	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
+	"expedition_eta_turns",           # hunt expedition next-delivery ETA (detail panel Next-delivery line)
+	"expedition_projected_delivery",  # hunt expedition next-delivery forecast (detail panel Next-delivery line)
+	"expedition_recurring",           # hunt expedition recurring ↻ badge (detail panel Next-delivery line)
 	"home_band_entity",       # Band/City panel groups a band's active expeditions by this
 	# Global config levers echoed on every cohort. NEITHER computes an expedition's trip length —
 	# that is a pure lookup into the herd's `hunt_trip_estimates` (Hud._hunt_trip_forecast), which
@@ -117,6 +120,10 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"pen_feed_upkeep": 1.7425,
 	# Expedition + config levers that are `float` in the schema (carry caps, rates, move speed).
 	"expedition_carry_cap": 16.25,
+	# Next-delivery projected food — a `float` copied onto the marker, so it must survive un-truncated
+	# (the detail panel reads it off `_selected_unit`). `expedition_eta_turns` is an integer count and
+	# `expedition_recurring` a bool → presence-only, NOT here.
+	"expedition_projected_delivery": 14.5,
 	"hunt_per_worker_provisions": 0.8125,
 	"expedition_per_worker_carry": 4.375,
 	"band_move_tiles_per_turn": 3.5,
@@ -163,6 +170,8 @@ const FIXTURE_ENTRY := {
 	"max_expedition_party_size": 8,
 	"expedition_target_herd": "game_deer_07",
 	"expedition_hunt_policy": "surplus",
+	"expedition_eta_turns": 6,       # int count → presence + _expect_int
+	"expedition_recurring": true,    # bool → presence + explicit check
 	"home_band_entity": 7777,
 	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
 	"expedition_viability_warn_turns": 20,
@@ -214,8 +223,11 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_hunt_policy", "surplus")
 	_expect_int(marker, "home_band_entity", 7777)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
+	_expect_int(marker, "expedition_eta_turns", 6)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
+	if not bool(marker.get("expedition_recurring", false)):
+		_fail("expedition_recurring did not round-trip to true (defaulted?)")
 
 	# 3. Fractional round-trip guard: a continuous field must NOT be narrowed by the marker copy.
 	for key in FRACTIONAL_ROUND_TRIP_KEYS:
