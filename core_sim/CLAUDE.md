@@ -741,6 +741,7 @@ every one of these is honored by *shaping the heightfield*, never by editing the
 | `continental_tilt_strength` | **0.0 (off)** | **Per-continent tilt** — a directional gradient across each centre, its heading hashed per centre from the world seed, windowed by `1 − t^4` so it vanishes at the rim. A dome sheds water in every direction; a *tilted* surface drains one way. Ships as a **tilted trough**, not a tilted plane: `heightfield::CONTINENT_TROUGH_GAIN` (0.5) lifts the ground away from the drainage axis, because a bare tilt gives **parallel** flow (many short rivers) rather than convergence onto a trunk. **Both presets ship it at `0.0`**: at `2.0` it buys one extra seed-with-a-river in six but fuses continents into a supercontinent, collapsing `polar_contrast`'s fold belts by 85% (see the note below). The machinery is retained, live and inert at zero — raising it is how you get the drainage back, at that cost. |
 | `continental_spine_amplitude` | 0.35 | **Ridged spine** — ridged noise gated to the continent interiors (`clamp(bias, 0, 1)`), so a landmass carries an internal **divide** with two drainage sides instead of one summit. Also the term that keeps mountain ranges narrow (see below). |
 | `continental_spine_frequency` | 2.2 | Cycles of spine noise across the map — roughly how many range-scale divides a continent can carry. |
+| `continental_basin_amplitude` | **0.4** (earthlike; polar_contrast 0.0/off) | **The lake lever.** How far the continent *interior* is planed down toward the coastline contour (`bias -= amplitude × bias.clamp(0, 1)`) — a broad near-sea-level interior plateau where the field's own fine-scale noise makes many small **enclosed** lakes. Gated to the interior (`bias ≤ 0` untouched), so it raises lake share **without** eroding the coast — unlike `continental_weight`, which lowers everything and costs cold-ocean seal habitat. `0.0` is byte-identical to no term. Earthlike median lake share ~1.5% → ~2.7%. See "Lakes are emergent" → "Abundance is the interior sink". |
 | `coastline_roughness` | 0.05 | High-frequency shoreline raggedness, applied to the field **before** `land_contour`. Replaces the retired `macro_land.jitter`, which perturbed the mask's *ranking* instead of the field and thereby decoupled the two. |
 
 > `macro_land.jitter` **no longer exists** and must not be reintroduced — it is the specific lever
@@ -826,12 +827,42 @@ writes elevation and re-derives:
 > is honest hydrology. **Do not lower a discharge threshold to put rivers on puddles** — grow the
 > lakes and the rivers follow.
 >
-> **The tectonic baselines moved with this** (earthlike fold 2326 → 2652, `polar_fold` 613 → 1158;
-> `polar_contrast` fold 3004 → 2840, fault 702 → 889) and were re-pinned. Not incidental: plates are
-> area-bucketed from land **connected-components**, so cutting straits fragmented land and the
-> fold-belt network is downstream of that. Any future stage that edits the coastline moves the
-> mountains too — the same coupling the `continental_tilt_strength` note describes from the other
-> direction.
+> #### Abundance is the interior sink, not a repair pass
+>
+> Deleting the carver stopped SUBTRACTING lakes; it did not make the heightfield PRODUCE enough. The
+> per-seed distribution stayed heavily right-skewed — **median ~1.5% of land, a third of maps under
+> 1%** — so a playtester still read the map as lake-poor. The abundance lever is
+> **`macro_land.continental_basin_amplitude`** (`heightfield::apply_continental_bias` step 4,
+> earthlike **0.4**): it planes the continent *interior* down toward the coastline contour
+> (`bias -= amplitude × bias.clamp(0, 1)`), so the top of the dome becomes a broad near-sea-level
+> plateau where the field's own fine-scale fbm dips below the contour in many small **enclosed** pools.
+> Median lake share rises to **~2.7% (mean ~3.4%, 24 seeds)** with **0 dry maps**.
+>
+> **Why the interior sink and not one of the obvious alternatives — all measured, all rejected:**
+> - **The strait carver's inverse (carve discrete bowls).** This is the shape the term *started* as,
+>   and the config name still says "basin". A bowl gouged into high interior drains to the sea and
+>   reads as a coastal inlet (ocean), not a lake — it barely moved the lake count at any depth or
+>   frequency. A lake needs a broad near-contour *area*, not a deep pit.
+> - **Lowering `continental_weight`.** It works (it lowers the interior, the same mechanism) — but it
+>   scales the *whole* envelope, so it also flattens the cold-ocean coastline, which **halved seal
+>   spawns** (`fauna_coastal_habitat` measured 14 → ~6, under its guard). The interior sink's
+>   `bias.clamp(0, 1)` gate pins the coast (`bias ≤ 0` untouched), so it raises lakes with seals and
+>   `realized_land_fraction` both **unchanged and green** — that gate is the whole reason it is a
+>   separate term.
+> - **Raising `sea_level` / lowering `target_land_pct`.** Inert / just adds ocean — the contour anchor
+>   holds the land∶water split regardless, and extra water goes to the sea, not enclosed basins.
+>
+> Guarded by `core_sim/tests/lake_abundance.rs` (sweep-median floor, the lake analog of the seal
+> pinhole guard) — the tripwire the carver era lacked.
+>
+> **The tectonic baselines moved twice and were re-pinned** — for the carver deletion and again for
+> the interior sink (both earthlike-only; `polar_contrast` carries neither). Not incidental: plates are
+> area-bucketed from land **connected-components**, so anything that changes how land coheres — cutting
+> straits, or planing the interior toward the contour — moves the fold/fault/uplift network downstream
+> of it. The re-pinned centres are the tuned seed's deterministic output and the single-seed counts are
+> high-variance, so read no *direction* into them; the stable guards are the continent *count* (median
+> 3 at large/huge), seals, and land fraction, each in its own test. Same coupling the
+> `continental_tilt_strength` note describes from the other direction.
 
 The active preset's `sea_level` is carried on the `ElevationField` resource, attached at the field's origin in `build_elevation_field` and propagated through `restamp_elevation` (`heightfield.rs` / `mapgen.rs`; falls back to `DEFAULT_SEA_LEVEL` = 0.6 only when no preset resolves — which also logs a `warn`, because a preset-less field skips erosion and the contour anchor entirely). It is exported in the snapshot as `ElevationOverlay.seaLevel` — **normalized to the overlay's [minValue, maxValue] sample scale AND quantized onto the same u16 lattice as the samples** (`snapshot/map.rs` `elevation_overlay_from_field`, `ELEVATION_SAMPLE_SCALE`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
 

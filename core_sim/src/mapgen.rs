@@ -3418,56 +3418,66 @@ mod tests {
         );
     }
 
-    /// Centres re-pinned when `connect_inland_seas_via_straits` was deleted. The carver used to cut
-    /// land corridors from landlocked water out to the ocean; without it the land is markedly less
-    /// fragmented, and [`derive_mountain_mask`] buckets plate count by land connected-component
-    /// area — so the plate decomposition, and with it the whole fold/fault network, genuinely
-    /// changes. This is a real terrain change, not unexplained drift. Tolerances are unchanged.
+    /// Centres re-pinned for two real terrain changes (tolerances unchanged both times):
+    ///
+    /// 1. `connect_inland_seas_via_straits` was deleted — without the carver cutting land corridors
+    ///    from landlocked water to the ocean, the land is less fragmented.
+    /// 2. `macro_land.continental_basin_amplitude` was set to 0.4 — the interior-sink lake term planes
+    ///    the continent interiors down toward the contour, which lifts earthlike lake share from
+    ///    median ~1.5% to ~3.0% (24 seeds, Standard) *without* touching the coast.
+    ///
+    /// [`derive_mountain_mask`] buckets plate count by land connected-component area, and both moves
+    /// reshape how land coheres, so the plate decomposition — and with it the whole fold/fault/uplift
+    /// network — changes. **These centres are the tuned seed's deterministic output, not a trend** —
+    /// the single-seed counts are high-variance (see `polar_contrast_fold_investigation`), so read no
+    /// direction into them. What is stable across seeds and is the actual guard on this change: the
+    /// continent *count* holds at the large/huge sizes (median 3), and seals + land fraction stay in
+    /// their own tests. Not unexplained drift — a measured terrain change.
     #[test]
     fn earthlike_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64));
         assert!(
-            (metrics.land_ratio - 0.4033).abs() <= 0.01,
+            (metrics.land_ratio - 0.4037).abs() <= 0.01,
             "earthlike land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 2652).abs() <= 32,
+            (metrics.fold as isize - 4391).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 328).abs() <= 16,
+            (metrics.fault as isize - 293).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 19).abs() <= 6,
+            (metrics.volcanic as isize - 25).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 692).abs() <= 32,
+            (metrics.dome as isize - 584).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 1158).abs() <= 32,
+            (metrics.polar_fold as isize - 1506).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 174).abs() <= 16,
+            (metrics.polar_fault as isize - 115).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 161).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 384).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 32).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 65).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );

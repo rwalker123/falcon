@@ -21,7 +21,7 @@
       "river_class_navigable_min_discharge": 25.0,
       "river_navigable_enabled": true,
       "river_navigable_min_hexes": 3,
-      "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "continental_weight": 0.5, "continental_radius": 0.35, "continental_falloff_exponent": 1.5, "continental_warp_amplitude": 0.18, "continental_warp_frequency": 1.6, "continental_tilt_strength": 0.0, "continental_spine_amplitude": 0.35, "continental_spine_frequency": 2.2, "coastline_roughness": 0.05 },
+      "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "continental_weight": 0.5, "continental_basin_amplitude": 0.4, "continental_radius": 0.35, "continental_falloff_exponent": 1.5, "continental_warp_amplitude": 0.18, "continental_warp_frequency": 1.6, "continental_tilt_strength": 0.0, "continental_spine_amplitude": 0.35, "continental_spine_frequency": 2.2, "coastline_roughness": 0.05 },
       "erosion": { "enabled": true, "iterations": 40, "erodibility": 0.1, "area_exponent": 0.5, "slope_exponent": 1.0, "timestep": 0.1, "min_slope": 1.0e-4, "fill_epsilon": 1.0e-6, "diffusivity": 1.0, "incision_floor": 0.0, "anchor_contour_to_sea_level": true },
       "shelf": { "width_tiles": 2, "slope_width_tiles": 3, "width_frac": 0.040, "width_exp": 0.4, "min_width_tiles": 1.0, "coast_height_threshold": 0.10 },
       "islands": { "continental_density": 0.0025, "oceanic_density": 0.0012, "fringing_shelf_width": 2, "min_distance_from_continent": 12, "island_peak_margin": 0.06 },

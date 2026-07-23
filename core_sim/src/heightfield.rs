@@ -313,6 +313,16 @@ fn apply_continental_bias(
     let spine_amplitude = cfg.continental_spine_amplitude.max(0.0);
     let spine_frequency = cfg.continental_spine_frequency.max(0.0);
     let spine_seed = mix_seed(CONTINENT_SPINE_SEED_SALT, seed, 0);
+    let basin_amplitude = cfg.continental_basin_amplitude.max(0.0);
+    // One line per worldgen recording the lake lever the code actually saw. Doubles as a build probe:
+    // if this line is ABSENT from a server's log, that binary predates the interior-sink term; if it
+    // reads `basin_amplitude=0`, the config never reached worldgen. See `map_preset.rs`
+    // `continental_basin_amplitude` and CLAUDE.md → "Lakes are emergent".
+    tracing::info!(
+        target: "shadow_scale::mapgen",
+        basin_amplitude,
+        "mapgen.macro_land.interior_sink"
+    );
     let aspect = width as f32 / height.max(1) as f32;
 
     for y in 0..height {
@@ -404,6 +414,25 @@ fn apply_continental_bias(
                     .clamp(0.0, 1.0)
                     .powf(CONTINENT_SPINE_RIDGE_EXPONENT);
                 bias += spine_amplitude * ridged * bias.clamp(0.0, 1.0);
+            }
+
+            // (4) The interior sink — the endorheic-lake term. It planes the continent INTERIOR down
+            // toward the contour, `bias -= basin_amplitude * bias.clamp(0, 1)`: the top of the dome
+            // becomes a broad near-sea-level plateau while the coastal rim (`bias ≤ 0`, gate 0) is
+            // left exactly as it was.
+            //
+            // Why this, and not discrete carved bowls (the shape this term started as, and the reason
+            // the config name says "basin"): a bowl gouged into high interior mostly drains to the sea
+            // and reads as a coastal inlet — measured, it barely moved the lake count at any depth.
+            // What actually makes lakes is a large area sitting *just above* the contour, where the
+            // field's own fine-scale fbm dips below it in many small enclosed pools; lowering the
+            // interior plateau is what creates that zone. It is the same mechanism as reducing
+            // `continental_weight`, with one decisive difference: the `bias.clamp(0, 1)` gate pins the
+            // COAST (the dome is dented, not shrunk), so the cold-ocean coastline the seal habitat
+            // sits on is untouched — which is the whole reason this exists as its own term rather than
+            // as a smaller `continental_weight`.
+            if basin_amplitude > 0.0 {
+                bias -= basin_amplitude * bias.clamp(0.0, 1.0);
             }
 
             values[y * width + x] += weight * bias;

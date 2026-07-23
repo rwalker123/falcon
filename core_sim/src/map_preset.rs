@@ -690,6 +690,17 @@ pub struct MacroLandConfig {
     /// divides a continent can carry.
     #[serde(default = "default_continental_spine_frequency")]
     pub continental_spine_frequency: f32,
+    /// **Interior-sink amplitude — the lake lever.** How far the continent *interior* is planed down
+    /// toward the coastline contour, in the envelope's own `[-1, 1]` units (`bias -= amplitude ×
+    /// bias.clamp(0, 1)`): `0.0` leaves the dome as-is, `1.0` would flatten its whole interior to the
+    /// coast level. Lowering the interior plateau makes a broad near-sea-level zone where the field's
+    /// own fine-scale noise dips below the contour in many small **enclosed** pools — i.e. lakes. It
+    /// is the same mechanism as reducing `continental_weight`, but the gate pins the COAST (`bias ≤ 0`
+    /// is untouched), so it raises lake share **without** eroding the cold-ocean coastline the seal
+    /// habitat depends on — the whole reason it is its own term. `0.0` (the default) is byte-identical
+    /// to no term at all. See `core_sim/CLAUDE.md` → "Lakes are emergent".
+    #[serde(default)]
+    pub continental_basin_amplitude: f32,
     /// Amplitude of the high-frequency noise that gives the coastline its raggedness, applied to the
     /// field **before** `land_contour`. This replaces the retired land-mask `jitter`, which
     /// perturbed the mask's *ranking* rather than the field — reordering the very surface the
@@ -730,6 +741,7 @@ impl Default for MacroLandConfig {
             continental_tilt_strength: default_continental_tilt_strength(),
             continental_spine_amplitude: default_continental_spine_amplitude(),
             continental_spine_frequency: default_continental_spine_frequency(),
+            continental_basin_amplitude: 0.0,
             coastline_roughness: 0.05,
         }
     }
