@@ -1741,18 +1741,11 @@ var right_dock: PanelDock
 # insets by the summed per-edge totals.
 var _reservations: Dictionary = {}
 # ---- The Telling (docs/plan_the_telling.md) --------------------------------
-# The player faction's pending forks + stance axes, cached from the snapshot. `_band_attention` is
-# the band/expedition half of the orb registry, cached so a fork arriving on its own delta can
-# rebuild the registry WITHOUT re-running the band producers (set_attention is a full replace, and
-# _band_labor.prev_band_sizes() is consumed by the losing-population producer, so re-invoking update_band_alerts
-# would silently eat that alert).
-var _pending_forks: Array = []
-var _stance_axes: Array = []
-var _band_attention: Array = []
-# Beats already auto-opened this session, so a fork the player dismissed does not re-open on
-# every subsequent snapshot. Keyed by beat_id.
-var _auto_opened_forks: Dictionary = {}
-var _fork_panel: NarrativeForkPanel = null
+# The turn-orb / attention / fork cluster (HUD decomposition Phase 1b, docs/plan_hud_decomposition.md).
+# The pending forks, stance axes, the cached `_band_attention` band half, the auto-opened set, and the
+# fork panel all live in the controller now; `update_band_alerts` feeds its band half via
+# `set_band_attention`, and the five reflective methods are thin delegators below.
+var _turnorb: TurnOrbController = null
 # The floating compose sheet + which source it is composing. `_compose_kind` is one of the
 # COMPOSE_KIND_* constants; `_compose_subject` is the source key (a "x,y" tile key or a herd id), so
 # a per-snapshot refresh can tell "the same source, restated" from "a different source, gone".
@@ -1781,10 +1774,15 @@ func _ready() -> void:
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
     _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label)
+    # Turn orb / attention / fork — constructed AFTER _telling and _command_feed (it needs both), handed
+    # the HUD CanvasLayer as the host it parents the fork panel into. It emits its OWN signals; HudLayer
+    # relays each onto the signals Main connects to (the controller never emits a HudLayer signal).
+    _turnorb = TurnOrbController.new(turn_orb, self, _telling, _command_feed)
+    _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
+    _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
+    _turnorb.focus_requested.connect(_on_turn_orb_focus)
     _load_ui_balance_config()
     _connect_zoom_rail()
-    _connect_turn_orb()
-    _ensure_fork_panel()
     _setup_tooltip()
     _legend.refresh_rows()
     _refresh_campaign_label()
@@ -2394,8 +2392,7 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     # _reconcile_pending, called from update_band_alerts later in the same snapshot cycle) stay here.
     _topbar.render_overlay(turn, metrics)
     _band_labor.set_turn(turn)
-    if turn_orb != null:
-        turn_orb.set_turn(turn)
+    _turnorb.set_turn(turn)
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
 ## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
@@ -2447,180 +2444,29 @@ func _connect_zoom_rail() -> void:
     if zoom_fit_button != null and not zoom_fit_button.is_connected("pressed", Callable(self, "_on_zoom_fit_pressed")):
         zoom_fit_button.pressed.connect(_on_zoom_fit_pressed)
 
-## Wire the turn orb: it re-emits the existing advance/jump signals, so the Main
-## wiring (next_turn_requested / alert_focus_requested → MapView.focus_on_tile) is
-## unchanged — the orb just replaces the old advance-turn button as their source.
-func _connect_turn_orb() -> void:
-    if turn_orb == null:
-        return
-    if not turn_orb.is_connected("focus_requested", Callable(self, "_on_turn_orb_focus")):
-        turn_orb.focus_requested.connect(_on_turn_orb_focus)
-    if not turn_orb.is_connected("advance_requested", Callable(self, "_on_turn_orb_advance")):
-        turn_orb.advance_requested.connect(_on_turn_orb_advance)
-    if not turn_orb.is_connected("panel_requested", Callable(self, "_on_turn_orb_panel_requested")):
-        turn_orb.panel_requested.connect(_on_turn_orb_panel_requested)
+# ---- The Telling: turn-orb / attention / fork delegators -------------------
+# The cluster lives in `_turnorb` (TurnOrbController, HUD decomposition Phase 1b). These five methods
+# stay reachable on HudLayer because Main reaches them by reflection; each is a thin delegator.
 
-# ---- The Telling: the fork decision surface --------------------------------
-
-## Build the narrative-fork panel once. It is a child of the HUD CanvasLayer itself, NOT of
-## `layout_root`: the panel is a modal overlay over the whole window, so it must not inset with
-## the reserved docks the way the layout column does. Added last so it draws above every card.
-func _ensure_fork_panel() -> void:
-    if _fork_panel != null:
-        return
-    _fork_panel = NarrativeForkPanel.new()
-    _fork_panel.name = "NarrativeForkPanel"
-    _fork_panel.answer_selected.connect(_on_fork_answer_selected)
-    add_child(_fork_panel)
-
-## Cache the PLAYER faction's pending forks and rebuild the orb registry.
-##
-## The caller only invokes this when the snapshot actually CARRIES the key (deltas omit an
-## unchanged field), so this is never reached with "absent means cleared" semantics.
 func update_pending_forks(forks_variant: Variant) -> void:
-    _pending_forks = _faction_rows(forks_variant, "forks")
-    _push_attention()
-    _maybe_auto_open_fork()
+    _turnorb.update_pending_forks(forks_variant)
 
-## Cache the PLAYER faction's stance axes — what the people's behaviour and their answers together
-## say about who they are. Displayed by the fork panel; no other consumer yet.
 func update_stance_axes(axes_variant: Variant) -> void:
-    _stance_axes = _faction_rows(axes_variant, "axes")
+    _turnorb.update_stance_axes(axes_variant)
 
-## The player faction's narrator MEDIUM — oral saga → painted chronicle → written record.
-##
-## Follows the `sedentarization` ingest precedent exactly: a per-faction wire array, scanned for
-## PLAYER_FACTION_ID. The caller only invokes this when the snapshot actually CARRIES the key
-## (a delta omits an unchanged field), so absence means "unchanged" and never "cleared".
-##
-## Presentational only — it never selects different copy. Both narrative surfaces take it, so the
-## panel's title/accent and the fork panel's header age together rather than drifting apart.
 func update_voice_medium(medium_variant: Variant) -> void:
-    if not (medium_variant is Array):
-        return
-    var medium_id := ""
-    for entry_variant in (medium_variant as Array):
-        if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == PLAYER_FACTION_ID:
-            medium_id = String((entry_variant as Dictionary).get("medium_id", ""))
-            break
-    if _telling != null:
-        _telling.set_voice_medium(medium_id)
-    if _fork_panel != null:
-        _fork_panel.set_voice_medium(medium_id)
-
-## Pull the player faction's nested child array out of a per-faction wire array
-## (`[{faction, <key>: [...]}, …]`), the shape `discovered_sites`/`sedentarization` also use.
-func _faction_rows(variant: Variant, key: String) -> Array:
-    if not (variant is Array):
-        return []
-    for entry_variant in (variant as Array):
-        if not (entry_variant is Dictionary):
-            continue
-        var entry: Dictionary = entry_variant
-        if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
-            continue
-        var rows: Variant = entry.get(key, [])
-        return rows if rows is Array else []
-    return []
-
-## The orb registry = the cached band/expedition producers + the fork producer, pushed as ONE
-## replace. `TurnOrb.set_attention` replaces wholesale, so the fork producer must fold in here
-## rather than call it separately — a second call would wipe every band row.
-func _push_attention() -> void:
-    if turn_orb == null:
-        return
-    var attention: Array = _band_attention.duplicate(true)
-    attention.append_array(_pending_fork_attention())
-    turn_orb.set_attention(attention)
-
-## Producer 6 — a narrative fork awaiting an answer. One row per pending fork, `blocking` so the
-## orb disables its `Advance ▸` footer (the client-side end-turn gate; the server never blocks).
-func _pending_fork_attention() -> Array:
-    var rows: Array = []
-    var register := NarrativeForkPanel.load_voice_register()
-    for fork_variant in _pending_forks:
-        if not (fork_variant is Dictionary):
-            continue
-        var fork: Dictionary = fork_variant
-        rows.append({
-            "kind": ATTENTION_KIND_DECISION,
-            "severity": ATTENTION_SEVERITY_CRITICAL,
-            "blocking": true,
-            "label": ATTENTION_DECISION_LABEL,
-            "detail": _fork_row_detail(fork, register),
-            "x": ATTENTION_NON_LOCATING, "y": ATTENTION_NON_LOCATING,
-        })
-    return rows
-
-## The orb row's one-line taste of the question. The narration is a paragraph and orb rows CLIP,
-## so it is truncated here on purpose — the full telling is the panel's job.
-func _fork_row_detail(fork: Dictionary, register: String) -> String:
-    var narration := NarrativeForkPanel.text_in_register(fork.get("narration", []), register)
-    if narration.length() <= ATTENTION_DECISION_DETAIL_MAX_CHARS:
-        return narration
-    return narration.substr(0, ATTENTION_DECISION_DETAIL_MAX_CHARS).strip_edges() + ATTENTION_DECISION_DETAIL_ELLIPSIS
-
-## Open the panel automatically the FIRST time a fork appears — an identity-defining moment should
-## not wait behind a click. Tracked by beat_id so a dismissed fork does not re-open every snapshot.
-func _maybe_auto_open_fork() -> void:
-    var fork := _first_pending_fork()
-    if fork.is_empty():
-        return
-    var beat_id := String(fork.get("beat_id", ""))
-    if beat_id == "" or _auto_opened_forks.has(beat_id):
-        return
-    _auto_opened_forks[beat_id] = true
-    _open_fork_panel()
-
-func _first_pending_fork() -> Dictionary:
-    for fork_variant in _pending_forks:
-        if fork_variant is Dictionary:
-            return fork_variant
-    return {}
-
-func _open_fork_panel() -> void:
-    _ensure_fork_panel()
-    var fork := _first_pending_fork()
-    if fork.is_empty():
-        return
-    _fork_panel.show_fork(fork)
-
-## A non-locating orb row was activated. The orb reports only the KIND; the Hud owns which panel
-## a kind opens, so a future non-locating producer needs no orb change.
-func _on_turn_orb_panel_requested(kind: String) -> void:
-    if kind == ATTENTION_KIND_DECISION:
-        _open_fork_panel()
-
-## The player answered. Drop the fork from the local cache OPTIMISTICALLY (so the orb's gate lifts
-## immediately) and let the next snapshot be authoritative.
-func _on_fork_answer_selected(payload: Dictionary) -> void:
-    var beat_id := String(payload.get("beat_id", ""))
-    var choice_id := String(payload.get("choice_id", ""))
-    if beat_id == "" or choice_id == "":
-        return
-    var remaining: Array = []
-    for fork_variant in _pending_forks:
-        if fork_variant is Dictionary and String((fork_variant as Dictionary).get("beat_id", "")) == beat_id:
-            continue
-        remaining.append(fork_variant)
-    _pending_forks = remaining
-    _push_attention()
-    emit_signal("answer_fork_requested", {
-        "faction": PLAYER_FACTION_ID,
-        "beat_id": beat_id,
-        "choice_id": choice_id,
-    })
+    _turnorb.update_voice_medium(medium_variant)
 
 ## Is a fork holding the turn? Read by the Inspector-path advance note (the dev toolbar and
 ## autoplay are deliberately NOT gated — see docs/plan_the_telling.md).
 func has_pending_fork() -> bool:
-    return not _pending_forks.is_empty()
+    return _turnorb.has_pending_fork()
 
 ## The dev toolbar / autoplay advanced past an unanswered fork. Not a gate — a RECEIPT: the
 ## server will expire the fork to its defer branch, which is a real narrative outcome, so a
 ## developer who skipped the question must be able to see that they did.
 func note_unanswered_fork() -> void:
-    _note_command_feed(UNANSWERED_FORK_LABEL, UNANSWERED_FORK_DETAIL)
+    _turnorb.note_unanswered_fork()
 
 ## The labor-allocation UI (allocation panel, herd/tile assign controls) is built at
 ## runtime with its own per-widget signal connections, so there are no static selection
@@ -2655,13 +2501,6 @@ func _on_turn_orb_focus(x: int, y: int) -> void:
         _focus_labor_source(x, y, pen_herd)
         return
     emit_signal("alert_focus_requested", x, y)
-
-func _on_turn_orb_advance() -> void:
-    # Advancing the turn is "catch me up": reveal the newest telling so a player who moves on isn't left
-    # parked on an old page (mid-turn beats only mark the book unread — see TellingPanel.reveal_newest).
-    if _telling != null:
-        _telling.reveal_newest()
-    emit_signal("next_turn_requested", 1)
 
 # ---- Early-Game Labor allocation (slice 3b) --------------------------------
 # Source-centric worker allocation for the single player band. The allocation panel
@@ -8959,8 +8798,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var populations: Array = populations_variant
     var new_sizes: Dictionary = {}
     # Turn-orb attention registry: one loop over the player faction feeds three producers
-    # per band (starving / losing_population / idle_workers). Pushed to the orb below (via
-    # `_push_attention`, which folds in the snapshot-driven fork producer), which severity-sorts
+    # per band (starving / losing_population / idle_workers). Fed to the orb below via
+    # `_turnorb.set_band_attention`, which folds in the snapshot-driven fork producer and severity-sorts
     # (critical floats up). New band-derived producers append here.
     var attention: Array = []
     # Bands-only counter: increments for resident bands, NOT expeditions, so the "Band N"
@@ -9039,10 +8878,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
     attention.append_array(_awaiting_orders_attention(player_expeditions))
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
-    # Cache the band/expedition half and push the whole registry (bands + the fork producer) as
-    # ONE replace — set_attention is wholesale, so a separate call would wipe these rows.
-    _band_attention = attention
-    _push_attention()
+    # Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
+    # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate
+    # call would wipe these rows.
+    _turnorb.set_band_attention(attention)
     # This snapshot is authoritative: drop optimistic pending actions the server has now
     # processed (issued on an older turn), then let the panels render the confirmed state.
     _reconcile_pending()

@@ -1,5 +1,19 @@
 # Prototype Task List
 
+> **⚠️ The live backlog has moved to GitHub Issues.**
+>
+> Open/active work is now tracked in **Issues + the Falcon Backlog project**:
+> → https://github.com/users/rwalker123/projects/2
+>
+> - **Arcs** are `type:arc` parent issues; their phases/slices are sub-issues.
+> - **Design specs** still live in `docs/plan_*.md` — issues link to them.
+> - Add / update / report items with the `/task-add`, `/task-status`,
+>   `/task-start`, `/task-report` skills (see `.claude/skills/`).
+>
+> The sections below are retained as a **historical record**. They still contain
+> completed (`[x]` / ✅) work; any *open* items they list have been migrated to
+> Issues (2026-07-23) and should be worked from there, not from this file.
+
 ## Core Simulation (`core_sim`)
 - [x] Flesh out deterministic ECS systems (materials, logistics, population).
 - [x] Replace placeholder system with staged schedules and fixed-point math.

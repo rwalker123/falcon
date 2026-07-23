@@ -263,7 +263,7 @@ func leaf(delta: int) -> void:
 	_page_index = target
 	_paint_page(true, direction)
 
-## Catch the reader up to the latest telling — the turn-advance path (`Hud._on_turn_orb_advance`). A
+## Catch the reader up to the latest telling — the turn-advance path (`TurnOrbController._on_turn_orb_advance`). A
 ## player who moves on is shown the newest page; mid-turn beats only mark unread, advancing reveals.
 func reveal_newest() -> void:
 	if _pages.is_empty():
