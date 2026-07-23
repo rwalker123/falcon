@@ -16,18 +16,18 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, hunt_credit_ceiling, hunt_policy_rate,
-    hunt_provisions, hunt_source_yield_preview, hunt_take, hunt_trip_forecast,
-    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
-    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig,
-    SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_band_movement, advance_expeditions, advance_herds, available_workers,
+    build_headless_app, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
+    hunt_source_yield_preview, hunt_take, hunt_trip_forecast, recapture_snapshot_in_place,
+    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
+    spawn_initial_world, BandTravel, CommandEventLog, CultureManager, DiscoveryProgressLedger,
+    Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, FogRevealLedger, FollowPolicy,
+    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
     VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
 };
@@ -168,6 +168,18 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
         (herd_pos.x + width / 3) % width,
         (herd_pos.y + height / 3) % height,
     );
+    let tile = tile_at(app, far);
+    app.world.spawn((cohort(tile, 10), ResidentBand)).id()
+}
+
+/// A home band far from the herd but on the **same row**, so a returning party's Chebyshev
+/// `step_toward` (which advances x and y independently) travels purely along x — making its per-turn
+/// progress equal to the `hex_distance_wrapped` the in-flight ETA measures. A diagonal offset would
+/// let the party cover both axes at once and arrive well before the hex-distance ETA, which is a real
+/// (deliberate) approximation of the helper, not a bug the driven pin should trip over.
+fn spawn_home_band_same_row(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
+    let width = app.world.resource::<TileRegistry>().width;
+    let far = UVec2::new((herd_pos.x + width / 3) % width, herd_pos.y);
     let tile = tile_at(app, far);
     app.world.spawn((cohort(tile, 10), ResidentBand)).id()
 }
@@ -1039,5 +1051,376 @@ fn the_expedition_danger_multiplier_scales_losses() {
     assert!(
         band_losses(&expedition) > band_losses(&local),
         "a bloodier (>1) expedition multiplier must cost strictly more than a local hunt"
+    );
+}
+
+// The IN-FLIGHT delivery forecast (`expedition_delivery` → the snapshot's
+// `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionRecurring`). The in-flight twin of
+// the pre-launch `huntTripEstimates`, pinned to a REAL driven party run — never to another forecast.
+// ---------------------------------------------------------------------------------------------------
+
+/// Run one real turn of the three systems, in pipeline order (Logistics regrow → Population
+/// move → Population expedition step), matching what the forecast forward-simulates.
+fn drive_expedition_turn(app: &mut App) {
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_band_movement);
+    app.world.run_system_once(advance_expeditions);
+}
+
+/// Pin a big-game herd stationary, **freeze its K** (`fodder_per_biomass = 0` → a non-grazing herd
+/// keeps its constant `carrying_capacity`, so the forecast's fixed-`K` clone can't drift from the live
+/// run), and seed it full so it stands a large surplus. Returns `(id, position)`.
+fn pin_frozen_full_big_herd(app: &mut App) -> (String, UVec2) {
+    // A large fixed K (independent of which big-game species the map seeded first) so the surplus
+    // above K/2 is worth several turns of hunting whatever the animal's body mass.
+    const FROZEN_CAP: f32 = 2000.0;
+    let id = pinned_game_herd(app, "big");
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.fodder_per_biomass = 0.0;
+    herd.carrying_capacity = FROZEN_CAP;
+    herd.biomass = FROZEN_CAP;
+    // The in-flight delivery forecast does not yet model hunt casualties (Predators Phase 0 — a
+    // dangerous herd's real party shrinks below the casualty-free forecast; flagged for Phase 1+). So
+    // retag to a harmless species (attack 0) while keeping the heavy frozen stock, exactly as the raid
+    // forecast test does, so `delivered == projected` holds here on the delivery mechanics alone.
+    herd.species = "Rabbit Warren".to_string();
+    let pos = herd.position();
+    (id, pos)
+}
+
+/// **THE in-flight forecast cannot lie — pinned to a real driven party run.** A live hunting party
+/// mid-`Hunting` carries a partial pack; the snapshot must tell the client how much that delivery will
+/// finally contain (`expeditionProjectedDelivery`) and roughly when it lands
+/// (`expeditionEtaTurns`). We capture those two off the wire, then drive the REAL systems forward and
+/// assert the home band actually receives that food, that many turns later. (Unbounded carry ⇒ the
+/// raid is surplus-bound and runs several turns, so the party is genuinely mid-flight at capture;
+/// frozen `K` ⇒ the forecast is exact.)
+#[test]
+fn in_flight_delivery_forecast_matches_a_real_party_run() {
+    let mut app = build_headless_app();
+    app.update();
+
+    // Carry cap effectively unbounded → the raid completes only when the standing surplus is spent,
+    // so it spans several turns and the party is genuinely mid-hunt (a partial pack) at capture.
+    app.world
+        .insert_resource(ExpeditionConfigHandle::new(unbounded_carry_config()));
+
+    let (id, herd_pos) = pin_frozen_full_big_herd(&mut app);
+    // A home band far from the herd (beyond comm + drop-off range → no early near-band delivery, so
+    // the trip completes on surplus-spent exactly as the forecast assumes) but on the SAME ROW, so the
+    // return travel matches the hex-distance ETA. Its larder starts empty.
+    let home = spawn_home_band_same_row(&mut app, herd_pos);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
+
+    // Drive until the party is mid-Hunting with a partial pack (carried > 0), a couple turns in.
+    let mut prehunt = 0;
+    while !(phase(&app, party) == ExpeditionPhase::Hunting && carried(&app, party) > 0.0) {
+        drive_expedition_turn(&mut app);
+        prehunt += 1;
+        assert!(
+            prehunt < 6,
+            "a surplus-bound raid should hunt for several turns"
+        );
+    }
+    assert_eq!(
+        phase(&app, party),
+        ExpeditionPhase::Hunting,
+        "the party must still be hunting when we capture its in-flight forecast"
+    );
+
+    // Read the in-flight forecast off the SHIPPED snapshot (the wire), not the helper directly.
+    recapture_snapshot_in_place(&mut app.world);
+    let (projected, eta, recurring) = {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let pstate = snapshot
+            .populations
+            .iter()
+            .find(|p| p.entity == party.to_bits())
+            .expect("the in-flight party is in the snapshot");
+        assert!(pstate.is_expedition, "the party is an expedition");
+        (
+            pstate.expedition_projected_delivery,
+            pstate.expedition_eta_turns,
+            pstate.expedition_recurring,
+        )
+    };
+    assert!(
+        projected > 0.0,
+        "a hunting party over a healthy herd projects a positive delivery (got {projected})"
+    );
+    assert!(
+        eta > 0,
+        "an in-flight Sustain party has a finite delivery ETA (got {eta})"
+    );
+    assert!(
+        !recurring,
+        "Sustain folds home after one trip — never recurring"
+    );
+
+    // Drive the REAL systems forward until the home band's larder receives the haul (Returning fold-
+    // back deposits it), counting turns from capture.
+    let horizon = expedition_config(&app).hunt.forecast_horizon_turns;
+    let mut delivery_turn = None;
+    let mut delivered = 0.0;
+    for turn in 1..=horizon {
+        drive_expedition_turn(&mut app);
+        let home_food = carried(&app, home);
+        if home_food > 0.0 {
+            delivery_turn = Some(turn);
+            delivered = home_food;
+            break;
+        }
+    }
+    let delivery_turn = delivery_turn.expect("the party delivers its haul within the horizon");
+
+    // (a) The delivered food equals what the wire promised. Both accumulate on the same Scalar grid,
+    // so a couple of quanta per hunt turn of slop is honest.
+    let food_tolerance = 1.0;
+    assert!(
+        (delivered - projected).abs() <= food_tolerance,
+        "delivered {delivered} != projected {projected} (in-flight forecast must not lie)"
+    );
+
+    // (b) The delivery lands ~E turns after capture. `eta_turns` is an APPROXIMATION by construction:
+    // it counts the full walk home from the herd and does NOT subtract the comm range at which the
+    // fold-back actually fires, so the real delivery is EARLIER by ~comm_range/speed turns (plus a
+    // framing turn). Assert E is that honest, slightly-conservative upper bound.
+    let cfg = expedition_config(&app);
+    let comm_range = cfg.effective_comm_range();
+    let speed = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_move_tiles_per_turn
+        .max(1);
+    let eta_slack = (comm_range.div_ceil(speed) + 2) as i64;
+    let gap = eta as i64 - delivery_turn as i64;
+    assert!(
+        (0..=eta_slack).contains(&gap),
+        "delivery landed on turn {delivery_turn}; ETA said {eta} (allowed slack {eta_slack})"
+    );
+}
+
+/// The recurring flag on the wire: a **Market** party relaunches for repeated trips, so
+/// `expeditionRecurring` must read `true` (Sustain reads `false`, pinned above). Guards the
+/// `FollowPolicy::expedition_recurring` seam end-to-end through the snapshot.
+#[test]
+fn a_market_party_reports_recurring_on_the_wire() {
+    let mut app = build_headless_app();
+    app.update();
+
+    let (id, herd_pos) = pin_frozen_full_big_herd(&mut app);
+    let home = spawn_home_band(&mut app, herd_pos);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Market);
+
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let pstate = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == party.to_bits())
+        .expect("the market party is in the snapshot");
+    assert!(
+        pstate.expedition_recurring,
+        "a Market hunting party relaunches — expeditionRecurring must be true"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Regression: a JUST-LAUNCHED hunting party, still traveling toward a HEALTHY herd (NOT in reach),
+// must project the SAME delivery the pre-launch `huntTripEstimates` promised for that (policy, party
+// size). `expedition_delivery`'s Hunting/Outbound arm runs the forward-sim regardless of reach —
+// travel only adds to the ETA — so a far party over a Thriving boar must still project a positive
+// delivery, never the "herd lost / no surplus" 0 the client mislabels. Mirrors the live playtest
+// where an in-flight party 8 tiles out read `expeditionProjectedDelivery == 0`.
+// ---------------------------------------------------------------------------------------------------
+
+/// Pin a big-game herd stationary as a **Wild Boar at `fraction`·K** with a frozen K (`fodder = 0`),
+/// well above the Sustain floor (`K/2`), so both forecasts read the same fixed ecology. Returns
+/// `(id, herd_pos)`.
+fn pin_frozen_boar_herd(app: &mut App, fraction: f32) -> (String, UVec2) {
+    let id = pinned_game_herd(app, "big");
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.species = "Wild Boar".to_string();
+    herd.body_mass = BOAR_BODY;
+    herd.fodder_per_biomass = 0.0;
+    herd.carrying_capacity = BOAR_K;
+    herd.biomass = BOAR_K * fraction;
+    herd.hunt_credit = 0.0;
+    let pos = herd.position();
+    (id, pos)
+}
+
+/// **The far/just-launched in-flight forecast must agree with the pre-launch estimate.** A 1-hunter
+/// Sustain party, still 8+ tiles from a Thriving boar (NOT in reach), captured right after launch with
+/// an empty pack. `expeditionProjectedDelivery` must be positive AND byte-equal to the herd's
+/// `huntTripEstimates` deliveredFood for `(Sustain, 1)` — the two forecasts are the same code with
+/// `initial_larder = carried = 0`, so a disagreement (the live 0) is the bug.
+#[test]
+fn a_far_just_launched_party_projects_the_estimate_delivery() {
+    let mut app = build_headless_app();
+    app.update();
+
+    let (id, herd_pos) = pin_frozen_boar_herd(&mut app, 0.86);
+    let home = spawn_home_band(&mut app, herd_pos);
+
+    // Place the party FAR from the herd (well past `reach_tiles`), traveling toward it — the state a
+    // party is in the turn it launches. Empty pack, Hunting phase, 1 worker.
+    let width = app.world.resource::<TileRegistry>().width;
+    let height = app.world.resource::<TileRegistry>().height;
+    let far = UVec2::new(
+        (herd_pos.x + width / 3) % width,
+        (herd_pos.y + height / 3) % height,
+    );
+    let party = spawn_hunt_party_of(&mut app, home, far, &id, FollowPolicy::Sustain, 1);
+    app.world
+        .entity_mut(party)
+        .insert(BandTravel { target: herd_pos });
+
+    // Confirm the reproduction preconditions: the party is out of reach and carries nothing.
+    let cfg = expedition_config(&app);
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let dist = core_sim::grid_utils::hex_distance_wrapped(far, herd_pos, width, wrap);
+    assert!(
+        dist > cfg.hunt.reach_tiles,
+        "the party must be OUT of reach (dist {dist} <= reach {})",
+        cfg.hunt.reach_tiles
+    );
+    assert_eq!(carried(&app, party), 0.0, "a just-launched party carries 0");
+    assert_eq!(phase(&app, party), ExpeditionPhase::Hunting);
+
+    // Capture the shipped snapshot WITHOUT advancing (the live capture is right after launch).
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+
+    let pstate = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == party.to_bits())
+        .expect("the in-flight party is in the snapshot");
+    let projected = pstate.expedition_projected_delivery;
+    let eta = pstate.expedition_eta_turns;
+
+    // The invariant that encodes the user's contradiction: the far in-flight forecast and the
+    // pre-launch estimate are the same forecast (carried == 0), so they must agree.
+    let herd_state = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the target herd is in the snapshot");
+    let estimate = herd_state
+        .hunt_trip_estimates
+        .iter()
+        .find(|e| e.policy == FollowPolicy::Sustain.as_str() && e.party_workers == 1)
+        .expect("a (Sustain, 1) huntTripEstimate row")
+        .delivered_food;
+    assert!(
+        estimate > 0.0,
+        "a Thriving boar at 0.86·K offers surplus — the pre-launch estimate must be positive"
+    );
+    assert!(
+        projected > 0.0,
+        "a hunting party over a healthy herd projects a positive delivery even far from it \
+         (got {projected}; estimate says {estimate})"
+    );
+    assert!(
+        (projected - estimate).abs() <= 1.0e-4,
+        "far in-flight projected {projected} != pre-launch estimate {estimate} \
+         (the two forecasts must agree)"
+    );
+    assert!(
+        eta > 0,
+        "a far Sustain party has a finite delivery ETA (travel + hunt + walk home)"
+    );
+}
+
+/// **The only way `expeditionProjectedDelivery` reads 0 over a HEALTHY herd is if the party's target
+/// is NOT that herd.** A party whose stored `fauna_id` no longer resolves (it went extinct / was
+/// replaced, while a *different* healthy boar sits on the map) hits `expedition_delivery`'s herd-lost
+/// branch → `projected_food = carried = 0`. Meanwhile the healthy boar the player sees still exports
+/// positive `huntTripEstimates`. This is the live contradiction reproduced: a real, legitimate 0 that
+/// belongs to a DIFFERENT herd than the one displayed on the tile — a client disambiguation problem,
+/// not a forecast bug. (Also rules out the "workers == 0" suspect: the party has a full worker count.)
+#[test]
+fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positive() {
+    let mut app = build_headless_app();
+    app.update();
+
+    // The healthy boar the player is looking at (positive estimates).
+    let (healthy, healthy_pos) = pin_frozen_boar_herd(&mut app, 0.86);
+    let home = spawn_home_band(&mut app, healthy_pos);
+
+    // A party targeting a DIFFERENT herd id that does not (any longer) resolve in the registry — the
+    // lost/replaced target. Positioned far, empty pack, Hunting.
+    let width = app.world.resource::<TileRegistry>().width;
+    let height = app.world.resource::<TileRegistry>().height;
+    let far = UVec2::new(
+        (healthy_pos.x + width / 3) % width,
+        (healthy_pos.y + height / 3) % height,
+    );
+    let party = spawn_hunt_party_of(&mut app, home, far, "game_gone", FollowPolicy::Sustain, 1);
+    app.world
+        .entity_mut(party)
+        .insert(BandTravel { target: far });
+
+    // The party genuinely has workers — the 0 is NOT the cap-0 early return.
+    let workers = available_workers(app.world.get::<PopulationCohort>(party).unwrap().working);
+    assert_eq!(workers, 1, "the party carries a real worker count");
+
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+
+    let pstate = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == party.to_bits())
+        .expect("the party is in the snapshot");
+    assert_eq!(
+        pstate.expedition_projected_delivery, 0.0,
+        "a party whose target herd is lost projects the food it carries (0) — the live symptom"
+    );
+
+    // The healthy boar the player sees STILL offers surplus in its estimates: the two herds are
+    // distinct, and only the client can tell the player which one the party is actually chasing.
+    let healthy_state = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == healthy)
+        .expect("the healthy boar is in the snapshot");
+    let healthy_estimate = healthy_state
+        .hunt_trip_estimates
+        .iter()
+        .find(|e| e.policy == FollowPolicy::Sustain.as_str() && e.party_workers == 1)
+        .expect("a (Sustain, 1) estimate for the healthy boar")
+        .delivered_food;
+    assert!(
+        healthy_estimate > 0.0,
+        "the boar on the tile is healthy — its estimate is positive while the party's target's is 0"
     );
 }

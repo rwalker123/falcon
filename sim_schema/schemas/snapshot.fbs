@@ -664,6 +664,18 @@ table PopulationCohortState {
   // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
   // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
   foodIncomeAverage:float = 0 (deprecated);
+  // In-flight hunt-party delivery forecast (the client's "Next delivery: ~X food in ~N turns" drawer
+  // line) — the in-flight twin of the pre-launch `huntTripEstimates`. Computed at capture by
+  // `systems::expeditions::expedition_delivery`. All three are 0/false for a scout, a normal band, or
+  // a party whose delivery can't be projected. Append-only.
+  expeditionEtaTurns:uint = 0;           // turns until the carried food reaches the home larder; 0 = unknown / n/a
+  expeditionProjectedDelivery:float = 0; // food that delivery will contain (carried + still-to-take, pack-capped)
+  expeditionRecurring:bool = false;      // party relaunches for repeated trips after delivering (Market)
+  // The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on the
+  // same LocalStore as provisions: a hay Field harvests into it, a pen that knows Foddering draws it,
+  // and it NEVER converts to provisions. Appended (append-only) after #165's expedition trio. Lets the
+  // client show a band's hay reserve beside its food reserve.
+  fodderStore:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -1121,6 +1133,14 @@ table FloraShareInfo {
   // tendedYield/fieldYield read. 0 where the plant cannot climb the rung.
   cultivatePayoff:float = 0;
   sowPayoff:float = 0;
+  // --- WHAT A HAY FIELD WOULD PAY (appended, flora roster F3) ---
+  // Fodder/turn a sown Field of THIS plant would harvest into the band's FODDER store on this tile,
+  // in the same convention as `sowPayoff` but routed to the FODDER account. A fodder crop's payoff is
+  // NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as food) — this is
+  // the number that lets the picker show hay's real value instead of a bare 0x. `0` for a staple (its
+  // yield vector pays no fodder) or a plant that cannot climb to the Field rung here. Produced by the
+  // same `field_fodder` payoff function the sim pays with, so the quote and the payout cannot drift.
+  sowFodderPayoff:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -1389,6 +1409,26 @@ table HerdTelemetryState {
   // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
   // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
   pastoralYield:float = 0;
+  // The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3, §5.2), in
+  // fodder units. Lets the client show "fed by hay" beside `penUpkeep`'s "fed by bread": a pen fed by
+  // its hay draws down provisions less (or not at all). 0 for an unpenned herd, a keeper that has not
+  // learned Foddering, or a pen whose own footprint already fed it. Appended (append-only).
+  fodderDraw:float = 0;
+  // --- The render-ready feed split (Flora Roster F3, appended last) --- the three terms one pen
+  // demand partitions into, so the client draws "Fed by pasture NN% · hay X.X · larder Y.Y" with ZERO
+  // arithmetic (the `penFeedUpkeep` precedent). `penUpkeep` above is the GROSS bill (upkeep × biomass,
+  // the same basis `corralYield` uses); these two are the NET remainders, in FOOD units.
+  // `penLarderBill` = the food/turn the keeper hauls from the FOOD larder AFTER the footprint's pasture
+  // and any drawn hay covered their share — the corral-tend branch's own `demand` local (= penUpkeep ×
+  // (1 − (footprint + hay)/grass_demand)). 0 when fully fed by pasture + hay, or unpenned. The
+  // invariant the client relies on: pasture_food + penHayFood + penLarderBill == penUpkeep (gross),
+  // where pasture_food = penUpkeep × penPastureFraction.
+  penLarderBill:float = 0;
+  // `penHayFood` = hay's contribution in FOOD-equivalent units (the food it DISPLACED from the larder
+  // = penUpkeep × fodderDraw / grass_demand). `fodderDraw` is in grass units (~25× the food scale) and
+  // cannot sit in the same row as the food-unit pasture/larder terms; this can. 0 when no hay drawn /
+  // no Foddering / unpenned.
+  penHayFood:float = 0;
   // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the RAW combat components of this
   // herd's species, so the client can DERIVE danger itself (danger is never stored server-side, because
   // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression). `attack`/

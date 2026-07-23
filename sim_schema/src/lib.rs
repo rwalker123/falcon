@@ -352,6 +352,29 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
+    /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
+    /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
+    /// own footprint already fed. Lets the client show "fed by hay" beside the `pen_upkeep` bread bill.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub fodder_draw: f32,
+    /// **The pen's NET larder bill after pasture + hay** (Flora Roster F3) — the food/turn its keeper
+    /// hauls from the `FOOD` larder once the footprint's pasture and any drawn hay have covered their
+    /// share (the corral-tend branch's own `demand` = `gross pen_upkeep × (1 − land_hay_fraction)`), in
+    /// **food** units. `0.0` when fully fed by pasture + hay, or unpenned. The render-ready larder term
+    /// of the feed split: with [`Self::pen_upkeep`] (gross) and [`Self::pen_pasture_fraction`],
+    /// `pen_upkeep × pen_pasture_fraction + pen_hay_food + pen_larder_bill == pen_upkeep` — three terms
+    /// of one demand, no double-count. Appended last (append-only).
+    #[serde(default)]
+    pub pen_larder_bill: f32,
+    /// **Hay's contribution to the pen's feed, in food-equivalent units** (Flora Roster F3) — the food
+    /// it *displaced* from the larder (`pen_upkeep × fodder_draw / grass_demand`). [`Self::fodder_draw`]
+    /// is in grass units (~25× the food scale) and cannot share a row with the food-unit pasture/larder
+    /// terms; this can. `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is
+    /// unpenned. The hay term of the render-ready feed split (see [`Self::pen_larder_bill`]). Appended
+    /// last (append-only).
+    #[serde(default)]
+    pub pen_hay_food: f32,
     /// **The raw combat components of this herd's species** (Predators Phase 0, `docs/plan_predators.md`),
     /// so the client can DERIVE danger itself — it is never stored server-side, because strength ≠
     /// danger (hunt-danger ≈ `attack × ferocity`, camp-threat ≈ `attack × aggression`). `attack` /
@@ -406,6 +429,9 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
+            fodder_draw: 0.0,
+            pen_larder_bill: 0.0,
+            pen_hay_food: 0.0,
             attack: 0.0,
             defense: 0.0,
             ferocity: 0.0,
@@ -587,6 +613,12 @@ pub struct FloraShareInfo {
     /// [`ForagePatchState::field_yield`]. Appended (append-only).
     #[serde(default)]
     pub sow_payoff: f32,
+    /// Fodder/turn a sown Field of this plant would harvest into the band's FODDER store on this tile
+    /// (Flora Roster F3). A fodder crop's payoff is in this account, not provisions, so the picker can
+    /// show hay's value instead of the bare `0×` its `sow_yield_ratio` reads. `0` for a staple or a
+    /// plant that cannot climb to the Field rung here. Appended (append-only).
+    #[serde(default)]
+    pub sow_fodder_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -2346,6 +2378,25 @@ pub struct PopulationCohortState {
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
+    /// In-flight hunt-party delivery forecast — the in-flight twin of the pre-launch
+    /// `hunt_trip_estimates`. Turns until the carried food reaches the home larder (`0` = unknown /
+    /// n/a). Computed at capture by `systems::expeditions::expedition_delivery`. Appended.
+    #[serde(default)]
+    pub expedition_eta_turns: u32,
+    /// The food that in-flight delivery will contain (carried + still-to-take, pack-capped). `0` for a
+    /// scout, a normal band, or a party whose delivery can't be projected. Appended.
+    #[serde(default)]
+    pub expedition_projected_delivery: f32,
+    /// Whether the party relaunches for repeated trips after delivering (only `Market`). Appended.
+    #[serde(default)]
+    pub expedition_recurring: bool,
+    /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
+    /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
+    /// draws it, and it never converts to provisions. Appended (append-only) after #165's expedition
+    /// trio. (The deprecated `foodIncomeAverage` slot sits earlier on the wire but is not carried on
+    /// the Rust side.)
+    #[serde(default)]
+    pub fodder_store: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -4294,6 +4345,11 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
+                // Hay this pen drew last turn (F3) — appended last (append-only wire).
+                fodderDraw: herd.fodder_draw,
+                // The render-ready feed split (F3) — appended last (append-only wire).
+                penLarderBill: herd.pen_larder_bill,
+                penHayFood: herd.pen_hay_food,
                 // Raw combat components (Predators Phase 0) — the client derives danger itself.
                 // Appended last (append-only wire).
                 attack: herd.attack,
@@ -4379,6 +4435,8 @@ fn create_flora_shares<'a>(
                 // What it would actually pay — appended last (append-only wire).
                 cultivatePayoff: share.cultivate_payoff,
                 sowPayoff: share.sow_payoff,
+                // The fodder a hay Field would pay — appended last (append-only wire, F3).
+                sowFodderPayoff: share.sow_fodder_payoff,
             },
         );
         entries.push(entry);
@@ -4865,6 +4923,13 @@ fn create_populations<'a>(
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                     expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
+                    expeditionEtaTurns: cohort.expedition_eta_turns,
+                    expeditionProjectedDelivery: cohort.expedition_projected_delivery,
+                    expeditionRecurring: cohort.expedition_recurring,
+                    // (`foodIncomeAverage` sits earlier on the wire but is `(deprecated)`, so flatc
+                    // omits it from the generated Args — nothing to set.)
+                    // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
+                    fodderStore: cohort.fodder_store,
                 },
             )
         })

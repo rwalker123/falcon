@@ -33,7 +33,6 @@ pub struct MapPreset {
     pub mountain_scale: f32,
     pub moisture_scale: f32,
     pub river_density: f32,
-    pub lake_chance: f32,
     #[serde(default)]
     pub climate_band_weights: HashMap<String, f32>,
     #[serde(default)]
@@ -102,8 +101,6 @@ pub struct MapPreset {
     pub shelf: ShelfConfig,
     #[serde(default)]
     pub islands: IslandConfig,
-    #[serde(default)]
-    pub inland_sea: InlandSeaConfig,
     #[serde(default)]
     pub ocean: OceanConfig,
     #[serde(default)]
@@ -693,6 +690,17 @@ pub struct MacroLandConfig {
     /// divides a continent can carry.
     #[serde(default = "default_continental_spine_frequency")]
     pub continental_spine_frequency: f32,
+    /// **Interior-sink amplitude — the lake lever.** How far the continent *interior* is planed down
+    /// toward the coastline contour, in the envelope's own `[-1, 1]` units (`bias -= amplitude ×
+    /// bias.clamp(0, 1)`): `0.0` leaves the dome as-is, `1.0` would flatten its whole interior to the
+    /// coast level. Lowering the interior plateau makes a broad near-sea-level zone where the field's
+    /// own fine-scale noise dips below the contour in many small **enclosed** pools — i.e. lakes. It
+    /// is the same mechanism as reducing `continental_weight`, but the gate pins the COAST (`bias ≤ 0`
+    /// is untouched), so it raises lake share **without** eroding the cold-ocean coastline the seal
+    /// habitat depends on — the whole reason it is its own term. `0.0` (the default) is byte-identical
+    /// to no term at all. See `core_sim/CLAUDE.md` → "Lakes are emergent".
+    #[serde(default)]
+    pub continental_basin_amplitude: f32,
     /// Amplitude of the high-frequency noise that gives the coastline its raggedness, applied to the
     /// field **before** `land_contour`. This replaces the retired land-mask `jitter`, which
     /// perturbed the mask's *ranking* rather than the field — reordering the very surface the
@@ -733,6 +741,7 @@ impl Default for MacroLandConfig {
             continental_tilt_strength: default_continental_tilt_strength(),
             continental_spine_amplitude: default_continental_spine_amplitude(),
             continental_spine_frequency: default_continental_spine_frequency(),
+            continental_basin_amplitude: 0.0,
             coastline_roughness: 0.05,
         }
     }
@@ -820,29 +829,6 @@ impl Default for IslandConfig {
             fringing_shelf_width: 2,
             min_distance_from_continent: 12,
             island_peak_margin: 0.06,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct InlandSeaConfig {
-    pub min_area: u32,
-    pub merge_strait_width: u32,
-    /// How far **below** `sea_level` a strait corridor is cut, on the normalized 0..1 elevation
-    /// scale. `connect_inland_seas_via_straits` lowers the corridor's elevation and the mask is
-    /// re-derived, rather than flipping `land`/`is_ocean` behind the field's back. Large enough that
-    /// the corridor is unambiguously water; small enough that it reads as a shallow channel and not
-    /// a trench.
-    pub strait_depth_margin: f32,
-}
-
-impl Default for InlandSeaConfig {
-    fn default() -> Self {
-        Self {
-            min_area: 24,
-            merge_strait_width: 2,
-            strait_depth_margin: 0.02,
         }
     }
 }

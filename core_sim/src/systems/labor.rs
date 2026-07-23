@@ -135,6 +135,18 @@ pub fn advance_labor_allocation(
         // the snapshot must export it or the band's net-food readout overstates the surplus by exactly
         // this much (see `LaborAllocation::last_pen_feed_upkeep`).
         let mut pen_feed_paid = 0.0_f32;
+        // **The band's fodder inflow rate this turn** (Flora Roster F3, §5.3) — the fodder its hay
+        // Fields harvest into the `FODDER` store, summed across every Forage assignment. This is the
+        // *sustained flow* the pen's `K_pen` term reads (NOT the store's stock, which would spike K
+        // off a buffer and oscillate): in steady state inflow = the field output the store holds
+        // steady at. Cached onto each pen this band keeps after the assignment loop and read next turn
+        // by `advance_herds`' `ecological_carrying_capacity` — the deliberate Logistics-reads-what-
+        // Population-wrote one-turn lag, exactly as `footprint_intake` is.
+        let mut band_fodder_inflow = 0.0_f32;
+        // The fauna ids of the pens this band tends this turn — the keepers whose `K_pen` gets the
+        // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
+        // already borrows the herd mutably, so a second pass keeps the borrows simple).
+        let mut kept_pens: Vec<String> = Vec::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -339,6 +351,22 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
+                        // **The FODDER account (Flora Roster F3, §5.1).** The *same* managed harvest,
+                        // routed by the yield vector's fodder component instead of its provisions
+                        // component — a grain Field's `field_fodder` is `0` (its crop pays no fodder),
+                        // a hay Field's `field_provisions` is `0` (hay is no food), so this is
+                        // commodity-generic with **no role branch**. The crew carries hay home at the
+                        // same throughput it carries grain, so the collection cap is
+                        // `managed_per_worker_fodder`. Credited to the same `FODDER` `LocalStore` key,
+                        // which round-trips through the snapshot for free.
+                        let fodder_production = field_fodder(patch, &labor.forage, &flora, mult_f);
+                        let fodder_collection = workers as f32
+                            * managed_per_worker_fodder(patch, &labor.forage, &flora, mult_f);
+                        let fodder = scalar_from_f32(fodder_production.min(fodder_collection));
+                        if fodder > scalar_zero() {
+                            cohort.stores.add(FODDER, fodder);
+                            band_fodder_inflow += fodder.to_f32();
+                        }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -673,20 +701,74 @@ pub fn advance_labor_allocation(
                             0.0
                         };
                         herd.pen_pasture_fraction = pasture_fraction;
-                        let demand = pen_upkeep(herd, &fauna) * (1.0 - pasture_fraction);
+                        // **HAY, drawn BEFORE the lossy larder (Flora Roster F3, §5.2).** Hay is
+                        // delivered graze-flow: it enters the pen economy at exactly the point graze
+                        // does, covering the gap the footprint left BEFORE any human food is hauled.
+                        // Gated on **Foddering** — no Foddering, no draw, and everything below is
+                        // byte-identical to the pre-F3 pasture-only pen. The draw is bounded by the gap
+                        // AND the `FODDER` store (a stock — this is the buffer the overwintering carry
+                        // rides), and `LocalStore::take` returns what it *actually* took.
+                        let grass_shortfall = (demand_grass - herd.footprint_intake).max(0.0);
+                        let fodder_draw = if grass_shortfall > 0.0
+                            && knows(
+                                &discovery,
+                                faction,
+                                FODDERING_DISCOVERY_ID,
+                                knowledge_threshold,
+                            ) {
+                            cohort
+                                .stores
+                                .take(FODDER, scalar_from_f32(grass_shortfall))
+                                .to_f32()
+                        } else {
+                            0.0
+                        };
+                        herd.fodder_draw = fodder_draw;
+                        // The share fed by the LAND and HAY together (grass + delivered hay), before
+                        // the larder is touched. Hay *is* feed, so it pays down the larder bill exactly
+                        // as pasture does — one term, both jobs.
+                        let land_hay_fraction = if demand_grass > 0.0 {
+                            ((herd.footprint_intake + fodder_draw) / demand_grass).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        // **The three-terms-of-one-demand split (Flora Roster F3).** The gross bread
+                        // bill (`pen_upkeep`, on the SAME basis `corralYield` uses) is paid down by three
+                        // sources that PARTITION it — the footprint's pasture, delivered hay, and the
+                        // larder. Stamp the two NET, food-unit terms the client renders (pasture is
+                        // `gross × pen_pasture_fraction`, so it needs no field of its own), ready to draw
+                        // "Fed by pasture NN% · hay X.X · larder Y.Y" with zero client arithmetic:
+                        //   pasture_food + pen_hay_food + pen_larder_bill == gross   (± f32 epsilon)
+                        // Hay's food-equivalent is the share of the bread bill it paid off — its grass
+                        // draw over the grass demand — converting `fodder_draw` out of grass units (~25×
+                        // the food scale) so it sits in the same row as the food-unit pasture/larder
+                        // terms. Computed from the same locals, so the wire cannot disagree with what the
+                        // pen paid.
+                        let gross_upkeep = pen_upkeep(herd, &fauna);
+                        herd.pen_hay_food = if demand_grass > 0.0 {
+                            gross_upkeep * (fodder_draw / demand_grass)
+                        } else {
+                            0.0
+                        };
+                        let demand = gross_upkeep * (1.0 - land_hay_fraction);
+                        // The NET larder bill after pasture + hay — the exact number billed just below.
+                        herd.pen_larder_bill = demand;
                         let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
                         pen_feed_paid += paid;
-                        // The herd's TOTAL fed fraction: the footprint's share plus the paid share of
-                        // the (reduced) larder bill. Fully fed when the larder covers its remainder (or
-                        // nothing was demanded). A well-pastured pen whose keeper can't pay is still fed
-                        // by its grass — `pasture_fraction`, never falsely 0.
+                        // The herd's TOTAL fed fraction: the land+hay share plus the paid share of the
+                        // (further-reduced) larder bill. Fully fed when the larder covers its remainder
+                        // (or nothing was demanded). A pen fed by its grass and hay whose keeper can't
+                        // pay is still fed by them — `land_hay_fraction`, never falsely 0 — so
+                        // starvation/shrink sees a hayed pen as fed.
                         let larder_covered = if demand > 0.0 {
                             (paid / demand).clamp(0.0, 1.0)
                         } else {
                             1.0
                         };
                         herd.pen_fed_fraction =
-                            pasture_fraction + (1.0 - pasture_fraction) * larder_covered;
+                            land_hay_fraction + (1.0 - land_hay_fraction) * larder_covered;
+                        // This band keeps this pen — its `K_pen` gets the fodder-flow term next turn.
+                        kept_pens.push(fauna_id.clone());
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
                         // **While EXTENDING the pen (2d-β) the keeper is fencing, not fully
@@ -1113,6 +1195,32 @@ pub fn advance_labor_allocation(
                     // answers that itself, via its own equipment). Their first live consumer is the
                     // **Phase 1 predator-raid path**: a carnivore with `aggression > 0` raiding a band,
                     // band as Defender. Do not delete this branch.
+                }
+            }
+        }
+        // **Stamp the fodder-flow rate onto every pen this band keeps** (Flora Roster F3, §5.3), now
+        // that the whole band's hay harvest (`band_fodder_inflow`) is summed. Split evenly across the
+        // band's pens so the *total* K contribution reflects the *total* hay grown, not N copies of
+        // it. Read next turn by `ecological_carrying_capacity` (the one-turn Logistics-reads-Population
+        // lag). **Gated on Foddering** exactly as the feed draw is: a faction that grew hay but has not
+        // learned to hay a herd delivers nothing to the pen's ceiling, so `K_pen` stays byte-identical
+        // to its footprint-only self — the fodder term is all-or-nothing with the capability, never a
+        // free K boost from unusable hay. Always written (0 when un-foddered), so a pen a band stops
+        // keeping does not carry a stale rate.
+        if !kept_pens.is_empty() {
+            let per_pen = if knows(
+                &discovery,
+                faction,
+                FODDERING_DISCOVERY_ID,
+                knowledge_threshold,
+            ) {
+                band_fodder_inflow / kept_pens.len() as f32
+            } else {
+                0.0
+            };
+            for fauna_id in &kept_pens {
+                if let Some(herd) = registry.herds.iter_mut().find(|herd| &herd.id == fauna_id) {
+                    herd.fodder_delivery_rate = per_pen;
                 }
             }
         }
@@ -2742,20 +2850,22 @@ mod labor_yield_tests {
         );
     }
 
-    /// **Rung 2 is a WILD stand on a better curve** — the slice-7 correction, and the plant twin of a
-    /// *pastoral* herd. A tended patch is Sustain-gathered at its **boosted** MSY (`wild MSY ×
-    /// tended_regrowth_gain` — strictly more than the same patch wild: the intensification incentive),
-    /// it **draws down** like any wild stand, and it is marked tended-this-turn.
+    /// **Rung 2 is a WILD stand, and since Flora Roster S2 it is a NEUTRAL one** — the plant twin of a
+    /// *pastoral* herd, but no longer on a boosted curve. A *bare* (uncommitted) tended patch is
+    /// Sustain-gathered at **exactly wild MSY** (`wild MSY × tended_regrowth_gain`, and the gain is now
+    /// `1.0`): it regrows and yields exactly as fast as the same patch wild. It still **draws down**
+    /// like any wild stand and is marked tended-this-turn — this test pins that neutrality plus those
+    /// rung mechanics (it draws down, marks the patch worked, and its Sustain take is honestly
+    /// sustainable).
     ///
-    /// **Retargeted, not weakened.** It used to be
-    /// `tended_patch_pays_tending_band_above_msy_no_drawdown` and asserted `paid == biomass ×
-    /// tended_provisions_per_biomass` with `biomass` **unchanged** — i.e. it pinned rung 2 as a
-    /// managed rung, which is the defect: a source that is never drawn down cannot be over-farmed, so
-    /// `actual == sustainable` was true by construction and the overdraw ⚠ could never fire. The
-    /// incentive claim it made (`tended > wild MSY`) survives intact — it is just carried by the curve
-    /// now instead of a flat rate.
+    /// **The intensification incentive moved to the committed crop.** It was once a flat managed rate (no
+    /// draw-down), then a boosted MSY curve; S2 retired the boost because, with S1 making
+    /// competitor-removal explicit as *concentration*, a growth boost double-counted it. So "tended
+    /// beats wild" now lives entirely in a committed crop — **concentration + conversion** (§4.3) — and
+    /// is pinned by the roster's own bar (`core_sim/tests/flora_roster.rs`) and `flora_commitment.rs`,
+    /// which see the crop this scale-free rung mechanic cannot.
     #[test]
-    fn a_tended_patch_out_yields_the_wild_stand_and_draws_down() {
+    fn a_bare_tended_patch_is_neutral_versus_wild_and_draws_down() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
         let forage = cfg.forage.clone();
@@ -2781,8 +2891,9 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        // The rung's payoff, stated as the curve: the tended Sustain ceiling is the wild one × the
-        // gain. `WORKERS` is enough hands to reach it, so the ceiling — not the crew — binds.
+        // At the neutral gain a bare tended patch reads the same MSY curve as wild — the boost is
+        // retired, and no committed crop means no conversion. `WORKERS` is enough hands to reach the
+        // ceiling, so the ceiling — not the crew — binds.
         let expected = wild_msy * forage.cultivation.tended_regrowth_gain;
         let paid = world
             .get::<PopulationCohort>(band)
@@ -2792,12 +2903,12 @@ mod labor_yield_tests {
             .to_f32();
         assert!(
             (paid - expected).abs() < 1e-3,
-            "tended band gathers its boosted MSY: {paid} vs {expected}"
+            "bare tended band gathers the neutral MSY: {paid} vs {expected}"
         );
         assert!(
-            paid > wild_msy,
-            "tending must still out-yield the same patch wild — the whole reason to cultivate: \
-             {paid} vs {wild_msy}"
+            (paid - wild_msy).abs() < 1e-3,
+            "with the boost retired and no crop committed, a bare tended patch pays exactly wild — \
+             the payoff moved to concentration + conversion: {paid} vs {wild_msy}"
         );
         // **It draws down** — the correction. A tended patch is a wild stand, so gathering it takes
         // biomass out of it, which is what makes over-farming it possible at all.
@@ -2824,12 +2935,11 @@ mod labor_yield_tests {
     /// finally fire on the plant web's rung 2. Before slice 7 the managed branch recorded
     /// `sustainable == actual` by construction, so `actual > sustainable` was unreachable here.
     ///
-    /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately: at
-    /// `tended_regrowth_gain` 2.0 the boosted MSY is high enough that Surplus (`1.6 × MSY`, riding the
-    /// *whole* K) equals a 20% Market skim at the exact biomass `B = K` (`1.6 × r_tended/4 = 0.20 =
-    /// market.take_fraction`) — a knife-edge tie at full patch only. Below capacity the two separate
-    /// cleanly, and the boosted sustainable Surplus **overtakes** the flat Market skim: the middle two
-    /// swap versus the pre-retune ladder, which is the true gain-2.0 behaviour.
+    /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately.
+    /// **Since Flora Roster S2 the gain is neutral (`1.0`)**, so a tended patch reads the same curve as
+    /// a wild one and the policies fall in their natural order: Sustain (MSY) < Surplus (`1.6 × MSY`) <
+    /// Market (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
+    /// past the flat Market skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
         let extractive = [
@@ -2893,10 +3003,9 @@ mod labor_yield_tests {
                 );
             }
         }
-        // ...and ordered as the axis means: restraint takes least, denial takes most. On the boosted
-        // tended curve the sustainable Surplus (1.6 × MSY) now out-takes the flat 20% Market skim
-        // below capacity — the middle two swap versus a wild patch, the true gain-2.0 behaviour — but
-        // the endpoints hold: Sustain the leanest, Eradicate the deepest.
+        // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
+        // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
+        // the leanest, then the boosted Surplus, then the flat Market skim, Eradicate the deepest.
         let take_of = |wanted: FollowPolicy| {
             takes
                 .iter()
@@ -2904,9 +3013,9 @@ mod labor_yield_tests {
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Market));
-        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
+        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction

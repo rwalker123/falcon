@@ -164,6 +164,14 @@ centers if a landmass lands under it) rather than a growth quota.
   mask is re-derived. Island count/size stay config-driven.
 - `connect_inland_seas_via_straits` lowers a corridor **below** sea level, then
   re-derives.
+  > **Superseded — the stage is DELETED.** Keeping it was this arc's one mistake: it
+  > was ported for *mechanism* (edit elevation, re-derive) without its *premise* being
+  > re-examined. The premise had already expired five days earlier, when the
+  > drainage-network rewrite (`2ad0923`) made lakes flow through and deleted the
+  > `lake_heads` fabricated-outlet hack that had made a landlocked lake a broken
+  > feature. Legal under this arc's rule and still a topology-repair pass: it decided
+  > an outcome and edited the field to reach it, destroying ~81% of the map's emergent
+  > lakes. See `core_sim/CLAUDE.md` → "Lakes are emergent".
 - `apply_tag_budget_solver` (`worldgen.rs:1285-1340`) loses its water branch
   entirely; water share is an elevation outcome. This also retires the warning
   comment at `map_presets.json:94` about the solver "inventing bathymetry the

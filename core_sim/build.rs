@@ -37,7 +37,16 @@ fn git_build_id() -> Option<String> {
     if short_hash.is_empty() || commit_date.is_empty() {
         return None;
     }
-    Some(format!("{commit_date}-{short_hash}"))
+    // Append `-dirty` when the working tree has uncommitted changes, so the stamp on a binary built
+    // from an edited tree is distinguishable from one built at the clean commit. Without this, a HEAD
+    // hash alone reads identical whether or not uncommitted code was compiled in — which hid a live
+    // bug (a server built from uncommitted worktree edits stamped the same as the committed HEAD).
+    // Mirrors `scripts/run_stack.sh`'s client stamp. `--porcelain` is empty iff the tree is clean.
+    let dirty = match git_output(&["status", "--porcelain"]) {
+        Some(status) if !status.is_empty() => "-dirty",
+        _ => "",
+    };
+    Some(format!("{commit_date}-{short_hash}{dirty}"))
 }
 
 /// Run `git <args>` in the crate dir (inside the repo) and return trimmed stdout,

@@ -347,6 +347,13 @@ const ACTIVITY_GLYPHS := {
 }
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
+# The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
+# distinct from the food larder above, in fodder/grass units (the raw `FODDER` `LocalStore` value,
+# `fodder_per_biomass × biomass` scale, ~25× the food scale — NOT comparable to and never summed onto
+# the food larder; only `pen_hay_food` is the food-equivalent conversion). Shown as its own stat line
+# beneath Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread
+# bill — `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
+const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 const FOOD_UNLIMITED_GLYPH := "∞"
 # The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the
 # ONE reader (`_format_detail_bbcode`'s Food/Provisions/Carried threshold tint, which recognizes the
@@ -640,6 +647,11 @@ const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this 
 # conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
 # the decision is "better or worse than wild", not a second significant figure.
 const FLORA_CROP_ROW_FORMAT := "%s %d%% · %.1f×"
+# A FODDER crop (hay) pays HAY, not provisions, so its provisions ratio is 0 and the `N.N×` row would
+# read it as worthless (Flora roster F3). When `sow_fodder_payoff > 0` the row instead states the hay
+# value in its own account — `Hay Grass 30% · 1.8 hay` — so a valuable feed crop never reads as a loss.
+const FLORA_CROP_FODDER_ROW_FORMAT := "%s %d%% · %.1f hay"
+const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.1f fodder/turn as a sown field — feed for penned animals, not food for people."
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea
 # and the ratio exists to stop that being invisible, not to prevent it.
@@ -686,9 +698,10 @@ const FIELD_BADGE_LABEL := "Field"
 # is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
 # state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView).
 const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
-# The pen's feed row in the herd drawer — what THIS pen demands per turn, and whether it is being
-# paid. The band's own ledger row is the sim-summed `pen_feed_upkeep` across all its pens; this is
-# the per-herd demand (`pen_upkeep`), which is why the two are never added together.
+# The pen's feed row in the herd drawer — the NET food-larder bill THIS pen draws per turn
+# (`pen_larder_bill`, after pasture + hay), and whether it is being paid. The same bill the feed-split's
+# "larder Y.Y" term states, so the two never disagree. The band's own ledger row is the sim-summed
+# `pen_feed_upkeep` across all its pens; this is the per-herd figure, which is why the two are never added.
 const PEN_FEED_ROW := "Pen feed"
 # `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
 const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
@@ -696,13 +709,24 @@ const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
 #   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
 #     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
 #     edges, so the client never recomputes it).
-#   • the FEED SPLIT — "Fed by pasture NN% · larder N.N food/turn" (`pen_pasture_fraction` × 100 and
-#     `pen_upkeep`, the OFFSET larder bill). A self-feeding pen on lush land reads "100% · larder 0.0";
-#     a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
+#   • the FEED SPLIT — "Fed by pasture NN% · hay X.X · larder Y.Y food/turn". The three render-ready
+#     terms the sim partitions the pen's GROSS demand into, ALL in food units, ZERO client arithmetic:
+#     `pen_pasture_fraction` × 100 (grazed free), `pen_hay_food` (hay's food-equivalent draw), and
+#     `pen_larder_bill` (the NET bread bill after pasture + hay). NOTE the larder term reads
+#     `pen_larder_bill`, NOT `pen_upkeep` — `pen_upkeep` is the GROSS projection (`upkeep_per_biomass ×
+#     biomass`, same basis as `corral_yield`, used only for the pre-commit Corral decision, pinned by
+#     `core_sim` `snapshot/mod.rs` `pen_upkeep_*` tests); the honest bill the keeper actually hauls is
+#     `pen_larder_bill`. Sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
+#     pen_larder_bill == pen_upkeep`. The hay segment shows ONLY when `pen_hay_food >= FOOD_FLOW_MIN` (a
+#     pre-Foddering / no-hay pen renders the two-term form); a self-feeding pen reads "100% · larder
+#     0.0", a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
 const PEN_FOOTPRINT_ROW := "Pen"
 const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
 const PEN_FEED_SPLIT_ROW := "Fed by pasture"
-const PEN_FEED_SPLIT_FORMAT := "%d%% · larder %.1f food/turn"
+# The `%s` is the optional hay segment (empty, or `PEN_FEED_SPLIT_HAY_SEGMENT`) spliced between the
+# pasture percent and the NET larder bill — so a pen that drew no hay renders exactly the two-term form.
+const PEN_FEED_SPLIT_FORMAT := "%d%%%s · larder %.1f food/turn"
+const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 # The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
 # On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
 # (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
@@ -1169,6 +1193,16 @@ const EXPEDITION_PHASE_LABELS := {
 # (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
+# Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Market
+# policy). Distinct from the Market policy glyph already shown (`FoodIcons.for_policy("market")` = ⇄),
+# so the two never read as duplicated: ↻ = "this trip repeats", ⇄ = "the take is sold as trade goods".
+const EXPEDITION_RECURRING_GLYPH := "↻"
+# "Next delivery" lines for the two ways a projected-0 forecast can arise, disambiguated on the
+# party's own `expedition_target_herd` (which MIGRATES and is often NOT the herd the player is
+# looking at). Target still in the herd telemetry but forecast projects 0 → it is at/below its
+# policy floor; target absent from telemetry → the herd was lost/replaced and the party is coming home.
+const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target herd has no surplus to raid"
+const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
 const SEND_EXPEDITION_BUTTON := "Send scouting party…"
 # Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
@@ -1388,6 +1422,9 @@ const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
 const WORK_INSPECT_JUMP := "Jump to source"
 const WORK_INSPECT_POLICY := "Change policy"
 const WORK_INSPECT_UNASSIGN := "Unassign"
+## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign).
+const PARTY_INSPECT_JUMP := "Jump to party"
+const PARTY_INSPECT_RECALL := "Recall"
 const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
@@ -1412,6 +1449,18 @@ const PARTY_RECALL_REST_ALPHA := 0.45
 const PARTY_RECALL_ALL_FORMAT := "Recall all parties (%d)"
 const PARTY_RECALL_CONFIRM_FORMAT := "Recall all %d parties? They walk home carrying what they have."
 const PARTY_RECALL_CONFIRM_OK := "Recall all"
+## Single-party recall confirm — wraps each BUTTON handler (row ✕, inspector Recall, drawer Recall), NOT
+## the shared emit `_on_recall_expedition_pressed` (which "Recall all" already loops under its OWN one
+## confirm — confirming inside the emit would pop N prompts after a confirmed "Recall all").
+const PARTY_RECALL_ONE_CONFIRM_FORMAT := "Recall the %s party? It walks home carrying what it has."
+const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
+## The %s a scout party fills into the recall prompt — a bare word, since "Recall the Scouting
+## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
+const PARTY_RECALL_SCOUT_LABEL := "scouting"
+## The parties inspector strip is DENSER than the work inspector (up to 6 detail lines vs ~1), and the
+## T/B parties zone is height-capped at ~300px, so its detail lines are tightened a touch below
+## ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer inside the box.
+const PARTIES_INSPECTOR_LINE_SEPARATION := 4
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 
 ## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
@@ -1689,6 +1738,9 @@ var _work_page: int = 0
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
 var _work_open_key: String = ""
 var _work_policy_open: bool = false
+## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
+## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
+var _party_open_key: String = ""
 ## The live work-zone column + its band, so `zones_resized` can RE-PAGE the board in place instead of
 ## re-rendering all three zones.
 var _work_zone_host: VBoxContainer = null
@@ -5296,12 +5348,82 @@ func _build_parties_zone_content(band: Dictionary) -> VBoxContainer:
     else:
         for exp in parties:
             col.add_child(_build_party_row(exp))
+    # Order: rows → inspector (if open) → an EXPAND_FILL spacer → footer, so the Scout/Hunt footer
+    # stays pinned to the BOTTOM of the zone with the strip sitting under the clicked row (the strip is
+    # a row → detail disclosure, the parties twin of the work board's inspector). Drop a strip pinned to
+    # a party that has left the list (recalled, moved to another band), mirroring `_fill_work_zone`'s
+    # stale-key clear. The strip's own line separation is tightened (PARTIES_INSPECTOR_LINE_SEPARATION)
+    # so strip + a row + the pinned footer still fit the height-capped T/B parties zone.
+    var inspected := _party_by_open_key(parties)
+    if inspected.is_empty():
+        _party_open_key = ""
+    else:
+        col.add_child(_build_parties_inspector(inspected))
     var spacer := Control.new()
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     col.add_child(spacer)
     col.add_child(_build_party_footer(band))
     return col
+
+## The party in `parties` whose entity matches `_party_open_key`, or `{}` when none is open / the open
+## one has left the list (the caller then clears the stale key).
+func _party_by_open_key(parties: Array) -> Dictionary:
+    if _party_open_key == "":
+        return {}
+    for exp_variant in parties:
+        if exp_variant is Dictionary:
+            var exp: Dictionary = exp_variant
+            if str(int(exp.get("entity", -1))) == _party_open_key:
+                return exp
+    return {}
+
+## Toggle the parties inspector strip open/closed for `key` (an expedition entity as a string), then
+## re-render the parties zone in place — the same path the footer mission buttons already drive.
+func _toggle_parties_inspector(key: String) -> void:
+    _party_open_key = "" if _party_open_key == key else key
+    _rerender_panel_allocation()
+
+## The parties inspector strip — the full Mission/Target/Policy/Phase/Carried/Next-delivery/Position
+## detail for one party, opened by a row click. Mirrors `_build_work_inspector`: a titled header with a
+## close `✕`, the detail lines as dim status parts, and inline Jump/Recall links.
+func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
+    var strip := PanelContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", PARTIES_INSPECTOR_LINE_SEPARATION)
+    strip.add_child(col)
+    var entity := int(exp.get("entity", -1))
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
+    var title := Label.new()
+    title.text = _panel_expedition_summary(exp)
+    title.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
+    title.clip_text = true
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var close := Button.new()
+    close.text = INSPECTOR_CLOSE_GLYPH
+    close.focus_mode = Control.FOCUS_NONE
+    close.tooltip_text = INSPECTOR_CLOSE_TOOLTIP
+    HudStyle.apply_button(close, "ghost")
+    _compact_control(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
+    close.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
+    head.add_child(close)
+    col.add_child(head)
+    for line in _expedition_summary_lines(exp):
+        col.add_child(_build_status_part(line, HudStyle.INK_DIM))
+    var links := HBoxContainer.new()
+    links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
+    links.add_child(_build_inline_link(PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
+        _on_panel_expedition_selected(entity, x, y)))
+    links.add_child(_build_inline_link(PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
+        _confirm_recall_expedition(exp)))
+    col.add_child(links)
+    return strip
 
 ## The player expeditions this band detached (grouped by `home_band_entity`).
 func _band_parties(band: Dictionary) -> Array:
@@ -5320,8 +5442,8 @@ func _band_party_workers(band: Dictionary) -> int:
     return total
 
 ## One party row: mission glyph · subject · phase chip · an always-visible recall `✕` (dimmed at rest,
-## bright on hover). Parties carry no stepper and no inspector, so the `✕` is their only removal path.
-## Clicking the row BODY keeps the existing behaviour: focus + select the expedition on the map.
+## bright on hover) as the quick removal path. Clicking the row BODY toggles the parties inspector
+## strip (the full Mission/Target/…/Next-delivery detail), mirroring the work board's row → inspector.
 func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var phase := _expedition_phase_key(exp)
     var row := HBoxContainer.new()
@@ -5338,9 +5460,7 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
         body.add_theme_color_override("font_color", HudStyle.WARN)
     body.tooltip_text = _expedition_row_tooltip(exp, phase)
     var entity := int(exp.get("entity", -1))
-    var x := int(exp.get("current_x", -1))
-    var y := int(exp.get("current_y", -1))
-    body.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
+    body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
     var recall := Button.new()
     recall.text = PARTY_RECALL_GLYPH
@@ -5348,12 +5468,24 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     recall.tooltip_text = PARTY_RECALL_TOOLTIP
     recall.custom_minimum_size = Vector2(PARTY_RECALL_WIDTH, 0.0)
     HudStyle.apply_button(recall, "ghost")
-    recall.modulate.a = PARTY_RECALL_REST_ALPHA
-    recall.mouse_entered.connect(func() -> void: recall.modulate.a = 1.0)
-    recall.mouse_exited.connect(func() -> void: recall.modulate.a = PARTY_RECALL_REST_ALPHA)
-    recall.pressed.connect(func() -> void: _on_recall_expedition_pressed(exp))
+    # DANGER-red like the Work inspector's destructive "Unassign" link — it removes a party. The steady
+    # red already reads as destructive, so it rests at full opacity (no alpha dim) and brightens no
+    # further on hover. Confirms before recalling (its own single-party prompt, NOT the raw emit).
+    recall.add_theme_color_override("font_color", HudStyle.DANGER)
+    recall.pressed.connect(func() -> void: _confirm_recall_expedition(exp))
     row.add_child(recall)
     return row
+
+## Confirm a SINGLE party's recall, then emit. Wraps the button handlers (row ✕, inspector Recall,
+## drawer Recall) — NOT the shared `_on_recall_expedition_pressed` emit, which "Recall all" loops under
+## its own one confirm. The prompt names the party (hunt → its herd, scout → the mission word).
+func _confirm_recall_expedition(exp: Dictionary) -> void:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
+        if mission == EXPEDITION_MISSION_HUNT \
+        else PARTY_RECALL_SCOUT_LABEL
+    _confirm_destructive(PARTY_RECALL_ONE_CONFIRM_FORMAT % label, PARTY_RECALL_ONE_CONFIRM_OK,
+        func() -> void: _on_recall_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
@@ -5680,7 +5812,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     recall_btn.tooltip_text = "Heading home — folds workers + provisions back on arrival." if returning \
         else "Order the expedition home (folds workers + provisions back on arrival)."
     recall_btn.disabled = returning
-    recall_btn.pressed.connect(_on_recall_expedition_pressed.bind(expedition))
+    recall_btn.pressed.connect(func() -> void: _confirm_recall_expedition(expedition))
     actions.add_child(recall_btn)
     allocation_panel.add_child(actions)
 
@@ -6389,6 +6521,12 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_yield_ratio", FLORA_CROP_RATIO_NONE))
     return float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE))
 
+## The FODDER (hay) this entry would pay per turn as a sown field — >0 marks a fodder crop, whose
+## provisions ratio reads 0. Routed to the fodder account, so the picker shows it in place of the 0×
+## ratio. `FLORA_CROP_RATIO_NONE` (0) for a normal provisions crop. Fodder is a Field payoff only.
+func _flora_entry_fodder_payoff(entry: Dictionary) -> float:
+    return float(entry.get("sow_fodder_payoff", FLORA_CROP_RATIO_NONE))
+
 ## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
 ## substituted) on a rung the species cannot climb.
@@ -6470,12 +6608,20 @@ func _build_crop_picker(
         var percent := int(entry["percent"])
         var legal := _flora_entry_allows(entry, policy)
         var ratio := _flora_entry_ratio(entry, policy)
+        # A fodder crop pays hay, not provisions: its ratio is 0, so its face states the hay value in
+        # its own account instead of a worthless-looking "0.0×".
+        var fodder_payoff := _flora_entry_fodder_payoff(entry)
+        var is_fodder := fodder_payoff > FLORA_CROP_RATIO_NONE
         var btn := Button.new()
-        # The payoff rides the face ONLY where there is one: a row greyed by the climbability flags
-        # carries the 0 sentinel, and printing "0.0×" there would read as "a crop worth nothing"
-        # rather than "not a crop at this rung".
-        btn.text = FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio] if ratio > FLORA_CROP_RATIO_NONE \
-            else FLORA_SHARE_FORMAT % [crop_name, percent]
+        # The payoff rides the face ONLY where there is one: a fodder crop shows its hay value, a
+        # provisions crop its ratio, and a row greyed by the climbability flags carries the 0 sentinel
+        # (printing "0.0×" there would read as "a crop worth nothing" rather than "not a crop at this rung").
+        if is_fodder:
+            btn.text = FLORA_CROP_FODDER_ROW_FORMAT % [crop_name, percent, fodder_payoff]
+        elif ratio > FLORA_CROP_RATIO_NONE:
+            btn.text = FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio]
+        else:
+            btn.text = FLORA_SHARE_FORMAT % [crop_name, percent]
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         HudStyle.apply_button(btn, "primary" if legal and species == selected else "ghost")
         # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
@@ -6485,9 +6631,14 @@ func _build_crop_picker(
         btn.disabled = not legal
         if legal:
             any_legal = true
+            # A fodder crop is valuable in the FODDER account, not the provisions one, so it never
+            # takes the loss-warn ink its 0 provisions ratio would otherwise earn: its tooltip names
+            # the hay it pays instead.
+            if is_fodder:
+                btn.tooltip_text = FLORA_CROP_FODDER_TOOLTIP_FORMAT % [crop_name, fodder_payoff]
             # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
             # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
-            if ratio > FLORA_CROP_RATIO_NONE and ratio < FLORA_CROP_BREAK_EVEN_RATIO:
+            elif ratio > FLORA_CROP_RATIO_NONE and ratio < FLORA_CROP_BREAK_EVEN_RATIO:
                 btn.add_theme_color_override("font_color", HudStyle.WARN)
                 btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
                 btn.tooltip_text = FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio]
@@ -8112,14 +8263,53 @@ func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
         policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
     return _join_tooltip_lines([
         _expedition_mission_label(mission), policy_hint,
-        _status_tooltip_line(phase), EXPEDITION_ROW_FOCUS_HINT])
+        _status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission),
+        EXPEDITION_ROW_FOCUS_HINT])
+
+## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
+## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
+## drawer's `_expedition_summary_lines` prints. Empty (dropped by `_join_tooltip_lines`) for a scout
+## party or a party not yet projecting a delivery.
+func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String) -> String:
+    if mission != EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
+        return ""
+    return _expedition_next_delivery_line(exp)
+
+## The robust "Next delivery: …" wording, shared by the parties inspector strip
+## (`_expedition_summary_lines`) and the row tooltip (`_expedition_delivery_tooltip_line`) so the two
+## can never disagree. Caller has already confirmed this is a hunt party carrying the field. A projected
+## 0 is a REAL answer, but it means one of TWO things — and the party's TARGET herd (which migrates and
+## is often NOT the herd the player is inspecting) tells them apart: if the target id is still in the
+## herd telemetry the raid returns empty because that herd is at/below its policy floor; if the id is
+## absent the target was lost/replaced and the party is coming home. Never blank the line as if there
+## were no forecast at all, and never imply it is the herd on the tile the player is looking at.
+func _expedition_next_delivery_line(exp: Dictionary) -> String:
+    var delivery := float(exp.get("expedition_projected_delivery", 0.0))
+    if delivery <= 0.0:
+        var target_id := String(exp.get("expedition_target_herd", "")).strip_edges()
+        var target := _find_world_herd(target_id) if target_id != "" else {}
+        if target.is_empty():
+            return EXPEDITION_NEXT_DELIVERY_TARGET_LOST
+        return EXPEDITION_NEXT_DELIVERY_NO_SURPLUS
+    var amount := int(round(delivery))
+    var eta := int(exp.get("expedition_eta_turns", 0))
+    var line := ""
+    if eta > 0:
+        var turns_word := "turn" if eta == 1 else "turns"
+        line = "Next delivery: ~%d food in %d %s" % [amount, eta, turns_word]
+    else:
+        line = "Next delivery: ~%d food (raid underway)" % amount
+    if bool(exp.get("expedition_recurring", false)):
+        line += "  %s" % EXPEDITION_RECURRING_GLYPH
+    return line
 
 ## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
 ## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
 ## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
 ## live in the tooltip. A scout has no policy → `for_policy` returns "" → `_row_glyph_suffix` emits
 ## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
-## its words (`_expedition_phase_suffix`).
+## its words (`_expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
+## parties inspector strip a row click opens (`_build_parties_inspector` → `_expedition_summary_lines`).
 func _panel_expedition_summary(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
@@ -8127,7 +8317,8 @@ func _panel_expedition_summary(exp: Dictionary) -> String:
         FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
     if mission == EXPEDITION_MISSION_HUNT:
         var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-        return "%s %s%s%s" % [PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
+        return "%s %s%s%s" % [
+            PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [
@@ -8413,6 +8604,11 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
         if _food_flow_present:
             _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
                 _food_breakdown_lines(unit_data))
+        # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
+        # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
+        var fodder_store := float(unit_data.get("fodder_store", 0.0))
+        if fodder_store > FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > FOOD_FLOW_MIN:
+            lines.append(BAND_FODDER_ROW_FORMAT % fodder_store)
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -8457,9 +8653,21 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     lines.append("Mission: %s" % _expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
+        # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
+        # at, so when the target is still in the telemetry with a live position we append it — the
+        # player can then tell "my party is bound to a boar at (68, 30)" from a healthy boar nearby.
+        # When the target is absent (lost/replaced), the delivery line already says so, so we leave
+        # the row as just the species/id.
         var herd_id := String(unit_data.get("expedition_target_herd", "")).strip_edges()
         if herd_id != "":
-            lines.append("Target: %s" % _herd_label_for_id(herd_id))
+            var target_line := "Target: %s" % _herd_label_for_id(herd_id)
+            var target_herd := _find_world_herd(herd_id)
+            if not target_herd.is_empty():
+                var tx := int(target_herd.get("x", -1))
+                var ty := int(target_herd.get("y", -1))
+                if tx >= 0 and ty >= 0:
+                    target_line += " (%d, %d)" % [tx, ty]
+            lines.append(target_line)
         # The launched take policy (Sustain/Surplus/Market/Eradicate).
         var policy := String(unit_data.get("expedition_hunt_policy", "")).strip_edges()
         if policy != "":
@@ -8491,6 +8699,14 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
             lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_turns_text(turns), full_badge])
         else:
             lines.append("Carried: %d  (%s)" % [carried, _food_turns_text(turns)])
+        # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
+        # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
+        # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
+        # hide. The gate is `has(...)`, not `> 0`: the native decoder always inserts the field now, so
+        # present-and-0 is a genuine no-surplus; an ABSENT key (older build) renders nothing rather
+        # than a false "none".
+        if unit_data.has("expedition_projected_delivery"):
+            lines.append(_expedition_next_delivery_line(unit_data))
     else:
         lines.append("Provisions: %d  (%s)" % [carried, _food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
@@ -8829,12 +9045,23 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
                 var pen_radius := int(herd_data.get("pen_radius", 0))
                 var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
                 lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
-                var upkeep := float(herd_data.get("pen_upkeep", 0.0))
+                # The larder term is the NET bread bill (`pen_larder_bill`), NOT the gross `pen_upkeep`.
+                var larder_bill := float(herd_data.get("pen_larder_bill", 0.0))
                 var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
+                # Hay is the middle feed term, in food-equivalent units (`pen_hay_food`, NOT the
+                # grass-unit `fodder_draw`), shown ONLY when the pen drew hay. pasture_food + hay +
+                # larder == gross pen_upkeep (sim-pinned), so the three never double-count.
+                var hay_food := float(herd_data.get("pen_hay_food", 0.0))
+                var hay_segment := ""
+                if hay_food >= FOOD_FLOW_MIN:
+                    hay_segment = PEN_FEED_SPLIT_HAY_SEGMENT % hay_food
                 lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
-                    % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), upkeep]])
-                if upkeep >= FOOD_FLOW_MIN:
-                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
+                    % [int(round(pasture_fraction * PROGRESS_PERCENT_SCALE)), hay_segment, larder_bill]])
+                # The standing "Pen feed" debit is the SAME food-larder bill the split's larder term
+                # states (`pen_larder_bill`, net of pasture + hay), not the gross `pen_upkeep` — so a
+                # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
+                if larder_bill >= FOOD_FLOW_MIN:
+                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(larder_bill, fed_fraction)])
             elif corral_progress > 0.0:
                 lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
         elif ceiling == HUSBANDRY_CEILING_PASTORAL:
@@ -9053,6 +9280,9 @@ func _flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # payoff; without these the row renders a correct ratio above a forecast that ignores it.
             "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
             "sow_payoff": float(entry.get("sow_payoff", 0.0)),
+            # Fodder crops pay hay, not provisions — carried through so the picker row can show the
+            # hay value in place of the 0× provisions ratio a fodder crop would otherwise read.
+            "sow_fodder_payoff": float(entry.get("sow_fodder_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries

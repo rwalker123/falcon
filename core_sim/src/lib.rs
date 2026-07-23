@@ -95,7 +95,7 @@ pub use components::{
     available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
     FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD,
 };
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
@@ -144,8 +144,8 @@ pub use fauna::{
     hunt_policy_rate, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
     project_arrivals_hunt, project_realized_hunt, quantise_animal_take, repopulate_fauna,
     spawn_initial_herds, AnimalTake, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID,
+    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

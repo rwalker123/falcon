@@ -266,6 +266,13 @@ pub struct LogisticsLink {
 /// entirely (only trade goods stay faction-global); kept as a stable constant.
 pub const FOOD: &str = "provisions";
 
+/// Commodity key for a band's **fodder** larder — the storable hay a fodder crop grows (Flora Roster
+/// F3, `docs/plan_flora_roster.md` §5). A second key on the *same* [`LocalStore`] as [`FOOD`], so it
+/// round-trips through the snapshot for free and the supply network can already balance it. Hay is
+/// animal feed, not human food: a fodder Field credits this key, a pen that knows Foddering draws it,
+/// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
+pub const FODDER: &str = "fodder";
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
@@ -1291,6 +1298,14 @@ impl FollowPolicy {
     /// fraction of nothing is honestly ~0 — a pure investment, not a withheld one.)
     pub fn delivers_food(self) -> bool {
         !matches!(self, FollowPolicy::Eradicate)
+    }
+
+    /// Does an expedition under this policy **relaunch** for repeated trips after each delivery,
+    /// rather than folding home after one? Only `Market` relaunches — see the `relaunch` arm of
+    /// `advance_expeditions` (Population). Stated here as the single source so the snapshot's
+    /// in-flight delivery forecast can't drift from the phase machine.
+    pub fn expedition_recurring(&self) -> bool {
+        matches!(self, FollowPolicy::Market)
     }
 
     /// Policies a **Forage** assignment accepts: the four extractive rungs plus the plant branch's

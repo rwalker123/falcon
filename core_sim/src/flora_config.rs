@@ -735,8 +735,9 @@ mod tests {
         let config = FloraConfig::builtin();
         assert_eq!(
             config.species.len(),
-            13,
-            "the F1 roster is 13 broad families (12 keyed on biome + river_fish, the channel itself)"
+            14,
+            "13 broad staple families (12 keyed on biome + river_fish, the channel itself) + the F3 \
+             fodder crop hay_grass"
         );
         // The channel is named separately from the valley it cut — see `navigable_composition`.
         assert_eq!(
