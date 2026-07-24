@@ -9,9 +9,8 @@ extends RefCounted
 ##
 ## THREE GROUPS, deliberately kept apart:
 ##   • `forage_*` — the tile card's "assign foragers" block. Read/written inside ONE builder.
-##   • `hunt_*`   — the herd drawer's "assign hunters/herders" block. Three reads leak out of its
-##                  builder (`HudWidgets.build_policy_picker`'s no-selection fallback, `_tame_stalled_hint`,
-##                  `_herd_crew_noun`) — see `hunt_policy()`.
+##   • `hunt_*`   — the herd drawer's "assign hunters/herders" block. Two reads leak out of its
+##                  builder (`_tame_stalled_hint`, `_herd_crew_noun`) — see `hunt_policy()`.
 ##   • `party_*`  — the Band panel's PARTIES-zone compose sheet (quarry + autofill). It is NOT drawer
 ##                  state, so it sits in its own section and can travel to a band-panel extraction
 ##                  without unpicking the drawer's.
@@ -153,11 +152,12 @@ func hunt_key() -> String:
 func hunt_count() -> int:
 	return _hunt_count
 
-## PUBLIC beyond the herd drawer, and that is a known cross-boundary read preserved verbatim through
-## the lift: `HudWidgets.build_policy_picker` falls back to THIS policy when invoked with no explicit
-## selection, so a work-inspector or party-compose render can read the drawer's rung. `_tame_stalled_hint`
-## and `_herd_crew_noun` read it from outside the builder too. Arguably a latent bug — it is fixed as
-## its own labelled change, never as a side effect of an extraction.
+## PUBLIC beyond the herd drawer: `_tame_stalled_hint` and `_herd_crew_noun` read it from outside the
+## builder. (An earlier note here also claimed `build_policy_picker` fell back to THIS policy when
+## given no explicit selection, letting a work-inspector or party-compose render inherit the drawer's
+## rung. That branch was DEAD CODE and is gone — `selected` is a required param and the picker reads
+## no compose state at all. The claim was never true in practice; it was asserted from the branch's
+## presence without checking any caller could reach it.)
 func hunt_policy() -> String:
 	return _hunt_policy
 
