@@ -4823,7 +4823,7 @@ func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
 
 ## Show a hunted herd. Herds MIGRATE each turn, so the hunt assignment's `target_x/target_y` is a
 ## stale launch position: resolve the herd's LIVE tile from the snapshot herd list first, exactly as
-## `MapView._draw_band_work_highlights` resolves the hunted-herd ring (`_herd_by_id`, falling back to
+## `BandOverlayRenderer.draw_band_work_highlights` resolves the hunted-herd ring (`_herd_by_id`, falling back to
 ## the assignment target when the herd is unknown — e.g. it left the visible fauna set).
 func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> void:
     var herd := _find_world_herd(herd_id)

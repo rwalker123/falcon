@@ -58,8 +58,8 @@ const PANEL_CONSUMED_KEYS := [
 	"hunt_reach",          # herd-hunt affordance local-vs-expedition distance gate
 	"scout_reveal_radius", # allocation Scout role hint
 	"is_traveling",        # travel-destination map draw gating
-	"travel_target_x",     # travel-destination map draw (MapView._draw_travel_destination)
-	"travel_target_y",     # travel-destination map draw (MapView._draw_travel_destination)
+	"travel_target_x",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
+	"travel_target_y",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"activity",            # roster activity glyph
 	"hunt_mode",           # roster / cancel-hunt label
 	"accessible_stockpile", # _accessible_stockpile_lines

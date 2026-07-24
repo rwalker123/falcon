@@ -288,6 +288,51 @@ re-assertion**, so its earliest states render at the wrong resolution. Fixing th
 the whole `map_preview` set a strict bit-identity reference; it is a pre-existing harness bug
 and was left untouched.
 
+### `MapView.gd` selected-band overlays (issue #297) — landed
+
+Deferred follow-up 2 is done. `clients/godot_thin_client/src/scripts/ui/BandOverlayRenderer.gd`
+(525 lines) owns the selected-band and selected-herd overlay family — work highlights, the
+three range borders, the deferred yield labels, the optimistic pending overlay, the travel
+destination, the herd grazing range and the corral pen footprint — behind four public entry
+points (`draw_band_work_highlights` / `draw_herd_range_highlights` /
+`draw_pen_footprint_highlight` / `flush_yield_labels`). Same `_view: MapView` back-ref as
+`TerrainRenderer` and the Step-4 marker renderers. `MapView.gd`: **4,609 → 4,131**.
+
+**The follow-up's stated difficulty did not exist, and that is the finding.** It warned that
+the yield-label batch "queues mid-`_draw` and flushes at the very end, so extracting cleanly
+means splitting that batch lifecycle across MapView and a helper." Measured, all three phases
+were already inside the family: the clear sits at the top of `_draw_band_work_highlights`
+(before its early-outs), the appends come only from `_queue_yield_label` called within that
+same function, and the flush drains. The *only* thing crossing the boundary was where `_draw`
+calls flush — so the helper took the whole lifecycle and MapView calls two ordered entry
+points, exactly as `_draw` already does for `SecondaryMarkerRenderer.compute_slots()` before
+its draw calls. Nothing split. The three invariants that made the batch look fragile are
+preserved verbatim, each guarding a real past bug: the clear precedes the early-outs (a
+deselected band must leave no stale labels), the far-zoom LOD gate stays at the **queue** site
+(so deferral cannot bypass suppression), and the flush stays the **last** draw call in `_draw`
+(the layers above it used to scribble across the numbers).
+
+`set_labor_pending` keeps its exact name as a MapView pass-through: `Main.gd` connects the
+HUD's `labor_pending_changed` signal to it *by name* via `has_method`/`Callable`, and
+`tools/map_preview.gd` calls it at 13 fixture sites — a rename would have broken the wiring
+and the harness at once.
+
+All 41 family consts moved with **no `const X = MapView.Y` alias needed** (unlike
+`TerrainRenderer`): each was grepped individually and none had a reference outside the family.
+Six ambiguous leaves were measured rather than assumed and moved because their only callers
+were inside it (`_in_range_disk`, `_draw_dashed_line`, `_draw_dashed_hex`,
+`_labor_assignments_of_marker`, `_format_yield_signed`, `_entry_realized_yield`); the shared
+primitives and `_is_player_unit` / `_draw_reticle` / the axial converters stayed, reached
+through `_view`.
+
+Verified by PNG byte-diff: **56 frames compared, 0 differing** — and this time with no
+excluded frames, because PR #310 made `map_preview` deterministic (canvas pinned +
+`Engine.time_scale = 0.0`, 56/56 across runs). Baseline reproducibility was confirmed on the
+clean tree first. `blend_probe`'s bit-identity references are likewise untouched; its 25
+`BANK_*` frames vary run-to-run for a **pre-existing** reason — `blend_probe` does not freeze
+`Engine.time_scale`, and BANK is its only state carrying a `TIME`-scrolled navigable-river
+channel. Applying map_preview's freeze there would make that set a strict reference too.
+
 ## Deferred follow-ups
 
 These were consciously scoped out (not missed). Each is a candidate for its own
@@ -306,13 +351,16 @@ verified pass; the `MapView.gd` remainder is also summarized in
    **Done** (issue #296) — see "`MapView.gd` terrain / shader split" in Status above.
    The `_cache_*` SubViewport and `_draw_terrain_direct` were **measured out** of the
    family and stayed on MapView; the drift risk was answered with a 286-frame byte-diff.
-2. **Selected-band overlays** — work-highlights, yield-labels, herd-range,
+2. ~~**Selected-band overlays** — work-highlights, yield-labels, herd-range,
    pending, travel-destination. Reads `_selected_player_band`/`selected_unit_id`/
    `_labor_*` and, critically, **queues the yield-label batch mid-`_draw` and
    flushes it at the very end** (`_deferred_yield_labels` → `_flush_yield_labels`);
    extracting cleanly means splitting that batch lifecycle across MapView and a
    helper. Verifiable (work/herd_range/travel fixtures exist) — just larger than a
-   marker move.
+   marker move.~~ **Done** (issue #297) — see "`MapView.gd` selected-band overlays"
+   in Status above. **The split-lifecycle premise above was measured FALSE**: all
+   three phases already lived inside the family, so the helper took the whole
+   lifecycle and nothing split.
 3. **Trade / crisis / terrain-highlight annotations + targeting / routes**
    (`_draw_trade_overlay`, `_draw_crisis_annotations`, `_draw_terrain_highlight`).
    Cohesive, but **no `map_preview` fixture exercises them** (no canned
