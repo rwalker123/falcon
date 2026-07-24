@@ -692,8 +692,9 @@ func _ecology_tier_color(phase: String) -> Color:
 		return HudStyle.WARN
 	return HudStyle.HEALTHY
 
-## The roster occupant matching `entity_id`. Public because HudLayer's band/labor navigation
-## (`_select_band_on_map`, `_on_panel_expedition_selected`, `_herd_label_for_id`) resolves through it.
+## The roster occupant matching `entity_id`. Public because the band/labor navigation
+## (`BandPanelController._select_band_on_map` / `select_expedition`, HudLayer's `_herd_label_for_id`)
+## resolves through it.
 func find_roster_unit(entity_id: int) -> Dictionary:
 	for unit in _selection.roster_units():
 		if unit is Dictionary and int((unit as Dictionary).get("entity", -1)) == entity_id:
@@ -715,9 +716,9 @@ func _on_roster_row_selected(kind: String, id: Variant) -> void:
 	emit_signal("roster_occupant_selected", kind, id)
 
 ## Make `(kind, id)` the lit subject and ask HudLayer to re-render (via `subject_changed`, which closes
-## the compose sheet + re-renders the panel + drawer). Public because HudLayer's band/labor navigation
-## (`_select_band_on_map`, `_focus_labor_source`, `_on_panel_expedition_selected`) selects through it —
-## those callers emit `roster_occupant_selected` themselves, so this does not.
+## the compose sheet + re-renders the panel + drawer). Public because the band/labor navigation
+## (`BandPanelController._select_band_on_map` / `focus_labor_source` / `select_expedition`) selects
+## through it — those callers emit `roster_occupant_selected` themselves, so this does not.
 func select_roster_occupant(kind: String, id: Variant) -> void:
 	_selection.note_choice_tile(_selected_tile_coords())
 	if kind == "unit":

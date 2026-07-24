@@ -390,16 +390,16 @@ func _ready() -> void:
 
 	# A row OPEN in the inspector strip: the board loses rows to it, and still no scrollbar.
 	_panel.set_dock(SIDE_LEFT)
-	_hud._toggle_work_inspector(_hud._work_source_models(_hud._band_labor._panel_band, 0)[0]["key"])
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0)[0]["key"])
 	await _settle()
 	await _save("band_panel_inspector")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._toggle_work_inspector(_hud._work_open_key)
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
-	_hud._on_work_unassign_all_pressed(_hud._band_labor._panel_band, 34)
+	_hud._bandpanel._on_work_unassign_all_pressed(_hud._band_labor._panel_band, 34)
 	await _settle()
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
@@ -432,8 +432,8 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_lit_rung(EXTRACTIVE_ROW_POLICY)
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_POLICY, false)
-	_hud._work_policy_open = false
-	_hud._toggle_work_inspector(_hud._work_open_key)
+	_hud._bandpanel._work_policy_open = false
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
 	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
@@ -443,13 +443,13 @@ func _ready() -> void:
 	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
 	_panel.set_active_tab(&"parties")
-	_hud._party_compose_open = true
-	_hud._party_compose_mission = "hunt"
+	_hud._bandpanel._party_compose_open = true
+	_hud._bandpanel._party_compose_mission = "hunt"
 	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
 	# Picking a quarry fills the party to its max-useful cap (the one-shot `_try_pick_quarry` sets);
 	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
 	_hud._compose.arm_party_autofill()
-	_hud._rerender_panel_allocation()
+	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt")
 	_assert_zones_within_bounds()
@@ -459,7 +459,7 @@ func _ready() -> void:
 	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
 	# below it, since policy/party/forecast are all unanswerable without a herd.
 	_hud._compose.clear_party_quarry()
-	_hud._rerender_panel_allocation()
+	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt_no_quarry")
 	_assert_zones_within_bounds()
@@ -467,15 +467,15 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 
 	# Same sheet under Scout: scouting title, NO quarry row, NO policy picker, "Send scouting party…".
-	_hud._party_compose_mission = "scout"
-	_hud._rerender_panel_allocation()
+	_hud._bandpanel._party_compose_mission = "scout"
+	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_scout")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._party_compose_open = false
-	_hud._party_compose_mission = ""
+	_hud._bandpanel._party_compose_open = false
+	_hud._bandpanel._party_compose_mission = ""
 	_hud._compose.clear_party_quarry()
 
 	# Zero idle workers: BOTH mission buttons (Scout / Hunt) stay VISIBLE and DISABLED, with the
@@ -504,13 +504,13 @@ func _ready() -> void:
 	_hud.update_food_modules(_many_forage_modules())
 	_hud.update_band_alerts([_many_sources_band_fixture(), _hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_BOTTOM)
-	_hud._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
 	await _settle()
 	await _save("band_panel_parties_inspector_wide")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))   # close before the next state
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))   # close before the next state
 
 	# (b) NARROW shell (left dock, Parties tab): the tall L/R parties zone holds both parties + the strip
 	# with room to spare. Inspect the NO-SURPLUS party → the invisible-line bug the strip fixes:
@@ -518,13 +518,13 @@ func _ready() -> void:
 	_hud.update_band_alerts([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"parties")
-	_hud._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
 	await _settle()
 	await _save("band_panel_parties_inspector_narrow")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
 
 	# (b2) NEXT-DELIVERY DISAMBIGUATION on a projected-0 forecast. A hunt party is bound to ONE herd
 	# (its `expedition_target_herd`) that MIGRATES and is often NOT the herd on the tile the player is
@@ -540,14 +540,14 @@ func _ready() -> void:
 	])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"parties")
-	_hud._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
 	await _settle()
 	await _save("band_panel_next_delivery_disambiguation")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_next_delivery_disambiguation()
-	_hud._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
 
 	# (c) DETAIL-PANEL via the MARKER path — the FIX-4 regression. The Occupants-card drawer reads
 	# `_expedition_summary_lines(_selected_unit)`, and `_selected_unit` is the MapView unit MARKER, not
@@ -683,7 +683,7 @@ func _assert_row_recall_confirms() -> void:
 	var fired := [false]
 	var sink := func(_payload: Dictionary) -> void: fired[0] = true
 	_hud.recall_expedition_requested.connect(sink)
-	var row: HBoxContainer = _hud._build_party_row(_hunt_expedition_fixture())
+	var row: HBoxContainer = _hud._bandpanel._build_party_row(_hunt_expedition_fixture())
 	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
 	recall.pressed.emit()
 	var dialog_shown := false
@@ -891,19 +891,19 @@ func _investment_policy_herd_fixtures() -> Array:
 ## harness, which is why this control had zero frame coverage.
 func _open_work_policy_picker(policy: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._work_source_models(band, 0):
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
 		var model: Dictionary = model_variant
 		if String(model.get("policy", "")) != policy:
 			continue
-		_hud._work_open_key = String(model.get("key", ""))
-		_hud._work_policy_open = true
-		_hud._repage_work_zone()
+		_hud._bandpanel._work_open_key = String(model.get("key", ""))
+		_hud._bandpanel._work_policy_open = true
+		_hud._bandpanel._repage_work_zone()
 		return
 	push_error("band_panel_preview: no work row standing on '%s' — fixture drifted?" % policy)
 
 ## The open inspector strip: the work zone host's PanelContainer (the board and chips are boxes).
 func _work_inspector_strip() -> PanelContainer:
-	var host: VBoxContainer = _hud._work_zone_host
+	var host: VBoxContainer = _hud._bandpanel._work_zone_host
 	if host == null or not is_instance_valid(host):
 		return null
 	for child in host.get_children():

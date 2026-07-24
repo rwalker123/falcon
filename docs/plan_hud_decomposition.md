@@ -132,9 +132,31 @@ is dissolved **first**, in place, before any code moves files.
     (~873 lines, ~25 tint sites). The tint scalars are a *detail-render* concern
     shared by drawer + band panel + popover, which is why 2c deliberately leaves
     them alone.
-  - **`BandPanelController`** — the band/work/parties zone builders + the cycler
-    (~1,935 lines), driven by the BandCityPanel and `update_band_alerts`, not by
-    selection. The largest remaining mass.
+  - **`BandPanelController` — DONE (Phase 2d).** The band/work/parties zone builders
+    + the cycler + the panel handle, 72 functions / 14 state members / 1,582 lines
+    (`Hud.gd` 5,283 → 3,931). Driven by the BandCityPanel and `update_band_alerts`,
+    not by selection.
+    **It is ONE controller, not three zones** — the map found four straddles that
+    make a zone split dirty: `_rerender_panel_allocation` is a *single* mutation sink
+    for all nine interactive sites (there is no per-zone re-render, so splitting
+    needs a `_hud` back-ref); the band zone's WORKFORCE bar calls a *parties* helper;
+    `_zone_box()` serves band + work off the panel handle; and **`_band_zone_tier`**
+    is a bare `int` written by the band zone's builder and read by the *work* zone's
+    resize handler — the fourth "hidden member a call-graph scan can't see" this arc
+    has caught. Keeping the halves together is what resolves it.
+    Host-from-zones is worse: the zone builders were **dual-host** (also called by
+    the no-dock `_build_allocation_panel`) *and* called back into the host's
+    re-render — a two-way seam over shared mutable subject state. Resolved by making
+    `_build_allocation_panel` a thin `HudLayer` function that stacks the controller's
+    three public zone builders, so the fallback host stays with its `%AllocationPanel`
+    node instead of straddling.
+    **Injection surface: 14 measured cold → 9 shipped** (the shared-layer pass
+    below did most of the work). Five signals relayed. Two costs worth recording:
+    `set_band_city_panel`/`cycle_panel_band`/`focus_panel_band` are `has_method`-probed
+    by `Main.gd` and two are bound to `BandCityPanel` signals, so they stay as
+    delegators — a broken one **fails silently**; and ~30 harness sites reached
+    private members by **direct field access**, which *hard-errors* after a move
+    (the loud failure, and the reason the harnesses had to be repointed in the same PR).
   - **The `DrawerComposeController` prerequisites (2c-2b, re-measured).** The
     current map put the drawer's raw injection surface at **36 Callables**, not the
     ~10–12 the 2c-2a estimate implied — because that estimate assumed the two
