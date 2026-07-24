@@ -21,8 +21,8 @@ extends RefCounted
 ## species). It stays on `HudLayer` because resolving a herd id reads THREE collaborators (the roster,
 ## the current selection, and the snapshot herd list), so it cannot fold onto `HudBandLaborState`.
 ## Reached through the typed adapter below rather than called raw: `Callable.call` returns `Variant`,
-## which trips warnings-as-errors. `HudLayer._labor_assignments_of` is a `static func`, so the pen
-## producers call it as a class-name static (exactly how `DetailFormat` reaches it) — no injection.
+## which trips warnings-as-errors. `HudBandLaborState.labor_assignments_of` is a public `static func`, so
+## the pen producers call it as a class-name static (exactly how `DetailFormat` reaches it) — no injection.
 ##
 ## IT EMITS ITS OWN `alert_focus_requested`; `HudLayer` RELAYS it (the `TurnOrbController` pattern — the
 ## controller never emits a HudLayer signal). The direct `_bandpanel.select_expedition` /
@@ -194,7 +194,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
 ## on a herd, so scanning `_band_labor.world_herds()` would happily alarm on a RIVAL's starving pen.
 func _starving_pen_attention(band: Dictionary) -> Array:
     var items: Array = []
-    for a_variant in HudLayer._labor_assignments_of(band):
+    for a_variant in HudBandLaborState.labor_assignments_of(band):
         if not (a_variant is Dictionary):
             continue
         var a: Dictionary = a_variant
@@ -225,7 +225,7 @@ func _starving_pen_at(x: int, y: int) -> String:
     for band_variant in _band_labor.player_bands():
         if not (band_variant is Dictionary):
             continue
-        for a_variant in HudLayer._labor_assignments_of(band_variant):
+        for a_variant in HudBandLaborState.labor_assignments_of(band_variant):
             if not (a_variant is Dictionary):
                 continue
             var a: Dictionary = a_variant

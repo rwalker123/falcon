@@ -421,6 +421,9 @@ func _selected_player_band() -> Dictionary:
 			return unit
 	return {}
 
+# Deliberately a LOCAL copy, NOT HudBandLaborState.labor_assignments_of: this is a MapView-side renderer
+# and must not depend on the HUD's band-labor model (that would be a wrong-direction cross-layer
+# coupling). Don't "finish" the dedupe by pointing it at the HUD.
 func _labor_assignments_of_marker(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []

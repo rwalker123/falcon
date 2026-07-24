@@ -465,12 +465,12 @@ static func _danger_open_row(value: float, key: String, world_herds: Array) -> S
     var raw := _format_danger_scalar(value)
     if reference <= 0.0:
         return raw
-    return "%s %s" % [HudLayer._meter_bar(value / reference * 100.0, DANGER_BAR_CELLS), raw]
+    return "%s %s" % [HudFormat.meter_bar(value / reference * 100.0, DANGER_BAR_CELLS), raw]
 
 ## A NATIVE 0..1 component (ferocity/aggression): a bar + percent.
 static func _danger_unit_row(value: float) -> String:
     return "%s %d%%" % [
-        HudLayer._meter_bar(value * HudConst.PROGRESS_PERCENT_SCALE, DANGER_BAR_CELLS),
+        HudFormat.meter_bar(value * HudConst.PROGRESS_PERCENT_SCALE, DANGER_BAR_CELLS),
         int(round(value * HudConst.PROGRESS_PERCENT_SCALE)),
     ]
 
@@ -721,7 +721,7 @@ static func band_provisions(band: Dictionary) -> float:
 ## signal to omit the Food-outlook block entirely rather than draw a flat starving line.
 static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
     var merged := PackedFloat32Array()
-    for a in HudLayer._labor_assignments_of(band):
+    for a in HudBandLaborState.labor_assignments_of(band):
         if not (a is Dictionary):
             continue
         var schedule := HudBandLaborState.as_schedule((a as Dictionary).get("arrival_schedule", null))
@@ -752,7 +752,7 @@ static func band_has_food_flow(band: Dictionary) -> bool:
 ## sum to the steady headline income (`band_food_income`); falls back to `actual_yield` if absent.
 static func sum_realized_yield(band: Dictionary, kind: String) -> float:
     var total := 0.0
-    for a in HudLayer._labor_assignments_of(band):
+    for a in HudBandLaborState.labor_assignments_of(band):
         if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
             var d := a as Dictionary
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))

@@ -6,12 +6,11 @@ extends RefCounted
 ## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
-## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. ONE helper stays on
-## HudLayer because it is shared beyond this cluster and is still a HudLayer METHOD, so it is passed in
-## as a Callable: `_meter_bar` (the herd-drawer danger bars use it). Everything SHARED-BUT-PURE left
-## HudLayer entirely and is called statically rather than injected or duplicated —
-## `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label` (whose
-## other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
+## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Everything
+## SHARED-BUT-PURE left HudLayer entirely and is called statically rather than injected or duplicated —
+## `HudFormat.meter_bar` (the Sedentarization + knowledge strips; the herd-drawer danger bars read it
+## too), `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label`
+## (whose other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
 ## knowledge back through the public `faction_knowledge()`.
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
@@ -89,8 +88,6 @@ var stockpile_list: VBoxContainer = null
 
 # --- Collaborators ---
 var _command_feed: CommandFeedController = null
-# The one shared-beyond-cluster helper still kept on HudLayer, called back through a Callable (header).
-var _meter_bar_fn: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
@@ -113,7 +110,6 @@ func _init(
 	stockpile_panel_: PanelContainer,
 	stockpile_list_: VBoxContainer,
 	command_feed: CommandFeedController,
-	meter_bar_fn: Callable,
 ) -> void:
 	turn_label = turn_label_
 	metrics_label = metrics_label_
@@ -126,7 +122,6 @@ func _init(
 	stockpile_panel = stockpile_panel_
 	stockpile_list = stockpile_list_
 	_command_feed = command_feed
-	_meter_bar_fn = meter_bar_fn
 
 ## The LABEL-rendering half of HudLayer.update_overlay's fan-out: the turn readout + the metrics line.
 ## The turn-orb / band-labor side effects stay on HudLayer (they are not top-bar readouts).
@@ -155,7 +150,7 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 		return
 	sedentarization_label.visible = true
 	var suffix := "" if stage == "" or stage == "none" else " · %s" % stage
-	sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [_meter_bar_fn.call(score, METER_BAR_CELLS), int(round(score)), suffix]
+	sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [HudFormat.meter_bar(score, METER_BAR_CELLS), int(round(score)), suffix]
 	sedentarization_label.add_theme_color_override("font_color", _sedentarization_color(stage))
 
 ## Show the player faction's age structure (children / working / elders) and the dependency
@@ -388,7 +383,7 @@ func faction_knowledge(faction: int, track: String) -> float:
 ## "✔ known" badge once complete. `progress` is 0..1.
 ##
 ## Deliberately TIGHTER than the Sedentarization meter beside it (which keeps the shared 10-cell
-## `_meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
+## `HudFormat.meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
 ## "learning" per track the line overflowed the top bar and clipped its last track off-screen —
 ## verified in the first cut of `two_meter_split.png`. The percent replaces the word rather than
 ## joining it: it is strictly more informative, and it is the SAME number the gate reason under a
@@ -400,7 +395,7 @@ func _knowledge_meter_text(progress: float) -> String:
 	if progress >= HudConst.KNOWLEDGE_COMPLETE:
 		return KNOWLEDGE_KNOWN_BADGE
 	return "%s %d%%" % [
-		_meter_bar_fn.call(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
+		HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
 		HudFormat.progress_percent(progress)]
 
 ## Tint the Sedentarization readout: cyan when the pressure is hard, amber when soft, neutral otherwise.

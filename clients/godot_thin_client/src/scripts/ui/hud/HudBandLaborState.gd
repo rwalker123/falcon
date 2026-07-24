@@ -276,7 +276,7 @@ func reconcile_pending(turn: int) -> bool:
 ## Each value: {kind, workers, x, y, herd_id, policy, pending: bool, + per-source yield fields}.
 func effective_worker_map(band: Dictionary) -> Dictionary:
 	var merged: Dictionary = {}
-	for a in _labor_assignments_of(band):
+	for a in labor_assignments_of(band):
 		if not (a is Dictionary):
 			continue
 		var kind := String((a as Dictionary).get("kind", "")).strip_edges().to_lower()
@@ -355,7 +355,7 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 ## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed. The role sibling of
 ## `workers_for_forage` / `workers_for_hunt`.
 func workers_for_role(band: Dictionary, kind: String) -> int:
-	for entry in _labor_assignments_of(band):
+	for entry in labor_assignments_of(band):
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
 			return int((entry as Dictionary).get("workers", 0))
 	return 0
@@ -371,8 +371,12 @@ static func as_schedule(value: Variant) -> PackedFloat32Array:
 			packed.push_back(float(amount))
 	return packed
 
-## A band's `labor_assignments` array (pure read of the band dict).
-func _labor_assignments_of(band: Dictionary) -> Array:
+## A band's `labor_assignments` array, or [] when the snapshot carried none (pure read of the band
+## dict). `static` + PUBLIC so `DetailFormat` / `AttentionController` reach it as a class-name static
+## (`HudBandLaborState.labor_assignments_of`) instead of a fourth private copy or a Callable injection;
+## a static is callable unqualified from this class's own methods, which is how the four readers below
+## reach it.
+static func labor_assignments_of(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
 
@@ -397,7 +401,7 @@ func player_band_by_entity(entity: int) -> Dictionary:
 ## behind the worker count, the seeded policy and the drawer's standing summary, so the three can
 ## never read different assignments.
 func forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
-	for entry in _labor_assignments_of(band):
+	for entry in labor_assignments_of(band):
 		if not (entry is Dictionary):
 			continue
 		var a: Dictionary = entry
@@ -409,7 +413,7 @@ func forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
 ## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
 ## of `forage_assignment_of`.
 func hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
-	for entry in _labor_assignments_of(band):
+	for entry in labor_assignments_of(band):
 		if not (entry is Dictionary):
 			continue
 		var a: Dictionary = entry

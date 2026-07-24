@@ -243,3 +243,12 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [
         PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
+
+## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
+## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
+## rows narrower still. Lives here (the pure format layer) because THREE clusters read it and it
+## touches no member; DetailFormat's danger bars and TopBarReadouts' meters call it as
+## `HudFormat.meter_bar` rather than taking a Callable injection.
+static func meter_bar(score: float, cells: int) -> String:
+    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
+    return "▰".repeat(filled) + "▱".repeat(cells - filled)

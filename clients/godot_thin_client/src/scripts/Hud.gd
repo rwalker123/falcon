@@ -295,14 +295,13 @@ func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
-    # knowledge-unlock nudge straight through it. The ONE shared-beyond-cluster helper that is still a
-    # HudLayer METHOD (_meter_bar) stays here and is passed as a Callable; the percent formatter and
-    # the stockpile item wording are `HudFormat.progress_percent` / `HudFormat.stockpile_label` now,
-    # which the cluster calls directly.
+    # knowledge-unlock nudge straight through it. The meter glyph, percent formatter and stockpile
+    # item wording are `HudFormat.meter_bar` / `HudFormat.progress_percent` / `HudFormat.stockpile_label`
+    # now, which the cluster calls directly — no Callable injection.
     _topbar = TopBarReadouts.new(
         turn_label, metrics_label, sedentarization_label, demographics_label,
         discoveries_row, discoveries_label, discoveries_strip, intensification_label,
-        stockpile_panel, stockpile_list, _command_feed, _meter_bar)
+        stockpile_panel, stockpile_list, _command_feed)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -519,15 +518,6 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     _band_labor.set_turn(turn)
     _turnorb.set_turn(turn)
 
-## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
-## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
-## rows narrower still. Kept on HudLayer because THREE clusters read it; handed to the TopBarReadouts
-## controller as a Callable and called as `HudLayer._meter_bar` by `DetailFormat`'s danger bars.
-## `static` so that all-static module can reach it without a Callable injection — it touches no member.
-static func _meter_bar(score: float, cells: int) -> String:
-    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
-    return "▰".repeat(filled) + "▱".repeat(cells - filled)
-
 ## Top-bar faction readouts — thin delegators to the TopBarReadouts controller (`_topbar`), which owns
 ## the Sedentarization / demographics / discoveries / intensification / stockpile rendering. These
 ## names stay on HudLayer because Main reaches them by reflection (`_hud_invoke` → has_method+callv).
@@ -674,13 +664,6 @@ func get_player_band_tile() -> Vector2i:
 func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> int:
     return SourceForecast.hex_distance_wrapped(
         a_col, a_row, b_col, b_row, _band_labor.grid_width(), _band_labor.wrap_horizontal())
-
-## The band's labor-assignment array, or [] when the snapshot carried none. `static` so `DetailFormat`
-## can read it as `HudLayer._labor_assignments_of` for the Gathered/Hunted sums rather than keeping a
-## fourth private copy of the same two-line accessor.
-static func _labor_assignments_of(band: Dictionary) -> Array:
-    var v: Variant = band.get("labor_assignments", [])
-    return v if v is Array else []
 
 ## A friendlier label for a herd id — the roster/selected herd's label when known, else the
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,

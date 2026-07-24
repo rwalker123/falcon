@@ -6,7 +6,8 @@ extends RefCounted
 ## compose builders behind it (`_build_forage_assign_controls` / `_build_herd_assign_controls`), and
 ## the compose-only forecast / gate / crop-picker layer they rest on. It is the second half of the
 ## selection card — `SelectionCardController` took the identity/list half; the DRAWER RENDER DISPATCH
-## (`_render_land_drawer` / `_render_occupant_drawer`) stays on `HudLayer` and calls IN here.
+## (`_render_land_drawer` / `_render_occupant_drawer`) lives on `SubjectDrawerController` (Phase 2c-3)
+## now and calls IN here.
 ##
 ## Built on the LegendController / TopBarReadouts / TurnOrbController / SelectionCardController idiom:
 ## `HudLayer` holds one as `_drawercompose`, hands it the shared `RefCounted` state models BY REFERENCE
