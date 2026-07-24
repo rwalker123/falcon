@@ -276,6 +276,12 @@ var _bandpanel: BandPanelController = null
 # and the two-host `_refresh_disclosure_hosts` calling in, and `_targeting` (its Move button connects to
 # `begin_move_band`). Constructed AFTER `_bandpanel` — it dispatches into it and `_drawercompose`.
 var _drawer: SubjectDrawerController = null
+# The BAND/EXPEDITION ATTENTION PRODUCERS + orb jump-routing (HUD decomposition). Owns the OTHER half
+# of the turn-orb attention model from `TurnOrbController`: it PRODUCES the band/expedition rows
+# (`build_band_attention`, fed to `_turnorb.set_band_attention` from `update_band_alerts`) and ROUTES
+# their "Jump →" (`on_turn_orb_focus`). Constructed AFTER `_bandpanel` (it holds it for the pen/awaiting
+# jumps); it emits its own `alert_focus_requested`, which HudLayer relays.
+var _attention: AttentionController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -307,7 +313,9 @@ func _ready() -> void:
     _turnorb = TurnOrbController.new(turn_orb, self, _telling, _command_feed)
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
     _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
-    _turnorb.focus_requested.connect(_on_turn_orb_focus)
+    # `_turnorb.focus_requested` is wired to `_attention.on_turn_orb_focus` further down, once `_attention`
+    # exists (it needs `_bandpanel` for the expedition/pen jumps). The orb never emits during construction,
+    # so deferring the connect is safe.
     # The selection card's identity/list half. Handed the three card nodes + the SAME selection/labor
     # models (it reads the labor readers straight off `_band_labor` now). A row/land click emits
     # `subject_changed` (HudLayer closes the compose sheet + re-renders), and `roster_occupant_selected`
@@ -371,6 +379,15 @@ func _ready() -> void:
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
+    # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
+    # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
+    # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
+    # (a second relayer into that one signal alongside `_bandpanel`'s is fine — Main connects to it once).
+    # The orb's focus signal is wired here, now that `_attention` exists (see the deferred connect above).
+    _attention = AttentionController.new(_band_labor, _bandpanel, _herd_label_for_id)
+    _attention.alert_focus_requested.connect(
+        func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
+    _turnorb.focus_requested.connect(_attention.on_turn_orb_focus)
     # The selection drawer's render dispatch. Constructed AFTER `_bandpanel` + `_drawercompose` (it
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
     # HUD CanvasLayer as the host its fit awaits a frame through (a RefCounted has no `get_tree()`), the
@@ -591,25 +608,6 @@ func _on_zoom_in_pressed() -> void:
 
 func _on_zoom_fit_pressed() -> void:
     emit_signal("map_zoom_fit")
-
-## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the
-## Band panel's Active-expeditions row click uses (`BandPanelController.select_expedition`: recenter + pin the
-## exact expedition so its drawer opens and the panel band isn't hijacked) rather than a second,
-## weaker jump that would only recenter the hex and auto-select whatever occupant sits on it. Every
-## other producer (band-located) keeps the plain recenter.
-func _on_turn_orb_focus(x: int, y: int) -> void:
-    var exp := _awaiting_expedition_at(x, y)
-    if not exp.is_empty():
-        _bandpanel.select_expedition(int(exp.get("entity", -1)), x, y)
-        return
-    # A starving-pen row jumps to the HERD, not just its hex: `focus_labor_source` (the very path
-    # the Band panel's Hunt row uses) recenters AND pins the herd, so the drawer that explains the
-    # alert — the "⚠ Starving" Corral row + the Pen feed cost — is what actually opens.
-    var pen_herd := _starving_pen_at(x, y)
-    if pen_herd != "":
-        _bandpanel.focus_labor_source(x, y, pen_herd)
-        return
-    emit_signal("alert_focus_requested", x, y)
 
 # ---- Early-Game Labor allocation (slice 3b) --------------------------------
 # Source-centric worker allocation for the single player band. The allocation panel
@@ -984,124 +982,6 @@ func _hide_drawer_blocks() -> void:
     if herd_assign_controls != null:
         herd_assign_controls.visible = false
 
-## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
-## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
-func _expedition_objective(exp: Dictionary) -> String:
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-    return HudAttentionVocab.ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
-
-## Turn-orb attention items for every expedition parked in `awaiting` (Producer 4). ONE ROW PER
-## PARTY — each is its own decision with its own place to go (unlike idle workers, which are
-## genuinely one aggregate per band) — capped at HudAttentionVocab.ATTENTION_AWAITING_MAX_ROWS, with the remainder
-## folded into a single overflow row that jumps to the first party beyond the cap (so even the
-## aggregate row is actionable rather than a dead "Open ▸" stub).
-func _awaiting_orders_attention(expeditions: Array) -> Array:
-    var awaiting: Array = []
-    for exp_variant in expeditions:
-        if not (exp_variant is Dictionary):
-            continue
-        var exp: Dictionary = exp_variant
-        if HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
-            awaiting.append(exp)
-    var items: Array = []
-    for i in awaiting.size():
-        var exp: Dictionary = awaiting[i]
-        var x := int(exp.get("current_x", -1))
-        var y := int(exp.get("current_y", -1))
-        if i >= HudAttentionVocab.ATTENTION_AWAITING_MAX_ROWS:
-            # Overflow: one aggregate row for the rest, locating to this (the first uncapped) party.
-            items.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_AWAITING_ORDERS,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": HudAttentionVocab.ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT % (awaiting.size() - i),
-                "detail": HudAttentionVocab.ATTENTION_AWAITING_OVERFLOW_DETAIL,
-                "x": x, "y": y,
-            })
-            break
-        items.append({
-            "kind": HudAttentionVocab.ATTENTION_KIND_AWAITING_ORDERS,
-            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-            # The demand headline reuses the phase words ("Awaiting orders"); the context line names
-            # the mission + its objective, so the row is actionable without opening anything.
-            "label": HudFormat.expedition_phase_label(HudExpeditionVocab.EXPEDITION_PHASE_AWAITING),
-            "detail": HudAttentionVocab.ATTENTION_AWAITING_DETAIL_FORMAT % [
-                DetailFormat.expedition_mission_label(String(exp.get("expedition_mission", ""))),
-                _expedition_objective(exp)],
-            "x": x, "y": y,
-        })
-    return items
-
-## The awaiting expedition standing on (x, y), or {} — lets the orb's Jump reuse the panel's own
-## expedition-focus path instead of a second, weaker one (see `_on_turn_orb_focus`).
-## Turn-orb attention items for the STARVING PENS one band keeps (Producer 5). One row per pen — a
-## pen is a distinct 25-turn investment with its own herd, its own tile and its own fed fraction, so
-## (unlike idle workers) there is nothing meaningful to aggregate. Driven by `PenStatus`, the same
-## test the herd drawer and the map badge ask, so the three surfaces cannot disagree.
-##
-## The pens are found through the band's OWN Corral labor assignments: the client has no owner field
-## on a herd, so scanning `_band_labor.world_herds()` would happily alarm on a RIVAL's starving pen.
-func _starving_pen_attention(band: Dictionary) -> Array:
-    var items: Array = []
-    for a_variant in _labor_assignments_of(band):
-        if not (a_variant is Dictionary):
-            continue
-        var a: Dictionary = a_variant
-        if String(a.get("kind", "")).to_lower() != SourceForecast.LABOR_KIND_HUNT:
-            continue
-        if String(a.get("policy", "")).to_lower() != SourceForecast.LABOR_POLICY_CORRAL:
-            continue
-        var herd_id := String(a.get("fauna_id", ""))
-        var herd := _band_labor.find_world_herd(herd_id)
-        if herd.is_empty() or not PenStatus.herd_is_starving(herd):
-            continue
-        var fed := PenStatus.fed_fraction(herd)
-        items.append({
-            "kind": HudAttentionVocab.ATTENTION_KIND_STARVING_PEN,
-            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-            "label": HudAttentionVocab.ATTENTION_PEN_LABEL_FORMAT % _herd_label_for_id(herd_id),
-            "detail": HudAttentionVocab.ATTENTION_PEN_DETAIL_FORMAT % int(round(fed * HudConst.PROGRESS_PERCENT_SCALE)),
-            # The HERD's live tile — a penned herd is pinned, but the jump must still land on the
-            # animals (that is where the drawer with the fed fraction and the feed cost opens),
-            # not on the keeper band.
-            "x": int(herd.get("x", -1)), "y": int(herd.get("y", -1)),
-        })
-    return items
-
-## The starving pen (if any) standing on `(x, y)`, for the orb's jump routing — the herd twin of
-## `_awaiting_expedition_at`. Only pens the player's own bands keep, via the same producer path.
-func _starving_pen_at(x: int, y: int) -> String:
-    for band_variant in _band_labor.player_bands():
-        if not (band_variant is Dictionary):
-            continue
-        for a_variant in _labor_assignments_of(band_variant):
-            if not (a_variant is Dictionary):
-                continue
-            var a: Dictionary = a_variant
-            if String(a.get("kind", "")).to_lower() != SourceForecast.LABOR_KIND_HUNT:
-                continue
-            if String(a.get("policy", "")).to_lower() != SourceForecast.LABOR_POLICY_CORRAL:
-                continue
-            var herd_id := String(a.get("fauna_id", ""))
-            var herd := _band_labor.find_world_herd(herd_id)
-            if herd.is_empty() or not PenStatus.herd_is_starving(herd):
-                continue
-            if int(herd.get("x", -1)) == x and int(herd.get("y", -1)) == y:
-                return herd_id
-    return ""
-
-func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
-    for exp_variant in _band_labor.player_expeditions():
-        if not (exp_variant is Dictionary):
-            continue
-        var exp: Dictionary = exp_variant
-        if HudFormat.expedition_phase_key(exp) != HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
-            continue
-        if int(exp.get("current_x", -1)) == x and int(exp.get("current_y", -1)) == y:
-            return exp
-    return {}
-
 # ---- THE BAND/CITY PANEL: the three reflective delegators -------------------------------------
 #
 # The panel itself (its handle, the three zone builders, the zone state, the cycler + snapshot
@@ -1196,20 +1076,15 @@ func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return
     var populations: Array = populations_variant
-    var new_sizes: Dictionary = {}
-    # Turn-orb attention registry: one loop over the player faction feeds three producers
-    # per band (starving / losing_population / idle_workers). Fed to the orb below via
-    # `_turnorb.set_band_attention`, which folds in the snapshot-driven fork producer and severity-sorts
-    # (critical floats up). New band-derived producers append here.
-    var attention: Array = []
-    # Bands-only counter: increments for resident bands, NOT expeditions, so the "Band N"
-    # attention labels match the band-picker (`_build_band_picker`, `i + 1`) and the panel
-    # header (the panel controller's `_index_of_player_band` + 1) — all number positionally within
-    # `_band_labor.player_bands()`.
-    var band_number := 0
+    # 1. PURE roster split — no attention built here anymore (it moved to `AttentionController`).
     # Capture the player bands each snapshot; the labor-allocation UI targets them (assign/move/
     # clear) and reads their labor_assignments for the herd/tile assign controls. `player_band`
     # (first) stays the default actor; `player_bands` backs the assign controls' band-picker.
+    # Split expeditions out of the band roster: they are detached scout/hunt parties, never a labor
+    # actor band, and must not be counted by the cycler, listed in the band-picker, or given
+    # band-style attention labels. The attention producers key off the bands-only list, so an
+    # expedition never surfaces as "Band N starving/losing/idle".
+    var new_sizes: Dictionary = {}
     var player_band: Dictionary = {}
     var player_bands: Array = []
     var player_expeditions: Array = []
@@ -1219,67 +1094,20 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var entry: Dictionary = entry_variant
         if int(entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
             continue
-        # Split expeditions out of the band roster: they are detached scout/hunt parties, never a
-        # labor actor band, and must not be counted by the cycler, listed in the band-picker, or
-        # given band-style attention labels. The attention producers key off the bands-only path
-        # below, so an expedition never surfaces as "Band N starving/losing/idle".
         if bool(entry.get("is_expedition", false)):
             player_expeditions.append(entry)
             continue
         if player_band.is_empty():
             player_band = entry
         player_bands.append(entry)
-        band_number += 1
-        var entity := int(entry.get("entity", -1))
-        var size := int(entry.get("size", 0))
-        var turns := float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-        var morale := float(entry.get("morale", 1.0))
-        var morale_cause := int(entry.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
-        var last_emigrated := int(entry.get("last_emigrated", 0))
-        var x := int(entry.get("current_x", -1))
-        var y := int(entry.get("current_y", -1))
-        var band_name := HudFormat.band_display_name(entry, band_number)
-        new_sizes[entity] = size
-        # Producer 1 — starving: larder below the critical threshold (red/critical).
-        if BandFoodStatus.is_critical(turns):
-            attention.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_STARVING,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL,
-                "label": "%s starving" % band_name,
-                "detail": DetailFormat.food_turns_text(turns),
-                "x": x, "y": y,
-            })
-        # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
-        if _band_labor.prev_band_sizes().has(entity) and size < int(_band_labor.prev_band_sizes()[entity]):
-            attention.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_LOSING_POPULATION,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": "%s losing population" % band_name,
-                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
-                "x": x, "y": y,
-            })
-        # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
-        # the old activity==idle alert (a worker count is more actionable than a state flag).
-        var idle_workers := int(entry.get("idle_workers", 0))
-        if idle_workers > 0:
-            attention.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
-                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
-                "detail": band_name,
-                "x": x, "y": y,
-            })
-        # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
-        # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
-        # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner
-        # field client-side) and what lets the row name the keeper who has to fix it.
-        attention.append_array(_starving_pen_attention(entry))
-    # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
-    # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
-    # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
-    attention.append_array(_awaiting_orders_attention(player_expeditions))
+        new_sizes[int(entry.get("entity", -1))] = int(entry.get("size", 0))
+    # 2. Attention BEFORE ingest — a load-bearing ordering. Producer 2 (losing-population) reads
+    # `_band_labor.prev_band_sizes()`, which `ingest_snapshot_bands` OVERWRITES for next turn, so the
+    # build must run against the PRE-INGEST sizes or every band silently stops reporting decline.
+    var attention := _attention.build_band_attention(player_bands, player_expeditions)
+    # 3. Ingest (overwrites prev_band_sizes) — unchanged.
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
-    # Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
+    # 4. Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
     # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate
     # call would wipe these rows.
     _turnorb.set_band_attention(attention)
@@ -1296,26 +1124,6 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # An OPEN compose sheet re-renders IN PLACE against the fresh subject — it must not close on a
     # snapshot, or it would be unusable under autoplay (§15). It closes only if its subject is gone.
     _drawercompose.refresh_compose_sheet()
-
-## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
-## then, since morale no longer kills (discontent relocates people — see
-## docs/plan_civ_wellbeing.md), a shrink with emigrants last turn reads "people leaving".
-## Otherwise the dominant morale cause names it in plain language ("harsh terrain" /
-## "harsh climate" / "unrest"). When no cause is attributed (morale steady/rising — e.g.
-## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
-## only say "low morale" if morale is actually low, else leave it plain rather than
-## asserting a false reason.
-func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
-    if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
-        return HudAttentionVocab.DECLINE_REASON_STARVING
-    if last_emigrated > 0:
-        return HudAttentionVocab.DECLINE_REASON_PEOPLE_LEAVING
-    var cause_label := DetailFormat.morale_cause_label(morale_cause)
-    if cause_label != "":
-        return cause_label
-    if morale < BandFoodStatus.warn_morale():
-        return HudAttentionVocab.DECLINE_REASON_LOW_MORALE
-    return ""
 
 func _note_command_feed(label: String, detail: String) -> void:
     _command_feed.note(label, detail)

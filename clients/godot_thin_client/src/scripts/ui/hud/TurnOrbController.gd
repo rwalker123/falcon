@@ -8,9 +8,10 @@ extends RefCounted
 ## reflective delegators for the five methods Main reaches by reflection, and RELAYS this controller's own
 ## signals onto the HudLayer signals Main connects to (the controller never emits a HudLayer signal directly).
 ##
-## Two seams to band/labor stay on HudLayer (Phase 3): `update_band_alerts` FEEDS the band half here via
-## `set_band_attention`, and the orb's "Jump →" band routing (`_on_turn_orb_focus`) stays on HudLayer, reached
-## through the relayed `focus_requested`. Holds PURE data + the orb node + the lazily-created fork panel; the
+## Two seams to band/labor stay outside this controller: `HudLayer.update_band_alerts` FEEDS the band half
+## here via `set_band_attention`, and the orb's "Jump →" band routing (`AttentionController.on_turn_orb_focus`)
+## lives on that controller, reached through the relayed `focus_requested`. Holds PURE data + the orb node +
+## the lazily-created fork panel; the
 ## controller is a RefCounted and cannot `add_child`, so it parents the fork panel into the `_host` node.
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
@@ -18,7 +19,7 @@ extends RefCounted
 signal answer_fork_requested(payload: Dictionary)
 # The orb face advanced the turn (after catching the book up) — relayed to HudLayer.next_turn_requested(1).
 signal advance_requested
-# An orb row's "Jump →" — relayed to HudLayer._on_turn_orb_focus (the retained band-routing handler).
+# An orb row's "Jump →" — HudLayer wires this to AttentionController.on_turn_orb_focus (the band-routing handler).
 signal focus_requested(x: int, y: int)
 
 # --- Collaborators (handed in by HudLayer) ---
