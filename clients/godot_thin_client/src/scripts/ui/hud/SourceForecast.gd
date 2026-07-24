@@ -285,8 +285,9 @@ static func _offset_to_axial(col: int, row: int) -> Vector2i:
 ## so a herd across the seam measures by its short wrapped distance, not the long way across the map.
 ## Mirrors the sim's `grid_utils::shortest_delta_x` exactly (magnitude only here, no live
 ## direction effect): keep the direct delta when within half the width, else shift by one width.
-## The exact-half tie (`abs(d) == width/2`) resolves POSITIVE like the sim, NOT `round()`'s
-## half-away-from-zero — kept consistent with MapView._wrapped_col_delta.
+## The exact-half tie (`abs(d) == width/2`) keeps the DIRECT signed delta (so `-width/2` stays
+## negative), matching the sim, NOT `round()`'s half-away-from-zero — kept consistent with
+## MapView._wrapped_col_delta.
 static func _wrapped_col_delta(from_col: int, to_col: int, grid_width: int, wrap_horizontal: bool) -> int:
     var d := to_col - from_col
     if wrap_horizontal and grid_width > 0:

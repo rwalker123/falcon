@@ -2325,8 +2325,8 @@ func _band_effective_col(col: int, radius: float, origin: Vector2) -> int:
 ## target tile renders adjacent to the band rather than across the whole map.
 ## Mirrors the sim's `grid_utils::shortest_delta_x` exactly: keep the direct delta when it is
 ## within half the width, else shift by one width. The exact-half tie (`abs(d) == width/2`)
-## resolves to the POSITIVE direct value, matching the sim — NOT `round()`'s half-away-from-zero
-## (which flipped the sign at the antipode and pointed the travel line the wrong seam direction).
+## keeps the DIRECT signed value (so `-width/2` stays negative), matching the sim — NOT `round()`'s
+## half-away-from-zero (which flipped the sign at the antipode and pointed the travel line the wrong seam direction).
 func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 	var d := to_col - from_col
 	if _wrap_horizontal and grid_width > 0:
