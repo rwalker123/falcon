@@ -32,6 +32,7 @@ const SPRITE_PATHS := {
 	"elk": SPRITE_DIR + "deer.png",
 	"gazelle": SPRITE_DIR + "deer.png",
 	"boar": SPRITE_DIR + "boar.png",
+	"wolf": SPRITE_DIR + "wolf.png",
 	"mammoth": SPRITE_DIR + "mammoth.png",
 	"aurochs": SPRITE_DIR + "aurochs.png",
 	"bison": SPRITE_DIR + "aurochs.png",

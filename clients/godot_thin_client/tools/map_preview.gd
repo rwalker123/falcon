@@ -1646,10 +1646,11 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_horse_01", "Wild Horse"],
 	["game_sheep_01", "Sheep"],
 	["game_fowl_01", "Jungle Fowl"],
+	["game_wolf_01", "Grey Wolf Pack"],
 ]
 ## The roster is laid out as ONE row: MapView is cover-fit, so on this wide preview window only a
 ## few middle rows are on screen and a second roster row is cropped away unseen.
-const FAUNA_ROSTER_COLUMNS := 10
+const FAUNA_ROSTER_COLUMNS := 11
 ## A middle row (well inside the cover-fit crop) and a leading margin off the map border.
 const FAUNA_ROSTER_ORIGIN := Vector2i(3, 5)
 ## Hexes between roster entries — one apart, so ten fit across GRID_W without markers colliding.
