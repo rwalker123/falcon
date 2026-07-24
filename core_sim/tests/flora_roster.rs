@@ -7,6 +7,7 @@
 //! Every assertion is made against the **loaded** `labor_config`, never a literal, so if either
 //! table drifts the test fails instead of quietly agreeing with a stale copy of itself.
 
+use bevy::math::UVec2;
 use core_sim::{FloraConfig, LaborConfig, BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY};
 use sim_runtime::TerrainType;
 
@@ -17,9 +18,32 @@ const SHARE_EPSILON: f32 = 1e-5;
 /// relative bound is the honest one for f32).
 const CAPACITY_RELATIVE_EPSILON: f32 = 1e-5;
 
+/// A pinned seed for every per-tile realization sweep (§10) — so "best/worst realization" is the same
+/// measured extreme run to run.
+const SWEEP_SEED: u64 = 0x_F10A_5EED_2EA1_0010;
+/// Side of the tile grid each sweep samples per biome (8×8 = 64 tiles — enough draws that a species
+/// realizes both dominant and absent across its hosted ground).
+const SWEEP_SIDE: u32 = 8;
+
 fn labor() -> LaborConfig {
     LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG)
         .expect("builtin labor config should parse and validate")
+}
+
+/// The tile coords a realization sweep samples — a small deterministic grid.
+fn sweep_tiles() -> impl Iterator<Item = UVec2> {
+    (0..SWEEP_SIDE).flat_map(|x| (0..SWEEP_SIDE).map(move |y| UVec2::new(x, y)))
+}
+
+/// `species`' realized share of `terrain`'s basket on tile `coord` under [`SWEEP_SEED`] — `0.0` where
+/// the tile does not realize it.
+fn realized_share(flora: &FloraConfig, terrain: TerrainType, species: &str, coord: UVec2) -> f32 {
+    flora
+        .realized_composition(terrain, coord, SWEEP_SEED)
+        .iter()
+        .find(|entry| entry.species == species)
+        .map(|entry| entry.share)
+        .unwrap_or(0.0)
 }
 
 #[test]
@@ -256,21 +280,28 @@ fn the_gathered_wild_things_never_beat_the_basket_average() {
     }
 }
 
-/// **THE commit trade, asserted as the design states it** (§4.3):
+/// **THE commit trade, asserted as the design states it** (§4.3), now on the PER-TILE REALIZED share
+/// (§10):
 ///
 /// ```text
 /// tending is worth it  ⟺  concentration × species_rate  >  1.0 × wild_rate
 /// ```
 ///
-/// For every species that *can* climb, the roster must make that true **somewhere** — on its best
-/// country — and false on its worst hosted ground. A species that clears the bar everywhere it grows
-/// is a free lunch; one that clears it nowhere is a rung nobody would ever climb.
+/// The commit bar is per-tile: a species is worth committing on a tile where it **realizes a high
+/// local share** — its own tiles — and not where it is absent or marginal. So for every climbing
+/// species the roster must make that true on its **best realization** (some tile clears the bar) and
+/// false on its **worst** (some tile — where it is absent, or crowded in with richer neighbours —
+/// does not). This is exactly what lets cash crops sit on AlluvialPlain without tripping the wheat
+/// bar: wheat still dominates *its* alluvial tiles, cotton dominates cotton tiles. Swept over a grid
+/// of tiles at a pinned seed, so "best/worst realization" is a measured extreme, not the uniform
+/// biome share the pre-§10 test read.
 #[test]
-fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its_worst() {
+fn every_climbing_species_is_worth_committing_on_its_best_realization_and_not_on_its_worst() {
     let flora = FloraConfig::builtin();
     let labor = labor();
     let forage = &labor.forage;
     let tended_gain = forage.cultivation.tended_concentration_gain;
+    let wild = forage.provisions_per_biomass;
 
     for (key, def) in &flora.species {
         if !def.cultivation_ceiling.allows_cultivate() {
@@ -284,35 +315,28 @@ fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its
         if def.yield_.provisions_per_biomass == 0.0 {
             continue;
         }
-        // The commit value on each biome this species hosts: `min(1, share × gain) × rate`, against
-        // the wild basket's `1.0 × forage.provisions_per_biomass`.
-        let mut values: Vec<(TerrainType, f32)> = def
-            .host_biomes
-            .keys()
-            .map(|terrain| {
-                let share = flora
-                    .composition(*terrain)
-                    .iter()
-                    .find(|entry| entry.species == *key)
-                    .map(|entry| entry.share)
-                    .expect("a hosted biome names its host");
-                let concentration = (share * tended_gain).min(1.0);
-                (*terrain, concentration * def.yield_.provisions_per_biomass)
-            })
-            .collect();
-        values.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let wild = forage.provisions_per_biomass;
-        let (best_biome, best) = values[0];
-        let (worst_biome, worst) = *values.last().expect("a species hosts at least one biome");
+        // The realized commit value on each hosted biome × a tile sweep: `min(1, realized_share ×
+        // gain) × rate` (0 where the tile does not realize this crop), against the wild basket's
+        // `1.0 × wild_rate`.
+        let mut best = f32::MIN;
+        let mut worst = f32::MAX;
+        for terrain in def.host_biomes.keys() {
+            for coord in sweep_tiles() {
+                let share = realized_share(&flora, *terrain, key, coord);
+                let value = (share * tended_gain).min(1.0) * def.yield_.provisions_per_biomass;
+                best = best.max(value);
+                worst = worst.min(value);
+            }
+        }
         assert!(
             best > wild,
-            "`{key}` is never worth tending — best country {best_biome:?} pays {best} against the \
-             wild basket's {wild}"
+            "`{key}` is never worth tending on any realized tile — best realization pays {best} \
+             against the wild basket's {wild}"
         );
         assert!(
             worst < wild,
-            "`{key}` is worth tending even on {worst_biome:?}, where it is marginal ({worst} vs \
-             {wild}) — a commitment that is right everywhere is not a decision"
+            "`{key}` is worth tending on every realized tile ({worst} vs {wild}) — a commitment that \
+             is right everywhere is not a decision"
         );
     }
 }

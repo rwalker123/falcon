@@ -230,15 +230,38 @@ pub fn advance_labor_allocation(
                                 RungKey::PlantTended
                             };
                             tiles.get(tile_entity).ok().and_then(|ground| {
-                                let composition =
-                                    tile_flora_composition(&flora, &labor.forage, ground);
-                                resolve_committed_species(
-                                    species.as_deref(),
-                                    &composition,
-                                    &flora,
-                                    rung,
-                                )
-                                .ok()
+                                // §10 scoping: Cultivate and a Sow that **upgrades** an existing
+                                // patch commit against the tile's **realized** basket (what is
+                                // growing here); a Sow that **creates** a patch on bare ground has no
+                                // realized basket, so it reads the **affinity** roster (what CAN grow
+                                // here). The create case does not occur on a generated map — every
+                                // food-bearing tile already carries a patch — but the branch keeps the
+                                // "you sow what grows here; unwilling ground is rung 4" rule honest.
+                                let sow_from_nothing = matches!(policy, FollowPolicy::Sow)
+                                    && forage_registry.patch(*tile).is_none();
+                                if sow_from_nothing {
+                                    resolve_committed_species(
+                                        species.as_deref(),
+                                        flora.composition(ground.resource_terrain()),
+                                        &flora,
+                                        rung,
+                                    )
+                                    .ok()
+                                } else {
+                                    let composition = tile_flora_composition(
+                                        &flora,
+                                        &labor.forage,
+                                        ground,
+                                        map_seed,
+                                    );
+                                    resolve_committed_species(
+                                        species.as_deref(),
+                                        &composition,
+                                        &flora,
+                                        rung,
+                                    )
+                                    .ok()
+                                }
                             })
                         })
                         .flatten();

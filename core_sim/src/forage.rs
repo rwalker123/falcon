@@ -524,15 +524,27 @@ pub fn tile_forage_capacity(forage: &ForageLaborConfig, tile: &Tile) -> f32 {
 /// [`FloraConfig::composition`] on a raw terrain: reading the underlying biome alone on a navigable
 /// hex leaves that hex's fishery bonus **unnamed**, which breaks the decomposition ruling on a whole
 /// class of tiles and is invisible to `validate_against_forage`.
+/// **Now realizes per tile** (`docs/plan_flora_roster.md` §10): the affinity roster answers *what CAN
+/// grow here*, and this seam answers *what IS growing here* — a seeded, deterministic subset keyed on
+/// `(map_seed, tile)`, so two tiles of one biome carry different baskets. Every non-Sow-from-nothing
+/// caller (display, wild gather, Cultivate, Sow-upgrade, and the wire `ForagePatchState.composition`)
+/// reads the realized basket through this one function. Owned on both arms now, because realization
+/// always produces a fresh subset.
 pub fn tile_flora_composition<'a>(
     flora: &'a FloraConfig,
     forage: &ForageLaborConfig,
     tile: &Tile,
+    map_seed: u64,
 ) -> Cow<'a, [FloraShare]> {
     if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
-        Cow::Owned(flora.navigable_composition(tile.resource_terrain(), forage))
+        Cow::Owned(flora.realized_navigable_composition(
+            tile.resource_terrain(),
+            forage,
+            tile.position,
+            map_seed,
+        ))
     } else {
-        Cow::Borrowed(flora.composition(tile.resource_terrain()))
+        Cow::Owned(flora.realized_composition(tile.resource_terrain(), tile.position, map_seed))
     }
 }
 
@@ -1083,12 +1095,14 @@ pub fn advance_forage_regrowth(
     mut registry: ResMut<ForageRegistry>,
     labor_config: Res<LaborConfigHandle>,
     flora_config: Res<crate::flora_config::FloraConfigHandle>,
+    sim_config: Res<crate::resources::SimulationConfig>,
     tile_registry: Res<crate::resources::TileRegistry>,
     tiles: Query<&Tile>,
 ) {
     let labor = labor_config.get();
     let forage = &labor.forage;
     let flora = flora_config.get();
+    let map_seed = sim_config.map_seed;
     for patch in registry.patches.values_mut() {
         // **Concentration, recomputed fresh from the tile every turn** — the plant twin of
         // `fauna::ecological_carrying_capacity`'s one write. Idempotent (`tile_K × concentration`
@@ -1102,7 +1116,7 @@ pub fn advance_forage_regrowth(
                 .index(patch.tile.x, patch.tile.y)
                 .and_then(|entity| tiles.get(entity).ok())
             {
-                let composition = tile_flora_composition(&flora, forage, tile);
+                let composition = tile_flora_composition(&flora, forage, tile, map_seed);
                 patch.carrying_capacity = effective_forage_capacity(
                     patch,
                     tile_forage_capacity(forage, tile),

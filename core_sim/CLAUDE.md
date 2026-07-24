@@ -2151,16 +2151,61 @@ distinct from the valley it cut — and `FloraConfig::navigable_composition` ble
 the same two-term shape as `navigable_forage_capacity` (each weighted by **its own** term, duplicate
 species keys **merged**, then renormalized and sorted by the same total order). **`forage::tile_flora_composition`
 is THE seam every caller reads** — the twin of `tile_forage_capacity`, branching on the same
-condition, so the capacity and its decomposition can never disagree about a tile's shape. Never call
+condition, so the capacity and its decomposition can never disagree about a tile's shape. It now also
+**realizes per tile** (see "Per-tile realization" below), so it takes `map_seed`. Never call
 `FloraConfig::composition` on a raw terrain from a sim/snapshot path.
 
 **On the wire** (append-only): `ForagePatchState.composition:[FloraShareInfo{ species, displayName,
 share, canCultivate, canSow, cultivateYieldRatio, sowYieldRatio }]`, resolved through
 `tile_flora_composition`. The last four are S1's crop-picker payload — see "Committing a patch to one
-plant". **Derived from the tile's biome, not per-patch
-state**: every tile of a biome publishes the same basket, and no `ForagePatch` field feeds it.
-**Client follow-up:** nothing renders it — the tile-card composition readout is a client-dev slice,
-and so is exposing the per-patch **commitment** (S1, below), which is sim/rollback state only today.
+plant". **Derived from the tile's biome AND its coordinate, not per-patch state**: since the F4/§10
+realization arc a tile publishes its **realized subset** (what is *growing* here — 2–4 species keyed on
+`(map_seed, tile)`), so **two tiles of one biome publish different baskets**; the uniform *affinity*
+table (`FloraConfig::composition`, what *can* grow here) is now one input to that, not the wire value.
+No `ForagePatch` field feeds it. **Client follow-up:** nothing renders it — the tile-card composition
+readout is a client-dev slice, and so is exposing the per-patch **commitment** (S1, below), which is
+sim/rollback state only today.
+
+### Per-tile realization — what *can* grow vs what *is* growing (Flora Roster §10)
+
+`FloraConfig::composition(terrain)` is the **affinity** roster — *what CAN grow on this biome* —
+uniform across every tile of a biome. `FloraConfig::realized_composition(terrain, tile, map_seed)` (and
+its navigable twin `realized_navigable_composition`) is the per-tile **realization** — *what IS
+growing here* — a **seeded weighted subset**: for tile `(x, y)` under `map_seed` it draws
+`k ∈ [realized_species_min, realized_species_max]` species (clamped to how many the biome hosts) by
+**Efraimidis–Spirakis** weighted sampling without replacement (probability ∝ affinity share), then
+**renormalizes** the picked shares to sum to `1`. So some alluvial tiles are wheat, others tobacco,
+instead of every tile carrying a diluted slice of all of them.
+
+- **`tile_flora_composition` is still THE seam** and realizes inside itself — the non-navigable arm
+  realizes the biome basket; the navigable arm realizes the **underlying valley** and blends the
+  **un-realized** channel term (`river_fish`) back in (a giant river is always a fishery). Every
+  non-Sow-from-nothing caller reads the realized basket: display, wild gather, Cultivate, Sow-**upgrade**,
+  and the wire `ForagePatchState.composition`. **`Sow`-from-nothing** (creating a patch on bare ground —
+  which does not occur on a generated map, every food-bearing tile already carries a patch) reads the
+  **affinity** roster, since there is no realized basket; the fuller "Sow reads affinity everywhere"
+  model is deferred (§11).
+- **Pure and derived, so it costs nothing.** Realization is a pure function of
+  `(map_seed, tile, terrain, affinities)` — no stored state, no RNG stream, `splitmix64` +
+  FNV-of-coord for entropy — so it is **deterministic under rollback for free** and adds **nothing** to
+  the snapshot/wire (the realized subset simply *is* the published `composition`). Determinism
+  discipline: the affinity input is already total-ordered, ties break by species key ascending, no
+  `HashMap` iteration order reaches the result. Pinned bit-exact by
+  `core_sim/tests/flora_realization.rs`.
+- **Per-tile neutrality — realization moves nothing at the wild rung.** The picked shares renormalize
+  to `1`, so `Σ share × capacity == capacity` on every tile: the tile still yields its full biome
+  capacity gathered wild, just composed of different species. The economy-neutrality F1 proved for the
+  uniform basket, now per tile.
+- **This dissolved the F4 cash-crop dilution bind.** The rung-2 commit bar reads a tile's **local
+  realized share**, not the uniform biome share, so cotton/tobacco/flax now host AlluvialPlain/Floodplain
+  *honestly* — some alluvial tiles realize as wheat (worth tending) and others as cotton — without
+  eroding wheat on every alluvial tile the way a global % table did. `every_climbing_species...` and the
+  `flora_commitment.rs` commit-trade tests are reframed around the realized share (best realization
+  beats wild; a tile is not always the same crop). Config dials `realized_species_min` (2) /
+  `realized_species_max` (4) in `flora_config.json`, validated `1 <= min <= max`.
+- **Client:** no schema change (the picker already renders `composition`, now varying tile to tile), so
+  it "just works" — but the ui_preview crop-picker fixture needs **two tiles of one biome** to *show*
+  the variance. Flag for the client half.
 
 ### Committing a patch to one plant (Flora Roster S1) — the land owns `K`
 

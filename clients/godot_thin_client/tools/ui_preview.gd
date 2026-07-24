@@ -864,11 +864,24 @@ func _ready() -> void:
 	# picker instead shows "Flax 30% · 2.4 trade". The provisions crop beside it (Wild Emmer) keeps its
 	# unchanged "70% · 3.2×" ratio — proof a normal crop's row is untouched (twin of the fodder frame).
 	_hud.show_tile_selection(_cash_basket_tile_fixture())
+	_compose_forage(_cash_basket_tile_fixture())   # settle the source key first (it changed)
 	_hud._compose.set_forage_policy("sow")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_cash_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_picker_cash")
+
+	# State F4 per-tile flora realization — the SECOND Alluvial Plain tile. Same biome as the frame
+	# above, but a DIFFERENT realized basket (Cotton 55% + Flax 45% vs Wild Emmer 70% + Flax 30%): two
+	# tiles of one biome now carry a seeded per-tile subset, not the uniform per-biome roster. Rendered
+	# beside `forage_crop_picker_cash`, the pair is the visible proof of the whole slice — read both.
+	_hud.show_tile_selection(_cash_variant_basket_tile_fixture())
+	_compose_forage(_cash_variant_basket_tile_fixture())   # settle the source key first (it changed)
+	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_species("")
+	_compose_forage(_cash_variant_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker_cash_variant")
 
 	# State 6b-sowing — the rung-3 BUILD meter: the Field row reads "Sowing 45%", following the pen's
 	# "Building 40%" / the fence's "Fencing 60%" convention. It sits BESIDE the "Cultivation 🌾 Tended
@@ -3812,6 +3825,30 @@ func _cash_basket_tile_fixture() -> Dictionary:
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
 			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 0.0},
 		{"species": "flax", "display_name": "Flax", "share": 0.30,
+			"can_cultivate": false, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 2.4},
+	]
+	return tile
+
+## PER-TILE FLORA REALIZATION (Flora roster F4) — the SECOND Alluvial Plain tile. Same biome as
+## `_cash_basket_tile_fixture` (both "Alluvial Plain"), but a DIFFERENT realized basket: two tiles of
+## one biome no longer carry the uniform per-biome roster, they carry a seeded per-tile SUBSET. This
+## one is cash-DOMINANT — Cotton 55% + Flax 45%, both cash crops paying trade — where its twin was
+## grain-dominant (Wild Emmer 70% + Flax 30%). Rendered beside it, the pair is the visible proof that
+## same-biome tiles realize different species/shares. A different coord so it reads as its own tile.
+func _cash_variant_basket_tile_fixture() -> Dictionary:
+	var tile := _sowable_tile_fixture()
+	tile["x"] = 68
+	tile["y"] = 12
+	tile["patch_composition"] = [
+		{"species": "cotton", "display_name": "Cotton", "share": 0.55,
+			"can_cultivate": false, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 3.6},
+		{"species": "flax", "display_name": "Flax", "share": 0.45,
 			"can_cultivate": false, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
