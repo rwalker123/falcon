@@ -47,6 +47,8 @@
 //! typed Rust *after* saturation, since a path-derived sentinel there would put a tile outside the
 //! grid or a raster out of step with its width.
 
+use flatbuffers::FlatBufferBuilder;
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_schema::codec::encode_snapshot_flatbuffer;
 use sim_schema::state::campaign::*;
 use sim_schema::state::culture::*;
@@ -94,6 +96,88 @@ pub fn write_fixture() -> Result<(), Box<dyn Error>> {
         bytes.len()
     );
     Ok(())
+}
+
+/// Where the HEADERLESS envelope lands. Committed beside the main fixture for the same reason:
+/// `tools/decode_guard.tscn` must run standalone.
+pub fn headerless_fixture_path() -> PathBuf {
+    Path::new("clients")
+        .join("godot_thin_client")
+        .join("tests")
+        .join("fixtures")
+        .join("snapshot_headerless_envelope.bin")
+}
+
+/// Writes a **malformed-but-verifiable** envelope: a `WorldSnapshot` carrying a real map section
+/// and **no `header`**.
+///
+/// `header` has no `required` attribute in the schema and `root_as_envelope` verifies table
+/// STRUCTURE only, so this parses cleanly and reaches `snapshot_to_dict` with the field absent —
+/// which used to `unwrap()` and take the client down. The guard decodes this fixture and asserts
+/// the decoder answers an EMPTY dictionary (the "no frame" contract `SnapshotLoader.poll_stream`
+/// already skips on), so both halves are pinned: it must not panic, and it must not publish a
+/// half-identified world either.
+///
+/// It is built with the FlatBuffers builder directly rather than through
+/// `encode_snapshot_flatbuffer`, because that encoder always writes a header — which is correct,
+/// and is exactly why the malformed case cannot come from it. The map section is deliberately
+/// **non-empty**: a snapshot that decoded to nothing anyway would not distinguish "the frame was
+/// dropped" from "there was nothing in it".
+pub fn write_headerless_fixture() -> Result<(), Box<dyn Error>> {
+    let bytes = encode_headerless_envelope();
+    let path = headerless_fixture_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, &bytes)?;
+    println!(
+        "Wrote headerless decode fixture to {} ({} bytes)",
+        path.display(),
+        bytes.len()
+    );
+    Ok(())
+}
+
+fn encode_headerless_envelope() -> Vec<u8> {
+    let mut builder = FlatBufferBuilder::new();
+
+    // One real raster, so the snapshot carries decodable content the header's absence must
+    // suppress. Values are irrelevant — nothing asserts on them; only the drop is asserted.
+    let samples = builder.create_vector(&[0u16; GRID_CELLS]);
+    let elevation = fb::ElevationOverlay::create(
+        &mut builder,
+        &fb::ElevationOverlayArgs {
+            width: GRID_W,
+            height: GRID_H,
+            samples: Some(samples),
+            ..Default::default()
+        },
+    );
+    let map = fb::MapSection::create(
+        &mut builder,
+        &fb::MapSectionArgs {
+            elevationOverlay: Some(elevation),
+            ..Default::default()
+        },
+    );
+    let snapshot = fb::WorldSnapshot::create(
+        &mut builder,
+        &fb::WorldSnapshotArgs {
+            // The whole point of this fixture.
+            header: None,
+            map: Some(map),
+            ..Default::default()
+        },
+    );
+    let envelope = fb::Envelope::create(
+        &mut builder,
+        &fb::EnvelopeArgs {
+            payload_type: fb::SnapshotPayload::snapshot,
+            payload: Some(snapshot.as_union_value()),
+        },
+    );
+    builder.finish(envelope, None);
+    builder.finished_data().to_vec()
 }
 
 /// Seed → saturate → fix up. See the module docs for why it is done in that order.
@@ -685,6 +769,34 @@ mod tests {
             bytes.len() > 1024,
             "fixture envelope is suspiciously small ({} bytes) — did a section stop encoding?",
             bytes.len()
+        );
+    }
+
+    /// The headerless fixture must stay **verifiable AND header-less** — that pair IS the case
+    /// under test, and it reaches CI where the Godot-side assertion cannot.
+    ///
+    /// Both halves can rot silently. If `header` ever gained a `required` attribute (or the builder
+    /// started emitting one) the guard's assertion would keep passing, vacuously, against a fixture
+    /// that no longer reproduces the bug; and if the map section were dropped, the guard could no
+    /// longer distinguish "the frame was dropped" from "the snapshot was empty anyway".
+    #[test]
+    fn the_headerless_fixture_verifies_and_carries_no_header() {
+        let bytes = encode_headerless_envelope();
+        let envelope = fb::root_as_envelope(&bytes).expect(
+            "the headerless envelope must still VERIFY — an unparseable one proves nothing",
+        );
+        assert_eq!(envelope.payload_type(), fb::SnapshotPayload::snapshot);
+        let snapshot = envelope
+            .payload_as_snapshot()
+            .expect("payload reads back as a WorldSnapshot");
+        assert!(
+            snapshot.header().is_none(),
+            "the fixture must carry NO header — that absence is the whole case under test"
+        );
+        assert!(
+            snapshot.map().is_some(),
+            "the fixture must carry real content, so a dropped frame is distinguishable from an \
+             empty one"
         );
     }
 

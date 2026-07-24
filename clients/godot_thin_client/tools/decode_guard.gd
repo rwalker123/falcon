@@ -33,6 +33,10 @@ extends Node
 ## a **map from wire field to dictionary key**. That is what makes a mis-wired accessor legible
 ## rather than merely different: the value tells you where it actually came from.
 ##
+## A **second** fixture is decoded first and has no golden — a deliberately MALFORMED snapshot with
+## no `header`, asserting the decoder DROPS that frame rather than panicking or inventing defaults.
+## See `_assert_headerless_frame_is_dropped`, including what it can and cannot see.
+##
 ##   cargo xtask decode-guard                  # regenerate fixture, build native, diff
 ##   cargo xtask decode-guard --write-golden   # re-record instead of diffing
 ##   cargo xtask decode-guard --no-build       # skip the native rebuild, when you just built it
@@ -42,6 +46,10 @@ extends Node
 
 const FIXTURE_PATH := "res://tests/fixtures/snapshot_envelope.bin"
 const GOLDEN_PATH := "res://tests/golden/snapshot_dict.json"
+
+## A second, deliberately MALFORMED envelope: a `WorldSnapshot` with a real map section and no
+## `header`. It has no golden — it is decoded for the assertion below, not for a diff.
+const HEADERLESS_FIXTURE_PATH := "res://tests/fixtures/snapshot_headerless_envelope.bin"
 
 ## Decimals kept on every float. The decoder divides fixed-point by 1e6 and stores some values as
 ## `f32`, so the last bits are not stable enough to pin — but a dropped divide moves a value by
@@ -65,6 +73,10 @@ const ELEMENT_SEPARATOR := "\u001f"
 const MAX_DIFF_LINES := 40
 
 var _write_golden := false
+
+## Set by `_die`. `get_tree().quit()` only SCHEDULES the exit — the rest of the calling function
+## still runs — so every caller past a possible failure checks this rather than reporting twice.
+var _died := false
 
 
 func _ready() -> void:
@@ -94,7 +106,12 @@ func _ready() -> void:
 		_die("ClassDB.instantiate(\"SnapshotDecoder\") returned null despite the class reporting instantiable — the native extension is likely half-loaded; rebuild it with cargo xtask godot-build.")
 		return
 
-	var decoded: Dictionary = decoder.decode_snapshot(payload)
+	if not _assert_headerless_frame_is_dropped(decoder):
+		return
+
+	var decoded := _decode_or_die(decoder, payload, "the fixture envelope")
+	if _died:
+		return
 
 	# An empty dict is what `decode_snapshot` returns for a payload it could not parse
 	# (`unwrap_or_default`), so it is the one failure that must be reported on its own terms rather
@@ -122,6 +139,66 @@ func _ready() -> void:
 		return
 
 	_report_diff(golden, rendered)
+
+
+## Decodes the malformed HEADERLESS envelope and asserts the decoder DROPS that frame.
+##
+## `header` carries no `required` attribute in `sim_schema/schemas/snapshot.fbs` and
+## `root_as_envelope` verifies table STRUCTURE only, so a snapshot can parse cleanly with the field
+## absent; `snapshot_to_dict` used to `unwrap()` it and take the whole client down. The contract is
+## that such a frame decodes to an EMPTY dictionary — the "no frame" value
+## `SnapshotLoader.poll_stream` already skips — and NOT to a dictionary filled in with header
+## defaults, which would publish a world whose `tick`, `world_epoch` and (worst) `wrap_horizontal`
+## are guesses rather than the server's.
+##
+## **The limit of this assertion, MEASURED rather than assumed, so nobody trusts it further than it
+## goes:** gdext catches a Rust panic at the FFI boundary and the call still comes back with the
+## method's DEFAULT value — for `decode_snapshot`, an empty `Dictionary`, the very thing asserted
+## here (the engine logs `ERROR: [panic …]` and a `SCRIPT ERROR: Bug: Invalid call error code 1337`
+## beside it, but the script sees a plain empty dict and sails on). So this cannot by itself tell a
+## clean drop from a re-introduced `unwrap()`, and a type check on the result does not help — the
+## returned Variant IS a Dictionary in both cases (that was tried). That half is caught one level up:
+## `cargo xtask decode-guard` greps the run for the engine's panic report and fails on it.
+func _assert_headerless_frame_is_dropped(decoder: Object) -> bool:
+	if not FileAccess.file_exists(HEADERLESS_FIXTURE_PATH):
+		_die("no headerless fixture at %s — generate it with: cargo xtask decode-fixture" % HEADERLESS_FIXTURE_PATH)
+		return false
+	var payload := FileAccess.get_file_as_bytes(HEADERLESS_FIXTURE_PATH)
+	if payload.is_empty():
+		_die("headerless fixture at %s is empty" % HEADERLESS_FIXTURE_PATH)
+		return false
+
+	var decoded := _decode_or_die(decoder, payload, "the HEADERLESS envelope")
+	if _died:
+		return false
+	if not decoded.is_empty():
+		_die("decode_snapshot returned %d keys for a HEADERLESS snapshot (%s) — a frame with no header carries no tick, no worldEpoch and no wrapHorizontal, so it must be DROPPED (an empty dictionary the loader skips), never decoded with header defaults." % [decoded.size(), str(decoded.keys())])
+		return false
+
+	print("decode_guard: headerless snapshot correctly dropped (empty dictionary, %d bytes in)" % payload.size())
+	return true
+
+
+## Calls the REAL decoder and hands back its dictionary.
+##
+## **This exists to stop the gate HANGING, and the untyped local is the whole trick.** gdext wraps
+## every `#[func]` in a panic guard: a Rust panic inside the decoder does not unwind into the engine,
+## it is logged and the call comes back flagged as failed (`SCRIPT ERROR: Bug: Invalid call error
+## code 1337`). A failed call assigned straight into a `: Dictionary` local ABORTS the calling
+## function — so `get_tree().quit()` never runs and the headless process sits there **forever**
+## instead of failing, which is what the old `header().unwrap()` did when it was put back to check
+## (measured: 23 minutes, killed by hand). Taking the result as a `Variant` keeps the script alive
+## through it, so the run finishes and `cargo xtask decode-guard`'s panic grep gets to speak.
+##
+## It is deliberately NOT a panic detector: the value that comes back is the method's DEFAULT, i.e.
+## an empty `Dictionary`, indistinguishable from a frame the decoder dropped on purpose. Detection
+## lives in the xtask runner; this only guarantees there is still a run for it to read.
+func _decode_or_die(decoder: Object, payload: PackedByteArray, what: String) -> Dictionary:
+	var result: Variant = decoder.decode_snapshot(payload)
+	if typeof(result) != TYPE_DICTIONARY:
+		_die("decode_snapshot returned %s, not a Dictionary, for %s — the decoder call failed outright. Look for a Rust panic or a signature change in the output above." % [type_string(typeof(result)), what])
+		return {}
+	return result
 
 
 func _read_fixture() -> PackedByteArray:
@@ -333,4 +410,5 @@ func _write_text(path: String, text: String) -> void:
 
 func _die(message: String) -> void:
 	printerr("decode_guard: FAIL — ", message)
+	_died = true
 	get_tree().quit(1)
