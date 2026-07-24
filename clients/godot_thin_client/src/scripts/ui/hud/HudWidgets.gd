@@ -30,8 +30,8 @@ class_name HudWidgets
 ## `HudStyle`'s remit and now LIVE there (`role_card_stylebox` / `work_row_stylebox` /
 ## `work_inspector_stylebox`) — a zone builder styles through `HudStyle`, never by hand.
 ##
-## CONSTS STAY ON `HudLayer` and are read back as `HudLayer.X` — the established pattern
-## `SelectionCardController` and `TopBarReadouts` already use. Word/format VOCABULARY lives next door in
+## CONSTS LIVE IN THE TOPIC VOCAB MODULES (`HudConst` / the matching `Hud*Vocab`) and are read as
+## `Module.X`. Word/format VOCABULARY lives next door in
 ## `HudFormat`, which this file calls freely (both are static); the split is so `TopBarReadouts` can
 ## depend on the formatting without importing a widget factory.
 

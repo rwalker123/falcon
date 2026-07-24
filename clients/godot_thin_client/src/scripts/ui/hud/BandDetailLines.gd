@@ -30,10 +30,10 @@ extends RefCounted
 ## callers pass `SelectionCardController.selected_terrain_label()`.
 ##
 ## CONSTS. Same rule as `DetailFormat`: a const lives here iff every one of its readers moved here.
-## The band/party row vocabulary below did; everything still shared with `HudLayer` code (the
-## `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` disclosure vocabulary, `MORALE_CAUSE_*`, the morale-breakdown
-## indent + sign glyphs, `STORE_ITEM_PROVISIONS`, `OUTPUT_FULL`, `FOOD_FLOW_MIN`) stayed there and is
-## read back as `HudLayer.X` — the `HudWidgets` / `HudFormat` / `TopBarReadouts` convention.
+## The band/party row vocabulary below did; the rest lives in its own topic module — the
+## `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` disclosure vocabulary in `HudDisclosureVocab`, `MORALE_CAUSE_*`
+## and the morale-breakdown indent + sign glyphs in `DetailFormat`, `STORE_ITEM_PROVISIONS` in
+## `HudConst`, `OUTPUT_FULL` / `FOOD_FLOW_MIN` in `SourceForecast` — each read as `Module.X`.
 
 # ---- The band's fodder (hay) larder row, shown beneath Food only for a band with a fodder economy
 # (it has stockpiled hay, or it pays a pen bread bill it could offset with hay) — so a forager band

@@ -31,9 +31,9 @@ extends RefCounted
 ## node — a `RefCounted` cannot `add_child`, so the `ComposeSheet` it creates is parented into the HUD
 ## CanvasLayer exactly as `TurnOrbController` parents its fork panel.
 ##
-## The word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the
-## same convention `HudWidgets` / `HudFormat` / `TopBarReadouts` / `SelectionCardController` follow —
-## so a phrase is still typed in exactly one place.
+## The word tables, formats and thresholds live in the topic vocab modules (`HudConst` / the matching
+## `Hud*Vocab`) and the shared `DetailFormat` layer, read as `Module.X` — so a phrase is still typed in
+## exactly one place.
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # A hunting party was dispatched — relayed to HudLayer.send_hunt_expedition_requested.

@@ -14,8 +14,9 @@ class_name HudFormat
 ## builder of Controls it never builds. `HudWidgets` depends on THIS, never the other way round.
 ##
 ## EVERYTHING HERE IS `static`, STATELESS AND PURE — same invariant as `SourceForecast` and
-## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) stay on
-## `HudLayer` and are read back as `HudLayer.X`, so there is still exactly one place a phrase is typed.
+## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) live in
+## `HudExpeditionVocab` and are read as `HudExpeditionVocab.X`, so there is still exactly one place a
+## phrase is typed.
 ## Where a formatter needs HUD state it takes it as a PARAMETER rather than reaching for it — see
 ## `panel_expedition_summary`'s `herd_label_for_id` Callable, the `HudWidgets.build_worker_stepper`
 ## `current_turn` precedent.
@@ -171,8 +172,8 @@ static func dependency_per_hundred(dependents: int, working: int) -> int:
     return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
 
 ## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
-## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` stays on
-## `HudLayer` (the chip's own tint reads it too) and is read back, the established convention.
+## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` lives in
+## `HudWorkVocab` (the chip's own tint reads it too) and is read as `HudWorkVocab.X`.
 static func dependency_tooltip(dependents: int, working: int) -> String:
     var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
     if dependency_per_hundred(dependents, working) > HudWorkVocab.PEOPLE_DEPENDENCY_HEAVY:

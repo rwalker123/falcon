@@ -38,9 +38,9 @@ extends RefCounted
 ## `add_child`, and `_confirm_destructive` parents a `ConfirmationDialog` exactly as
 ## `TurnOrbController` parents its fork panel.
 ##
-## The word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the
-## same convention `HudWidgets` / `HudFormat` / `TopBarReadouts` / `SelectionCardController` /
-## `DrawerComposeController` follow — so a phrase is still typed in exactly one place.
+## The word tables, formats and thresholds live in the topic vocab modules (`HudConst` / the matching
+## `Hud*Vocab`) and the shared `DetailFormat` layer, read as `Module.X` — so a phrase is still typed in
+## exactly one place.
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # Standing work was cleared for a whole scope — relayed to HudLayer.cancel_order_requested.

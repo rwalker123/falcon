@@ -27,9 +27,10 @@ extends RefCounted
 ## (`subject_body.minimum_size_changed` and `viewport.size_changed.bind(true)` — the force-past-the-gate
 ## flag) are wired in HudLayer's `_ready` exactly as before, only repointed here.
 ##
-## Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the same
-## convention `HudWidgets` / `HudFormat` / `SelectionCardController` / `DrawerComposeController` /
-## `BandPanelController` follow — so a phrase is still typed in exactly one place.
+## Word tables, formats and thresholds live in the topic vocab modules (`HudConst` / the matching
+## `Hud*Vocab`) and the shared `DetailFormat` layer, read as `Module.X` — this file reaches for
+## `HudConst` / `HudSelectionVocab` / `HudWorkVocab` / `HudExpeditionVocab` / `HudFloraVocab` /
+## `DetailFormat` — so a phrase is still typed in exactly one place.
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _selection: HudSelectionState = null

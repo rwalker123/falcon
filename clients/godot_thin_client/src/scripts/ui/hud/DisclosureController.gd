@@ -27,8 +27,9 @@ extends RefCounted
 ## `refresh_hosts` Callable rather than as two back-references.
 ##
 ## CONSTS. Same rule as `DetailFormat`: a const lives here iff every reader moved here. The popover's
-## geometry did; `BREAKDOWN_TOGGLE_META_PREFIX` (read by the formatter and by both preview harnesses),
-## `BREAKDOWN_KIND_*` and the `FOOD_LABEL_*` table did not, and are read back as `HudLayer.X`.
+## geometry did; `BREAKDOWN_TOGGLE_META_PREFIX` (read by the formatter and by both preview harnesses)
+## and `BREAKDOWN_KIND_*` live in `HudDisclosureVocab`, the `FOOD_LABEL_*` table in `DetailFormat` —
+## each read as `Module.X`.
 
 ## The breakdown popover's card geometry. Fixed width so the rows align in a column like the table
 ## they came from; the GAP is how far under the clicked row the card floats.
