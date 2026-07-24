@@ -222,6 +222,28 @@ The remaining deferred items below are now tracked as issues **#295–#299**
 (native `lib.rs` split; the three `MapView.gd` families; the snapshot
 clippy-allow and per-capture `tracing` cleanups).
 
+### Native `lib.rs` split (issue #295) — landed
+
+Deferred follow-up 5 is done. `clients/godot_thin_client/native/src/lib.rs`
+(5,617 lines: three `GodotClass` types, the whole snapshot/delta decode path, and
+~60 converters) is now a module tree partitioned along the **same nine sections**,
+so both ends of the wire look alike: `bridge/{command,script_host,decoder,variant}.rs`,
+`snapshot/{mod,raster,delta}.rs`, and
+`dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign}.rs`.
+`lib.rs` keeps only the gdextension entry point and the public re-exports (25 lines).
+Like `sim_schema`, there is no `dict/vision.rs` — the vision section is rasters,
+owned by `snapshot/raster.rs`.
+
+Pure code motion, and verified as such **mechanically**, because the usual PNG
+harnesses do not reach this file at all (neither `ui_preview.gd` nor `map_preview.gd`
+references `SnapshotDecoder`; they feed hand-written GDScript fixture dicts straight
+to `Hud`/`MapView`, so a green PNG run proves nothing here). Instead: all 5,159
+substantive lines reconstruct in their original order with **zero** mismatches, the
+only altered lines being 107 `pub(crate)` visibility promotions; all 736 distinct
+string literals (989 occurrences) — every dictionary key and label — are identical;
+plus `clippy -D warnings`, `cargo test`, `cargo xtask godot-build`, and a live
+`ClassDB` check that all three classes still register and instantiate.
+
 ## Deferred follow-ups
 
 These were consciously scoped out (not missed). Each is a candidate for its own
@@ -252,9 +274,10 @@ verified pass; the `MapView.gd` remainder is also summarized in
 4. **Hud selection-panel builders** (`_build_allocation_*`, `_herd_summary_lines`).
    Read shared `_selected_*` state; defer until a selection-panel PNG fixture can
    verify them.
-5. **`native/src/lib.rs`** remains a single-file hotspot (Step 1 re-routed ~90
+5. ~~**`native/src/lib.rs`** remains a single-file hotspot (Step 1 re-routed ~90
    read sites through section accessors but did not split the file). Splitting it
-   by domain is a candidate if it stays a conflict source.
+   by domain is a candidate if it stays a conflict source.~~ **Done** (issue #295)
+   — see "Native `lib.rs` split" in Status above.
 
 ### Pre-existing cleanups surfaced by PR #122 review
 
