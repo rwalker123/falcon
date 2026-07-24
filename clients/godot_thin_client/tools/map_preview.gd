@@ -305,6 +305,75 @@ const RIVERINE_FISH_X := 6             # column of the open-water (fish) site
 const RIVERINE_REED_X := 10            # column of the dry-floodplain (reed) site
 const RIVERINE_SITE_Y := 6            # shared row so both markers sit at the same height, easy to compare
 
+# --- The ANNOTATION states (trade / crisis / terrain highlight / routes) -------------------------
+# These four cover the `AnnotationRenderer` family, which had NO fixture at all before. They were
+# written AFTER the code they cover, so they encode CURRENT BEHAVIOUR — bugs included. They prove
+# "this refactor changed nothing", NOT "this rendering is correct"; do not read a passing byte-diff
+# as a correctness result.
+#
+# State "trade overlay". Trade links address their endpoints by TILE ENTITY id, which MapView resolves
+# through `tile_lookup` (built from `tiles[].entity`) — so this is the one flat-backdrop fixture that
+# has to publish a `tiles` array at all. The three link entities exist to fan the draw's branches out
+# across one frame: the SELECTED one (green + widened), a busy open one, and a thin closed one whose
+# leak is imminent (a red midpoint dot).
+const TRADE_SELECTED_ENTITY := 4201    # the caravan TradePanel reports as selected → the selection branch
+const TRADE_BUSY_ENTITY := 4202        # high throughput + openness → the widest, most opaque amber line
+const TRADE_LEAKING_ENTITY := 4203     # low throughput + openness → thin/faint, and its leak fires
+# `leak_timer <= 1` is the draw's own test for "this link leaks knowledge NOW" (the red midpoint dot).
+const TRADE_LEAK_QUIET := 5            # above the test → no dot
+const TRADE_LEAK_IMMINENT := 0         # at/below it → dot
+# A link whose endpoints are NOT in `tile_lookup` — the draw skips it. Present so the guard is
+# EXERCISED by the reference frame; a refactor that dropped it would start drawing a line here.
+const TRADE_UNRESOLVED_TILE := -1
+# Link endpoints (col, row) on the flat GRID_W×GRID_H backdrop, spread so no two lines overlap.
+const TRADE_SELECTED_FROM := Vector2i(2, 2)
+const TRADE_SELECTED_TO := Vector2i(13, 3)
+const TRADE_BUSY_FROM := Vector2i(3, 9)
+const TRADE_BUSY_TO := Vector2i(12, 8)
+const TRADE_LEAKING_FROM := Vector2i(7, 1)
+const TRADE_LEAKING_TO := Vector2i(6, 10)
+const TRADE_BUSY_THROUGHPUT := 8.0     # ≫ the draw's 2.5 intensity clamp → full width
+const TRADE_BUSY_OPENNESS := 0.9       # → the opacity clamp's top end
+const TRADE_QUIET_THROUGHPUT := 1.0    # → a barely-thickened line
+const TRADE_QUIET_OPENNESS := 0.05     # → the opacity clamp's floor
+
+# State "crisis annotations". The draw is gated on the `crisis` overlay channel being ACTIVE, so the
+# fixture publishes that channel (a west→east pressure ramp, so the backdrop isn't a flat wash) and
+# selects it after the snapshot lands — `display_snapshot` clears the active overlay every time.
+const CRISIS_CHANNEL_KEY := "crisis"   # mirrors the decoder's channel key / MapView's OVERLAY_COLORS entry
+const CRISIS_RAW_SCALE := 100.0        # raw = normalized × this, so the legend reads as a 0..100 pressure
+# The four annotation SHAPES the draw can produce, one per entry (see `_crisis_annotations`):
+# a multi-hop PackedInt32Array path, a multi-hop Array-of-pairs path, a single-tile marker, and a
+# single-tile marker with an unknown severity (which falls back to the base CRISIS_COLOR) and no label.
+# The PACKED ones are authored as plain int Arrays because a PackedInt32Array constructor is not a
+# constant expression in GDScript; `_crisis_annotations` converts them, and that conversion is
+# LOAD-BEARING — the draw branches on the exact type, and a plain Array of flat ints would fall into
+# the Array-of-pairs branch and render nothing.
+const CRISIS_PATH_PACKED := [2, 2, 5, 3, 8, 3, 11, 4]   # flattened col,row pairs
+const CRISIS_PATH_PAIRS := [[3, 8], [6, 9], [9, 9]]      # the Array-of-[col,row] form
+const CRISIS_POINT_SAFE := [11, 7]   # kept off the right edge: MapView is cover-fit, and the label reads outward
+const CRISIS_POINT_UNKNOWN := [5, 6]
+const CRISIS_SEVERITY_UNKNOWN := "quiet"   # not in CRISIS_SEVERITY_COLORS → the CRISIS_COLOR fallback
+
+# State "terrain highlight". The Terrain tab's "highlight every tile of this type" tool, run on the
+# four-band biome map so the MATCHED band and the three UNMATCHED ones read in the same frame.
+const TERRAIN_HIGHLIGHT_TARGET_ID := 11   # prairie_steppe — BIOME_BAND_IDS[1], the second of four bands
+const TERRAIN_HIGHLIGHT_OFF := -1         # MapView's "no highlight" sentinel
+
+# State "routes". Order paths, drawn as per-faction polylines. Faction lookup is by the raw `faction`
+# value, so the three routes cover MapView.faction_colors' INT key, its STRING key, and an unknown
+# faction (the amber default). Multi-hop with turns, because a straight two-point line would not
+# exercise the segment loop.
+const ROUTE_PLAYER_FACTION := 0             # int key → the player cyan
+const ROUTE_RIVAL_FACTION := "Obsidian"     # string key → orange
+const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # absent from faction_colors → the default amber
+const ROUTE_PLAYER_PATH := [[1, 2], [3, 3], [5, 3], [7, 4], [9, 4], [11, 5]]
+const ROUTE_RIVAL_PATH := [[2, 10], [4, 9], [6, 9], [8, 8], [10, 8]]
+const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, and inside the cover-fit crop
+# A one-waypoint order — the draw bails at `points.size() < 2`. Present for the same reason as
+# TRADE_UNRESOLVED_TILE: a guard only guards the reference frame if the frame exercises it.
+const ROUTE_DEGENERATE_PATH := [[5, 11]]
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -320,8 +389,11 @@ var _river_notch_head := Vector2i(-1, -1)
 # run ALONGSIDE it (no channel exits toward the lake) — the @21,61 case the shore-pass mouth test fixes.
 var _river_lake_hex := Vector2i(-1, -1)
 
-# The canvas currently pinned. A state changes it through _set_canvas(); it is NOT restored afterwards,
-# because the aspect-matched states are the last ones and today's frames depend on that sequence.
+# The canvas currently pinned. A state changes it through _set_canvas() and does NOT restore it — every
+# state that needs a particular canvas asks for it, and today's frames depend on that sequence. The
+# aspect-matched pasture/forage/danger states switch to PASTURE_WINDOW_SIZE and leave it there (the
+# river states inherit it); the ANNOTATION states that follow switch back to DEFAULT_CANVAS_SIZE,
+# because their fixtures are authored against the GRID_W×GRID_H grid like the earlier states.
 var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
 
 func _ready() -> void:
@@ -1022,6 +1094,85 @@ func _ready() -> void:
 	_map.pan_offset += Vector2(0.0, RIVER_PAN_ROWS * _map.last_hex_radius)
 	await _settle()
 	await _save_crop_rect("map_rivers_web", RIVER_WEB_CROP)
+
+	# === THE ANNOTATION STATES ===================================================================
+	# Trade overlay / crisis annotations / terrain highlight / routes — the four overlays that had no
+	# fixture at all, so no refactor of them could be pixel-checked. They run LAST and each CLEARS its
+	# own state afterwards, so a leak here can only ever show up in the annotation frames themselves.
+	# They restore the default canvas (the river states above left the pasture aspect pinned) because
+	# their fixtures are authored against the GRID_W×GRID_H grid the earlier states use.
+	# **They prove UNCHANGED, not CORRECT** — see the comment on TRADE_SELECTED_ENTITY.
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+
+	# State "trade overlay" — the Trade tab's diffusion overlay, pushed exactly the way TradePanel
+	# pushes it (update_trade_overlay → set_trade_overlay_enabled → set_trade_overlay_selection, all
+	# three reached BY NAME through has_method/call). Three links fan the draw's branches across one
+	# frame: the SELECTED caravan (green, widened — the branch an unselected-only fixture would leave
+	# unproven), a busy open link (widest amber), and a thin closed one whose leak is imminent (the red
+	# midpoint dot). A fourth link addresses tiles that don't exist, so the skip guard is exercised too.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_trade_overlay())
+	_map.update_trade_overlay(_trade_links(), true)
+	_map.set_trade_overlay_enabled(true)
+	_map.set_trade_overlay_selection(TRADE_SELECTED_ENTITY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_trade_overlay")
+	# Clear it: the overlay is only re-ingested by a snapshot that CARRIES `trade_links`, so without
+	# this the links would persist into every following state.
+	_map.set_trade_overlay_selection(-1)
+	_map.update_trade_overlay([], false)
+	_map.set_trade_overlay_enabled(false)
+
+	# State "crisis annotations" — the Crisis overlay's map annotations, which draw ONLY while the
+	# `crisis` channel is the active one. All four shapes the draw can produce in one frame: a
+	# multi-hop path from the PackedInt32Array form (critical), a multi-hop path from the
+	# Array-of-[col,row] form (warn), a single-tile marker (safe — halo disc + core disc instead of a
+	# polyline), and a single-tile marker with an unknown severity (the CRISIS_COLOR fallback) and no
+	# label. The channel is selected AFTER the snapshot: display_snapshot clears the active overlay.
+	_map.set_fow_enabled(false)
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_crisis_annotations())
+	_map.set_overlay_channel(CRISIS_CHANNEL_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_crisis_annotations")
+	_map.set_overlay_channel("")   # back to plain terrain for the states after this one
+
+	# State "terrain highlight" — the Terrain tab's "highlight every tile of this type" tool, run on
+	# the four-band biome map. The MATCHED band (prairie) wears the magenta fill + outline while the
+	# three UNMATCHED bands render untouched, so both paths of the per-tile test are in one frame.
+	# The highlight ignores Fog of War by design (it doubles as a worldgen debugging tool).
+	_map.set_fow_enabled(false)
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_biomes())
+	_map.set_terrain_highlight(TERRAIN_HIGHLIGHT_TARGET_ID)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_terrain_highlight")
+	_map.set_terrain_highlight(TERRAIN_HIGHLIGHT_OFF)
+
+	# State "routes" — order paths, drawn as per-faction polylines from the snapshot's `orders`. Three
+	# multi-hop routes that turn (a straight two-point line would never exercise the segment loop),
+	# colored through MapView.faction_colors' INT key, its STRING key, and an unknown faction (the
+	# amber default) — plus a one-waypoint order the draw must bail on.
+	_map.set_fow_enabled(false)
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_routes())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_routes")
 
 	get_tree().quit()
 
@@ -2406,4 +2557,128 @@ func _snapshot_sites_fogged() -> Dictionary:
 		"terrain": _terrain_array(),
 		"channels": {"visibility": {"raw": vis, "normalized": vis, "label": "Visibility"}},
 	}
+	return snap
+
+# --- The ANNOTATION fixtures (see the TRADE_* / CRISIS_* / ROUTE_* consts) -----------------------
+# Written AFTER the code they cover: they encode CURRENT behaviour, so they prove "unchanged", not
+# "correct".
+
+## Row-major tile ENTITY id on the flat GRID_W×GRID_H backdrop. Trade links address their endpoints by
+## entity and MapView resolves them through `tile_lookup`, which is built from `tiles[].entity` — so
+## the trade fixture is the one flat-backdrop state that has to publish a `tiles` array.
+func _tile_entity(x: int, y: int) -> int:
+	return y * GRID_W + x
+
+func _entity_tiles() -> Array:
+	var tiles: Array = []
+	for y in GRID_H:
+		for x in GRID_W:
+			tiles.append({"entity": _tile_entity(x, y), "x": x, "y": y, "terrain": TERRAIN_ID})
+	return tiles
+
+## One trade link in the shape the Trade tab hands to `update_trade_overlay`: endpoints as tile
+## entities, a throughput (drives line width) and a knowledge sub-dict (openness drives opacity,
+## leak_timer arms the red midpoint dot).
+func _trade_link(entity: int, from_tile: Vector2i, to_tile: Vector2i,
+		throughput: float, openness: float, leak_timer: int) -> Dictionary:
+	return {
+		"entity": entity,
+		"from_tile": _tile_entity(from_tile.x, from_tile.y),
+		"to_tile": _tile_entity(to_tile.x, to_tile.y),
+		"throughput": throughput,
+		"knowledge": {"openness": openness, "leak_timer": leak_timer},
+	}
+
+func _trade_links() -> Array:
+	return [
+		_trade_link(TRADE_SELECTED_ENTITY, TRADE_SELECTED_FROM, TRADE_SELECTED_TO,
+			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
+		_trade_link(TRADE_BUSY_ENTITY, TRADE_BUSY_FROM, TRADE_BUSY_TO,
+			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
+		_trade_link(TRADE_LEAKING_ENTITY, TRADE_LEAKING_FROM, TRADE_LEAKING_TO,
+			TRADE_QUIET_THROUGHPUT, TRADE_QUIET_OPENNESS, TRADE_LEAK_IMMINENT),
+		# Endpoints that are not in `tile_lookup` — the draw skips this link. Kept so the guard is
+		# exercised by the reference frame rather than merely present in the source.
+		{
+			"entity": TRADE_SELECTED_ENTITY,
+			"from_tile": TRADE_UNRESOLVED_TILE,
+			"to_tile": TRADE_UNRESOLVED_TILE,
+			"throughput": TRADE_BUSY_THROUGHPUT,
+			"knowledge": {"openness": TRADE_BUSY_OPENNESS, "leak_timer": TRADE_LEAK_IMMINENT},
+		},
+	]
+
+## The trade backdrop: the flat terrain every band state uses, PLUS the per-tile entity table the link
+## endpoints resolve through. No units or herds — the frame is about the links.
+func _snapshot_trade_overlay() -> Dictionary:
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"tiles": _entity_tiles(),
+		"populations": [],
+		"herds": [],
+	}
+
+## The four annotation SHAPES the crisis draw can produce, in the order it walks them:
+##   1. a multi-hop path in the PackedInt32Array (flattened col,row) form → polyline + head/tail discs
+##   2. a multi-hop path in the Array-of-[col,row] form → the same geometry from the other wire shape
+##   3. a SINGLE tile → halo disc + core disc, no polyline
+##   4. a single tile with a severity that is not in CRISIS_SEVERITY_COLORS (→ the CRISIS_COLOR
+##      fallback) and NO label (→ the label block is skipped)
+func _crisis_annotations() -> Array:
+	return [
+		{"severity": "critical", "label": "Famine front", "path": PackedInt32Array(CRISIS_PATH_PACKED)},
+		{"severity": "warn", "label": "Unrest march", "path": CRISIS_PATH_PAIRS},
+		{"severity": "safe", "label": "Contained", "path": PackedInt32Array(CRISIS_POINT_SAFE)},
+		{"severity": CRISIS_SEVERITY_UNKNOWN, "path": PackedInt32Array(CRISIS_POINT_UNKNOWN)},
+	]
+
+## The crisis backdrop: flat terrain under a west→east `crisis` pressure ramp (so the channel tint is
+## not a flat wash and the annotations are read against a real overlay), plus the annotations
+## themselves on the `overlays` payload — the same key the server publishes them under.
+func _snapshot_crisis_annotations() -> Dictionary:
+	var total := GRID_W * GRID_H
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	for i in total:
+		var pressure := float(i % GRID_W) / float(GRID_W - 1)
+		normalized[i] = pressure
+		raw[i] = pressure * CRISIS_RAW_SCALE
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": _terrain_array(),
+			"channels": {
+				CRISIS_CHANNEL_KEY: {
+					"label": "Crisis Pressure",
+					"description": "Staged crisis pressure, west to east.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([CRISIS_CHANNEL_KEY]),
+			"crisis_annotations": _crisis_annotations(),
+		},
+		"populations": [],
+		"herds": [],
+	}
+
+## An order in the shape `display_snapshot` reads into `routes`: a faction (looked up in
+## MapView.faction_colors) and a path of [col, row] waypoints.
+func _route_order(faction: Variant, path: Array) -> Dictionary:
+	return {"faction": faction, "path": path}
+
+## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop
+## routes covering the int/string/unknown faction-color lookups, and one one-waypoint order the draw
+## must bail on.
+func _snapshot_routes() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 0), [])
+	snap["orders"] = [
+		_route_order(ROUTE_PLAYER_FACTION, ROUTE_PLAYER_PATH),
+		_route_order(ROUTE_RIVAL_FACTION, ROUTE_RIVAL_PATH),
+		_route_order(ROUTE_UNKNOWN_FACTION, ROUTE_UNKNOWN_PATH),
+		_route_order(ROUTE_PLAYER_FACTION, ROUTE_DEGENERATE_PATH),
+	]
 	return snap
