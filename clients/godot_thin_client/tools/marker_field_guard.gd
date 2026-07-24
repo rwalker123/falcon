@@ -24,7 +24,7 @@ extends Node
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 
-# Every key the band drawer (`Hud._unit_summary_lines`) and the labor-allocation panel
+# Every key the band drawer (`BandDetailLines.unit_summary_lines`) and the labor-allocation panel
 # (`Hud._build_allocation_panel` / `_effective_*`) read off `_selected_unit` (the marker copy),
 # plus the marker fields MapView draws from the same copy (e.g. the travel-destination reticle).
 # The marker's key set MUST stay a superset of this list; add a key here whenever the panel or a
@@ -35,19 +35,19 @@ const PANEL_CONSUMED_KEYS := [
 	"id",                  # Occupants-drawer "Unit:" label (the band panel names the band in its header)
 	"pos",                 # drawer "Position:" line
 	"size",                # band panel "Population:" row / Occupants-drawer "Size:" row
-	"turns_of_food",        # _band_food_line
+	"turns_of_food",        # BandDetailLines Food row
 	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
 	"food_consumption",    # Food summary line net rate + Eaten (people) breakdown
 	"pen_feed_upkeep",     # Food summary line net rate + Pen feed (animals) breakdown
-	"stores",              # _band_food_line provisions
-	"morale",              # _band_morale_line / DetailFormat.morale_is_concerning
-	"morale_delta",        # _band_morale_line trend
-	"morale_cause",        # _band_morale_line named cause
-	"output_multiplier",   # _band_output_line + the local-hunt yield preview (payout modifier)
-	"morale_settling",     # _morale_breakdown_lines
-	"morale_terrain",      # _morale_breakdown_lines
-	"morale_climate",      # _morale_breakdown_lines
-	"morale_unrest",       # _morale_breakdown_lines
+	"stores",              # BandDetailLines Food row provisions
+	"morale",              # BandDetailLines Morale row / DetailFormat.morale_is_concerning
+	"morale_delta",        # BandDetailLines Morale trend
+	"morale_cause",        # BandDetailLines Morale named cause
+	"output_multiplier",   # BandDetailLines Output row + the local-hunt yield preview (payout modifier)
+	"morale_settling",     # BandDetailLines morale breakdown
+	"morale_terrain",      # BandDetailLines morale breakdown
+	"morale_climate",      # BandDetailLines morale breakdown
+	"morale_unrest",       # BandDetailLines morale breakdown
 	"working_age",         # allocation header Workers / _effective_idle
 	"idle_workers",        # allocation header Idle / quick_assign_hunters
 	"age_children",        # band panel age-structure row (children / working / elders)
@@ -62,7 +62,7 @@ const PANEL_CONSUMED_KEYS := [
 	"travel_target_y",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"activity",            # roster activity glyph
 	"hunt_mode",           # roster / cancel-hunt label
-	"accessible_stockpile", # _accessible_stockpile_lines
+	"accessible_stockpile", # BandDetailLines accessible-stockpile rows
 	"is_expedition",       # expedition panel gating + distinct marker
 	"expedition_mission",  # expedition panel mission line
 	"expedition_phase",    # expedition marker awaiting state + panel phase line

@@ -6,13 +6,13 @@ extends RefCounted
 ## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
-## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Two helpers stay on
-## HudLayer because they are shared beyond this cluster and are still HudLayer METHODS, so they are
-## passed in as Callables: `_meter_bar` (the herd-drawer danger bars use it) and
-## `_format_stockpile_label` (the accessible-stockpile lines use it). The shared FORMATTING left
-## HudLayer entirely — `HudFormat.progress_percent` and `HudWidgets.set_label_tooltip` are all-static,
-## so this cluster calls them directly rather than injecting or duplicating them. The gate helpers read
-## this cluster's knowledge back through the public `faction_knowledge()`.
+## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. ONE helper stays on
+## HudLayer because it is shared beyond this cluster and is still a HudLayer METHOD, so it is passed in
+## as a Callable: `_meter_bar` (the herd-drawer danger bars use it). Everything SHARED-BUT-PURE left
+## HudLayer entirely and is called statically rather than injected or duplicated —
+## `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label` (whose
+## other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
+## knowledge back through the public `faction_knowledge()`.
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
 # The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on
@@ -89,9 +89,8 @@ var stockpile_list: VBoxContainer = null
 
 # --- Collaborators ---
 var _command_feed: CommandFeedController = null
-# Shared-beyond-cluster helpers kept on HudLayer, called back through these Callables (see header).
+# The one shared-beyond-cluster helper still kept on HudLayer, called back through a Callable (header).
 var _meter_bar_fn: Callable
-var _format_stockpile_label_fn: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
@@ -115,7 +114,6 @@ func _init(
 	stockpile_list_: VBoxContainer,
 	command_feed: CommandFeedController,
 	meter_bar_fn: Callable,
-	format_stockpile_label_fn: Callable,
 ) -> void:
 	turn_label = turn_label_
 	metrics_label = metrics_label_
@@ -129,7 +127,6 @@ func _init(
 	stockpile_list = stockpile_list_
 	_command_feed = command_feed
 	_meter_bar_fn = meter_bar_fn
-	_format_stockpile_label_fn = format_stockpile_label_fn
 
 ## The LABEL-rendering half of HudLayer.update_overlay's fan-out: the turn readout + the metrics line.
 ## The turn-orb / band-labor side effects stay on HudLayer (they are not top-bar readouts).
@@ -453,7 +450,7 @@ func update_stockpiles(faction_inventory_variant: Variant) -> void:
 			continue
 		var delta := float(amount - previous)
 		panel_entries.append({
-			"label": _format_stockpile_label_fn.call(key),
+			"label": HudFormat.stockpile_label(key),
 			"amount": amount,
 			"delta": delta,
 		})

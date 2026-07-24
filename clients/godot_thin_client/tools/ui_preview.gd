@@ -229,7 +229,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band")
 
-	# State 1-foreign — a NON-player band selected. The drawer is the same `_unit_summary_lines` host,
+	# State 1-foreign — a NON-player band selected. The drawer is the same `unit_summary_lines` host,
 	# but almost none of it applies: morale/output/breakdowns are player-only (someone else's band is
 	# not ours to read), there is no allocation panel, and the identity rows (name, size) now live in
 	# the roster row above. So the check this state exists for: does the drawer collapse to an empty
@@ -1001,7 +1001,7 @@ func _ready() -> void:
 	# ASSERT the HARMLESS case: the base Red Deer carries no combat components (all default 0), so its
 	# component rows all read empty — and crucially NO "Harmless"/"Deadly" verdict word appears (words
 	# don't survive the roster). The rows are the raw components, Elevation-style.
-	var deer_lines := _hud._herd_summary_lines(_herd_fixture())
+	var deer_lines := DetailFormat.herd_summary_lines(_herd_fixture(), _hud._band_labor.world_herds())
 	assert(_danger_component_rows_present(deer_lines))
 	assert(not _danger_verdict_word_present(deer_lines))
 	assert(_danger_row_value(deer_lines, "Fights back").ends_with("0%"))
@@ -1012,7 +1012,7 @@ func _ready() -> void:
 	_hud.show_herd_selection(_deadly_herd_fixture())
 	await _settle()
 	await _save("herd_danger")
-	var mammoth_lines := _hud._herd_summary_lines(_deadly_herd_fixture())
+	var mammoth_lines := DetailFormat.herd_summary_lines(_deadly_herd_fixture(), _hud._band_labor.world_herds())
 	assert(_danger_component_rows_present(mammoth_lines))
 	assert(not _danger_verdict_word_present(mammoth_lines))
 	# Fights back 90%, Aggressive 0% — the split that proves strength ≠ danger.

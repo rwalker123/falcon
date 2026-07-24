@@ -550,7 +550,7 @@ func _ready() -> void:
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LOST_ENTITY))
 
 	# (c) DETAIL-PANEL via the MARKER path — the FIX-4 regression. The Occupants-card drawer reads
-	# `_expedition_summary_lines(_selected_unit)`, and `_selected_unit` is the MapView unit MARKER, not
+	# `BandDetailLines.expedition_summary_lines(_selected_unit)`, and `_selected_unit` is the MapView unit MARKER, not
 	# a raw `_player_expeditions` dict. Drive the REAL marker path (display_snapshot →
 	# _rebuild_unit_markers → handle_hex_click → show_unit_selection → _selected_unit) with a hunt party
 	# projecting 14.5 food in 6t, and ASSERT the Next-delivery line reaches the panel (rounds to 15).
@@ -629,7 +629,7 @@ func _assert_detail_panel_delivery() -> void:
 	view.unit_selected.connect(_hud.show_unit_selection)
 	view.handle_hex_click(tile.x, tile.y, MOUSE_BUTTON_LEFT)
 	view.unit_selected.disconnect(_hud.show_unit_selection)
-	var lines: Array = _hud._expedition_summary_lines(_hud._selection._selected_unit)
+	var lines: Array = _hud._banddetail.expedition_summary_lines(_hud._selection._selected_unit)
 	var want := "Next delivery: ~15 food in 6 turns"
 	if lines.has(want):
 		print("band_panel_preview: assert OK — detail panel (marker path) renders '%s'" % want)
@@ -640,30 +640,34 @@ func _assert_detail_panel_delivery() -> void:
 
 ## GUARD: a projected-0 next-delivery forecast must disambiguate on the party's TARGET herd, and the
 ## Target row must carry the target's live position. Requires `_world_herds` already set to
-## `_herd_fixtures()`. Drives the shared `_expedition_next_delivery_line` / `_expedition_summary_lines`
+## `_herd_fixtures()`. Drives the shared `DetailFormat.expedition_next_delivery_line` /
+## `BandDetailLines.expedition_summary_lines`
 ## helpers directly (the same ones the strip, the drawer and the row tooltip use) and prints every
 ## rendered line. Verified to FAIL before the target-based branch (a lost target reading "no surplus").
 func _assert_next_delivery_disambiguation() -> void:
 	# (1) target FOUND in telemetry, projects 0 → "no surplus", Target row shows the herd's position.
 	var lean := _lean_hunt_expedition_fixture()
-	var lean_delivery := _hud._expedition_next_delivery_line(lean)
+	var lean_delivery := DetailFormat.expedition_next_delivery_line(
+		lean, _hud._band_labor.expedition_target_herd(lean))
 	var lean_target := _summary_target_line(lean)
-	_check_line("no-surplus delivery", lean_delivery, _hud.EXPEDITION_NEXT_DELIVERY_NO_SURPLUS)
+	_check_line("no-surplus delivery", lean_delivery, DetailFormat.EXPEDITION_NEXT_DELIVERY_NO_SURPLUS)
 	_check_line("no-surplus target", lean_target, "Target: Red Deer (68, 15)")
 	# (2) target ABSENT from telemetry, projects 0 → "target herd lost".
 	var lost := _lost_hunt_expedition_fixture()
-	var lost_delivery := _hud._expedition_next_delivery_line(lost)
-	_check_line("lost delivery", lost_delivery, _hud.EXPEDITION_NEXT_DELIVERY_TARGET_LOST)
+	var lost_delivery := DetailFormat.expedition_next_delivery_line(
+		lost, _hud._band_labor.expedition_target_herd(lost))
+	_check_line("lost delivery", lost_delivery, DetailFormat.EXPEDITION_NEXT_DELIVERY_TARGET_LOST)
 	# (3) projecting party (delivery > 0) → the ETA line, Target row shows the herd's position.
 	var live := _hunt_expedition_fixture()
-	var live_delivery := _hud._expedition_next_delivery_line(live)
+	var live_delivery := DetailFormat.expedition_next_delivery_line(
+		live, _hud._band_labor.expedition_target_herd(live))
 	var live_target := _summary_target_line(live)
 	_check_line("projecting delivery", live_delivery, "Next delivery: ~14 food in 6 turns")
 	_check_line("projecting target", live_target, "Target: Roe Deer (64, 11)")
 
-## The `Target: …` line `_expedition_summary_lines` emits for a party ("" if none).
+## The `Target: …` line `BandDetailLines.expedition_summary_lines` emits for a party ("" if none).
 func _summary_target_line(party: Dictionary) -> String:
-	for line in _hud._expedition_summary_lines(party):
+	for line in _hud._banddetail.expedition_summary_lines(party):
 		if String(line).begins_with("Target:"):
 			return String(line)
 	return ""
