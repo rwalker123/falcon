@@ -1059,21 +1059,37 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral_starving")
 
-	# Staffing readout — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
-	# FULLY STAFFED: a near-tamed herd with every needed herder present (`herded_fraction` 1.0) reads a
-	# calm "Herders: 4 / 4" (neutral ink) and no consequence line — it holds its tameness and earns
-	# Penning normally.
+	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count. The
+	# reference band (`_band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
+	# that ACTUAL assignment, never from last turn's resolved `herded_fraction`.
+	# FULLY STAFFED: the herd needs 4 and 4 are on it → a calm "Herders: 4 / 4" (neutral ink), no
+	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
+	# self-contradictory "2 / 4 — under-herded" — proving the fix.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
 	_hud.show_herd_selection(_fully_herded_herd_fixture())
 	await _settle()
 	await _save("herd_fully_herded")
+	# ASSERT the corrected count: the actual staffed 4 shows, not the stale reconstruction 2.
+	var fully_lines := DetailFormat.herd_summary_lines(
+		_fully_herded_herd_fixture(), _hud._band_labor.world_herds(),
+		_hud._band_labor.assigned_herders_for(_fully_herded_herd_fixture()["id"]))
+	assert(_lines_contain(fully_lines, "Herders: 4 / 4"))
+	assert(not _lines_any_contain(fully_lines, "under-herded"))
 
-	# UNDER-HERDED: the SAME herd with only half the needed herders (`herded_fraction` 0.5). Its
-	# tameness is slipping, so the drawer says so loudly even though domestication 0.98 rounds to
-	# "Domesticating 100%": an amber "Herders: 2 / 4 — under-herded" row plus the muted "Tameness
-	# slipping — teaching Herding, not Penning. Staff all 4 herders to hold it." consequence line.
+	# UNDER-HERDED: the herd now needs 6 herders but only 4 are staffed → an amber "Herders: 4 / 6 —
+	# under-herded" (the ACTUAL count) plus the shed line "Under-herded — animals are drifting off.
+	# Staff all 6 herders to hold the herd." — NOT the retired "tameness slipping" copy. `herded_fraction`
+	# is a stale 1.0, so the OLD reconstruction would have read a calm "6 / 6" with no warning.
 	_hud.show_herd_selection(_under_herded_herd_fixture())
 	await _settle()
 	await _save("herd_under_herded")
+	var under_lines := DetailFormat.herd_summary_lines(
+		_under_herded_herd_fixture(), _hud._band_labor.world_herds(),
+		_hud._band_labor.assigned_herders_for(_under_herded_herd_fixture()["id"]))
+	assert(_lines_contain(under_lines, "Herders: 4 / 6 — under-herded"))
+	assert(_lines_any_contain(under_lines, "animals are drifting off"))
+	assert(not _lines_any_contain(under_lines, "slipping"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
@@ -4004,25 +4020,31 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 	fixture["ecology_phase"] = "stressed"
 	return fixture
 
-## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout. Domestication is
-## near-complete and `herded_fraction` is 1.0 (every needed herder present), so the herd holds its
-## tameness and earns Penning normally: the drawer shows a neutral "Herders: 4 / 4" with NO warning.
+## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
+## stale-count bug (fauna neglect-escape arc). `_band_fixture` has 4 herders (a Hunt assignment) on
+## game_deer_07, and this herd needs 4, so the drawer reads a neutral "Herders: 4 / 4" — from the
+## ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is deliberately left STALE at 0.4
+## (last turn's resolved value): the OLD code reconstructed `round(0.4 · 4) = 2` and wrongly read a
+## self-contradictory "2 / 4 — under-herded", which this frame proves is gone.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["domestication"] = 0.9
 	fixture["herders_needed"] = 4
-	fixture["herded_fraction"] = 1.0
+	fixture["herded_fraction"] = 0.4
 	return fixture
 
-## The SAME herd, UNDER-HERDED — the playtest bug made visible. Only half the needed herders are on it
-## (`herded_fraction` 0.5), so its tameness is slipping: domestication decays, the herd will drop back
-## to WILD and stop earning Penning. `domestication` sits at 0.98 (rounds to "Domesticating 100%", the
-## exact reading that used to look fine), so the drawer must NOT read as OK — the amber "Herders: 2 / 4
-## — under-herded" row and the muted "Tameness slipping — teaching Herding, not Penning…" line carry it.
+## The SAME herd, UNDER-HERDED — animals are drifting off (fauna neglect-escape arc; neglect no longer
+## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `_band_fixture`
+## only staffs 4, so the drawer reads the amber "Herders: 4 / 6 — under-herded" (the ACTUAL staffed
+## count) plus the muted "Under-herded — animals are drifting off. Staff all 6 herders to hold the herd."
+## line — NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD
+## code reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
+## stale-reading this fix removes.
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	fixture["domestication"] = 0.98
-	fixture["herded_fraction"] = 0.5
+	fixture["herders_needed"] = 6
+	fixture["herded_fraction"] = 1.0
 	return fixture
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
@@ -4137,6 +4159,20 @@ func _danger_component_rows_present(lines: Array) -> bool:
 		if _danger_row_value(lines, key) == "":
 			return false
 	return true
+
+## True when SOME produced line is EXACTLY `text` (used to pin a specific "Herders: N / M" readout).
+func _lines_contain(lines: Array, text: String) -> bool:
+	for line in lines:
+		if String(line) == text:
+			return true
+	return false
+
+## True when SOME produced line CONTAINS `text` (used to pin the shed copy / prove the old copy is gone).
+func _lines_any_contain(lines: Array, text: String) -> bool:
+	for line in lines:
+		if String(line).contains(text):
+			return true
+	return false
 
 func _danger_verdict_word_present(lines: Array) -> bool:
 	for line in lines:

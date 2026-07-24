@@ -638,8 +638,10 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
+    # Amber for an overdraw (⚠) OR an under-contained managed herd (its shed ⚠) — both are trouble the
+    # eye must find; INK_DIM otherwise (a plain policy glyph).
     marks.add_theme_color_override("font_color",
-        HudStyle.WARN if bool(model.get("warn", false)) else HudStyle.INK_DIM)
+        HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("under_herded", false)) else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marks)
@@ -828,6 +830,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var icon := ""
         var label := ""
         var cap := {}
+        var live_herd := {}
         if kind == SourceForecast.LABOR_KIND_FORAGE:
             if not (policy in HudBandLaborState.FORAGE_POLICY_OPTIONS):
                 policy = SourceForecast.DEFAULT_HUNT_POLICY
@@ -847,17 +850,31 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
+            live_herd = _band_labor.find_world_herd(herd_id)
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
-                _band_labor.find_world_herd(herd_id), SourceForecast.SOURCE_KIND_HERD,
+                live_herd, SourceForecast.SOURCE_KIND_HERD,
                 HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
         var note := String(yld.get("note", ""))
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
+        # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer herders staffed than the herd
+        # needs → it sheds whole animals into the wild. Flag it wherever the herd is LISTED, not only in
+        # its drawer, with the established overhunt ⚠. `assigned_herders_for` is the SAME actual/staged
+        # count the herd drawer reads, so the panel and the drawer can never disagree about it.
+        var herders_needed := int(live_herd.get("herders_needed", 0))
+        var under_herded := herders_needed > 0 \
+            and _band_labor.assigned_herders_for(herd_id) < herders_needed
+        if under_herded:
+            if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
+                marks += " " + HudComposeVocab.OVERHUNT_FLAG
+            if note == "":
+                note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "label": label,
             "rate": float(yld.get("rate", 0.0)), "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
+            "under_herded": under_herded,
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),

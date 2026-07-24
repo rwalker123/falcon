@@ -229,11 +229,12 @@ const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
 const FLORA_CROP_COMMITTED_HINT := "Already committed — this patch stays this crop until it lapses back to wild."
 
 # Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
-# needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction < 1`)
-# it DECAYS out of the pastoral rung, slips back to wild, and stops earning Penning — the silent stall
-# a playtest hit ("🐄 Domesticated" with no signal that Penning had stopped). The row makes the deficit
-# visible; the under-herded value is WARN-tinted via `DetailFormat.herders_value_hex`, and the slipping consequence
-# is spelled out below it so the player knows WHY Penning stalled and how to fix it.
+# needs `herders_needed` herders every turn to HOLD the herd; understaffed it SHEDS whole animals over
+# its labor capacity into a nearby wild herd (they drift off — tameness leaves with them, it is never
+# decayed; fauna neglect-escape arc). The row makes the deficit visible from the ACTUAL staffed count
+# (`assigned_herders`, never a reconstruction from `herded_fraction`); the under-herded value is
+# WARN-tinted via `DetailFormat.herders_value_hex`, and the shed consequence (`HERDERS_SHED_FORMAT`) is
+# spelled out below it so the player knows the animals are drifting off and how to stop it.
 # (Herd drawer combat-component rows, Predators Phase 0 — the whole `DANGER_*` family lives in
 # `DetailFormat` with `append_danger_component_lines`, its only reader. Strength is NOT danger: a
 # mammoth is deadly to HUNT yet no camp THREAT, so the drawer shows the four RAW components

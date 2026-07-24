@@ -181,9 +181,11 @@ const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 
-# ---- The under-herded CONSEQUENCE line. A managed herd slipping below full staffing loses tameness,
-# so the drawer states why Penning stalled and the one lever that fixes it.
-const HERDERS_SLIPPING_FORMAT := "Tameness slipping — teaching Herding, not Penning. Staff all %d herders to hold it."
+# ---- The under-herded CONSEQUENCE line (fauna neglect-escape arc). Neglect no longer decays a
+# managed herd's tameness — an under-herded herd SHEDS whole animals over its labor capacity into a
+# nearby wild herd (the animals drift off, tameness leaves with them). So the drawer states the shed,
+# its live cost, and the one lever that stops it — never the retired "tameness slipping" story.
+const HERDERS_SHED_FORMAT := "Under-herded — animals are drifting off. Staff all %d herders to hold the herd."
 
 # ---- Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes — a SEPARATE fact
 # from the biomass/cap pair the `Biomass` row carries. Key ≤ `DETAIL_KEY_MAX_LENGTH` so it aligns as a
@@ -343,7 +345,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
     elif key == "Husbandry":
         return husbandry_value_hex(value)
     elif key == HERDERS_ROW:
-        # A managed herd's staffing: amber when under-herded (tameness slipping), ink when full.
+        # A managed herd's staffing: amber when under-herded (animals shedding), ink when full.
         return herders_value_hex(value)
     elif key == "Cultivation":
         return cultivation_value_hex(value)
@@ -515,16 +517,18 @@ static func husbandry_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
-## The "Herders" row value: a calm "N / N" when fully staffed, an amber "A / N — under-herded" when
-## the herd is decaying for lack of herders. Fully staffed uses [needed, needed] (assigned == needed
-## at frac 1.0); under-herded uses the rounded assigned count. Tinted via `herders_value_hex`.
-static func herders_label(assigned: int, needed: int, herded_fraction: float) -> String:
-    if herded_fraction >= FULLY_HERDED:
-        return HERDERS_STAFFED_FORMAT % [needed, needed]
+## The "Herders" row value: a calm "N / N" when the herd is fully staffed, an amber "A / N —
+## under-herded" when short of herders (and shedding animals). `assigned` is the ACTUAL count of
+## herders staffed/staged on the herd — never a reconstruction from last turn's resolved
+## `herded_fraction` — so the row updates the instant the player assigns one. Tinted via
+## `herders_value_hex`.
+static func herders_label(assigned: int, needed: int) -> String:
+    if assigned >= needed:
+        return HERDERS_STAFFED_FORMAT % [assigned, needed]
     return HERDERS_UNDER_FORMAT % [assigned, needed]
 
-## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded and its tameness is
-## slipping, normal ink when fully staffed. Matched on the label from `herders_label`, mirroring
+## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded (shedding animals),
+## normal ink when fully staffed. Matched on the label from `herders_label`, mirroring
 ## `corral_value_hex` / the overgrazing warning's shared WARN tint.
 static func herders_value_hex(value: String) -> String:
     if value.to_lower().contains("under-herded"):
@@ -797,7 +801,13 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## `world_herds` is THREADED IN (it is only ever forwarded to `append_danger_component_lines`, whose
 ## Attack/Defense bars normalize against the roster) — the same treatment the tint `Context` gets, and
 ## what makes this producer pure. Callers pass `HudBandLaborState.world_herds()`.
-static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Array[String]:
+## `assigned_herders` is the ACTUAL count of herders staffed/staged on this herd (summed from the
+## player's `Hunt` assignments across bands, pending-aware — see `HudBandLaborState.assigned_herders_for`),
+## threaded in as a parameter the way `world_herds` is so this layer stays stateless. `-1` = "not
+## supplied" (the danger-only ui_preview callers on wild herds, where `herders_needed` is 0 and the
+## staffing block is skipped anyway); it is clamped to 0. It is deliberately NOT reconstructed from
+## `herded_fraction`, which lags a turn.
+static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assigned_herders: int = -1) -> Array[String]:
     var lines: Array[String] = []
     var size_class := String(herd_data.get("size_class", "")).strip_edges()
     if size_class != "":
@@ -849,21 +859,24 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:
             lines.append("Husbandry: %s" % husbandry_label(domestication))
-        # Staffing deficit — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
-        # A managed herd needs `herders_needed` herders every turn to hold its tameness; understaffed,
-        # its domestication decays, the herd slips back to WILD and stops earning Penning. Surface it
-        # so the player has a signal to staff more herders. Shown only for a managed herd
-        # (`herders_needed > 0`); `herded_fraction` defaults to FULLY_HERDED, so an unmanaged herd never
-        # trips it. Fully staffed reads a calm "N / N"; under-herded an amber "A / N — under-herded".
+        # Staffing deficit (fauna neglect-escape arc). A managed herd needs `herders_needed` herders
+        # every turn to HOLD its animals — understaffed, it SHEDS whole animals over its labor capacity
+        # into a nearby wild herd (they drift off; tameness leaves with them, it is never decayed). The
+        # count is the ACTUAL herders staffed/staged on the herd (`assigned_herders`, summed from the
+        # player's Hunt assignments across bands, pending-aware) — NOT `round(herded_fraction · needed)`,
+        # which reconstructed last turn's RESOLVED fraction and so read a stale, self-contradictory
+        # "only 2 of 5 working" the instant the player assigned a herder. Shown only for a managed herd
+        # (`herders_needed > 0`); a wild herd reports 0 and never trips it. Fully staffed reads a calm
+        # "N / N"; under-herded an amber "A / N — under-herded".
         var herders_needed := int(herd_data.get("herders_needed", 0))
         if herders_needed > 0:
-            var herded_fraction := float(herd_data.get("herded_fraction", FULLY_HERDED))
-            var herders_assigned := int(round(herded_fraction * herders_needed))
-            lines.append("%s: %s" % [HERDERS_ROW, herders_label(herders_assigned, herders_needed, herded_fraction)])
-            # Make the CONSEQUENCE explicit when the herd is slipping AND has real tameness to lose:
-            # a muted one-liner naming why Penning has stalled and the single lever that fixes it.
-            if herded_fraction < FULLY_HERDED and domestication > 0.0:
-                lines.append(HERDERS_SLIPPING_FORMAT % herders_needed)
+            var herders_assigned := maxi(assigned_herders, 0)
+            lines.append("%s: %s" % [HERDERS_ROW, herders_label(herders_assigned, herders_needed)])
+            # State the CONSEQUENCE when the herd is under-contained AND owned: a muted one-liner
+            # naming the shed and the single lever that stops it. `assigned < needed` is the same
+            # "under-contained" condition the map/work-panel warning derives.
+            if herders_assigned < herders_needed and domestication > 0.0:
+                lines.append(HERDERS_SHED_FORMAT % herders_needed)
         # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
         # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
         # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
