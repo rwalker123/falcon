@@ -60,6 +60,75 @@ never writes, deletes, or liveness-checks the file.
 
 ---
 
+## HUD Module Architecture — keeping `Hud.gd` decomposed
+
+`Hud.gd` (`class_name HudLayer`) was a **~9,850-line god-file**; it is now a **~1,400-line
+coordinator** across 21 modules (`docs/plan_hud_decomposition.md`). It stays small only if new code
+lands in the module that matches its KIND. **Before adding anything to `HudLayer`, ask which of these
+it is — `HudLayer` itself is none of them.** (The Inspector has the parallel "Tab-panel extraction
+pattern" below; this is the HUD's.)
+
+**The module taxonomy** (all under `src/scripts/ui/hud/`):
+- **State models** (`RefCounted`, pure DATA, no nodes) — cross-cluster snapshot/selection state:
+  `HudSelectionState` (what's selected), `HudBandLaborState` (the digested player world + optimistic
+  overlay + the thin band-labor readers), `ComposeState` (what's being dialed but not committed). A
+  field read by two+ clusters goes on a model, **not** as a `HudLayer` member.
+- **All-`static`, stateless shared layers** — pure logic shared by 2+ clusters, with state passed as
+  PARAMETERS (never a `_hud` back-ref): `SourceForecast` (yield/forecast math), `HudWidgets` (the
+  widget factory), `HudFormat` (string/vocab format), `DetailFormat` (BBCode detail render + its pure
+  producers). New shared math/format/widget code goes here; if a helper needs HUD state, thread it in.
+- **Vocab modules** (`class_name`d, ALL-`const`, zero funcs/vars) — the topic word/glyph/format/
+  threshold tables: `HudConst` (the universal leaf, reads nothing) + `Hud{Work,Compose,Flora,
+  Expedition,Attention,Selection,Disclosure}Vocab`. **A new label / glyph / threshold goes in the
+  matching vocab module — NEVER as a fresh `const` on `HudLayer`.** That block WAS the merge-conflict
+  surface the whole arc removed; regrowing it re-creates the problem.
+- **Controllers** (`RefCounted`) — one interactive cluster each, owning its nodes + per-cluster state +
+  render/build/dispatch: `SelectionCardController`, `DrawerComposeController`, `SubjectDrawerController`,
+  `BandPanelController`, `TargetingController`, `AttentionController`, `TurnOrbController`,
+  `TopBarReadouts`, `DisclosureController`, `BandDetailLines`, `LegendController`,
+  `CommandFeedController`. A new interactive feature EXTENDS the owning controller or is a NEW
+  controller — it does **not** land inline on `HudLayer`.
+- **`HudLayer` = the coordinator ONLY** — the `_ready` wiring, the reflective snapshot/selection ENTRY
+  points `Main` calls, thin reflective delegators, and signal relays. It HOLDS the controllers + models
+  as members; it does not hold feature logic. **A cluster of feature methods accreting on `HudLayer`
+  IS the smell — extract it.**
+
+**The rules that keep it safe** (each learned the hard way — see `docs/plan_hud_decomposition.md`):
+- **Reflective / harness-reached methods stay as thin `HudLayer` delegators.** `Main.gd` reaches
+  `HudLayer` by `has_method` / `has_signal`, and a failed probe **fails SILENTLY** (no error — the
+  wiring simply never happens). So a controller emits its OWN signals and `HudLayer` RELAYS them, and a
+  `has_method`-probed name is never moved off `HudLayer` (it keeps a thin delegator). The same applies
+  to the `ui_preview` / `band_panel_preview` harnesses, which poke some `HudLayer` privates by DIRECT
+  field access — those hard-error on a move (budget for the repoints).
+- **Watch the hidden member straddle.** A bare `bool` / `int` / `Dictionary` written by one cluster and
+  read by another is invisible to a call-graph scan and silently welds the two. **Before splitting a
+  cluster, grep for shared MEMBERS, not just shared functions** — this bit the arc four times
+  (`_grid_wrap_horizontal`, the three tint scalars, `_food_flow_present`, `_band_zone_tier`).
+- **"An injection you still have to hold is relocated, not eliminated."** Moving a helper out while
+  keeping the Callable to reach it has not reduced coupling. The real win is a controller holding a
+  typed collaborator ref (`TargetingController` collapsed BandPanelController 6→3), or calling an
+  all-`static` layer directly (TopBarReadouts is now injection-free).
+- **A `const` moves iff EVERY reader moved — but dependency DIRECTION outranks that rule.** A leaf
+  (`HudStyle`, a vocab module) must NEVER be made to depend on `HudLayer`; a stray reader becomes a
+  **downward alias** instead. And `const` initializers evaluate at class load, so a cross-class
+  const-ref **cycle fails to load the WHOLE client** — keep vocab leaves acyclic (`HudConst` reads
+  nothing) and honor the co-location constraints noted on the vocab-module row.
+- **Extract shared layers BEFORE controllers.** A controller pulled out over a still-inline shared
+  layer needs a dozen Callable injections to reach it; extracting the all-`static` layer first drops
+  that surface dramatically (this took `DrawerComposeController` from 36 injections to 3).
+- **A `RefCounted` can't `add_child` or `get_tree()`** — pass the HUD `CanvasLayer` as a host `Node`
+  and parent / `await` through it (the `TurnOrbController` fork-panel pattern). **Reparenting a `%Name`
+  node clears `unique_name_in_owner`** — pass scene nodes by reference, never reparent them.
+
+**The process when a cluster genuinely needs extracting:** MEASURE first (grep the surface — functions
+AND members AND every reflective/harness seam), verify each "X-only" claim's REACHABILITY (not just its
+presence — a dead branch is not a dependency), then extract behaviour-neutral with `ui_preview` /
+`band_panel_preview` / `marker_field_guard` as the safety net. The same discipline applies to the other
+big client files that were decomposed the same way (the native `lib.rs` module map below; `Inspector.gd`
+→ per-tab panels).
+
+---
+
 ## Key Scripts Reference
 
 | Script | Purpose |
