@@ -153,6 +153,41 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 ### Native Extension
 `native/` contains GDExtension bindings for FlatBuffers decoding (generated from `sim_schema/schemas/snapshot.fbs`).
 
+#### Module map (`native/src/`)
+The decoder was one 5,617-line `lib.rs`; it is now split along **the same nine domain
+sections `snapshot.fbs` uses**, mirroring the `sim_schema/src/{state,codec}` split on the
+server side, so the two ends of the wire have the same shape.
+
+| Module | Holds |
+|--------|-------|
+| `lib.rs` | The gdextension entry point (`ShadowScaleExtension` + `entry_symbol`) and the crate's public re-exports. Nothing else — no decode logic |
+| `bridge/command.rs` | `CommandBridge` (`#[godot_api]`), the command worker thread, `command_sender`, `resolve_entry_path` |
+| `bridge/script_host.rs` | `ScriptHostBridge` (`#[godot_api]`) over the embedded script runtime |
+| `bridge/decoder.rs` | `SnapshotDecoder` (`#[godot_api]`) + the free `decode_snapshot` / `decode_delta`. **The only entry into the decode path** (`SnapshotLoader.gd` is its one caller) |
+| `bridge/variant.rs` | `Variant` ↔ `serde_json` marshalling shared by the bridges |
+| `snapshot/mod.rs` | The two top-level assemblers: `snapshot_dict` (rasters + sections → the client dict) and `snapshot_to_dict` (walks a `WorldSnapshot`) |
+| `snapshot/raster.rs` | `GridSize`, `OverlaySlices`, `TerrainSlices`, `OverlayChannelParams`, `packed_from_slice`, `insert_overlay_channel`, `normalize_overlay` |
+| `snapshot/delta.rs` | `DeltaAggregator` + `CrisisAnnotationRecord` — a delta carries only changed sections, so it accumulates them into full-snapshot shape and re-enters `snapshot_dict` |
+| `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
+| `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
+
+There is deliberately **no `dict/vision.rs`** — the vision section is only the
+fog/visibility/military rasters, which `snapshot/raster.rs` and the assemblers already
+own (`sim_schema` makes the same call: a `codec/vision.rs`, no `state/vision.rs`).
+
+**The rule for a new snapshot field: its converter goes in its section's `dict/` module** —
+the section is whichever `.section()` accessor `snapshot_to_dict` reaches it through. Put a
+helper in `dict/mod.rs` only once a *second* section needs it, and hoist rather than
+duplicate. Fixed-point (`Scalar`, 1e6) fields go through `fixed64_to_f32`/`_f64`, never an
+inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
+(`dict/population.rs`), which is the one part of this crate `cargo test` can reach
+(`VarDictionary` cannot be built outside a live engine).
+
+> Doc references elsewhere in this file of the form "decoded in `native/src/lib.rs
+> `*fn*`" predate the split — the named function now lives in its section's module above
+> (e.g. `herds_to_array` → `dict/subsistence.rs`, `tile_to_dict` → `dict/map.rs`,
+> `population_to_dict` → `dict/population.rs`). The function names did not change.
+
 > **Note:** Elevation is not rendered as 3D relief. A shallow-3D heightfield view was
 > prototyped and permanently removed; elevation is surfaced as the 2D **Elevation
 > Heatmap** overlay and as a per-tile **Height** readout in the tile panels (the HUD
