@@ -466,9 +466,10 @@ const LABOR_POLICY_CULTIVATE := "cultivate"
 const LABOR_POLICY_SOW := "sow"
 const LABOR_POLICY_TAME := "tame"
 # The full picker option sets per source kind (the four extractive rungs + that kind's TWO investment
-# rungs, in ladder order so the picker reads bottom-of-the-ladder → top).
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
+# rungs, in ladder order so the picker reads bottom-of-the-ladder → top). Canonical on the labor model
+# (the moved policy_for_* readers re-seed against them); re-exported here via the alias idiom.
+const FORAGE_POLICY_OPTIONS := HudBandLaborState.FORAGE_POLICY_OPTIONS
+const HUNT_POLICY_OPTIONS := HudBandLaborState.HUNT_POLICY_OPTIONS
 # Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
 # (gathering a plant patch's regrowth, not culling a herd).
 const FORAGE_POLICY_HINTS := {
@@ -1602,11 +1603,11 @@ func _ready() -> void:
     _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
     _turnorb.focus_requested.connect(_on_turn_orb_focus)
     # The selection card's identity/list half. Handed the three card nodes + the SAME selection/labor
-    # models; the two labor readers stay on HudLayer (Callables). A row/land click emits `subject_changed`
-    # (HudLayer closes the compose sheet + re-renders), and `roster_occupant_selected` relays to Main.
+    # models (it reads the labor readers straight off `_band_labor` now). A row/land click emits
+    # `subject_changed` (HudLayer closes the compose sheet + re-renders), and `roster_occupant_selected`
+    # relays to Main.
     _selectioncard = SelectionCardController.new(
-        tile_panel, tile_chips, subject_list, _selection, _band_labor,
-        _workers_for_forage, _workers_for_hunt, _alloc_hint_label)
+        tile_panel, tile_chips, subject_list, _selection, _band_labor, _alloc_hint_label)
     _selectioncard.subject_changed.connect(_on_selection_subject_changed)
     _selectioncard.roster_occupant_selected.connect(func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     _load_ui_balance_config()
@@ -2202,30 +2203,6 @@ func _resolve_assign_band() -> Dictionary:
         return _selection.unit()
     return _band_labor.player_band()
 
-## The player bands the band-picker lists. Normally `_band_labor.player_bands()` (captured each snapshot);
-## falls back to `[_band_labor.player_band()]` when only the single band was seeded (e.g. the ui_preview
-## harness, or before the first alerts pass) so the dropdown is always populated.
-func _current_player_bands() -> Array:
-    if not _band_labor.player_bands().is_empty():
-        return _band_labor.player_bands()
-    return [_band_labor.player_band()] if not _band_labor.player_band().is_empty() else []
-
-## Resolve a listed player band by its entity id; {} if it is no longer present.
-func _player_band_by_entity(entity: int) -> Dictionary:
-    for b in _current_player_bands():
-        if b is Dictionary and int((b as Dictionary).get("entity", -1)) == entity:
-            return b
-    return {}
-
-## Max workers a band can commit to ONE source: its idle workers plus any it already has on
-## that source (the assign REPLACES that count, so re-editing an existing assignment isn't
-## capped below its current staffing). Reduces to `idle_workers` for a fresh source.
-func _assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
-    return int(band.get("idle_workers", 0)) + _workers_for_hunt(band, herd_id)
-
-func _assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
-    return int(band.get("idle_workers", 0)) + _workers_for_forage(band, x, y)
-
 ## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap
 ## feed the wrap-aware hex distance the herd-hunt affordance keys its local-vs-expedition decision
 ## off. Grid rides full snapshots only; persists across deltas (fields default to the last value).
@@ -2327,7 +2304,7 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
     row.add_child(name_label)
     var picker := OptionButton.new()
     picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    var bands := _current_player_bands()
+    var bands := _band_labor.current_player_bands()
     var selected_entity := int(selected_band.get("entity", -1))
     var selected_idx := 0
     for i in bands.size():
@@ -2338,7 +2315,7 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
             selected_idx = i
     picker.select(selected_idx)
     picker.item_selected.connect(func(idx: int) -> void:
-        on_pick.call(_player_band_by_entity(int(picker.get_item_metadata(idx)))))
+        on_pick.call(_band_labor.player_band_by_entity(int(picker.get_item_metadata(idx)))))
     row.add_child(picker)
     return row
 
@@ -2352,53 +2329,6 @@ func _workers_for_role(band: Dictionary, kind: String) -> int:
         if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
             return int((entry as Dictionary).get("workers", 0))
     return 0
-
-## The band's standing FORAGE assignment on (x,y) — `{}` when it works no such tile. The one lookup
-## behind the worker count, the seeded policy and the drawer's standing summary, so the three can
-## never read different assignments.
-func _forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
-    for entry in _labor_assignments_of(band):
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
-                and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
-            return a
-    return {}
-
-## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
-## of `_forage_assignment_of`.
-func _hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
-    for entry in _labor_assignments_of(band):
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
-            return a
-    return {}
-
-## Workers currently foraging a specific in-range tile; 0 when unstaffed.
-func _workers_for_forage(band: Dictionary, x: int, y: int) -> int:
-    return int(_forage_assignment_of(band, x, y).get("workers", 0))
-
-## Workers currently hunting a specific herd; 0 when unstaffed.
-func _workers_for_hunt(band: Dictionary, herd_id: String) -> int:
-    return int(_hunt_assignment_of(band, herd_id).get("workers", 0))
-
-## The take policy of the band's existing hunt on `herd_id`, else the default.
-func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
-    var policy := String(_hunt_assignment_of(band, herd_id).get("policy", "")).strip_edges().to_lower()
-    # HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
-    # re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
-    return policy if policy in HUNT_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
-
-## The take policy of the band's existing forage on (x,y), else the default.
-func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
-    var policy := String(_forage_assignment_of(band, x, y).get("policy", "")).strip_edges().to_lower()
-    # FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
-    # re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
-    # investment back to Sustain (and the patch would go feral).
-    return policy if policy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
 
 ## A friendlier label for a herd id — the roster/selected herd's label when known, else the
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
@@ -2469,20 +2399,6 @@ func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
     if pend.has(key):
         return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
     return {"workers": _workers_for_role(band, kind), "pending": false}
-
-func _effective_forage_workers(band: Dictionary, x: int, y: int) -> int:
-    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
-    var key := _band_labor.pending_key(LABOR_KIND_FORAGE, x, y, "")
-    if pend.has(key):
-        return int((pend[key] as Dictionary).get("workers", 0))
-    return _workers_for_forage(band, x, y)
-
-func _effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
-    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
-    var key := _band_labor.pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
-    if pend.has(key):
-        return int((pend[key] as Dictionary).get("workers", 0))
-    return _workers_for_hunt(band, herd_id)
 
 ## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
 ## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
@@ -4021,7 +3937,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 BARE_FORECAST_PREFIX, policy), workers, idle)
         else:
             if not (policy in HUNT_POLICY_OPTIONS):
-                policy = _policy_for_hunt(band, herd_id)
+                policy = _band_labor.policy_for_hunt(band, herd_id)
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
             label = WORK_ROW_HUNT_FORMAT % herd_label
@@ -4688,15 +4604,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if source_changed:
         _compose.begin_hunt_source(herd_id, int(resolved.get("entity", -1)))
     # The actor is the band-picker selection; fall back to the resolved band if it has vanished.
-    var band := _player_band_by_entity(_compose.hunt_band())
+    var band := _band_labor.player_band_by_entity(_compose.hunt_band())
     if band.is_empty():
         band = resolved
         _compose.set_hunt_band(int(band.get("entity", -1)))
     if source_changed:
-        var staffed := _workers_for_hunt(band, herd_id)
-        _compose.seed_hunt(staffed if staffed > 0 else WORKER_STEP, _policy_for_hunt(band, herd_id))
+        var staffed := _band_labor.workers_for_hunt(band, herd_id)
+        _compose.seed_hunt(staffed if staffed > 0 else WORKER_STEP, _band_labor.policy_for_hunt(band, herd_id))
     # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
-    var current := _effective_hunt_workers(band, herd_id)
+    var current := _band_labor.effective_hunt_workers(band, herd_id)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
     # The sheet's own header already names the verb ("ASSIGN HERDERS") and the herd, so this line
     # carries only what the header cannot: the standing staffing being edited.
@@ -4722,7 +4638,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # Beyond reach → expedition. Unknown distance (missing tiles) falls back to the local hunt.
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
-    var assignable := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    var assignable := _expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
     # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
     # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
     var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
@@ -5370,17 +5286,17 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var source_changed := _compose.forage_key() != key
     if source_changed:
         _compose.begin_forage_source(key, int(resolved.get("entity", -1)))
-    var band := _player_band_by_entity(_compose.forage_band())
+    var band := _band_labor.player_band_by_entity(_compose.forage_band())
     if band.is_empty():
         band = resolved
         _compose.set_forage_band(int(band.get("entity", -1)))
     if source_changed:
         # `seed_forage` also clears the crop: a crop pick belongs to the PATCH it was made on, and a
         # new tile has a different basket.
-        var staffed := _workers_for_forage(band, x, y)
-        _compose.seed_forage(staffed if staffed > 0 else WORKER_STEP, _policy_for_forage(band, x, y))
+        var staffed := _band_labor.workers_for_forage(band, x, y)
+        _compose.seed_forage(staffed if staffed > 0 else WORKER_STEP, _band_labor.policy_for_forage(band, x, y))
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
-    var current := _effective_forage_workers(band, x, y)
+    var current := _band_labor.effective_forage_workers(band, x, y)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_FORAGE, x, y, ""))
     # The sheet's own header already names the verb and the subject ("ASSIGN FORAGERS  Nut Grove"),
     # so this line carries only what the header cannot: the standing staffing being edited.
@@ -5447,7 +5363,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # selection moves this line on the same frame. Only `payoff` is substituted — the ceiling and the
     # per-worker rate still describe the PATCH, which is what caps the stepper.
     forecast = _forecast_for_selected_crop(forecast, basket, _compose.forage_policy(), _compose.forage_species())
-    var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
+    var capped := _forecast_worker_cap(forecast, _band_labor.assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
     # the policy (clamped to available below). Only ever set by a policy click, never by a −/+ tick.
@@ -5792,8 +5708,8 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
         if not (band_variant is Dictionary):
             continue
         var band: Dictionary = band_variant
-        var found := _hunt_assignment_of(band, herd_id) if kind == LABOR_KIND_HUNT \
-            else _forage_assignment_of(band, x, y)
+        var found := _band_labor.hunt_assignment_of(band, herd_id) if kind == LABOR_KIND_HUNT \
+            else _band_labor.forage_assignment_of(band, x, y)
         if not found.is_empty():
             return found
     return {}

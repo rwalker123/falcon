@@ -33,9 +33,8 @@ var _subject_list: VBoxContainer = null
 # The SAME instances HudLayer holds — pure data, no scene refs. This controller reads + mutates them.
 var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
-# HudLayer methods that stay with the labor cluster / the shared alloc chrome (Phase-1 Callable idiom).
-var _workers_for_forage: Callable
-var _workers_for_hunt: Callable
+# The shared alloc chrome (Phase-1 Callable idiom). The forage/hunt worker readers moved onto
+# `HudBandLaborState`, so this controller calls `_band_labor.workers_for_*` directly.
 var _alloc_hint_label: Callable
 
 # --- Owned Phase-2a in-place-diff caches (moved off HudLayer) ---
@@ -45,15 +44,12 @@ var _tile_chip_slots: Array = []
 var _subject_row_keys: Array = []
 
 func _init(tile_panel: PanelCard, tile_chips: HFlowContainer, subject_list: VBoxContainer,
-		selection: HudSelectionState, band_labor: HudBandLaborState,
-		workers_for_forage: Callable, workers_for_hunt: Callable, alloc_hint_label: Callable) -> void:
+		selection: HudSelectionState, band_labor: HudBandLaborState, alloc_hint_label: Callable) -> void:
 	_tile_panel = tile_panel
 	_tile_chips = tile_chips
 	_subject_list = subject_list
 	_selection = selection
 	_band_labor = band_labor
-	_workers_for_forage = workers_for_forage
-	_workers_for_hunt = workers_for_hunt
 	_alloc_hint_label = alloc_hint_label
 
 ## The identity/list render, driven from HudLayer._render_selection_panel: assemble the hex's roster, draw the
@@ -430,7 +426,7 @@ func _forage_workers_on_tile(x: int, y: int) -> int:
 	var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
 	for band_variant in bands:
 		if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
-			total += int(_workers_for_forage.call(band_variant, x, y))
+			total += int(_band_labor.workers_for_forage(band_variant, x, y))
 	return total
 
 ## The land row was clicked. It emits `roster_occupant_selected` with the THIRD kind, `"land"` (an
@@ -574,7 +570,7 @@ func _hunt_workers_on_herd(herd_id: String) -> int:
 	var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
 	for band_variant in bands:
 		if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
-			total += int(_workers_for_hunt.call(band_variant, herd_id))
+			total += int(_band_labor.workers_for_hunt(band_variant, herd_id))
 	for exp_variant in _band_labor.player_expeditions():
 		if not (exp_variant is Dictionary):
 			continue
