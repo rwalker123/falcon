@@ -103,7 +103,7 @@ func update_voice_medium(medium_variant: Variant) -> void:
 		return
 	var medium_id := ""
 	for entry_variant in (medium_variant as Array):
-		if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+		if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 			medium_id = String((entry_variant as Dictionary).get("medium_id", ""))
 			break
 	if _telling != null:
@@ -120,7 +120,7 @@ func _faction_rows(variant: Variant, key: String) -> Array:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		if int(entry.get("faction", -1)) != HudLayer.PLAYER_FACTION_ID:
+		if int(entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
 			continue
 		var rows: Variant = entry.get(key, [])
 		return rows if rows is Array else []
@@ -159,12 +159,12 @@ func _pending_fork_attention() -> Array:
 			continue
 		var fork: Dictionary = fork_variant
 		rows.append({
-			"kind": HudLayer.ATTENTION_KIND_DECISION,
-			"severity": HudLayer.ATTENTION_SEVERITY_CRITICAL,
+			"kind": HudAttentionVocab.ATTENTION_KIND_DECISION,
+			"severity": HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL,
 			"blocking": true,
-			"label": HudLayer.ATTENTION_DECISION_LABEL,
+			"label": HudAttentionVocab.ATTENTION_DECISION_LABEL,
 			"detail": _fork_row_detail(fork, register),
-			"x": HudLayer.ATTENTION_NON_LOCATING, "y": HudLayer.ATTENTION_NON_LOCATING,
+			"x": HudAttentionVocab.ATTENTION_NON_LOCATING, "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
 		})
 	return rows
 
@@ -172,9 +172,9 @@ func _pending_fork_attention() -> Array:
 ## truncated here on purpose — the full telling is the panel's job.
 func _fork_row_detail(fork: Dictionary, register: String) -> String:
 	var narration := NarrativeForkPanel.text_in_register(fork.get("narration", []), register)
-	if narration.length() <= HudLayer.ATTENTION_DECISION_DETAIL_MAX_CHARS:
+	if narration.length() <= HudAttentionVocab.ATTENTION_DECISION_DETAIL_MAX_CHARS:
 		return narration
-	return narration.substr(0, HudLayer.ATTENTION_DECISION_DETAIL_MAX_CHARS).strip_edges() + HudLayer.ATTENTION_DECISION_DETAIL_ELLIPSIS
+	return narration.substr(0, HudAttentionVocab.ATTENTION_DECISION_DETAIL_MAX_CHARS).strip_edges() + HudAttentionVocab.ATTENTION_DECISION_DETAIL_ELLIPSIS
 
 ## Open the panel automatically the FIRST time a fork appears — an identity-defining moment should not
 ## wait behind a click. Tracked by beat_id so a dismissed fork does not re-open every snapshot.
@@ -204,7 +204,7 @@ func _open_fork_panel() -> void:
 ## A non-locating orb row was activated. The orb reports only the KIND; this controller owns which panel a
 ## kind opens, so a future non-locating producer needs no orb change.
 func _on_turn_orb_panel_requested(kind: String) -> void:
-	if kind == HudLayer.ATTENTION_KIND_DECISION:
+	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
 
 ## The player answered. Drop the fork from the local cache OPTIMISTICALLY (so the orb's gate lifts
@@ -222,7 +222,7 @@ func _on_fork_answer_selected(payload: Dictionary) -> void:
 	_pending_forks = remaining
 	_push_attention()
 	emit_signal("answer_fork_requested", {
-		"faction": HudLayer.PLAYER_FACTION_ID,
+		"faction": HudConst.PLAYER_FACTION_ID,
 		"beat_id": beat_id,
 		"choice_id": choice_id,
 	})
@@ -237,7 +237,7 @@ func has_pending_fork() -> bool:
 ## question must be able to see that they did. Routed straight through the command feed controller, the
 ## same sink HudLayer._note_command_feed forwards to.
 func note_unanswered_fork() -> void:
-	_command_feed.note(HudLayer.UNANSWERED_FORK_LABEL, HudLayer.UNANSWERED_FORK_DETAIL)
+	_command_feed.note(HudAttentionVocab.UNANSWERED_FORK_LABEL, HudAttentionVocab.UNANSWERED_FORK_DETAIL)
 
 ## An orb row's "Jump →". The band routing stays on HudLayer (`_on_turn_orb_focus` reaches into band/labor
 ## helpers), so the controller just re-emits its own `focus_requested`, which HudLayer relays into that

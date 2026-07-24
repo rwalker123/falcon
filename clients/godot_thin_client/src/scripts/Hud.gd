@@ -137,202 +137,8 @@ var tooltip_label: Label
 const LEGEND_SORT_FIELD_NAME := LegendController.SORT_FIELD_NAME
 const LEGEND_SORT_FIELD_COUNT := LegendController.SORT_FIELD_COUNT
 const STACK_ADDITIONAL_MARGIN := 16.0
-const PLAYER_FACTION_ID := 0
-# Turn-orb attention contract (see TurnOrb.gd). The folded-in Alerts panel became
-# three producers here: starving (critical), losing_population (warn), idle_workers (warn) —
-# plus a fourth, awaiting_orders (warn): an expedition parked at its objective, burning provisions
-# until the player acts. That is structurally the SAME class as idle workers (a demand on the
-# player, an efficiency loss, not a crisis), so it shares their WARN severity and, like them, must
-# be discoverable from the orb rather than only by having the right band panel open.
-const ATTENTION_KIND_STARVING := "starving"
-const ATTENTION_KIND_LOSING_POPULATION := "losing_population"
-const ATTENTION_KIND_IDLE_WORKERS := "idle_workers"
-const ATTENTION_KIND_AWAITING_ORDERS := "awaiting_orders"
-# A pen whose keeper could not pay this turn's feed: the herd is SHRINKING every turn, and with it
-# the yield a 25-turn investment was built for. It recovers if fed again, so this is a reversible
-# loss the player must be told about WHILE it is reversible — exactly what the orb is for.
-#
-# SEVERITY IS DELIBERATELY WARN, NOT CRITICAL, and that is a framing decision about DOUBLE-REPORTING:
-# a pen only goes unfed when the keeper's larder came up short, so the SAME empty larder normally
-# also trips `starving` (critical) on that band. The two are not one alert twice — they are two
-# different LOSSES from one cause (the people are dying / the herd is dying), with two different
-# subjects, two different jumps (the band's tile / the herd's tile) and two different remedies. But
-# only ONE of them gets to shout: the band's `starving` row stays the critical headline, and the pen
-# row rides below it as the consequence the player would otherwise never see coming.
-const ATTENTION_KIND_STARVING_PEN := "starving_pen"
-const ATTENTION_PEN_LABEL_FORMAT := "%s pen starving"
-# The detail carries the fed fraction and the consequence — and NOTHING else. It deliberately does
-# NOT name the keeper band: the orb's rows CLIP at POPOVER_WIDTH (sized to the widest producer), and
-# appending "· Band 1" pushed this row past it (rendered, looked at, cut). The row already names the
-# herd, and its Jump lands on that herd — the band adds nothing the player can act on here.
-const ATTENTION_PEN_DETAIL_FORMAT := "%d%% fed — the herd is shrinking"
-## The Telling (docs/plan_the_telling.md): a narrative fork awaiting the player's answer.
-##
-## CRITICAL and, uniquely, `blocking` — it is the one producer that holds the end-turn. That is a
-## deliberate asymmetry with every other row: a starving band is a loss you can choose to accept,
-## but a fork is the game asking who your people ARE, and letting it scroll past unanswered is the
-## one outcome the arc cannot afford. The out is not "ignore it" but the DEFER choice, which the
-## panel always offers and always keeps enabled.
-##
-## It is NON-LOCATING (x/y = -1): the question lives in a panel, not on a hex, so the orb row reads
-## `Open ▸` and routes through `panel_requested` rather than a map jump.
-const ATTENTION_KIND_DECISION := "decision"
-const ATTENTION_NON_LOCATING := -1
-## The orb's rows CLIP at POPOVER_WIDTH, and a fork's narration is a paragraph — so the row carries
-## only a fixed prompt and the fork's own first clause; the QUESTION itself belongs in the panel.
-const ATTENTION_DECISION_LABEL := "A question awaits an answer"
-const ATTENTION_DECISION_DETAIL_MAX_CHARS := 64
-const ATTENTION_DECISION_DETAIL_ELLIPSIS := "…"
-const UNANSWERED_FORK_LABEL := "A question went unanswered"
-const UNANSWERED_FORK_DETAIL := "The turn advanced past a pending fork — it will settle as if nothing was said."
-const ATTENTION_SEVERITY_CRITICAL := "critical"
-const ATTENTION_SEVERITY_WARN := "warn"
-# Awaiting expeditions are listed ONE ROW EACH (not one aggregate like idle workers): each parked
-# party is a SEPARATE decision with its own destination, so an aggregate row would have nowhere to
-# jump. The popover is positioned ABOVE the orb (`TurnOrb._position_popover`), so an unbounded list
-# would climb off the top of the screen and take the `Advance ▸` footer with it — hence a cap, past
-# which the remainder folds into a single overflow row that jumps to the first party beyond it.
-const ATTENTION_AWAITING_MAX_ROWS := 3
-const ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT := "+%d more awaiting orders"
-const ATTENTION_AWAITING_OVERFLOW_DETAIL := "Jump to the next parked party"
-# The row's context line: "<mission> · <objective>" (the objective is the herd for a hunt party, the
-# party's own tile for a scout). Mission words come from EXPEDITION_MISSION_LABELS, the demand
-# headline from EXPEDITION_PHASE_LABELS — neither is retyped here.
-const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
-const ATTENTION_TILE_FORMAT := "(%d, %d)"
-const FOOD_ACTION_FORAGE := "forage"
-const FOOD_ACTION_HUNT := "hunt"
-# Band-status alert types, ordered high → low priority (rendered in this order).
-const BAND_ACTIVITY_IDLE := "idle"
-# Verb prefixes for the optimistic in-flight label on the disabled cancel button,
-# composed with the task action phrase as "<verb> <phrase>…" (e.g. "Cancelling
-# Market Hunt…", "Starting Foraging…"). Shown from dispatch until the snapshot
-# confirms the band's `activity` CHANGED from its value at dispatch.
-const CANCEL_ORDER_PENDING_VERB := "Cancelling"
-const START_ORDER_PENDING_VERB := "Starting"
-# Why a band is losing population — appended to the losing_population alert label.
-const DECLINE_REASON_STARVING := "starving"
-const DECLINE_REASON_LOW_MORALE := "low morale"
-# Morale-driven loss is now emigration/relocation (people don't die of low morale —
-# see docs/plan_civ_wellbeing.md), so a shrink with emigrants last turn reads this.
-const DECLINE_REASON_PEOPLE_LEAVING := "people leaving"
-# Per-cohort morale cause (snapshot PopulationCohortState.moraleCause; 0 = None).
-const MORALE_CAUSE_NONE := 0
-const MORALE_CAUSE_TERRAIN := 1
-const MORALE_CAUSE_COLD := 2
-const MORALE_CAUSE_UNREST := 3
-# Plain-language cause labels, shared by the drawer morale line and the alert reason.
-# Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
-const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
-const MORALE_CAUSE_LABEL_COLD := "harsh climate"
-const MORALE_CAUSE_LABEL_UNREST := "unrest"
-# |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
-# bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
-# thing that draws them.)
-const MORALE_TREND_EPSILON := 0.005
-# ─── RE-EXPORTED FROM `SourceForecast` ────────────────────────────────────────────────────────────
-# The shared forecast/estimate layer (src/scripts/ui/hud/SourceForecast.gd) OWNS these definitions —
-# it is called by the drawer's compose blocks, the Band panel's work zone and its parties zone alike,
-# so the vocabulary they all quote has to live with the math, not with this node. They are aliased
-# here (not redefined) so HudLayer's own call sites read unchanged and there is exactly ONE definition
-# of each. When a helper that uses one of these moves out of HudLayer, its alias goes with it.
-const OUTPUT_FULL = SourceForecast.OUTPUT_FULL
-const LABOR_KIND_FORAGE = SourceForecast.LABOR_KIND_FORAGE
-const LABOR_KIND_HUNT = SourceForecast.LABOR_KIND_HUNT
-const LABOR_HUNT_POLICIES = SourceForecast.LABOR_HUNT_POLICIES
-const LABOR_POLICY_SUSTAIN = SourceForecast.LABOR_POLICY_SUSTAIN
-const DEFAULT_HUNT_POLICY = SourceForecast.DEFAULT_HUNT_POLICY
-const LABOR_POLICY_CORRAL = SourceForecast.LABOR_POLICY_CORRAL
-const DOMESTICATION_COMPLETE = SourceForecast.DOMESTICATION_COMPLETE
-const SOURCE_KIND_HERD = SourceForecast.SOURCE_KIND_HERD
-const SOURCE_KIND_FORAGE = SourceForecast.SOURCE_KIND_FORAGE
-const FLORA_CROP_RATIO_NONE = SourceForecast.FLORA_CROP_RATIO_NONE
-const HUSBANDRY_CEILING_WILD = SourceForecast.HUSBANDRY_CEILING_WILD
-const HUSBANDRY_CEILING_PASTORAL = SourceForecast.HUSBANDRY_CEILING_PASTORAL
-const HUSBANDRY_CEILING_PEN = SourceForecast.HUSBANDRY_CEILING_PEN
-const YIELD_TOOLTIP_RENEWABLE = SourceForecast.YIELD_TOOLTIP_RENEWABLE
-const TOOLTIP_LINE_SEPARATOR = SourceForecast.TOOLTIP_LINE_SEPARATOR
-const FOOD_FLOW_MIN = SourceForecast.FOOD_FLOW_MIN
-const MAX_USEFUL_UNBOUNDED = SourceForecast.MAX_USEFUL_UNBOUNDED
-const MAX_USEFUL_NOTE_FORMAT = SourceForecast.MAX_USEFUL_NOTE_FORMAT
-const MAX_USEFUL_NOUN_ONE = SourceForecast.MAX_USEFUL_NOUN_ONE
-const MAX_USEFUL_NOUN_MANY = SourceForecast.MAX_USEFUL_NOUN_MANY
-const LABOR_BOUND_NOTE_FORMAT = SourceForecast.LABOR_BOUND_NOTE_FORMAT
-const HERD_BAND_CEILINGS_KEY = SourceForecast.HERD_BAND_CEILINGS_KEY
-const HUNT_RATE_UNAVAILABLE = SourceForecast.HUNT_RATE_UNAVAILABLE
-const SEND_HUNTING_EXPEDITION_BUTTON = SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
-const HUNT_WASTE_SUFFIX_FORMAT = SourceForecast.HUNT_WASTE_SUFFIX_FORMAT
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-# Itemized morale breakdown — the four signed Layer-1 contributions (their sum IS
-# morale_delta) rendered as indented sub-lines under the Morale headline when morale is
-# concerning or declining. Tinted by sign (▲ positive = healthy, ▼ negative = amber).
-const MORALE_BREAKDOWN_INDENT := "    "
-# (The two CONTRIBUTION LABELS `settling`/`culture` are `BandDetailLines`', and the recovery-guidance
-# pair `DetailFormat`'s — each moved with every one of its readers.)
-const MORALE_CONTRIB_POSITIVE_GLYPH := "▲"
-const MORALE_CONTRIB_NEGATIVE_GLYPH := "▼"
-# Positive-lever morale hints on the action buttons (tooltip suffixes).
-const MORALE_HINT_SCOUT := "Scout unknown ground — reveals nearby tiles and lifts the band's spirits (+morale)."
-const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+morale/turn)."
-# Occupants roster row chrome.
-const ROSTER_DOT_SIZE := 9.0
-const ROSTER_ROW_MIN_HEIGHT := 30.0
-const ROSTER_ROW_SEPARATION := 8
-const ROSTER_ROW_H_PADDING := 10.0
-const ROSTER_ACCENT_WIDTH := 3.0
-const ROSTER_HEADER_FONT_SIZE := 10
-# ---- The subject list: the land is the FIRST ROW, not a card above the occupants ---------------
-# The land is the same KIND of thing a band or a herd is — a subject on this hex you can put
-# workers on — so it is a row, and selecting it fills the same one drawer. `_selection.subject()` says
-# only which KIND of row is lit; `_selection.unit()` / `_selection.herd()` stay authoritative for WHICH.
-# The subject-kind vocabulary lives on HudSelectionState (the selection model owns it); these
-# aliases keep every existing `SUBJECT_*` reference in this file working unchanged.
-const SUBJECT_LAND := HudSelectionState.SUBJECT_LAND
-const SUBJECT_UNIT := HudSelectionState.SUBJECT_UNIT
-const SUBJECT_HERD := HudSelectionState.SUBJECT_HERD
-# `roster_occupant_selected`'s id for the LAND kind: the land has no entity, and the signal's id is
-# a Variant, so it carries the same "no occupant" sentinel the rest of the client uses.
-const LAND_SUBJECT_ID := -1
-# Fallback glyph for the land row on a tile carrying no food module. Text-presentation (the
-# line-art policy in `FoodIcons`): it inherits the row label's colour, so it dims with the row.
-const LAND_ROW_GLYPH := "◈"
-# Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
-const LAND_META_WORKERS_FORMAT := "%d %s"
-const LAND_META_NO_FORAGE := "No forage"
-# Herd-row meta: the same `<count> <activity glyph>` form the land row uses, so a hunted herd
-# (`1 🏹`) and a foraged hex (`2 🌾`) state their staffing identically down the subject list.
-const HERD_META_WORKERS_FORMAT := "%d %s"
-# Chip strip font: one notch under the row labels — a chip is a standing condition, not a heading.
-const CHIP_FONT_SIZE := 11
-# Tag chips are skipped when the tile reports this literal (the `tags_text` "no tags" value): an
-# absent condition earns no chip, exactly as it earns no row.
-const CHIP_TAGS_NONE := "none"
-# The drawer's floor. Below this a compose block is unreadable, so the card is allowed to push the
-# dock into its own scroll rather than crushing the controls the player came here to use.
-const SUBJECT_DRAWER_MIN_HEIGHT := 180.0
-const SUBJECT_DRAWER_BOTTOM_MARGIN := 12.0
-# The list ↔ drawer rule: one hairline, the same weight `header_stylebox` draws under a card title.
-const SUBJECT_DIVIDER_HEIGHT := 1.0
-# A selected PLAYER band's detail lives in the dockable Band/City panel, so its drawer here would
-# otherwise be a blank gap. Say where it went instead.
-const BAND_PANEL_POINTER_TEXT := "Labor allocation is in the Band / City panel."
-# …but REPOSITIONING is a map action, and the player is already on the map with this hex open, so
-# Move stays in the drawer beside the pointer (§18). Same words as the Band/City panel's own Orders
-# Move — one order, one name.
-const MOVE_BAND_BUTTON_TEXT := "Move"
-const MOVE_BAND_BUTTON_TOOLTIP := "Relocate the band, then click a destination tile."
-# Per-activity glyph for a player band's roster row. `activity` is the kind with the
-# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
-const ACTIVITY_GLYPHS := {
-    "idle": "·",
-    "forage": "🌾",
-    "hunt": "🏹",
-    "scout": "🧭",
-    "warrior": "🛡",
-}
-# Provisions is the food item under a band's larder `stores`.
-const STORE_ITEM_PROVISIONS := "provisions"
 # The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
 # distinct from the food larder above, in fodder/grass units (the raw `FODDER` `LocalStore` value,
 # `fodder_per_biomass × biomass` scale, ~25× the food scale — NOT comparable to and never summed onto
@@ -408,953 +214,24 @@ var _disclosures: DisclosureController = null
 # The band/party detail-line producers (Food / Morale / Output / stockpile rows + the party rows).
 # Shared BY REFERENCE with `BandPanelController`, which renders the same rows into the dock.
 var _banddetail: BandDetailLines = null
-# Early-Game Labor (docs/plan_early_game_labor.md, slice 3b). Assignment kinds mirror
-# the sim's LaborAssignment.kind; the source-centric allocation targets the single
-# player band captured from each snapshot (there is exactly one player band today).
-const LABOR_KIND_SCOUT := "scout"
-const LABOR_KIND_WARRIOR := "warrior"
-# INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
-# cost — the source pays only its dip ceiling (the patch's `ceiling_cultivate` / `ceiling_sow`
-# scalars; for a herd, the `tame` / `corral` rows of its `hunt_policy_ceilings` list) while the
-# workers prepare it, then flips to the much higher managed yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate + Sow are forage-only, Tame
-# + Corral are hunt-only. Each ladder now runs its verb TWICE — one verb per rung-transition:
-#   plants:  wild --cultivate--> Tended Patch --sow--> Field
-#   animals: wild --tame------> Pastoral herd --corral--> Pen
-const LABOR_POLICY_CULTIVATE := "cultivate"
-const LABOR_POLICY_SOW := "sow"
-const LABOR_POLICY_TAME := "tame"
-# The full picker option sets per source kind (the four extractive rungs + that kind's TWO investment
-# rungs, in ladder order so the picker reads bottom-of-the-ladder → top). Canonical on the labor model
-# (the moved policy_for_* readers re-seed against them); re-exported here via the alias idiom.
-const FORAGE_POLICY_OPTIONS := HudBandLaborState.FORAGE_POLICY_OPTIONS
-const HUNT_POLICY_OPTIONS := HudBandLaborState.HUNT_POLICY_OPTIONS
-# Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
-# (gathering a plant patch's regrowth, not culling a herd).
-const FORAGE_POLICY_HINTS := {
-    "sustain": "Sustain — gather at the patch's regrowth; it stays healthy.",
-    "surplus": "Surplus — gather more now; the patch declines.",
-    "market": "Market — gather for trade goods; faster decline.",
-    "eradicate": "Eradicate — strip the patch bare.",
-    "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
-    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
-    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
-    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
-    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
-    # neglected Field reverts to WILD, not to a free tended patch.
-    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
-}
-# GATES on the investment rungs. The option stays VISIBLE but disabled with its reasons, so the player
-# learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
-# mirror the sim's `assign_labor` validation (faction knowledge complete + the source ready).
-#
-# Each reason states WHAT'S MISSING + HOW FAR ALONG IT IS + THE ACTION THAT CLOSES IT — naming the
-# prerequisite alone ("Herd must be domesticated") tells the player a door is locked without saying
-# where the key is.
-#
-# THIS IS WHERE THE TWO-METER SPLIT IS TAUGHT (docs/plan_intensification_ladder.md §4.1). A gated
-# verb has at most two kinds of reason, and they are DIFFERENT KINDS OF THING:
-#   • a KNOWLEDGE reason — "your PEOPLE haven't learned this craft yet". Faction-wide, permanent,
-#     earned by cumulative practice on the rung BELOW. Its meter lives in the top-bar knowledge
-#     strip, never in this source's drawer, and the remedy names the PRACTICE that fills it.
-#   • a SOURCE reason — "you haven't done it to THIS herd/patch yet". Local, decays if abandoned.
-#     Its meter is the source's own drawer row, and the remedy names the VERB that fills it.
-# One line teaches the whole ladder: practise this rung → fill that knowledge meter → unlock that
-# verb. The remedies therefore name a glyph pulled from the shared `FoodIcons.POLICY_ICONS` map, so
-# each is literally the icon on a button beside it.
-#
-# The KNOWLEDGE reasons. Practice teaches the NEXT rung up (§4), and the rule keys off the rung the
-# source STANDS on, not the verb — so the same Sustain hunt teaches Herding on a wild herd and
-# Penning on a tamed one. Format args: %d = the live faction progress percent, %s = the Sustain glyph.
-const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Your people know Cultivation %d%% — %s Sustain-forage a wild patch to learn it"
-const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Your people know Herding %d%% — %s Sustain-hunt a wild herd to learn it"
-# The two knowledges slice 4 added. The §4.3 reshuffle put ONE knowledge on each transition, so these
-# gate the rung-3 verbs and their remedies point at working the rung-2 source — the ladder's
-# "practise this rung to unlock the next" rule, stated in the place the player is blocked.
-const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Selection %d%% — %s Sustain-forage a Tended Patch to learn it"
-const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s Sustain-hunt a tamed herd to learn it"
-# The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
-# `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
-# nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
-# is the exact hidden rule the arc exists to kill.
-const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
-# The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
-# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
-# patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
-# %s = the live `patch_ecology_phase`, capitalized.
-const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
-# A COMPLETED investment rung is a dead-end no-op — the build is DONE, so re-running the verb only pays
-# the low prep dip forever. The rung is greyed (like Sow is greyed when gated) and the reason points the
-# player at the ♻ Sustain that now HARVESTS the finished ground, where the real payoff lives. Mirrors the
-# SOURCE-reason voice ("This herd is 40% tamed — ◎ Tame it to finish") for a state that is already there.
-const GATE_REASON_ALREADY_TENDED_FORMAT := "Already a Tended Patch — %s Sustain-forage it to harvest"
-const GATE_REASON_ALREADY_FIELD_FORMAT := "Already a Field — %s Sustain-forage it to harvest"
-# THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
-# the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
-# client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so
-# the sim ships the VERDICT as a stable key and these turn it into the manual's voice. Never show a
-# Sow button that just fails, and never answer with a bare "you can't": each line names the fault AND
-# points at the rung that lifts it (Worked Land — irrigation and the plough — is a future arc, so the
-# promise is deliberately "not yet", not a date).
-#
-# Rung 3 moves seed but cannot FERTILIZE, so the land itself must do it: the ground has to be rich
-# already and near fresh water. Salt coast does not count.
-const SOW_REFUSAL_TOO_POOR := "too_poor"
-const SOW_REFUSAL_TOO_DRY := "too_dry"
-const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
-const SOW_REFUSAL_REASONS := {
-    "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
-    "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",
-    "too_poor_and_too_dry": "This ground is both too thin and too dry to take a crop — your people can carry seed, but neither feed the soil nor water it yet. The river valleys will take it; this ground will not, until they learn to work the land.",
-}
-# An unrecognized refusal key still refuses (fail CLOSED — the sim gates the command regardless, so a
-# button offered here would simply fail), and says the one thing we do know.
-const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people cannot yet work land like this."
-# Taming pauses (it does not fail, and it does not lose progress) while the herd is not Thriving. The
-# verb is deliberately NOT gated on that — a herd's phase swings as you hunt it — so this line is the
-# only thing standing between the player and a hidden rule. %s = the herd's live `ecology_phase`.
-const TAME_STALLED_HINT_FORMAT := "⚠ Taming is paused — the herd is %s, and it only gentles while Thriving. Progress is not lost: ease your hunters off and it resumes as the herd recovers."
-# A patch with no streamed phase (redacted remembered tile) still fails the Thriving
-# test; it reads as unknown rather than asserting a phase we don't have.
-const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
-# A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
-const GATE_REASON_LINE_FORMAT := "%s — %s"
-# Two or more reasons are far too long for one line, so they render as a header + one bullet each
-# ("🌱 Cultivate needs:" / "   · <reason>").
-const GATE_REASON_HEADER_FORMAT := "%s needs:"
-const GATE_REASON_BULLET_FORMAT := "   · %s"
-# COLLAPSING ANOTHER RUNG'S REASONS — OPT-IN, and deliberately narrow. Three wrapped paragraphs
-# explaining why *Sow* is refused while the player composes a *Cultivate* answer a question they did
-# not ask and cost about a third of the compose card; the crop picker, the stepper and the commit
-# button are what paid. But spelled-out reasons are also how the ladder TEACHES — several frames exist
-# precisely to show a NON-composed rung's full prerequisites (`forage_cultivate_locked`,
-# `forage_sow_locked`, `herd_corral_locked*`, and `two_meter_split`, whose whole subject is the gated
-# Corral's reason line while Tame is composed). So this is NOT the shared default: `HudWidgets.build_policy_picker`
-# collapses only when its caller asks, and the only caller that asks is the forage compose while a
-# COMMITTING rung is selected — i.e. exactly when the crop picker is on the card competing for height.
-# Every other picker (hunt, expedition, work board) is byte-for-byte unchanged.
-const GATE_REASON_COLLAPSED_ONE_FORMAT := "%s — locked (1 requirement unmet)"
-const GATE_REASON_COLLAPSED_MANY_FORMAT := "%s — locked (%d requirements unmet)"
-# The disabled button's tooltip carries every reason, one per line.
-const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
-# Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
-# +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its
-# gate reasons below (one per line), so a hover names the rung AND explains any lock.
-const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
-# 0..1 progress tracks (knowledge, domestication) render as whole percents.
-const PROGRESS_PERCENT_SCALE := 100.0
-# A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
-const KNOWLEDGE_COMPLETE := 1.0
-# The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
-const CULTIVATION_PREPARING_LABEL := "Preparing"
-const CORRAL_GLYPH := "🐄"
-# Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
-# "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
-# may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's
-# "Fencing N%" build-verb convention; the completed badge is a Field — deliberately a different WORD
-# and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
-const FIELD_ROW := "Field"
-# Tile card "What grows here" row (flora roster F1) — the named plants this tile's forage capacity is
-# MADE OF. Naming DECOMPOSES, it never adds: the shares sum to 1, so this says what the Forage number
-# already on the card consists of. Derived from the biome, so it is descriptive, not a state.
-const FLORA_COMPOSITION_ROW := "What grows here"
-# (The row's own ` · ` separator is `DetailFormat.FLORA_SHARE_SEPARATOR` — only the composition
-# formatter uses it. This FORMAT stays: the crop picker prints its rows with it too.)
-const FLORA_SHARE_FORMAT := "%s %d%%"
-# Tile card "Crop" row (flora roster S1) — the row FLORA_COMPOSITION_ROW becomes once a band commits
-# the patch to one species under Cultivate/Sow. The basket is displaced (that is the cost of tending
-# — docs/plan_flora_roster.md §4.3), so the two rows are mutually exclusive: a committed tile is one
-# plant, and showing the wild mix beside it would state what no longer grows there. Kept well under
-# `DetailFormat`'s 16-char key limit so it aligns as a normal table row, like the row it replaces.
-const FLORA_CROP_ROW := "Crop"
-# THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of
-# a server default. It renders only under the two rungs that actually commit a patch to one plant; the
-# extractive rungs gather the whole basket and choose nothing, so a crop control there would be noise.
-const FLORA_COMMITTING_POLICIES := [LABOR_POLICY_CULTIVATE, LABOR_POLICY_SOW]
-const FLORA_CROP_PICKER_HEADER := "Crop to commit to"
-# An entry the SPECIES can never climb this rung with stays VISIBLE and disabled, never hidden: that a
-# tile carries Oak Mast you cannot farm is information about the LAND, and hiding it would make the
-# tile read poorer than it is. `can_cultivate` / `can_sow` are species-GLOBAL — "can this plant ever
-# climb this rung" — so the reason names the plant, not the ground.
-const FLORA_CROP_NO_CULTIVATE_FORMAT := "%s cannot be tended — it is a wild harvest only."
-const FLORA_CROP_NO_SOW_FORMAT := "%s cannot be sown — its seed is not yours to move."
-# A LEGAL BUT MARGINAL CROP IS NEVER DISABLED. A 20%-share plant is a bad choice, not an illegal one,
-# and being free to make it is the decision docs/plan_flora_roster.md §4.3 exists to create — only the
-# two species flags disable anything. The warning rides the ROW's own tooltip rather than a standing
-# hint line: a line under the list costs the sheet ~40px of height, and the commit button below it is
-# what pays (see FLORA_CROP_LIST_MAX_HEIGHT).
-# THE VERDICT IS RELATIVE TO 1.0, never to an impression of what the numbers "usually" look like.
-# Committing beats gathering wild on most good ground, so ratios above 1.0 are the NORM: "poor" is
-# reserved for a crop that genuinely loses to simply gathering the tile, and the tier between break-even
-# and FLORA_CROP_STRONG_RATIO is the honest middle — worth doing, not worth celebrating.
-const FLORA_CROP_STRONG_RATIO := 1.5
-const FLORA_CROP_LOSS_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — it loses to simply gathering here."
-const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — worth committing to."
-const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
-# THE PAYOFF, beside the share — `cultivate_yield_ratio` / `sow_yield_ratio`: what committing this tile
-# to this plant yields RELATIVE to gathering it wild. The sim folds the share AND the species'
-# conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
-# the decision is "better or worse than wild", not a second significant figure.
-const FLORA_CROP_ROW_FORMAT := "%s %d%% · %.1f×"
-# A FODDER crop (hay) pays HAY, not provisions, so its provisions ratio is 0 and the `N.N×` row would
-# read it as worthless (Flora roster F3). When `sow_fodder_payoff > 0` the row instead states the hay
-# value in its own account — `Hay Grass 30% · 1.8 hay` — so a valuable feed crop never reads as a loss.
-const FLORA_CROP_FODDER_ROW_FORMAT := "%s %d%% · %.1f hay"
-const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.1f fodder/turn as a sown field — feed for penned animals, not food for people."
-# The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
-# the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea
-# and the ratio exists to stop that being invisible, not to prevent it.
-const FLORA_CROP_BREAK_EVEN_RATIO := 1.0
-# THE LIST SCROLLS WITHIN ITSELF so a long basket can never push the commit button below the sheet's
-# fold. The sheet's own `CARD_MAX_HEIGHT` is deliberately NOT raised — that cap belongs to every
-# compose card, not just this one — so the picker has to live inside the room the sheet has left, and
-# the budget is TIGHT: a Cultivate compose already spends most of the card on the rung gates. Hence
-# the work-board's compact row idiom rather than default button chrome (which pads 9px top AND bottom,
-# making a row ~37px and the whole picker unaffordable), and hence a cap DERIVED from the rows it
-# shows rather than a picked pixel height: `rows × (row + separation)`, with a partial row deliberately
-# NOT budgeted for — the cut-off row is itself the "there is more below" affordance.
-const FLORA_CROP_ROW_HEIGHT := 22.0
-const FLORA_CROP_ROW_FONT_SIZE := WORK_ROW_FONT_SIZE
-const FLORA_CROP_ROW_PADDING_V := HudStyle.WORK_ROW_PADDING_V
-# MEASURED, not chosen — and set so that NO SHIPPED BASKET EVER HIDES A CROP. The longest a tile can
-# carry today is 5 (a navigable hex blends the valley's basket with the channel's fishery), so at 5 the
-# whole basket is on screen and the player compares it rather than peering at it through a slot: a
-# picker that hides the best crop behind a scroll is the guess the payoff ratio exists to remove. It was
-# 2 rows until the OTHER rung's gate reasons were collapsed (see GATE_REASON_COLLAPSED_ONE_FORMAT),
-# which is what bought the other three. The cap is still a real guard, not dead code — F5 refines this
-# coarse roster into a fine-grained one and baskets lengthen — and ui_preview's
-# `forage_crop_picker_overlong` (a synthetic 8-plant tile, longer than any real one) keeps the scroll
-# path RENDERED so it cannot rot unseen. `forage_crop_picker` ASSERTS the sheet has nothing left to
-# scroll, i.e. `Forage` is on screen; change this number and let that assertion answer, never assume.
-const FLORA_CROP_LIST_VISIBLE_ROWS := 5
-const FLORA_CROP_BLOCK_SEPARATION := 2
-const FLORA_CROP_LIST_MAX_HEIGHT := FLORA_CROP_ROW_HEIGHT * FLORA_CROP_LIST_VISIBLE_ROWS \
-    + float(FLORA_CROP_BLOCK_SEPARATION) * (FLORA_CROP_LIST_VISIBLE_ROWS - 1)
-const FLORA_CROP_NONE_LEGAL_HINT := "Nothing growing here can climb this rung."
-# A committed patch is one-way until it lapses, so the picker becomes a READ-ONLY readout: an editable
-# control here would imply a switch the sim will refuse.
-const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
-const FLORA_CROP_COMMITTED_HINT := "Already committed — this patch stays this crop until it lapses back to wild."
-# The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
-# graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
-# share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
-# is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
-# state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView); the two
-# starving LABELS are `DetailFormat.PEN_STARVING_LABEL` / `PEN_FEED_STARVING_FORMAT`, beside the row
-# builders that are their only readers.
-# The pen's feed row in the herd drawer — the NET food-larder bill THIS pen draws per turn
-# (`pen_larder_bill`, after pasture + hay), and whether it is being paid. The same bill the feed-split's
-# "larder Y.Y" term states, so the two never disagree. The band's own ledger row is the sim-summed
-# `pen_feed_upkeep` across all its pens; this is the per-herd figure, which is why the two are never added.
-# Grazing 2d-γ — the pen is fenced LAND that grazes itself. Two herd-drawer rows state it:
-#   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
-#     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
-#     edges, so the client never recomputes it).
-#   • the FEED SPLIT — "Fed by pasture NN% · hay X.X · larder Y.Y food/turn". The three render-ready
-#     terms the sim partitions the pen's GROSS demand into, ALL in food units, ZERO client arithmetic:
-#     `pen_pasture_fraction` × 100 (grazed free), `pen_hay_food` (hay's food-equivalent draw), and
-#     `pen_larder_bill` (the NET bread bill after pasture + hay). NOTE the larder term reads
-#     `pen_larder_bill`, NOT `pen_upkeep` — `pen_upkeep` is the GROSS projection (`upkeep_per_biomass ×
-#     biomass`, same basis as `corral_yield`, used only for the pre-commit Corral decision, pinned by
-#     `core_sim` `snapshot/mod.rs` `pen_upkeep_*` tests); the honest bill the keeper actually hauls is
-#     `pen_larder_bill`. Sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
-#     pen_larder_bill == pen_upkeep`. The hay segment shows ONLY when `pen_hay_food >= FOOD_FLOW_MIN` (a
-#     pre-Foddering / no-hay pen renders the two-term form); a self-feeding pen reads "100% · larder
-#     0.0", a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
-# The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
-# On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
-# (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
-# "Building N%" meter. The server rejects an extend at max radius / unowned / Herding-unknown with a
-# feed message, so the client does not pre-gate on those (max radius is not on the wire).
-const PEN_EXTEND_LABEL := "Extend pen"
-const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
-const PEN_FENCING_LABEL := "Fencing %d%%"
-# Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
-# needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction < 1`)
-# it DECAYS out of the pastoral rung, slips back to wild, and stops earning Penning — the silent stall
-# a playtest hit ("🐄 Domesticated" with no signal that Penning had stopped). The row makes the deficit
-# visible; the under-herded value is WARN-tinted via `DetailFormat.herders_value_hex`, and the slipping consequence
-# is spelled out below it so the player knows WHY Penning stalled and how to fix it.
-# (Herd drawer combat-component rows, Predators Phase 0 — the whole `DANGER_*` family lives in
-# `DetailFormat` with `append_danger_component_lines`, its only reader. Strength is NOT danger: a
-# mammoth is deadly to HUNT yet no camp THREAT, so the drawer shows the four RAW components
-# Elevation-style, with no verdict word. The roster it normalizes the open-ended bars against is
-# threaded IN as `_band_labor.world_herds()`, since that module holds no snapshot state.)
-# The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
-const ECOLOGY_PHASE_THRIVING := "thriving"
-# The FOUR intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
-# the FACTION-WIDE half of the two-meter split (§4.1). One per rung-transition, so the list IS the
-# ladder, and §4.3 pins "no two rungs share an unlock gate":
-#   plant:  wild --cultivation--> tended --seed_selection--> field
-#   animal: wild --herding------> pastoral --penning-------> pen
-# `seed_selection`/`penning` were appended by slice 4 (discovery ids 2005/2006).
-const KNOWLEDGE_TRACK_CULTIVATION := "cultivation"
-const KNOWLEDGE_TRACK_HERDING := "herding"
-const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
-const KNOWLEDGE_TRACK_PENNING := "penning"
-# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
-# carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
-# because a resident Sustain hunt on a thriving herd accrues HUSBANDRY toward livestock (and feeds
-# Sedentarization's `domestication` input), the single most under-communicated payoff in the system.
-#
-# These are the BAND's payoffs and must not be reused for an expedition: the Hunting expedition arm
-# credits FOOD ONLY — no husbandry accrual, no trade goods — so `SEND_HUNT_POLICY_HINTS` below
-# deliberately promises neither. Do not merge the two sets; the asymmetry is real (a known v1 gap,
-# tracked server-side), and a hint that claims a payoff the sim never pays is a lie to the player.
-#
-# Corral (the herd-side INVESTMENT rung) lives HERE and only here — it is a LOCAL-hunt policy: a
-# detached party follows the herd and builds no pen, so the expedition set has no Corral entry (and
-# the sim rejects a Corral expedition outright). This is also the local set `_policy_hint` spells out
-# on a worked Hunt row's tooltip — those rows are always a resident band's.
-const LOCAL_HUNT_POLICY_HINTS := {
-    # Sustain USED to claim it tamed the herd ("on a thriving herd the hunt also tames it… livestock
-    # that pays food every turn without being hunted down"). BOTH halves of that are now false and
-    # the sentence is the reason this whole arc exists: slice 3a split the conflated branch, so
-    # Sustain TEACHES the faction Herding but tames nothing (the `tame` verb fills the herd's own
-    # meter), and slice 3b retired passive-free pastoral, so a tamed herd pays only through workers.
-    # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
-    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
-    "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
-    "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
-    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no craft learned, no trade — denial only.",
-    # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
-    # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
-    # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
-    "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
-    # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
-    # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
-    # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
-    # underfed herd shrinks (and takes its yield down with it). It also still escapes if unstaffed.
-    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your larder every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
-}
-# One worker per −/+ stepper press.
-const WORKER_STEP := 1
-# Leading label on the assign controls' band-picker dropdown ("which band supplies the workers").
-const BAND_PICKER_LABEL := "Band:"
-# Worker-stepper row chrome: the fixed-width −/+ buttons, the centered count column,
-# and the row separation.
-const WORKER_STEPPER_BUTTON_WIDTH := 28.0
-const WORKER_STEPPER_VALUE_WIDTH := 32.0
-const WORKER_STEPPER_SEPARATION := 6
-# Policy-picker layout: the compacted glyph+metric buttons wrap 3 per row so the six-rung
-# forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A picker
-# with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker) stays
-# a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
-const POLICY_PICKER_COLUMNS := 3
-const POLICY_PICKER_MAX_SINGLE_ROW := 4
-# Passed for `columns` to keep `HudWidgets.build_policy_picker`'s width-driven default — a caller that only wants
-# to set a LATER argument must still name this one, and a bare 0 there reads as "no columns".
-const POLICY_PICKER_AUTO_COLUMNS := 0
-# Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
-# rows): the title + stepper ride line 1, the yield/policy/status/notes drop to an indented, smaller
-# secondary line 2 so the row reads narrow. `STATUS_LINE_INDENT` ≈ the leading resource-icon width, so
-# line 2 sits under the title TEXT rather than under the icon; the flow separation is the gap between
-# the status parts (which wrap to the next line rather than widening the panel); the two-line gap is
-# the vertical space between line 1 and line 2.
-const STATUS_LINE_INDENT := 18.0
-const STATUS_LINE_SEPARATION := 6
-const TWO_LINE_STEPPER_SEPARATION := 2
-# Allocation-panel section headers + role hints (make the panel read as a "current actions"
-# report and make the standing Scout/Warrior roles discoverable — the −/+ steppers ARE how
-# you staff a scout mission now; there is no targeted map action).
-const ALLOC_SECTION_FONT_SIZE := 10
-# Vertical gap between the rows within one allocation section block (Workers / Current actions /
-# Band roles / Orders / Send expedition). Matches the pre-section-block flat-list spacing so the
-# tall stack reads unchanged; the Band/City panel spaces the blocks THEMSELVES apart (tall) or flows
-# them into columns (wide).
-const ALLOC_BLOCK_SEPARATION := 6
-# The merged larder projection's section header (see `_build_food_outlook_block`). Its own block, not
-# a line inside the summary RichTextLabel — BBCode cannot host a drawn chart.
-const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
-const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
-const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
-const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
-# Appended to a clickable Current-actions row's tooltip: the row's LABEL is an inline link that jumps
-# the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
-# are band-wide roles with no tile, so their rows stay plain labels and never carry this.
-const SOURCE_ROW_FOCUS_HINT := "Click to show this source on the map."
-# Overhunting flag: a worked source whose actual take exceeds its renewable-sustainable ceiling by
-# more than this epsilon is overdrawing (depletable herds only — forage is renewable, actual ==
-# sustainable, so it never trips). Shown as a WARN-tinted ⚠ on the row + spelled out in the tooltip.
-const OVERHUNT_EPSILON := 0.001
-const OVERHUNT_FLAG := "⚠"
-# A MANAGED hunt source's crew are HERDERS, not a hunt party (`workersNeeded` = max(herders, haulers),
-# scaling with herd size). The local stepper labels them so a pen needing several keepers doesn't read
-# as a hunt-party bug. See `SourceForecast.is_managed_hunt_source`.
-const HUNT_CREW_LABEL := "Hunters"
-const HERD_CREW_LABEL := "Herders"
-# A policy button carries its per-policy metric TWICE: a bare COMPACT string on the one-line button face
-# (glyph + metric, no name — so all six rungs fit one docked row) and the VERBOSE full string in the
-# tooltip (led by the policy name). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
-# The INVESTMENT rungs (Cultivate/Sow, Tame/Corral) wear a metric too, but it is not an immediate take
-# like the extractive rate — it is the PAYOFF the preparation builds TOWARD (the tended/field/pastoral/
-# corral yield). A leading arrow marks it on the compact face (`→+1.20`, distinct from an extractive
-# rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward X/turn".
-const POLICY_PAYOFF_COMPACT := "→%s"
-const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
-# The EXPEDITION picker wears the SAME "up to X/turn" cap metric as the local hunt + forage pickers
-# (`POLICY_CAP_FORMAT` via `SourceForecast.extractive_take`): each policy's MAX obtainable food/turn, computed in
-# `SourceForecast.expedition_policy_takes` as the max over party sizes of delivered_food / trip_turns. No bespoke
-# raid-animals face any more — the three pickers read identically.
-# The INVESTMENT rungs by name — "does this rung trade a dip now for a better source later?". This is
-# the test for *which yield row a rung gets*, and it is deliberately NOT `policy in
-# FORECAST_PAYOFF_KEYS`: `tame` is an investment rung that has no quotable payoff (above), so the
-# payoff map cannot answer this question. An investment rung must never render the extractive
-# "renewable / ⚠ overdraws the herd" preview — it is drawn sustainably by construction, and the
-# verdict would argue with the dip row.
-const INVESTMENT_POLICIES := ["cultivate", "sow", "tame", "corral"]
-# The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
-# Tame renders through it too (dip from `hunt_policy_ceilings["tame"]`, payoff = `pastoral_yield`), with
-# no feed term (Tame has no running cost).
-const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
-# The same deal for a rung that also carries a running feed cost:
-#   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
-# `pen_upkeep` answers "what would this pen cost?" for an UNPENNED herd too (a projection at the
-# herd's current biomass, on the SAME basis `corral_yield` uses — see `fauna::pen_upkeep`), so the
-# pre-commit row quotes the real running cost at the moment the player actually decides. The
-# subtraction is a pure difference of two numbers the sim exported for THIS herd; the client models
-# no ecology. (Before the sim exported that projection this row said "before feed"; it no longer
-# has to.) A herd with no `pen_upkeep` (no pen feed to charge) degrades to the plain no-feed format
-# above rather than printing a fabricated "− 0.00 feed".
-const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
-# A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing this row can
-# say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above `K/2`), so a
-# herd at or below the MSY point honestly pays **0.00** until it rebuilds: penning it would eat feed
-# every turn and pay nothing. That must never be suppressed, blanked, or em-dashed away — a player
-# who pens a depleted herd because the UI declined to show them a zero has been actively misled. So
-# the zero renders in full, and the row EMPHASIZES it: WARN-amber instead of income-green, plus this
-# note naming the remedy (let it rebuild). The feed line still shows, because the feed is what makes
-# a zero payoff a net LOSS rather than merely a nothing.
-# (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
-# flow here", used by the band ledger's rows and by this row alike.)
-# AT ZERO WORKERS THERE IS NO "PREPARING" TO STATE. `Preparing` is staffing-scaled (workers ×
-# per_worker) while the `→ then` payoff is not, so an unstaffed forecast used to read
-# "Preparing: +0.00 /turn → then +1.22 /turn" — a sequence the player is emphatically NOT on track for,
-# since an unstaffed build meter never advances at all. The payoff itself stays on screen (it is how you
-# decide whether the source is worth staffing), but as a CONDITION rather than an imminent arrival.
-# Short on purpose: the moment ONE worker is on it the full "Preparing: … → then …" line renders, so a
-# long unstaffed sentence earns nothing. Crew-named, so a herd rung says hunters/herders.
-const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s — %s"
-const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s — %s − %s feed"
-const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
-# How a forecast dict SPELLS its field keys — a key spelling, nothing more.
-#
-# Two dict shapes carry them BARE and so share one prefix: a herd dict, and the RAW wire
-# forage-patch dict (decoded in native `forage_patches_to_array`, stored in `_band_labor.forage_patch_lookup()`,
-# and read by the Current-actions Forage row). Only `tile_info` carries the patch's fields under a
-# `patch_` prefix, because that is a cross-ref MapView stamps on in `_tile_info_at`.
-#
-# ⚠ A PREFIX CANNOT IDENTIFY A SOURCE KIND — that is why the bare case is ONE const and not two
-# same-valued ones. It used to be two (a `HERD_*` and a `WIRE_FORAGE_PATCH_*`, both `""`), and
-# having a herd-sounding name for the empty string invited `prefix == HERD_…` as an "is this a
-# herd?" test; it read as discriminating and was not, so it silently routed forage patches down the
-# herd branch and left the `+` button dead on every Current-actions Forage row. Pass `SOURCE_KIND_*`
-# when you need the kind; a prefix only ever tells you how to spell a key.
-const BARE_FORECAST_PREFIX := ""
-const FORAGE_FORECAST_PREFIX := "patch_"
-# Band food flow lives on the Food summary line: `Food 15 (19 turns) · −0.77 /turn` (net =
-# food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
-# (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
-# the net readout and each breakdown category (below it → absent, not shown as a zero).
-# Click-to-open disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label and
-# a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `DisclosureController`.
-#
-# THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE. Expanding it in place grew the vitals label — a
-# `fit_content` RichTextLabel — by several lines AFTER `build_band_zone` had already chosen
-# its height tier from the zone box, and the zone box is fixed by design with `clip_contents` hosts,
-# so the extra lines silently sliced the WORKFORCE row and ate the role cards. A Window cannot change
-# a zone's height, which is the same reason the section `⋯` menus are `MenuButton`s and the
-# destructive confirms are `ConfirmationDialog`s. The work board's budgeted inline inspector strip is
-# the other idiom and does not apply here: in the SHORT tier the chart is already dropped and the role
-# cards are already hint-less, so there is nothing left to spend but PEOPLE/WORKFORCE — the content.
-# The `[url]` meta prefix stays HERE: the formatter emits it, the disclosure controller parses it, and
-# both preview harnesses build one — shared vocabulary rather than either half's own. (The ▸/▾ carets
-# themselves are `DetailFormat`'s, and the popover's geometry `DisclosureController`'s.)
-const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
-const BREAKDOWN_KIND_FOOD := "food"
-const BREAKDOWN_KIND_MORALE := "morale"
-# The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
-const DETAIL_ROW_FOOD := "Food"
-const DETAIL_ROW_MORALE := "Morale"
-# ---- Band/City panel identity grid ---------------------------------------------------------------
-# The panel's own header already states the band's name + settlement stage, so the summary rows there
-# drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
-# under another name) with the labor line — same numbers, one row, in the identity grid where they
-# belong. The Occupants-card drawer (FOREIGN bands, and the no-panel ui_preview fallback) keeps
-# Unit/Size: it has no panel header naming the band, and a foreign band exposes no worker breakdown.
-# The population/workers LINE is gone from the summary entirely: the band zone's People and
-# Workforce bars state the same numbers as two readable charts, and a text restatement above them
-# was the third telling of one fact.
-# Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
-# through the SAME `DetailFormat.detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
-# eaten amber) — no inline color tags, which mis-layout between the KV table segments.
-const FOOD_LABEL_GATHERED := "Gathered"
-const FOOD_LABEL_HUNTED := "Hunted"
-# The two DEBIT rows, deliberately separate: the people eat (`food_consumption`), and the ANIMALS in
-# the band's pens eat (`pen_feed_upkeep` — a confined herd cannot graze, so its keeper hauls it food
-# every turn). Both come straight off the same larder, and telling them apart is the entire readout
-# of the corral-as-a-managed-population arc: a band whose larder drains because it is feeding its
-# herd must be able to SEE that, not just watch the number fall.
-const FOOD_LABEL_EATEN := "Eaten (people)"
-const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
-# Scouting expedition (docs/plan_exploration_and_sites.md §2). A detached party is a cohort
-# tagged Expedition flowing through the same populations[] array as a band; it carries no labor
-# in v1, so its drawer shows a dedicated mission/phase/party/provisions readout + Recall/Move
-# instead of the labor-allocation panel. The outfit affordance (party stepper + send) lives on a
-# resident band's allocation panel.
-const EXPEDITION_MISSION_SCOUT := "scout"
-const EXPEDITION_MISSION_HUNT := "hunt"
-const EXPEDITION_PHASE_OUTBOUND := "outbound"
-# One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
-const EXPEDITION_PHASE_AWAITING := FoodIcons.STATUS_AWAITING
-const EXPEDITION_PHASE_HUNTING := "hunting"
-const EXPEDITION_PHASE_DELIVERING := "delivering"
-const EXPEDITION_PHASE_RETURNING := "returning"
-const EXPEDITION_MISSION_LABELS := {
-	"scout": "Scouting expedition",
-	"hunt": "Hunting expedition",
-}
-const EXPEDITION_PHASE_LABELS := {
-	"outbound": "Outbound",
-	"awaiting": "Awaiting orders",
-	"returning": "Returning",
-	"hunting": "Hunting",
-	"delivering": "Delivering",
-}
-const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
-const SEND_EXPEDITION_BUTTON := "Send scouting party…"
-# Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
-# migratory herd, accumulates food, and drops it at the band. Launched from a resident band by
-# picking a herd (herd-target click, not a tile), and Recalled like a scout expedition.
-const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, then click on the herd."
-# Distance-aware herd-hunt affordance (docs/plan_exploration_and_sites.md §2b): clicking a herd
-# offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
-# it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
-# wrap-aware hex distance from the selected band's own tile.
-const ASSIGN_LOCAL_HUNT_BUTTON := "Assign Local Hunt"
-# Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
-# beyond the selected band's `work_range` disables the button rather than offering an alternative.
-const FORAGE_ASSIGN_BUTTON := "Forage"
-# `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
-# player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
-# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a tile this band
-# already works it is a legitimate unassign and says so, and at 0 on a tile it does not work it is a
-# no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the unassign.
-const FORAGE_UNASSIGN_BUTTON := "Unassign"
-const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
-# ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
-# Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
-# in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
-# keeps the detail rows, gains a one-line STANDING-ASSIGNMENT summary, and ends in the button below.
-const FORAGE_CREW_LABEL := "Foragers"
-# `Assign foragers ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
-# sheet's stepper uses, so the drawer and the sheet can never disagree about who is being staffed.
-const COMPOSE_OPEN_BUTTON_FORMAT := "Assign %s ▸"
-const COMPOSE_SHEET_EYEBROW_FORMAT := "Assign %s"
-# The standing staffing being edited, shown INSIDE the sheet (the header carries verb + subject).
-const COMPOSE_NOW_STAFFED_FORMAT := "Now %d%s"
-const COMPOSE_PENDING_SUFFIX := " · pending"
-# The drawer's one-line summary of what is ALREADY standing on this source: `♻ 3 foragers · +2.74
-# /turn`. The rate comes from `SourceForecast.source_yield_readout` — never recomputed here.
-const STANDING_SUMMARY_FORMAT := "%s %d %s"
-const STANDING_SUMMARY_SEPARATOR := " ·"
-const COMPOSE_KIND_NONE := ComposeState.KIND_NONE
-const COMPOSE_KIND_FORAGE := ComposeState.KIND_FORAGE
-const COMPOSE_KIND_HERD := ComposeState.KIND_HERD
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
 
-# ---- Band/City panel zones (docs/band_panel_ux_proposal.html) ---------------
-## The tighter gap between the parts of one zone SECTION (bar → key → cards). The gap between the
-## sections themselves travelled to `HudWidgets.ZONE_SECTION_SEPARATION` with `make_zone_column`, its
-## only reader; this one has readers on both sides (the work board's capacity maths), so it stays.
-const ZONE_BLOCK_SEPARATION := 6
-## The zone box assumed when no dock is injected (the HUD-only ui_preview host), so the work board
-## still pages against a sane measure instead of collapsing to one row.
-const ZONE_FALLBACK_SIZE := Vector2(340.0, 360.0)
-## A zone section head reserves exactly this height, so the work board's capacity maths and what the
-## head actually draws are the same number.
-const ZONE_HEAD_HEIGHT := 20.0
-const ZONE_HEAD_SEPARATION := 6
-const ZONE_HEAD_FONT_SIZE := 10
-## Section-menu affordance (`⋯`) — a MenuButton, so its popup is a Window and cannot move any layout.
-const SECTION_MENU_GLYPH := "⋯"
-const SECTION_MENU_WIDTH := 22.0
-const CONFIRM_DIALOG_TITLE := "Confirm"
 
-## Zone section headers (uppercased by `HudWidgets.alloc_section_label`).
-const ZONE_HEADER_PEOPLE := "People"
-const ZONE_HEADER_WORKFORCE := "Workforce"
-const ZONE_HEADER_WORK := "Work"
-const ZONE_HEADER_PARTIES := "Parties"
 
-## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
-## with `build_composition_bar` / `build_composition_key`; these two stay because the parties zone's
-## link row and the dependency chip read them outside those builders.
-const COMPOSITION_KEY_SEPARATION := 12
-const COMPOSITION_KEY_FONT_SIZE := 11
 
-## PEOPLE key glyphs + words (the words live in the tooltips the glyphs replaced).
-const PEOPLE_GLYPH_CHILDREN := "👶"
-const PEOPLE_GLYPH_WORKING := "🛠"
-const PEOPLE_GLYPH_ELDERS := "🧓"
-const PEOPLE_LABEL_CHILDREN := "children"
-const PEOPLE_LABEL_WORKING := "working age"
-const PEOPLE_LABEL_ELDERS := "elders"
-## Above this many dependents per 100 workers the band carries more mouths than hands → WARN. Stays
-## here because the chip's own tint reads it beside the tooltip that `HudFormat.dependency_tooltip`
-## now writes; the ratio BASE and the two tooltip strings travelled with that formatter.
-const PEOPLE_DEPENDENCY_HEAVY := 100
-## The chip says the COUNT, not the ratio. `dep 88/100` was the analyst's framing of a number the
-## player has to act on — it reads as a score out of 100 (and the game's designer could not tell what
-## it meant), while the bar beside it already shows the split. "14 dependents" is the fact; the ratio
-## and what it implies live in the tooltip, which is where the teaching belongs.
-const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
 
-## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
-## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
-## At/above TALL: the full-height food-outlook chart and hinted role cards.
-## Between CHART_MIN and TALL: a compact chart.
-## Below CHART_MIN (a 360px T/B dock): no chart at all, and the role cards drop their hint line to a
-## tooltip — the two biggest blocks, given up in the order they are least missed.
-## All measured against the zone BOX, never against the dock edge.
-const BAND_ZONE_TALL_MIN_HEIGHT := 420.0
-const BAND_ZONE_CHART_MIN_HEIGHT := 340.0
-const FOOD_CHART_COMPACT_HEIGHT := 42.0
-## The three tiers as an ordinal, so `zones_resized` can tell a mere re-page (the work board) from a
-## band-zone tier change (which needs the zone rebuilt, not re-paged).
-const BAND_ZONE_TIER_SHORT := 0
-const BAND_ZONE_TIER_COMPACT := 1
-const BAND_ZONE_TIER_TALL := 2
 
-## WORKFORCE readout + segment keys.
-const WORKFORCE_IDLE_FORMAT := "%d idle of %d"
-const WORKFORCE_KEY_FORAGE := "Forage"
-const WORKFORCE_KEY_HUNT := "Hunt"
-const WORKFORCE_KEY_ROLES := "Roles"
-const WORKFORCE_KEY_PARTIES := "Parties"
-const WORKFORCE_KEY_IDLE := "Idle"
 
-## Standing-role CARDS (the fix for roles reading as one more worked source in a list).
-const ROLE_NAME_SCOUT := "Scout"
-const ROLE_NAME_WARRIOR := "Warrior"
-## Trimmed to what the SHORT tier affords: at 8/8 the band zone stood 5px past a 360px T/B dock
-## (measured by `band_panel_preview`'s zone-bounds assertion, which is why it exists).
-const ROLE_CARD_SEPARATION := 6
-const ROLE_CARD_NAME_FONT_SIZE := 12
-## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
-## hint wraps to.
-const ROLE_CARD_HINT_HEIGHT := 28.0
 
-## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
-## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
-const WORK_ROW_HEIGHT := 28.0
-## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
-## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate
-## (`Forage (73, 20`), which costs the row the one thing it is for: naming WHICH source. Three
-## readable columns beat four unreadable ones — the page loses ~7 rows, the row keeps its identity.
-const WORK_COLUMN_MIN_WIDTH := 380.0
-const WORK_MAX_COLUMNS := 4
-const WORK_CHIPS_HEIGHT := 26.0
-const WORK_PAGER_HEIGHT := 24.0
-const WORK_INSPECTOR_HEIGHT := 118.0
-## The inspector with its policy picker open (an extra rung row + its hint).
-const WORK_INSPECTOR_POLICY_HEIGHT := 186.0
-## …plus the standing-investment line (`WORK_INSPECT_STANDING_INVESTMENT_FORMAT`), which only renders
-## on a source standing on an investment rung. One `ALLOC_SECTION_FONT_SIZE` line and its separation.
-const WORK_INSPECTOR_STANDING_LINE_HEIGHT := 22.0
-## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
-const WORK_ZONE_GAP_COUNT := 3.0
-const WORK_COLUMN_RULE_WIDTH := 1.0
-const WORK_COLUMN_SEPARATION := 10
-const WORK_ROW_STRIPE_WIDTH := 2.0
-## The row is a fixed budget: everything but the label is fixed-width, so the label gets whatever a
-## `WORK_COLUMN_MIN_WIDTH` column has left. These are trimmed to the smallest legible size so the
-## label's share stays as wide as possible; past it the label ellipsises and the inspector strip
-## spells the row out in full.
-const WORK_ROW_SEPARATION := 4
-const WORK_ROW_ICON_WIDTH := 16.0
-const WORK_ROW_RATE_WIDTH := 46.0
-const WORK_ROW_MARKS_WIDTH := 20.0
-## A board row must be EXACTLY `WORK_ROW_HEIGHT` — the capacity maths divides by it, so a row that
-## renders taller silently overflows the page off the bottom of the zone. The default button chrome
-## (`HudStyle._button_stylebox`, 9px of vertical padding) makes a stepper ~42px tall on its own, so a
-## work row's stepper takes a COMPACT treatment: these are the paddings and type sizes that fit.
-const WORK_ROW_FONT_SIZE := 13
-const WORK_STEPPER_FONT_SIZE := 12
-const WORK_STEPPER_PADDING_V := 2
-## The same squeeze for the zone chrome, each sized to its own reserved height.
-const ZONE_MENU_PADDING_V := 2
-const WORK_CHIP_PADDING_V := 3
-const WORK_PAGER_PADDING_V := 2
-const INSPECTOR_CLOSE_PADDING_V := 2
-const WORK_CHIP_SEPARATION := 4
-const WORK_CHIP_FONT_SIZE := 11
 
-## Board filters + sorts. The chips ARE the summary and the filter (they replace group headers).
-const WORK_FILTER_ALL := &"all"
-const WORK_FILTER_FORAGE := &"forage"
-const WORK_FILTER_HUNT := &"hunt"
-const WORK_FILTER_ATTENTION := &"attention"
-const WORK_SORT_YIELD := &"yield"
-const WORK_SORT_NAME := &"name"
-const WORK_CHIP_ALL_FORMAT := "All %d"
-const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
-const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
-const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 
-const WORK_SOURCES_FORMAT := "%d sources"
-const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
-const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
-const WORK_MENU_SORT_YIELD := "Sort by yield"
-const WORK_MENU_SORT_NAME := "Sort by name"
-const WORK_MENU_UNASSIGN_FORMAT := "Unassign all work (%d)"
-const WORK_UNASSIGN_CONFIRM_FORMAT := "Return all %d sources' workers to idle? Standing roles and parties are untouched."
-const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
 
-const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
-const WORK_ROW_HUNT_FORMAT := "Hunt %s"
-const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
-const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 
-## The inspector strip (the row's second/third lines, relocated to one place).
-const INSPECTOR_CLOSE_GLYPH := "✕"
-const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
-const WORK_INSPECT_JUMP := "Jump to source"
-const WORK_INSPECT_POLICY := "Change policy"
-const WORK_INSPECT_UNASSIGN := "Unassign"
-## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign).
-const PARTY_INSPECT_JUMP := "Jump to party"
-const PARTY_INSPECT_RECALL := "Recall"
-const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
-const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
-const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
-## The inspector's picker offers the four EXTRACTIVE rungs only — the INVESTMENT rungs are ladder
-## COMMITMENTS made at the source's own compose control, where their gates and payoff forecasts live.
-## So a source STANDING on an investment rung highlights none of the four, which without a word reads
-## as an unset control on a very-much-set assignment. These two say what is actually true: the rung
-## it stands on, and that picking here ENDS it (a part-built pen/field is discarded, not paused).
-const WORK_INSPECT_STANDING_INVESTMENT_FORMAT := "Currently %s — picking a rung here ends it."
-const WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT := "End %s on %s and take at %s instead? The work done toward it is lost."
-const WORK_INSPECT_END_INVESTMENT_CONFIRM_OK := "End it"
 
-const PAGER_PREV_GLYPH := "‹"
-const PAGER_NEXT_GLYPH := "›"
-const PAGER_PREV_TOOLTIP := "Previous page"
-const PAGER_NEXT_TOOLTIP := "Next page"
-const PAGER_FORMAT := "Page %d / %d"
-const PAGER_RANGE_FORMAT := "%d–%d of %d"
 
-## PARTIES zone.
-const PARTIES_HEADER_FORMAT := "%d out · %d workers"
-const PARTIES_EMPTY_HINT := "No parties in the field."
-const PARTY_MENU_TOOLTIP := "Bulk actions for parties in the field."
-const PARTY_RECALL_GLYPH := "✕"
-const PARTY_RECALL_TOOLTIP := "Recall — the party walks home"
-const PARTY_RECALL_WIDTH := 24.0
-## The per-row recall stays VISIBLE (parties have no other removal path) but rests dimmed, so it
-## reads as available without competing with the row it sits on.
-const PARTY_RECALL_REST_ALPHA := 0.45
-const PARTY_RECALL_ALL_FORMAT := "Recall all parties (%d)"
-const PARTY_RECALL_CONFIRM_FORMAT := "Recall all %d parties? They walk home carrying what they have."
-const PARTY_RECALL_CONFIRM_OK := "Recall all"
-## Single-party recall confirm — wraps each BUTTON handler (row ✕, inspector Recall, drawer Recall), NOT
-## the shared emit `_on_recall_expedition_pressed` (which "Recall all" already loops under its OWN one
-## confirm — confirming inside the emit would pop N prompts after a confirmed "Recall all").
-const PARTY_RECALL_ONE_CONFIRM_FORMAT := "Recall the %s party? It walks home carrying what it has."
-const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
-## The %s a scout party fills into the recall prompt — a bare word, since "Recall the Scouting
-## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
-const PARTY_RECALL_SCOUT_LABEL := "scouting"
-## The parties inspector strip is DENSER than the work inspector (up to 6 detail lines vs ~1), and the
-## T/B parties zone is height-capped at ~300px, so its detail lines are tightened a touch below
-## ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer inside the box.
-const PARTIES_INSPECTOR_LINE_SEPARATION := 4
-const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 
-## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
-## always already on one and the policy picker is unreachable except under Hunt.
-const COMPOSE_MISSION_SCOUT := "scout"
-const COMPOSE_MISSION_HUNT := "hunt"
-const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
-const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
-const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
-const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
-const COMPOSE_FIELD_PARTY := "Party"
-const COMPOSE_FIELD_POLICY := "Policy"
-## The QUARRY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
-## take and the trip length, so every field below it is unanswerable until it is picked.
-const COMPOSE_FIELD_QUARRY := "Quarry"
-const COMPOSE_QUARRY_CHOOSE := "Choose…"
-const COMPOSE_QUARRY_HINT := "Choose a quarry — the rest of the form follows from it."
-const COMPOSE_QUARRY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
-const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
-## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
-## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
-## the distance, the reach that binds and the local alternative.
-const QUARRY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
-const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
-const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 
-## `cancel_order` scopes (the server grammar: `cancel_order <faction> [band] [all|work|roles]`).
-## `work` clears Forage + Hunt only — standing roles, parties and an in-progress move survive.
-## A policy picker rendered INSIDE a zone wraps to this many columns — four rungs abreast do not fit
-## a 380px L/R dock, and a picker wider than its zone drags the whole zone column past its host.
-const ZONE_POLICY_PICKER_COLUMNS := 2
 
-const CANCEL_SCOPE_ALL := "all"
-const CANCEL_SCOPE_WORK := "work"
-const CANCEL_SCOPE_ROLES := "roles"
-# The launch policy (Sustain/Surplus/Market/Eradicate) chosen for a hunting EXPEDITION, with a
-# one-line behaviour hint so the choice is legible. Reuses `LABOR_HUNT_POLICIES` for the option set.
-#
-# An expedition's Hunting arm credits **FOOD ONLY** — no husbandry accrual, no trade goods (a known v1
-# gap, tracked server-side). So these hints promise NEITHER, even though the resident-band versions of
-# Sustain and Market do exactly those things (see `LOCAL_HUNT_POLICY_HINTS`). The asymmetry is real;
-# blurring it would have the UI promise the player a payoff the sim never pays.
-const SEND_HUNT_POLICY_HINTS := {
-	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
-	# hunt takes, so the herd stays healthy indefinitely. The trade-off is speed: MSY is a small flow,
-	# so a party fills slowly, and on a small herd the trip may not be worth sending. The per-herd
-	# turns-to-fill forecast (shown at the herd-targeting step) is the number that decides it. It does
-	# NOT tame the herd — only a resident band's Sustain hunt builds husbandry.
-	"sustain": "Sustain — takes only the herd's sustainable yield; it stays healthy forever, but the party fills slowly on a small herd.",
-	"surplus": "Surplus — takes the herd's spare stock, so the party fills fast; the herd declines.",
-	"market": "Market — grinds the herd down with repeated trips; the party still hauls home food, not trade goods.",
-	"eradicate": "Eradicate — denial mission: hunts the herd toward extinction and delivers no food.",
-}
-# A resident BAND and a detached EXPEDITION are told apart by the sim, and the client reads a DIFFERENT
-# herd field for each — never one for the other:
-#   `hunt_policy_ceilings`  {policy → provisions/turn} — the BAND's renewable FLOW ceiling. With the
-#       cohort's levers this makes the LOCAL hunt preview pure arithmetic (see `_hunt_take_rate`).
-#   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food}} — the sim's
-#       PRE-LAUNCH TRIP ESTIMATE, forward-simulated server-side. An expedition's trip length is NOT a
-#       rate division: on Surplus/Market the ceiling is a *stock*, so the party strips the headroom in
-#       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
-#       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren under Surplus only a LONE
-#       hunter fills at all (23 turns); a party of 4 never fills within the sim's horizon. So the
-#       client does ZERO arithmetic here — it looks the answer up. Never re-derive it.
-# (The denial case — an Eradicate party hunts the herd toward extinction and carries NOTHING home —
-# is NOT inferred from the policy string: the estimate itself carries `delivers_food = false`, so the
-# sim, not the client, decides which policies are denial missions.)
-# Pre-launch hunt-trip forecast (shown in the targeting banner while a hunt expedition is armed and
-# the player hovers a herd, and live above the herd panel's Send button). It is a PURE TABLE LOOKUP
-# into the sim-exported per-(policy, party-size) `hunt_trip_estimates` carried on the herd — each cell
-# {policy, party_workers, turns_to_fill, delivers_food}, where `turns_to_fill == 0` means the party
-# does NOT fill within the sim's `forecast_horizon_turns`. The client reads the cell and stops (see
-# `SourceForecast.hunt_trip_forecast`); the only thing it computes is the display verdict:
-#     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)
-# THE CLIENT DOES ZERO ARITHMETIC FOR AN EXPEDITION, and must NEVER divide a carry cap by a take rate.
-# The sim FORWARD-SIMULATES the trip — the herd's state moves under the party, its stock exhausts, and
-# a horizon bounds the answer — so any client-side re-derivation drifts from the take the sim actually
-# performs. That forward simulation is the only honest number (pinned by core_sim/tests/expedition_hunt.rs).
-# This does NOT mean the client does no math anywhere: the LOCAL (resident band) per-turn yield preview
-# IS legitimate arithmetic — `min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier`
-# over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
-# pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
-# Live per-turn yield preview for the LOCAL hunt branch. A resident hunt has no carry cap, so
-# turns-to-fill is meaningless there; the number that decides a standing assignment is the food/turn
-# it will produce — the sim's hunt take:
-#     rate = min(workers × hunt_per_worker_provisions, ceiling_for(policy)) × output_multiplier
-# The band applies its morale/discontent productivity modifier (`output_multiplier`) at payout; a
-# detached expedition does not, which is why the two branches show different numbers from the same
-# exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
-const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
-# The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
-# with the same ⚠ / WARN amber. This is the COMPOSE preview, which derives the flag from the steady
-# forecast via `_is_overdraw` (there is no assignment yet, so no wire `overdraws` field); the CONFIRMED
-# allocation rows instead read the sim-answered `overdraws` bool off the assignment.
-const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
-# The FORAGE twin of the hunt overdraw suffix: a take above the patch's Sustain ceiling draws its
-# biomass down. Forage is smooth food (no whole-animal rhythm), so the preview shows a bare rate + this.
-const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
-# CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
-# unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
-# itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
-# ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered_and_waste`).
-const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
-# The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
-# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer (always shown on an
-# extractive hunt rung) naming the averaging span, computed from the SELECTED policy's ceiling by
-# `_hunt_avg_window_turns` so it never blinks out as workers change (a faster policy averages over a
-# different span, so the line reflects the composed action, not a Sustain-wide claim).
-const HUNT_AVG_WINDOW_FORMAT := "This estimate is a long-run average over ~%d turns — you take whole animals, so per-turn delivery varies."
-# The averaging window's upper clamp: near-integer animals/turn rates make the "extra animal" cycle span
-# read absurdly long, so cap it at a plausible span.
-const HUNT_WINDOW_MAX_TURNS := 12
-# Animals-per-turn rate formatting: up to 2 decimals, trailing zeros/dot stripped (1.90→"1.9", 1.00→"1",
-# 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
-const HUNT_ANIMAL_RATE_DECIMALS := 2
-# Tile-card PASTURE rows (the graze layer). The twin of `Forage biomass`, and the pair is the point:
-# forage is what HUMANS can eat here (seeds, nuts, tubers — food-module tiles only), pasture is what
-# ANIMALS can eat here (grass and browse — cellulose humans cannot digest, on nearly every land tile).
-# Your best farm is usually not your best pasture. Rendered ONLY where the ground actually carries
-# pasture (`graze_capacity > 0`): on a glacier the card prints nothing, never "0 / 0".
-const PASTURE_KEY := "Pasture"
-# Its own row key rather than the shared "Ecology" one — a forage tile would otherwise show two rows
-# both called "Ecology" (the patch's and the pasture's) with no way to tell them apart. The LABEL and
-# the TINT are still the shared `DetailFormat.ecology_phase_label` / `ecology_value_hex` path, so a stressed
-# pasture reads exactly like a stressed herd or a stressed patch.
-const PASTURE_ECOLOGY_KEY := "Pasture ecology"
-# Tile-card SIGHT row — the player must ALWAYS be able to tell "there is nothing here" apart from
-# "I cannot see what is here". Herds/bands are LIVE state and are fog-gated out of `tile_info`
-# (MapView._herds_on_tile), so on a remembered hex an empty Occupants list would otherwise read as
-# "empty" when the truth is "unknown". These three rows name the hex's sight state in plain words,
-# and `OCCUPANTS_UNKNOWN_*` replaces the roster with the honest statement.
-# Sim-side the states are Active / Discovered / Unexplored.
-# The FoW states MapView tags onto `tile_info.visibility_state` (mirrors `_visibility_state_at`).
-# Empty string = FoW disabled → everything is in sight, and the Sight row is omitted entirely.
-const VISIBILITY_ACTIVE := "active"
-const VISIBILITY_DISCOVERED := "discovered"
-const VISIBILITY_UNEXPLORED := "unexplored"
-const TILE_SIGHT_KEY := "Sight"
-const TILE_SIGHT_ACTIVE := "In sight"
-const TILE_SIGHT_REMEMBERED := "Remembered — not in sight now"
-# The chip FACE for the remembered state. A pill states a condition in a word; the full sentence
-# above is a sentence — it was the widest element in the strip — so it rides the chip's tooltip.
-const TILE_SIGHT_REMEMBERED_SHORT := "Remembered"
-const TILE_SIGHT_UNEXPLORED := "Unexplored"
-# Shown INSTEAD of the Occupants roster on a hex the player cannot currently see. Never render an
-# empty roster there — an absent list is a claim of emptiness the client cannot back up.
-const OCCUPANTS_UNKNOWN_TITLE := "out of sight"
-const OCCUPANTS_UNKNOWN_REMEMBERED := "You remember the ground here, but not what's on it now — bands and herds move. Scout it to see."
-const OCCUPANTS_UNKNOWN_UNEXPLORED := "Nobody has been here. Send a band to reveal what's on this ground."
-# Your OWN party can stand on a hex it cannot see (a scouting expedition doesn't reveal fog — discovery
-# is comm-range gated), so the roster CAN be non-empty on an unseen hex while still hiding everything
-# that isn't ours. Listing only your own party without a word would quietly imply it's alone there.
-const OCCUPANTS_UNSEEN_OTHERS_HINT := "Out of sight — you can't see anything here but your own."
-# ---- Action-status vocabulary: row GLYPHS, tooltip WORDS ---------------------------------------
-# A Current-actions / Active-expeditions row states its state with a GLYPH (`FoodIcons.STATUS_ICONS`,
-# the one glyph registry, exactly like the policy icons) and moves the WORDS into the row tooltip.
-# The rows were spelling everything out (`🌰 Forage (27, 26) [sustain] · pending`) — long, and the
-# pending row is ALREADY amber, so "· pending" repeated what the tint said.
-# Two orthogonal layers (see `FoodIcons.STATUS_ICONS`), kept deliberately separate:
-#   • STATUS — what the action is doing: a confirmed local forage/hunt row has no sim phase, it is
-#     simply `working`; an expedition's is the sim's `ExpeditionPhase`.
-#   • `pending` — a state of the ORDER, not the action (composed locally, not yet acknowledged by the
-#     sim, resolves on turn advance). It rides on ANY row, is a MODIFIER (never a phase member), and
-#     takes the row's glyph slot + keeps the amber label tint that ties it to the pending map hex.
-# EXCEPTION — `awaiting` KEEPS ITS WORDS. It is not a status but a DEMAND ON THE PLAYER: the party is
-# parked at its objective burning provisions until you act. A status you already expect is fine to
-# hide behind a hover; a call to action must never require one. So an awaiting row renders
-# glyph + WARN-tinted words, while every other state is glyph-only.
-# Separates a row's trailing glyphs from its label (and from each other): "🌰 Forage (27, 26)  ♻  ●".
-const ROW_GLYPH_SEPARATOR := "  "
-# Word forms for the two ORDER-level statuses. The expedition PHASE words are NOT duplicated here —
-# `HudFormat.status_label` reads them from `EXPEDITION_PHASE_LABELS`, their single source of truth.
-const STATUS_LABELS := {
-	FoodIcons.STATUS_PENDING: "Pending",
-	FoodIcons.STATUS_WORKING: "Working",
-}
-# The one-line behaviour hint the tooltip appends after the status word ("" = the word says it all).
-const STATUS_HINTS := {
-	FoodIcons.STATUS_PENDING: "starts when you advance the turn",
-	FoodIcons.STATUS_WORKING: "",
-	EXPEDITION_PHASE_OUTBOUND: "heading to the target",
-	EXPEDITION_PHASE_AWAITING: "parked at the objective — it needs an order",
-	EXPEDITION_PHASE_HUNTING: "taking food from the herd",
-	EXPEDITION_PHASE_DELIVERING: "bringing the haul home",
-	EXPEDITION_PHASE_RETURNING: "heading home",
-}
-const STATUS_HINT_FORMAT := "%s — %s"
 # The player-faction split (single player band, all player bands, expeditions) captured each
 # snapshot lives on `_band_labor` — see `player_band()` / `player_bands()` / `player_expeditions()`.
 
@@ -1415,7 +292,7 @@ func _ready() -> void:
     _selection = HudSelectionState.new()
     _band_labor = HudBandLaborState.new()
     # Both compose policies start on the default rung; the policy vocabulary stays here, not in the model.
-    _compose = ComposeState.new(DEFAULT_HUNT_POLICY)
+    _compose = ComposeState.new(SourceForecast.DEFAULT_HUNT_POLICY)
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
@@ -1551,7 +428,7 @@ func _apply_hud_style() -> void:
     # The list ↔ drawer hairline: the palette owns the rule, the node owns its thickness.
     if subject_divider != null:
         subject_divider.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
-        subject_divider.custom_minimum_size = Vector2(0.0, SUBJECT_DIVIDER_HEIGHT)
+        subject_divider.custom_minimum_size = Vector2(0.0, HudSelectionVocab.SUBJECT_DIVIDER_HEIGHT)
         subject_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
     if stockpile_panel != null:
         stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
@@ -1978,7 +855,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         return
     var clamped: int = max(0, workers)
     emit_signal("assign_labor_requested", {
-        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band": bits,
         "kind": kind,
         "workers": clamped,
@@ -2065,7 +942,7 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
     var band := _pending_move_band
     var bits := int(band.get("entity", -1))
     emit_signal("move_band_requested", {
-        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band": bits,
         "x": x,
         "y": y,
@@ -2101,7 +978,7 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
         return
     var band: Dictionary = _pending_send_expedition.get("band", {})
     emit_signal("send_expedition_requested", {
-        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band": int(band.get("entity", -1)),
         "party_workers": int(_pending_send_expedition.get("party_workers", 0)),
         "x": x,
@@ -2147,7 +1024,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
     var band: Dictionary = _pending_pick_quarry.get("band", {})
     if not _is_expedition_quarry(band, herd):
         var band_tile := SourceForecast.band_tile(band)
-        _note_command_feed("Hunt expedition", QUARRY_WITHIN_REACH_FORMAT % [
+        _note_command_feed("Hunt expedition", HudComposeVocab.QUARRY_WITHIN_REACH_FORMAT % [
             SourceForecast.herd_display_name(herd),
             _hex_distance_wrapped(band_tile.x, band_tile.y,
                 int(herd.get("x", -1)), int(herd.get("y", -1))),
@@ -2211,8 +1088,8 @@ func quick_assign_hunters(herd_id: String) -> void:
     if idle <= 0:
         _note_command_feed("Quick-hunt", "No idle workers to assign to %s." % herd_id)
         return
-    _emit_assign_labor(band, LABOR_KIND_HUNT, idle,
-        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id, DEFAULT_HUNT_POLICY)
+    _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, idle,
+        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id, SourceForecast.DEFAULT_HUNT_POLICY)
 
 func update_overlay_legend(legend: Dictionary) -> void:
     _legend.update(legend)
@@ -2417,13 +1294,13 @@ func _hide_drawer_blocks() -> void:
 ## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
 func _expedition_objective(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    if mission == EXPEDITION_MISSION_HUNT:
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
         return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-    return ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
+    return HudAttentionVocab.ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
 
 ## Turn-orb attention items for every expedition parked in `awaiting` (Producer 4). ONE ROW PER
 ## PARTY — each is its own decision with its own place to go (unlike idle workers, which are
-## genuinely one aggregate per band) — capped at ATTENTION_AWAITING_MAX_ROWS, with the remainder
+## genuinely one aggregate per band) — capped at HudAttentionVocab.ATTENTION_AWAITING_MAX_ROWS, with the remainder
 ## folded into a single overflow row that jumps to the first party beyond the cap (so even the
 ## aggregate row is actionable rather than a dead "Open ▸" stub).
 func _awaiting_orders_attention(expeditions: Array) -> Array:
@@ -2432,30 +1309,30 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
-        if HudFormat.expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
             awaiting.append(exp)
     var items: Array = []
     for i in awaiting.size():
         var exp: Dictionary = awaiting[i]
         var x := int(exp.get("current_x", -1))
         var y := int(exp.get("current_y", -1))
-        if i >= ATTENTION_AWAITING_MAX_ROWS:
+        if i >= HudAttentionVocab.ATTENTION_AWAITING_MAX_ROWS:
             # Overflow: one aggregate row for the rest, locating to this (the first uncapped) party.
             items.append({
-                "kind": ATTENTION_KIND_AWAITING_ORDERS,
-                "severity": ATTENTION_SEVERITY_WARN,
-                "label": ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT % (awaiting.size() - i),
-                "detail": ATTENTION_AWAITING_OVERFLOW_DETAIL,
+                "kind": HudAttentionVocab.ATTENTION_KIND_AWAITING_ORDERS,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+                "label": HudAttentionVocab.ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT % (awaiting.size() - i),
+                "detail": HudAttentionVocab.ATTENTION_AWAITING_OVERFLOW_DETAIL,
                 "x": x, "y": y,
             })
             break
         items.append({
-            "kind": ATTENTION_KIND_AWAITING_ORDERS,
-            "severity": ATTENTION_SEVERITY_WARN,
+            "kind": HudAttentionVocab.ATTENTION_KIND_AWAITING_ORDERS,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             # The demand headline reuses the phase words ("Awaiting orders"); the context line names
             # the mission + its objective, so the row is actionable without opening anything.
-            "label": HudFormat.expedition_phase_label(EXPEDITION_PHASE_AWAITING),
-            "detail": ATTENTION_AWAITING_DETAIL_FORMAT % [
+            "label": HudFormat.expedition_phase_label(HudExpeditionVocab.EXPEDITION_PHASE_AWAITING),
+            "detail": HudAttentionVocab.ATTENTION_AWAITING_DETAIL_FORMAT % [
                 DetailFormat.expedition_mission_label(String(exp.get("expedition_mission", ""))),
                 _expedition_objective(exp)],
             "x": x, "y": y,
@@ -2477,9 +1354,9 @@ func _starving_pen_attention(band: Dictionary) -> Array:
         if not (a_variant is Dictionary):
             continue
         var a: Dictionary = a_variant
-        if String(a.get("kind", "")).to_lower() != LABOR_KIND_HUNT:
+        if String(a.get("kind", "")).to_lower() != SourceForecast.LABOR_KIND_HUNT:
             continue
-        if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
+        if String(a.get("policy", "")).to_lower() != SourceForecast.LABOR_POLICY_CORRAL:
             continue
         var herd_id := String(a.get("fauna_id", ""))
         var herd := _band_labor.find_world_herd(herd_id)
@@ -2487,10 +1364,10 @@ func _starving_pen_attention(band: Dictionary) -> Array:
             continue
         var fed := PenStatus.fed_fraction(herd)
         items.append({
-            "kind": ATTENTION_KIND_STARVING_PEN,
-            "severity": ATTENTION_SEVERITY_WARN,
-            "label": ATTENTION_PEN_LABEL_FORMAT % _herd_label_for_id(herd_id),
-            "detail": ATTENTION_PEN_DETAIL_FORMAT % int(round(fed * PROGRESS_PERCENT_SCALE)),
+            "kind": HudAttentionVocab.ATTENTION_KIND_STARVING_PEN,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+            "label": HudAttentionVocab.ATTENTION_PEN_LABEL_FORMAT % _herd_label_for_id(herd_id),
+            "detail": HudAttentionVocab.ATTENTION_PEN_DETAIL_FORMAT % int(round(fed * HudConst.PROGRESS_PERCENT_SCALE)),
             # The HERD's live tile — a penned herd is pinned, but the jump must still land on the
             # animals (that is where the drawer with the fed fraction and the feed cost opens),
             # not on the keeper band.
@@ -2508,9 +1385,9 @@ func _starving_pen_at(x: int, y: int) -> String:
             if not (a_variant is Dictionary):
                 continue
             var a: Dictionary = a_variant
-            if String(a.get("kind", "")).to_lower() != LABOR_KIND_HUNT:
+            if String(a.get("kind", "")).to_lower() != SourceForecast.LABOR_KIND_HUNT:
                 continue
-            if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
+            if String(a.get("policy", "")).to_lower() != SourceForecast.LABOR_POLICY_CORRAL:
                 continue
             var herd_id := String(a.get("fauna_id", ""))
             var herd := _band_labor.find_world_herd(herd_id)
@@ -2525,7 +1402,7 @@ func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
-        if HudFormat.expedition_phase_key(exp) != EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) != HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
             continue
         if int(exp.get("current_x", -1)) == x and int(exp.get("current_y", -1)) == y:
             return exp
@@ -2553,7 +1430,7 @@ func focus_panel_band() -> void:
 
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
+    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -2646,7 +1523,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
-        if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
+        if int(entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
             continue
         # Split expeditions out of the band roster: they are detached scout/hunt parties, never a
         # labor actor band, and must not be counted by the cycler, listed in the band-picker, or
@@ -2663,7 +1540,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var size := int(entry.get("size", 0))
         var turns := float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
         var morale := float(entry.get("morale", 1.0))
-        var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
+        var morale_cause := int(entry.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
         var last_emigrated := int(entry.get("last_emigrated", 0))
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
@@ -2672,8 +1549,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
         # Producer 1 — starving: larder below the critical threshold (red/critical).
         if BandFoodStatus.is_critical(turns):
             attention.append({
-                "kind": ATTENTION_KIND_STARVING,
-                "severity": ATTENTION_SEVERITY_CRITICAL,
+                "kind": HudAttentionVocab.ATTENTION_KIND_STARVING,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
                 "detail": DetailFormat.food_turns_text(turns),
                 "x": x, "y": y,
@@ -2681,8 +1558,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
         if _band_labor.prev_band_sizes().has(entity) and size < int(_band_labor.prev_band_sizes()[entity]):
             attention.append({
-                "kind": ATTENTION_KIND_LOSING_POPULATION,
-                "severity": ATTENTION_SEVERITY_WARN,
+                "kind": HudAttentionVocab.ATTENTION_KIND_LOSING_POPULATION,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
                 "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
                 "x": x, "y": y,
@@ -2692,13 +1569,13 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var idle_workers := int(entry.get("idle_workers", 0))
         if idle_workers > 0:
             attention.append({
-                "kind": ATTENTION_KIND_IDLE_WORKERS,
-                "severity": ATTENTION_SEVERITY_WARN,
+                "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
                 "detail": band_name,
                 "x": x, "y": y,
             })
-        # Producer 5 — a starving pen this band keeps (amber/warn; see ATTENTION_KIND_STARVING_PEN
+        # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
         # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner
         # field client-side) and what lets the row name the keeper who has to fix it.
@@ -2736,14 +1613,14 @@ func update_band_alerts(populations_variant: Variant) -> void:
 ## asserting a false reason.
 func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
     if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
-        return DECLINE_REASON_STARVING
+        return HudAttentionVocab.DECLINE_REASON_STARVING
     if last_emigrated > 0:
-        return DECLINE_REASON_PEOPLE_LEAVING
+        return HudAttentionVocab.DECLINE_REASON_PEOPLE_LEAVING
     var cause_label := DetailFormat.morale_cause_label(morale_cause)
     if cause_label != "":
         return cause_label
     if morale < BandFoodStatus.warn_morale():
-        return DECLINE_REASON_LOW_MORALE
+        return HudAttentionVocab.DECLINE_REASON_LOW_MORALE
     return ""
 
 func _note_command_feed(label: String, detail: String) -> void:

@@ -146,7 +146,7 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 	var stage := ""
 	if sedentarization_variant is Array:
 		for entry in sedentarization_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				score = float(entry.get("score", 0.0))
 				stage = String(entry.get("stage", ""))
 				break
@@ -169,7 +169,7 @@ func update_demographics(demographics_variant: Variant) -> void:
 	var found := false
 	if demographics_variant is Array:
 		for entry in demographics_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				children = int(entry.get("children", 0))
 				working = int(entry.get("working", 0))
 				elders = int(entry.get("elders", 0))
@@ -207,7 +207,7 @@ func update_discoveries(discovered_variant: Variant) -> void:
 	var sites: Array = []
 	if discovered_variant is Array:
 		for entry in discovered_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				var faction_sites: Variant = entry.get("sites", [])
 				if faction_sites is Array:
 					sites = faction_sites
@@ -302,12 +302,12 @@ func update_intensification(intensification_variant: Variant) -> void:
 	var segments: Array[String] = []
 	var all_known := true
 	for track in KNOWLEDGE_TRACK_LABELS:
-		var progress := faction_knowledge(HudLayer.PLAYER_FACTION_ID, String(track))
+		var progress := faction_knowledge(HudConst.PLAYER_FACTION_ID, String(track))
 		if progress <= 0.0:
 			continue
 		segments.append("%s %s" % [
 			String(KNOWLEDGE_TRACK_LABELS[track]), _knowledge_meter_text(progress)])
-		all_known = all_known and progress >= HudLayer.KNOWLEDGE_COMPLETE
+		all_known = all_known and progress >= HudConst.KNOWLEDGE_COMPLETE
 	if segments.is_empty():
 		intensification_label.visible = false
 		return
@@ -358,9 +358,9 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
 		for track in KNOWLEDGE_UNLOCK_NOTES:
 			if not previous.has(track):
 				continue
-			if float(previous[track]) >= HudLayer.KNOWLEDGE_COMPLETE:
+			if float(previous[track]) >= HudConst.KNOWLEDGE_COMPLETE:
 				continue
-			if float(current[track]) < HudLayer.KNOWLEDGE_COMPLETE:
+			if float(current[track]) < HudConst.KNOWLEDGE_COMPLETE:
 				continue
 			_announce_knowledge_unlock(faction, String(track))
 		_intensification_knowledge[faction] = current
@@ -373,7 +373,7 @@ func _announce_knowledge_unlock(faction: int, track: String) -> void:
 	if _knowledge_announced.has(key):
 		return
 	_knowledge_announced[key] = true
-	if faction != HudLayer.PLAYER_FACTION_ID:
+	if faction != HudConst.PLAYER_FACTION_ID:
 		return
 	_command_feed.note(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
 
@@ -397,10 +397,10 @@ func _knowledge_meter_text(progress: float) -> String:
 	# A bare ✔ rather than "✔ known": the strip's own prefix already reads "Your people know:", so the
 	# word was saying it twice — and the two it cost per known track were enough to push the fourth
 	# track's percent onto the frame edge.
-	if progress >= HudLayer.KNOWLEDGE_COMPLETE:
+	if progress >= HudConst.KNOWLEDGE_COMPLETE:
 		return KNOWLEDGE_KNOWN_BADGE
 	return "%s %d%%" % [
-		_meter_bar_fn.call(progress * HudLayer.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
+		_meter_bar_fn.call(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
 		HudFormat.progress_percent(progress)]
 
 ## Tint the Sedentarization readout: cyan when the pressure is hard, amber when soft, neutral otherwise.
@@ -421,7 +421,7 @@ func update_stockpiles(faction_inventory_variant: Variant) -> void:
 	for faction_entry in faction_array:
 		if not (faction_entry is Dictionary):
 			continue
-		if int(faction_entry.get("faction", -1)) != HudLayer.PLAYER_FACTION_ID:
+		if int(faction_entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
 			continue
 		var inventory_variant: Variant = faction_entry.get("inventory", [])
 		if inventory_variant is Array:

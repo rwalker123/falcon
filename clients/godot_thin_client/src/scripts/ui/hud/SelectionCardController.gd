@@ -109,26 +109,26 @@ func _render_tile_card(tile_info: Dictionary) -> void:
 ## no chip at all.
 func _tile_sight_value(visibility_state: String) -> String:
 	match visibility_state:
-		HudLayer.VISIBILITY_ACTIVE:
-			return HudLayer.TILE_SIGHT_ACTIVE
-		HudLayer.VISIBILITY_DISCOVERED:
-			return HudLayer.TILE_SIGHT_REMEMBERED
-		HudLayer.VISIBILITY_UNEXPLORED:
-			return HudLayer.TILE_SIGHT_UNEXPLORED
+		HudConst.VISIBILITY_ACTIVE:
+			return HudConst.TILE_SIGHT_ACTIVE
+		HudConst.VISIBILITY_DISCOVERED:
+			return HudConst.TILE_SIGHT_REMEMBERED
+		HudConst.VISIBILITY_UNEXPLORED:
+			return HudConst.TILE_SIGHT_UNEXPLORED
 		_:
 			return ""
 
 ## The chip FACE: one or two words. Only the remembered state has a long form to shorten — the
 ## other two already ARE their short form, so they pass through and cannot drift out of step.
 func _tile_sight_chip_value(value: String) -> String:
-	return HudLayer.TILE_SIGHT_REMEMBERED_SHORT if value == HudLayer.TILE_SIGHT_REMEMBERED else value
+	return HudConst.TILE_SIGHT_REMEMBERED_SHORT if value == HudConst.TILE_SIGHT_REMEMBERED else value
 
 ## Value tint for the Sight chip: in-sight reads live (SIGNAL cyan — the HUD's "this is current" color),
 ## while both unseen states read dim (INK_DIM). The chip states what you KNOW, not what is wrong, so it
 ## never borrows the WARN/DANGER palette. (The BBCode-hex twin `DetailFormat.sight_value_hex` lives with
 ## `DetailFormat.detail_bbcode`, the shared key→tint registry that still consults it.)
 func _sight_value_color(value: String) -> Color:
-	return HudStyle.SIGNAL if value == HudLayer.TILE_SIGHT_ACTIVE else HudStyle.INK_DIM
+	return HudStyle.SIGNAL if value == HudConst.TILE_SIGHT_ACTIVE else HudStyle.INK_DIM
 
 # ---- The chip strip ---------------------------------------------------------
 # Chips carry the tile's STANDING CONDITION — the one-word states you reason with while composing
@@ -175,7 +175,7 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 		out.append({"key": "sight", "text": _tile_sight_chip_value(sight_value),
 			"tint": _sight_value_color(sight_value), "tooltip": sight_value})
 	# Nothing else is knowable on ground nobody has stood on — not even its biome.
-	if visibility_state == HudLayer.VISIBILITY_UNEXPLORED:
+	if visibility_state == HudConst.VISIBILITY_UNEXPLORED:
 		return out
 	if tile_info.has("habitability"):
 		var habitability := float(tile_info["habitability"])
@@ -187,7 +187,7 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 		out.append({"key": "climate", "text": TileClimate.band_for(float(tile_info["temperature"])),
 			"tint": HudStyle.INK_DIM, "tooltip": ""})
 	var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
-	if tags_text != "" and tags_text.to_lower() != HudLayer.CHIP_TAGS_NONE:
+	if tags_text != "" and tags_text.to_lower() != HudSelectionVocab.CHIP_TAGS_NONE:
 		out.append({"key": "tags", "text": tags_text, "tint": HudStyle.INK_DIM, "tooltip": ""})
 	var site_name := String(tile_info.get("site_name", "")).strip_edges()
 	if site_name != "":
@@ -228,7 +228,7 @@ func _make_chip(text: String, tint: Color, tooltip: String = "") -> PanelContain
 	label.text = text
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_color_override("font_color", tint)
-	label.add_theme_font_size_override("font_size", HudLayer.CHIP_FONT_SIZE)
+	label.add_theme_font_size_override("font_size", HudSelectionVocab.CHIP_FONT_SIZE)
 	chip.add_child(label)
 	return chip
 
@@ -240,7 +240,7 @@ func _make_chip(text: String, tint: Color, tooltip: String = "") -> PanelContain
 ## because HudLayer's drawer half (`_forage_compose_available` / `_render_unknown_contents_note`) asks it too.
 func tile_contents_unseen(tile_info: Dictionary) -> bool:
 	var state := String(tile_info.get("visibility_state", ""))
-	return state == HudLayer.VISIBILITY_DISCOVERED or state == HudLayer.VISIBILITY_UNEXPLORED
+	return state == HudConst.VISIBILITY_DISCOVERED or state == HudConst.VISIBILITY_UNEXPLORED
 
 ## The selected hex's coordinates, as the one key an explicit subject choice is remembered against.
 func _selected_tile_coords() -> Vector2i:
@@ -340,7 +340,7 @@ func _build_subject_row(descriptor: Dictionary) -> Control:
 		"herd":
 			return _build_herd_row(descriptor["data"])
 		_:
-			return HudWidgets.alloc_hint_label(HudLayer.OCCUPANTS_UNSEEN_OTHERS_HINT)
+			return HudWidgets.alloc_hint_label(HudConst.OCCUPANTS_UNSEEN_OTHERS_HINT)
 
 ## Patch one existing subject-row node in place. Headers + the hint are static once membership is
 ## fixed (their counts are implied by it), so only the three selectable rows carry an updater.
@@ -365,7 +365,7 @@ func _build_land_row(tile_info: Dictionary) -> Button:
 	var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
 	var dot_color := _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT
 	var module_key := String(tile_info.get("food_module", "")).strip_edges()
-	var glyph := HudLayer.LAND_ROW_GLYPH
+	var glyph := HudSelectionVocab.LAND_ROW_GLYPH
 	if module_key != "":
 		glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
 	var button := _make_roster_button(selected)
@@ -391,7 +391,7 @@ func _update_land_row(button: Button, tile_info: Dictionary) -> void:
 	var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
 	_set_row_dot(button, _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT)
 	var module_key := String(tile_info.get("food_module", "")).strip_edges()
-	var glyph := HudLayer.LAND_ROW_GLYPH
+	var glyph := HudSelectionVocab.LAND_ROW_GLYPH
 	if module_key != "":
 		glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
 	_set_row_name(button, "%s %s" % [glyph, String(tile_info.get("terrain_label", "Unknown"))], selected)
@@ -409,8 +409,8 @@ func _land_row_meta(tile_info: Dictionary) -> String:
 		# place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
 		# compose sheet's header both printed it whole. The zero form is parallel to the staffed
 		# one, so "nobody is working this" reads at a glance instead of needing a comparison.
-		return HudLayer.LAND_META_WORKERS_FORMAT % [workers, HudLayer.ACTIVITY_GLYPHS[HudLayer.LABOR_KIND_FORAGE]]
-	return HudLayer.LAND_META_NO_FORAGE
+		return HudSelectionVocab.LAND_META_WORKERS_FORMAT % [workers, HudSelectionVocab.ACTIVITY_GLYPHS[SourceForecast.LABOR_KIND_FORAGE]]
+	return HudSelectionVocab.LAND_META_NO_FORAGE
 
 ## Foragers this faction has on (x, y), summed across every player band — the row states the hex's
 ## staffing, not one band's share of it.
@@ -436,13 +436,13 @@ func _on_land_row_selected() -> void:
 	_selection.note_choice_tile(_selected_tile_coords())
 	_selection.select_land()
 	emit_signal("subject_changed")
-	emit_signal("roster_occupant_selected", HudSelectionState.SUBJECT_LAND, HudLayer.LAND_SUBJECT_ID)
+	emit_signal("roster_occupant_selected", HudSelectionState.SUBJECT_LAND, HudConst.LAND_SUBJECT_ID)
 
 func _roster_group_header(title: String, count: int) -> Label:
 	var label := Label.new()
 	label.text = "%s (%d)" % [title.to_upper(), count]
 	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	label.add_theme_font_size_override("font_size", HudLayer.ROSTER_HEADER_FONT_SIZE)
+	label.add_theme_font_size_override("font_size", HudSelectionVocab.ROSTER_HEADER_FONT_SIZE)
 	return label
 
 ## One selectable band row. A Button (row click) hosts a mouse-transparent HBox
@@ -466,7 +466,7 @@ func _build_band_row(unit: Dictionary) -> Button:
 	row.add_child(meta_label)
 	var glyph_label: Label = null
 	if glyph != "":
-		glyph_label = _roster_glyph_label(glyph, String(unit.get("activity", "")) == HudLayer.BAND_ACTIVITY_IDLE)
+		glyph_label = _roster_glyph_label(glyph, String(unit.get("activity", "")) == HudSelectionVocab.BAND_ACTIVITY_IDLE)
 		row.add_child(glyph_label)
 	# Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
 	# the band has no resolved stage (pre-stage / missing snapshot).
@@ -496,7 +496,7 @@ func _update_band_row(button: Button, unit: Dictionary) -> void:
 		var glyph_label := button.get_meta("glyph_label") as Label
 		glyph_label.text = _activity_glyph(activity)
 		glyph_label.add_theme_color_override("font_color",
-			HudStyle.INK_FAINT if activity == HudLayer.BAND_ACTIVITY_IDLE else HudStyle.INK_DIM)
+			HudStyle.INK_FAINT if activity == HudSelectionVocab.BAND_ACTIVITY_IDLE else HudStyle.INK_DIM)
 	button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()
 
 ## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
@@ -550,7 +550,7 @@ func _herd_row_meta(herd: Dictionary) -> String:
 	var herd_id := String(herd.get("id", "")).strip_edges()
 	var workers := _hunt_workers_on_herd(herd_id)
 	if workers > 0 or bool(herd.get("huntable", false)):
-		return HudLayer.HERD_META_WORKERS_FORMAT % [workers, HudLayer.ACTIVITY_GLYPHS[HudLayer.LABOR_KIND_HUNT]]
+		return HudSelectionVocab.HERD_META_WORKERS_FORMAT % [workers, HudSelectionVocab.ACTIVITY_GLYPHS[SourceForecast.LABOR_KIND_HUNT]]
 	return ""
 
 ## Hunters this faction has on `herd_id`, summed across BOTH ways a herd can be worked: standing
@@ -570,7 +570,7 @@ func _hunt_workers_on_herd(herd_id: String) -> int:
 		if not (exp_variant is Dictionary):
 			continue
 		var exp: Dictionary = exp_variant
-		if String(exp.get("expedition_mission", "")).strip_edges().to_lower() != HudLayer.EXPEDITION_MISSION_HUNT:
+		if String(exp.get("expedition_mission", "")).strip_edges().to_lower() != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
 			continue
 		if String(exp.get("expedition_target_herd", "")).strip_edges() != herd_id:
 			continue
@@ -583,7 +583,7 @@ func _hunt_workers_on_herd(herd_id: String) -> int:
 func _make_roster_button(selected: bool) -> Button:
 	var button := Button.new()
 	button.focus_mode = Control.FOCUS_NONE
-	button.custom_minimum_size = Vector2(0, HudLayer.ROSTER_ROW_MIN_HEIGHT)
+	button.custom_minimum_size = Vector2(0, HudSelectionVocab.ROSTER_ROW_MIN_HEIGHT)
 	HudStyle.apply_button(button, "primary" if selected else "ghost")
 	return button
 
@@ -593,16 +593,16 @@ func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.set_anchors_preset(Control.PRESET_FULL_RECT)
-	row.offset_left = HudLayer.ROSTER_ROW_H_PADDING
-	row.offset_right = -HudLayer.ROSTER_ROW_H_PADDING
-	row.add_theme_constant_override("separation", HudLayer.ROSTER_ROW_SEPARATION)
+	row.offset_left = HudSelectionVocab.ROSTER_ROW_H_PADDING
+	row.offset_right = -HudSelectionVocab.ROSTER_ROW_H_PADDING
+	row.add_theme_constant_override("separation", HudSelectionVocab.ROSTER_ROW_SEPARATION)
 	var accent := ColorRect.new()
-	accent.custom_minimum_size = Vector2(HudLayer.ROSTER_ACCENT_WIDTH, 0)
+	accent.custom_minimum_size = Vector2(HudSelectionVocab.ROSTER_ACCENT_WIDTH, 0)
 	accent.color = HudStyle.SIGNAL if selected else Color(0, 0, 0, 0)
 	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(accent)
 	var dot := ColorRect.new()
-	dot.custom_minimum_size = Vector2(HudLayer.ROSTER_DOT_SIZE, HudLayer.ROSTER_DOT_SIZE)
+	dot.custom_minimum_size = Vector2(HudSelectionVocab.ROSTER_DOT_SIZE, HudSelectionVocab.ROSTER_DOT_SIZE)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	dot.color = dot_color
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -679,7 +679,7 @@ func _roster_glyph_label(glyph: String, dim: bool) -> Label:
 	return label
 
 func _activity_glyph(activity: String) -> String:
-	return String(HudLayer.ACTIVITY_GLYPHS.get(activity.strip_edges().to_lower(), HudLayer.ACTIVITY_GLYPHS[HudLayer.BAND_ACTIVITY_IDLE]))
+	return String(HudSelectionVocab.ACTIVITY_GLYPHS.get(activity.strip_edges().to_lower(), HudSelectionVocab.ACTIVITY_GLYPHS[HudSelectionVocab.BAND_ACTIVITY_IDLE]))
 
 ## Shared green/amber/red tier for a herd's ecology phase, matching the band
 ## food dot so map/roster/drawer agree: thriving→green, stressed→amber,
@@ -737,4 +737,4 @@ func select_roster_occupant(kind: String, id: Variant) -> void:
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit / HudLayer._is_player_unit —
 ## a trivial pure predicate kept local rather than threaded in as a Callable).
 func _is_player_unit(unit: Dictionary) -> bool:
-	return int(unit.get("faction", HudLayer.PLAYER_FACTION_ID)) == HudLayer.PLAYER_FACTION_ID
+	return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID

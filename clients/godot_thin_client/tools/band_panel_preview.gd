@@ -928,7 +928,7 @@ func _picker_rung_buttons() -> Dictionary:
 	for child in grid.get_children():
 		if not (child is Button):
 			continue
-		for policy in HudLayer.LABOR_HUNT_POLICIES:
+		for policy in SourceForecast.LABOR_HUNT_POLICIES:
 			if (child as Button).text == HudFormat.policy_face(String(policy)):
 				buttons[String(policy)] = child
 	return buttons
@@ -945,7 +945,7 @@ func _find_first_grid(node: Node) -> GridContainer:
 ## RED 1: a source standing on an INVESTMENT rung must SAY so. Without it the picker highlights none
 ## of its four rungs and reads as an unset control on a very-much-set assignment.
 func _assert_standing_investment_line(policy: String) -> void:
-	var want := HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(policy)
+	var want := HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(policy)
 	var strip := _work_inspector_strip()
 	if strip != null and _find_label_with_text(strip, want) != null:
 		print("band_panel_preview: assert OK — inspector states the standing rung ('%s')" % want)
@@ -1107,7 +1107,7 @@ func _save(name: String) -> void:
 ## exactly as they do in the game. A debug back door (poking Hud state directly) would pass even with
 ## the click path broken, which is the whole reason this goes through the signal.
 func _click_disclosure(key: String) -> void:
-	var meta := HudLayer.BREAKDOWN_TOGGLE_META_PREFIX + key
+	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label := _find_meta_label(_panel, meta)
 	if label == null:
 		push_warning("band_panel_preview: no vitals label offering '%s' — disclosure not rendered?" % meta)

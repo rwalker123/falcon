@@ -99,14 +99,14 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
 ## Player-faction check for a roster/drawer band (a trivial private copy of HudLayer's, the
 ## SelectionCardController / BandPanelController precedent — a one-line predicate is not worth a Callable).
 func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudLayer.PLAYER_FACTION_ID)) == HudLayer.PLAYER_FACTION_ID
+    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 # ---- The drawer render dispatch --------------------------------------------------------------
 
 ## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
 ## paths is visible at a time — that is what bounds the card's height.
 func render_subject_drawer() -> void:
-    if _selection.subject() == HudLayer.SUBJECT_LAND:
+    if _selection.subject() == HudSelectionState.SUBJECT_LAND:
         _render_land_drawer()
     else:
         _render_occupant_drawer()
@@ -155,9 +155,9 @@ func _render_unknown_contents_note() -> void:
         _occupant_detail.text = ""
         return
     _occupant_detail.visible = true
-    var message := HudLayer.OCCUPANTS_UNKNOWN_UNEXPLORED \
-        if String(_selection.tile_info().get("visibility_state", "")) == HudLayer.VISIBILITY_UNEXPLORED \
-        else HudLayer.OCCUPANTS_UNKNOWN_REMEMBERED
+    var message := HudConst.OCCUPANTS_UNKNOWN_UNEXPLORED \
+        if String(_selection.tile_info().get("visibility_state", "")) == HudConst.VISIBILITY_UNEXPLORED \
+        else HudConst.OCCUPANTS_UNKNOWN_REMEMBERED
     _occupant_detail.text = DetailFormat.detail_bbcode([message])
 
 ## Cap the drawer against the room left in the dock beneath the card, so a crowded hex scrolls
@@ -191,8 +191,8 @@ func fit_subject_drawer(force: bool = false) -> void:
         _subject_scroll,
         content_height,
         _left_dock_scroll,
-        HudLayer.SUBJECT_DRAWER_MIN_HEIGHT,
-        HudLayer.SUBJECT_DRAWER_BOTTOM_MARGIN,
+        HudSelectionVocab.SUBJECT_DRAWER_MIN_HEIGHT,
+        HudSelectionVocab.SUBJECT_DRAWER_BOTTOM_MARGIN,
     )
 
 # ---- The land-drawer content producer -------------------------------------------------------
@@ -220,7 +220,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # The Sight CHIP states which of the three states this hex is in; the sentence says what that
     # costs you, which is the part a chip cannot carry.
     var visibility_state := String(tile_info.get("visibility_state", ""))
-    if visibility_state == HudLayer.VISIBILITY_UNEXPLORED:
+    if visibility_state == HudConst.VISIBILITY_UNEXPLORED:
         lines.append("Not yet scouted — send a band to reveal this area.")
         return lines
     if tile_info.has("height_display"):
@@ -241,12 +241,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
     if graze_capacity > 0.0:
         lines.append("%s: %.0f / %.0f" % [
-            HudLayer.PASTURE_KEY, float(tile_info.get("graze_biomass", 0.0)), graze_capacity
+            HudFloraVocab.PASTURE_KEY, float(tile_info.get("graze_biomass", 0.0)), graze_capacity
         ])
         var graze_phase := String(tile_info.get("graze_ecology_phase", "")).strip_edges().to_lower()
         if graze_phase != "":
-            lines.append("%s: %s" % [HudLayer.PASTURE_ECOLOGY_KEY, DetailFormat.ecology_phase_label(graze_phase)])
-    if visibility_state == HudLayer.VISIBILITY_DISCOVERED:
+            lines.append("%s: %s" % [HudFloraVocab.PASTURE_ECOLOGY_KEY, DetailFormat.ecology_phase_label(graze_phase)])
+    if visibility_state == HudConst.VISIBILITY_DISCOVERED:
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
     var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
@@ -266,11 +266,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # it was tended to — never both, since committing displaces the rest of the basket.
     var crop_name := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
     if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
-        lines.append("%s: %s" % [HudLayer.FLORA_CROP_ROW, crop_name])
+        lines.append("%s: %s" % [HudFloraVocab.FLORA_CROP_ROW, crop_name])
     else:
         var composition_text := DetailFormat.flora_composition_text(tile_info.get("patch_composition", []))
         if composition_text != "":
-            lines.append("%s: %s" % [HudLayer.FLORA_COMPOSITION_ROW, composition_text])
+            lines.append("%s: %s" % [HudFloraVocab.FLORA_COMPOSITION_ROW, composition_text])
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
     # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
@@ -303,11 +303,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
     # ground. Both rows are the source's own, and both decay if the patch is abandoned.
     if bool(tile_info.get("patch_is_field", false)):
-        lines.append("%s: %s" % [HudLayer.FIELD_ROW, DetailFormat.field_label(1.0, true)])
+        lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(1.0, true)])
     elif tile_info.has("patch_field_progress"):
         var field_progress := float(tile_info["patch_field_progress"])
         if field_progress > 0.0:
-            lines.append("%s: %s" % [HudLayer.FIELD_ROW, DetailFormat.field_label(field_progress, false)])
+            lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(field_progress, false)])
     return lines
 
 func _format_food_kind_label(kind_value: String) -> String:
@@ -356,7 +356,7 @@ func _render_occupant_drawer() -> void:
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         _occupant_detail.visible = true
-        _occupant_detail.text = DetailFormat.detail_bbcode([HudLayer.BAND_PANEL_POINTER_TEXT])
+        _occupant_detail.text = DetailFormat.detail_bbcode([HudSelectionVocab.BAND_PANEL_POINTER_TEXT])
         # The one order that stays HERE (§18): repositioning is a map action. Player resident bands
         # only — this branch is already player-band-gated, and a foreign band's orders aren't ours.
         _build_band_move_actions()
@@ -434,11 +434,11 @@ func _build_band_move_actions() -> void:
 ## is what catches either half of that going wrong (none offered, or one offered twice).
 func _make_band_move_actions() -> HBoxContainer:
     var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    actions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var move_btn := Button.new()
-    move_btn.text = HudLayer.MOVE_BAND_BUTTON_TEXT
+    move_btn.text = HudSelectionVocab.MOVE_BAND_BUTTON_TEXT
     HudStyle.apply_button(move_btn, "ghost")
-    move_btn.tooltip_text = HudLayer.MOVE_BAND_BUTTON_TOOLTIP
+    move_btn.tooltip_text = HudSelectionVocab.MOVE_BAND_BUTTON_TOOLTIP
     move_btn.pressed.connect(_on_move_band_pressed)
     actions.add_child(move_btn)
     return actions
@@ -456,12 +456,12 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     if not is_player:
         return
     var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
-    if phase == HudLayer.EXPEDITION_PHASE_AWAITING:
+    if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
         var callout := HudWidgets.alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
         callout.add_theme_color_override("font_color", HudStyle.WARN)
         _allocation_panel.add_child(callout)
     var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    actions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var move_btn := Button.new()
     move_btn.text = "Move"
     HudStyle.apply_button(move_btn, "ghost")
@@ -470,7 +470,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     actions.add_child(move_btn)
     # Already homeward-bound: the button reads its state ("Returning", disabled) rather than a
     # mysterious grayed-out "Recall". Otherwise it's an enabled "Recall" that folds the party home.
-    var returning := phase == HudLayer.EXPEDITION_PHASE_RETURNING
+    var returning := phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING
     var recall_btn := Button.new()
     recall_btn.text = "Returning" if returning else "Recall"
     HudStyle.apply_button(recall_btn, "primary")

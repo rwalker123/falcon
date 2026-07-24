@@ -76,7 +76,7 @@ static func build_worker_stepper(label_text: String, count: int, plus_enabled: b
             current_turn)
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     if row_tooltip != "":
         row.tooltip_text = row_tooltip
     var row_text := label_text + HudFormat.row_glyph_suffix(FoodIcons.for_status(status_key))
@@ -84,7 +84,7 @@ static func build_worker_stepper(label_text: String, count: int, plus_enabled: b
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
     # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
     if warn:
-        row.add_child(build_row_note_label(HudLayer.OVERHUNT_FLAG, HudStyle.WARN, row_tooltip))
+        row.add_child(build_row_note_label(HudComposeVocab.OVERHUNT_FLAG, HudStyle.WARN, row_tooltip))
     # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
     # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
     # means "overdrawing" (ecological); this means "extra workers idle here" (see
@@ -113,12 +113,12 @@ static func build_two_line_stepper(label_text: String, count: int, plus_enabled:
         current_turn: int) -> VBoxContainer:
     var col := VBoxContainer.new()
     col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    col.add_theme_constant_override("separation", HudLayer.TWO_LINE_STEPPER_SEPARATION)
+    col.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
     # Line 1: title + spacer + stepper. The status glyph is NOT appended to the title here (it lives on
     # line 2); the title keeps its click-to-jump link (or a plain Label for band-wide roles).
     var title_row := HBoxContainer.new()
     title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    title_row.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    title_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     title_row.add_child(build_row_name_label(label_text, row_ink, row_tooltip, on_focus_source))
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -130,10 +130,10 @@ static func build_two_line_stepper(label_text: String, count: int, plus_enabled:
     # the widest single part, small by construction).
     var status_margin := MarginContainer.new()
     status_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    status_margin.add_theme_constant_override("margin_left", int(HudLayer.STATUS_LINE_INDENT))
+    status_margin.add_theme_constant_override("margin_left", int(HudWorkVocab.STATUS_LINE_INDENT))
     var status_flow := HFlowContainer.new()
     status_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    status_flow.add_theme_constant_override("h_separation", HudLayer.STATUS_LINE_SEPARATION)
+    status_flow.add_theme_constant_override("h_separation", HudWorkVocab.STATUS_LINE_SEPARATION)
     if row_tooltip != "":
         status_flow.tooltip_text = row_tooltip
     # The yield + policy glyph the caller composed (INK), then the status glyph (row_ink — WARN with the
@@ -144,7 +144,7 @@ static func build_two_line_stepper(label_text: String, count: int, plus_enabled:
     if status_glyph != "":
         status_flow.add_child(build_status_part(status_glyph, row_ink))
     if warn:
-        status_flow.add_child(build_status_part(HudLayer.OVERHUNT_FLAG, HudStyle.WARN))
+        status_flow.add_child(build_status_part(HudComposeVocab.OVERHUNT_FLAG, HudStyle.WARN))
     if note != "":
         status_flow.add_child(build_status_part(note, HudStyle.WARN))
     if muted_note != "":
@@ -157,7 +157,7 @@ static func build_two_line_stepper(label_text: String, count: int, plus_enabled:
     if ArrivalStrip.has_gap(arrival_schedule):
         var strip_margin := MarginContainer.new()
         strip_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        strip_margin.add_theme_constant_override("margin_left", int(HudLayer.STATUS_LINE_INDENT))
+        strip_margin.add_theme_constant_override("margin_left", int(HudWorkVocab.STATUS_LINE_INDENT))
         var strip := ArrivalStrip.new()
         strip.set_schedule(arrival_schedule, current_turn)
         strip_margin.add_child(strip)
@@ -172,7 +172,7 @@ static func build_row_name_label(text: String, ink: Color, row_tooltip: String, 
         link.text = text
         link.alignment = HORIZONTAL_ALIGNMENT_LEFT
         HudStyle.apply_link_button(link, ink)
-        link.tooltip_text = (row_tooltip + HudLayer.TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + HudLayer.SOURCE_ROW_FOCUS_HINT
+        link.tooltip_text = (row_tooltip + SourceForecast.TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + HudWorkVocab.SOURCE_ROW_FOCUS_HINT
         link.pressed.connect(func() -> void: on_focus_source.call())
         return link
     var plain := Label.new()
@@ -190,12 +190,12 @@ static func build_row_note_label(text: String, color: Color, row_tooltip: String
     return label
 
 ## A secondary status part (line 2 of the two-line form): rendered a touch smaller
-## (`HudLayer.ALLOC_SECTION_FONT_SIZE`) than the title.
+## (`HudWorkVocab.ALLOC_SECTION_FONT_SIZE`) than the title.
 static func build_status_part(text: String, color: Color) -> Label:
     var label := Label.new()
     label.text = text
     label.add_theme_color_override("font_color", color)
-    label.add_theme_font_size_override("font_size", HudLayer.ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     return label
 
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
@@ -203,32 +203,32 @@ static func build_status_part(text: String, color: Color) -> Label:
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false) -> void:
     var minus := Button.new()
     minus.text = "−"
-    minus.custom_minimum_size = Vector2(HudLayer.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     HudStyle.apply_button(minus, "ghost")
     minus.disabled = count <= 0
-    minus.pressed.connect(func() -> void: on_change.call(count - HudLayer.WORKER_STEP))
+    minus.pressed.connect(func() -> void: on_change.call(count - HudConst.WORKER_STEP))
     row.add_child(minus)
     var value := Label.new()
     value.text = str(count)
-    value.custom_minimum_size = Vector2(HudLayer.WORKER_STEPPER_VALUE_WIDTH, 0)
+    value.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH, 0)
     value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     value.add_theme_color_override("font_color", HudStyle.INK if count > 0 else HudStyle.INK_FAINT)
     row.add_child(value)
     var plus := Button.new()
     plus.text = "+"
-    plus.custom_minimum_size = Vector2(HudLayer.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     HudStyle.apply_button(plus, "ghost")
     plus.disabled = not plus_enabled
-    plus.pressed.connect(func() -> void: on_change.call(count + HudLayer.WORKER_STEP))
+    plus.pressed.connect(func() -> void: on_change.call(count + HudConst.WORKER_STEP))
     row.add_child(plus)
     if compact_chrome:
         for control in [minus, value, plus]:
-            compact(control, HudLayer.WORK_STEPPER_FONT_SIZE, HudLayer.WORK_STEPPER_PADDING_V)
+            compact(control, HudWorkVocab.WORK_STEPPER_FONT_SIZE, HudWorkVocab.WORK_STEPPER_PADDING_V)
 
 ## Squeeze a control into a zone's fixed-height chrome row: smaller type, and a button's stylebox
 ## chrome trimmed vertically. `HudStyle._button_stylebox` pads 9px top and bottom, which alone makes a
-## plain Button ~40px tall — taller than `HudLayer.WORK_ROW_HEIGHT`, `HudLayer.ZONE_HEAD_HEIGHT`, `HudLayer.WORK_CHIPS_HEIGHT`
-## and `HudLayer.WORK_PAGER_HEIGHT` put together. Every one of those consts is a height the board's capacity
+## plain Button ~40px tall — taller than `HudWorkVocab.WORK_ROW_HEIGHT`, `HudWorkVocab.ZONE_HEAD_HEIGHT`, `HudWorkVocab.WORK_CHIPS_HEIGHT`
+## and `HudWorkVocab.WORK_PAGER_HEIGHT` put together. Every one of those consts is a height the board's capacity
 ## maths SUBTRACTS, so a control that renders taller pushes the page off the bottom of the zone.
 static func compact(control: Control, font_size: int, padding_v: int) -> void:
     control.add_theme_font_size_override("font_size", font_size)
@@ -256,7 +256,7 @@ static func alloc_section_label(text: String) -> Label:
     var label := Label.new()
     label.text = text.to_upper()
     label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", HudLayer.ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     return label
 
 ## A dim wrapping hint line (role explanation / empty-state prompt).
@@ -264,7 +264,7 @@ static func alloc_hint_label(text: String) -> Label:
     var label := Label.new()
     label.text = text
     label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", HudLayer.ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     return label
@@ -274,7 +274,7 @@ static func build_inline_link(text: String, ink: Color, on_press: Callable) -> B
     var link := Button.new()
     link.text = text
     link.focus_mode = Control.FOCUS_NONE
-    link.add_theme_font_size_override("font_size", HudLayer.ALLOC_SECTION_FONT_SIZE)
+    link.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudStyle.apply_link_button(link, ink)
     link.pressed.connect(func() -> void: on_press.call())
     return link
@@ -288,7 +288,7 @@ static func forecast_label(bbcode: String) -> RichTextLabel:
     label.scroll_active = false
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    label.add_theme_font_size_override("normal_font_size", HudLayer.ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_font_size_override("normal_font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
     label.text = bbcode
     return label
@@ -303,7 +303,7 @@ const COMPOSITION_MIN_RATIO := 1.0
 const COMPOSITION_SWATCH_SIZE := Vector2(8.0, 8.0)
 const COMPOSITION_SWATCH_SEPARATION := 4
 ## The gap between a zone column's SECTIONS (blocks); the tighter within-block gap is
-## `HudLayer.ZONE_BLOCK_SEPARATION`, which has readers on both sides of this boundary.
+## `HudWorkVocab.ZONE_BLOCK_SEPARATION`, which has readers on both sides of this boundary.
 const ZONE_SECTION_SEPARATION := 12
 
 ## A proportional stacked bar. `segments` are `{key, count, color, tooltip}`; zero-count segments are
@@ -331,7 +331,7 @@ static func build_composition_bar(segments: Array) -> HBoxContainer:
 static func build_composition_key(segments: Array, trailing: Control = null) -> HFlowContainer:
     var key := HFlowContainer.new()
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    key.add_theme_constant_override("h_separation", HudLayer.COMPOSITION_KEY_SEPARATION)
+    key.add_theme_constant_override("h_separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
     for segment_variant in segments:
         var segment: Dictionary = segment_variant
         var chip := HBoxContainer.new()
@@ -345,7 +345,7 @@ static func build_composition_key(segments: Array, trailing: Control = null) -> 
         chip.add_child(swatch)
         var text := Label.new()
         text.text = "%s %d" % [String(segment.get("key", "")), int(segment.get("count", 0))]
-        text.add_theme_font_size_override("font_size", HudLayer.COMPOSITION_KEY_FONT_SIZE)
+        text.add_theme_font_size_override("font_size", HudWorkVocab.COMPOSITION_KEY_FONT_SIZE)
         text.add_theme_color_override("font_color", HudStyle.INK_DIM)
         text.mouse_filter = Control.MOUSE_FILTER_IGNORE
         chip.add_child(text)
@@ -367,7 +367,7 @@ static func make_zone_column() -> VBoxContainer:
 static func make_zone_block() -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    block.add_theme_constant_override("separation", HudLayer.ZONE_BLOCK_SEPARATION)
+    block.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     return block
 
 ## Wrap a zone column in the plain `Control` the panel parents into its fixed-size zone host (the host
@@ -392,8 +392,8 @@ static func clear_children(node: Node) -> void:
 ## trailing `⋯` menu button. The one head vocabulary all three zones use.
 static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "") -> HBoxContainer:
     var head := HBoxContainer.new()
-    head.custom_minimum_size = Vector2(0.0, HudLayer.ZONE_HEAD_HEIGHT)
-    head.add_theme_constant_override("separation", HudLayer.ZONE_HEAD_SEPARATION)
+    head.custom_minimum_size = Vector2(0.0, HudWorkVocab.ZONE_HEAD_HEIGHT)
+    head.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
     head.add_child(alloc_section_label(title))
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -402,7 +402,7 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
     if readout != "":
         var right := Label.new()
         right.text = readout
-        right.add_theme_font_size_override("font_size", HudLayer.ZONE_HEAD_FONT_SIZE)
+        right.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
         right.add_theme_color_override("font_color", readout_color)
         set_label_tooltip(right, readout_tooltip)
         head.add_child(right)
@@ -415,12 +415,12 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
 ## array of `{label, disabled, on_pick}` dictionaries.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
-    button.text = HudLayer.SECTION_MENU_GLYPH
+    button.text = HudWorkVocab.SECTION_MENU_GLYPH
     button.tooltip_text = tooltip
     button.focus_mode = Control.FOCUS_NONE
-    button.custom_minimum_size = Vector2(HudLayer.SECTION_MENU_WIDTH, 0.0)
+    button.custom_minimum_size = Vector2(HudWorkVocab.SECTION_MENU_WIDTH, 0.0)
     HudStyle.apply_button(button, "ghost")
-    compact(button, HudLayer.ZONE_HEAD_FONT_SIZE, HudLayer.ZONE_MENU_PADDING_V)
+    compact(button, HudWorkVocab.ZONE_HEAD_FONT_SIZE, HudWorkVocab.ZONE_MENU_PADDING_V)
     var popup := button.get_popup()
     var picks: Array[Callable] = []
     for entry_variant in entries:
@@ -440,9 +440,9 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var key := Label.new()
-    key.text = HudLayer.COMPOSE_FIELD_PARTY
+    key.text = HudComposeVocab.COMPOSE_FIELD_PARTY
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(key)
     add_stepper_controls(row, count, count < party_max, on_change)
@@ -459,9 +459,9 @@ static func gate_reasons(gates: Dictionary, policy: String) -> Array:
 ## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
 ## forage drawer) and owns none of their state. `options` is the option set for this source kind —
 ## the four extractive rungs by default, plus that kind's INVESTMENT rungs on the forage/herd assign
-## controls (HudLayer.FORAGE_POLICY_OPTIONS / HudLayer.HUNT_POLICY_OPTIONS). A `selected` that is not in `options`
+## controls (HudBandLaborState.FORAGE_POLICY_OPTIONS / HudBandLaborState.HUNT_POLICY_OPTIONS). A `selected` that is not in `options`
 ## simply highlights nothing; a caller offering a narrower set than its source can stand on owes the
-## player a line saying so (see `HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT`).
+## player a line saying so (see `HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT`).
 ##
 ## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
 ## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
@@ -472,14 +472,14 @@ static func gate_reasons(gates: Dictionary, policy: String) -> Array:
 static func build_policy_picker(
     on_pick: Callable,
     selected: String,
-    options: Array = HudLayer.LABOR_HUNT_POLICIES,
+    options: Array = SourceForecast.LABOR_HUNT_POLICIES,
     gates: Dictionary = {},
     takes: Dictionary = {},
     columns: int = 0,
     collapse_other_gates: bool = false) -> VBoxContainer:
     var current := selected
     var block := VBoxContainer.new()
-    block.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
     # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
     # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
@@ -490,9 +490,9 @@ static func build_policy_picker(
     if columns > 0:
         grid.columns = columns
     else:
-        grid.columns = maxi(1, options.size()) if options.size() <= HudLayer.POLICY_PICKER_MAX_SINGLE_ROW else HudLayer.POLICY_PICKER_COLUMNS
-    grid.add_theme_constant_override("h_separation", HudLayer.WORKER_STEPPER_SEPARATION)
-    grid.add_theme_constant_override("v_separation", HudLayer.WORKER_STEPPER_SEPARATION)
+        grid.columns = maxi(1, options.size()) if options.size() <= HudWorkVocab.POLICY_PICKER_MAX_SINGLE_ROW else HudWorkVocab.POLICY_PICKER_COLUMNS
+    grid.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     for policy in options:
         var policy_key := String(policy)
         var icon := FoodIcons.for_policy(policy_key)
@@ -516,7 +516,7 @@ static func build_policy_picker(
         # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
         # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
         # it is locked.
-        var name_line := HudLayer.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
+        var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
             if full != "" else policy_key.capitalize()
         var tooltip_lines: Array[String] = [name_line]
         btn.disabled = not reasons.is_empty()
@@ -524,12 +524,12 @@ static func build_policy_picker(
             tooltip_lines.append_array(reasons)
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
-        btn.tooltip_text = HudLayer.GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
+        btn.tooltip_text = HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
         grid.add_child(btn)
     block.add_child(grid)
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach. A caller
     # that is TIGHT ON HEIGHT may opt into collapsing the rungs it is not composing (see
-    # HudLayer.GATE_REASON_COLLAPSED_ONE_FORMAT); by default every gated rung still teaches in full.
+    # HudFloraVocab.GATE_REASON_COLLAPSED_ONE_FORMAT); by default every gated rung still teaches in full.
     for policy in options:
         var policy_key := String(policy)
         var reasons := gate_reasons(gates, policy_key)
@@ -539,16 +539,16 @@ static func build_policy_picker(
         if collapse_other_gates and policy_key != current:
             # Collapsed: the count, plus every reason in the line's own tooltip. A Label ignores the
             # mouse by default, so the filter must be set with the text or the tooltip never shows.
-            var collapsed := alloc_hint_label(HudLayer.GATE_REASON_COLLAPSED_ONE_FORMAT % titled \
+            var collapsed := alloc_hint_label(HudFloraVocab.GATE_REASON_COLLAPSED_ONE_FORMAT % titled \
                 if reasons.size() == 1 \
-                else HudLayer.GATE_REASON_COLLAPSED_MANY_FORMAT % [titled, reasons.size()])
-            set_label_tooltip(collapsed, HudLayer.GATE_REASON_TOOLTIP_SEPARATOR.join(reasons))
+                else HudFloraVocab.GATE_REASON_COLLAPSED_MANY_FORMAT % [titled, reasons.size()])
+            set_label_tooltip(collapsed, HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(reasons))
             block.add_child(collapsed)
             continue
         if reasons.size() == 1:
-            block.add_child(alloc_hint_label(HudLayer.GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
+            block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
             continue
-        block.add_child(alloc_hint_label(HudLayer.GATE_REASON_HEADER_FORMAT % titled))
+        block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_HEADER_FORMAT % titled))
         for reason in reasons:
-            block.add_child(alloc_hint_label(HudLayer.GATE_REASON_BULLET_FORMAT % reason))
+            block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_BULLET_FORMAT % reason))
     return block

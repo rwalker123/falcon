@@ -42,6 +42,76 @@ class_name DetailFormat
 # ---- Detail-row carets (the disclosure affordance this file RENDERS; the popover it opens is
 # `DisclosureController`'s). The meta PREFIX stays on HudLayer — both modules and both harnesses
 # read it, so it is shared vocabulary rather than either half's own.
+# ---- Consts absorbed from HudLayer (const/vocabulary extraction) ----
+const FOOD_ACTION_FORAGE := "forage"
+
+const FOOD_ACTION_HUNT := "hunt"
+
+# Per-cohort morale cause (snapshot PopulationCohortState.moraleCause; 0 = None).
+const MORALE_CAUSE_NONE := 0
+
+const MORALE_CAUSE_TERRAIN := 1
+
+const MORALE_CAUSE_COLD := 2
+
+const MORALE_CAUSE_UNREST := 3
+
+# Plain-language cause labels, shared by the drawer morale line and the alert reason.
+# Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
+const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
+
+const MORALE_CAUSE_LABEL_COLD := "harsh climate"
+
+const MORALE_CAUSE_LABEL_UNREST := "unrest"
+
+# |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
+# bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
+# thing that draws them.)
+const MORALE_TREND_EPSILON := 0.005
+
+# Itemized morale breakdown — the four signed Layer-1 contributions (their sum IS
+# morale_delta) rendered as indented sub-lines under the Morale headline when morale is
+# concerning or declining. Tinted by sign (▲ positive = healthy, ▼ negative = amber).
+const MORALE_BREAKDOWN_INDENT := "    "
+
+# (The two CONTRIBUTION LABELS `settling`/`culture` are `BandDetailLines`', and the recovery-guidance
+# pair `DetailFormat`'s — each moved with every one of its readers.)
+const MORALE_CONTRIB_POSITIVE_GLYPH := "▲"
+
+const MORALE_CONTRIB_NEGATIVE_GLYPH := "▼"
+
+# Positive-lever morale hints on the action buttons (tooltip suffixes).
+const MORALE_HINT_SCOUT := "Scout unknown ground — reveals nearby tiles and lifts the band's spirits (+morale)."
+
+const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+morale/turn)."
+
+const CORRAL_GLYPH := "🐄"
+
+# ---- Band/City panel identity grid ---------------------------------------------------------------
+# The panel's own header already states the band's name + settlement stage, so the summary rows there
+# drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
+# under another name) with the labor line — same numbers, one row, in the identity grid where they
+# belong. The Occupants-card drawer (FOREIGN bands, and the no-panel ui_preview fallback) keeps
+# Unit/Size: it has no panel header naming the band, and a foreign band exposes no worker breakdown.
+# The population/workers LINE is gone from the summary entirely: the band zone's People and
+# Workforce bars state the same numbers as two readable charts, and a text restatement above them
+# was the third telling of one fact.
+# Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
+# through the SAME `DetailFormat.detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
+# eaten amber) — no inline color tags, which mis-layout between the KV table segments.
+const FOOD_LABEL_GATHERED := "Gathered"
+
+const FOOD_LABEL_HUNTED := "Hunted"
+
+# The two DEBIT rows, deliberately separate: the people eat (`food_consumption`), and the ANIMALS in
+# the band's pens eat (`pen_feed_upkeep` — a confined herd cannot graze, so its keeper hauls it food
+# every turn). Both come straight off the same larder, and telling them apart is the entire readout
+# of the corral-as-a-managed-population arc: a band whose larder drains because it is feeding its
+# herd must be able to SEE that, not just watch the number fall.
+const FOOD_LABEL_EATEN := "Eaten (people)"
+
+const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
+
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 
@@ -99,7 +169,7 @@ const PEN_FEED_SPLIT_ROW := "Fed by pasture"
 # The larder term reads `pen_larder_bill` (the NET bread bill after pasture + hay), NOT the gross
 # `pen_upkeep`; sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
 # pen_larder_bill == pen_upkeep`. A self-feeding pen reads "100% · larder 0.0", a scrub pen "0% ·
-# larder N.N"; the hay segment shows ONLY when `pen_hay_food >= HudLayer.FOOD_FLOW_MIN`.
+# larder N.N"; the hay segment shows ONLY when `pen_hay_food >= SourceForecast.FOOD_FLOW_MIN`.
 const PEN_FEED_SPLIT_FORMAT := "%d%%%s · larder %.1f food/turn"
 const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 
@@ -202,11 +272,11 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
         # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
         # `\n` after `[/table]` forces a block break: a RichTextLabel `[table]` is inline, so text
         # emitted right after it otherwise floats onto the table's top-right when there's room.
-        if line.begins_with(HudLayer.MORALE_BREAKDOWN_INDENT):
+        if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT):
             if table_open:
                 out += "[/table]\n"
                 table_open = false
-            var row_hex := HudStyle.HEALTHY_HEX if line.contains(HudLayer.MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
+            var row_hex := HudStyle.HEALTHY_HEX if line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
         # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
@@ -238,7 +308,7 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
 ## detail surface in the game consults this one table, which is why the tile card's Sight /
 ## Habitability / Ecology cases live beside the band's Food / Morale / Output ones.
 static func _value_hex(key: String, value: String, ctx: Context) -> String:
-    if key == HudLayer.DETAIL_ROW_FOOD or key == "Provisions" or key == "Carried":
+    if key == HudDisclosureVocab.DETAIL_ROW_FOOD or key == "Provisions" or key == "Carried":
         # The band larder / expedition provisions / hunt-party carried-food row tints by the
         # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT` the one
         # renderer (`food_turns_text`) spells the runway with — never a bare literal, which is how
@@ -246,7 +316,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # not food-limited.
         if not is_nan(ctx.food_turns) and (value.contains(FOOD_RUNWAY_UNIT) or value.contains(FOOD_UNLIMITED_GLYPH)):
             return BandFoodStatus.hex_for_turns(ctx.food_turns)
-    elif key == HudLayer.DETAIL_ROW_MORALE:
+    elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
             return BandFoodStatus.hex_for_morale(ctx.morale)
@@ -260,10 +330,10 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
     elif key == "Habitability":
         # The tile's habitability rating tints by its bucket (green→red).
         return TileHabitability.hex_for_rating(value)
-    elif key == HudLayer.TILE_SIGHT_KEY:
+    elif key == HudConst.TILE_SIGHT_KEY:
         # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
         return sight_value_hex(value)
-    elif key == "Ecology" or key == HudLayer.PASTURE_ECOLOGY_KEY:
+    elif key == "Ecology" or key == HudFloraVocab.PASTURE_ECOLOGY_KEY:
         # Shared by the herd drawer, the forage-patch tile card and the tile card's PASTURE row — one
         # phase tint (neutral/amber/red) for every ecology in the game. The pasture row keeps its own
         # KEY only so a forage tile doesn't print two rows named "Ecology"; the styling path is
@@ -276,7 +346,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return herders_value_hex(value)
     elif key == "Cultivation":
         return cultivation_value_hex(value)
-    elif key == HudLayer.FIELD_ROW:
+    elif key == HudFloraVocab.FIELD_ROW:
         # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal once
         # complete). Same shape as Cultivation's; kept its own case because a Field is a different
         # rung with its own badge word, not a Tended Patch at a higher percentage.
@@ -300,7 +370,7 @@ static func _key_cell(key: String, ctx: Context) -> String:
     var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
     var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
     return "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
-        HudLayer.BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
+        HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
         caret_hex, key, caret,
     ]
 
@@ -333,7 +403,7 @@ static func _split_kv(line: String) -> Array:
 ## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's BBCode
 ## hex and the chip's Color, so the two forms cannot drift apart.
 static func sight_is_live(value: String) -> bool:
-    return value == HudLayer.TILE_SIGHT_ACTIVE
+    return value == HudConst.TILE_SIGHT_ACTIVE
 
 ## Value tint for the Sight row: in-sight reads live (SIGNAL cyan — the HUD's "this is current"
 ## color), while both unseen states read dim (INK_DIM). The row states what you KNOW, not what is
@@ -400,8 +470,8 @@ static func _danger_open_row(value: float, key: String, world_herds: Array) -> S
 ## A NATIVE 0..1 component (ferocity/aggression): a bar + percent.
 static func _danger_unit_row(value: float) -> String:
     return "%s %d%%" % [
-        HudLayer._meter_bar(value * HudLayer.PROGRESS_PERCENT_SCALE, DANGER_BAR_CELLS),
-        int(round(value * HudLayer.PROGRESS_PERCENT_SCALE)),
+        HudLayer._meter_bar(value * HudConst.PROGRESS_PERCENT_SCALE, DANGER_BAR_CELLS),
+        int(round(value * HudConst.PROGRESS_PERCENT_SCALE)),
     ]
 
 ## The largest value of an open-ended combat component across the known herds — the reference the
@@ -434,8 +504,8 @@ static func graze_range_label(range_radius: int) -> String:
 ## `husbandry_value_hex`.
 static func husbandry_label(progress: float) -> String:
     if progress >= HUSBANDRY_PROGRESS_COMPLETE:
-        return "%s Domesticated" % HudLayer.CORRAL_GLYPH
-    return "Domesticating %d%%" % int(round(progress * HudLayer.PROGRESS_PERCENT_SCALE))
+        return "%s Domesticated" % DetailFormat.CORRAL_GLYPH
+    return "Domesticating %d%%" % int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))
 
 ## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal ink while
 ## it's still being tamed. Matched on the label produced by `husbandry_label`.
@@ -469,7 +539,7 @@ static func cultivation_label(progress: float, cultivated: bool) -> String:
     # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
     # percentage buried in the tile card was easy to miss and broke parity with the animal side.
     return "%s %d%%" % [
-        HudLayer.CULTIVATION_PREPARING_LABEL, int(round(progress * HudLayer.PROGRESS_PERCENT_SCALE)),
+        HudFloraVocab.CULTIVATION_PREPARING_LABEL, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE)),
     ]
 
 ## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink while it's
@@ -486,7 +556,7 @@ static func cultivation_value_hex(value: String) -> String:
 ## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
 static func field_label(progress: float, is_field: bool) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
-        return "%s %s" % [FoodIcons.for_policy(HudLayer.LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
+        return "%s %s" % [FoodIcons.for_policy(HudConst.LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
     return "%s %d%%" % [FIELD_SOWING_LABEL, HudFormat.progress_percent(progress)]
 
 ## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
@@ -511,7 +581,7 @@ static func flora_composition_text(composition: Variant) -> String:
         return ""
     var parts: Array[String] = []
     for entry in entries:
-        parts.append(HudLayer.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
+        parts.append(HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
     return FLORA_SHARE_SEPARATOR.join(parts)
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
@@ -523,9 +593,9 @@ static func flora_composition_text(composition: Variant) -> String:
 static func corral_label(progress: float, corralled: bool, fed_fraction: float) -> String:
     if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
         if PenStatus.is_starving(fed_fraction):
-            return PEN_STARVING_LABEL % int(round(fed_fraction * HudLayer.PROGRESS_PERCENT_SCALE))
-        return "%s Corralled" % HudLayer.CORRAL_GLYPH
-    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * HudLayer.PROGRESS_PERCENT_SCALE))]
+            return PEN_STARVING_LABEL % int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
+        return "%s Corralled" % DetailFormat.CORRAL_GLYPH
+    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))]
 
 ## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
 ## much of it was actually paid. Amber/red-tinted via `pen_feed_value_hex`.
@@ -533,7 +603,7 @@ static func pen_feed_label(upkeep: float, fed_fraction: float) -> String:
     var demand := SourceForecast.format_yield(-upkeep)
     if PenStatus.is_starving(fed_fraction):
         return PEN_FEED_STARVING_FORMAT % [
-            demand, int(round(fed_fraction * HudLayer.PROGRESS_PERCENT_SCALE)),
+            demand, int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE)),
         ]
     return demand
 
@@ -564,20 +634,20 @@ static func pen_feed_value_hex(value: String) -> String:
 ## token for an unknown/future mission (e.g. PR 2's "hunt").
 static func expedition_mission_label(mission: String) -> String:
     var key := mission.strip_edges().to_lower()
-    if HudLayer.EXPEDITION_MISSION_LABELS.has(key):
-        return HudLayer.EXPEDITION_MISSION_LABELS[key]
+    if HudExpeditionVocab.EXPEDITION_MISSION_LABELS.has(key):
+        return HudExpeditionVocab.EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
 
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
 static func morale_cause_label(cause: int) -> String:
     match cause:
-        HudLayer.MORALE_CAUSE_TERRAIN:
-            return HudLayer.MORALE_CAUSE_LABEL_TERRAIN
-        HudLayer.MORALE_CAUSE_COLD:
-            return HudLayer.MORALE_CAUSE_LABEL_COLD
-        HudLayer.MORALE_CAUSE_UNREST:
-            return HudLayer.MORALE_CAUSE_LABEL_UNREST
+        DetailFormat.MORALE_CAUSE_TERRAIN:
+            return DetailFormat.MORALE_CAUSE_LABEL_TERRAIN
+        DetailFormat.MORALE_CAUSE_COLD:
+            return DetailFormat.MORALE_CAUSE_LABEL_COLD
+        DetailFormat.MORALE_CAUSE_UNREST:
+            return DetailFormat.MORALE_CAUSE_LABEL_UNREST
         _:
             return ""
 
@@ -599,7 +669,7 @@ static func food_turns_text(runway: float) -> String:
 static func morale_is_concerning(unit_data: Dictionary) -> bool:
     var morale := float(unit_data.get("morale", 1.0))
     var delta := float(unit_data.get("morale_delta", 0.0))
-    return morale < BandFoodStatus.warn_morale() or delta <= -HudLayer.MORALE_TREND_EPSILON
+    return morale < BandFoodStatus.warn_morale() or delta <= -DetailFormat.MORALE_TREND_EPSILON
 
 
 # =====================================================================================
@@ -629,8 +699,8 @@ static func band_net_food(band: Dictionary) -> float:
 ## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
 ## for one commit and was retired as redundant; do not reintroduce it.)
 static func band_food_income(band: Dictionary) -> float:
-    return sum_realized_yield(band, HudLayer.LABOR_KIND_FORAGE) \
-        + sum_realized_yield(band, HudLayer.LABOR_KIND_HUNT)
+    return sum_realized_yield(band, SourceForecast.LABOR_KIND_FORAGE) \
+        + sum_realized_yield(band, SourceForecast.LABOR_KIND_HUNT)
 
 ## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
 static func band_pen_feed(band: Dictionary) -> float:
@@ -642,7 +712,7 @@ static func band_pen_feed(band: Dictionary) -> float:
 static func band_provisions(band: Dictionary) -> float:
     var stores_variant: Variant = band.get("stores", {})
     if stores_variant is Dictionary:
-        return float((stores_variant as Dictionary).get(HudLayer.STORE_ITEM_PROVISIONS, 0.0))
+        return float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))
     return 0.0
 
 ## The band-wide merged arrival schedule: element-wise sum of every source's `arrival_schedule`, so
@@ -672,9 +742,9 @@ static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 ## wait turn, so a band with a perfectly good STEADY income failed all three tests and lost its net
 ## line and breakdown entirely. Gate on the same number you display.
 static func band_has_food_flow(band: Dictionary) -> bool:
-    return band_food_income(band) >= HudLayer.FOOD_FLOW_MIN \
-        or float(band.get("food_consumption", 0.0)) >= HudLayer.FOOD_FLOW_MIN \
-        or band_pen_feed(band) >= HudLayer.FOOD_FLOW_MIN
+    return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN
 
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
@@ -703,8 +773,8 @@ static func breakdown_key(kind: String, band: Dictionary) -> String:
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:
-    var glyph := HudLayer.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else HudLayer.MORALE_CONTRIB_NEGATIVE_GLYPH
-    return "%s%s %s  %s" % [HudLayer.MORALE_BREAKDOWN_INDENT, glyph, SourceForecast.format_signed(value), label]
+    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
+    return "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, SourceForecast.format_signed(value), label]
 
 
 # =====================================================================================
@@ -772,7 +842,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
     # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
     # (or empty/absent) shows the full ladder, exactly as before.
     var ceiling := SourceForecast.husbandry_ceiling(herd_data)
-    if ceiling == HudLayer.HUSBANDRY_CEILING_WILD:
+    if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
         lines.append(HUSBANDRY_WILD_HINT)
     else:
         var domestication := float(herd_data.get("domestication", 0.0))
@@ -803,7 +873,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
         # "Pen feed" row states the demand and how much of it the keeper actually paid.
         # The whole corral/pen readout is PEN-ceiling only — a pastoral herd can never be penned (the
         # server never builds one), so its Corral/pen rows are suppressed and a hint stands in their place.
-        if ceiling == HudLayer.HUSBANDRY_CEILING_PEN:
+        if ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
             var fed_fraction := PenStatus.fed_fraction(herd_data)
             if bool(herd_data.get("corralled", false)):
@@ -822,18 +892,18 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
                 # larder == gross pen_upkeep (sim-pinned), so the three never double-count.
                 var hay_food := float(herd_data.get("pen_hay_food", 0.0))
                 var hay_segment := ""
-                if hay_food >= HudLayer.FOOD_FLOW_MIN:
+                if hay_food >= SourceForecast.FOOD_FLOW_MIN:
                     hay_segment = PEN_FEED_SPLIT_HAY_SEGMENT % hay_food
                 lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
-                    % [int(round(pasture_fraction * HudLayer.PROGRESS_PERCENT_SCALE)), hay_segment, larder_bill]])
+                    % [int(round(pasture_fraction * HudConst.PROGRESS_PERCENT_SCALE)), hay_segment, larder_bill]])
                 # The standing "Pen feed" debit is the SAME food-larder bill the split's larder term
                 # states (`pen_larder_bill`, net of pasture + hay), not the gross `pen_upkeep` — so a
                 # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
-                if larder_bill >= HudLayer.FOOD_FLOW_MIN:
+                if larder_bill >= SourceForecast.FOOD_FLOW_MIN:
                     lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_label(larder_bill, fed_fraction)])
             elif corral_progress > 0.0:
                 lines.append("Corral: %s" % corral_label(corral_progress, false, PenStatus.FULLY_FED))
-        elif ceiling == HudLayer.HUSBANDRY_CEILING_PASTORAL:
+        elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
@@ -854,9 +924,9 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
 static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var policy_hint := ""
-    if mission == HudLayer.EXPEDITION_MISSION_HUNT:
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
         var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
-        policy_hint = String(HudLayer.SEND_HUNT_POLICY_HINTS.get(policy, ""))
+        policy_hint = String(HudComposeVocab.SEND_HUNT_POLICY_HINTS.get(policy, ""))
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), policy_hint,
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
@@ -867,7 +937,7 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
 ## drawer's `BandDetailLines.expedition_summary_lines` prints. Empty (dropped by
 ## `HudFormat.join_tooltip_lines`) for a scout party or a party not yet projecting a delivery.
 static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, target_herd: Dictionary) -> String:
-    if mission != HudLayer.EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
+    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
         return ""
     return expedition_next_delivery_line(exp, target_herd)
 

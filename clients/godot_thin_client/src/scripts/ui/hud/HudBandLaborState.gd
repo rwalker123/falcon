@@ -16,7 +16,7 @@ extends RefCounted
 
 signal changed(reason: StringName)
 
-# The pending-key labor vocabulary. Mirrors `HudLayer.LABOR_KIND_FORAGE` / `LABOR_KIND_HUNT` (the
+# The pending-key labor vocabulary. Mirrors `SourceForecast.LABOR_KIND_FORAGE` / `LABOR_KIND_HUNT` (the
 # command-side names); a forage source keys by tile, a hunt source by herd, every other role (scout /
 # warrior) is one band-wide slot keyed by its own kind.
 const LABOR_KIND_FORAGE := "forage"

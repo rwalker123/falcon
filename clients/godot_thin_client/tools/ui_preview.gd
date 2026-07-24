@@ -2697,7 +2697,7 @@ func _mouse_button_event(button_index: int) -> InputEventMouseButton:
 ## with the very `[url]` meta its own text carries, so the bound handler + anchor run exactly as they
 ## do in the game. Toggling: a second call on the same key dismisses the popover.
 func _click_disclosure(key: String) -> void:
-	var meta := HudLayer.BREAKDOWN_TOGGLE_META_PREFIX + key
+	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label := _find_meta_label(_hud, meta)
 	if label == null:
 		push_warning("ui_preview: no detail label offering '%s' — disclosure not rendered?" % meta)
