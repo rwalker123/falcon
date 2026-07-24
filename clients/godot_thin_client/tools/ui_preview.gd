@@ -1276,7 +1276,7 @@ func _ready() -> void:
 	var second_band: Dictionary = _two_player_bands()[1]
 	_hud._compose.set_hunt_band(int(second_band["entity"]))
 	_hud._compose.set_hunt_count(clampi(
-		_hud._compose.hunt_count(), 0, _hud._assignable_hunt_workers(second_band, _herd_fixture()["id"])))
+		_hud._compose.hunt_count(), 0, _hud._band_labor.assignable_hunt_workers(second_band, _herd_fixture()["id"])))
 	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_band_picker_b")

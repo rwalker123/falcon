@@ -134,15 +134,30 @@ is dissolved **first**, in place, before any code moves files.
   - **`BandPanelController`** — the band/work/parties zone builders + the cycler
     (~1,935 lines), driven by the BandCityPanel and `update_band_alerts`, not by
     selection. The largest remaining mass.
-  - **Two collapses the 2c-2a measurement surfaced**, both of which shrink every
-    later boundary: (i) eight thin readers over `_band_labor` +
-    `_forage_assignment_of`/`_hunt_assignment_of` (`_workers_for_*`,
-    `_policy_for_*`, `_effective_*_workers`, `_assignable_*_workers`) belong **on
-    `HudBandLaborState`**, not on `HudLayer`; (ii) six HudStyle-adjacent widget
-    factories (`_alloc_hint_label`, `_build_row_note_label`, `_build_status_part`,
-    `_set_label_tooltip`, `_build_worker_stepper`, `_compact_control`) are a shared
-    widget layer deserving their own `ui/hud/` file — together with the three
-    pickers left behind by 2c-2a.
+  - **The `DrawerComposeController` prerequisites (2c-2b, re-measured).** The
+    current map put the drawer's raw injection surface at **36 Callables**, not the
+    ~10–12 the 2c-2a estimate implied — because that estimate assumed the two
+    collapses below were already done. They are prerequisites, not future cleanup,
+    and each shrinks *every* remaining boundary (the band panel too), so they land
+    as their own behaviour-neutral PRs first:
+    - **(i) DONE — band-labor readers → `HudBandLaborState`.** 12 of 15 candidate
+      readers (`workers_for_*`, `policy_for_*`, `effective_*_workers`,
+      `assignable_*_workers`, `*_assignment_of`, `current_player_bands`,
+      `player_band_by_entity`) moved onto the model as public methods; consumers
+      call `_band_labor.*`. Also dropped two injected Callables from
+      `SelectionCardController` (it holds `_band_labor` already). Left on `HudLayer`:
+      `_resolve_assign_band` (reads `_selection`), `_emit_assign_labor` (emits a
+      HudLayer signal), `_herd_label_for_id` (cross-controller resolver).
+    - **(ii) NEXT — widget factories → a shared `ui/hud/` module.** `_alloc_hint_label`
+      (12 drawer call sites alone), `_build_worker_stepper`, `_build_policy_picker`,
+      `_forecast_label`, `_gate_reasons`, `_build_row_note_label`, `_build_status_part`,
+      `_compact_control`, `_progress_percent`, `_set_label_tooltip`,
+      `_alloc_section_label`, `_build_extend_pen_control` — all shared with the
+      band-panel zones. Plus a handful of forecast-adjacent math that should join
+      `SourceForecast` (`_is_overdraw`, `_payoff_take`, `_hunt_take_rate`,
+      `_hunt_delivered_and_waste`) and formatters that should join `HudFormat`.
+    - Then **2c-2b** proper: `DrawerComposeController` (~1,279 lines incl. the 15
+      controller-only forecast/gate/picker fns), with a handful of injections left.
   - **`HudFormat`** — `format_signed` / `format_magnitude` / `format_yield` currently
     live in `SourceForecast` because its math genuinely needs them and duplicating
     them is forbidden. They are formatting, not forecasting. The seam is already

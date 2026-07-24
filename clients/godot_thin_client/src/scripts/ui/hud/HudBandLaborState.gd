@@ -19,6 +19,14 @@ signal changed(reason: StringName)
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 
+# The policy rungs each source kind offers — the four extractive rungs plus the two kind-specific
+# INVESTMENT rungs (hunt: tame/corral, forage: cultivate/sow). Canonical here (the labor readers below
+# re-seed a compose picker against them); `HudLayer` re-exports both via `const X = HudBandLaborState.X`.
+# `DEFAULT_HUNT_POLICY` aliases SourceForecast's — one source of truth, shared by both files.
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
+const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
+
 # Every player-faction resident band from the latest snapshot (roster order; first == `_player_band`).
 var _player_bands: Array = []
 # The single player band (first player-faction cohort) — assign/move/clear-all target it.
@@ -250,6 +258,23 @@ func effective_idle(band: Dictionary) -> int:
 		assigned += int((merged[key] as Dictionary).get("workers", 0))
 	return max(0, int(band.get("working_age", 0)) - assigned)
 
+## Effective worker count on ONE forage tile, overlaying any pending value (the single-source scalar
+## twin of `effective_worker_map` — beside it because it reads the same pending overlay + confirmed base).
+func effective_forage_workers(band: Dictionary, x: int, y: int) -> int:
+	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	var key := pending_key(LABOR_KIND_FORAGE, x, y, "")
+	if pend.has(key):
+		return int((pend[key] as Dictionary).get("workers", 0))
+	return workers_for_forage(band, x, y)
+
+## Effective worker count hunting ONE herd, overlaying any pending value.
+func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
+	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	var key := pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
+	if pend.has(key):
+		return int((pend[key] as Dictionary).get("workers", 0))
+	return workers_for_hunt(band, herd_id)
+
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.
 static func as_schedule(value: Variant) -> PackedFloat32Array:
@@ -265,3 +290,76 @@ static func as_schedule(value: Variant) -> PackedFloat32Array:
 func _labor_assignments_of(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
+
+# ---- Player band roster + per-source labor readers -----------------------------------------------
+
+## The player bands the band-picker lists. Normally `_player_bands` (captured each snapshot); falls back
+## to `[_player_band]` when only the single band was seeded (e.g. the ui_preview harness, or before the
+## first alerts pass) so the dropdown is always populated.
+func current_player_bands() -> Array:
+	if not _player_bands.is_empty():
+		return _player_bands
+	return [_player_band] if not _player_band.is_empty() else []
+
+## Resolve a listed player band by its entity id; {} if it is no longer present.
+func player_band_by_entity(entity: int) -> Dictionary:
+	for b in current_player_bands():
+		if b is Dictionary and int((b as Dictionary).get("entity", -1)) == entity:
+			return b
+	return {}
+
+## The band's standing FORAGE assignment on (x,y) — `{}` when it works no such tile. The one lookup
+## behind the worker count, the seeded policy and the drawer's standing summary, so the three can
+## never read different assignments.
+func forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
+	for entry in _labor_assignments_of(band):
+		if not (entry is Dictionary):
+			continue
+		var a: Dictionary = entry
+		if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
+				and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
+			return a
+	return {}
+
+## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
+## of `forage_assignment_of`.
+func hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
+	for entry in _labor_assignments_of(band):
+		if not (entry is Dictionary):
+			continue
+		var a: Dictionary = entry
+		if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
+			return a
+	return {}
+
+## Workers currently foraging a specific in-range tile; 0 when unstaffed.
+func workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+	return int(forage_assignment_of(band, x, y).get("workers", 0))
+
+## Workers currently hunting a specific herd; 0 when unstaffed.
+func workers_for_hunt(band: Dictionary, herd_id: String) -> int:
+	return int(hunt_assignment_of(band, herd_id).get("workers", 0))
+
+## The take policy of the band's existing hunt on `herd_id`, else the default.
+func policy_for_hunt(band: Dictionary, herd_id: String) -> String:
+	var policy := String(hunt_assignment_of(band, herd_id).get("policy", "")).strip_edges().to_lower()
+	# HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
+	# re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
+	return policy if policy in HUNT_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
+
+## The take policy of the band's existing forage on (x,y), else the default.
+func policy_for_forage(band: Dictionary, x: int, y: int) -> String:
+	var policy := String(forage_assignment_of(band, x, y).get("policy", "")).strip_edges().to_lower()
+	# FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
+	# re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
+	# investment back to Sustain (and the patch would go feral).
+	return policy if policy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
+
+## Max workers a band can commit to ONE source: its idle workers plus any it already has on that
+## source (the assign REPLACES that count, so re-editing an existing assignment isn't capped below its
+## current staffing). Reduces to `idle_workers` for a fresh source.
+func assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
+	return int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id)
+
+func assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
+	return int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
