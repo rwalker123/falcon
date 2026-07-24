@@ -166,7 +166,7 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
 ## detail surface in the game consults this one table, which is why the tile card's Sight /
 ## Habitability / Ecology cases live beside the band's Food / Morale / Output ones.
 static func _value_hex(key: String, value: String, ctx: Context) -> String:
-    if key == "Food" or key == "Provisions" or key == "Carried":
+    if key == HudLayer.DETAIL_ROW_FOOD or key == "Provisions" or key == "Carried":
         # The band larder / expedition provisions / hunt-party carried-food row tints by the
         # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT` the one
         # renderer (`food_turns_text`) spells the runway with — never a bare literal, which is how
@@ -174,7 +174,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # not food-limited.
         if not is_nan(ctx.food_turns) and (value.contains(FOOD_RUNWAY_UNIT) or value.contains(FOOD_UNLIMITED_GLYPH)):
             return BandFoodStatus.hex_for_turns(ctx.food_turns)
-    elif key == "Morale":
+    elif key == HudLayer.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
             return BandFoodStatus.hex_for_morale(ctx.morale)
