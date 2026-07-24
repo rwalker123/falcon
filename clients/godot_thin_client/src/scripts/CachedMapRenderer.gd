@@ -153,7 +153,7 @@ func _hex_points(center: Vector2, radius: float, closed: bool = false) -> Packed
 
 func _draw_hex_textured(center: Vector2, terrain_id: int, radius: float, tint: Color = Color.WHITE) -> void:
 	## `tint` modulates the texture (Fog of War: mist for Discovered, white for Active).
-	var tex: ImageTexture = map_view._hex_texture_cache.get(terrain_id)
+	var tex: ImageTexture = map_view._terrain.hex_texture_for(terrain_id)
 	if tex == null:
 		var color: Color = map_view._terrain_color_for_id(terrain_id) * tint
 		var polygon_points := _hex_points(center, radius)

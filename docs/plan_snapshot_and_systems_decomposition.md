@@ -244,13 +244,57 @@ string literals (989 occurrences) — every dictionary key and label — are ide
 plus `clippy -D warnings`, `cargo test`, `cargo xtask godot-build`, and a live
 `ClassDB` check that all three classes still register and instantiate.
 
+### `MapView.gd` terrain / shader split (issue #296) — landed
+
+Deferred follow-up 1 is done. `clients/godot_thin_client/src/scripts/ui/TerrainRenderer.gd`
+(858 lines) takes both implementations of *textured base terrain* — the Approach-B blend
+shader (`setup` / `update_shader_quad` / `hide_shader_quad` / `rebuild_shader_maps` /
+`shader_active`) and the per-hex texture path (`_build_hex_texture_cache` /
+`_render_hex_texture` / `draw_hex_textured_direct` / the hex alpha mask) — plus the
+blend-class helpers, the texture toggles, the `ShaderMaterial` + its ~40 uniforms, the six
+raster textures, and all eight shader-uniform const families with their tuning commentary.
+Same `_view: MapView` back-ref as the Step-4 marker renderers. `MapView.gd`: **5,430 → 4,609**.
+
+Two boundaries were **measured** rather than assumed, and one went against the follow-up's own
+framing above:
+
+- **The `_cache_*` SubViewport STAYS on MapView.** It is named here as part of the family, but
+  `_invalidate_map_cache()` has 11 call sites and only 2 are terrain — the rest are overlay
+  channels, the FoW toggle, grid lines, pan-wrap, zoom and the reserved inset — and
+  `CachedMapRenderer` reads `_tile_color` / `_visibility_state_at` /
+  `_fow_texture_tint_for_state` / `_show_grid_lines` / `GRID_LINE_COLOR`. It caches the whole
+  *non-shader base render*, not the terrain. Only its `_hex_texture_cache` read repointed.
+  **`_draw_terrain_direct` stays with it** for the same reason: it is the frame's base-pass loop
+  (textured hex vs `_tile_color`, per-tile FoW classification, the shared grid overlay), not a
+  terrain function.
+- **All eight const families moved wholesale** (`EDGE_BLEND_*`, `WATER_BLEND_*`, `SHORE_*`,
+  `CANOPY_*`, `PEAK_*`, `RIVER_*`, `BASE_DEFAULT_*`) — every executable reference to them was
+  inside the three shader functions; the only outside hits were comments. **`FOW_*` stayed**
+  (12+ references across the visibility and tile-card paths), aliased into the helper as
+  `const X = MapView.Y` — the idiom `HudLayer` uses for `SourceForecast`.
+
+`MapView._draw_hex_textured` was deleted: callerless (static and dynamic), a stale duplicate of
+`CachedMapRenderer`'s own copy.
+
+Verified by **PNG byte-diff, 286 frames compared, 0 differing** across `map_preview` and
+`blend_probe`. Getting there took making the baseline deterministic first: 4 frames vary
+run-to-run *in the unmodified code*, and the river-flow shader scroll (`TIME *
+river_flow_speed`) made the whole `map_rivers*` family incomparable — so `flow_speed` was
+temporarily zeroed to bring those frames into the comparison rather than excluding them
+(reverted after). The 4 residual frames' hashes group **by run, not by code version**, which is
+the signature of harness nondeterminism, not drift; root cause is the documented
+window-maximize race — **`tools/map_preview.gd` lacks `blend_probe`'s `_pin_canvas`
+re-assertion**, so its earliest states render at the wrong resolution. Fixing that would make
+the whole `map_preview` set a strict bit-identity reference; it is a pre-existing harness bug
+and was left untouched.
+
 ## Deferred follow-ups
 
 These were consciously scoped out (not missed). Each is a candidate for its own
 verified pass; the `MapView.gd` remainder is also summarized in
 `clients/godot_thin_client/CLAUDE.md` (key-scripts table, `MapView.gd` row).
 
-1. **Terrain / raster / shader draw family** (`_draw_terrain_direct`,
+1. ~~**Terrain / raster / shader draw family** (`_draw_terrain_direct`,
    `_update_terrain_shader_quad`, `_rebuild_terrain_shader_maps`,
    `_draw_hex_textured*`, blend-class helpers). *Highest remaining churn, so
    highest conflict-reduction value — but the hardest.* It is **not** a read-only
@@ -258,7 +302,10 @@ verified pass; the `MapView.gd` remainder is also summarized in
    a `ShaderMaterial` + ~40 uniforms, `_terrain_blend_*`, id/vis/river map
    textures, `_hex_texture_cache`) written across `_ready`/`_process`/
    `display_snapshot`/`_draw`. A mechanical move risks subtle visual drift that the
-   PNG harness only weakly covers. Needs a dedicated pass, not a bounded one.
+   PNG harness only weakly covers. Needs a dedicated pass, not a bounded one.~~
+   **Done** (issue #296) — see "`MapView.gd` terrain / shader split" in Status above.
+   The `_cache_*` SubViewport and `_draw_terrain_direct` were **measured out** of the
+   family and stayed on MapView; the drift risk was answered with a 286-frame byte-diff.
 2. **Selected-band overlays** — work-highlights, yield-labels, herd-range,
    pending, travel-destination. Reads `_selected_player_band`/`selected_unit_id`/
    `_labor_*` and, critically, **queues the yield-label batch mid-`_draw` and

@@ -69,10 +69,11 @@ never writes, deletes, or liveness-checks the file.
 | `ui/LandingScreen.gd` (`ui/LandingScreen.tscn`) | The boot main-scene (`project.godot` run/main_scene): a MenuShell in landing mode over a dark ground. `new_game_requested` stashes params in `GameLaunch.pending_new_game` and swaps to `Main.tscn`; `exit_requested` quits |
 | `MapSizes.gd` | Canonical 5-entry map-size list (`OPTIONS` + `DEFAULT_KEY`), shared by `MapPanel` and `MenuShell` (DRY) |
 | `GameLaunch.gd` (autoload) | Cross-scene handoff: `pending_new_game` dict set by LandingScreen, consumed + cleared by `Main._build_new_game_command` |
-| `MapView.gd` | Terrain rendering, overlays, hex selection (select-then-cycle through a tile's band stack), navigation (WASD/QE/mouse), tile picking, and the coordinator for the **layered hex-marker system** (see Map markers below). Three cohesive subsystems are composed out into owned renderer helpers, each holding a `_view: MapView` back-ref and driven from MapView's `_ready`/`_draw` (all shared geometry/glyph/pill/fog primitives + the marker source arrays + selection state stay on MapView): the **2D minimap** (`ui/MinimapController.gd`, `_minimap`), the **primary band markers** (`ui/BandMarkerRenderer.gd`, `_band_markers`), and the **secondary markers** (`ui/SecondaryMarkerRenderer.gd`, `_secondary_markers`). Still on MapView: the `_draw_*` overlay families NOT yet extracted — terrain/shader/cache, the selected-band work-highlights + yield-labels + herd-range, supply links, routes, targeting, trade/crisis annotations (see the Step-4 report for why each was left) |
+| `MapView.gd` | Terrain rendering, overlays, hex selection (select-then-cycle through a tile's band stack), navigation (WASD/QE/mouse), tile picking, and the coordinator for the **layered hex-marker system** (see Map markers below). Three cohesive subsystems are composed out into owned renderer helpers, each holding a `_view: MapView` back-ref and driven from MapView's `_ready`/`_draw` (all shared geometry/glyph/pill/fog primitives + the marker source arrays + selection state stay on MapView): the **2D minimap** (`ui/MinimapController.gd`, `_minimap`), the **primary band markers** (`ui/BandMarkerRenderer.gd`, `_band_markers`), and the **secondary markers** (`ui/SecondaryMarkerRenderer.gd`, `_secondary_markers`). A FOURTH helper owns the terrain rasters: the **terrain textures + Approach-B blend shader** (`ui/TerrainRenderer.gd`, `_terrain`). Still on MapView on the terrain side: the CPU base pass `_draw_terrain_direct` (the frame's base loop, which branches between the helper's textured hex and MapView's solid `_tile_color` fill) and the whole `_cache_*` SubViewport (it caches the non-shader base render and 9 of its 11 invalidation sites are non-terrain). Still on MapView: the `_draw_*` overlay families NOT yet extracted — the selected-band work-highlights + yield-labels + herd-range, supply links, routes, targeting, trade/crisis annotations (see the Step-4 report for why each was left) |
 | `ui/MinimapController.gd` | Owns MapView's 2D minimap: the `MinimapPanel` instance, its terrain/FoW image (rebuilt only on grid/data/FoW change), the viewport-indicator overlay and click-to-pan. Holds a `_view: MapView` back-ref; behaviour is identical to the old inlined minimap code |
 | `ui/BandMarkerRenderer.gd` | Owns MapView's PRIMARY player-band markers: the offset card-stack of settlement-stage tokens / expedition flag-discs, the faction nameplate banner (+ its reused StyleBoxFlat), the food-days dot, the travel/task arrow, and the ×N over-cap count pill. `_view: MapView` back-ref; `draw_primary_bands()` called during MapView's `_draw`; pixel-identical to the old inlined code (verified via `map_preview` byte-diff) |
 | `ui/SecondaryMarkerRenderer.gd` | Owns MapView's SECONDARY markers (herds / food sites / discovered sites / harvest+scout overlays) + the per-frame edge-slot assignment (`compute_slots`) and `+N` overflow chip. Owns only the per-frame slot maps; all draw commands + shared primitives + marker source arrays stay on MapView via the `_view` back-ref. Pixel-identical to the old inlined code (verified via `map_preview` byte-diff) |
+| `ui/TerrainRenderer.gd` | Owns MapView's TERRAIN raster/shader subsystem: the Approach-B per-pixel biome-blend shader (the whole-map `TerrainBlendQuad` child + its `ShaderMaterial` + the six per-hex splatmap textures it is fed — id / vis / elev / river-edge / river-channel / navigable-underlying), the blend-OFF per-hex texture cache, the blend-class + canopy/peak code maps, and the `T`-key texture toggle (MapView keeps thin `get_terrain_textures_enabled` / `enable_terrain_textures` pass-throughs for the Inspector/HUD; `CachedMapRenderer` reads the cache via `hex_texture_for`). **All eight tuning-const families live here** (`EDGE_BLEND_*` / `WATER_BLEND_*` / `SHORE_*` / `CANOPY_*` / `PEAK_*` / `RIVER_*` / `BASE_DEFAULT_TEXTURE_SCALE`); `EDGE_BLEND_MIN_RADIUS` + `FOW_EXPLORED/VISIBLE_THRESHOLD` are `const X = MapView.Y` aliases, so each has exactly one definition. `_view: MapView` back-ref — every draw command plus the shared geometry/colour/visibility/river primitives stay on MapView. Pixel-identical to the old inlined code, **verified by byte-diff**: an extracted run matched a pre-extraction run on all 286 `map_preview` + `blend_probe` frames (the 4 `map_band_*` frames that vary run-to-run do so identically before and after — the `map_preview` window-maximize race, not this change) |
 | `Inspector.gd` | Inspector coordinator: streaming fan-out, capability gating, typography; hosts per-tab panels |
 | `ui/inspector/PowerPanel.gd` | Power tab panel — reference for the tab-panel extraction contract (`apply_update`/`reset`) |
 | `ui/inspector/CrisisPanel.gd` | Crisis tab panel — adds command hooks (`set_command_hooks`) and `apply_typography` to the contract |
@@ -392,7 +393,7 @@ sides share the **same blendable class** and their terrain ids differ:
 (`_build_terrain_blend_class_map`); `TerrainTextureManager.blend_class_for` mirrors it.
 
 **`blend_rugged_land` — the RUGGED-LAND gate (config bool, `terrain_config.json`, **SHIPPED `true`**;
-`EDGE_BLEND_DEFAULT_RUGGED_LAND` in `MapView.gd` → the shader's `blend_rugged_land` uniform).** Under
+`EDGE_BLEND_DEFAULT_RUGGED_LAND` in `ui/TerrainRenderer.gd` → the shader's `blend_rugged_land` uniform).** Under
 the bare same-class rule a rugged biome's BASE FLOOR never blends, so it ends in a razor-straight
 hexagon against its neighbour — and for a **peak** biome that floor is the *whole* ground under the
 relief overlay (`rolling_hills`' base is plain grass; the mounds are a `peaks/` overlay), which is the
@@ -432,7 +433,7 @@ takes it. Verify with `blend_probe` **state 9 (X)** below.
 
 **The three water levers** (`terrain_config.json` → `water_blend` block:
 `blend_width` **0.45** / `blend_soft` **0.45** / `blend_noise_amount` **0.45**, vs the land
-0.25/0.35/0.30; fallbacks are `WATER_BLEND_DEFAULT_*` in `MapView.gd`, pushed as the
+0.25/0.35/0.30; fallbacks are `WATER_BLEND_DEFAULT_*` in `ui/TerrainRenderer.gd`, pushed as the
 `water_blend_band`/`water_blend_soft`/`water_blend_noise_amount` uniforms). They keep their names but, under
 the depth field, they mean:
 - `blend_width` → the field's **REACH**: how far into the own hex a neighbour's depth still bleeds.
@@ -506,7 +507,7 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
   texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
   (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
   companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
-- **Config levers (all fallbacks mirrored as `EDGE_BLEND_DEFAULT_*` consts in `MapView.gd`):**
+- **Config levers (all fallbacks mirrored as `EDGE_BLEND_DEFAULT_*` consts in `ui/TerrainRenderer.gd`):**
   - `blend_width` (**0.25** → `blend_band = blend_width · radius`, the half-band in px) — the **REACH**, i.e.
     the width of the ecotone. The user wants a **shallow** transition confined to the hex edge, so it is
     small: `0.25·radius` ≈ 19px at the on-screen r≈75, a band that never reaches a hex interior.
@@ -582,7 +583,7 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
     coastline/treeline/footline; verified by pixel-diff).
   - Top-level `base_texture_scale`
   (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
-  larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `MapView.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
+  larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `ui/TerrainRenderer.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
   (`= ICON_MIN_DETAIL_RADIUS`) the shader renders base-only (no shimmer at far zoom). **FoW:** the
   shader applies the same discovered-mist multiply / unexplored-fog fill as the per-hex path
   (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend. It also
@@ -730,7 +731,7 @@ foam↔water.
   grey-blue** (it was `[223, 242, 247]`, a near-white that read as a hard bright outline at map-scale zoom);
   the recolour alone was rendered as a candidate ("option A") and rejected — it only greys the ring, it does
   not stop it being an opaque ring, because the ring's opacity was structural. Fallbacks are the
-  `SHORE_DEFAULT_*` consts in `MapView.gd`; the fixed feel-tuning (`SHORE_SAND_PLATEAU_MAX` /
+  `SHORE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`; the fixed feel-tuning (`SHORE_SAND_PLATEAU_MAX` /
   `SHORE_SAND_OPACITY` / `SHORE_WISP_STRENGTH` / `SHORE_WATERLINE_FADE`) is named consts in the shader. The `land_beach_width` / `sand_land_width` / `sand_sea_width` keys of the rejected passes are
   **gone**. Note the visible beach is intrinsically narrow: the surf covers the inner `foam_inland_width` of
   it, so only the `sand_width − foam_inland_width` annulus (0.10·r) reads as open sand — that is the
@@ -858,7 +859,7 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
 - **Config levers** (`terrain_config.json` → `canopy` block): `overhang_width` / `softness_width`
   (fractions of the hex radius → `canopy_overhang` / `canopy_softness` px uniforms, like `blend_width`),
   `texture_scale` (→ `canopy_scale`), and `canopy_min_radius` (the decoupled canopy LOD floor in px, ≪
-  `EDGE_BLEND_MIN_RADIUS`). Fallbacks are the `CANOPY_DEFAULT_*` consts in `MapView.gd`.
+  `EDGE_BLEND_MIN_RADIUS`). Fallbacks are the `CANOPY_DEFAULT_*` consts in `ui/TerrainRenderer.gd`.
 - **Caveat — canopy is shader-only:** the blend-OFF **per-hex CPU path** (`use_edge_blending = false`,
   `map_biome_hard.png`) renders only the base, so forests there read as the **bare grass floor** (no
   crowns). The live client runs blend-on, so this affects only the reference/fallback path.
@@ -979,7 +980,7 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   (→ `peak_overhang` / `peak_softness` px, like canopy), `texture_scale` (→ `peak_scale`),
   `peak_min_radius` (LOD floor px), `shadow_length` (→ `peak_shadow_len` px) / `shadow_strength`,
   `min_prominence`, and `light_dir_x` / `light_dir_y` (normalized → `peak_light_dir`). Fallbacks are the
-  `PEAK_DEFAULT_*` consts in `MapView.gd`. Peaks are shader-only (same caveat as canopy).
+  `PEAK_DEFAULT_*` consts in `ui/TerrainRenderer.gd`. Peaks are shader-only (same caveat as canopy).
 - Verify via `tools/map_preview.gd` **State swatch** with `SWATCH_BIOME_ID = 26` (alpine) →
   `map_swatch.png` (+ `map_swatch_farzoom.png`): faceted peaks composite with light-left/dark-right
   self-shading, overhang the alpine↔prairie seam + cast a darkening shadow onto the prairie, and the
@@ -1238,7 +1239,7 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   smoothstep, `> 1` holds the tributary's width longer then flares. An exponent, never a width, so it
   cannot disturb the exact navigable-width match at the hex edge), plus `texture_scale`,
   `river_min_radius` (the LOD floor), and `flow_speed`. Fallbacks are the `RIVER_DEFAULT_*` consts in
-  `MapView.gd`.
+  `ui/TerrainRenderer.gd`.
 - **River LOD is DECOUPLED from the blend LOD** (own `rivers_lod_enabled`, `radius ≥ river_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`) — a river is a landmark you navigate *by*, so it must survive
   zooming out; the mipmapped/trilinear river array keeps the thin band stable (no shimmer).
