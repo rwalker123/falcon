@@ -912,7 +912,7 @@ func _work_inspector_strip() -> PanelContainer:
 	return null
 
 ## The inspector picker's rung buttons, keyed by policy. The work inspector passes NO `takes`, so a
-## button's face is exactly `Hud._policy_face(policy)` — the same vocabulary the standing line uses.
+## button's face is exactly `HudFormat.policy_face(policy)` — the same vocabulary the standing line uses.
 func _picker_rung_buttons() -> Dictionary:
 	var buttons := {}
 	var strip := _work_inspector_strip()
@@ -925,7 +925,7 @@ func _picker_rung_buttons() -> Dictionary:
 		if not (child is Button):
 			continue
 		for policy in HudLayer.LABOR_HUNT_POLICIES:
-			if (child as Button).text == _hud._policy_face(String(policy)):
+			if (child as Button).text == HudFormat.policy_face(String(policy)):
 				buttons[String(policy)] = child
 	return buttons
 
@@ -941,7 +941,7 @@ func _find_first_grid(node: Node) -> GridContainer:
 ## RED 1: a source standing on an INVESTMENT rung must SAY so. Without it the picker highlights none
 ## of its four rungs and reads as an unset control on a very-much-set assignment.
 func _assert_standing_investment_line(policy: String) -> void:
-	var want := HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % _hud._policy_face(policy)
+	var want := HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(policy)
 	var strip := _work_inspector_strip()
 	if strip != null and _find_label_with_text(strip, want) != null:
 		print("band_panel_preview: assert OK — inspector states the standing rung ('%s')" % want)

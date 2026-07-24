@@ -10,7 +10,7 @@ extends RefCounted
 ## THREE GROUPS, deliberately kept apart:
 ##   • `forage_*` — the tile card's "assign foragers" block. Read/written inside ONE builder.
 ##   • `hunt_*`   — the herd drawer's "assign hunters/herders" block. Three reads leak out of its
-##                  builder (`_build_policy_picker`'s no-selection fallback, `_tame_stalled_hint`,
+##                  builder (`HudWidgets.build_policy_picker`'s no-selection fallback, `_tame_stalled_hint`,
 ##                  `_herd_crew_noun`) — see `hunt_policy()`.
 ##   • `party_*`  — the Band panel's PARTIES-zone compose sheet (quarry + autofill). It is NOT drawer
 ##                  state, so it sits in its own section and can travel to a band-panel extraction
@@ -154,7 +154,7 @@ func hunt_count() -> int:
 	return _hunt_count
 
 ## PUBLIC beyond the herd drawer, and that is a known cross-boundary read preserved verbatim through
-## the lift: `HudLayer._build_policy_picker` falls back to THIS policy when invoked with no explicit
+## the lift: `HudWidgets.build_policy_picker` falls back to THIS policy when invoked with no explicit
 ## selection, so a work-inspector or party-compose render can read the drawer's rung. `_tame_stalled_hint`
 ## and `_herd_crew_noun` read it from outside the builder too. Arguably a latent bug — it is fixed as
 ## its own labelled change, never as a side effect of an extraction.

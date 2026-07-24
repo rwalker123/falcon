@@ -1225,7 +1225,7 @@ func _ready() -> void:
 	_compose_herd(_taming_herd_fixture())
 	await _settle()
 	await _save("two_meter_split")
-	# THE HERD-SIDE BLAST-RADIUS GUARD. `_build_policy_picker` is SHARED with the hunt/expedition pickers,
+	# THE HERD-SIDE BLAST-RADIUS GUARD. `HudWidgets.build_policy_picker` is SHARED with the hunt/expedition pickers,
 	# and this frame's whole subject is the gated Corral's reason line — naming the knowledge, its live
 	# percent and the practice that fills it — while TAME is the composed rung. The collapse is opt-in and
 	# only the forage compose opts in, so the hunt picker must be byte-for-byte unchanged.
