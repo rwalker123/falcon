@@ -117,6 +117,7 @@ const SPEED_ROW_TITLE_SIZE := 13
 const SPEED_READOUT_FORMAT := "%.2f×"
 ## Meta key on each speed slider carrying its default, so "Restore defaults" resets it.
 const SPEED_DEFAULT_META := "speed_default"
+const SPEED_READOUT_META := "speed_readout"
 
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
@@ -576,6 +577,7 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
 	readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
 	row.add_child(readout)
+	slider.set_meta(SPEED_READOUT_META, readout)
 
 	slider.value_changed.connect(func(v: float) -> void:
 		on_changed.call(v)
@@ -588,7 +590,10 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 func _on_restore_defaults_pressed() -> void:
 	ClientSettings.restore_defaults()
 	for slider in _speed_sliders:
-		slider.value = slider.get_meta(SPEED_DEFAULT_META)
+		var default_value: float = slider.get_meta(SPEED_DEFAULT_META)
+		slider.set_value_no_signal(default_value)
+		var readout: Label = slider.get_meta(SPEED_READOUT_META)
+		readout.text = SPEED_READOUT_FORMAT % default_value
 
 
 func _build_abandon_pane() -> void:
