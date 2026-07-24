@@ -189,22 +189,65 @@ pub(crate) fn hunt_trip_estimate_entries(
 /// The `hunt_policy_ceilings` list is the single wire view of a herd's per-policy ceilings — one
 /// `SourceYieldForecast` per herd, projected once, keyed by a free-form policy name (the old scalar
 /// `ceiling*` fields are retired `(deprecated)` slots).
-#[allow(clippy::too_many_arguments)] // every config the exported forecast reads is a lever
-pub(crate) fn herd_snapshot_entries(
-    telemetry: &HerdTelemetry,
-    registry: &HerdRegistry,
-    fauna: &FaunaConfig,
-    ladder: &LadderConfig,
-    labor: &LaborConfig,
-    expedition: &ExpeditionConfig,
-    grid_size: UVec2,
-    wrap_horizontal: bool,
-) -> Vec<HerdTelemetryState> {
+///
+/// **The list is FOG-FILTERED for the viewer faction** — see [`HerdSnapshotInputs::herd_is_visible`].
+pub(crate) struct HerdSnapshotInputs<'a> {
+    pub(crate) telemetry: &'a HerdTelemetry,
+    pub(crate) registry: &'a HerdRegistry,
+    pub(crate) fauna: &'a FaunaConfig,
+    pub(crate) ladder: &'a LadderConfig,
+    pub(crate) labor: &'a LaborConfig,
+    pub(crate) expedition: &'a ExpeditionConfig,
+    pub(crate) grid_size: UVec2,
+    pub(crate) wrap_horizontal: bool,
+    /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
+    /// same faction — so a herd can never be drawn on a tile the raster paints black.
+    pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
+    pub(crate) viewer: FactionId,
+}
+
+impl HerdSnapshotInputs<'_> {
+    /// **Wire-level fog for fauna.** A herd reaches the client's display telemetry iff the viewer can
+    /// *see where it is standing right now* (`VisibilityState::Active`), **or the viewer owns it**.
+    ///
+    /// - **`Active`, not `Discovered`.** Ground you saw two hundred turns ago says nothing about
+    ///   where a herd wanders today, so `Discovered` would leak live positions across the whole
+    ///   explored map — the leak this filter exists to close. Remembering the *last seen* herd is a
+    ///   separate, deliberate feature (issue #214) built on top of this, not a weaker filter.
+    /// - **Ownership is not a leak.** A tamed or penned herd is your property; you know where your
+    ///   animals are. Without this clause a pastoral herd drifting a hex out of sight would take its
+    ///   `corralProgress` / `penFedFraction` starving warning with it, and a pen alert that vanishes
+    ///   because of fog is a bug, not fog.
+    /// - **Fails CLOSED.** An absent faction map (before the first `calculate_visibility`, or the
+    ///   turn after a rollback clears the ledger) hides every herd — which is exactly what
+    ///   `visibility_raster_from_ledger` does in the same state: it emits an all-unexplored raster,
+    ///   so the client is rendering a black map anyway. The two agree by construction.
+    ///
+    /// A herd the registry cannot resolve has no owner to check, so it is judged on visibility alone.
+    fn herd_is_visible(&self, herd: Option<&Herd>, pos: UVec2) -> bool {
+        self.visibility.is_visible(self.viewer, pos.x, pos.y)
+            || herd.is_some_and(|herd| herd.owner == Some(self.viewer))
+    }
+}
+
+pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdTelemetryState> {
+    let HerdSnapshotInputs {
+        telemetry,
+        registry,
+        fauna,
+        ladder,
+        labor,
+        expedition,
+        grid_size,
+        wrap_horizontal,
+        ..
+    } = inputs;
     let width = grid_size.x.max(1);
     let height = grid_size.y.max(1);
     telemetry
         .entries
         .iter()
+        .filter(|entry| inputs.herd_is_visible(registry.find(&entry.id), entry.position))
         .map(|entry| {
             let herd = registry.find(&entry.id);
             // The species row backing this herd — resolved once for the raw combat components below.
@@ -220,6 +263,14 @@ pub(crate) fn herd_snapshot_entries(
                     )
                 })
                 .unwrap_or_default();
+            // The heading arrow points at the herd's NEXT hex, which is a second, independent tile —
+            // so it is fog-filtered on its own terms through the same rule, or a visible herd on the
+            // edge of your sight would hand you a free look at where it is going. `-1` (the existing
+            // "no heading" sentinel the client already renders as no arrow) covers both "loitering"
+            // and "you cannot see that far", which the client has no reason to distinguish.
+            let next_position = entry
+                .next_position
+                .filter(|pos| inputs.herd_is_visible(herd, *pos));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
@@ -228,8 +279,8 @@ pub(crate) fn herd_snapshot_entries(
                 y: entry.position.y,
                 biomass: entry.biomass,
                 route_length: entry.route_length,
-                next_x: entry.next_position.map(|pos| pos.x as i32).unwrap_or(-1),
-                next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
+                next_x: next_position.map(|pos| pos.x as i32).unwrap_or(-1),
+                next_y: next_position.map(|pos| pos.y as i32).unwrap_or(-1),
                 size_class: entry.size_class.clone(),
                 huntable: entry.huntable,
                 ecology_phase: entry.ecology_phase.clone(),
