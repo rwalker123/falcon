@@ -350,11 +350,11 @@ func _ready() -> void:
 	cap_band["idle_workers"] = 16
 	cap_band["max_expedition_party_size"] = 8
 	cap_band["labor_assignments"] = []   # all 16 working-age workers read idle
-	_hud._send_expedition_count = 8
+	_hud._bandpanel._send_expedition_count = 8
 	_hud.show_unit_selection(cap_band)
 	await _settle()
 	await _save("expedition_outfit_cap")
-	_hud._send_expedition_count = 1   # reset so later states render a fresh party stepper
+	_hud._bandpanel._send_expedition_count = 1   # reset so later states render a fresh party stepper
 
 	# State 1h — a hunting expedition (PR 2, §2b) selected in its Hunting phase: the panel shows the
 	# hunt readout (Mission "Hunting expedition", Target herd, Policy, Carried 8 / 16, Party) +
@@ -405,7 +405,7 @@ func _ready() -> void:
 	launch_band["idle_workers"] = 12
 	launch_band["labor_assignments"] = []
 	var left_scroll: ScrollContainer = _hud.left_stack.get_parent() as ScrollContainer
-	_hud._send_hunt_policy = "market"
+	_hud._bandpanel._send_hunt_policy = "market"
 	_hud.show_unit_selection(launch_band)
 	await _settle()
 	left_scroll.scroll_vertical = int(left_scroll.get_v_scroll_bar().max_value)
@@ -417,7 +417,7 @@ func _ready() -> void:
 	# maximum-sustainable-yield FLOW (it used to promise "one conservative harvest", a model that no
 	# longer exists). It also must NOT mention domestication: only a RESIDENT band's Sustain hunt
 	# builds husbandry — an expedition's take is food only.
-	_hud._send_hunt_policy = "sustain"
+	_hud._bandpanel._send_hunt_policy = "sustain"
 	_hud.show_unit_selection(launch_band)
 	await _settle()
 	left_scroll.scroll_vertical = int(left_scroll.get_v_scroll_bar().max_value)
