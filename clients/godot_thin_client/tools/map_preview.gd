@@ -325,6 +325,23 @@ var _river_lake_hex := Vector2i(-1, -1)
 var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
 
 func _ready() -> void:
+	# FREEZE ANIMATION TIME. What it buys: with the canvas pinned, the only remaining run-to-run
+	# difference was animated content, so this is what makes the frame set a STRICT BIT-IDENTITY
+	# REFERENCE (56/56 identical across runs) — which is the whole reason the harness exists, since a
+	# frame that varies cannot be pixel-diffed to prove a refactor changed nothing. What it costs:
+	# every animation renders at a FIXED PHASE rather than being sampled wherever the clock happened
+	# to land. It affects 14 frames — the 11 `map_rivers*` (the shader's `TIME * river_flow_speed`
+	# channel scroll), `map_quarry_targeting` and `map_expeditions` (the `delta`-driven targeting and
+	# awaiting-expedition pulses); every other frame is byte-identical with or without it.
+	#
+	# Nothing is erased by freezing at phase 0, and that was checked against the draw code before it
+	# was taken, not assumed: both pulses are the `0.5 + 0.5 * sin(t)` idiom, so t = 0 is the MIDPOINT
+	# (0.5) rather than zero amplitude — the awaiting ring draws at 1.46x radius / 0.65 alpha and the
+	# quarry glow at 0.60x / 0.675 — and the river's phase is a UV OFFSET whose coverage alpha comes
+	# from a purely geometric `smoothstep`, so the channel, banks and taper are unaffected. The
+	# targeting frame's eligibility test (which herds are valid quarries) is pure distance and never
+	# touched the pulse at all. `_settle` waits on `process_frame`, which still fires at time_scale 0.
+	Engine.time_scale = 0.0
 	_pin_canvas(get_window())
 	DirAccess.make_dir_absolute(OUT_DIR)
 	_map = MAP_VIEW.new()
