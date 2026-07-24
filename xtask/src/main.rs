@@ -41,7 +41,7 @@ fn print_usage() {
     eprintln!("Usage: cargo xtask prepare-client");
     eprintln!("       cargo xtask godot-build");
     eprintln!("       cargo xtask decode-fixture");
-    eprintln!("       cargo xtask decode-guard [--write-golden]");
+    eprintln!("       cargo xtask decode-guard [--write-golden] [--no-build]");
     eprintln!("       cargo xtask manifest-schema");
     eprintln!("       cargo xtask validate-manifests");
     eprintln!("       cargo xtask command [OPTIONS] <verb> [args...]");

@@ -35,6 +35,7 @@ extends Node
 ##
 ##   cargo xtask decode-guard                  # regenerate fixture, build native, diff
 ##   cargo xtask decode-guard --write-golden   # re-record instead of diffing
+##   cargo xtask decode-guard --no-build       # skip the native rebuild, when you just built it
 ##   godot --headless --path . res://tools/decode_guard.tscn    # standalone, current fixture
 ##
 ## Exits 0 on PASS, 1 on FAIL (CI-usable).
@@ -71,8 +72,17 @@ func _ready() -> void:
 		if arg == "--write-golden":
 			_write_golden = true
 
+	# Two predicates, because registration does not imply instantiability: Godot ships abstract
+	# classes (Shape2D, MultiplayerPeer) that pass `class_exists` and return null from `instantiate`.
+	# Calling a method on that null raises a GDScript error that aborts `_ready` before
+	# `get_tree().quit()` runs — so skipping the second check costs this tool its exit code and
+	# HANGS instead of reporting.
 	if not ClassDB.class_exists("SnapshotDecoder"):
 		_die("SnapshotDecoder class is not registered — build the native extension first (cargo xtask godot-build).")
+		return
+
+	if not ClassDB.can_instantiate("SnapshotDecoder"):
+		_die("SnapshotDecoder is registered but NOT instantiable — this gate constructs it directly, so the class must stay concrete and default-constructible: check that it is still declared #[class(init, base=RefCounted)] in native/src/bridge/decoder.rs.")
 		return
 
 	var payload := _read_fixture()
@@ -80,6 +90,10 @@ func _ready() -> void:
 		return
 
 	var decoder: Object = ClassDB.instantiate("SnapshotDecoder")
+	if decoder == null:
+		_die("ClassDB.instantiate(\"SnapshotDecoder\") returned null despite the class reporting instantiable — the native extension is likely half-loaded; rebuild it with cargo xtask godot-build.")
+		return
+
 	var decoded: Dictionary = decoder.decode_snapshot(payload)
 
 	# An empty dict is what `decode_snapshot` returns for a payload it could not parse
