@@ -3,9 +3,10 @@ extends Node2D
 ## It lives as a child of MapView with show_behind_parent = true, so the blended terrain renders BEHIND
 ## MapView's own draws (grid lines, overlays, markers). A separate node is required because a canvas
 ## item's ShaderMaterial applies to ALL of that item's draw commands — keeping the shader on its own
-## node leaves MapView's markers/grid unshaded. MapView owns the ShaderMaterial + uniforms; this node
-## only issues the one draw_rect. Shader uniforms are live: MapView re-pushes them and calls this node's
-## queue_redraw() each frame (from _update_terrain_shader_quad), so the rect re-renders every frame with the
+## node leaves MapView's markers/grid unshaded. `ui/TerrainRenderer.gd` owns the ShaderMaterial +
+## uniforms; this node only issues the one draw_rect. Shader uniforms are live: TerrainRenderer re-pushes
+## them and calls this node's queue_redraw() each frame (from TerrainRenderer.update_shader_quad), so the
+## rect re-renders every frame with the
 ## fresh uniforms. set_rect_size() additionally queue_redraw()s only when the rect size actually changes.
 
 var rect_size: Vector2 = Vector2.ZERO

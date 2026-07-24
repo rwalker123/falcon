@@ -920,7 +920,7 @@ func _override_config(overrides: Dictionary) -> Array:
 	## restore token. Restoring must ERASE a key that was ABSENT, never write `null` back over it: MapView
 	## reads levers as `bool(config.get(key, DEFAULT))` / `float(...)`, and the default only applies when the
 	## key is MISSING — a key present with a null value reaches `bool(null)`, which is a RUNTIME ERROR
-	## ("Nonexistent 'bool' constructor") that aborts _update_terrain_shader_quad *before it pushes a single
+	## ("Nonexistent 'bool' constructor") that aborts TerrainRenderer.update_shader_quad *before it pushes a single
 	## uniform*. Every later frame then renders with STALE uniforms and silently lies. This bit us on
 	## `blend_rugged_land`, the first lever with no entry in terrain_config.json.
 	var previous: Dictionary = {}
@@ -1748,7 +1748,7 @@ func _render_variant(
 	crop_radii: float = ISO_CROP_RADII
 ) -> void:
 	## Re-render with config levers overridden in the live config (MapView re-reads the config every frame
-	## in _update_terrain_shader_quad, so a redraw is all it takes), then restore the shipped values.
+	## in TerrainRenderer.update_shader_quad, so a redraw is all it takes), then restore the shipped values.
 	var token: Array = _override_config(overrides)
 	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
 	await _settle()

@@ -14,7 +14,7 @@ extends RefCounted
 ## non-terrain concerns. Both stay on MapView.
 ##
 ## Behaviour — and every rendered pixel — is identical to the old inlined terrain code: the move was
-## verified by byte-diffing all 284 reproducible `map_preview` + `blend_probe` frames before and
+## verified by byte-diffing all 286 reproducible `map_preview` + `blend_probe` frames before and
 ## after, with zero differing frames.
 
 # The blend LOD and the FoW thresholds are MapView's, aliased rather than duplicated so there stays

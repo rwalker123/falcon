@@ -3281,7 +3281,7 @@ func terrain_palette_entries() -> Array:
 
 func present_terrain_ids() -> PackedInt32Array:
 	## Distinct terrain ids actually present on the current map, sorted ascending,
-	## computed from the per-tile `_cached_terrain_ids` set in `display_snapshot`.
+	## computed from the per-tile ids `TerrainRenderer._cached_terrain_ids` caches in `display_snapshot`.
 	## Empty before the first snapshot (no per-tile terrain cached yet) — callers
 	## fall back to the full palette in that case.
 	var seen: Dictionary = {}
@@ -3869,7 +3869,7 @@ func set_terrain_mode(_enabled: bool) -> void:
 	set_overlay_channel("")
 
 ## Debug toggle (Map tab): tint the shader's river bands hard so they pop against the terrain.
-## Pushed to the blend shader as `river_highlight` on the next _update_terrain_shader_quad.
+## Pushed to the blend shader as `river_highlight` on the next TerrainRenderer.update_shader_quad.
 func set_highlight_rivers(enabled: bool) -> void:
 	highlight_rivers = enabled
 	queue_redraw()
