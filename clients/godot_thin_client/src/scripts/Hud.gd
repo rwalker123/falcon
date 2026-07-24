@@ -372,6 +372,12 @@ var _band_labor: HudBandLaborState = null
 # is handed the SAME `_selection`/`_band_labor` instances; HudLayer relays its `roster_occupant_selected`
 # and re-renders on its `subject_changed`. The DRAWER + compose stay on HudLayer (Phase 2c).
 var _selectioncard: SelectionCardController = null
+# "What the player is dialing but has not committed" (HUD decomposition Phase 2c-1) — the forage /
+# hunt drawer compose blocks, the parties-zone party compose, and the open sheet's subject identity.
+# Every former `_forage_assign_*` / `_hunt_assign_*` / `_send_party_*` / `_compose_kind` /
+# `_compose_subject` member lives here now. The `ComposeSheet` NODE stays on HudLayer (`_compose_sheet`
+# below) — a model holds pure data, never a scene handle.
+var _compose: ComposeState = null
 # One drawer fit in flight at a time — see `_fit_subject_drawer`.
 var _subject_fit_pending: bool = false
 # ---- Selection-card in-place update caches (docs/plan_hud_decomposition.md §2a) --------------
@@ -387,8 +393,6 @@ var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
 var _tile_detail_lines_cache: Array = []
 var _subject_fit_last_height: float = NAN
-var _selected_food_module: String = ""
-var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
 # can threshold-tint the Food row. NAN when no band is selected.
 var _selected_band_food_turns: float = NAN
@@ -1194,9 +1198,9 @@ const COMPOSE_PENDING_SUFFIX := " · pending"
 # /turn`. The rate comes from `_source_yield_readout` — never recomputed here.
 const STANDING_SUMMARY_FORMAT := "%s %d %s"
 const STANDING_SUMMARY_SEPARATOR := " ·"
-const COMPOSE_KIND_NONE := ""
-const COMPOSE_KIND_FORAGE := "forage"
-const COMPOSE_KIND_HERD := "herd"
+const COMPOSE_KIND_NONE := ComposeState.KIND_NONE
+const COMPOSE_KIND_FORAGE := ComposeState.KIND_FORAGE
+const COMPOSE_KIND_HERD := ComposeState.KIND_HERD
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
 
 # ---- Band/City panel zones (docs/band_panel_ux_proposal.html) ---------------
@@ -1713,41 +1717,8 @@ var _pending_pick_quarry: Dictionary = {}
 var _send_expedition_count: int = WORKER_STEP
 # Compose state for the hunt-expedition launch policy (Sustain/Surplus/Market/Eradicate).
 var _send_hunt_policy: String = DEFAULT_HUNT_POLICY
-# The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is
-# the FIRST question the hunt form asks, because the herd sets the useful party size, the per-policy
-# take and the trip length — everything below it in the form.
-var _send_party_quarry_id: String = ""
-# One-shot: set when the player CLICKS a policy in the compose sheet so the next rebuild auto-fills
-# the party to that policy's max-useful cap. The sheet's OWN autofill — `_hunt_assign_autofill` is
-# the herd drawer's, and sharing it would let one surface's click refill the other's stepper.
-var _send_party_autofill := false
-# Compose state for the herd/tile "Assign" controls — the in-progress worker count (and, for
-# hunts, the policy) the player is dialing before pressing Assign. Keyed to the source so a
-# per-snapshot re-render preserves the count, but re-initializes from current staffing when
-# the selected source changes.
-var _forage_assign_key: String = ""
-var _forage_assign_count: int = 0
-# One-shot: set when the player CLICKS a forage policy so the next rebuild auto-fills the worker count
-# to the policy's max-useful cap ("give me everything this patch sustains"). The forage twin of
-# `_hunt_assign_autofill` — cleared as soon as consumed, never set by a −/+ tick.
-var _forage_assign_autofill := false
-var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
-# The crop the composed Cultivate/Sow will commit this patch to (flora roster S1); "" = send nothing,
-# which is VALID and yields the sim's own default (`default_species_for_rung` — the highest-share legal
-# plant). Re-resolved every render, so it can never name a plant this tile/rung cannot take.
-var _forage_assign_species: String = ""
-var _hunt_assign_key: String = ""
-var _hunt_assign_count: int = 0
-var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
-# One-shot: set when the player CLICKS a policy so the next rebuild auto-fills the worker count to the
-# policy's max-useful cap ("give me everything this herd sustains" — zero waste + full rate). Cleared as
-# soon as it's consumed; never set by a −/+ stepper tick, so manual counts are preserved.
-var _hunt_assign_autofill := false
-# The band-picker selection (actor band entity) for each assign control, persisted across the
-# per-snapshot re-renders of the same source. Re-defaults to _resolve_assign_band() when the
-# selected source changes; -1 means "fall back to the resolved band".
-var _hunt_assign_band: int = -1
-var _forage_assign_band: int = -1
+# The forage / hunt / party compose state (the dialed worker counts, policies, crop, actor bands, the
+# party's quarry and the two autofill one-shots) lives on `_compose` — see `ComposeState`.
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
@@ -1764,12 +1735,11 @@ var _reservations: Dictionary = {}
 # fork panel all live in the controller now; `update_band_alerts` feeds its band half via
 # `set_band_attention`, and the five reflective methods are thin delegators below.
 var _turnorb: TurnOrbController = null
-# The floating compose sheet + which source it is composing. `_compose_kind` is one of the
-# COMPOSE_KIND_* constants; `_compose_subject` is the source key (a "x,y" tile key or a herd id), so
-# a per-snapshot refresh can tell "the same source, restated" from "a different source, gone".
+# The floating compose sheet NODE. Which source it is composing (`_compose.kind()` — one of the
+# COMPOSE_KIND_* constants — and `_compose.subject()`, the source key: a "x,y" tile key or a herd id,
+# so a per-snapshot refresh can tell "the same source, restated" from "a different source, gone") is
+# pure data and lives on `_compose`; this handle is a scene node, so it stays here.
 var _compose_sheet: ComposeSheet = null
-var _compose_kind: String = COMPOSE_KIND_NONE
-var _compose_subject: String = ""
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -1778,6 +1748,8 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _selection = HudSelectionState.new()
     _band_labor = HudBandLaborState.new()
+    # Both compose policies start on the default rung; the policy vocabulary stays here, not in the model.
+    _compose = ComposeState.new(DEFAULT_HUNT_POLICY)
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
@@ -4852,7 +4824,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
         _party_compose_open = true
         _party_compose_mission = mission
         # A fresh compose act starts with no quarry — never a herd left over from a cancelled one.
-        _send_party_quarry_id = ""
+        _compose.clear_party_quarry()
         _rerender_panel_allocation())
     return btn
 
@@ -4911,12 +4883,12 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # that MIGRATES into the band's hunt reach fails for the same reason — it is no longer a party's
     # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
     # should not make.
-    var herd := _find_world_herd(_send_party_quarry_id)
+    var herd := _find_world_herd(_compose.party_quarry_id())
     if herd.is_empty() or not _is_expedition_quarry(band, herd):
         herd = {}
-        _send_party_quarry_id = ""
+        _compose.clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
-    if _send_party_quarry_id == "":
+    if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
         # shown so the shape of the form is legible, and it says why it is not yet pressable.
         sheet.add_child(_alloc_hint_label(COMPOSE_QUARRY_HINT))
@@ -4937,7 +4909,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         _send_hunt_policy = policy
         # Auto-max on policy select, exactly as the herd drawer does: "give me everything this herd
         # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
-        _send_party_autofill = true
+        _compose.arm_party_autofill()
         _rerender_panel_allocation(), _send_hunt_policy, LABOR_HUNT_POLICIES,
         {}, _expedition_policy_takes(band, herd), ZONE_POLICY_PICKER_COLUMNS))
     sheet.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
@@ -4946,9 +4918,8 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var assignable := _scout_party_max(band, idle)
     var capped := _expedition_useful_cap(band, herd, _send_hunt_policy, assignable)
     var cap: int = maxi(int(capped["cap"]), WORKER_STEP)
-    if _send_party_autofill:
+    if _compose.consume_party_autofill():
         _send_expedition_count = cap
-        _send_party_autofill = false
     _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, cap)
     sheet.add_child(_build_party_stepper_row(_send_expedition_count, cap,
         func(n: int) -> void:
@@ -4973,7 +4944,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     _style_send_hunt_button(confirm, trip, reason)
     if no_surplus:
         sheet.add_child(_alloc_hint_label(reason))
-    var quarry_id := _send_party_quarry_id
+    var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:
         emit_signal("send_hunt_expedition_requested", {
             "faction": int(band.get("faction", PLAYER_FACTION_ID)),
@@ -5041,7 +5012,7 @@ func _scout_party_max(band: Dictionary, idle: int) -> int:
 func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
-    _send_party_quarry_id = ""
+    _compose.clear_party_quarry()
     _cancel_pending_pick_quarry()
     _rerender_panel_allocation()
 
@@ -5195,19 +5166,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # When the selected herd changes, default the actor band to the resolved band (and re-seed
     # the compose count/policy from its staffing); otherwise preserve the picked band + count
     # across per-snapshot re-renders of the same herd.
-    var source_changed := _hunt_assign_key != herd_id
+    var source_changed := _compose.hunt_key() != herd_id
     if source_changed:
-        _hunt_assign_key = herd_id
-        _hunt_assign_band = int(resolved.get("entity", -1))
+        _compose.begin_hunt_source(herd_id, int(resolved.get("entity", -1)))
     # The actor is the band-picker selection; fall back to the resolved band if it has vanished.
-    var band := _player_band_by_entity(_hunt_assign_band)
+    var band := _player_band_by_entity(_compose.hunt_band())
     if band.is_empty():
         band = resolved
-        _hunt_assign_band = int(band.get("entity", -1))
+        _compose.set_hunt_band(int(band.get("entity", -1)))
     if source_changed:
         var staffed := _workers_for_hunt(band, herd_id)
-        _hunt_assign_count = staffed if staffed > 0 else WORKER_STEP
-        _hunt_assign_policy = _policy_for_hunt(band, herd_id)
+        _compose.seed_hunt(staffed if staffed > 0 else WORKER_STEP, _policy_for_hunt(band, herd_id))
     # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_hunt_workers(band, herd_id)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
@@ -5221,7 +5190,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
     # how many workers"). Switching bands re-runs the distance-aware branch below for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
-        _hunt_assign_band = int(picked.get("entity", -1))
+        _compose.set_hunt_band(int(picked.get("entity", -1)))
         _build_herd_assign_controls(herd, target)))
     # Distance-aware: a LOCAL hunt when the herd is within the SELECTED band's hunt_reach, a hunting
     # EXPEDITION when it's beyond. Distance is wrap-aware from the picked band's OWN tile — every part
@@ -5259,15 +5228,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
-    if not (_hunt_assign_policy in hunt_options) \
-            or not _gate_reasons(hunt_gates, _hunt_assign_policy).is_empty():
-        _hunt_assign_policy = DEFAULT_HUNT_POLICY
+    if not (_compose.hunt_policy() in hunt_options) \
+            or not _gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty():
+        _compose.set_hunt_policy(DEFAULT_HUNT_POLICY)
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
-    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, _hunt_assign_policy)
+    var forecast := _forecast_inputs(herd, SOURCE_KIND_HERD, BARE_FORECAST_PREFIX, _compose.hunt_policy())
     # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
     #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
     #       what you give up, for how long, to get what. That IS the Corral decision, and the local
@@ -5293,24 +5262,23 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # always staffable. `herders_needed == 0` on a wild herd, so max(take-useful, 0) is a no-op there. The
     # expedition party has no herding crew, so `_expedition_useful_cap` is left alone.
     var herd_floor := int(herd.get("herders_needed", 0))
-    var capped := _expedition_useful_cap(band, herd, _hunt_assign_policy, assignable) if is_expedition \
+    var capped := _expedition_useful_cap(band, herd, _compose.hunt_policy(), assignable) if is_expedition \
         else _forecast_worker_cap(forecast, assignable, herd_floor)
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
     # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy
     # click (both branches), never by a −/+ tick, so manual counts survive the rebuild.
-    if _hunt_assign_autofill:
-        _hunt_assign_count = cap
-        _hunt_assign_autofill = false
-    _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
+    if _compose.consume_hunt_autofill():
+        _compose.set_hunt_count(cap)
+    _compose.clamp_hunt_count(cap)
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
-    var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) \
+    var crew_label := HERD_CREW_LABEL if _is_managed_hunt_source(herd, _compose.hunt_policy()) \
         else HUNT_CREW_LABEL
     target.add_child(_build_worker_stepper(
-        "Party" if is_expedition else crew_label, _hunt_assign_count, _hunt_assign_count < cap,
+        "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
-            _hunt_assign_count = clampi(n, 0, cap)
+            _compose.set_hunt_count(clampi(n, 0, cap))
             _build_herd_assign_controls(herd, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
@@ -5322,17 +5290,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var policy_takes := _expedition_policy_takes(band, herd) if is_expedition \
         else _hunt_policy_takes(herd)
     target.add_child(_build_policy_picker(func(policy: String) -> void:
-        _hunt_assign_policy = policy
+        _compose.set_hunt_policy(policy)
         # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
-        _hunt_assign_autofill = true
-        _build_herd_assign_controls(herd, target), _hunt_assign_policy, hunt_options, hunt_gates, policy_takes))
+        _compose.arm_hunt_autofill()
+        _build_herd_assign_controls(herd, target), _compose.hunt_policy(), hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
     # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
     # promise the expedition player a payoff the sim never pays.
     if forecast_active:
         target.add_child(
-            _forecast_yield_row(forecast, _hunt_assign_count, band, crew_label))
+            _forecast_yield_row(forecast, _compose.hunt_count(), band, crew_label))
     if is_expedition:
         target.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -5346,7 +5314,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # `trip`, NOT `forecast`: the outer `forecast` is the LOCAL hunt's per-turn ceiling inputs
         # (client arithmetic over the BAND flow ceiling). This one is the sim's forward-simulated TRIP
         # estimate — a pure table lookup, zero client arithmetic. The two must never be confused.
-        var trip := _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)
+        var trip := _hunt_trip_forecast(band, herd, _compose.hunt_policy(), _compose.hunt_count())
         var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
             target.add_child(_forecast_label(forecast_line))
@@ -5363,15 +5331,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # carries the consequence — above all what Sustain actually teaches, which is otherwise
         # invisible). Deliberately NOT the expedition hints: a party earns neither.
         target.add_child(_alloc_hint_label(
-            String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
+            String(LOCAL_HUNT_POLICY_HINTS.get(_compose.hunt_policy(), ""))))
         # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
         # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
         # an extractive rung (an investment rung shows a dip→payoff, not an animal cadence, so it's
         # skipped), as a STABLE herd-level statement: the span is keyed off the selected policy's flow
         # ceiling (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never
         # blinks out. Skipped only when the window is unknown (missing food_per_animal / ceiling).
-        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
-            var window_turns := _hunt_avg_window_turns(herd, _hunt_assign_policy)
+        if not (_compose.hunt_policy() in INVESTMENT_POLICIES):
+            var window_turns := _hunt_avg_window_turns(herd, _compose.hunt_policy())
             if window_turns > 0:
                 target.add_child(_alloc_hint_label(
                     HUNT_AVG_WINDOW_FORMAT % window_turns))
@@ -5388,9 +5356,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # (`forecast_active`) or by Tame's row, and rendering both put two rows with the same number
         # on the panel. See the ONE-yield-row-per-rung note there. Tested against the named rung set,
         # NOT `forecast["investment"]` (which is really "has a payoff key" and so misses Tame).
-        if not (_hunt_assign_policy in INVESTMENT_POLICIES):
+        if not (_compose.hunt_policy() in INVESTMENT_POLICIES):
             var yield_line := _local_hunt_preview_bbcode(
-                band, herd, _hunt_assign_policy, _hunt_assign_count)
+                band, herd, _compose.hunt_policy(), _compose.hunt_count())
             if yield_line != "":
                 target.add_child(_forecast_label(yield_line))
         assign_btn.text = ASSIGN_LOCAL_HUNT_BUTTON
@@ -5399,25 +5367,25 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
         # `_style_send_hunt_button` already disabled it when the raid returns empty (no surplus); a
         # positive party is the other precondition. (`or` — never clear a disable the style step set.)
-        assign_btn.disabled = assign_btn.disabled or _hunt_assign_count <= 0
+        assign_btn.disabled = assign_btn.disabled or _compose.hunt_count() <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _hunt_assign_count <= 0 or _hunt_trip_no_surplus(
-                    _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)):
+            if _compose.hunt_count() <= 0 or _hunt_trip_no_surplus(
+                    _hunt_trip_forecast(band, herd, _compose.hunt_policy(), _compose.hunt_count())):
                 return
             emit_signal("send_hunt_expedition_requested", {
                 "faction": int(band.get("faction", PLAYER_FACTION_ID)),
                 "band": int(band.get("entity", -1)),
-                "party_workers": _hunt_assign_count,
+                "party_workers": _compose.hunt_count(),
                 "fauna_id": herd_id,
                 "fauna_label": _herd_display_name(herd),
-                "policy": _hunt_assign_policy if _hunt_assign_policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
+                "policy": _compose.hunt_policy() if _compose.hunt_policy() in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
             })
             # Committing is the end of the compose act — return to the read state (§15).
             close_compose_sheet())
     else:
         assign_btn.pressed.connect(func() -> void:
-            _emit_assign_labor(band, LABOR_KIND_HUNT, _hunt_assign_count,
-                herd_x, herd_y, herd_id, _hunt_assign_policy)
+            _emit_assign_labor(band, LABOR_KIND_HUNT, _compose.hunt_count(),
+                herd_x, herd_y, herd_id, _compose.hunt_policy())
             close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -5712,7 +5680,7 @@ func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
 ## the opposite of "work harder" (ease off and let it recover), the same shape as the patch-ecology
 ## gate's advice. Returns "" when Tame is not selected or the herd is Thriving (nothing to explain).
 func _tame_stalled_hint(herd: Dictionary) -> String:
-    if _hunt_assign_policy != LABOR_POLICY_TAME:
+    if _compose.hunt_policy() != LABOR_POLICY_TAME:
         return ""
     var phase := String(herd.get("ecology_phase", "")).strip_edges().to_lower()
     if phase == "" or phase == ECOLOGY_PHASE_THRIVING:
@@ -5739,7 +5707,11 @@ func _build_policy_picker(
     takes: Dictionary = {},
     columns: int = 0,
     collapse_other_gates: bool = false) -> VBoxContainer:
-    var current := selected if selected != "" else _hunt_assign_policy
+    # PRESERVED VERBATIM (HUD decomposition Phase 2c-1): with no explicit `selected`, this falls back
+    # to the HERD DRAWER's composed rung — so a work-inspector or party-compose render reads the
+    # drawer's state. A real cross-boundary read, arguably a latent bug; it is fixed as its own
+    # labelled change, never as a side effect of the state lift.
+    var current := selected if selected != "" else _compose.hunt_policy()
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
@@ -6008,20 +5980,18 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # When the selected tile changes, default the actor band to the resolved band (and re-seed
     # the count from its staffing); otherwise preserve the picked band + count across the
     # per-snapshot re-renders of the same tile.
-    var source_changed := _forage_assign_key != key
+    var source_changed := _compose.forage_key() != key
     if source_changed:
-        _forage_assign_key = key
-        _forage_assign_band = int(resolved.get("entity", -1))
-    var band := _player_band_by_entity(_forage_assign_band)
+        _compose.begin_forage_source(key, int(resolved.get("entity", -1)))
+    var band := _player_band_by_entity(_compose.forage_band())
     if band.is_empty():
         band = resolved
-        _forage_assign_band = int(band.get("entity", -1))
+        _compose.set_forage_band(int(band.get("entity", -1)))
     if source_changed:
+        # `seed_forage` also clears the crop: a crop pick belongs to the PATCH it was made on, and a
+        # new tile has a different basket.
         var staffed := _workers_for_forage(band, x, y)
-        _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
-        _forage_assign_policy = _policy_for_forage(band, x, y)
-        # A crop pick belongs to the PATCH it was made on — a new tile has a different basket.
-        _forage_assign_species = ""
+        _compose.seed_forage(staffed if staffed > 0 else WORKER_STEP, _policy_for_forage(band, x, y))
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_forage_workers(band, x, y)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(LABOR_KIND_FORAGE, x, y, ""))
@@ -6035,7 +6005,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Which band supplies the foragers (above the stepper). Switching re-runs the range check below
     # for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
-        _forage_assign_band = int(picked.get("entity", -1))
+        _compose.set_forage_band(int(picked.get("entity", -1)))
         _build_forage_assign_controls(tile_info, target)))
     # Forage take policy (Sustain/Surplus/Market/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
@@ -6043,38 +6013,38 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var forage_gates := _forage_policy_gates(tile_info)
     # A gated rung can never be the composed policy — the patch may have left Thriving under a
     # standing Cultivate selection, so re-validate every render, not just on a tile change.
-    if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
-            or not _gate_reasons(forage_gates, _forage_assign_policy).is_empty():
-        _forage_assign_policy = DEFAULT_HUNT_POLICY
+    if not (_compose.forage_policy() in FORAGE_POLICY_OPTIONS) \
+            or not _gate_reasons(forage_gates, _compose.forage_policy()).is_empty():
+        _compose.set_forage_policy(DEFAULT_HUNT_POLICY)
     # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
     # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
     # like Corral — their dip→payoff is stated by the forecast row below).
     var forage_takes := _forage_policy_takes(tile_info)
     target.add_child(_build_policy_picker(func(policy: String) -> void:
-        _forage_assign_policy = policy
+        _compose.set_forage_policy(policy)
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
-        _forage_assign_autofill = true
-        _build_forage_assign_controls(tile_info, target), _forage_assign_policy, FORAGE_POLICY_OPTIONS,
+        _compose.arm_forage_autofill()
+        _build_forage_assign_controls(tile_info, target), _compose.forage_policy(), FORAGE_POLICY_OPTIONS,
         forage_gates, forage_takes, POLICY_PICKER_AUTO_COLUMNS,
         # Collapse the OTHER rungs' reasons only while a committing rung is composed — that is the one
         # card that also carries the crop picker, and the only place the height is not there.
-        _forage_assign_policy in FLORA_COMMITTING_POLICIES))
-    target.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
+        _compose.forage_policy() in FLORA_COMMITTING_POLICIES))
+    target.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_compose.forage_policy(), ""))))
     # WHICH CROP this rung commits the patch to (flora roster S1). Only the two COMMITTING rungs show
     # it; the selection is re-resolved every render (a policy switch changes which plants are legal),
-    # so `_forage_assign_species` can never name a plant this tile+rung cannot take — and "" always
+    # so the composed crop can never name a plant this tile+rung cannot take — and "" always
     # remains valid, meaning "take the sim's default".
     var basket := _flora_basket_entries(tile_info.get("patch_composition", []))
     var committed_crop := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
     var is_committed := String(tile_info.get("patch_committed_species", "")).strip_edges() != "" \
         and committed_crop != ""
-    _forage_assign_species = _resolve_crop_selection(
-        basket, _forage_assign_policy, is_committed, _forage_assign_species)
-    if _forage_assign_policy in FLORA_COMMITTING_POLICIES:
-        var crop_picker := _build_crop_picker(basket, _forage_assign_policy, _forage_assign_species,
+    _compose.resolve_forage_species(func(current: String) -> String:
+        return _resolve_crop_selection(basket, _compose.forage_policy(), is_committed, current))
+    if _compose.forage_policy() in FLORA_COMMITTING_POLICIES:
+        var crop_picker := _build_crop_picker(basket, _compose.forage_policy(), _compose.forage_species(),
             committed_crop if is_committed else "",
             func(species: String) -> void:
-                _forage_assign_species = species
+                _compose.set_forage_species(species)
                 _build_forage_assign_controls(tile_info, target))
         if crop_picker != null:
             target.add_child(crop_picker)
@@ -6083,25 +6053,24 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
     # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
     # switching policy moves the cap).
-    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    var forecast := _forecast_inputs(tile_info, SOURCE_KIND_FORAGE, FORAGE_FORECAST_PREFIX, _compose.forage_policy())
     # THE "→ then" TERM FOLLOWS THE CROP. `_forecast_inputs` answers for the patch, which is species-
-    # blind; once a crop is committed the payoff is that crop's. `basket` and `_forage_assign_species`
+    # blind; once a crop is committed the payoff is that crop's. `basket` and the composed crop
     # are resolved above, and the picker's own handler rebuilds these whole controls, so changing the
     # selection moves this line on the same frame. Only `payoff` is substituted — the ceiling and the
     # per-worker rate still describe the PATCH, which is what caps the stepper.
-    forecast = _forecast_for_selected_crop(forecast, basket, _forage_assign_policy, _forage_assign_species)
+    forecast = _forecast_for_selected_crop(forecast, basket, _compose.forage_policy(), _compose.forage_species())
     var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
     # the policy (clamped to available below). Only ever set by a policy click, never by a −/+ tick.
-    if _forage_assign_autofill:
-        _forage_assign_count = cap
-        _forage_assign_autofill = false
-    _forage_assign_count = clampi(_forage_assign_count, 0, cap)
+    if _compose.consume_forage_autofill():
+        _compose.set_forage_count(cap)
+    _compose.clamp_forage_count(cap)
     target.add_child(_build_worker_stepper(
-        FORAGE_CREW_LABEL, _forage_assign_count, _forage_assign_count < cap,
+        FORAGE_CREW_LABEL, _compose.forage_count(), _compose.forage_count() < cap,
         func(n: int) -> void:
-            _forage_assign_count = clampi(n, 0, cap)
+            _compose.set_forage_count(clampi(n, 0, cap))
             _build_forage_assign_controls(tile_info, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
@@ -6115,23 +6084,23 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     #     always allowed"). Live button, renamed, and NO "assign to begin" line — a panel whose button
     #     says Unassign above a line reading "assign to begin" tells the player two opposite things.
     # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
-    var is_unassign := _forage_assign_count <= 0 and current > 0
-    var is_noop := _forage_assign_count <= 0 and current <= 0
+    var is_unassign := _compose.forage_count() <= 0 and current > 0
+    var is_noop := _compose.forage_count() <= 0 and current <= 0
     # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
     # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
     # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
     # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
     # warning an Eradicate/Market forage used to render silently.
-    if _forage_assign_policy in INVESTMENT_POLICIES:
+    if _compose.forage_policy() in INVESTMENT_POLICIES:
         # Nothing is forecast for an unassign — see is_unassign above. What abandoning costs is already
         # on the card in the rung's own policy hint ("It must stay staffed or it goes feral"), so a
         # second warning here would state one fact twice.
         if bool(forecast["known"]) and not is_unassign:
             target.add_child(
-                _forecast_yield_row(forecast, _forage_assign_count, band, FORAGE_CREW_LABEL))
+                _forecast_yield_row(forecast, _compose.forage_count(), band, FORAGE_CREW_LABEL))
     else:
         var yield_line := _local_forage_preview_bbcode(
-            band, tile_info, _forage_assign_policy, _forage_assign_count)
+            band, tile_info, _compose.forage_policy(), _compose.forage_count())
         if yield_line != "":
             target.add_child(_forecast_label(yield_line))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
@@ -6155,8 +6124,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range or is_noop
     assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "",
-            _forage_assign_policy, _forage_assign_species)
+        _emit_assign_labor(band, LABOR_KIND_FORAGE, _compose.forage_count(), x, y, "",
+            _compose.forage_policy(), _compose.forage_species())
         close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -6192,8 +6161,7 @@ func close_compose_sheet() -> void:
 ## The sheet reports itself closed (including when WE closed it) — drop the compose state so the two
 ## can never disagree, and restore the drawer's read state so its button un-presses.
 func _on_compose_sheet_closed() -> void:
-    _compose_kind = COMPOSE_KIND_NONE
-    _compose_subject = ""
+    _compose.clear_composing()
     _refresh_drawer_actions()
 
 ## The rect the sheet floats beside: the selection card, so the subject list + standing summary it
@@ -6224,20 +6192,19 @@ func _forage_source_key(tile_info: Dictionary) -> String:
 ## The crew noun the sheet's stepper uses for this herd — herders on a MANAGED (corralled/pastoral)
 ## herd, hunters on a wild one. Read by the drawer button too, so the two always agree.
 func _herd_crew_noun(herd: Dictionary) -> String:
-    return HERD_CREW_LABEL if _is_managed_hunt_source(herd, _hunt_assign_policy) else HUNT_CREW_LABEL
+    return HERD_CREW_LABEL if _is_managed_hunt_source(herd, _compose.hunt_policy()) else HUNT_CREW_LABEL
 
 func _open_forage_compose(tile_info: Dictionary) -> void:
     if not _forage_compose_available(tile_info):
         return
     _ensure_compose_sheet()
-    _compose_kind = COMPOSE_KIND_FORAGE
-    _compose_subject = _forage_source_key(tile_info)
+    _compose.set_composing(COMPOSE_KIND_FORAGE, _forage_source_key(tile_info))
     var subject := String(tile_info.get("food_module_label", "")).strip_edges()
     if subject == "":
         subject = _format_food_module_label(String(tile_info.get("food_module", "")))
     var content := _compose_sheet.open(
         COMPOSE_SHEET_EYEBROW_FORMAT % FORAGE_CREW_LABEL.to_lower(),
-        subject, _compose_subject, _compose_anchor_rect())
+        subject, _compose.subject(), _compose_anchor_rect())
     _build_forage_assign_controls(tile_info, content)
     _refresh_drawer_actions()
 
@@ -6245,11 +6212,10 @@ func _open_herd_compose(herd: Dictionary) -> void:
     if not _herd_compose_available(herd):
         return
     _ensure_compose_sheet()
-    _compose_kind = COMPOSE_KIND_HERD
-    _compose_subject = String(herd.get("id", ""))
+    _compose.set_composing(COMPOSE_KIND_HERD, String(herd.get("id", "")))
     var content := _compose_sheet.open(
         COMPOSE_SHEET_EYEBROW_FORMAT % _herd_crew_noun(herd).to_lower(),
-        _herd_display_name(herd), _compose_subject, _compose_anchor_rect())
+        _herd_display_name(herd), _compose.subject(), _compose_anchor_rect())
     _build_herd_assign_controls(herd, content)
     _refresh_drawer_actions()
 
@@ -6260,15 +6226,15 @@ func _open_herd_compose(herd: Dictionary) -> void:
 func _refresh_compose_sheet() -> void:
     if not is_compose_sheet_open():
         return
-    match _compose_kind:
+    match _compose.kind():
         COMPOSE_KIND_FORAGE:
-            if _forage_source_key(_selection.tile_info()) != _compose_subject \
+            if _forage_source_key(_selection.tile_info()) != _compose.subject() \
                     or not _forage_compose_available(_selection.tile_info()):
                 close_compose_sheet()
                 return
             _build_forage_assign_controls(_selection.tile_info(), _compose_sheet.content())
         COMPOSE_KIND_HERD:
-            if String(_selection.herd().get("id", "")) != _compose_subject \
+            if String(_selection.herd().get("id", "")) != _compose.subject() \
                     or not _herd_compose_available(_selection.herd()):
                 close_compose_sheet()
                 return
@@ -6415,7 +6381,7 @@ func _update_compose_open_button(button: Button, noun: String, subject_key: Stri
     if button == null:
         return
     button.text = COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
-    var composing := is_compose_sheet_open() and _compose_subject == subject_key
+    var composing := is_compose_sheet_open() and _compose.subject() == subject_key
     HudStyle.apply_button(button, "primary" if composing else "ghost")
 
 ## The `Assign … ▸` button. It lights "primary" (SIGNAL cyan — this HUD's LIVE state, as on the
@@ -6425,7 +6391,7 @@ func _update_compose_open_button(button: Button, noun: String, subject_key: Stri
 func _build_compose_open_button(noun: String, subject_key: String, on_press: Callable) -> Button:
     var button := Button.new()
     button.text = COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
-    var composing := is_compose_sheet_open() and _compose_subject == subject_key
+    var composing := is_compose_sheet_open() and _compose.subject() == subject_key
     HudStyle.apply_button(button, "primary" if composing else "ghost")
     button.pressed.connect(on_press)
     return button
@@ -6641,12 +6607,12 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
         return
     # NO no-surplus check here: no policy is chosen yet, so that verdict is unknowable. It lives
     # entirely on the sheet's Send button, which has every input.
-    _send_party_quarry_id = fauna_id
+    _compose.set_party_quarry(fauna_id)
     # Fill the party to this herd's max-useful cap for the default policy, same one-shot a policy
     # click sets. Party size is meaningless until the quarry is known (the useful count is a property
     # of the HERD), so picking one is the first moment we CAN default it — "give me everyone this raid
     # can use". Consumed on the next render before the clamp; a −/+ tick still overrides freely.
-    _send_party_autofill = true
+    _compose.arm_party_autofill()
     _pending_pick_quarry = {}
     _refresh_targeting()
     _rerender_panel_allocation()
@@ -6775,7 +6741,6 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
     _selection.select_tile(tile_info.duplicate(true) if tile_info is Dictionary else {})
-    _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
     _render_selection_panel(_selection.tile_info(), {}, {})
     _try_dispatch_pending_move_band(_selection.tile_info())
     _try_dispatch_pending_send_expedition(_selection.tile_info())
@@ -6799,7 +6764,6 @@ func show_unit_selection(unit_data: Dictionary) -> void:
         tile_info = _selection.tile_info()
     _selection.set_tile_info(tile_info)
     _selection.select_unit(unit_data.duplicate(true))
-    _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, _selection.unit(), {})
 
 func show_herd_selection(herd_data: Dictionary) -> void:
@@ -6817,7 +6781,6 @@ func show_herd_selection(herd_data: Dictionary) -> void:
         tile_info = _selection.tile_info()
     _selection.set_tile_info(tile_info)
     _selection.select_herd(herd_data.duplicate(true))
-    _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, {}, _selection.herd())
 
 ## True when the currently-selected tile is the same hex the herd occupies, so it
@@ -6852,7 +6815,6 @@ func reapply_selection(kind: String, data: Dictionary) -> void:
             _render_selection_panel(_selection.tile_info(), {}, _selection.herd())
         "tile":
             _selection.select_tile(data.duplicate(true) if data is Dictionary else {})
-            _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
             _render_selection_panel(_selection.tile_info(), {}, {})
         _:
             # Selected occupant vanished (e.g. the band expired). Drop to its last tile
@@ -6869,7 +6831,6 @@ func _adopt_tile_info_from(occupant: Dictionary) -> void:
     var ti_variant: Variant = occupant.get("tile_info", {})
     if ti_variant is Dictionary and not (ti_variant as Dictionary).is_empty():
         _selection.set_tile_info((ti_variant as Dictionary).duplicate(true))
-    _selected_food_module = String(_selection.tile_info().get("food_module", "")).strip_edges()
 
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
@@ -7185,7 +7146,7 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
     # cycler swapping the panel subject must not carry one across.
     if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
-        _send_party_quarry_id = ""
+        _compose.clear_party_quarry()
     # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
     # selection path passes it in). The panel persists across selection changes, so it needs its
     # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)
@@ -8431,8 +8392,6 @@ func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
     _selection.select_land()
-    _selected_food_module = ""
-    _selected_food_is_hunt = false
     # Keep pending move-band so the user can still choose a destination after deselecting.
     if _selection.tile_info().is_empty():
         _hide_selection_card()

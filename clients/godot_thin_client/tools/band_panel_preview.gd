@@ -403,10 +403,10 @@ func _ready() -> void:
 	_panel.set_active_tab(&"parties")
 	_hud._party_compose_open = true
 	_hud._party_compose_mission = "hunt"
-	_hud._send_party_quarry_id = QUARRY_FAR_HERD_ID
+	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
 	# Picking a quarry fills the party to its max-useful cap (the one-shot `_try_pick_quarry` sets);
 	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
-	_hud._send_party_autofill = true
+	_hud._compose.arm_party_autofill()
 	_hud._rerender_panel_allocation()
 	await _settle()
 	await _save("band_panel_compose_hunt")
@@ -416,7 +416,7 @@ func _ready() -> void:
 
 	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
 	# below it, since policy/party/forecast are all unanswerable without a herd.
-	_hud._send_party_quarry_id = ""
+	_hud._compose.clear_party_quarry()
 	_hud._rerender_panel_allocation()
 	await _settle()
 	await _save("band_panel_compose_hunt_no_quarry")
@@ -434,7 +434,7 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_hud._party_compose_open = false
 	_hud._party_compose_mission = ""
-	_hud._send_party_quarry_id = ""
+	_hud._compose.clear_party_quarry()
 
 	# Zero idle workers: BOTH mission buttons (Scout / Hunt) stay VISIBLE and DISABLED, with the
 	# shared reason line beneath them.
@@ -991,7 +991,7 @@ func _quarry_tile_info(herd: Dictionary) -> Dictionary:
 ## A hunting PARTY is for game the band cannot work from home, so the quarry picker must refuse a herd
 ## inside the band's `hunt_reach` (`Hud._is_expedition_quarry`) — the near herd is a LOCAL hunt. This
 ## is behavioural, not pictorial: the refusal happens at the click, which no frame can show. Verified
-## to FAIL (the near herd is accepted, `_send_party_quarry_id` = the near id) with the eligibility test
+## to FAIL (the near herd is accepted, `_compose.party_quarry_id()` = the near id) with the eligibility test
 ## removed from `_try_pick_quarry`.
 func _assert_quarry_eligibility() -> void:
 	var herds := _quarry_herd_fixtures()
@@ -999,21 +999,21 @@ func _assert_quarry_eligibility() -> void:
 	var near: Dictionary = herds[1]
 	_hud.update_herds(herds)
 	# NEAR — inside hunt reach: refused, and targeting stays armed so the player can pick again.
-	_hud._send_party_quarry_id = ""
+	_hud._compose.clear_party_quarry()
 	_hud._pending_pick_quarry = {"band": _band_fixture()}
 	_hud._try_pick_quarry(_quarry_tile_info(near))
-	assert(_hud._send_party_quarry_id == "",
+	assert(_hud._compose.party_quarry_id() == "",
 		"band_panel_preview: a herd INSIDE hunt reach was accepted as a quarry (%s)" \
-		% _hud._send_party_quarry_id)
+		% _hud._compose.party_quarry_id())
 	assert(not _hud._pending_pick_quarry.is_empty(),
 		"band_panel_preview: the refused pick dropped out of targeting instead of staying armed")
 	# FAR — beyond hunt reach: accepted, and the pick ends targeting.
 	_hud._try_pick_quarry(_quarry_tile_info(far))
-	assert(_hud._send_party_quarry_id == QUARRY_FAR_HERD_ID,
+	assert(_hud._compose.party_quarry_id() == QUARRY_FAR_HERD_ID,
 		"band_panel_preview: a herd BEYOND hunt reach was refused as a quarry (%s)" \
-		% _hud._send_party_quarry_id)
+		% _hud._compose.party_quarry_id())
 	_hud._pending_pick_quarry = {}
-	_hud._send_party_quarry_id = ""
+	_hud._compose.clear_party_quarry()
 	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
 
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
