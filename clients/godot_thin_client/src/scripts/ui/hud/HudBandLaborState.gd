@@ -119,6 +119,13 @@ func find_world_herd(herd_id: String) -> Dictionary:
 			return herd
 	return {}
 
+## The herd a hunting party is bound to, resolved from the live telemetry; {} for a scout party, a
+## party whose target was lost/replaced, or an unknown id. The stateless detail layer takes this as a
+## PARAMETER (`DetailFormat.expedition_row_tooltip` / `expedition_next_delivery_line`), so the id →
+## herd step lives here rather than being spelled at each of its three call sites.
+func expedition_target_herd(exp: Dictionary) -> Dictionary:
+	return find_world_herd(String(exp.get("expedition_target_herd", "")).strip_edges())
+
 ## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
 ## there. "" when the tile has no known module (undiscovered), so the row renders bare rather than
 ## with a misleading fallback sprig.

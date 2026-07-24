@@ -692,6 +692,13 @@ func _ecology_tier_color(phase: String) -> Color:
 		return HudStyle.WARN
 	return HudStyle.HEALTHY
 
+## The selected tile's biome name, stripped ("" when none). Public because the band detail lines take
+## it as a PARAMETER rather than holding the selection model (`BandDetailLines` — the morale row's
+## "it's the hex you're on" payload is the ONLY thing those producers ever asked the selection for),
+## and both their hosts resolve it through here so the read is written once.
+func selected_terrain_label() -> String:
+	return String(_selection.tile_info().get("terrain_label", "")).strip_edges()
+
 ## The roster occupant matching `entity_id`. Public because the band/labor navigation
 ## (`BandPanelController._select_band_on_map` / `select_expedition`, HudLayer's `_herd_label_for_id`)
 ## resolves through it.

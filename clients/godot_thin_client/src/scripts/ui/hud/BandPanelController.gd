@@ -20,17 +20,11 @@ extends RefCounted
 ## injected?" (`_refresh_disclosure_hosts` and `_render_occupant_drawer`, which forks the band detail
 ## into the dock when one is), so they ask `has_panel()` instead of holding the node.
 ##
-## THE BOUNDARY BACK TO `HudLayer` IS NINE CALLABLES, each retained there for a reason the
+## THE BOUNDARY BACK TO `HudLayer` IS SIX CALLABLES, each retained there for a reason the
 ## "an injection you still have to hold is relocated, not eliminated" test settles:
 ##   • `_emit_assign_labor` — owns the `assign_labor_requested` emit, the optimistic pending write and
 ##     `_after_pending_change()`. So `assign_labor` stays INDIRECT here, while the three commands with
 ##     no other emitter (`cancel_order` / `send_hunt_expedition` / `recall_expedition`) are signals.
-##   • `_unit_summary_lines` / `_expedition_summary_lines` — the two detail-line PRODUCERS. They read
-##     `_selection` and fill a `DetailFormat.Context`, and the Occupants-card drawer renders from the
-##     same pair; they travel when the producers do.
-##   • `_expedition_row_tooltip` — one call site here, but its own subtree
-##     (`_expedition_delivery_tooltip_line` → `_expedition_next_delivery_line`) is shared with
-##     `_expedition_summary_lines`, so moving it would only trade one injection for another.
 ##   • `_herd_label_for_id` — the herd vocabulary, also read by the targeting banner + command feed.
 ##   • `_on_send_expedition_pressed` + the QUARRY TRIO (`_on_pick_quarry_pressed` /
 ##     `_cancel_pending_pick_quarry` / `_is_expedition_quarry`) — HudLayer's targeting machinery, which
@@ -38,9 +32,13 @@ extends RefCounted
 ##     considered and rejected: `HudLayer` would still construct it from the same three Callables.
 ##
 ## Everything else arrives as a collaborator: the two state models, the selection card (roster lookup +
-## pinning, for the map-focus routing), the disclosure cluster (`wire_label` for the vitals row), and a
-## HOST node — a `RefCounted` cannot `add_child`, and `_confirm_destructive` parents a
-## `ConfirmationDialog` exactly as `TurnOrbController` parents its fork panel.
+## pinning, for the map-focus routing, and the one selection read the vitals rows need —
+## `selected_terrain_label`), the disclosure cluster (`wire_label` for the vitals row), the BAND
+## DETAIL-LINE producers (`BandDetailLines`, a typed ref — the three `*_fn` Callables it replaced,
+## `_unit_summary_lines` / `_expedition_summary_lines` / `_expedition_row_tooltip`, are gone with their
+## adapters; the tooltip is a static `DetailFormat` call now), and a HOST node — a `RefCounted` cannot
+## `add_child`, and `_confirm_destructive` parents a `ConfirmationDialog` exactly as
+## `TurnOrbController` parents its fork panel.
 ##
 ## The word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the
 ## same convention `HudWidgets` / `HudFormat` / `TopBarReadouts` / `SelectionCardController` /
@@ -66,16 +64,15 @@ var _compose: ComposeState = null
 var _selectioncard: SelectionCardController = null
 # Read for `wire_label` ONLY — the vitals row's Food/Morale carets.
 var _disclosures: DisclosureController = null
+# The band/party detail-line producers behind the vitals label + the parties inspector strip.
+var _banddetail: BandDetailLines = null
 # The HUD CanvasLayer, so this RefCounted has a node to parent the confirm dialog into.
 var _host: Node = null
 
-# --- The nine retained HudLayer helpers, injected as Callables (see the class header) ---
+# --- The six retained HudLayer helpers, injected as Callables (see the class header) ---
 # Each is reached through a typed adapter below rather than called raw: `Callable.call` returns
 # `Variant`, which would push an untyped value into every consumer here.
 var _emit_assign_labor_fn: Callable
-var _unit_summary_lines_fn: Callable
-var _expedition_summary_lines_fn: Callable
-var _expedition_row_tooltip_fn: Callable
 var _herd_label_for_id_fn: Callable
 var _on_send_expedition_pressed_fn: Callable
 var _on_pick_quarry_pressed_fn: Callable
@@ -120,48 +117,31 @@ var _send_expedition_count: int = HudLayer.WORKER_STEP
 var _send_hunt_policy: String = HudLayer.DEFAULT_HUNT_POLICY
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
-        selectioncard: SelectionCardController, disclosures: DisclosureController, host: Node,
-        emit_assign_labor: Callable, unit_summary_lines: Callable, expedition_summary_lines: Callable,
-        expedition_row_tooltip: Callable, herd_label_for_id: Callable,
+        selectioncard: SelectionCardController, disclosures: DisclosureController,
+        banddetail: BandDetailLines, host: Node,
+        emit_assign_labor: Callable, herd_label_for_id: Callable,
         on_send_expedition_pressed: Callable, on_pick_quarry_pressed: Callable,
         cancel_pending_pick_quarry: Callable, is_expedition_quarry: Callable) -> void:
     _band_labor = band_labor
     _compose = compose
     _selectioncard = selectioncard
     _disclosures = disclosures
+    _banddetail = banddetail
     _host = host
     _emit_assign_labor_fn = emit_assign_labor
-    _unit_summary_lines_fn = unit_summary_lines
-    _expedition_summary_lines_fn = expedition_summary_lines
-    _expedition_row_tooltip_fn = expedition_row_tooltip
     _herd_label_for_id_fn = herd_label_for_id
     _on_send_expedition_pressed_fn = on_send_expedition_pressed
     _on_pick_quarry_pressed_fn = on_pick_quarry_pressed
     _cancel_pending_pick_quarry_fn = cancel_pending_pick_quarry
     _is_expedition_quarry_fn = is_expedition_quarry
 
-# ---- Typed adapters over the nine injected HudLayer helpers ------------------------------------
+# ---- Typed adapters over the six injected HudLayer helpers -------------------------------------
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
 ## the optimistic pending-labor write and `_after_pending_change()`.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         policy: String, species: String = "") -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species)
-
-## The band summary rows, filling `ctx` as it emits them. Retained on HudLayer with the Occupants-card
-## drawer that renders the same lines.
-func _unit_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context) -> Array[String]:
-    return _unit_summary_lines_fn.call(unit_data, ctx)
-
-## The in-flight party's summary rows (the parties inspector strip). Retained on HudLayer beside
-## `_unit_summary_lines`, which dispatches to it for an expedition.
-func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
-    return _expedition_summary_lines_fn.call(unit_data, null)
-
-## A party row's hover text. Retained on HudLayer because its delivery-line subtree is shared with
-## `_expedition_summary_lines`.
-func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
-    return _expedition_row_tooltip_fn.call(exp, phase)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -303,7 +283,7 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
 ## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
-## `_unit_summary_lines` as it emits the rows, and handed straight to the formatter.
+## `BandDetailLines.unit_summary_lines` as it emits the rows, and handed straight to the formatter.
 func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     var detail_label := RichTextLabel.new()
     detail_label.bbcode_enabled = true
@@ -313,7 +293,8 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _disclosures.wire_label(detail_label)
     var ctx := DetailFormat.Context.new()
-    detail_label.text = DetailFormat.detail_bbcode(_unit_summary_lines(band, ctx), ctx)
+    detail_label.text = DetailFormat.detail_bbcode(
+        _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx), ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
@@ -1101,7 +1082,7 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     close.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     head.add_child(close)
     col.add_child(head)
-    for line in _expedition_summary_lines(exp):
+    for line in _banddetail.expedition_summary_lines(exp):
         col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM))
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", HudLayer.COMPOSITION_KEY_SEPARATION)
@@ -1129,7 +1110,8 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     HudStyle.apply_button(body, "ghost")
     if phase == HudLayer.EXPEDITION_PHASE_AWAITING:
         body.add_theme_color_override("font_color", HudStyle.WARN)
-    body.tooltip_text = _expedition_row_tooltip(exp, phase)
+    body.tooltip_text = DetailFormat.expedition_row_tooltip(
+        exp, phase, _band_labor.expedition_target_herd(exp))
     var entity := int(exp.get("entity", -1))
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
