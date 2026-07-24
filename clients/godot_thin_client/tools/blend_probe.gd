@@ -708,6 +708,34 @@ var _only: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
+	# FREEZE ANIMATION TIME (the `map_preview` treatment — see that harness's _ready). What it buys:
+	# with the canvas already pinned below, animated content was the ONLY remaining run-to-run
+	# difference here, so this is what makes the set a STRICT BIT-IDENTITY REFERENCE (230/230
+	# identical across runs) rather than 205 stable frames and 25 that drift. That matters because a
+	# frame that varies cannot be pixel-diffed to prove a refactor changed nothing — the property
+	# every MapView decomposition pass leans on, and the reference new fixtures get judged against.
+	# What it costs: any animation renders at a FIXED PHASE instead of wherever the clock landed.
+	# It affects exactly the 25 `BANK_*` frames — the only state here carrying a navigable river, and
+	# so the only consumer of the shader's `TIME * river_flow_speed` channel scroll; the other 205 are
+	# byte-identical with or without it (measured, not assumed: they moved 0 bytes).
+	#
+	# Nothing under test is erased by freezing at phase 0, and that was checked against the shader
+	# before it was taken. `terrain_blend.gdshader` reads TIME in exactly two places (the edge-class
+	# river pass and the navigable-channel pass) and BOTH enter identically, as a UV OFFSET:
+	# `ruv = <geometric map-space UV> + best_tangent * (TIME * river_flow_speed)`, feeding only the
+	# `river_tex` sample. Every term that decides whether water DRAWS is purely geometric and never
+	# samples TIME — the channel `alpha` and the bank `bank_alpha` are both
+	# `smoothstep(-river_softness, river_softness, <signed coverage>)`, and `class_mix` comes from
+	# coverage differences — so the channel, its banks, the taper and the corridor blend are untouched;
+	# only WHICH TEXELS of the water art land where is pinned. This harness itself has no
+	# time-dependent GDScript at all (no Time. reads, no tween, no pulse), and `_settle` waits on
+	# `process_frame`, which still fires at time_scale 0.
+	#
+	# RE-CHECK RULE for anything animated added later: an AMPLITUDE term (`A * sin(t)`) VANISHES at
+	# phase 0, and a frame that is deterministic because its subject disappeared is worse than one
+	# that varies. An offset (UV scroll) or a midpoint idiom (`0.5 + 0.5 * sin(t)`, which reads 0.5 at
+	# t = 0) survives. Classify the new term before trusting the freeze, exactly as above.
+	Engine.time_scale = 0.0
 	_parse_only()
 	var win := get_window()
 	_pin_canvas(win)
