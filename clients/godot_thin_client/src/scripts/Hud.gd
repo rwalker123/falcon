@@ -389,20 +389,16 @@ var _selectioncard: SelectionCardController = null
 # beside the lifecycle that opens it — a model holds pure data, never a scene handle. This state is
 # shared: BOTH HudLayer (the parties zone) and that controller (the drawer) hold the same instance.
 var _compose: ComposeState = null
-# One drawer fit in flight at a time — see `_fit_subject_drawer`.
-var _subject_fit_pending: bool = false
 # ---- Selection-card in-place update caches (docs/plan_hud_decomposition.md §2a) --------------
 # The selection card re-renders on EVERY snapshot; to avoid a one-frame teardown/reflow flash each
-# of these caches the last-rendered STRUCTURE of its widget, so an unchanged restate PATCHES the
+# controller caches the last-rendered STRUCTURE of its widget, so an unchanged restate PATCHES the
 # existing nodes in place instead of freeing + rebuilding them (rebuild only on a structural change).
 # The chip-slot / roster-row caches (`_tile_chip_slots` / `_subject_row_keys`) moved WITH the
-# identity/list code into `SelectionCardController` (Phase 2b), and the drawer-ACTIONS shape
-# signatures (`_forage_drawer_shape` / `_herd_drawer_shape`) moved WITH the drawer-action builders
-# into `DrawerComposeController` (Phase 2c-2b). What remains here is the drawer's RENDER diff state:
-# `_tile_detail_lines_cache` = the last land-drawer BBCode line array; `_subject_fit_last_height` =
-# the last-applied drawer content height (skips a same-height reflow).
-var _tile_detail_lines_cache: Array = []
-var _subject_fit_last_height: float = NAN
+# identity/list code into `SelectionCardController` (Phase 2b), the drawer-ACTIONS shape signatures
+# (`_forage_drawer_shape` / `_herd_drawer_shape`) moved WITH the drawer-action builders into
+# `DrawerComposeController` (Phase 2c-2b), and the drawer's RENDER diff state (`_tile_detail_lines_cache`
+# + the fit-flight/last-height guards) moved WITH the render dispatch into `SubjectDrawerController`
+# (Phase 2c-3).
 # The Food/Morale disclosure cluster (carets + the shared breakdown popover). Owns `_disclosure_state`
 # / the stashed payloads / the `PopupPanel`; `state()` feeds the per-render `DetailFormat.Context`.
 # The three per-render tint scalars it used to sit beside (`_selected_band_food_turns` / `_morale` /
@@ -1404,6 +1400,12 @@ var _drawercompose: DrawerComposeController = null
 # `%AllocationPanel` host that call in; the three methods Main reaches by name
 # (`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band`) stay here as thin delegators below.
 var _bandpanel: BandPanelController = null
+# The selection drawer's RENDER DISPATCH (HUD decomposition Phase 2c-3): the one-drawer land/occupant
+# dispatch, the land-drawer terrain-line producer, the `%AllocationPanel` occupant/expedition/band-move
+# branches, and the height-capping fit path. HudLayer keeps the reflectively-reached `_render_selection_panel`
+# and the two-host `_refresh_disclosure_hosts` calling in, and `_on_move_band_pressed` (the one injection,
+# targeting machinery). Constructed AFTER `_bandpanel` — it dispatches into it and `_drawercompose`.
+var _drawer: SubjectDrawerController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -1487,6 +1489,15 @@ func _ready() -> void:
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
+    # The selection drawer's render dispatch. Constructed AFTER `_bandpanel` + `_drawercompose` (it
+    # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
+    # HUD CanvasLayer as the host its fit awaits a frame through (a RefCounted has no `get_tree()`), the
+    # drawer scene nodes it writes (kept `@onready` here — a `%Name` node loses `unique_name_in_owner`
+    # if reparented), and the one HudLayer helper that keeps a caller on this side, `_on_move_band_pressed`.
+    _drawer = SubjectDrawerController.new(
+        _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
+        tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
+        subject_body, subject_scroll, left_dock_scroll, _on_move_band_pressed)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _setup_tooltip()
@@ -1522,10 +1533,10 @@ func _ready() -> void:
     # every early-return in the three compose builders. No feedback loop: the fit writes the
     # SCROLL's minimum, which is outside the body it measures.
     if subject_body != null:
-        subject_body.minimum_size_changed.connect(_fit_subject_drawer)
+        subject_body.minimum_size_changed.connect(_drawer.fit_subject_drawer)
     # A window resize changes the dock's height, hence the room the drawer may claim — force the
     # refit past the same-height gate (the content is unchanged, but the room it fits into is not).
-    get_viewport().size_changed.connect(_fit_subject_drawer.bind(true))
+    get_viewport().size_changed.connect(_drawer.fit_subject_drawer.bind(true))
 
 ## Apply the shared HudStyle console look to the selection panel: restyle its
 ## action buttons, tint the detail text, and bring the two plain PanelContainers
@@ -2008,104 +2019,7 @@ func _reconcile_pending() -> void:
 func _refresh_disclosure_hosts() -> void:
     if _bandpanel.has_panel() and not _band_labor.panel_band().is_empty():
         _bandpanel.render_band(_band_labor.panel_band())
-    _render_subject_drawer()
-
-## Stack the three ZONE contents into `target` — the legacy flat host (the Occupants card's
-## %AllocationPanel, used by the no-dock `ui_preview` harness). It renders exactly what the dock
-## renders, through the SAME three builders (`BandPanelController.build_*_zone`); there is no second
-## layout to maintain.
-##
-## This function STAYS on HudLayer even though the zones it stacks moved out: it writes the drawer's
-## `%AllocationPanel` node, which is HudLayer's, so it lives beside its node and the controller never
-## needs a second host. Its two siblings on the same host (`_build_band_move_actions` /
-## `_build_expedition_panel`) are branches of `_render_occupant_drawer` and stay here for the same
-## reason.
-func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> void:
-    var container: VBoxContainer = target if target != null else allocation_panel
-    if container == null:
-        return
-    HudWidgets.clear_children(container)
-    var is_player := not band.is_empty() and _is_player_unit(band)
-    container.visible = is_player
-    if not is_player:
-        return
-    container.add_child(_bandpanel.build_band_zone(band, false))
-    container.add_child(_bandpanel.build_work_zone(band))
-    container.add_child(_bandpanel.build_parties_zone(band))
-    # The docked path offers Move from `_build_band_move_actions`; this host must offer it too, or a
-    # selected player band has no way to be moved at all here (see `_make_band_move_actions`).
-    container.add_child(_make_band_move_actions())
-
-## The selected PLAYER band's one drawer action (§18): Move. Shares the allocation-panel host with
-## `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
-## exclusive on the selected occupant, so the fallback path's own Orders Move is never doubled.
-##
-## Wired straight to `_on_move_band_pressed`, which resolves through `_resolve_assign_band()` and so
-## already targets the band selected in THIS list — the whole point on a hex carrying several.
-## `Clear all` is deliberately NOT here: it returns every worker to idle, a heavier action that
-## belongs beside the labor allocation it clears.
-func _build_band_move_actions() -> void:
-    if allocation_panel == null:
-        return
-    for child in allocation_panel.get_children():
-        child.queue_free()
-    allocation_panel.visible = true
-    allocation_panel.add_child(_make_band_move_actions())
-
-## The Move row itself, so the two hosts that offer it build the SAME control rather than two that
-## can drift. **Both hosts must offer it**: the docked path adds it beside the panel pointer, and the
-## NO-PANEL fallback appends it under the band content — the fallback used to inherit a Move from the
-## allocation stack's Orders block, and when the Band panel rework deleted that block the fallback
-## silently offered no way to move a band at all. `ui_preview`'s "exactly ONE Move button" assertion
-## is what catches either half of that going wrong (none offered, or one offered twice).
-func _make_band_move_actions() -> HBoxContainer:
-    var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var move_btn := Button.new()
-    move_btn.text = MOVE_BAND_BUTTON_TEXT
-    HudStyle.apply_button(move_btn, "ghost")
-    move_btn.tooltip_text = MOVE_BAND_BUTTON_TOOLTIP
-    move_btn.pressed.connect(_on_move_band_pressed)
-    actions.add_child(move_btn)
-    return actions
-
-## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
-## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
-## entity) and Recall. Reuses the allocation-panel host; player expeditions only.
-func _build_expedition_panel(expedition: Dictionary) -> void:
-    if allocation_panel == null:
-        return
-    for child in allocation_panel.get_children():
-        child.queue_free()
-    var is_player := not expedition.is_empty() and _is_player_unit(expedition)
-    allocation_panel.visible = is_player
-    if not is_player:
-        return
-    var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
-    if phase == EXPEDITION_PHASE_AWAITING:
-        var callout := HudWidgets.alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
-        callout.add_theme_color_override("font_color", HudStyle.WARN)
-        allocation_panel.add_child(callout)
-    var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var move_btn := Button.new()
-    move_btn.text = "Move"
-    HudStyle.apply_button(move_btn, "ghost")
-    move_btn.tooltip_text = "Send the expedition onward, then click a target tile."
-    move_btn.pressed.connect(_on_move_band_pressed)
-    actions.add_child(move_btn)
-    # Already homeward-bound: the button reads its state ("Returning", disabled) rather than a
-    # mysterious grayed-out "Recall". Otherwise it's an enabled "Recall" that folds the party home.
-    var returning := phase == EXPEDITION_PHASE_RETURNING
-    var recall_btn := Button.new()
-    recall_btn.text = "Returning" if returning else "Recall"
-    HudStyle.apply_button(recall_btn, "primary")
-    recall_btn.tooltip_text = "Heading home — folds workers + provisions back on arrival." if returning \
-        else "Order the expedition home (folds workers + provisions back on arrival)."
-    recall_btn.disabled = returning
-    recall_btn.pressed.connect(func() -> void: _bandpanel.confirm_recall_expedition(expedition))
-    actions.add_child(recall_btn)
-    allocation_panel.add_child(actions)
+    _drawer.render_subject_drawer()
 
 # ---- THE COMPOSE SHEET: the two reflective delegators -----------------------------------------
 #
@@ -2473,7 +2387,7 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
     # The identity/list half — roster assembly, tile-card header + chips, auto-select, subject list —
     # lives in the controller (HUD decomposition Phase 2b); the DRAWER stays here (Phase 2c).
     _selectioncard.render(_selection.tile_info())
-    _render_subject_drawer()
+    _drawer.render_subject_drawer()
 
 ## The controller changed the lit subject via a roster/land CLICK. Re-render BOTH halves: close the
 ## compose sheet (a selection change invalidates the subject being composed, §15) then re-run the whole
@@ -2497,265 +2411,6 @@ func _hide_drawer_blocks() -> void:
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
-        herd_assign_controls.visible = false
-
-## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
-## paths is visible at a time — that is what bounds the card's height.
-func _render_subject_drawer() -> void:
-    if _selection.subject() == SUBJECT_LAND:
-        _render_land_drawer()
-    else:
-        _render_occupant_drawer()
-    # An OPEN compose sheet re-renders IN PLACE against the fresh subject. This is the SNAPSHOT path
-    # (`reapply_selection` → here, every turn), and it must NOT close the sheet — closing would make
-    # it unusable under autoplay (§15). A SELECTION change has already closed the sheet by the time it
-    # reaches here, so this is a no-op there.
-    _drawercompose.refresh_compose_sheet()
-    _fit_subject_drawer()
-
-## The LAND drawer: the terrain rows + the "Assign foragers" compose block (the land's only action).
-## On a hex the player cannot see it also carries the unknown-contents statement — see below.
-func _render_land_drawer() -> void:
-    if tile_detail == null:
-        return
-    tile_detail.visible = true
-    # Skip the `.text` reassignment (and its implicit BBCode reparse + `minimum_size_changed`) when
-    # the terrain lines are identical to last render — the common per-snapshot restate of the same
-    # hex, where only numbers on OTHER widgets moved.
-    var lines := _tile_terrain_lines(_selection.tile_info())
-    if lines != _tile_detail_lines_cache:
-        # No context: the LAND has no band behind it, and every tint its rows take (Sight,
-        # Habitability, Ecology, Cultivation, Field) is a pure function of the row's own value.
-        tile_detail.text = DetailFormat.detail_bbcode(lines)
-        _tile_detail_lines_cache = lines.duplicate()
-    _drawercompose.build_forage_drawer_actions(_selection.tile_info())
-    if allocation_panel != null:
-        allocation_panel.visible = false
-    if herd_assign_controls != null:
-        herd_assign_controls.visible = false
-    _render_unknown_contents_note()
-
-## An EMPTY occupant list is a claim of emptiness the client cannot back up, so on a hex the player
-## cannot see the list carries the land row and nothing else, and the drawer says so out loud. This
-## is the whole point of the fog gate — silence would read as "nothing here".
-##
-## Skipped when the list DOES carry occupant rows: that only happens for your own party on an
-## unseen hex, and `_rebuild_subject_list` already appends `OCCUPANTS_UNSEEN_OTHERS_HINT` there.
-func _render_unknown_contents_note() -> void:
-    if occupant_detail == null:
-        return
-    var unseen := _selectioncard.tile_contents_unseen(_selection.tile_info())
-    var roster_empty := _selection.roster_units().is_empty() and _selection.roster_herds().is_empty()
-    if not unseen or not roster_empty:
-        occupant_detail.visible = false
-        occupant_detail.text = ""
-        return
-    occupant_detail.visible = true
-    var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
-        if String(_selection.tile_info().get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
-        else OCCUPANTS_UNKNOWN_REMEMBERED
-    occupant_detail.text = DetailFormat.detail_bbcode([message])
-
-## Cap the drawer against the room left in the dock beneath the card, so a crowded hex scrolls
-## INSIDE the drawer rather than dragging the whole dock.
-##
-## WAITS A WHOLE FRAME, not just `call_deferred`, and that is load-bearing. The drawer's content
-## height is a function of its WIDTH — the detail label wraps, and the card's width is itself set by
-## whichever compose block is showing — so a measurement taken before the new subject has been laid
-## out reports the PREVIOUS subject's wrapping. On a card that just got narrower that under-reports
-## the height and the drawer caps short with a scrollbar over content that would have fit. A
-## deferred call is flushed inside the same frame and is not enough; one `process_frame` is.
-## Coalesced, so the render + the body's own `minimum_size_changed` collapse into one fit.
-func _fit_subject_drawer(force: bool = false) -> void:
-    if subject_scroll == null or subject_body == null or _subject_fit_pending:
-        return
-    _subject_fit_pending = true
-    await get_tree().process_frame
-    _subject_fit_pending = false
-    if subject_scroll == null or subject_body == null:
-        return
-    # Once the teardown/rebuild flash is gone, a same-structure restate settles to the SAME content
-    # height, so the awaited resize (which reflows the drawer) is pure churn — skip it unless the
-    # height actually moved, or a caller FORCES it because the dock ROOM changed (window resize, feed
-    # toggle) while the content did not.
-    var content_height := subject_body.get_combined_minimum_size().y
-    if not force and is_equal_approx(content_height, _subject_fit_last_height):
-        return
-    _subject_fit_last_height = content_height
-    DockScrollFit.fit_height(
-        subject_scroll,
-        content_height,
-        left_dock_scroll,
-        SUBJECT_DRAWER_MIN_HEIGHT,
-        SUBJECT_DRAWER_BOTTOM_MARGIN,
-    )
-
-
-## The LAND DRAWER's rows: only what a CHIP CANNOT CARRY.
-##
-## The pinned chip strip above the list already states this tile's standing condition — Sight,
-## Habitability, Climate, Tags, Site — so printing those as rows here restated the strip verbatim,
-## and `Biome` restated the land ROW's own label (the "no restated identity" rule,
-## docs/plan_tile_panel_layout.md §8). The chips REPLACE those rows; what is left is the numbers and
-## the stocks, whose subject is the land: Height · the rivers · Pasture · Forage · the patch's
-## biomass/ecology · the two build meters — plus the FoW sentences, which are statements, not
-## conditions, and have no chip.
-##
-## `_render_land_drawer` is the ONE caller (the map hover tooltip builds its own text in
-## `show_tooltip`), so the trim is local to the drawer.
-func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    if tile_info.is_empty():
-        lines.append("Hover or click a tile to inspect details.")
-        return lines
-    # Fog of War: never-seen tiles reveal nothing; remembered (Discovered) tiles
-    # show only their last-known terrain, not current contents. See MapView
-    # _apply_visibility_to_info, which redacts the hidden fields before this runs.
-    # The Sight CHIP states which of the three states this hex is in; the sentence says what that
-    # costs you, which is the part a chip cannot carry.
-    var visibility_state := String(tile_info.get("visibility_state", ""))
-    if visibility_state == VISIBILITY_UNEXPLORED:
-        lines.append("Not yet scouted — send a band to reveal this area.")
-        return lines
-    if tile_info.has("height_display"):
-        lines.append("Height: %s" % String(tile_info["height_display"]))
-    # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
-    # apply to). Terrain-intrinsic permanent geography, so it renders before the discovered
-    # early-return, like Pasture below. Guarded on the key so a rehydrated snapshot
-    # degrades to no row instead of a wrong one; RiverEdges returns [] on a riverless tile, so it
-    # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
-    if tile_info.has("river_edges"):
-        lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
-    # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
-    # PASTURE — the animal-edible stock (see PASTURE_KEY). Surfaced BEFORE the discovered
-    # early-return because, like the biome on the land row and the habitability chip, grass is a property of the
-    # GROUND: you can read a steppe from a ridge, and a remembered tile already remembers its biome.
-    # (What a remembered tile redacts is live CONTENTS — the bands and herds standing on it.) Only
-    # when the ground carries pasture at all, so a glacier prints nothing rather than "0 / 0".
-    var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
-    if graze_capacity > 0.0:
-        lines.append("%s: %.0f / %.0f" % [
-            PASTURE_KEY, float(tile_info.get("graze_biomass", 0.0)), graze_capacity
-        ])
-        var graze_phase := String(tile_info.get("graze_ecology_phase", "")).strip_edges().to_lower()
-        if graze_phase != "":
-            lines.append("%s: %s" % [PASTURE_ECOLOGY_KEY, DetailFormat.ecology_phase_label(graze_phase)])
-    if visibility_state == VISIBILITY_DISCOVERED:
-        lines.append("Last seen — information incomplete. Scout to update.")
-        return lines
-    var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
-    if food_label == "":
-        food_label = "None"
-    var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
-    var food_line := "Forage: %s" % food_label
-    if food_kind != "":
-        food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
-    # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
-    # yield coefficient, meaningless to the player (it still drives the sim's yield math).
-    lines.append(food_line)
-    # WHAT GROWS HERE / CROP — the named plants behind the Forage line above (flora roster F1/S1).
-    # It reads directly under the module because it says what that module's basket IS; the
-    # stock/ecology rows below then say how much of it there is and how it is faring. ONE row, two
-    # states: an UNCOMMITTED patch names the whole wild basket, a COMMITTED one names the single crop
-    # it was tended to — never both, since committing displaces the rest of the basket.
-    var crop_name := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
-    if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
-        lines.append("%s: %s" % [FLORA_CROP_ROW, crop_name])
-    else:
-        var composition_text := DetailFormat.flora_composition_text(tile_info.get("patch_composition", []))
-        if composition_text != "":
-            lines.append("%s: %s" % [FLORA_COMPOSITION_ROW, composition_text])
-    # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
-    # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
-    # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
-    # carries a real patch (capacity > 0), so a plain food-module tile with no patch stays bare.
-    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
-    if patch_capacity > 0.0:
-        lines.append("Forage biomass: %.0f / %.0f" % [float(tile_info.get("patch_biomass", 0.0)), patch_capacity])
-    # Ecology phase of the patch — ALWAYS shown for any tile carrying a patch (not just a
-    # cultivated one): the phase gates whether cultivation can accrue at all, so it is the
-    # single most important condition on a forage tile. Same row name / label / tint as the
-    # herd's Ecology row (`DetailFormat.ecology_phase_label` + `ecology_value_hex`), so a stressed patch
-    # and a stressed herd read identically.
-    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
-    if patch_phase != "":
-        lines.append("Ecology: %s" % DetailFormat.ecology_phase_label(patch_phase))
-    # Forage-patch intensification ladder: while a patch is being tended it shows the
-    # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
-    # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
-    # never invent a state on a patch that isn't being worked.
-    if bool(tile_info.get("is_cultivated", false)):
-        lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
-    elif tile_info.has("cultivation_progress"):
-        var cultivation_progress := float(tile_info["cultivation_progress"])
-        if cultivation_progress > 0.0:
-            lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress, false))
-    # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
-    # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
-    # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
-    # half of the two-meter split (§4.1) — the FACTION's Seed Selection knowledge is NOT shown here;
-    # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
-    # ground. Both rows are the source's own, and both decay if the patch is abandoned.
-    if bool(tile_info.get("patch_is_field", false)):
-        lines.append("%s: %s" % [FIELD_ROW, DetailFormat.field_label(1.0, true)])
-    elif tile_info.has("patch_field_progress"):
-        var field_progress := float(tile_info["patch_field_progress"])
-        if field_progress > 0.0:
-            lines.append("%s: %s" % [FIELD_ROW, DetailFormat.field_label(field_progress, false)])
-    return lines
-
-## The detail drawer + action buttons for the currently-selected occupant. Shares the one drawer
-## with the land, so it hides the land's content first — exactly one subject fills it.
-func _render_occupant_drawer() -> void:
-    if occupant_detail == null:
-        return
-    if tile_detail != null:
-        tile_detail.visible = false
-    if forage_assign_controls != null:
-        forage_assign_controls.visible = false
-    # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
-    # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
-    var ctx := DetailFormat.Context.new()
-    var is_band := not _selection.unit().is_empty()
-    var is_herd := not _selection.herd().is_empty()
-    var is_expedition := is_band and bool(_selection.unit().get("is_expedition", false))
-    var is_player_band := is_band and not is_expedition and _is_player_unit(_selection.unit())
-    # A selected player band is the panel's subject: its detail + labor allocation render into the
-    # dockable Band/City panel (docs/plan_band_city_dock.md §3), and the Occupants card shows NO
-    # band detail (the roster still lists it). Falls back to the legacy in-card drawer only when no
-    # panel is injected (e.g. the HUD-only ui_preview harness).
-    if is_player_band and _bandpanel.has_panel():
-        _bandpanel.render_band(_selection.unit())
-        # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
-        # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
-        occupant_detail.visible = true
-        occupant_detail.text = DetailFormat.detail_bbcode([BAND_PANEL_POINTER_TEXT])
-        # The one order that stays HERE (§18): repositioning is a map action. Player resident bands
-        # only — this branch is already player-band-gated, and a foreign band's orders aren't ours.
-        _build_band_move_actions()
-        if herd_assign_controls != null:
-            herd_assign_controls.visible = false
-        return
-    # Herd / expedition / non-player band (or no-panel fallback) → the Occupants card drawer,
-    # unchanged. Expedition → Recall/Move panel; player band (fallback) → allocation panel; herd →
-    # assign-hunters controls. All mutually exclusive with the current selection.
-    occupant_detail.visible = true
-    var lines: Array[String] = []
-    if not _selection.unit().is_empty():
-        lines = _banddetail.unit_summary_lines(
-            _selection.unit(), _selectioncard.selected_terrain_label(), ctx)
-    elif not _selection.herd().is_empty():
-        lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds())
-    occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
-    if is_expedition:
-        _build_expedition_panel(_selection.unit())
-    elif is_player_band:
-        _build_allocation_panel(_selection.unit())
-    elif allocation_panel != null:
-        allocation_panel.visible = false
-    if is_herd:
-        _drawercompose.build_herd_drawer_actions(_selection.herd())
-    elif herd_assign_controls != null:
         herd_assign_controls.visible = false
 
 ## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
@@ -2899,25 +2554,6 @@ func focus_panel_band() -> void:
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
-
-func _format_food_kind_label(kind_value: String) -> String:
-    if kind_value == "":
-        return ""
-    var tokens: PackedStringArray = kind_value.split("_", false)
-    if tokens.is_empty():
-        return kind_value.capitalize()
-    var parts: Array[String] = []
-    for token in tokens:
-        if token == "":
-            continue
-        var head := token.substr(0, 1).to_upper()
-        var tail := ""
-        if token.length() > 1:
-            tail = token.substr(1, token.length() - 1)
-        parts.append(head + tail)
-    if parts.is_empty():
-        return kind_value.capitalize()
-    return " ".join(parts)
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -3234,7 +2870,7 @@ func _refit_right_dock() -> void:
 ## two must settle in a fixed order or each measures the other mid-flight and their sum overspills
 ## the dock. Release the drawer's claim → let the feed re-fit into the freed column → then let the
 ## drawer take exactly the remainder. Ordinary selection changes need none of this: the feed is
-## already settled and `_fit_subject_drawer` alone fits into what is left.
+## already settled and `_drawer.fit_subject_drawer` alone fits into what is left.
 func _refit_left_dock() -> void:
     if subject_scroll != null:
         subject_scroll.custom_minimum_size.y = 0.0
@@ -3243,7 +2879,7 @@ func _refit_left_dock() -> void:
         _command_feed.refit()
     await get_tree().process_frame
     # The feed just changed the room the drawer may claim, so force past the same-height gate.
-    _fit_subject_drawer(true)
+    _drawer.fit_subject_drawer(true)
 
 # ---- dock-card visibility persistence --------------------------------------
 
