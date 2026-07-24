@@ -48,10 +48,11 @@ is dissolved **first**, in place, before any code moves files.
     (`_forage_assign_*` / `_hunt_assign_*` / `_send_party_*` / `_selected_food_module`)
     and the **band-tint scalars** (`_selected_band_food_turns` / `_morale` /
     `_output`). So 2b extracts only the state-isolated half: the tile-card header,
-    the chips, the whole roster/subject list, and the terrain-lines text — **zero
+    the chips, the whole roster/subject list, and auto-select/row-clicks — **zero
     builder coupling, zero shared compose state** (its diff caches `_tile_chip_slots`
-    / `_subject_row_keys` / `_tile_detail_lines_cache` split off cleanly; the
-    drawer-shape/fit caches stay). `HudLayer` keeps the whole drawer. ~500–600
+    / `_subject_row_keys` split off cleanly; the drawer-shape/fit caches AND the
+    terrain-lines producer + `_tile_detail_lines_cache` stay on `HudLayer` with the
+    drawer, which sets `tile_detail`). `HudLayer` keeps the whole drawer. ~500–600
     lines, low risk.
   - **2c — Lift `ComposeState`, then extract the drawer/compose half.** First lift
     the shared compose state into a small `RefCounted` `ComposeState` (the Phase-0
