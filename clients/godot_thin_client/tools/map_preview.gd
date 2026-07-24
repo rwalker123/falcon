@@ -16,6 +16,15 @@ const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 const OUT_DIR := "res://ui_preview_out"
 const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
+# The canvas every state renders at unless it asks for another (see PASTURE_WINDOW_SIZE). MapView is
+# cover-fit, so the canvas ASPECT decides what a frame shows — which is why this is pinned rather than
+# left to whatever the WM hands us.
+const DEFAULT_CANVAS_SIZE := Vector2i(1000, 800)
+# How many frames _ensure_canvas will keep re-asserting the pinned canvas while it waits for the WM to
+# honour it (project.godot opens MAXIMIZED; the mode change lands asynchronously). Bounded so a WM that
+# refuses to shrink the window fails loudly rather than hanging.
+const CANVAS_PIN_MAX_FRAMES := 60
+
 const GRID_W := 16
 const GRID_H := 12
 const BAND_ENTITY := 9001
@@ -311,8 +320,12 @@ var _river_notch_head := Vector2i(-1, -1)
 # run ALONGSIDE it (no channel exits toward the lake) — the @21,61 case the shore-pass mouth test fixes.
 var _river_lake_hex := Vector2i(-1, -1)
 
+# The canvas currently pinned. A state changes it through _set_canvas(); it is NOT restored afterwards,
+# because the aspect-matched states are the last ones and today's frames depend on that sequence.
+var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
+
 func _ready() -> void:
-	get_window().size = Vector2i(1000, 800)
+	_pin_canvas(get_window())
 	DirAccess.make_dir_absolute(OUT_DIR)
 	_map = MAP_VIEW.new()
 	add_child(_map)
@@ -762,7 +775,7 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	get_window().size = PASTURE_WINDOW_SIZE   # match the grid's aspect — see PASTURE_WINDOW_SIZE
+	await _set_canvas(PASTURE_WINDOW_SIZE)   # match the grid's aspect — see PASTURE_WINDOW_SIZE
 	await _settle()
 	_map.display_snapshot(_snapshot_pasture())
 	# display_snapshot re-ingests the channels and clears the active overlay (the Inspector re-applies
@@ -807,7 +820,7 @@ func _ready() -> void:
 	#   * forest + river valleys read RICH here where prairie reads richest on pasture (the inversion);
 	#   * the coastal shelf LIGHTS UP as a fishing ground where pasture paints it dead water;
 	#   * only deep ocean / glacier / lava are barren, and a barren forage tile can still be good land.
-	get_window().size = PASTURE_WINDOW_SIZE   # same aspect as pasture — the two are meant to be compared
+	await _set_canvas(PASTURE_WINDOW_SIZE)   # same aspect as pasture — the two are meant to be compared
 	await _settle()
 	_map.display_snapshot(_snapshot_forage())
 	_map.set_overlay_channel(FORAGE_OVERLAY_KEY)
@@ -829,7 +842,7 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	get_window().size = PASTURE_WINDOW_SIZE
+	await _set_canvas(PASTURE_WINDOW_SIZE)
 	await _settle()
 	_map.display_snapshot(_snapshot_danger())
 	_map.set_overlay_channel(HUNT_DANGER_OVERLAY_KEY)
@@ -996,14 +1009,72 @@ func _ready() -> void:
 	get_tree().quit()
 
 func _settle() -> void:
+	await _ensure_canvas()
 	await get_tree().process_frame
 	RenderingServer.force_draw()
 	await get_tree().process_frame
 
+## Hold the window at the pinned canvas. Deliberately does NOT touch content_scale_size /
+## content_scale_factor (blend_probe does, to get a 1:1 canvas): project.godot stretches
+## `canvas_items` with an `expand` aspect, so pinning those here would re-project EVERY frame this
+## harness renders — a mass pixel change, not a race fix. The race is a window mode/size problem.
+func _pin_canvas(win: Window) -> void:
+	win.mode = Window.MODE_WINDOWED
+	win.size = _canvas_size
+
+## Switch the pinned canvas for the states that need a different aspect (see PASTURE_WINDOW_SIZE) and
+## wait for the WM to honour it, so the state renders at the size it asked for rather than whatever
+## the previous state left behind.
+func _set_canvas(size: Vector2i) -> void:
+	_canvas_size = size
+	await _ensure_canvas()
+
+## Hold the window at the pinned canvas, and WAIT for the WM to honour it, before anything is measured
+## or captured. project.godot opens MAXIMIZED and macOS applies (and RE-applies) that asynchronously,
+## many frames in — so the bare `get_window().size = …` + two process_frames this harness used to do in
+## _ready is a RACE, and it does not stay won. Measured on a clean run: 33 of 41 saved frames came out
+## at the monitor's 3840x1050 rather than the pinned 1000x800, and the four earliest states flipped
+## between the two from run to run, which is what made this frame set unusable as a pixel reference.
+## Hence: check the WINDOW, re-pin, and give the WM frames to comply.
+func _ensure_canvas() -> void:
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		if get_window().size == _canvas_size and get_window().mode == Window.MODE_WINDOWED:
+			return
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+
+## The viewport image, GUARANTEED to be the pinned canvas (or an integer HiDPI multiple of it). The
+## WM's deferred maximize can resize the render target between a settle and a capture, and a raw
+## get_image() then hands back a monitor-sized frame: the pixel-diff dies on a size mismatch and every
+## fractional crop lands somewhere else on the map. Re-pin and re-draw until the geometry is the
+## canvas's, then give up loudly rather than silently saving a bad frame.
+##
+## THE GUARD IS DERIVED FROM WHAT THIS HARNESS ACTUALLY SEES, not copied from blend_probe: with
+## content_scale_* deliberately unpinned, the captured image matches the WINDOW size (measured 1:1 on
+## every frame of a clean run), while the viewport's logical rect is the content-scale `expand`
+## projection of it and matches NEITHER (win 1000x800 -> vprect 1920x1536). So this compares against
+## the window-sized canvas; the integer-multiple form keeps it satisfiable on a HiDPI display, where
+## it reduces to plain equality at 1x. Testing the viewport rect here could never be satisfied.
+func _capture() -> Image:
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		var image := get_viewport().get_texture().get_image()
+		if image == null:
+			push_warning("map_preview: null image (dummy renderer?) — run without --headless")
+			return null
+		var w := image.get_width()
+		var h := image.get_height()
+		if w % _canvas_size.x == 0 and h % _canvas_size.y == 0 and w / _canvas_size.x == h / _canvas_size.y:
+			return image
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+		RenderingServer.force_draw()
+		await get_tree().process_frame
+	push_error("map_preview: viewport never came back to the pinned %s canvas" % _canvas_size)
+	return null
+
 func _save(name: String) -> void:
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture()
 	if image == null:
-		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
@@ -1013,9 +1084,8 @@ func _save(name: String) -> void:
 
 ## Save a cropped region of the current frame (fractions of the viewport, 0..1) — used for coast close-ups.
 func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) -> void:
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture()
 	if image == null:
-		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
 		return
 	var w := image.get_width()
 	var h := image.get_height()
@@ -1038,9 +1108,8 @@ func _save_crop_rect(name: String, frac: Rect2) -> void:
 ## e.g. a 3921-px-wide viewport captured as a 5120-px image), so the incoming viewport-space center and
 ## half-size are rescaled into IMAGE pixels first; without that the crop lands a hex or two off target.
 func _save_crop_px(name: String, center: Vector2, half: float) -> void:
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture()
 	if image == null:
-		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
 		return
 	var w := image.get_width()
 	var h := image.get_height()
