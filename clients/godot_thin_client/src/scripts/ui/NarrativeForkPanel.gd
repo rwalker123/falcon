@@ -9,7 +9,7 @@ class_name NarrativeForkPanel
 ## collapsed — as the standing proof that the voice never lies.
 ##
 ## Structure follows the two patterns this HUD already has:
-##   • the targeting banner's centered-overlay skeleton (Hud._ensure_targeting_banner), and
+##   • the targeting banner's centered-overlay skeleton (TargetingController._ensure_targeting_banner), and
 ##   • the TurnOrb popover's CATCHER NESTING (TurnOrb._open_popover) — the card is a CHILD of the
 ##     full-screen dismiss layer, never its sibling. A child renders and picks ABOVE its parent, so
 ##     the card's own buttons consume their clicks and only clicks OUTSIDE the card dismiss. As

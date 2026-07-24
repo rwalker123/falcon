@@ -1807,7 +1807,7 @@ func _ready() -> void:
 
 	# (3) STARTING A TARGETING FLOW CLOSES THE SHEET — a floating sheet over the map while the player
 	# is being asked to click a hex is a trap. Driven through the real Move-band entry point.
-	_hud._on_move_band_pressed()
+	_hud._targeting.begin_move_band()
 	await _settle()
 	_assert_hud("starting move-band targeting closes the compose sheet",
 		not _hud.is_compose_sheet_open())
@@ -1820,7 +1820,7 @@ func _ready() -> void:
 	# sheet open alone, any ordering answers "compose_sheet".
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	_compose_herd(_corral_locked_herd_fixture())
-	_hud._on_move_band_pressed()
+	_hud._targeting.begin_move_band()
 	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
 	_assert_hud("precondition: a sheet and targeting are BOTH active",
@@ -1940,7 +1940,7 @@ func _ready() -> void:
 	await _save("tile_panel_band")
 
 	# THE MOVE ASSERTION (§18). Driven through the drawer's REAL button — calling
-	# `_on_move_band_pressed` directly would assert the resolver, not the wiring — and the pending
+	# `_targeting.begin_move_band` directly would assert the resolver, not the wiring — and the pending
 	# move must name the band SELECTED IN THE LIST (302), never the faction default
 	# (`_player_band`, 301), which is what a naive wiring resolves to on a crowded hex.
 	var tile_panel_move_btn: Button = _find_button_by_text(_hud.allocation_panel, MOVE_BUTTON_TEXT)
@@ -1950,7 +1950,7 @@ func _ready() -> void:
 	await _settle()
 	_assert_hud("Move enters move-band targeting", _hud.is_targeting_active())
 	_assert_hud("…targeting the band SELECTED IN THE LIST, not the faction default",
-		int(_hud._pending_move_band.get("entity", -1)) == TILE_PANEL_MOVE_BAND_ENTITY)
+		int(_hud._targeting._pending_move_band.get("entity", -1)) == TILE_PANEL_MOVE_BAND_ENTITY)
 	_hud.cancel_active_targeting()
 	await _settle()
 	_hud.set_band_city_panel(null)
@@ -1981,7 +1981,7 @@ func _ready() -> void:
 	# State 4 — targeting active: pressing "Move" on the band allocation panel enters
 	# tile-targeting, raising the top-centre banner ("MOVE … click a destination tile").
 	_hud.show_unit_selection(_band_fixture())
-	_hud._on_move_band_pressed()
+	_hud._targeting.begin_move_band()
 	await _settle()
 	await _save("targeting_banner")
 	_hud.cancel_active_targeting()
@@ -2697,7 +2697,7 @@ func _mouse_button_event(button_index: int) -> InputEventMouseButton:
 ## with the very `[url]` meta its own text carries, so the bound handler + anchor run exactly as they
 ## do in the game. Toggling: a second call on the same key dismisses the popover.
 func _click_disclosure(key: String) -> void:
-	var meta := HudLayer.BREAKDOWN_TOGGLE_META_PREFIX + key
+	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label := _find_meta_label(_hud, meta)
 	if label == null:
 		push_warning("ui_preview: no detail label offering '%s' — disclosure not rendered?" % meta)

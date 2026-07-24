@@ -27,8 +27,9 @@ extends RefCounted
 ## `refresh_hosts` Callable rather than as two back-references.
 ##
 ## CONSTS. Same rule as `DetailFormat`: a const lives here iff every reader moved here. The popover's
-## geometry did; `BREAKDOWN_TOGGLE_META_PREFIX` (read by the formatter and by both preview harnesses),
-## `BREAKDOWN_KIND_*` and the `FOOD_LABEL_*` table did not, and are read back as `HudLayer.X`.
+## geometry did; `BREAKDOWN_TOGGLE_META_PREFIX` (read by the formatter and by both preview harnesses)
+## and `BREAKDOWN_KIND_*` live in `HudDisclosureVocab`, the `FOOD_LABEL_*` table in `DetailFormat` —
+## each read as `Module.X`.
 
 ## The breakdown popover's card geometry. Fixed width so the rows align in a column like the table
 ## they came from; the GAP is how far under the clicked row the card floats.
@@ -95,7 +96,7 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
         return false
     var key := DetailFormat.breakdown_key(kind, band)
     _breakdown_payloads[key] = lines
-    var concerning := DetailFormat.food_is_concerning(band) if kind == HudLayer.BREAKDOWN_KIND_FOOD \
+    var concerning := DetailFormat.food_is_concerning(band) if kind == HudDisclosureVocab.BREAKDOWN_KIND_FOOD \
         else DetailFormat.morale_is_concerning(band)
     _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
     # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
@@ -112,18 +113,18 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
 ## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
 func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    var gathered := DetailFormat.sum_realized_yield(band, HudLayer.LABOR_KIND_FORAGE)
-    if gathered >= HudLayer.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(gathered, HudLayer.FOOD_LABEL_GATHERED))
-    var hunted := DetailFormat.sum_realized_yield(band, HudLayer.LABOR_KIND_HUNT)
-    if hunted >= HudLayer.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(hunted, HudLayer.FOOD_LABEL_HUNTED))
+    var gathered := DetailFormat.sum_realized_yield(band, SourceForecast.LABOR_KIND_FORAGE)
+    if gathered >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(gathered, DetailFormat.FOOD_LABEL_GATHERED))
+    var hunted := DetailFormat.sum_realized_yield(band, SourceForecast.LABOR_KIND_HUNT)
+    if hunted >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
     var eaten := float(band.get("food_consumption", 0.0))
-    if eaten >= HudLayer.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(-eaten, HudLayer.FOOD_LABEL_EATEN))
+    if eaten >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_EATEN))
     var pen_feed := DetailFormat.band_pen_feed(band)
-    if pen_feed >= HudLayer.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(-pen_feed, HudLayer.FOOD_LABEL_PEN_FEED))
+    if pen_feed >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-pen_feed, DetailFormat.FOOD_LABEL_PEN_FEED))
     return lines
 
 ## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure
@@ -132,9 +133,9 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
 ## popover positions under.
 func _on_meta_clicked(meta: Variant, anchor: Control) -> void:
     var payload := String(meta)
-    if not payload.begins_with(HudLayer.BREAKDOWN_TOGGLE_META_PREFIX):
+    if not payload.begins_with(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX):
         return
-    var key := payload.substr(HudLayer.BREAKDOWN_TOGGLE_META_PREFIX.length())
+    var key := payload.substr(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX.length())
     if _breakdown_popover_key == key:
         _close_popover()
         return

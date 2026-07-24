@@ -6,12 +6,11 @@ extends RefCounted
 ## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
-## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. ONE helper stays on
-## HudLayer because it is shared beyond this cluster and is still a HudLayer METHOD, so it is passed in
-## as a Callable: `_meter_bar` (the herd-drawer danger bars use it). Everything SHARED-BUT-PURE left
-## HudLayer entirely and is called statically rather than injected or duplicated —
-## `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label` (whose
-## other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
+## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Everything
+## SHARED-BUT-PURE left HudLayer entirely and is called statically rather than injected or duplicated —
+## `HudFormat.meter_bar` (the Sedentarization + knowledge strips; the herd-drawer danger bars read it
+## too), `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label`
+## (whose other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
 ## knowledge back through the public `faction_knowledge()`.
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
@@ -89,8 +88,6 @@ var stockpile_list: VBoxContainer = null
 
 # --- Collaborators ---
 var _command_feed: CommandFeedController = null
-# The one shared-beyond-cluster helper still kept on HudLayer, called back through a Callable (header).
-var _meter_bar_fn: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
@@ -113,7 +110,6 @@ func _init(
 	stockpile_panel_: PanelContainer,
 	stockpile_list_: VBoxContainer,
 	command_feed: CommandFeedController,
-	meter_bar_fn: Callable,
 ) -> void:
 	turn_label = turn_label_
 	metrics_label = metrics_label_
@@ -126,7 +122,6 @@ func _init(
 	stockpile_panel = stockpile_panel_
 	stockpile_list = stockpile_list_
 	_command_feed = command_feed
-	_meter_bar_fn = meter_bar_fn
 
 ## The LABEL-rendering half of HudLayer.update_overlay's fan-out: the turn readout + the metrics line.
 ## The turn-orb / band-labor side effects stay on HudLayer (they are not top-bar readouts).
@@ -146,7 +141,7 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 	var stage := ""
 	if sedentarization_variant is Array:
 		for entry in sedentarization_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				score = float(entry.get("score", 0.0))
 				stage = String(entry.get("stage", ""))
 				break
@@ -155,7 +150,7 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 		return
 	sedentarization_label.visible = true
 	var suffix := "" if stage == "" or stage == "none" else " · %s" % stage
-	sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [_meter_bar_fn.call(score, METER_BAR_CELLS), int(round(score)), suffix]
+	sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [HudFormat.meter_bar(score, METER_BAR_CELLS), int(round(score)), suffix]
 	sedentarization_label.add_theme_color_override("font_color", _sedentarization_color(stage))
 
 ## Show the player faction's age structure (children / working / elders) and the dependency
@@ -169,7 +164,7 @@ func update_demographics(demographics_variant: Variant) -> void:
 	var found := false
 	if demographics_variant is Array:
 		for entry in demographics_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				children = int(entry.get("children", 0))
 				working = int(entry.get("working", 0))
 				elders = int(entry.get("elders", 0))
@@ -207,7 +202,7 @@ func update_discoveries(discovered_variant: Variant) -> void:
 	var sites: Array = []
 	if discovered_variant is Array:
 		for entry in discovered_variant:
-			if entry is Dictionary and int(entry.get("faction", -1)) == HudLayer.PLAYER_FACTION_ID:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				var faction_sites: Variant = entry.get("sites", [])
 				if faction_sites is Array:
 					sites = faction_sites
@@ -302,12 +297,12 @@ func update_intensification(intensification_variant: Variant) -> void:
 	var segments: Array[String] = []
 	var all_known := true
 	for track in KNOWLEDGE_TRACK_LABELS:
-		var progress := faction_knowledge(HudLayer.PLAYER_FACTION_ID, String(track))
+		var progress := faction_knowledge(HudConst.PLAYER_FACTION_ID, String(track))
 		if progress <= 0.0:
 			continue
 		segments.append("%s %s" % [
 			String(KNOWLEDGE_TRACK_LABELS[track]), _knowledge_meter_text(progress)])
-		all_known = all_known and progress >= HudLayer.KNOWLEDGE_COMPLETE
+		all_known = all_known and progress >= HudConst.KNOWLEDGE_COMPLETE
 	if segments.is_empty():
 		intensification_label.visible = false
 		return
@@ -358,9 +353,9 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
 		for track in KNOWLEDGE_UNLOCK_NOTES:
 			if not previous.has(track):
 				continue
-			if float(previous[track]) >= HudLayer.KNOWLEDGE_COMPLETE:
+			if float(previous[track]) >= HudConst.KNOWLEDGE_COMPLETE:
 				continue
-			if float(current[track]) < HudLayer.KNOWLEDGE_COMPLETE:
+			if float(current[track]) < HudConst.KNOWLEDGE_COMPLETE:
 				continue
 			_announce_knowledge_unlock(faction, String(track))
 		_intensification_knowledge[faction] = current
@@ -373,7 +368,7 @@ func _announce_knowledge_unlock(faction: int, track: String) -> void:
 	if _knowledge_announced.has(key):
 		return
 	_knowledge_announced[key] = true
-	if faction != HudLayer.PLAYER_FACTION_ID:
+	if faction != HudConst.PLAYER_FACTION_ID:
 		return
 	_command_feed.note(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
 
@@ -388,7 +383,7 @@ func faction_knowledge(faction: int, track: String) -> float:
 ## "✔ known" badge once complete. `progress` is 0..1.
 ##
 ## Deliberately TIGHTER than the Sedentarization meter beside it (which keeps the shared 10-cell
-## `_meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
+## `HudFormat.meter_bar`): slice 4 took this strip from two tracks to FOUR, and at 10 cells + the word
 ## "learning" per track the line overflowed the top bar and clipped its last track off-screen —
 ## verified in the first cut of `two_meter_split.png`. The percent replaces the word rather than
 ## joining it: it is strictly more informative, and it is the SAME number the gate reason under a
@@ -397,10 +392,10 @@ func _knowledge_meter_text(progress: float) -> String:
 	# A bare ✔ rather than "✔ known": the strip's own prefix already reads "Your people know:", so the
 	# word was saying it twice — and the two it cost per known track were enough to push the fourth
 	# track's percent onto the frame edge.
-	if progress >= HudLayer.KNOWLEDGE_COMPLETE:
+	if progress >= HudConst.KNOWLEDGE_COMPLETE:
 		return KNOWLEDGE_KNOWN_BADGE
 	return "%s %d%%" % [
-		_meter_bar_fn.call(progress * HudLayer.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
+		HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
 		HudFormat.progress_percent(progress)]
 
 ## Tint the Sedentarization readout: cyan when the pressure is hard, amber when soft, neutral otherwise.
@@ -421,7 +416,7 @@ func update_stockpiles(faction_inventory_variant: Variant) -> void:
 	for faction_entry in faction_array:
 		if not (faction_entry is Dictionary):
 			continue
-		if int(faction_entry.get("faction", -1)) != HudLayer.PLAYER_FACTION_ID:
+		if int(faction_entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
 			continue
 		var inventory_variant: Variant = faction_entry.get("inventory", [])
 		if inventory_variant is Array:

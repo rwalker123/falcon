@@ -446,8 +446,8 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 		# Quarry targeting: glow the herds that are valid targets + reticle the hovered hex, so it
 		# reads "click on a herd".
 		# `min_distance` is the outfitting band's `hunt_reach`, and this test is the RENDER-SIDE
-		# MIRROR of `Hud._is_expedition_quarry` — a herd within reach is a LOCAL hunt, not a party's
-		# job, and `Hud._try_pick_quarry` refuses it. The halo must never promise a target the pick
+		# MIRROR of `TargetingController.is_expedition_quarry` — a herd within reach is a LOCAL hunt, not a party's
+		# job, and `TargetingController._try_pick_quarry` refuses it. The halo must never promise a target the pick
 		# will refuse, nor hide one it would accept, so the two tests must be changed together.
 		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
 		var min_distance := int(_targeting.get("min_distance", TARGETING_NO_MIN_DISTANCE))
@@ -506,7 +506,7 @@ func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector
 		text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, TARGETING_LABEL_FG)
 
 ## Wrap-aware hex distance from the targeting ORIGIN to (col,row), the render-side mirror of
-## Hud._hex_distance_wrapped (which Hud._is_expedition_quarry — the authoritative quarry pick —
+## Hud._hex_distance_wrapped (which TargetingController.is_expedition_quarry — the authoritative quarry pick —
 ## routes through). Bring the target into the origin's column frame via _wrapped_col_delta BEFORE
 ## the row-parity-sensitive offset→axial conversion (the same pre-wrap the work-range rings use), so
 ## a herd across the horizontal wrap seam measures the SHORT way round. Without this the herd-glow

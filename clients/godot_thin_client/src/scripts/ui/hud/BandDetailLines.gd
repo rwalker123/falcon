@@ -30,10 +30,10 @@ extends RefCounted
 ## callers pass `SelectionCardController.selected_terrain_label()`.
 ##
 ## CONSTS. Same rule as `DetailFormat`: a const lives here iff every one of its readers moved here.
-## The band/party row vocabulary below did; everything still shared with `HudLayer` code (the
-## `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` disclosure vocabulary, `MORALE_CAUSE_*`, the morale-breakdown
-## indent + sign glyphs, `STORE_ITEM_PROVISIONS`, `OUTPUT_FULL`, `FOOD_FLOW_MIN`) stayed there and is
-## read back as `HudLayer.X` — the `HudWidgets` / `HudFormat` / `TopBarReadouts` convention.
+## The band/party row vocabulary below did; the rest lives in its own topic module — the
+## `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` disclosure vocabulary in `HudDisclosureVocab`, `MORALE_CAUSE_*`
+## and the morale-breakdown indent + sign glyphs in `DetailFormat`, `STORE_ITEM_PROVISIONS` in
+## `HudConst`, `OUTPUT_FULL` / `FOOD_FLOW_MIN` in `SourceForecast` — each read as `Module.X`.
 
 # ---- The band's fodder (hay) larder row, shown beneath Food only for a band with a fodder economy
 # (it has stockpiled hay, or it pays a pen bread bill it could offset with hay) — so a forager band
@@ -43,7 +43,7 @@ const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
 
-# ---- Morale-trend arrow glyphs. Whether a trend reads as flat at all is `HudLayer.MORALE_TREND_EPSILON`,
+# ---- Morale-trend arrow glyphs. Whether a trend reads as flat at all is `DetailFormat.MORALE_TREND_EPSILON`,
 # which stays there — `DetailFormat.morale_is_concerning` tests it too.
 const MORALE_TREND_FALLING_GLYPH := "▼"
 const MORALE_TREND_RISING_GLYPH := "▲"
@@ -95,7 +95,7 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## Player-faction check for a roster/drawer band (a trivial private copy of HudLayer's, the
 ## `SelectionCardController` / `BandPanelController` precedent).
 func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudLayer.PLAYER_FACTION_ID)) == HudLayer.PLAYER_FACTION_ID
+    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 # ---- The two public producers ---------------------------------------------------------------------
 
@@ -137,12 +137,12 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # the formatter draws the caret + clickable meta. The rows are NEVER appended here — inline
         # growth is what clipped the zone.
         if _food_flow_present:
-            _disclosures.register(HudLayer.DETAIL_ROW_FOOD, HudLayer.BREAKDOWN_KIND_FOOD, unit_data,
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.BREAKDOWN_KIND_FOOD, unit_data,
                 _disclosures.food_breakdown_lines(unit_data))
         # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
         # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
         var fodder_store := float(unit_data.get("fodder_store", 0.0))
-        if fodder_store > HudLayer.FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > HudLayer.FOOD_FLOW_MIN:
+        if fodder_store > SourceForecast.FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > SourceForecast.FOOD_FLOW_MIN:
             lines.append(BAND_FODDER_ROW_FORMAT % fodder_store)
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
@@ -157,7 +157,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # Itemized morale breakdown: the SAME click-to-open disclosure as Food, in the same popover.
         # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
         # the concerning recovery line) — `register` declines an empty payload.
-        _disclosures.register(HudLayer.DETAIL_ROW_MORALE, HudLayer.BREAKDOWN_KIND_MORALE, unit_data,
+        _disclosures.register(HudDisclosureVocab.DETAIL_ROW_MORALE, HudDisclosureVocab.BREAKDOWN_KIND_MORALE, unit_data,
             _morale_breakdown_lines(unit_data, terrain_label))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
@@ -190,7 +190,7 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var context := ctx if ctx != null else DetailFormat.Context.new()
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
-    var is_hunt := mission == HudLayer.EXPEDITION_MISSION_HUNT
+    var is_hunt := mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT
     # The party's OWN target, resolved once: the `Target:` row's live position and the delivery line's
     # lost-vs-lean disambiguation are the same herd, so they must not be looked up twice.
     var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_hunt else {}
@@ -232,7 +232,7 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
             for qty in (stores_variant as Dictionary).values():
                 carried += int(round(float(qty)))
         else:
-            carried = int(round(float((stores_variant as Dictionary).get(HudLayer.STORE_ITEM_PROVISIONS, 0.0))))
+            carried = int(round(float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))))
     if is_hunt:
         # Carried X / cap + a FULL badge at the carry ceiling (the party heads home when full).
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
@@ -268,7 +268,7 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
     var provisions := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
-        provisions = int(round(float((stores_variant as Dictionary).get(HudLayer.STORE_ITEM_PROVISIONS, 0.0))))
+        provisions = int(round(float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))))
     var line := "Food: %d  (%s)" % [provisions, DetailFormat.food_turns_text(turns)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
     # the Food label a clickable disclosure. `_food_flow_present` is read ONLY by
@@ -297,19 +297,19 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
     ctx.morale = morale
     var text := "Morale: %d%%" % int(round(morale * 100.0))
     var delta: float = float(unit_data.get("morale_delta", 0.0))
-    if delta <= -HudLayer.MORALE_TREND_EPSILON:
+    if delta <= -DetailFormat.MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_FALLING_GLYPH
         # Name the cause only when morale is actually concerning — a healthy band
         # drifting slowly (nearly every tile bleeds a little today) shouldn't be
         # branded "harsh climate/terrain". Below the warn threshold, spell it out.
         if morale < BandFoodStatus.warn_morale():
-            var cause := int(unit_data.get("morale_cause", HudLayer.MORALE_CAUSE_NONE))
+            var cause := int(unit_data.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
             var cause_label := DetailFormat.morale_cause_label(cause)
             if cause_label != "":
-                if cause == HudLayer.MORALE_CAUSE_TERRAIN and terrain_label != "":
+                if cause == DetailFormat.MORALE_CAUSE_TERRAIN and terrain_label != "":
                     cause_label = "%s (%s)" % [cause_label, terrain_label]
                 text += " — %s" % cause_label
-    elif delta >= HudLayer.MORALE_TREND_EPSILON:
+    elif delta >= DetailFormat.MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_RISING_GLYPH
     return text
 
@@ -318,8 +318,8 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
 ## below full output; stashes the value on the render context so `DetailFormat.detail_bbcode`
 ## tints it by the output.{warn,critical} buckets (ink → amber → red).
 func _band_output_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
-    var output: float = float(unit_data.get("output_multiplier", HudLayer.OUTPUT_FULL))
-    if output >= HudLayer.OUTPUT_FULL:
+    var output: float = float(unit_data.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    if output >= SourceForecast.OUTPUT_FULL:
         return ""
     ctx.output = output
     return "Output: %d%%" % int(round(output * 100.0))
@@ -332,26 +332,26 @@ func _band_output_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
 ## "recover"). Returns [] when there is nothing to disclose (no contribution + not concerning).
 func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Array[String]:
     var lines: Array[String] = []
-    var terrain_row_label := HudLayer.MORALE_CAUSE_LABEL_TERRAIN
+    var terrain_row_label := DetailFormat.MORALE_CAUSE_LABEL_TERRAIN
     if terrain_label != "":
-        terrain_row_label = "%s (%s)" % [HudLayer.MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
+        terrain_row_label = "%s (%s)" % [DetailFormat.MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
     var unrest_value := float(unit_data.get("morale_unrest", 0.0))
     # (value, label) in the display order of the spec: settling, terrain, climate, unrest.
     var contributions := [
         [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
-        [float(unit_data.get("morale_climate", 0.0)), HudLayer.MORALE_CAUSE_LABEL_COLD],
-        [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else HudLayer.MORALE_CAUSE_LABEL_UNREST],
+        [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
+        [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:
         var value: float = entry[0]
         if absf(value) < epsilon:
             continue
-        var glyph := HudLayer.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else HudLayer.MORALE_CONTRIB_NEGATIVE_GLYPH
+        var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
         var sign_str := "+" if value > 0.0 else "−"
         lines.append("%s%s %s%.1f%%  %s" % [
-            HudLayer.MORALE_BREAKDOWN_INDENT, glyph, sign_str, absf(value) * 100.0, entry[1],
+            DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, sign_str, absf(value) * 100.0, entry[1],
         ])
     # Recovery guidance is a "you have a problem" prompt — only when concerning.
     if DetailFormat.morale_is_concerning(unit_data):

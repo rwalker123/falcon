@@ -65,7 +65,7 @@ var _party_autofill := false
 var _kind: String = KIND_NONE
 var _subject: String = ""
 
-## Both policy fields start on the caller's default rung (`HudLayer.DEFAULT_HUNT_POLICY`), passed in
+## Both policy fields start on the caller's default rung (`SourceForecast.DEFAULT_HUNT_POLICY`), passed in
 ## rather than mirrored here so the policy vocabulary lives in exactly one place.
 func _init(default_policy: String) -> void:
 	_forage_policy = default_policy

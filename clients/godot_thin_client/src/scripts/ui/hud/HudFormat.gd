@@ -14,8 +14,9 @@ class_name HudFormat
 ## builder of Controls it never builds. `HudWidgets` depends on THIS, never the other way round.
 ##
 ## EVERYTHING HERE IS `static`, STATELESS AND PURE — same invariant as `SourceForecast` and
-## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) stay on
-## `HudLayer` and are read back as `HudLayer.X`, so there is still exactly one place a phrase is typed.
+## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) live in
+## `HudExpeditionVocab` and are read as `HudExpeditionVocab.X`, so there is still exactly one place a
+## phrase is typed.
 ## Where a formatter needs HUD state it takes it as a PARAMETER rather than reaching for it — see
 ## `panel_expedition_summary`'s `herd_label_for_id` Callable, the `HudWidgets.build_worker_stepper`
 ## `current_turn` precedent.
@@ -75,24 +76,24 @@ static func source_icon_prefix(icon: String) -> String:
 ## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
 ## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
 static func row_glyph_suffix(glyph: String) -> String:
-    return "" if glyph == "" else HudLayer.ROW_GLYPH_SEPARATOR + glyph
+    return "" if glyph == "" else HudExpeditionVocab.ROW_GLYPH_SEPARATOR + glyph
 
 ## Humanize an expedition phase id ("awaiting" → "Awaiting orders").
 static func expedition_phase_label(phase: String) -> String:
     var key := phase.strip_edges().to_lower()
-    if HudLayer.EXPEDITION_PHASE_LABELS.has(key):
-        return HudLayer.EXPEDITION_PHASE_LABELS[key]
+    if HudExpeditionVocab.EXPEDITION_PHASE_LABELS.has(key):
+        return HudExpeditionVocab.EXPEDITION_PHASE_LABELS[key]
     return key.capitalize()
 
-## The WORDS behind a status glyph. Order-level statuses come from `HudLayer.STATUS_LABELS`; an expedition
-## PHASE reads from `HudLayer.EXPEDITION_PHASE_LABELS` (`expedition_phase_label`), which stays the single
+## The WORDS behind a status glyph. Order-level statuses come from `HudExpeditionVocab.STATUS_LABELS`; an expedition
+## PHASE reads from `HudExpeditionVocab.EXPEDITION_PHASE_LABELS` (`expedition_phase_label`), which stays the single
 ## source of truth for the phase words — they are never re-typed here.
 static func status_label(status: String) -> String:
     var key := status.strip_edges().to_lower()
     if key == "":
         return ""
-    if HudLayer.STATUS_LABELS.has(key):
-        return String(HudLayer.STATUS_LABELS[key])
+    if HudExpeditionVocab.STATUS_LABELS.has(key):
+        return String(HudExpeditionVocab.STATUS_LABELS[key])
     return expedition_phase_label(key)
 
 ## One tooltip line spelling a status glyph out: the word plus its behaviour hint ("Pending — starts
@@ -101,8 +102,8 @@ static func status_tooltip_line(status: String) -> String:
     var label := status_label(status)
     if label == "":
         return ""
-    var hint := String(HudLayer.STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
-    return label if hint == "" else HudLayer.STATUS_HINT_FORMAT % [label, hint]
+    var hint := String(HudExpeditionVocab.STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
+    return label if hint == "" else HudExpeditionVocab.STATUS_HINT_FORMAT % [label, hint]
 
 ## Append the status words to a row tooltip. The glyph on the row is terse by design, so the hover
 ## must carry what it encodes — composed WITH the tooltip the row already had (yield readout,
@@ -111,7 +112,7 @@ static func append_status_tooltip(tooltip: String, status: String) -> String:
     var status_line := status_tooltip_line(status)
     if status_line == "":
         return tooltip
-    return status_line if tooltip == "" else tooltip + HudLayer.TOOLTIP_LINE_SEPARATOR + status_line
+    return status_line if tooltip == "" else tooltip + SourceForecast.TOOLTIP_LINE_SEPARATOR + status_line
 
 ## Join the non-empty parts of a row tooltip (yield readout · policy behaviour · …) into one block.
 static func join_tooltip_lines(lines: Array) -> String:
@@ -120,7 +121,7 @@ static func join_tooltip_lines(lines: Array) -> String:
         var text := String(line)
         if text != "":
             parts.append(text)
-    return HudLayer.TOOLTIP_LINE_SEPARATOR.join(parts)
+    return SourceForecast.TOOLTIP_LINE_SEPARATOR.join(parts)
 
 ## A rung's display FACE — its `FoodIcons` glyph welded to its name. The one policy vocabulary every
 ## rung readout shares (the gate-reason lines, the work inspector's standing-investment line and its
@@ -131,7 +132,7 @@ static func policy_face(policy: String) -> String:
 ## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
 ## a gate reason — it tells the player they haven't started the track at all.
 static func progress_percent(progress: float) -> int:
-    return int(round(clampf(progress, 0.0, 1.0) * HudLayer.PROGRESS_PERCENT_SCALE))
+    return int(round(clampf(progress, 0.0, 1.0) * HudConst.PROGRESS_PERCENT_SCALE))
 
 # ---- People: apportionment + the dependency vocabulary -------------------------------------------
 
@@ -171,11 +172,11 @@ static func dependency_per_hundred(dependents: int, working: int) -> int:
     return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
 
 ## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
-## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` stays on
-## `HudLayer` (the chip's own tint reads it too) and is read back, the established convention.
+## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` lives in
+## `HudWorkVocab` (the chip's own tint reads it too) and is read as `HudWorkVocab.X`.
 static func dependency_tooltip(dependents: int, working: int) -> String:
     var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
-    if dependency_per_hundred(dependents, working) > HudLayer.PEOPLE_DEPENDENCY_HEAVY:
+    if dependency_per_hundred(dependents, working) > HudWorkVocab.PEOPLE_DEPENDENCY_HEAVY:
         text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
     return text
 
@@ -214,7 +215,7 @@ static func expedition_phase_key(exp: Dictionary) -> String:
 ## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
 static func expedition_phase_suffix(phase: String) -> String:
     var suffix := row_glyph_suffix(FoodIcons.for_status(phase))
-    if phase == HudLayer.EXPEDITION_PHASE_AWAITING:
+    if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
         return "%s %s" % [suffix, expedition_phase_label(phase)]
     return suffix
 
@@ -235,7 +236,7 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
     var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
     var policy_suffix := row_glyph_suffix(
         FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
-    if mission == HudLayer.EXPEDITION_MISSION_HUNT:
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
         var herd := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
         return "%s %s%s%s" % [
             PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
@@ -243,3 +244,12 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [
         PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
+
+## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
+## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
+## rows narrower still. Lives here (the pure format layer) because THREE clusters read it and it
+## touches no member; DetailFormat's danger bars and TopBarReadouts' meters call it as
+## `HudFormat.meter_bar` rather than taking a Callable injection.
+static func meter_bar(score: float, cells: int) -> String:
+    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
+    return "▰".repeat(filled) + "▱".repeat(cells - filled)

@@ -20,16 +20,14 @@ extends RefCounted
 ## injected?" (`_refresh_disclosure_hosts` and `_render_occupant_drawer`, which forks the band detail
 ## into the dock when one is), so they ask `has_panel()` instead of holding the node.
 ##
-## THE BOUNDARY BACK TO `HudLayer` IS SIX CALLABLES, each retained there for a reason the
+## THE BOUNDARY BACK TO `HudLayer` IS TWO CALLABLES, each retained there for a reason the
 ## "an injection you still have to hold is relocated, not eliminated" test settles:
 ##   • `_emit_assign_labor` — owns the `assign_labor_requested` emit, the optimistic pending write and
 ##     `_after_pending_change()`. So `assign_labor` stays INDIRECT here, while the three commands with
 ##     no other emitter (`cancel_order` / `send_hunt_expedition` / `recall_expedition`) are signals.
 ##   • `_herd_label_for_id` — the herd vocabulary, also read by the targeting banner + command feed.
-##   • `_on_send_expedition_pressed` + the QUARRY TRIO (`_on_pick_quarry_pressed` /
-##     `_cancel_pending_pick_quarry` / `_is_expedition_quarry`) — HudLayer's targeting machinery, which
-##     has three other modes and its own `_pending_*` state. Bundling the trio behind a façade was
-##     considered and rejected: `HudLayer` would still construct it from the same three Callables.
+## The send-expedition + quarry (begin / cancel / eligibility) verbs the parties zone drives are no
+## longer four Callables into HudLayer — they are a typed `TargetingController` collaborator now.
 ##
 ## Everything else arrives as a collaborator: the two state models, the selection card (roster lookup +
 ## pinning, for the map-focus routing, and the one selection read the vitals rows need —
@@ -40,9 +38,9 @@ extends RefCounted
 ## `add_child`, and `_confirm_destructive` parents a `ConfirmationDialog` exactly as
 ## `TurnOrbController` parents its fork panel.
 ##
-## The word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the
-## same convention `HudWidgets` / `HudFormat` / `TopBarReadouts` / `SelectionCardController` /
-## `DrawerComposeController` follow — so a phrase is still typed in exactly one place.
+## The word tables, formats and thresholds live in the topic vocab modules (`HudConst` / the matching
+## `Hud*Vocab`) and the shared `DetailFormat` layer, read as `Module.X` — so a phrase is still typed in
+## exactly one place.
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # Standing work was cleared for a whole scope — relayed to HudLayer.cancel_order_requested.
@@ -69,15 +67,14 @@ var _banddetail: BandDetailLines = null
 # The HUD CanvasLayer, so this RefCounted has a node to parent the confirm dialog into.
 var _host: Node = null
 
-# --- The six retained HudLayer helpers, injected as Callables (see the class header) ---
+# --- The two retained HudLayer helpers, injected as Callables (see the class header) ---
 # Each is reached through a typed adapter below rather than called raw: `Callable.call` returns
 # `Variant`, which would push an untyped value into every consumer here.
 var _emit_assign_labor_fn: Callable
 var _herd_label_for_id_fn: Callable
-var _on_send_expedition_pressed_fn: Callable
-var _on_pick_quarry_pressed_fn: Callable
-var _cancel_pending_pick_quarry_fn: Callable
-var _is_expedition_quarry_fn: Callable
+# The command-targeting cluster. The send-expedition + quarry (begin/cancel/eligibility) verbs the
+# parties zone drives now live here, not behind Callables into HudLayer.
+var _targeting: TargetingController = null
 
 # --- Owned state (moved off HudLayer) ---
 # The dockable Band/City command center (docs/plan_band_city_dock.md §3), injected by Main through
@@ -88,8 +85,8 @@ var _is_expedition_quarry_fn: Callable
 var _panel: BandCityPanel = null
 # ---- Band/City zone state (persists across renders, so a filter/tab/page survives a snapshot) ----
 ## Which sources the work board shows, how it orders them, and which page is on screen.
-var _work_filter: StringName = HudLayer.WORK_FILTER_ALL
-var _work_sort: StringName = HudLayer.WORK_SORT_YIELD
+var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
+var _work_sort: StringName = HudWorkVocab.WORK_SORT_YIELD
 var _work_page: int = 0
 ## The source key open in the work inspector strip ("" = none), and whether its policy picker is out.
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
@@ -105,23 +102,22 @@ var _work_zone_band: Dictionary = {}
 ## The band-zone height tier the current render was built for. Written by `build_band_zone`, read by
 ## `_on_zones_resized` — the one straddle the band and work halves shared, resolved by keeping BOTH
 ## ends in this controller.
-var _band_zone_tier: int = HudLayer.BAND_ZONE_TIER_TALL
+var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
 ## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
 ## keeps the party size / policy / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
 var _party_compose_mission: String = ""
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
-var _send_expedition_count: int = HudLayer.WORKER_STEP
+var _send_expedition_count: int = HudConst.WORKER_STEP
 # Compose state for the hunt-expedition launch policy (Sustain/Surplus/Market/Eradicate).
-var _send_hunt_policy: String = HudLayer.DEFAULT_HUNT_POLICY
+var _send_hunt_policy: String = SourceForecast.DEFAULT_HUNT_POLICY
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
         banddetail: BandDetailLines, host: Node,
         emit_assign_labor: Callable, herd_label_for_id: Callable,
-        on_send_expedition_pressed: Callable, on_pick_quarry_pressed: Callable,
-        cancel_pending_pick_quarry: Callable, is_expedition_quarry: Callable) -> void:
+        targeting: TargetingController) -> void:
     _band_labor = band_labor
     _compose = compose
     _selectioncard = selectioncard
@@ -130,12 +126,9 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _host = host
     _emit_assign_labor_fn = emit_assign_labor
     _herd_label_for_id_fn = herd_label_for_id
-    _on_send_expedition_pressed_fn = on_send_expedition_pressed
-    _on_pick_quarry_pressed_fn = on_pick_quarry_pressed
-    _cancel_pending_pick_quarry_fn = cancel_pending_pick_quarry
-    _is_expedition_quarry_fn = is_expedition_quarry
+    _targeting = targeting
 
-# ---- Typed adapters over the six injected HudLayer helpers -------------------------------------
+# ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
 ## the optimistic pending-labor write and `_after_pending_change()`.
@@ -148,30 +141,10 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 func _herd_label_for_id(herd_id: String) -> String:
     return _herd_label_for_id_fn.call(herd_id)
 
-## Outfit a scouting party and enter TILE-targeting for its destination. Retained on HudLayer with the
-## `_pending_send_expedition` state and the three other targeting modes.
-func _on_send_expedition_pressed(band: Dictionary, party_workers: int) -> void:
-    _on_send_expedition_pressed_fn.call(band, party_workers)
-
-## Enter HERD-targeting so the next map click names the hunting party's quarry. Retained on HudLayer
-## with `_pending_pick_quarry`.
-func _on_pick_quarry_pressed(band: Dictionary) -> void:
-    _on_pick_quarry_pressed_fn.call(band)
-
-## Abandon an in-flight quarry pick (the chosen quarry, if any, stays chosen). Retained on HudLayer
-## with the targeting refresh it drives.
-func _cancel_pending_pick_quarry() -> void:
-    _cancel_pending_pick_quarry_fn.call()
-
-## Is `herd` a valid quarry for a DETACHED party from `band` (strictly beyond its hunt reach)? THE
-## single definition, retained on HudLayer where the pick and MapView's glow also read it.
-func _is_expedition_quarry(band: Dictionary, herd: Dictionary) -> bool:
-    return bool(_is_expedition_quarry_fn.call(band, herd))
-
 ## Player-faction check for a band (a trivial private copy of HudLayer's, the SelectionCardController
 ## precedent — a one-line predicate is not worth a Callable).
 func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudLayer.PLAYER_FACTION_ID)) == HudLayer.PLAYER_FACTION_ID
+    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 # ---- The inbound seam: is a panel even injected? ------------------------------------------------
 
@@ -197,7 +170,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     if arrivals.is_empty():
         return null
     var block := _make_alloc_block()
-    block.add_child(HudWidgets.alloc_section_label(HudLayer.ALLOC_HEADER_FOOD_OUTLOOK))
+    block.add_child(HudWidgets.alloc_section_label(HudWorkVocab.ALLOC_HEADER_FOOD_OUTLOOK))
     var chart := FoodOutlookChart.new()
     # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
     # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
@@ -207,7 +180,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
     # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
     if compact:
-        chart.custom_minimum_size = Vector2(chart.custom_minimum_size.x, HudLayer.FOOD_CHART_COMPACT_HEIGHT)
+        chart.custom_minimum_size = Vector2(chart.custom_minimum_size.x, HudWorkVocab.FOOD_CHART_COMPACT_HEIGHT)
     block.add_child(chart)
     return block
 
@@ -217,7 +190,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
 func _make_alloc_block() -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    block.add_theme_constant_override("separation", HudLayer.ALLOC_BLOCK_SEPARATION)
+    block.add_theme_constant_override("separation", HudWorkVocab.ALLOC_BLOCK_SEPARATION)
     return block
 
 ## ============================================================================
@@ -243,7 +216,7 @@ func _zone_box() -> Vector2:
         var box: Vector2 = _panel.work_zone_size()
         if box.x > 0.0 and box.y > 0.0:
             return box
-    return HudLayer.ZONE_FALLBACK_SIZE
+    return HudWorkVocab.ZONE_FALLBACK_SIZE
 
 ## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
 ## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
@@ -252,7 +225,7 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
     var dialog := ConfirmationDialog.new()
     dialog.dialog_text = body
     dialog.ok_button_text = ok_text
-    dialog.title = HudLayer.CONFIRM_DIALOG_TITLE
+    dialog.title = HudWorkVocab.CONFIRM_DIALOG_TITLE
     dialog.confirmed.connect(func() -> void:
         on_confirm.call()
         dialog.queue_free())
@@ -273,11 +246,11 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var people := _build_people_block(band)
     if people != null:
         col.add_child(people)
-    if _band_zone_tier != HudLayer.BAND_ZONE_TIER_SHORT:
-        var outlook := _build_food_outlook_block(band, _band_zone_tier == HudLayer.BAND_ZONE_TIER_COMPACT)
+    if _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:
+        var outlook := _build_food_outlook_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_COMPACT)
         if outlook != null:
             col.add_child(outlook)
-    col.add_child(_build_workforce_block(band, _band_zone_tier == HudLayer.BAND_ZONE_TIER_SHORT))
+    col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
     return col
 
 ## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
@@ -325,16 +298,16 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
         return null
     var segments: Array = []
     if children > 0:
-        segments.append({"key": HudLayer.PEOPLE_GLYPH_CHILDREN, "count": children,
-            "color": HudStyle.VOICE_PIGMENT, "tooltip": "%d %s" % [children, HudLayer.PEOPLE_LABEL_CHILDREN]})
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_CHILDREN, "count": children,
+            "color": HudStyle.VOICE_PIGMENT, "tooltip": "%d %s" % [children, HudWorkVocab.PEOPLE_LABEL_CHILDREN]})
     if working > 0:
-        segments.append({"key": HudLayer.PEOPLE_GLYPH_WORKING, "count": working,
-            "color": HudStyle.INK_DIM, "tooltip": "%d %s" % [working, HudLayer.PEOPLE_LABEL_WORKING]})
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_WORKING, "count": working,
+            "color": HudStyle.INK_DIM, "tooltip": "%d %s" % [working, HudWorkVocab.PEOPLE_LABEL_WORKING]})
     if elders > 0:
-        segments.append({"key": HudLayer.PEOPLE_GLYPH_ELDERS, "count": elders,
-            "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, HudLayer.PEOPLE_LABEL_ELDERS]})
+        segments.append({"key": HudWorkVocab.PEOPLE_GLYPH_ELDERS, "count": elders,
+            "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, HudWorkVocab.PEOPLE_LABEL_ELDERS]})
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudLayer.ZONE_HEADER_PEOPLE, str(total)))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE, str(total)))
     block.add_child(HudWidgets.build_composition_bar(segments))
     block.add_child(HudWidgets.build_composition_key(segments, _build_dependency_chip(children, working, elders)))
     return block
@@ -347,10 +320,10 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
     var dependents := children + elders
     var per_hundred := HudFormat.dependency_per_hundred(dependents, working)
     var chip := Label.new()
-    chip.text = HudLayer.PEOPLE_DEPENDENCY_FORMAT % dependents
-    chip.add_theme_font_size_override("font_size", HudLayer.COMPOSITION_KEY_FONT_SIZE)
+    chip.text = HudWorkVocab.PEOPLE_DEPENDENCY_FORMAT % dependents
+    chip.add_theme_font_size_override("font_size", HudWorkVocab.COMPOSITION_KEY_FONT_SIZE)
     chip.add_theme_color_override("font_color",
-        HudStyle.WARN if per_hundred > HudLayer.PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
+        HudStyle.WARN if per_hundred > HudWorkVocab.PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
     HudWidgets.set_label_tooltip(chip, HudFormat.dependency_tooltip(dependents, working))
     chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -367,26 +340,26 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
         var m: Dictionary = merged[key]
         var workers := int(m.get("workers", 0))
         match String(m.get("kind", "")):
-            HudLayer.LABOR_KIND_FORAGE: forage_workers += workers
-            HudLayer.LABOR_KIND_HUNT: hunt_workers += workers
-    var scout_eff := _band_labor.effective_role_workers(band, HudLayer.LABOR_KIND_SCOUT)
-    var warrior_eff := _band_labor.effective_role_workers(band, HudLayer.LABOR_KIND_WARRIOR)
+            SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
+            SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+    var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
+    var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
     var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0))
     var party_workers := _band_labor.band_party_workers(band)
     var segments: Array = []
     for spec in [
-        [HudLayer.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
-        [HudLayer.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
-        [HudLayer.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
-        [HudLayer.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
-        [HudLayer.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
+        [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
+        [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
+        [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudLayer.ZONE_HEADER_WORKFORCE,
-        HudLayer.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE,
+        HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
@@ -395,9 +368,9 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
     # as one more worked source in a list (the complaint the card treatment fixes).
     var cards := HBoxContainer.new()
     cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    cards.add_theme_constant_override("separation", HudLayer.ROLE_CARD_SEPARATION)
-    cards.add_child(_build_role_card(band, HudLayer.ROLE_NAME_SCOUT, HudLayer.SCOUT_ROLE_HINT, HudLayer.LABOR_KIND_SCOUT, scout_eff, idle, compact_cards))
-    cards.add_child(_build_role_card(band, HudLayer.ROLE_NAME_WARRIOR, HudLayer.WARRIOR_ROLE_HINT, HudLayer.LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards))
+    cards.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle, compact_cards))
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, HudWorkVocab.WARRIOR_ROLE_HINT, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards))
     block.add_child(cards)
     return block
 
@@ -412,20 +385,20 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     # In a short zone the hint moves to the card's tooltip — the words survive, the two lines do not.
     card.tooltip_text = hint
     var col := VBoxContainer.new()
-    col.add_theme_constant_override("separation", HudLayer.ROLE_CARD_SEPARATION)
+    col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
     var title := Label.new()
     title.text = role_name
-    title.add_theme_font_size_override("font_size", HudLayer.ROLE_CARD_NAME_FONT_SIZE)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     col.add_child(title)
     if not compact:
         var hint_label := HudWidgets.alloc_hint_label(hint)
-        hint_label.custom_minimum_size = Vector2(0.0, HudLayer.ROLE_CARD_HINT_HEIGHT)
+        hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
         col.add_child(hint_label)
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
-    stepper.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         func(n: int) -> void: _emit_assign_labor(band, kind, n, -1, -1, "", ""))
     col.add_child(stepper)
@@ -437,7 +410,7 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## reference to itself so `zones_resized` can RE-PAGE in place rather than re-render the whole panel.
 func build_work_zone(band: Dictionary) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    col.add_theme_constant_override("separation", HudLayer.ZONE_BLOCK_SEPARATION)
+    col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     _work_zone_host = col
     _work_zone_band = band
     _fill_work_zone(col, band)
@@ -455,11 +428,11 @@ func _on_zones_resized() -> void:
 
 ## Which content tier the band zone's height affords (see `BAND_ZONE_*_MIN_HEIGHT`).
 func _band_zone_tier_for(zone_height: float) -> int:
-    if zone_height >= HudLayer.BAND_ZONE_TALL_MIN_HEIGHT:
-        return HudLayer.BAND_ZONE_TIER_TALL
-    if zone_height >= HudLayer.BAND_ZONE_CHART_MIN_HEIGHT:
-        return HudLayer.BAND_ZONE_TIER_COMPACT
-    return HudLayer.BAND_ZONE_TIER_SHORT
+    if zone_height >= HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT:
+        return HudWorkVocab.BAND_ZONE_TIER_TALL
+    if zone_height >= HudWorkVocab.BAND_ZONE_CHART_MIN_HEIGHT:
+        return HudWorkVocab.BAND_ZONE_TIER_COMPACT
+    return HudWorkVocab.BAND_ZONE_TIER_SHORT
 
 ## Re-page the live work board against the panel's new zone box. Only the board is rebuilt — the
 ## other two zones are untouched.
@@ -487,7 +460,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         _work_open_key = ""
         _work_policy_open = false
     if filtered.is_empty():
-        var hint := HudWidgets.alloc_hint_label(HudLayer.WORK_EMPTY_HINT)
+        var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
         return
@@ -512,14 +485,14 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## `inspected` is the open inspector's model, EMPTY when none is open.
 func _work_board_capacity(count: int, inspected: Dictionary) -> Dictionary:
     var box := _zone_box()
-    var cols := clampi(int(box.x / HudLayer.WORK_COLUMN_MIN_WIDTH), 1, HudLayer.WORK_MAX_COLUMNS)
+    var cols := clampi(int(box.x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
-    var chrome := HudLayer.ZONE_HEAD_HEIGHT + HudLayer.WORK_CHIPS_HEIGHT + inspector_h \
-        + float(HudLayer.ZONE_BLOCK_SEPARATION) * HudLayer.WORK_ZONE_GAP_COUNT
-    var rows := maxi(1, int((box.y - chrome) / HudLayer.WORK_ROW_HEIGHT))
+    var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
+        + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * HudWorkVocab.WORK_ZONE_GAP_COUNT
+    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
     if pages > 1:
-        rows = maxi(1, int((box.y - chrome - HudLayer.WORK_PAGER_HEIGHT - float(HudLayer.ZONE_BLOCK_SEPARATION)) / HudLayer.WORK_ROW_HEIGHT))
+        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_HEIGHT))
         pages = ceili(float(count) / float(maxi(cols * rows, 1)))
     return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
 
@@ -529,12 +502,12 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
     var board := HBoxContainer.new()
     board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     board.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    board.add_theme_constant_override("separation", HudLayer.WORK_COLUMN_SEPARATION)
+    board.add_theme_constant_override("separation", HudWorkVocab.WORK_COLUMN_SEPARATION)
     for c in range(cols):
         if c > 0:
             var rule := ColorRect.new()
             rule.color = HudStyle.LINE_SOFT
-            rule.custom_minimum_size = Vector2(HudLayer.WORK_COLUMN_RULE_WIDTH, 0.0)
+            rule.custom_minimum_size = Vector2(HudWorkVocab.WORK_COLUMN_RULE_WIDTH, 0.0)
             rule.size_flags_vertical = Control.SIZE_EXPAND_FILL
             rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
             board.add_child(rule)
@@ -553,18 +526,18 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
 ## The zone's head row: WORK · n sources · the band's total rate · the `⋯` section menu.
 func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxContainer:
     var menu := HudWidgets.build_section_menu([
-        {"label": HudLayer.WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(HudLayer.WORK_SORT_YIELD)},
-        {"label": HudLayer.WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(HudLayer.WORK_SORT_NAME)},
-        {"label": HudLayer.WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
+        {"label": HudWorkVocab.WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
+        {"label": HudWorkVocab.WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
+        {"label": HudWorkVocab.WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
             "on_pick": func() -> void: _on_work_unassign_all_pressed(band, models.size())},
-    ], HudLayer.WORK_MENU_TOOLTIP)
-    var head := HudWidgets.zone_head(HudLayer.ZONE_HEADER_WORK, HudLayer.WORK_SOURCES_FORMAT % models.size(), menu)
+    ], HudWorkVocab.WORK_MENU_TOOLTIP)
+    var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORK, HudWorkVocab.WORK_SOURCES_FORMAT % models.size(), menu)
     # The total sits between the count and the menu, tinted like the Food line's net rate.
     var total := Label.new()
     total.text = SourceForecast.format_yield(income)
-    total.add_theme_font_size_override("font_size", HudLayer.ZONE_HEAD_FONT_SIZE)
+    total.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
     total.add_theme_color_override("font_color", HudStyle.HEALTHY if income > 0.0 else HudStyle.INK_DIM)
-    HudWidgets.set_label_tooltip(total, HudLayer.WORK_TOTAL_TOOLTIP)
+    HudWidgets.set_label_tooltip(total, HudWorkVocab.WORK_TOTAL_TOOLTIP)
     head.add_child(total)
     head.move_child(total, head.get_child_count() - 2)
     return head
@@ -575,21 +548,21 @@ func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxCon
 ## (it is the reset), so the row is never empty.
 func _build_work_chips(models: Array) -> HFlowContainer:
     var chips := HFlowContainer.new()
-    chips.custom_minimum_size = Vector2(0.0, HudLayer.WORK_CHIPS_HEIGHT)
-    chips.add_theme_constant_override("h_separation", HudLayer.WORK_CHIP_SEPARATION)
-    var forage: Array = models.filter(func(m): return String(m["kind"]) == HudLayer.LABOR_KIND_FORAGE)
-    var hunt: Array = models.filter(func(m): return String(m["kind"]) == HudLayer.LABOR_KIND_HUNT)
+    chips.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_CHIPS_HEIGHT)
+    chips.add_theme_constant_override("h_separation", HudWorkVocab.WORK_CHIP_SEPARATION)
+    var forage: Array = models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_FORAGE)
+    var hunt: Array = models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_HUNT)
     var attention: Array = models.filter(func(m): return bool(m["attention"]))
-    chips.add_child(_build_work_chip(HudLayer.WORK_FILTER_ALL, HudLayer.WORK_CHIP_ALL_FORMAT % models.size(), false))
+    chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ALL, HudWorkVocab.WORK_CHIP_ALL_FORMAT % models.size(), false))
     if not forage.is_empty():
-        chips.add_child(_build_work_chip(HudLayer.WORK_FILTER_FORAGE, HudLayer.WORK_CHIP_KIND_FORMAT % [
+        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_FORAGE, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
             FoodIcons.DEFAULT, forage.size(), SourceForecast.format_magnitude(_work_rate_sum(forage))], false))
     if not hunt.is_empty():
-        chips.add_child(_build_work_chip(HudLayer.WORK_FILTER_HUNT, HudLayer.WORK_CHIP_KIND_FORMAT % [
+        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_HUNT, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
             FoodIcons.HUNT, hunt.size(), SourceForecast.format_magnitude(_work_rate_sum(hunt))], false))
     if not attention.is_empty():
-        chips.add_child(_build_work_chip(HudLayer.WORK_FILTER_ATTENTION,
-            HudLayer.WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
+        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ATTENTION,
+            HudWorkVocab.WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
     return chips
 
 func _work_rate_sum(models: Array) -> float:
@@ -604,10 +577,10 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
     chip.text = text
     chip.focus_mode = Control.FOCUS_NONE
     HudStyle.apply_button(chip, "primary" if active else "ghost")
-    HudWidgets.compact(chip, HudLayer.WORK_CHIP_FONT_SIZE, HudLayer.WORK_CHIP_PADDING_V)
+    HudWidgets.compact(chip, HudWorkVocab.WORK_CHIP_FONT_SIZE, HudWorkVocab.WORK_CHIP_PADDING_V)
     if alert and not active:
         chip.add_theme_color_override("font_color", HudStyle.WARN)
-    chip.tooltip_text = HudLayer.WORK_CHIP_TOOLTIP
+    chip.tooltip_text = HudWorkVocab.WORK_CHIP_TOOLTIP
     chip.pressed.connect(func() -> void: _set_work_filter(filter))
     return chip
 
@@ -616,7 +589,7 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var open := String(model.get("key", "")) == _work_open_key
     var row := PanelContainer.new()
-    row.custom_minimum_size = Vector2(0.0, HudLayer.WORK_ROW_HEIGHT)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -626,20 +599,20 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
             _toggle_work_inspector(String(model.get("key", ""))))
     var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudLayer.WORK_ROW_SEPARATION)
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     row.add_child(line)
     # Severity stripe: WARN when the source is overdrawing or overstaffed, SIGNAL while an edit is
     # still pending, transparent otherwise — so the eye finds trouble without reading a word.
     var stripe := ColorRect.new()
-    stripe.custom_minimum_size = Vector2(HudLayer.WORK_ROW_STRIPE_WIDTH, 0.0)
+    stripe.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_STRIPE_WIDTH, 0.0)
     stripe.size_flags_vertical = Control.SIZE_EXPAND_FILL
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(stripe)
     var icon := Label.new()
     icon.text = String(model.get("icon", ""))
-    icon.custom_minimum_size = Vector2(HudLayer.WORK_ROW_ICON_WIDTH, 0.0)
-    icon.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    icon.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_ICON_WIDTH, 0.0)
+    icon.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(icon)
     var label := Label.new()
@@ -651,23 +624,23 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     label.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("pending", false)) else HudStyle.INK)
-    label.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(label)
     var rate := Label.new()
     rate.text = SourceForecast.format_signed(float(model.get("rate", 0.0))) if bool(model.get("has_yield", false)) else ""
-    rate.custom_minimum_size = Vector2(HudLayer.WORK_ROW_RATE_WIDTH, 0.0)
+    rate.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RATE_WIDTH, 0.0)
     rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     rate.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    rate.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    rate.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     rate.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(rate)
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
-    marks.custom_minimum_size = Vector2(HudLayer.WORK_ROW_MARKS_WIDTH, 0.0)
+    marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
     marks.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("warn", false)) else HudStyle.INK_DIM)
-    marks.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marks)
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
@@ -684,36 +657,36 @@ func _work_row_stripe_color(model: Dictionary) -> Color:
 ## The pager, shown only when one page cannot hold the filtered set.
 func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HBoxContainer:
     var pager := HBoxContainer.new()
-    pager.custom_minimum_size = Vector2(0.0, HudLayer.WORK_PAGER_HEIGHT)
-    pager.add_theme_constant_override("separation", HudLayer.WORK_ROW_SEPARATION)
+    pager.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_PAGER_HEIGHT)
+    pager.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var prev := Button.new()
-    prev.text = HudLayer.PAGER_PREV_GLYPH
+    prev.text = HudWorkVocab.PAGER_PREV_GLYPH
     prev.focus_mode = Control.FOCUS_NONE
     prev.disabled = _work_page <= 0
-    prev.tooltip_text = HudLayer.PAGER_PREV_TOOLTIP
+    prev.tooltip_text = HudWorkVocab.PAGER_PREV_TOOLTIP
     HudStyle.apply_button(prev, "ghost")
-    HudWidgets.compact(prev, HudLayer.WORK_CHIP_FONT_SIZE, HudLayer.WORK_PAGER_PADDING_V)
+    HudWidgets.compact(prev, HudWorkVocab.WORK_CHIP_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
     prev.pressed.connect(func() -> void: _step_work_page(-1))
     pager.add_child(prev)
     var label := Label.new()
-    label.text = HudLayer.PAGER_FORMAT % [_work_page + 1, pages]
-    label.add_theme_font_size_override("font_size", HudLayer.WORK_CHIP_FONT_SIZE)
+    label.text = HudWorkVocab.PAGER_FORMAT % [_work_page + 1, pages]
+    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
     label.add_theme_color_override("font_color", HudStyle.INK_DIM)
     pager.add_child(label)
     var next := Button.new()
-    next.text = HudLayer.PAGER_NEXT_GLYPH
+    next.text = HudWorkVocab.PAGER_NEXT_GLYPH
     next.focus_mode = Control.FOCUS_NONE
     next.disabled = _work_page >= pages - 1
-    next.tooltip_text = HudLayer.PAGER_NEXT_TOOLTIP
+    next.tooltip_text = HudWorkVocab.PAGER_NEXT_TOOLTIP
     HudStyle.apply_button(next, "ghost")
-    HudWidgets.compact(next, HudLayer.WORK_CHIP_FONT_SIZE, HudLayer.WORK_PAGER_PADDING_V)
+    HudWidgets.compact(next, HudWorkVocab.WORK_CHIP_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
     next.pressed.connect(func() -> void: _step_work_page(1))
     pager.add_child(next)
     var range_label := Label.new()
-    range_label.text = HudLayer.PAGER_RANGE_FORMAT % [start + 1, shown_end, total]
+    range_label.text = HudWorkVocab.PAGER_RANGE_FORMAT % [start + 1, shown_end, total]
     range_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     range_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    range_label.add_theme_font_size_override("font_size", HudLayer.WORK_CHIP_FONT_SIZE)
+    range_label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
     range_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
     pager.add_child(range_label)
     return pager
@@ -729,28 +702,28 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     strip.custom_minimum_size = Vector2(0.0, _work_inspector_height(model))
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var col := VBoxContainer.new()
-    col.add_theme_constant_override("separation", HudLayer.ZONE_BLOCK_SEPARATION)
+    col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     strip.add_child(col)
     var head := HBoxContainer.new()
-    head.add_theme_constant_override("separation", HudLayer.WORK_ROW_SEPARATION)
+    head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var title := Label.new()
     title.text = "%s %s" % [String(model.get("icon", "")), String(model.get("label", ""))]
-    title.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var close := Button.new()
-    close.text = HudLayer.INSPECTOR_CLOSE_GLYPH
+    close.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
     close.focus_mode = Control.FOCUS_NONE
-    close.tooltip_text = HudLayer.INSPECTOR_CLOSE_TOOLTIP
+    close.tooltip_text = HudWorkVocab.INSPECTOR_CLOSE_TOOLTIP
     HudStyle.apply_button(close, "ghost")
-    HudWidgets.compact(close, HudLayer.WORK_ROW_FONT_SIZE, HudLayer.INSPECTOR_CLOSE_PADDING_V)
+    HudWidgets.compact(close, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.INSPECTOR_CLOSE_PADDING_V)
     close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
     head.add_child(close)
     col.add_child(head)
     col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM))
     if bool(model.get("warn", false)):
-        col.add_child(HudWidgets.build_status_part(HudLayer.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
+        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
     if String(model.get("note", "")) != "":
         col.add_child(HudWidgets.build_status_part(String(model.get("note", "")), HudStyle.WARN))
     if String(model.get("muted_note", "")) != "":
@@ -761,13 +734,13 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         arrivals.set_schedule(schedule, _band_labor.current_turn())
         col.add_child(arrivals)
     var links := HBoxContainer.new()
-    links.add_theme_constant_override("separation", HudLayer.COMPOSITION_KEY_SEPARATION)
-    links.add_child(HudWidgets.build_inline_link(HudLayer.WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
+    links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
+    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
         _focus_work_source(model)))
-    links.add_child(HudWidgets.build_inline_link(HudLayer.WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
         _work_policy_open = not _work_policy_open
         _repage_work_zone()))
-    links.add_child(HudWidgets.build_inline_link(HudLayer.WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
         _work_open_key = ""
         _work_policy_open = false
         _emit_work_assign(band, model, 0)))
@@ -777,14 +750,14 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         # COMMITMENTS made at the source's own compose control, where their knowledge gates and payoff
         # forecasts live; changing an existing assignment's take needs no gate.
         var standing := String(model.get("policy", ""))
-        if standing in HudLayer.INVESTMENT_POLICIES:
+        if standing in HudComposeVocab.INVESTMENT_POLICIES:
             # The picker highlights NOTHING on an investment assignment (the standing rung is not one
             # of the four), and an unhighlighted radio reads as unset. This line is what explains it.
             col.add_child(HudWidgets.build_status_part(
-                HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(standing), HudStyle.WARN))
+                HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(standing), HudStyle.WARN))
         col.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
             _on_work_policy_picked(band, model, policy),
-            standing, HudLayer.LABOR_HUNT_POLICIES, {}, {}, HudLayer.ZONE_POLICY_PICKER_COLUMNS))
+            standing, SourceForecast.LABOR_HUNT_POLICIES, {}, {}, HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
     return strip
 
 ## A rung picked in the work inspector. On the ordinary (EXTRACTIVE) standing policy this re-sends the
@@ -793,13 +766,13 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
 ## work" and "Recall all parties" get. The picker stays open until the answer comes back, so a cancel
 ## leaves the frame exactly as it was rather than silently closing on a change that never happened.
 func _on_work_policy_picked(band: Dictionary, model: Dictionary, policy: String) -> void:
-    if String(model.get("policy", "")) in HudLayer.INVESTMENT_POLICIES:
+    if String(model.get("policy", "")) in HudComposeVocab.INVESTMENT_POLICIES:
         _confirm_destructive(
-            HudLayer.WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT % [
+            HudWorkVocab.WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT % [
                 HudFormat.policy_face(String(model.get("policy", ""))),
                 String(model.get("label", "")),
                 HudFormat.policy_face(policy)],
-            HudLayer.WORK_INSPECT_END_INVESTMENT_CONFIRM_OK,
+            HudWorkVocab.WORK_INSPECT_END_INVESTMENT_CONFIRM_OK,
             func() -> void: _commit_work_policy(band, model, policy))
         return
     _commit_work_policy(band, model, policy)
@@ -812,10 +785,10 @@ func _commit_work_policy(band: Dictionary, model: Dictionary, policy: String) ->
 ## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
 func _work_inspector_height(model: Dictionary) -> float:
     if not _work_policy_open:
-        return HudLayer.WORK_INSPECTOR_HEIGHT
-    if String(model.get("policy", "")) in HudLayer.INVESTMENT_POLICIES:
-        return HudLayer.WORK_INSPECTOR_POLICY_HEIGHT + HudLayer.WORK_INSPECTOR_STANDING_LINE_HEIGHT
-    return HudLayer.WORK_INSPECTOR_POLICY_HEIGHT
+        return HudWorkVocab.WORK_INSPECTOR_HEIGHT
+    if String(model.get("policy", "")) in HudComposeVocab.INVESTMENT_POLICIES:
+        return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT + HudWorkVocab.WORK_INSPECTOR_STANDING_LINE_HEIGHT
+    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT
 
 ## The inspector's one-sentence readout: rate · policy in WORDS · status · assigned workers.
 func _work_inspector_sentence(model: Dictionary) -> String:
@@ -827,8 +800,8 @@ func _work_inspector_sentence(model: Dictionary) -> String:
         parts.append(policy.capitalize())
     parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
         else FoodIcons.STATUS_WORKING))
-    parts.append(HudLayer.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
-    return HudLayer.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
+    parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
+    return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 # ---- work-zone models + state ----------------------------------------------
 
@@ -843,7 +816,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
         var workers := int(m.get("workers", 0))
         var pending := bool(m.get("pending", false))
-        if not (kind == HudLayer.LABOR_KIND_FORAGE or kind == HudLayer.LABOR_KIND_HUNT):
+        if not (kind == SourceForecast.LABOR_KIND_FORAGE or kind == SourceForecast.LABOR_KIND_HUNT):
             continue
         if workers <= 0 and not pending:
             continue
@@ -855,32 +828,32 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var icon := ""
         var label := ""
         var cap := {}
-        if kind == HudLayer.LABOR_KIND_FORAGE:
-            if not (policy in HudLayer.FORAGE_POLICY_OPTIONS):
-                policy = HudLayer.DEFAULT_HUNT_POLICY
+        if kind == SourceForecast.LABOR_KIND_FORAGE:
+            if not (policy in HudBandLaborState.FORAGE_POLICY_OPTIONS):
+                policy = SourceForecast.DEFAULT_HUNT_POLICY
             # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
-            label = HudLayer.WORK_ROW_FORAGE_FORMAT % [x, y]
+            label = HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [x, y]
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
-                _band_labor.forage_patch_lookup().get(Vector2i(x, y), {}), HudLayer.SOURCE_KIND_FORAGE,
-                HudLayer.BARE_FORECAST_PREFIX, policy), workers, idle)
+                _band_labor.forage_patch_lookup().get(Vector2i(x, y), {}), SourceForecast.SOURCE_KIND_FORAGE,
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
         else:
-            if not (policy in HudLayer.HUNT_POLICY_OPTIONS):
+            if not (policy in HudBandLaborState.HUNT_POLICY_OPTIONS):
                 policy = _band_labor.policy_for_hunt(band, herd_id)
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
-            label = HudLayer.WORK_ROW_HUNT_FORMAT % herd_label
+            label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
-                _band_labor.find_world_herd(herd_id), HudLayer.SOURCE_KIND_HERD,
-                HudLayer.BARE_FORECAST_PREFIX, policy), workers, idle)
+                _band_labor.find_world_herd(herd_id), SourceForecast.SOURCE_KIND_HERD,
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
         var note := String(yld.get("note", ""))
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
-            marks += " " + HudLayer.OVERHUNT_FLAG
+            marks += " " + HudComposeVocab.OVERHUNT_FLAG
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "label": label,
             "rate": float(yld.get("rate", 0.0)), "has_yield": bool(m.get("has_yield", false)),
@@ -890,7 +863,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
-                _policy_hint(kind, policy), String(cap.get("note", "")), HudLayer.WORK_ROW_OPEN_HINT]),
+                _policy_hint(kind, policy), String(cap.get("note", "")), HudWorkVocab.WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
             "attention": bool(yld.get("warn", false)) or note != "" or pending,
         })
@@ -900,26 +873,26 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
 ## empties (the last herd is unassigned, the last ⚠ clears), so a standing filter would otherwise
 ## strand the player on an empty board with no chip left to press to get back out of it.
 func _reconcile_work_filter(models: Array) -> void:
-    if _work_filter == HudLayer.WORK_FILTER_ALL:
+    if _work_filter == HudWorkVocab.WORK_FILTER_ALL:
         return
     if _work_models_matching(_work_filter, models).is_empty():
-        _work_filter = HudLayer.WORK_FILTER_ALL
+        _work_filter = HudWorkVocab.WORK_FILTER_ALL
 
 func _filter_work_models(models: Array) -> Array:
     return _work_models_matching(_work_filter, models)
 
 func _work_models_matching(filter: StringName, models: Array) -> Array:
     match filter:
-        HudLayer.WORK_FILTER_FORAGE:
-            return models.filter(func(m): return String(m["kind"]) == HudLayer.LABOR_KIND_FORAGE)
-        HudLayer.WORK_FILTER_HUNT:
-            return models.filter(func(m): return String(m["kind"]) == HudLayer.LABOR_KIND_HUNT)
-        HudLayer.WORK_FILTER_ATTENTION:
+        HudWorkVocab.WORK_FILTER_FORAGE:
+            return models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_FORAGE)
+        HudWorkVocab.WORK_FILTER_HUNT:
+            return models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_HUNT)
+        HudWorkVocab.WORK_FILTER_ATTENTION:
             return models.filter(func(m): return bool(m["attention"]))
     return models.duplicate()
 
 func _sort_work_models(models: Array) -> void:
-    if _work_sort == HudLayer.WORK_SORT_NAME:
+    if _work_sort == HudWorkVocab.WORK_SORT_NAME:
         models.sort_custom(func(a, b): return String(a["label"]).naturalnocasecmp_to(String(b["label"])) < 0)
     else:
         models.sort_custom(func(a, b): return float(a["rate"]) > float(b["rate"]))
@@ -942,7 +915,7 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int, policy
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:
-    if String(model.get("kind", "")) == HudLayer.LABOR_KIND_HUNT:
+    if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
         _focus_hunt_source(String(model.get("herd_id", "")), int(model.get("x", -1)), int(model.get("y", -1)))
     else:
         focus_labor_source(int(model.get("x", -1)), int(model.get("y", -1)))
@@ -977,8 +950,8 @@ func _step_work_page(delta: int) -> void:
 func _on_work_unassign_all_pressed(band: Dictionary, count: int) -> void:
     if band.is_empty() or count <= 0:
         return
-    _confirm_destructive(HudLayer.WORK_UNASSIGN_CONFIRM_FORMAT % count, HudLayer.WORK_UNASSIGN_CONFIRM_OK,
-        func() -> void: _emit_cancel_order(band, HudLayer.CANCEL_SCOPE_WORK))
+    _confirm_destructive(HudWorkVocab.WORK_UNASSIGN_CONFIRM_FORMAT % count, HudWorkVocab.WORK_UNASSIGN_CONFIRM_OK,
+        func() -> void: _emit_cancel_order(band, HudComposeVocab.CANCEL_SCOPE_WORK))
 
 ## Clear labor for a band at `scope` (`all` / `work` / `roles`). Main formats the
 ## `cancel_order <faction> <band> <scope>` command.
@@ -994,25 +967,25 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 ## set, whose payoffs differ). Only `_work_source_models` asks, so it travelled with the board.
 func _policy_hint(kind: String, policy: String) -> String:
     var key := policy.strip_edges().to_lower()
-    if kind == HudLayer.LABOR_KIND_FORAGE:
-        return String(HudLayer.FORAGE_POLICY_HINTS.get(key, ""))
-    return String(HudLayer.LOCAL_HUNT_POLICY_HINTS.get(key, ""))
+    if kind == SourceForecast.LABOR_KIND_FORAGE:
+        return String(HudComposeVocab.FORAGE_POLICY_HINTS.get(key, ""))
+    return String(HudComposeVocab.LOCAL_HUNT_POLICY_HINTS.get(key, ""))
 
 # ---- zone `parties` ---------------------------------------------------------
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
 func build_parties_zone(band: Dictionary) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    col.add_theme_constant_override("separation", HudLayer.ZONE_BLOCK_SEPARATION)
+    col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     var parties := _band_labor.band_parties(band)
     var menu := HudWidgets.build_section_menu([
-        {"label": HudLayer.PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
+        {"label": HudComposeVocab.PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
             "on_pick": func() -> void: _on_recall_all_parties_pressed(parties)},
-    ], HudLayer.PARTY_MENU_TOOLTIP)
-    col.add_child(HudWidgets.zone_head(HudLayer.ZONE_HEADER_PARTIES,
-        HudLayer.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
+    ], HudComposeVocab.PARTY_MENU_TOOLTIP)
+    col.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PARTIES,
+        HudComposeVocab.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
     if parties.is_empty():
-        col.add_child(HudWidgets.alloc_hint_label(HudLayer.PARTIES_EMPTY_HINT))
+        col.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.PARTIES_EMPTY_HINT))
     else:
         for exp in parties:
             col.add_child(_build_party_row(exp))
@@ -1060,35 +1033,35 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var col := VBoxContainer.new()
-    col.add_theme_constant_override("separation", HudLayer.PARTIES_INSPECTOR_LINE_SEPARATION)
+    col.add_theme_constant_override("separation", HudComposeVocab.PARTIES_INSPECTOR_LINE_SEPARATION)
     strip.add_child(col)
     var entity := int(exp.get("entity", -1))
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     var head := HBoxContainer.new()
-    head.add_theme_constant_override("separation", HudLayer.WORK_ROW_SEPARATION)
+    head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var title := Label.new()
     title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
-    title.add_theme_font_size_override("font_size", HudLayer.WORK_ROW_FONT_SIZE)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var close := Button.new()
-    close.text = HudLayer.INSPECTOR_CLOSE_GLYPH
+    close.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
     close.focus_mode = Control.FOCUS_NONE
-    close.tooltip_text = HudLayer.INSPECTOR_CLOSE_TOOLTIP
+    close.tooltip_text = HudWorkVocab.INSPECTOR_CLOSE_TOOLTIP
     HudStyle.apply_button(close, "ghost")
-    HudWidgets.compact(close, HudLayer.WORK_ROW_FONT_SIZE, HudLayer.INSPECTOR_CLOSE_PADDING_V)
+    HudWidgets.compact(close, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.INSPECTOR_CLOSE_PADDING_V)
     close.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     head.add_child(close)
     col.add_child(head)
     for line in _banddetail.expedition_summary_lines(exp):
         col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM))
     var links := HBoxContainer.new()
-    links.add_theme_constant_override("separation", HudLayer.COMPOSITION_KEY_SEPARATION)
-    links.add_child(HudWidgets.build_inline_link(HudLayer.PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
+    links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
+    links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
         select_expedition(entity, x, y)))
-    links.add_child(HudWidgets.build_inline_link(HudLayer.PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
         confirm_recall_expedition(exp)))
     col.add_child(links)
     return strip
@@ -1100,7 +1073,7 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var phase := HudFormat.expedition_phase_key(exp)
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", HudLayer.WORK_ROW_SEPARATION)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var body := Button.new()
     body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
     body.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1108,7 +1081,7 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     body.clip_text = true
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(body, "ghost")
-    if phase == HudLayer.EXPEDITION_PHASE_AWAITING:
+    if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
         body.add_theme_color_override("font_color", HudStyle.WARN)
     body.tooltip_text = DetailFormat.expedition_row_tooltip(
         exp, phase, _band_labor.expedition_target_herd(exp))
@@ -1116,10 +1089,10 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
     var recall := Button.new()
-    recall.text = HudLayer.PARTY_RECALL_GLYPH
+    recall.text = HudComposeVocab.PARTY_RECALL_GLYPH
     recall.focus_mode = Control.FOCUS_NONE
-    recall.tooltip_text = HudLayer.PARTY_RECALL_TOOLTIP
-    recall.custom_minimum_size = Vector2(HudLayer.PARTY_RECALL_WIDTH, 0.0)
+    recall.tooltip_text = HudComposeVocab.PARTY_RECALL_TOOLTIP
+    recall.custom_minimum_size = Vector2(HudComposeVocab.PARTY_RECALL_WIDTH, 0.0)
     HudStyle.apply_button(recall, "ghost")
     # DANGER-red like the Work inspector's destructive "Unassign" link — it removes a party. The steady
     # red already reads as destructive, so it rests at full opacity (no alpha dim) and brightens no
@@ -1135,9 +1108,9 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
 func confirm_recall_expedition(exp: Dictionary) -> void:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
-        if mission == HudLayer.EXPEDITION_MISSION_HUNT \
-        else HudLayer.PARTY_RECALL_SCOUT_LABEL
-    _confirm_destructive(HudLayer.PARTY_RECALL_ONE_CONFIRM_FORMAT % label, HudLayer.PARTY_RECALL_ONE_CONFIRM_OK,
+        if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT \
+        else HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
+    _confirm_destructive(HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_FORMAT % label, HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
         func() -> void: _on_recall_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
@@ -1145,7 +1118,7 @@ func confirm_recall_expedition(exp: Dictionary) -> void:
 func _on_recall_all_parties_pressed(parties: Array) -> void:
     if parties.is_empty():
         return
-    _confirm_destructive(HudLayer.PARTY_RECALL_CONFIRM_FORMAT % parties.size(), HudLayer.PARTY_RECALL_CONFIRM_OK,
+    _confirm_destructive(HudComposeVocab.PARTY_RECALL_CONFIRM_FORMAT % parties.size(), HudComposeVocab.PARTY_RECALL_CONFIRM_OK,
         func() -> void:
             for exp in parties:
                 _on_recall_expedition_pressed(exp))
@@ -1161,14 +1134,14 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
         foot.add_child(_build_compose_sheet(band, idle))
         return foot
     var missions := HBoxContainer.new()
-    missions.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
-    missions.add_child(_build_mission_launch_button(HudLayer.COMPOSE_MISSION_SCOUT,
-        HudLayer.COMPOSE_MISSION_LABEL_SCOUT, HudLayer.SEND_EXPEDITION_HINT, idle))
-    missions.add_child(_build_mission_launch_button(HudLayer.COMPOSE_MISSION_HUNT,
-        HudLayer.COMPOSE_MISSION_LABEL_HUNT, HudLayer.SEND_HUNT_EXPEDITION_HINT, idle))
+    missions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_SCOUT,
+        HudComposeVocab.COMPOSE_MISSION_LABEL_SCOUT, HudComposeVocab.SEND_EXPEDITION_HINT, idle))
+    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_HUNT,
+        HudComposeVocab.COMPOSE_MISSION_LABEL_HUNT, HudComposeVocab.SEND_HUNT_EXPEDITION_HINT, idle))
     foot.add_child(missions)
     if idle <= 0:
-        foot.add_child(HudWidgets.alloc_hint_label(HudLayer.SEND_PARTY_NO_IDLE_REASON))
+        foot.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_PARTY_NO_IDLE_REASON))
     return foot
 
 ## One footer mission button: opens the compose sheet already committed to `mission`.
@@ -1192,17 +1165,17 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
 ## sheet titles itself by mission and the policy picker is unreachable except under Hunt (it used to
 ## sit above the scouting button and read as if it modified it). `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
-    var is_hunt := _party_compose_mission == HudLayer.COMPOSE_MISSION_HUNT
+    var is_hunt := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_HUNT
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
-    title.text = HudLayer.COMPOSE_TITLE_HUNT if is_hunt else HudLayer.COMPOSE_TITLE_SCOUT
+    title.text = HudComposeVocab.COMPOSE_TITLE_HUNT if is_hunt else HudComposeVocab.COMPOSE_TITLE_SCOUT
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
-    cancel.text = HudLayer.INSPECTOR_CLOSE_GLYPH
+    cancel.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
     cancel.focus_mode = Control.FOCUS_NONE
-    cancel.tooltip_text = HudLayer.COMPOSE_CANCEL_TOOLTIP
+    cancel.tooltip_text = HudComposeVocab.COMPOSE_CANCEL_TOOLTIP
     HudStyle.apply_button(cancel, "ghost")
     cancel.pressed.connect(func() -> void:
         _close_party_compose())
@@ -1214,21 +1187,21 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
     # depends on where it is going, so the destination is still picked on the map after the send.
     var party_max := _scout_party_max(band, idle)
-    _send_expedition_count = clampi(_send_expedition_count, HudLayer.WORKER_STEP, party_max)
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
-            _send_expedition_count = clampi(n, HudLayer.WORKER_STEP, party_max)
+            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
             rerender()))
-    sheet.add_child(HudWidgets.alloc_hint_label(HudLayer.COMPOSE_OF_IDLE_FORMAT % idle))
-    sheet.add_child(HudWidgets.alloc_hint_label(HudLayer.SEND_EXPEDITION_HINT))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_EXPEDITION_HINT))
     var confirm := Button.new()
-    confirm.text = HudLayer.SEND_EXPEDITION_BUTTON
+    confirm.text = HudComposeVocab.SEND_EXPEDITION_BUTTON
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(confirm, "primary")
-    confirm.tooltip_text = HudLayer.SEND_EXPEDITION_HINT
+    confirm.tooltip_text = HudComposeVocab.SEND_EXPEDITION_HINT
     confirm.pressed.connect(func() -> void:
         _close_party_compose()
-        _on_send_expedition_pressed(band, _send_expedition_count))
+        _targeting.begin_send_expedition(band, _send_expedition_count))
     sheet.add_child(confirm)
     return sheet
 
@@ -1244,25 +1217,25 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
     # should not make.
     var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _is_expedition_quarry(band, herd):
+    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
         herd = {}
         _compose.clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
     if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
         # shown so the shape of the form is legible, and it says why it is not yet pressable.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudLayer.COMPOSE_QUARRY_HINT))
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_QUARRY_HINT))
         var blocked := Button.new()
-        blocked.text = HudLayer.SEND_HUNTING_EXPEDITION_BUTTON
+        blocked.text = SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
         blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         blocked.disabled = true
-        blocked.tooltip_text = HudLayer.COMPOSE_QUARRY_HINT
+        blocked.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_HINT
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
-    if not (_send_hunt_policy in HudLayer.LABOR_HUNT_POLICIES):
-        _send_hunt_policy = HudLayer.DEFAULT_HUNT_POLICY
-    sheet.add_child(HudWidgets.alloc_section_label(HudLayer.COMPOSE_FIELD_POLICY))
+    if not (_send_hunt_policy in SourceForecast.LABOR_HUNT_POLICIES):
+        _send_hunt_policy = SourceForecast.DEFAULT_HUNT_POLICY
+    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_FIELD_POLICY))
     # With a herd in hand the four rungs finally carry their ascending per-policy metric — the same
     # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
     sheet.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
@@ -1270,22 +1243,22 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         # Auto-max on policy select, exactly as the herd drawer does: "give me everything this herd
         # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
-        rerender(), _send_hunt_policy, HudLayer.LABOR_HUNT_POLICIES,
-        {}, SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudLayer.ZONE_POLICY_PICKER_COLUMNS))
-    sheet.add_child(HudWidgets.alloc_hint_label(String(HudLayer.SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
+        rerender(), _send_hunt_policy, SourceForecast.LABOR_HUNT_POLICIES,
+        {}, SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+    sheet.add_child(HudWidgets.alloc_hint_label(String(HudComposeVocab.SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
     # Party size, capped at the raid's max-useful plateau for THIS herd + policy (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill.
     var assignable := _scout_party_max(band, idle)
     var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_policy, assignable)
-    var cap: int = maxi(int(capped["cap"]), HudLayer.WORKER_STEP)
+    var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
     if _compose.consume_party_autofill():
         _send_expedition_count = cap
-    _send_expedition_count = clampi(_send_expedition_count, HudLayer.WORKER_STEP, cap)
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, cap)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, cap,
         func(n: int) -> void:
-            _send_expedition_count = clampi(n, HudLayer.WORKER_STEP, cap)
+            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, cap)
             rerender()))
-    sheet.add_child(HudWidgets.alloc_hint_label(HudLayer.COMPOSE_OF_IDLE_FORMAT % idle))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
     var cap_note := String(capped["note"])
     if cap_note != "":
         sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -1308,7 +1281,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:
         emit_signal("send_hunt_expedition_requested", {
-            "faction": int(band.get("faction", HudLayer.PLAYER_FACTION_ID)),
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
             "band": int(band.get("entity", -1)),
             "party_workers": _send_expedition_count,
             "fauna_id": quarry_id,
@@ -1322,9 +1295,9 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
 ## (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
 func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", HudLayer.WORKER_STEPPER_SEPARATION)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var key := Label.new()
-    key.text = HudLayer.COMPOSE_FIELD_QUARRY
+    key.text = HudComposeVocab.COMPOSE_FIELD_QUARRY
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(key)
     var pick := Button.new()
@@ -1334,18 +1307,18 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     # row does not resize as a quarry is chosen.
     pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     if herd.is_empty():
-        pick.text = HudLayer.COMPOSE_QUARRY_CHOOSE
-        pick.tooltip_text = HudLayer.SEND_HUNT_EXPEDITION_HINT
+        pick.text = HudComposeVocab.COMPOSE_QUARRY_CHOOSE
+        pick.tooltip_text = HudComposeVocab.SEND_HUNT_EXPEDITION_HINT
         HudStyle.apply_button(pick, "primary")
     else:
         var name_text := SourceForecast.herd_display_name(herd)
-        pick.text = HudLayer.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+        pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
         pick.clip_text = true
-        pick.tooltip_text = HudLayer.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
+        pick.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
         ]
         HudStyle.apply_button(pick, "ghost")
-    pick.pressed.connect(func() -> void: _on_pick_quarry_pressed(band))
+    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band))
     row.add_child(pick)
     return row
 
@@ -1363,7 +1336,7 @@ func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
     _compose.clear_party_quarry()
-    _cancel_pending_pick_quarry()
+    _targeting.cancel_pick_quarry()
     rerender()
 
 # ---- badges -----------------------------------------------------------------
@@ -1382,7 +1355,7 @@ func _push_zone_badges(band: Dictionary) -> void:
     var parties := _band_labor.band_parties(band)
     var awaiting := false
     for exp in parties:
-        if HudFormat.expedition_phase_key(exp) == HudLayer.EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
@@ -1393,7 +1366,7 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
     if expedition.is_empty():
         return
     emit_signal("recall_expedition_requested", {
-        "faction": int(expedition.get("faction", HudLayer.PLAYER_FACTION_ID)),
+        "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
         "expedition": int(expedition.get("entity", -1)),
     })
 
