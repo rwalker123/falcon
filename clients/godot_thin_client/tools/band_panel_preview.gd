@@ -62,6 +62,17 @@ const QUARRY_NEAR_Y := 18
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 
+## The work-inspector policy-picker states work TWO Hunt rows on one band, told apart by the rung they
+## stand on: `corral` is an INVESTMENT rung (the picker offers only the four extractive ones, so it can
+## highlight nothing) and `sustain` is the ordinary control.
+const INVESTMENT_ROW_POLICY := "corral"
+const INVESTMENT_ROW_HERD_ID := "game_aurochs_11"
+const EXTRACTIVE_ROW_POLICY := "sustain"
+const EXTRACTIVE_ROW_HERD_ID := "game_deer_07"
+## The rung both assertions PRESS. Extractive, so on the investment row it is a genuine "discard the
+## pen and take at Surplus instead", and on the control row an ordinary change of take.
+const PICKED_RUNG_POLICY := "surplus"
+
 # The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
 const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
@@ -392,6 +403,37 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
+
+	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
+	# until now (`_work_policy_open` was never set true in either harness). Two rows, two behaviours:
+	# a source standing on an INVESTMENT rung (Corral) highlights none of the four extractive rungs,
+	# so it must SAY the standing rung and CONFIRM before a pick discards it; a source standing on an
+	# extractive rung (Sustain) must behave exactly as it always has — one lit rung, immediate emit.
+	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_herds(_investment_policy_herd_fixtures())
+	_hud.update_band_alerts([_investment_policy_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_open_work_policy_picker(INVESTMENT_ROW_POLICY)
+	await _settle()
+	await _save("band_panel_work_policy_investment")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_standing_investment_line(INVESTMENT_ROW_POLICY)
+	_assert_policy_pick_confirms(INVESTMENT_ROW_POLICY, true)
+
+	# The CONTROL: the very same picker on the extractive row beside it. Both assertions here must
+	# pass BEFORE and AFTER the investment fix — they are what proves it cannot fire on the normal path.
+	_open_work_policy_picker(EXTRACTIVE_ROW_POLICY)
+	await _settle()
+	await _save("band_panel_work_policy_extractive")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_lit_rung(EXTRACTIVE_ROW_POLICY)
+	_assert_policy_pick_confirms(EXTRACTIVE_ROW_POLICY, false)
+	_hud._work_policy_open = false
+	_hud._toggle_work_inspector(_hud._work_open_key)
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
 	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
@@ -801,6 +843,159 @@ func _find_zone_hosts(node: Node) -> Array:
 	for child in node.get_children():
 		hosts.append_array(_find_zone_hosts(child))
 	return hosts
+
+## Two Hunt rows on one band, told apart by the rung they STAND on: a part-built pen (an INVESTMENT
+## rung, which the work inspector's four-extractive-rung picker cannot highlight) and an ordinary
+## Sustain take (the control). Same band, same zone, so the two frames differ in exactly the rung.
+func _investment_policy_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 912
+	band["id"] = "Band 9"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "policy": INVESTMENT_ROW_POLICY,
+			"fauna_id": INVESTMENT_ROW_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": 0.75, "sustainable_yield": 0.75},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": EXTRACTIVE_ROW_POLICY,
+			"fauna_id": EXTRACTIVE_ROW_HERD_ID, "target_x": 69, "target_y": 19,
+			"actual_yield": 0.20, "sustainable_yield": 0.20},
+		{"kind": "scout", "workers": 1},
+	]
+	return band
+
+## The two herds those rows work. The pen is mid-build (`corral_progress`), which is exactly the
+## ~25-turn investment a pick in the work inspector would throw away.
+func _investment_policy_herd_fixtures() -> Array:
+	return [
+		{
+			"id": INVESTMENT_ROW_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
+			"population": 210, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 1.0, "corral_progress": 0.4, "herders_needed": 3,
+			"per_worker_yield": 0.25,
+			"hunt_policy_ceilings": {
+				"sustain": 0.40, "surplus": 1.10, "market": 1.60, "eradicate": 2.40,
+				"tame": 0.20, INVESTMENT_ROW_POLICY: 0.75,
+			},
+		},
+		{
+			"id": EXTRACTIVE_ROW_HERD_ID, "species": "Red Deer", "x": 69, "y": 19,
+			"population": 90, "ecology_phase": "thriving", "huntable": true,
+			"per_worker_yield": 0.10,
+			"hunt_policy_ceilings": {
+				"sustain": 0.20, "surplus": 0.60, "market": 0.90, "eradicate": 1.40,
+			},
+		},
+	]
+
+## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
+## repage so the picker actually renders. `_work_policy_open` is otherwise never true in either
+## harness, which is why this control had zero frame coverage.
+func _open_work_policy_picker(policy: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	for model_variant in _hud._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("policy", "")) != policy:
+			continue
+		_hud._work_open_key = String(model.get("key", ""))
+		_hud._work_policy_open = true
+		_hud._repage_work_zone()
+		return
+	push_error("band_panel_preview: no work row standing on '%s' — fixture drifted?" % policy)
+
+## The open inspector strip: the work zone host's PanelContainer (the board and chips are boxes).
+func _work_inspector_strip() -> PanelContainer:
+	var host: VBoxContainer = _hud._work_zone_host
+	if host == null or not is_instance_valid(host):
+		return null
+	for child in host.get_children():
+		if child is PanelContainer:
+			return child
+	return null
+
+## The inspector picker's rung buttons, keyed by policy. The work inspector passes NO `takes`, so a
+## button's face is exactly `Hud._policy_face(policy)` — the same vocabulary the standing line uses.
+func _picker_rung_buttons() -> Dictionary:
+	var buttons := {}
+	var strip := _work_inspector_strip()
+	if strip == null:
+		return buttons
+	var grid := _find_first_grid(strip)
+	if grid == null:
+		return buttons
+	for child in grid.get_children():
+		if not (child is Button):
+			continue
+		for policy in HudLayer.LABOR_HUNT_POLICIES:
+			if (child as Button).text == _hud._policy_face(String(policy)):
+				buttons[String(policy)] = child
+	return buttons
+
+func _find_first_grid(node: Node) -> GridContainer:
+	if node is GridContainer:
+		return node
+	for child in node.get_children():
+		var found := _find_first_grid(child)
+		if found != null:
+			return found
+	return null
+
+## RED 1: a source standing on an INVESTMENT rung must SAY so. Without it the picker highlights none
+## of its four rungs and reads as an unset control on a very-much-set assignment.
+func _assert_standing_investment_line(policy: String) -> void:
+	var want := HudLayer.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % _hud._policy_face(policy)
+	var strip := _work_inspector_strip()
+	if strip != null and _find_label_with_text(strip, want) != null:
+		print("band_panel_preview: assert OK — inspector states the standing rung ('%s')" % want)
+	else:
+		push_error("band_panel_preview: inspector never rendered the standing-investment line '%s'" % want)
+
+func _find_label_with_text(node: Node, text: String) -> Label:
+	if node is Label and (node as Label).text == text:
+		return node
+	for child in node.get_children():
+		var found := _find_label_with_text(child, text)
+		if found != null:
+			return found
+	return null
+
+## RED 2 (the important one) / CONTROL (i): press a real rung button and watch what happens.
+## `want_confirm` true  — the standing rung is an INVESTMENT: a ConfirmationDialog must appear and
+##                        `assign_labor_requested` must NOT fire yet (the ~25-turn build is at stake).
+## `want_confirm` false — the ordinary EXTRACTIVE path: the emit must land immediately, no dialog.
+func _assert_policy_pick_confirms(standing: String, want_confirm: bool) -> void:
+	var buttons := _picker_rung_buttons()
+	if not buttons.has(PICKED_RUNG_POLICY):
+		push_error("band_panel_preview: no '%s' rung in the work inspector's picker" % PICKED_RUNG_POLICY)
+		return
+	var fired := [false]
+	var sink := func(_payload: Dictionary) -> void: fired[0] = true
+	_hud.assign_labor_requested.connect(sink)
+	(buttons[PICKED_RUNG_POLICY] as Button).pressed.emit()
+	var dialog_shown := false
+	for child in _hud.get_children():
+		if child is ConfirmationDialog:
+			dialog_shown = true
+	_hud.assign_labor_requested.disconnect(sink)
+	if dialog_shown == want_confirm and fired[0] == (not want_confirm):
+		print("band_panel_preview: assert OK — a '%s' row's pick %s" % [
+			standing, "confirms before discarding" if want_confirm else "emits immediately"])
+	else:
+		push_error("band_panel_preview: '%s' row pick expected (confirm=%s, emit=%s) but got (confirm=%s, emit=%s)" % [
+			standing, want_confirm, not want_confirm, dialog_shown, fired[0]])
+	_dismiss_dialogs()
+
+## CONTROL (ii): on an EXTRACTIVE row exactly ONE rung wears the `primary` variant. There is no other
+## marker of "this is the standing rung" than the button's own resting fill, so read it back.
+func _assert_lit_rung(standing: String) -> void:
+	var lit: Array[String] = []
+	var buttons := _picker_rung_buttons()
+	for policy in buttons:
+		var box := (buttons[policy] as Button).get_theme_stylebox("normal")
+		if box is StyleBoxFlat and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG):
+			lit.append(String(policy))
+	if lit.size() == 1 and lit[0] == standing:
+		print("band_panel_preview: assert OK — exactly one rung lit, and it is '%s'" % standing)
+	else:
+		push_error("band_panel_preview: expected only '%s' lit in the picker but got %s" % [standing, str(lit)])
 
 ## Close any modal the preview opened, so the next state renders unobstructed.
 func _dismiss_dialogs() -> void:
