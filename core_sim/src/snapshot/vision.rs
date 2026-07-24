@@ -368,17 +368,17 @@ pub(crate) fn visibility_raster_from_ledger(
     let total = (width * height) as usize;
     let mut samples = vec![0i64; total];
 
-    let has_faction = ledger.get_faction(faction).is_some();
+    let faction_map = ledger.get_faction(faction);
     tracing::debug!(
         target: "shadow_scale::visibility",
         faction = faction.0,
-        has_faction,
+        has_faction = faction_map.is_some(),
         width,
         height,
         "visibility_raster_from_ledger START"
     );
 
-    if let Some(map) = ledger.get_faction(faction) {
+    if let Some(map) = faction_map {
         let mut active_count = 0u32;
         let mut discovered_count = 0u32;
         let mut unexplored_count = 0u32;
