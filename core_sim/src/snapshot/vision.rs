@@ -1,16 +1,27 @@
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn fog_raster_from_discoveries(
-    tiles: &[TileState],
-    populations: &[PopulationCohortState],
-    discovery: &DiscoveryProgressLedger,
-    grid_size: UVec2,
-    overlays: &SnapshotOverlaysConfig,
-    start_location: &StartLocation,
-    fog_reveals: &FogRevealLedger,
-    tick: u64,
-) -> ScalarRasterState {
+pub(crate) struct FogRasterInputs<'a> {
+    pub(crate) tiles: &'a [TileState],
+    pub(crate) populations: &'a [PopulationCohortState],
+    pub(crate) discovery: &'a DiscoveryProgressLedger,
+    pub(crate) grid_size: UVec2,
+    pub(crate) overlays: &'a SnapshotOverlaysConfig,
+    pub(crate) start_location: &'a StartLocation,
+    pub(crate) fog_reveals: &'a FogRevealLedger,
+    pub(crate) tick: u64,
+}
+
+pub(crate) fn fog_raster_from_discoveries(inputs: FogRasterInputs<'_>) -> ScalarRasterState {
+    let FogRasterInputs {
+        tiles,
+        populations,
+        discovery,
+        grid_size,
+        overlays,
+        start_location,
+        fog_reveals,
+        tick,
+    } = inputs;
     let mut max_x = 0u32;
     let mut max_y = 0u32;
     for tile in tiles {
@@ -358,7 +369,7 @@ pub(crate) fn visibility_raster_from_ledger(
     let mut samples = vec![0i64; total];
 
     let has_faction = ledger.get_faction(faction).is_some();
-    tracing::info!(
+    tracing::debug!(
         target: "shadow_scale::visibility",
         faction = faction.0,
         has_faction,
@@ -404,7 +415,7 @@ pub(crate) fn visibility_raster_from_ledger(
             samples[idx] = value;
         }
 
-        tracing::info!(
+        tracing::debug!(
             target: "shadow_scale::visibility",
             active_count,
             discovered_count,
@@ -414,7 +425,7 @@ pub(crate) fn visibility_raster_from_ledger(
     } else {
         // No visibility data for this faction, all unexplored (0 = black)
         // samples already initialized to 0
-        tracing::info!(
+        tracing::debug!(
             target: "shadow_scale::visibility",
             "visibility_raster_from_ledger NO_FACTION_DATA"
         );

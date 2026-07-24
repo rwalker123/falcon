@@ -1581,28 +1581,28 @@ pub fn capture_snapshot(
                     config.map_topology.wrap_horizontal,
                 )
             });
-            population_state(
+            population_state(PopulationStateInputs {
                 entity,
                 cohort,
                 allocation,
                 expedition,
-                home_pos,
-                current_pos,
+                home_position: home_pos,
+                current_position: current_pos,
                 is_traveling,
                 stockpile_radius,
                 start_position,
-                &faction_inventory,
-                &demographics_config,
-                &wellbeing_config,
-                &supply_membership,
-                band_work_range,
+                inventory: &faction_inventory,
+                demographics: &demographics_config,
+                wellbeing: &wellbeing_config,
+                supply_membership: &supply_membership,
+                work_range: band_work_range,
                 scout_vantage_distance,
-                &expedition_levers,
-                &settlement_stage_config,
+                expedition_levers: &expedition_levers,
+                settlement_stage_config: &settlement_stage_config,
                 travel_target,
                 hunt_reach,
                 expedition_delivery,
-            )
+            })
         })
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
@@ -1672,16 +1672,16 @@ pub fn capture_snapshot(
         grid_size: config.grid_size,
         overlays: overlays_config.as_ref(),
     });
-    let fog_raster = fog_raster_from_discoveries(
-        &tile_states,
-        &population_states,
-        &discovery_progress,
-        config.grid_size,
-        overlays_config.as_ref(),
-        start_location.as_ref(),
-        fog_reveals.as_ref(),
-        tick.0,
-    );
+    let fog_raster = fog_raster_from_discoveries(FogRasterInputs {
+        tiles: &tile_states,
+        populations: &population_states,
+        discovery: &discovery_progress,
+        grid_size: config.grid_size,
+        overlays: overlays_config.as_ref(),
+        start_location: start_location.as_ref(),
+        fog_reveals: fog_reveals.as_ref(),
+        tick: tick.0,
+    });
     let culture_raster = culture_raster_from_layers(
         &tile_states,
         culture.as_ref(),

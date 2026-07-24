@@ -633,28 +633,28 @@ mod tests {
             hunt_viability_warn_turns: 0,
             band_move_tiles_per_turn: 0,
         };
-        population_state(
-            Entity::from_raw(1),
+        population_state(PopulationStateInputs {
+            entity: Entity::from_raw(1),
             cohort,
-            Some(allocation),
-            None,
-            Some(UVec2::new(0, 0)),
-            None,
-            false,
-            0,
-            None,
-            &inventory,
-            &demographics,
-            &wellbeing,
-            &membership,
-            0,
-            0,
-            &levers,
-            &stages,
-            None,
-            0,
-            None,
-        )
+            allocation: Some(allocation),
+            expedition: None,
+            home_position: Some(UVec2::new(0, 0)),
+            current_position: None,
+            is_traveling: false,
+            stockpile_radius: 0,
+            start_position: None,
+            inventory: &inventory,
+            demographics: &demographics,
+            wellbeing: &wellbeing,
+            supply_membership: &membership,
+            work_range: 0,
+            scout_vantage_distance: 0,
+            expedition_levers: &levers,
+            settlement_stage_config: &stages,
+            travel_target: None,
+            hunt_reach: 0,
+            expedition_delivery: None,
+        })
     }
 
     /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = the food the people
@@ -1267,16 +1267,16 @@ mod tests {
         let overlays_config = SnapshotOverlaysConfig::default();
         let start_location = StartLocation::default();
         let fog_reveals = FogRevealLedger::default();
-        let fog = fog_raster_from_discoveries(
-            &tiles,
-            &populations,
-            &discovery,
-            UVec2::new(2, 1),
-            &overlays_config,
-            &start_location,
-            &fog_reveals,
-            0,
-        );
+        let fog = fog_raster_from_discoveries(FogRasterInputs {
+            tiles: &tiles,
+            populations: &populations,
+            discovery: &discovery,
+            grid_size: UVec2::new(2, 1),
+            overlays: &overlays_config,
+            start_location: &start_location,
+            fog_reveals: &fog_reveals,
+            tick: 0,
+        });
 
         assert_eq!(fog.width, 2);
         assert_eq!(fog.height, 1);
@@ -1297,16 +1297,16 @@ mod tests {
         let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
         let fog_reveals = FogRevealLedger::default();
 
-        let fog = fog_raster_from_discoveries(
-            &tiles,
-            &populations,
-            &discovery,
-            UVec2::new(2, 1),
-            &overlays_config,
-            &start_location,
-            &fog_reveals,
-            0,
-        );
+        let fog = fog_raster_from_discoveries(FogRasterInputs {
+            tiles: &tiles,
+            populations: &populations,
+            discovery: &discovery,
+            grid_size: UVec2::new(2, 1),
+            overlays: &overlays_config,
+            start_location: &start_location,
+            fog_reveals: &fog_reveals,
+            tick: 0,
+        });
 
         assert!(fog
             .samples
@@ -1328,16 +1328,16 @@ mod tests {
         let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
         let fog_reveals = FogRevealLedger::default();
 
-        let fog = fog_raster_from_discoveries(
-            &tiles,
-            &populations,
-            &discovery,
-            UVec2::new(2, 1),
-            &overlays_config,
-            &start_location,
-            &fog_reveals,
-            0,
-        );
+        let fog = fog_raster_from_discoveries(FogRasterInputs {
+            tiles: &tiles,
+            populations: &populations,
+            discovery: &discovery,
+            grid_size: UVec2::new(2, 1),
+            overlays: &overlays_config,
+            start_location: &start_location,
+            fog_reveals: &fog_reveals,
+            tick: 0,
+        });
 
         assert_eq!(fog.samples[0], Scalar::zero().raw());
         assert_eq!(fog.samples[1], Scalar::one().raw());
