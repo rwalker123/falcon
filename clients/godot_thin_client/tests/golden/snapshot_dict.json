@@ -1,0 +1,2149 @@
+{
+  "axis_bias": {
+    "agency": 0.000126,
+    "equity": 0.000038,
+    "knowledge": 0.000135,
+    "trust": 0.000105
+  },
+  "campaign_label": {
+    "profile_id": "header.campaign_label.profile_id",
+    "subtitle": "header.campaign_label.subtitle",
+    "subtitle_loc_key": "header.campaign_label.subtitle_loc_key",
+    "title": "header.campaign_label.title",
+    "title_loc_key": "header.campaign_label.title_loc_key"
+  },
+  "campaign_profiles": [
+    {
+      "fog_mode": "campaign_profiles[0].fog_mode",
+      "id": "campaign_profiles[0].id",
+      "inventory": [
+        {
+          "item": "campaign_profiles[0].inventory[0].item",
+          "quantity": 116
+        },
+        {
+          "item": "campaign_profiles[0].inventory[1].item",
+          "quantity": 117
+        }
+      ],
+      "knowledge_tags": [
+        "campaign_profiles[0].knowledge_tags[0]",
+        "campaign_profiles[0].knowledge_tags[1]"
+      ],
+      "primary_food_module": "campaign_profiles[0].primary_food_module",
+      "secondary_food_module": "campaign_profiles[0].secondary_food_module",
+      "starting_units": [
+        {
+          "count": 146,
+          "kind": "campaign_profiles[0].starting_units[0].kind",
+          "tags": [
+            "campaign_profiles[0].starting_units[0].tags[0]",
+            "campaign_profiles[0].starting_units[0].tags[1]"
+          ]
+        },
+        {
+          "count": 97,
+          "kind": "campaign_profiles[0].starting_units[1].kind",
+          "tags": [
+            "campaign_profiles[0].starting_units[1].tags[0]",
+            "campaign_profiles[0].starting_units[1].tags[1]"
+          ]
+        }
+      ],
+      "subtitle": "campaign_profiles[0].subtitle",
+      "subtitle_loc_key": "campaign_profiles[0].subtitle_loc_key",
+      "survey_radius": 64,
+      "title": "campaign_profiles[0].title",
+      "title_loc_key": "campaign_profiles[0].title_loc_key"
+    },
+    {
+      "fog_mode": "campaign_profiles[1].fog_mode",
+      "id": "campaign_profiles[1].id",
+      "inventory": [
+        {
+          "item": "campaign_profiles[1].inventory[0].item",
+          "quantity": 91
+        },
+        {
+          "item": "campaign_profiles[1].inventory[1].item",
+          "quantity": 2
+        }
+      ],
+      "knowledge_tags": [
+        "campaign_profiles[1].knowledge_tags[0]",
+        "campaign_profiles[1].knowledge_tags[1]"
+      ],
+      "primary_food_module": "campaign_profiles[1].primary_food_module",
+      "secondary_food_module": "campaign_profiles[1].secondary_food_module",
+      "starting_units": [
+        {
+          "count": 89,
+          "kind": "campaign_profiles[1].starting_units[0].kind",
+          "tags": [
+            "campaign_profiles[1].starting_units[0].tags[0]",
+            "campaign_profiles[1].starting_units[0].tags[1]"
+          ]
+        },
+        {
+          "count": 90,
+          "kind": "campaign_profiles[1].starting_units[1].kind",
+          "tags": [
+            "campaign_profiles[1].starting_units[1].tags[0]",
+            "campaign_profiles[1].starting_units[1].tags[1]"
+          ]
+        }
+      ],
+      "subtitle": "campaign_profiles[1].subtitle",
+      "subtitle_loc_key": "campaign_profiles[1].subtitle_loc_key",
+      "survey_radius": 155,
+      "title": "campaign_profiles[1].title",
+      "title_loc_key": "campaign_profiles[1].title_loc_key"
+    }
+  ],
+  "command_events": [
+    {
+      "detail": "command_events[0].detail",
+      "faction": 107,
+      "kind": "command_events[0].kind",
+      "label": "command_events[0].label",
+      "tick": 172
+    },
+    {
+      "detail": "command_events[1].detail",
+      "faction": 52,
+      "kind": "command_events[1].kind",
+      "label": "command_events[1].label",
+      "tick": 109
+    }
+  ],
+  "corruption": {
+    "audit_capacity": 55,
+    "entries": [
+      {
+        "exposure_timer": 102,
+        "incident_id": 189,
+        "intensity": 0.000108,
+        "last_update_tick": 183,
+        "restitution_window": 176,
+        "subsystem": "Logistics"
+      },
+      {
+        "exposure_timer": 103,
+        "incident_id": 18,
+        "intensity": 0.000087,
+        "last_update_tick": 94,
+        "restitution_window": 169,
+        "subsystem": "Logistics"
+      }
+    ],
+    "reputation_modifier": 0.00018
+  },
+  "crisis_overlay": {
+    "annotations": [
+      {
+        "label": "crisis_overlay.annotations[0].label",
+        "path": {"__packed": "PackedInt32Array", "len": 4, "items": [43, 64, 61, 66]},
+        "severity": "safe"
+      },
+      {
+        "label": "crisis_overlay.annotations[1].label",
+        "path": {"__packed": "PackedInt32Array", "len": 4, "items": [36, 103, 142, 17]},
+        "severity": "safe"
+      }
+    ],
+    "heatmap": {
+      "height": 3,
+      "samples": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000063, 0.00018, 0.000169, 0.00019, 0.000043, 0.000072, 0.000061, 0.000066, 0.000119, 0.000052, 0.00006, 0.000039]},
+      "width": 4
+    }
+  },
+  "crisis_telemetry": {
+    "containment_incidents": 47,
+    "criticals_active": 28,
+    "foreshock_incidents": 103,
+    "gauges": [
+      {
+        "band": "safe",
+        "critical_threshold": 36.23,
+        "ema": 28.98,
+        "history": [
+          {
+            "tick": 52,
+            "value": 89.57
+          },
+          {
+            "tick": 45,
+            "value": 78.059998
+          }
+        ],
+        "kind": "r0",
+        "label": "R₀",
+        "last_updated_tick": 127,
+        "raw": 67.120003,
+        "stale_ticks": 155,
+        "trend_5t": 41.490002,
+        "warn_threshold": 56.970001
+      },
+      {
+        "band": "safe",
+        "critical_threshold": 108.470001,
+        "ema": 52.43,
+        "history": [
+          {
+            "tick": 123,
+            "value": 33.220001
+          },
+          {
+            "tick": 114,
+            "value": 91.099998
+          }
+        ],
+        "kind": "r0",
+        "label": "R₀",
+        "last_updated_tick": 144,
+        "raw": 34.32,
+        "stale_ticks": 200,
+        "trend_5t": 72.309998,
+        "warn_threshold": 50.380001
+      }
+    ],
+    "modifiers_active": 196,
+    "warnings_active": 19
+  },
+  "culture_layers": [
+    {
+      "divergence": 0.000067,
+      "hard_threshold": 0.000106,
+      "id": 94,
+      "last_updated_tick": 5,
+      "owner": "0000000000000068",
+      "owner_value": 104,
+      "parent": 129,
+      "scope": "Regional",
+      "scope_label": "Regional",
+      "soft_threshold": 0.000145,
+      "ticks_above_hard": 193,
+      "ticks_above_soft": 74,
+      "traits": [
+        {
+          "axis": "OpenClosed",
+          "baseline": 0.000171,
+          "label": "Open ↔ Closed",
+          "modifier": 0.000169,
+          "value": 0.000115
+        },
+        {
+          "axis": "OpenClosed",
+          "baseline": 0.000146,
+          "label": "Open ↔ Closed",
+          "modifier": 0.000012,
+          "value": 0.000016
+        }
+      ]
+    },
+    {
+      "divergence": 0.000166,
+      "hard_threshold": 0.000019,
+      "id": 163,
+      "last_updated_tick": 174,
+      "owner": "00000000000000BB",
+      "owner_value": 187,
+      "parent": 80,
+      "scope": "Regional",
+      "scope_label": "Regional",
+      "soft_threshold": 0.00008,
+      "ticks_above_hard": 100,
+      "ticks_above_soft": 103,
+      "traits": [
+        {
+          "axis": "OpenClosed",
+          "baseline": 0.00013,
+          "label": "Open ↔ Closed",
+          "modifier": 0.000004,
+          "value": 0.000176
+        },
+        {
+          "axis": "OpenClosed",
+          "baseline": 0.000123,
+          "label": "Open ↔ Closed",
+          "modifier": 0.000057,
+          "value": 0.000051
+        }
+      ]
+    }
+  ],
+  "culture_tensions": [
+    {
+      "kind": "SchismRisk",
+      "kind_label": "Schism Risk",
+      "layer_id": 179,
+      "scope": "Local",
+      "scope_label": "Local",
+      "severity": 0.000071,
+      "timer": 135
+    },
+    {
+      "kind": "SchismRisk",
+      "kind_label": "Schism Risk",
+      "layer_id": 102,
+      "scope": "Local",
+      "scope_label": "Local",
+      "severity": 0.000054,
+      "timer": 196
+    }
+  ],
+  "demographics": [
+    {
+      "children": 133,
+      "elders": 91,
+      "faction": 134,
+      "working": 171
+    },
+    {
+      "children": 92,
+      "elders": 2,
+      "faction": 61,
+      "working": 24
+    }
+  ],
+  "discovered_sites": [
+    {
+      "faction": 133,
+      "sites": [
+        {
+          "category": "discovered_sites[0].sites[0].category",
+          "display_name": "discovered_sites[0].sites[0].display_name",
+          "glyph": "discovered_sites[0].sites[0].glyph",
+          "site_id": "discovered_sites[0].sites[0].site_id",
+          "x": 81,
+          "y": 92
+        },
+        {
+          "category": "discovered_sites[0].sites[1].category",
+          "display_name": "discovered_sites[0].sites[1].display_name",
+          "glyph": "discovered_sites[0].sites[1].glyph",
+          "site_id": "discovered_sites[0].sites[1].site_id",
+          "x": 62,
+          "y": 51
+        }
+      ]
+    },
+    {
+      "faction": 198,
+      "sites": [
+        {
+          "category": "discovered_sites[1].sites[0].category",
+          "display_name": "discovered_sites[1].sites[0].display_name",
+          "glyph": "discovered_sites[1].sites[0].glyph",
+          "site_id": "discovered_sites[1].sites[0].site_id",
+          "x": 124,
+          "y": 113
+        },
+        {
+          "category": "discovered_sites[1].sites[1].category",
+          "display_name": "discovered_sites[1].sites[1].display_name",
+          "glyph": "discovered_sites[1].sites[1].glyph",
+          "site_id": "discovered_sites[1].sites[1].site_id",
+          "x": 47,
+          "y": 58
+        }
+      ]
+    }
+  ],
+  "discovery_progress": [
+    {
+      "discovery": 18,
+      "faction": 32,
+      "progress": 0.000099,
+      "progress_raw": 99
+    },
+    {
+      "discovery": 133,
+      "faction": 63,
+      "progress": 0.000166,
+      "progress_raw": 166
+    }
+  ],
+  "faction_inventory": [
+    {
+      "faction": 21,
+      "inventory": [
+        {
+          "item": "faction_inventory[0].inventory[0].item",
+          "quantity": 106
+        },
+        {
+          "item": "faction_inventory[0].inventory[1].item",
+          "quantity": 179
+        }
+      ]
+    },
+    {
+      "faction": 78,
+      "inventory": [
+        {
+          "item": "faction_inventory[1].inventory[0].item",
+          "quantity": 129
+        },
+        {
+          "item": "faction_inventory[1].inventory[1].item",
+          "quantity": 176
+        }
+      ]
+    }
+  ],
+  "food_modules": [
+    {
+      "kind": "food_modules[0].kind",
+      "module": "food_modules[0].module",
+      "seasonal_weight": 102.029999,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "kind": "food_modules[1].kind",
+      "module": "food_modules[1].module",
+      "seasonal_weight": 16.73,
+      "x": 1,
+      "y": 1
+    }
+  ],
+  "forage_patches": [
+    {
+      "biomass": 69.25,
+      "carrying_capacity": 26.76,
+      "ceiling_cultivate": 94.260002,
+      "ceiling_eradicate": 74.980003,
+      "ceiling_market": 71.400002,
+      "ceiling_sow": 80.440002,
+      "ceiling_surplus": 3.86,
+      "ceiling_sustain": 61.040001,
+      "committed_display_name": "forage_patches[0].committed_display_name",
+      "committed_species": "forage_patches[0].committed_species",
+      "composition": [
+        {
+          "can_cultivate": true,
+          "can_sow": true,
+          "cultivate_payoff": 18.76,
+          "cultivate_yield_ratio": 71.150002,
+          "display_name": "forage_patches[0].composition[0].display_name",
+          "share": 4.84,
+          "sow_fodder_payoff": 70.239998,
+          "sow_payoff": 15.1,
+          "sow_yield_ratio": 69.620003,
+          "species": "forage_patches[0].composition[0].species"
+        },
+        {
+          "can_cultivate": true,
+          "can_sow": true,
+          "cultivate_payoff": 42.560001,
+          "cultivate_yield_ratio": 12.23,
+          "display_name": "forage_patches[0].composition[1].display_name",
+          "share": 84.0,
+          "sow_fodder_payoff": 56.23,
+          "sow_payoff": 63.709999,
+          "sow_yield_ratio": 44.119999,
+          "species": "forage_patches[0].composition[1].species"
+        }
+      ],
+      "cultivation_progress": 14.53,
+      "ecology_phase": "forage_patches[0].ecology_phase",
+      "field_progress": 67.019997,
+      "field_yield": 78.199997,
+      "has_owner": true,
+      "is_cultivated": true,
+      "is_field": true,
+      "owner": 114,
+      "per_worker_yield": 54.48,
+      "sow_site_refusal": "forage_patches[0].sow_site_refusal",
+      "tended_yield": 11.58,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "biomass": 74.910004,
+      "carrying_capacity": 41.889999,
+      "ceiling_cultivate": 43.639999,
+      "ceiling_eradicate": 13.7,
+      "ceiling_market": 1.27,
+      "ceiling_sow": 6.95,
+      "ceiling_surplus": 78.580002,
+      "ceiling_sustain": 22.9,
+      "committed_display_name": "forage_patches[1].committed_display_name",
+      "committed_species": "forage_patches[1].committed_species",
+      "composition": [
+        {
+          "can_cultivate": true,
+          "can_sow": true,
+          "cultivate_payoff": 15.93,
+          "cultivate_yield_ratio": 106.290001,
+          "display_name": "forage_patches[1].composition[0].display_name",
+          "share": 72.419998,
+          "sow_fodder_payoff": 94.639999,
+          "sow_payoff": 43.549999,
+          "sow_yield_ratio": 97.620003,
+          "species": "forage_patches[1].composition[0].species"
+        },
+        {
+          "can_cultivate": true,
+          "can_sow": true,
+          "cultivate_payoff": 50.290001,
+          "cultivate_yield_ratio": 48.369999,
+          "display_name": "forage_patches[1].composition[1].display_name",
+          "share": 38.57,
+          "sow_fodder_payoff": 23.5,
+          "sow_payoff": 37.689999,
+          "sow_yield_ratio": 27.1,
+          "species": "forage_patches[1].composition[1].species"
+        }
+      ],
+      "cultivation_progress": 85.480003,
+      "ecology_phase": "forage_patches[1].ecology_phase",
+      "field_progress": 6.39,
+      "field_yield": 75.790001,
+      "has_owner": true,
+      "is_cultivated": true,
+      "is_field": true,
+      "owner": 21,
+      "per_worker_yield": 108.360001,
+      "sow_site_refusal": "forage_patches[1].sow_site_refusal",
+      "tended_yield": 86.169998,
+      "x": 1,
+      "y": 1
+    }
+  ],
+  "generations": [
+    {
+      "bias_agency": 0.000034,
+      "bias_equity": 0.000026,
+      "bias_knowledge": 0.000115,
+      "bias_trust": 0.000181,
+      "id": 30,
+      "name": "generations[0].name"
+    },
+    {
+      "bias_agency": 0.000085,
+      "bias_equity": 0.000017,
+      "bias_knowledge": 0.000082,
+      "bias_trust": 0.000056,
+      "id": 131,
+      "name": "generations[1].name"
+    }
+  ],
+  "great_discoveries": [
+    {
+      "effect_flags": 51,
+      "effects": {"__packed": "PackedStringArray", "len": 2, "items": ["Power", "Crisis"]},
+      "faction": 166,
+      "field_label": "Physics",
+      "id": 87,
+      "publicly_deployed": true,
+      "tick": 27
+    },
+    {
+      "effect_flags": 122,
+      "effects": {"__packed": "PackedStringArray", "len": 2, "items": ["Crisis", "Forced Publication"]},
+      "faction": 181,
+      "field_label": "Physics",
+      "id": 146,
+      "publicly_deployed": true,
+      "tick": 146
+    }
+  ],
+  "great_discovery_definitions": [
+    {
+      "cooldown_ticks": 107,
+      "covert_until_public": true,
+      "effect_flags": 48,
+      "effects_summary": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[0].effects_summary[0]", "great_discovery_definitions[0].effects_summary[1]"]},
+      "field": "Physics",
+      "freshness_window": 87,
+      "id": 12,
+      "leak_profile": "great_discovery_definitions[0].leak_profile",
+      "name": "great_discovery_definitions[0].name",
+      "observation_notes": "great_discovery_definitions[0].observation_notes",
+      "observation_threshold": 145,
+      "requirements": [
+        {
+          "discovery_id": 125,
+          "minimum_progress": 25.440001,
+          "name": "great_discovery_definitions[0].requirements[0].name",
+          "summary": "great_discovery_definitions[0].requirements[0].summary",
+          "weight": 99.699997
+        },
+        {
+          "discovery_id": 42,
+          "minimum_progress": 42.259998,
+          "name": "great_discovery_definitions[0].requirements[1].name",
+          "summary": "great_discovery_definitions[0].requirements[1].summary",
+          "weight": 71.089996
+        }
+      ],
+      "summary": "great_discovery_definitions[0].summary",
+      "tags": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[0].tags[0]", "great_discovery_definitions[0].tags[1]"]},
+      "tier": "great_discovery_definitions[0].tier"
+    },
+    {
+      "cooldown_ticks": 46,
+      "covert_until_public": true,
+      "effect_flags": 185,
+      "effects_summary": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[1].effects_summary[0]", "great_discovery_definitions[1].effects_summary[1]"]},
+      "field": "Physics",
+      "freshness_window": 134,
+      "id": 25,
+      "leak_profile": "great_discovery_definitions[1].leak_profile",
+      "name": "great_discovery_definitions[1].name",
+      "observation_notes": "great_discovery_definitions[1].observation_notes",
+      "observation_threshold": 138,
+      "requirements": [
+        {
+          "discovery_id": 2,
+          "minimum_progress": 7.89,
+          "name": "great_discovery_definitions[1].requirements[0].name",
+          "summary": "great_discovery_definitions[1].requirements[0].summary",
+          "weight": 90.300003
+        },
+        {
+          "discovery_id": 93,
+          "minimum_progress": 86.510002,
+          "name": "great_discovery_definitions[1].requirements[1].name",
+          "summary": "great_discovery_definitions[1].requirements[1].summary",
+          "weight": 31.530001
+        }
+      ],
+      "summary": "great_discovery_definitions[1].summary",
+      "tags": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[1].tags[0]", "great_discovery_definitions[1].tags[1]"]},
+      "tier": "great_discovery_definitions[1].tier"
+    }
+  ],
+  "great_discovery_progress": [
+    {
+      "covert": true,
+      "discovery": 72,
+      "eta_ticks": 129,
+      "faction": 194,
+      "observation_deficit": 135,
+      "progress": 0.000161,
+      "progress_raw": 161
+    },
+    {
+      "covert": true,
+      "discovery": 11,
+      "eta_ticks": 158,
+      "faction": 81,
+      "observation_deficit": 88,
+      "progress": 0.000044,
+      "progress_raw": 44
+    }
+  ],
+  "great_discovery_telemetry": {
+    "active_constellations": 55,
+    "pending_candidates": 54,
+    "total_resolved": 73
+  },
+  "grid": {
+    "height": 3,
+    "width": 4,
+    "wrap_horizontal": true
+  },
+  "herds": [
+    {
+      "aggression": 33.330002,
+      "attack": 84.400002,
+      "biomass": 109.120003,
+      "body_mass": 32.599998,
+      "carrying_capacity": 59.91,
+      "corral_progress": 82.440002,
+      "corral_yield": 50.880001,
+      "corralled": true,
+      "defense": 77.480003,
+      "domestication": 25.139999,
+      "ecology_phase": "herds[0].ecology_phase",
+      "ferocity": 35.540001,
+      "fodder_draw": 56.889999,
+      "food_per_animal": 22.77,
+      "graze_range_radius": 200,
+      "herded_fraction": 57.66,
+      "herders_needed": 45,
+      "hunt_policy_ceilings": {
+        "herds[0].hunt_policy_ceilings[0].policy": 13.71,
+        "herds[0].hunt_policy_ceilings[1].policy": 37.509998
+      },
+      "hunt_trip_estimates": {
+        "herds[0].hunt_trip_estimates[0].policy:147": {
+          "animals_taken": 76,
+          "delivered_food": 29.25,
+          "delivers_food": true,
+          "turns_to_fill": 15,
+          "wasted_food": 56.849998
+        },
+        "herds[0].hunt_trip_estimates[1].policy:72": {
+          "animals_taken": 191,
+          "delivered_food": 49.540001,
+          "delivers_food": true,
+          "turns_to_fill": 180,
+          "wasted_food": 76.540001
+        }
+      },
+      "huntable": true,
+      "husbandry_ceiling": "herds[0].husbandry_ceiling",
+      "id": "herds[0].id",
+      "label": "herds[0].label",
+      "next_x": 68,
+      "next_y": 57,
+      "pastoral_yield": 90.18,
+      "pen_extend_progress": 34.240002,
+      "pen_fed_fraction": 2.26,
+      "pen_footprint_tiles": 167,
+      "pen_hay_food": 81.709999,
+      "pen_larder_bill": 107.800003,
+      "pen_pasture_fraction": 58.049999,
+      "pen_radius": 8,
+      "pen_upkeep": 13.16,
+      "per_worker_yield": 30.27,
+      "route_length": 176,
+      "size_class": "herds[0].size_class",
+      "species": "herds[0].species",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "aggression": 40.509998,
+      "attack": 61.459999,
+      "biomass": 44.529999,
+      "body_mass": 55.09,
+      "carrying_capacity": 52.919998,
+      "corral_progress": 69.410004,
+      "corral_yield": 35.5,
+      "corralled": true,
+      "defense": 11.55,
+      "domestication": 102.790001,
+      "ecology_phase": "herds[1].ecology_phase",
+      "ferocity": 29.459999,
+      "fodder_draw": 7.59,
+      "food_per_animal": 45.939999,
+      "graze_range_radius": 93,
+      "herded_fraction": 76.389999,
+      "herders_needed": 64,
+      "hunt_policy_ceilings": {
+        "herds[1].hunt_policy_ceilings[0].policy": 108.389999,
+        "herds[1].hunt_policy_ceilings[1].policy": 96.169998
+      },
+      "hunt_trip_estimates": {
+        "herds[1].hunt_trip_estimates[0].policy:150": {
+          "animals_taken": 65,
+          "delivered_food": 6.45,
+          "delivers_food": true,
+          "turns_to_fill": 22,
+          "wasted_food": 81.800003
+        },
+        "herds[1].hunt_trip_estimates[1].policy:73": {
+          "animals_taken": 118,
+          "delivered_food": 61.830002,
+          "delivers_food": true,
+          "turns_to_fill": 1,
+          "wasted_food": 84.790001
+        }
+      },
+      "huntable": true,
+      "husbandry_ceiling": "herds[1].husbandry_ceiling",
+      "id": "herds[1].id",
+      "label": "herds[1].label",
+      "next_x": 1,
+      "next_y": 12,
+      "pastoral_yield": 53.27,
+      "pen_extend_progress": 58.25,
+      "pen_fed_fraction": 94.949997,
+      "pen_footprint_tiles": 24,
+      "pen_hay_food": 36.400002,
+      "pen_larder_bill": 49.450001,
+      "pen_pasture_fraction": 6.67,
+      "pen_radius": 109,
+      "pen_upkeep": 26.040001,
+      "per_worker_yield": 37.77,
+      "route_length": 161,
+      "size_class": "herds[1].size_class",
+      "species": "herds[1].species",
+      "x": 1,
+      "y": 1
+    }
+  ],
+  "influencers": [
+    {
+      "audience_generations": {"__packed": "PackedInt32Array", "len": 2, "items": [62, 57]},
+      "baseline_growth": 0.000031,
+      "coherence": 0.000048,
+      "culture_resonance": [
+        {
+          "axis": "SecularDevout",
+          "label": "Secular ↔ Devout",
+          "output": 0.00017,
+          "weight": 0.000061
+        },
+        {
+          "axis": "SecularDevout",
+          "label": "Secular ↔ Devout",
+          "output": 0.000191,
+          "weight": 0.00004
+        }
+      ],
+      "domains": {"__packed": "PackedStringArray", "len": 1, "items": ["Sentiment"]},
+      "domains_mask": 97,
+      "generation_scope": 11,
+      "growth_rate": 0.000072,
+      "id": 35,
+      "influence": 0.000039,
+      "lifecycle": "Active",
+      "logistics_bonus": 0.000003,
+      "logistics_weight": 0.00014,
+      "morale_bonus": 0.000014,
+      "morale_weight": 0.000003,
+      "name": "influencers[0].name",
+      "notoriety": 0.000093,
+      "power_bonus": 0.000109,
+      "power_weight": 0.00005,
+      "scope": "Generation",
+      "sentiment_agency": 0.000167,
+      "sentiment_equity": 0.000007,
+      "sentiment_knowledge": 0.000056,
+      "sentiment_trust": 0.000042,
+      "sentiment_weight_agency": 0.000154,
+      "sentiment_weight_equity": 0.00001,
+      "sentiment_weight_knowledge": 0.000123,
+      "sentiment_weight_trust": 0.000173,
+      "support_charge": 0.0002,
+      "support_humanitarian": 0.000015,
+      "support_institutional": 0.000159,
+      "support_peer": 0.000088,
+      "support_popular": 0.000021,
+      "supported": true,
+      "suppress_pressure": 0.000011,
+      "suppressed": true,
+      "ticks_in_status": 163,
+      "weight_humanitarian": 0.00005,
+      "weight_institutional": 0.000196,
+      "weight_peer": 0.000065,
+      "weight_popular": 0.000098
+    },
+    {
+      "audience_generations": {"__packed": "PackedInt32Array", "len": 2, "items": [33, 150]},
+      "baseline_growth": 0.00008,
+      "coherence": 0.000031,
+      "culture_resonance": [
+        {
+          "axis": "SecularDevout",
+          "label": "Secular ↔ Devout",
+          "output": 0.000029,
+          "weight": 0.000114
+        },
+        {
+          "axis": "SecularDevout",
+          "label": "Secular ↔ Devout",
+          "output": 0.000064,
+          "weight": 0.000023
+        }
+      ],
+      "domains": {"__packed": "PackedStringArray", "len": 4, "items": ["Discovery", "Logistics", "Production", "Humanitarian"]},
+      "domains_mask": 190,
+      "generation_scope": 130,
+      "growth_rate": 0.000043,
+      "id": 166,
+      "influence": 0.00004,
+      "lifecycle": "Active",
+      "logistics_bonus": 0.000004,
+      "logistics_weight": 0.000181,
+      "morale_bonus": 0.000019,
+      "morale_weight": 0.000172,
+      "name": "influencers[1].name",
+      "notoriety": 0.00013,
+      "power_bonus": 0.00015,
+      "power_weight": 0.000171,
+      "scope": "Generation",
+      "sentiment_agency": 0.00009,
+      "sentiment_equity": 0.000074,
+      "sentiment_knowledge": 0.000083,
+      "sentiment_trust": 0.000133,
+      "sentiment_weight_agency": 0.000085,
+      "sentiment_weight_equity": 0.000033,
+      "sentiment_weight_knowledge": 0.000114,
+      "sentiment_weight_trust": 0.000104,
+      "support_charge": 0.000029,
+      "support_humanitarian": 0.000142,
+      "support_institutional": 0.00016,
+      "support_peer": 0.000133,
+      "support_popular": 0.00015,
+      "supported": true,
+      "suppress_pressure": 0.00008,
+      "suppressed": true,
+      "ticks_in_status": 28,
+      "weight_humanitarian": 0.000105,
+      "weight_institutional": 0.000113,
+      "weight_peer": 0.000082,
+      "weight_popular": 0.000151
+    }
+  ],
+  "intensification_knowledge": [
+    {
+      "cultivation": 94.459999,
+      "faction": 72,
+      "herding": 31.219999,
+      "penning": 29.51,
+      "seed_selection": 21.629999
+    },
+    {
+      "cultivation": 28.549999,
+      "faction": 103,
+      "herding": 37.700001,
+      "penning": 54.32,
+      "seed_selection": 14.35
+    }
+  ],
+  "orders": [],
+  "overlays": {
+    "channel_order": {"__packed": "PackedStringArray", "len": 14, "items": ["logistics", "crisis", "sentiment", "corruption", "fog", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
+    "channels": {
+      "corruption": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
+        "description": "Composite pressure mixing active incidents with logistics, trade, military, and governance risk at each tile.",
+        "label": "Corruption Pressure",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000186, 0.000181, 0.000192, 0.000163, 0.00011, 0.000089, 0.0001, 0.000183, 0.00005, 0.000045, 0.000139, 0.000072]}
+      },
+      "crisis": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.133678, 0.06184, 0.119732, 0.0, 0.025788, 0.170782, 0.124468, 0.146836, 0.249112, 0.078681, 0.119732, 0.0]},
+        "description": "Normalized crisis pressure per tile derived from local grid stability and incidents.",
+        "label": "Crisis Stress",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.15894, 0.933775, 0.860927, 1.0, 0.02649, 0.218543, 0.145695, 0.178808, 0.529801, 0.086093, 0.139073, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000063, 0.00018, 0.000169, 0.00019, 0.000043, 0.000072, 0.000061, 0.000066, 0.000119, 0.000052, 0.00006, 0.000039]}
+      },
+      "culture": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
+        "description": "Local layer divergence relative to schism thresholds (1.0 = schism risk).",
+        "label": "Culture Divergence",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000037, 0.000042, 0.000115, 0.000048, 0.000145, 0.000062, 0.000039, 0.00006, 0.000101, 0.00001, 0.000142, 0.000025]}
+      },
+      "elevation": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
+        "description": "Relative elevation above sea level after tectonic restamp (0 = coast, 1 = peaks).",
+        "label": "Elevation Heatmap",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000259, 0.001923, 0.001572, 0.000305, 0.001419, 0.00174, 0.002731, 0.001709, 0.002335, 0.002411, 0.002716, 0.00264]}
+      },
+      "fog": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
+        "description": "Knowledge gap for the controlling faction and local cohorts (1.0 = unknown, 0.0 = fully scouted).",
+        "label": "Fog of Knowledge",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000179, 0.000096, 0.000093, 0.000098, 0.000087, 0.000116, 0.000001, 0.000126, 0.000043, 0.000064, 0.000144, 0.000027]}
+      },
+      "forage": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.652828, 0.859912, 0.44968, 0.115199, 0.366945, 0.982194, 0.480866, 1.0, 0.71333, 0.02184, 0.311658, 0.070438]},
+        "description": "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish. Every tile carries a value from its biome; forest and river valleys read rich where prairie reads poor, coastal shelves light up as fishing grounds, and only deep ocean, glacier and lava carry none.",
+        "label": "Forage (Human Food Capacity)",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.652828, 0.859912, 0.44968, 0.115199, 0.366945, 0.982194, 0.480866, 1.0, 0.71333, 0.02184, 0.311658, 0.070438]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [66.360001, 87.410004, 45.709999, 11.71, 37.299999, 99.839996, 48.880001, 101.650002, 72.510002, 2.22, 31.68, 7.16]}
+      },
+      "hunt_danger": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "description": "How costly the wildlife on this tile is to HUNT — attack × ferocity, the deadliest fighter standing here. A placid grazer reads low even if huge; an aurochs or mammoth reads high. Empty ground reads as none.",
+        "label": "Hunt danger",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [2999.576172, 0.0, 0.0, 0.0, 0.0, 1810.611572, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
+      },
+      "logistics": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
+        "description": "Sum of supply flow touching the tile after current corruption multipliers.",
+        "label": "Logistics Throughput",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.115385, 0.0, 0.104396, 1.0, 0.532967, 0.989011, 0.521978, 0.406593, 0.862637, 0.175824, 0.736264, 0.368132]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000038, 0.000017, 0.000036, 0.000199, 0.000114, 0.000197, 0.000112, 0.000091, 0.000174, 0.000049, 0.000151, 0.000084]}
+      },
+      "military": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.050279, 0.284916, 0.027933, 0.083799, 0.977654, 0.564246, 1.0, 0.307263, 0.675978, 1.0, 0.184358, 0.653631]},
+        "description": "Composite of garrison morale, manpower, and local supply margin.",
+        "label": "Force Readiness",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.47486, 0.357542, 0.486033, 0.458101, 0.988827, 0.782123, 1.0, 0.346369, 0.162011, 0.0, 0.592179, 0.173184]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000092, 0.000071, 0.000094, 0.000089, 0.000184, 0.000147, 0.000186, 0.000069, 0.000036, 0.000007, 0.000113, 0.000038]}
+      },
+      "moisture": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.105416, 0.817964, 0.79187, 1.0, 0.700904, 0.965069, 0.938975, 0.601206, 0.357106, 0.621374, 0.439547, 0.0]},
+        "description": "Humidity field after windward lift and leeward drying (0 = arid, 1 = saturated).",
+        "label": "Moisture & Rain Shadows",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.105416, 0.817964, 0.79187, 1.0, 0.700904, 0.965069, 0.938975, 0.601206, 0.357106, 0.621374, 0.439547, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [21.030001, 89.57, 87.059998, 107.080002, 78.309998, 103.720001, 101.209999, 68.720001, 45.240002, 70.660004, 53.169998, 10.89]}
+      },
+      "pasture": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.601788, 0.925575, 0.069956, 0.848687, 0.498723, 0.063754, 0.109632, 1.0, 0.025994, 0.990606, 0.81348, 0.499635]},
+        "description": "How much GRASS AND BROWSE this tile's biome can carry — the animal-edible stock (humans cannot digest it). Prairie is the reference pasture; a closed forest canopy shades the ground cover out; water, glacier and lava carry NO pasture at all and are drawn as barren, not as poor.",
+        "label": "Pasture (Graze Capacity)",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.601788, 0.925575, 0.069956, 0.848687, 0.498723, 0.063754, 0.109632, 1.0, 0.025994, 0.990606, 0.81348, 0.499635]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [65.980003, 101.480003, 7.67, 93.050003, 54.68, 6.99, 12.02, 109.639999, 2.85, 108.610001, 89.190002, 54.779999]}
+      },
+      "sentiment": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.067416, 1.0, 0.089888, 0.033708, 0.292135, 0.033708, 0.404494, 1.0, 0.292135, 0.52809, 0.775281, 0.539326]},
+        "description": "Average morale of population cohorts anchored to the tile (fixed-point scale).",
+        "label": "Sentiment Morale",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.533708, 1.0, 0.544944, 0.516854, 0.646067, 0.483146, 0.702247, 0.0, 0.353933, 0.235955, 0.11236, 0.230337]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000112, 0.000195, 0.000114, 0.000109, 0.000132, 0.000103, 0.000142, 0.000017, 0.00008, 0.000059, 0.000037, 0.000058]}
+      },
+      "threat": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "description": "How much the wildlife on this tile menaces you UNPROVOKED — attack × aggression. A grazer (aggression 0) reads none however dangerous it is to hunt; a predator reads high. Empty ground reads as none.",
+        "label": "Threat",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [2813.052246, 0.0, 0.0, 0.0, 0.0, 2489.744385, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
+      },
+      "visibility": {
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.918519, 0.303704, 0.133333, 1.0, 0.118519, 0.155556, 0.696296, 0.2, 0.503704, 0.540741, 0.155556, 0.0]},
+        "description": "Line-of-sight visibility from units and settlements (0 = unexplored, 0.5 = discovered, 1 = active).",
+        "label": "Fog of War",
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.918519, 0.303704, 0.133333, 1.0, 0.118519, 0.155556, 0.696296, 0.2, 0.503704, 0.540741, 0.155556, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000145, 0.000062, 0.000039, 0.000156, 0.000037, 0.000042, 0.000115, 0.000048, 0.000089, 0.000094, 0.000042, 0.000021]}
+      }
+    },
+    "climate_boreal_max_temp": 91.300003,
+    "climate_polar_max_temp": 67.209999,
+    "climate_temperate_max_temp": 50.5,
+    "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
+    "corruption": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
+    "corruption_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
+    "corruption_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000186, 0.000181, 0.000192, 0.000163, 0.00011, 0.000089, 0.0001, 0.000183, 0.00005, 0.000045, 0.000139, 0.000072]},
+    "crisis": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.15894, 0.933775, 0.860927, 1.0, 0.02649, 0.218543, 0.145695, 0.178808, 0.529801, 0.086093, 0.139073, 0.0]},
+    "crisis_annotations": [
+      {
+        "label": "crisis_overlay.annotations[0].label",
+        "path": {"__packed": "PackedInt32Array", "len": 4, "items": [43, 64, 61, 66]},
+        "severity": "safe"
+      },
+      {
+        "label": "crisis_overlay.annotations[1].label",
+        "path": {"__packed": "PackedInt32Array", "len": 4, "items": [36, 103, 142, 17]},
+        "severity": "safe"
+      }
+    ],
+    "crisis_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.133678, 0.06184, 0.119732, 0.0, 0.025788, 0.170782, 0.124468, 0.146836, 0.249112, 0.078681, 0.119732, 0.0]},
+    "crisis_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000063, 0.00018, 0.000169, 0.00019, 0.000043, 0.000072, 0.000061, 0.000066, 0.000119, 0.000052, 0.00006, 0.000039]},
+    "culture": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
+    "culture_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
+    "culture_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000037, 0.000042, 0.000115, 0.000048, 0.000145, 0.000062, 0.000039, 0.00006, 0.000101, 0.00001, 0.000142, 0.000025]},
+    "default_channel": "logistics",
+    "elevation": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
+    "elevation_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
+    "elevation_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000259, 0.001923, 0.001572, 0.000305, 0.001419, 0.00174, 0.002731, 0.001709, 0.002335, 0.002411, 0.002716, 0.00264]},
+    "elevation_sea_level": 22.42,
+    "fog": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
+    "fog_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
+    "fog_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000179, 0.000096, 0.000093, 0.000098, 0.000087, 0.000116, 0.000001, 0.000126, 0.000043, 0.000064, 0.000144, 0.000027]},
+    "logistics": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.115385, 0.0, 0.104396, 1.0, 0.532967, 0.989011, 0.521978, 0.406593, 0.862637, 0.175824, 0.736264, 0.368132]},
+    "logistics_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
+    "logistics_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000038, 0.000017, 0.000036, 0.000199, 0.000114, 0.000197, 0.000112, 0.000091, 0.000174, 0.000049, 0.000151, 0.000084]},
+    "military": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.47486, 0.357542, 0.486033, 0.458101, 0.988827, 0.782123, 1.0, 0.346369, 0.162011, 0.0, 0.592179, 0.173184]},
+    "military_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.050279, 0.284916, 0.027933, 0.083799, 0.977654, 0.564246, 1.0, 0.307263, 0.675978, 1.0, 0.184358, 0.653631]},
+    "military_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000092, 0.000071, 0.000094, 0.000089, 0.000184, 0.000147, 0.000186, 0.000069, 0.000036, 0.000007, 0.000113, 0.000038]},
+    "moisture": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.105416, 0.817964, 0.79187, 1.0, 0.700904, 0.965069, 0.938975, 0.601206, 0.357106, 0.621374, 0.439547, 0.0]},
+    "moisture_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.105416, 0.817964, 0.79187, 1.0, 0.700904, 0.965069, 0.938975, 0.601206, 0.357106, 0.621374, 0.439547, 0.0]},
+    "moisture_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [21.030001, 89.57, 87.059998, 107.080002, 78.309998, 103.720001, 101.209999, 68.720001, 45.240002, 70.660004, 53.169998, 10.89]},
+    "sentiment": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.533708, 1.0, 0.544944, 0.516854, 0.646067, 0.483146, 0.702247, 0.0, 0.353933, 0.235955, 0.11236, 0.230337]},
+    "sentiment_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.067416, 1.0, 0.089888, 0.033708, 0.292135, 0.033708, 0.404494, 1.0, 0.292135, 0.52809, 0.775281, 0.539326]},
+    "sentiment_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000112, 0.000195, 0.000114, 0.000109, 0.000132, 0.000103, 0.000142, 0.000017, 0.00008, 0.000059, 0.000037, 0.000058]},
+    "terrain": {"__packed": "PackedInt32Array", "len": 12, "items": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
+    "terrain_palette": {
+      "0": "Deep Ocean",
+      "1": "Continental Shelf",
+      "10": "Alluvial Plain",
+      "11": "Prairie Steppe",
+      "2": "Lake",
+      "3": "Coral Shelf",
+      "4": "Hydrothermal Vent Field",
+      "5": "Tidal Flat",
+      "6": "River Delta",
+      "7": "Mangrove Swamp",
+      "8": "Freshwater Marsh",
+      "9": "Floodplain"
+    },
+    "terrain_tag_labels": {
+      "1": "Water",
+      "1024": "Subsurface",
+      "128": "Highland",
+      "16": "Fertile",
+      "2": "Freshwater",
+      "2048": "Hydrothermal",
+      "256": "Volcanic",
+      "32": "Arid",
+      "4": "Coastal",
+      "512": "Hazardous",
+      "64": "Polar",
+      "8": "Wetland"
+    },
+    "terrain_tags": {"__packed": "PackedInt32Array", "len": 12, "items": [167, 102, 113, 152, 99, 138, 45, 116, 63, 174, 8, 65]}
+  },
+  "pending_forks": [
+    {
+      "faction": 187,
+      "forks": [
+        {
+          "beat_id": "pending_forks[0].forks[0].beat_id",
+          "choices": [
+            {
+              "choice_id": "pending_forks[0].forks[0].choices[0].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[0].forks[0].choices[0].label[0].register",
+                  "text": "pending_forks[0].forks[0].choices[0].label[0].text"
+                },
+                {
+                  "register": "pending_forks[0].forks[0].choices[0].label[1].register",
+                  "text": "pending_forks[0].forks[0].choices[0].label[1].text"
+                }
+              ]
+            },
+            {
+              "choice_id": "pending_forks[0].forks[0].choices[1].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[0].forks[0].choices[1].label[0].register",
+                  "text": "pending_forks[0].forks[0].choices[1].label[0].text"
+                },
+                {
+                  "register": "pending_forks[0].forks[0].choices[1].label[1].register",
+                  "text": "pending_forks[0].forks[0].choices[1].label[1].text"
+                }
+              ]
+            }
+          ],
+          "gloss": [
+            {
+              "signal": "pending_forks[0].forks[0].gloss[0].signal",
+              "value": 21.95
+            },
+            {
+              "signal": "pending_forks[0].forks[0].gloss[1].signal",
+              "value": 51.37
+            }
+          ],
+          "narration": [
+            {
+              "register": "pending_forks[0].forks[0].narration[0].register",
+              "text": "pending_forks[0].forks[0].narration[0].text"
+            },
+            {
+              "register": "pending_forks[0].forks[0].narration[1].register",
+              "text": "pending_forks[0].forks[0].narration[1].text"
+            }
+          ],
+          "posted_tick": 33,
+          "wardrobe_id": "pending_forks[0].forks[0].wardrobe_id"
+        },
+        {
+          "beat_id": "pending_forks[0].forks[1].beat_id",
+          "choices": [
+            {
+              "choice_id": "pending_forks[0].forks[1].choices[0].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[0].forks[1].choices[0].label[0].register",
+                  "text": "pending_forks[0].forks[1].choices[0].label[0].text"
+                },
+                {
+                  "register": "pending_forks[0].forks[1].choices[0].label[1].register",
+                  "text": "pending_forks[0].forks[1].choices[0].label[1].text"
+                }
+              ]
+            },
+            {
+              "choice_id": "pending_forks[0].forks[1].choices[1].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[0].forks[1].choices[1].label[0].register",
+                  "text": "pending_forks[0].forks[1].choices[1].label[0].text"
+                },
+                {
+                  "register": "pending_forks[0].forks[1].choices[1].label[1].register",
+                  "text": "pending_forks[0].forks[1].choices[1].label[1].text"
+                }
+              ]
+            }
+          ],
+          "gloss": [
+            {
+              "signal": "pending_forks[0].forks[1].gloss[0].signal",
+              "value": 43.22
+            },
+            {
+              "signal": "pending_forks[0].forks[1].gloss[1].signal",
+              "value": 91.94
+            }
+          ],
+          "narration": [
+            {
+              "register": "pending_forks[0].forks[1].narration[0].register",
+              "text": "pending_forks[0].forks[1].narration[0].text"
+            },
+            {
+              "register": "pending_forks[0].forks[1].narration[1].register",
+              "text": "pending_forks[0].forks[1].narration[1].text"
+            }
+          ],
+          "posted_tick": 62,
+          "wardrobe_id": "pending_forks[0].forks[1].wardrobe_id"
+        }
+      ]
+    },
+    {
+      "faction": 172,
+      "forks": [
+        {
+          "beat_id": "pending_forks[1].forks[0].beat_id",
+          "choices": [
+            {
+              "choice_id": "pending_forks[1].forks[0].choices[0].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[1].forks[0].choices[0].label[0].register",
+                  "text": "pending_forks[1].forks[0].choices[0].label[0].text"
+                },
+                {
+                  "register": "pending_forks[1].forks[0].choices[0].label[1].register",
+                  "text": "pending_forks[1].forks[0].choices[0].label[1].text"
+                }
+              ]
+            },
+            {
+              "choice_id": "pending_forks[1].forks[0].choices[1].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[1].forks[0].choices[1].label[0].register",
+                  "text": "pending_forks[1].forks[0].choices[1].label[0].text"
+                },
+                {
+                  "register": "pending_forks[1].forks[0].choices[1].label[1].register",
+                  "text": "pending_forks[1].forks[0].choices[1].label[1].text"
+                }
+              ]
+            }
+          ],
+          "gloss": [
+            {
+              "signal": "pending_forks[1].forks[0].gloss[0].signal",
+              "value": 46.98
+            },
+            {
+              "signal": "pending_forks[1].forks[0].gloss[1].signal",
+              "value": 2.18
+            }
+          ],
+          "narration": [
+            {
+              "register": "pending_forks[1].forks[0].narration[0].register",
+              "text": "pending_forks[1].forks[0].narration[0].text"
+            },
+            {
+              "register": "pending_forks[1].forks[0].narration[1].register",
+              "text": "pending_forks[1].forks[0].narration[1].text"
+            }
+          ],
+          "posted_tick": 36,
+          "wardrobe_id": "pending_forks[1].forks[0].wardrobe_id"
+        },
+        {
+          "beat_id": "pending_forks[1].forks[1].beat_id",
+          "choices": [
+            {
+              "choice_id": "pending_forks[1].forks[1].choices[0].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[1].forks[1].choices[0].label[0].register",
+                  "text": "pending_forks[1].forks[1].choices[0].label[0].text"
+                },
+                {
+                  "register": "pending_forks[1].forks[1].choices[0].label[1].register",
+                  "text": "pending_forks[1].forks[1].choices[0].label[1].text"
+                }
+              ]
+            },
+            {
+              "choice_id": "pending_forks[1].forks[1].choices[1].choice_id",
+              "is_defer": true,
+              "label": [
+                {
+                  "register": "pending_forks[1].forks[1].choices[1].label[0].register",
+                  "text": "pending_forks[1].forks[1].choices[1].label[0].text"
+                },
+                {
+                  "register": "pending_forks[1].forks[1].choices[1].label[1].register",
+                  "text": "pending_forks[1].forks[1].choices[1].label[1].text"
+                }
+              ]
+            }
+          ],
+          "gloss": [
+            {
+              "signal": "pending_forks[1].forks[1].gloss[0].signal",
+              "value": 94.21
+            },
+            {
+              "signal": "pending_forks[1].forks[1].gloss[1].signal",
+              "value": 61.66
+            }
+          ],
+          "narration": [
+            {
+              "register": "pending_forks[1].forks[1].narration[0].register",
+              "text": "pending_forks[1].forks[1].narration[0].text"
+            },
+            {
+              "register": "pending_forks[1].forks[1].narration[1].register",
+              "text": "pending_forks[1].forks[1].narration[1].text"
+            }
+          ],
+          "posted_tick": 159,
+          "wardrobe_id": "pending_forks[1].forks[1].wardrobe_id"
+        }
+      ]
+    }
+  ],
+  "populations": [
+    {
+      "accessible_stockpile": {
+        "entries": [
+          {
+            "item": "populations[0].accessible_stockpile.entries[0].item",
+            "quantity": 4
+          },
+          {
+            "item": "populations[0].accessible_stockpile.entries[1].item",
+            "quantity": 5
+          }
+        ],
+        "radius": 173
+      },
+      "activity": "populations[0].activity",
+      "age_children": 0.000157,
+      "age_elders": 0.000027,
+      "age_working": 0.000131,
+      "band_move_tiles_per_turn": 65.150002,
+      "current_x": 0,
+      "current_y": 0,
+      "discontent_fraction": 0.00013,
+      "entity": 100,
+      "expedition_carry_cap": 64.029999,
+      "expedition_eta_turns": 125,
+      "expedition_hunt_policy": "populations[0].expedition_hunt_policy",
+      "expedition_mission": "populations[0].expedition_mission",
+      "expedition_per_worker_carry": 3.28,
+      "expedition_phase": "populations[0].expedition_phase",
+      "expedition_projected_delivery": 86.919998,
+      "expedition_recurring": true,
+      "expedition_target_herd": "populations[0].expedition_target_herd",
+      "expedition_viability_warn_turns": 89,
+      "faction": 182,
+      "fodder_store": 14.69,
+      "food_consumption": 106.57,
+      "food_income": 88.889999,
+      "generation": 178,
+      "grievance": 0.000154,
+      "home": 193,
+      "home_band_entity": 133,
+      "hunt_mode": "populations[0].hunt_mode",
+      "hunt_per_worker_provisions": 29.4,
+      "hunt_reach": 171,
+      "idle_workers": 54,
+      "is_expedition": true,
+      "is_traveling": true,
+      "knowledge_fragments": [
+        {
+          "discovery": 18,
+          "fidelity": 0.000014,
+          "progress": 0.000061,
+          "progress_raw": 61
+        },
+        {
+          "discovery": 71,
+          "fidelity": 0.000195,
+          "progress": 0.000168,
+          "progress_raw": 168
+        }
+      ],
+      "labor_assignments": [
+        {
+          "actual_yield": 78.650002,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [53.360001, 85.860001, 62.110001, 89.209999]},
+          "fauna_id": "populations[0].labor_assignments[0].fauna_id",
+          "kind": "populations[0].labor_assignments[0].kind",
+          "overdraws": true,
+          "policy": "populations[0].labor_assignments[0].policy",
+          "realized_yield": 50.82,
+          "sustainable_yield": 16.4,
+          "target_x": 117,
+          "target_y": 128,
+          "wasted_yield": 8.95,
+          "workers": 6,
+          "workers_needed": 56
+        },
+        {
+          "actual_yield": 43.470001,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [24.74, 44.759998, 71.209999, 53.509998]},
+          "fauna_id": "populations[0].labor_assignments[1].fauna_id",
+          "kind": "populations[0].labor_assignments[1].kind",
+          "overdraws": true,
+          "policy": "populations[0].labor_assignments[1].policy",
+          "realized_yield": 67.830002,
+          "sustainable_yield": 35.830002,
+          "target_x": 44,
+          "target_y": 33,
+          "wasted_yield": 32.889999,
+          "workers": 1,
+          "workers_needed": 77
+        }
+      ],
+      "last_emigrated": 197,
+      "last_immigrated": 170,
+      "max_expedition_party_size": 29,
+      "migration": {
+        "destination": 76,
+        "eta": 148,
+        "fragments": [
+          {
+            "discovery": 109,
+            "fidelity": 0.000029,
+            "progress": 0.000126,
+            "progress_raw": 126
+          },
+          {
+            "discovery": 40,
+            "fidelity": 0.0002,
+            "progress": 0.000003,
+            "progress_raw": 3
+          }
+        ]
+      },
+      "morale": 0.000022,
+      "morale_cause": 86,
+      "morale_climate": 0.00015,
+      "morale_delta": 0.000129,
+      "morale_settling": 0.000027,
+      "morale_terrain": 0.000096,
+      "morale_unrest": 0.000088,
+      "output_multiplier": 0.000001,
+      "pen_feed_upkeep": 5.23,
+      "scout_reveal_radius": 65,
+      "settlement_stage_icon": "populations[0].settlement_stage.icon",
+      "settlement_stage_id": "populations[0].settlement_stage.id",
+      "settlement_stage_label": "populations[0].settlement_stage.label",
+      "size": 115,
+      "stores": {
+        "populations[0].stores[0].item": 0.000025,
+        "populations[0].stores[1].item": 0.000072
+      },
+      "supply_network_id": 60,
+      "travel_target_x": 79,
+      "travel_target_y": 90,
+      "turns_of_food": 62.830002,
+      "work_range": 137,
+      "working_age": 87
+    },
+    {
+      "accessible_stockpile": {
+        "entries": [
+          {
+            "item": "populations[1].accessible_stockpile.entries[0].item",
+            "quantity": 81
+          },
+          {
+            "item": "populations[1].accessible_stockpile.entries[1].item",
+            "quantity": 184
+          }
+        ],
+        "radius": 102
+      },
+      "activity": "populations[1].activity",
+      "age_children": 0.000028,
+      "age_elders": 0.00017,
+      "age_working": 0.00008,
+      "band_move_tiles_per_turn": 61.23,
+      "current_x": 1,
+      "current_y": 1,
+      "discontent_fraction": 0.000061,
+      "entity": 101,
+      "expedition_carry_cap": 0.73,
+      "expedition_eta_turns": 200,
+      "expedition_hunt_policy": "populations[1].expedition_hunt_policy",
+      "expedition_mission": "populations[1].expedition_mission",
+      "expedition_per_worker_carry": 96.309998,
+      "expedition_phase": "populations[1].expedition_phase",
+      "expedition_projected_delivery": 110.099998,
+      "expedition_recurring": true,
+      "expedition_target_herd": "populations[1].expedition_target_herd",
+      "expedition_viability_warn_turns": 190,
+      "faction": 141,
+      "fodder_store": 97.489998,
+      "food_consumption": 0.92,
+      "food_income": 52.610001,
+      "generation": 195,
+      "grievance": 0.000053,
+      "home": 148,
+      "home_band_entity": 32,
+      "hunt_mode": "populations[1].hunt_mode",
+      "hunt_per_worker_provisions": 38.400002,
+      "hunt_reach": 130,
+      "idle_workers": 151,
+      "is_expedition": true,
+      "is_traveling": true,
+      "knowledge_fragments": [
+        {
+          "discovery": 89,
+          "fidelity": 0.000145,
+          "progress": 0.000122,
+          "progress_raw": 122
+        },
+        {
+          "discovery": 4,
+          "fidelity": 0.000132,
+          "progress": 0.000023,
+          "progress_raw": 23
+        }
+      ],
+      "labor_assignments": [
+        {
+          "actual_yield": 34.459999,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [14.59, 109.389999, 80.620003, 100.639999]},
+          "fauna_id": "populations[1].labor_assignments[0].fauna_id",
+          "kind": "populations[1].labor_assignments[0].kind",
+          "overdraws": true,
+          "policy": "populations[1].labor_assignments[0].policy",
+          "realized_yield": 31.379999,
+          "sustainable_yield": 23.76,
+          "target_x": 62,
+          "target_y": 51,
+          "wasted_yield": 77.68,
+          "workers": 195,
+          "workers_needed": 163
+        },
+        {
+          "actual_yield": 85.459999,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [35.360001, 53.060001, 26.610001, 75.970001]},
+          "fauna_id": "populations[1].labor_assignments[1].fauna_id",
+          "kind": "populations[1].labor_assignments[1].kind",
+          "overdraws": true,
+          "policy": "populations[1].labor_assignments[1].policy",
+          "realized_yield": 16.93,
+          "sustainable_yield": 31.49,
+          "target_x": 135,
+          "target_y": 146,
+          "wasted_yield": 58.150002,
+          "workers": 120,
+          "workers_needed": 78
+        }
+      ],
+      "last_emigrated": 24,
+      "last_immigrated": 49,
+      "max_expedition_party_size": 142,
+      "migration": {
+        "destination": 119,
+        "eta": 55,
+        "fragments": [
+          {
+            "discovery": 186,
+            "fidelity": 0.000142,
+            "progress": 0.000005,
+            "progress_raw": 5
+          },
+          {
+            "discovery": 103,
+            "fidelity": 0.000027,
+            "progress": 0.000176,
+            "progress_raw": 176
+          }
+        ]
+      },
+      "morale": 0.000167,
+      "morale_cause": 171,
+      "morale_climate": 0.000195,
+      "morale_delta": 0.00018,
+      "morale_settling": 0.00012,
+      "morale_terrain": 0.000157,
+      "morale_unrest": 0.000139,
+      "output_multiplier": 0.000118,
+      "pen_feed_upkeep": 77.650002,
+      "scout_reveal_radius": 130,
+      "settlement_stage_icon": "populations[1].settlement_stage.icon",
+      "settlement_stage_id": "populations[1].settlement_stage.id",
+      "settlement_stage_label": "populations[1].settlement_stage.label",
+      "size": 14,
+      "stores": {
+        "populations[1].stores[0].item": 0.000168,
+        "populations[1].stores[1].item": 0.000153
+      },
+      "supply_network_id": 199,
+      "travel_target_x": 128,
+      "travel_target_y": 117,
+      "turns_of_food": 103.459999,
+      "work_range": 176,
+      "working_age": 100
+    }
+  ],
+  "power_metrics": {
+    "grid_stress_avg": 92.629997,
+    "incidents": [
+      {
+        "deficit": 0.00015,
+        "deficit_raw": 150,
+        "node_id": 32,
+        "severity": "warning"
+      },
+      {
+        "deficit": 0.000013,
+        "deficit_raw": 13,
+        "node_id": 175,
+        "severity": "warning"
+      }
+    ],
+    "instability_alerts": 171,
+    "surplus_margin": 24.17,
+    "total_capacity": 0.00005,
+    "total_capacity_raw": 50,
+    "total_demand": 0.000151,
+    "total_demand_raw": 151,
+    "total_storage": 0.000127,
+    "total_storage_raw": 127,
+    "total_supply": 0.000135,
+    "total_supply_raw": 135
+  },
+  "power_nodes": [
+    {
+      "deficit": 0.000053,
+      "deficit_raw": 53,
+      "demand": 0.000042,
+      "demand_raw": 42,
+      "efficiency": 0.000104,
+      "efficiency_raw": 104,
+      "entity": 82,
+      "generation": 0.000181,
+      "generation_raw": 181,
+      "incident_count": 65,
+      "node_id": 111,
+      "stability": 0.000162,
+      "stability_raw": 162,
+      "storage_capacity": 0.000181,
+      "storage_capacity_raw": 181,
+      "storage_level": 0.000031,
+      "storage_level_raw": 31,
+      "surplus": 0.000153,
+      "surplus_raw": 153
+    },
+    {
+      "deficit": 0.000046,
+      "deficit_raw": 46,
+      "demand": 0.000059,
+      "demand_raw": 59,
+      "efficiency": 0.000005,
+      "efficiency_raw": 5,
+      "entity": 55,
+      "generation": 0.000044,
+      "generation_raw": 44,
+      "incident_count": 140,
+      "node_id": 40,
+      "stability": 0.000141,
+      "stability_raw": 141,
+      "storage_capacity": 0.000036,
+      "storage_capacity_raw": 36,
+      "storage_level": 0.0002,
+      "storage_level_raw": 200,
+      "surplus": 0.00017,
+      "surplus_raw": 170
+    }
+  ],
+  "sedentarization": [
+    {
+      "faction": 8,
+      "score": 80.769997,
+      "stage": "sedentarization[0].stage"
+    },
+    {
+      "faction": 71,
+      "score": 26.860001,
+      "stage": "sedentarization[1].stage"
+    }
+  ],
+  "sentiment": {
+    "agency": {
+      "drivers": [
+        {
+          "category": "Policy",
+          "label": "sentiment.agency.drivers[0].label",
+          "value": 0.000016,
+          "weight": 0.000159
+        },
+        {
+          "category": "Policy",
+          "label": "sentiment.agency.drivers[1].label",
+          "value": 0.000059,
+          "weight": 0.000138
+        }
+      ],
+      "incidents": 0.000011,
+      "influencers": 0.000182,
+      "policy": 0.000186,
+      "total": 0.0002
+    },
+    "equity": {
+      "drivers": [
+        {
+          "category": "Policy",
+          "label": "sentiment.equity.drivers[0].label",
+          "value": 0.000044,
+          "weight": 0.000019
+        },
+        {
+          "category": "Policy",
+          "label": "sentiment.equity.drivers[1].label",
+          "value": 0.000175,
+          "weight": 0.000142
+        }
+      ],
+      "incidents": 0.000199,
+      "influencers": 0.000146,
+      "policy": 0.000046,
+      "total": 0.000044
+    },
+    "knowledge": {
+      "drivers": [
+        {
+          "category": "Policy",
+          "label": "sentiment.knowledge.drivers[0].label",
+          "value": 0.000147,
+          "weight": 0.000106
+        },
+        {
+          "category": "Policy",
+          "label": "sentiment.knowledge.drivers[1].label",
+          "value": 0.00004,
+          "weight": 0.000039
+        }
+      ],
+      "incidents": 0.000014,
+      "influencers": 0.000099,
+      "policy": 0.000053,
+      "total": 0.000173
+    },
+    "trust": {
+      "drivers": [
+        {
+          "category": "Policy",
+          "label": "sentiment.trust.drivers[0].label",
+          "value": 0.000141,
+          "weight": 0.000196
+        },
+        {
+          "category": "Policy",
+          "label": "sentiment.trust.drivers[1].label",
+          "value": 0.000074,
+          "weight": 0.000017
+        }
+      ],
+      "incidents": 0.000176,
+      "influencers": 0.000109,
+      "policy": 0.000147,
+      "total": 0.000091
+    }
+  },
+  "server_build": "header.server_build",
+  "stance_axes": [
+    {
+      "axes": [
+        {
+          "axis": "stance_axes[0].axes[0].axis",
+          "value": 17.52
+        },
+        {
+          "axis": "stance_axes[0].axes[1].axis",
+          "value": 110.160004
+        }
+      ],
+      "faction": 194
+    },
+    {
+      "axes": [
+        {
+          "axis": "stance_axes[1].axes[0].axis",
+          "value": 2.54
+        },
+        {
+          "axis": "stance_axes[1].axes[1].axis",
+          "value": 25.030001
+        }
+      ],
+      "faction": 145
+    }
+  ],
+  "tiles": [
+    {
+      "culture_layer": 111,
+      "element": 155,
+      "entity": 0,
+      "forage_capacity": 66.360001,
+      "graze_biomass": 61.889999,
+      "graze_capacity": 65.980003,
+      "habitability": 0.000015,
+      "mass": 0.000187,
+      "mountain_kind": 1,
+      "mountain_relief": 9.83,
+      "river_channel": 81,
+      "river_edges": 146,
+      "river_inflow": 151,
+      "temperature": 0.000097,
+      "terrain": 0,
+      "terrain_tags": 126,
+      "underlying_terrain": 1,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "culture_layer": 156,
+      "element": 68,
+      "entity": 1,
+      "forage_capacity": 87.410004,
+      "graze_biomass": 81.050003,
+      "graze_capacity": 101.480003,
+      "habitability": 0.000094,
+      "mass": 0.000086,
+      "mountain_kind": 1,
+      "mountain_relief": 42.299999,
+      "river_channel": 170,
+      "river_edges": 117,
+      "river_inflow": 130,
+      "temperature": 0.000082,
+      "terrain": 1,
+      "terrain_tags": 171,
+      "underlying_terrain": 2,
+      "x": 1,
+      "y": 0
+    },
+    {
+      "culture_layer": 105,
+      "element": 153,
+      "entity": 2,
+      "forage_capacity": 45.709999,
+      "graze_biomass": 8.22,
+      "graze_capacity": 7.67,
+      "habitability": 0.000069,
+      "mass": 0.000137,
+      "mountain_kind": 1,
+      "mountain_relief": 80.540001,
+      "river_channel": 55,
+      "river_edges": 164,
+      "river_inflow": 21,
+      "temperature": 0.000035,
+      "terrain": 2,
+      "terrain_tags": 156,
+      "underlying_terrain": 3,
+      "x": 2,
+      "y": 0
+    },
+    {
+      "culture_layer": 126,
+      "element": 122,
+      "entity": 3,
+      "forage_capacity": 11.71,
+      "graze_biomass": 95.989998,
+      "graze_capacity": 93.050003,
+      "habitability": 0.0001,
+      "mass": 0.000012,
+      "mountain_kind": 1,
+      "mountain_relief": 85.029999,
+      "river_channel": 88,
+      "river_edges": 111,
+      "river_inflow": 184,
+      "temperature": 0.0001,
+      "terrain": 3,
+      "terrain_tags": 97,
+      "underlying_terrain": 4,
+      "x": 3,
+      "y": 0
+    },
+    {
+      "culture_layer": 3,
+      "element": 159,
+      "entity": 4,
+      "forage_capacity": 37.299999,
+      "graze_biomass": 110.269997,
+      "graze_capacity": 54.68,
+      "habitability": 0.000115,
+      "mass": 0.000119,
+      "mountain_kind": 1,
+      "mountain_relief": 15.94,
+      "river_channel": 173,
+      "river_edges": 6,
+      "river_inflow": 155,
+      "temperature": 0.000101,
+      "terrain": 4,
+      "terrain_tags": 90,
+      "underlying_terrain": 5,
+      "x": 0,
+      "y": 1
+    },
+    {
+      "culture_layer": 144,
+      "element": 184,
+      "entity": 5,
+      "forage_capacity": 99.839996,
+      "graze_biomass": 44.48,
+      "graze_capacity": 6.99,
+      "habitability": 0.000178,
+      "mass": 0.00009,
+      "mountain_kind": 1,
+      "mountain_relief": 58.279999,
+      "river_channel": 190,
+      "river_edges": 129,
+      "river_inflow": 30,
+      "temperature": 0.000046,
+      "terrain": 5,
+      "terrain_tags": 15,
+      "underlying_terrain": 6,
+      "x": 1,
+      "y": 1
+    },
+    {
+      "culture_layer": 165,
+      "element": 197,
+      "entity": 6,
+      "forage_capacity": 48.880001,
+      "graze_biomass": 110.989998,
+      "graze_capacity": 12.02,
+      "habitability": 0.000161,
+      "mass": 0.000085,
+      "mountain_kind": 1,
+      "mountain_relief": 53.02,
+      "river_channel": 171,
+      "river_edges": 200,
+      "river_inflow": 1,
+      "temperature": 0.000103,
+      "terrain": 6,
+      "terrain_tags": 16,
+      "underlying_terrain": 7,
+      "x": 2,
+      "y": 1
+    },
+    {
+      "culture_layer": 2,
+      "element": 110,
+      "entity": 7,
+      "forage_capacity": 101.650002,
+      "graze_biomass": 16.450001,
+      "graze_capacity": 109.639999,
+      "habitability": 0.000008,
+      "mass": 0.000104,
+      "mountain_kind": 1,
+      "mountain_relief": 37.919998,
+      "river_channel": 36,
+      "river_edges": 115,
+      "river_inflow": 148,
+      "temperature": 0.000064,
+      "terrain": 7,
+      "terrain_tags": 157,
+      "underlying_terrain": 8,
+      "x": 3,
+      "y": 1
+    },
+    {
+      "culture_layer": 95,
+      "element": 115,
+      "entity": 8,
+      "forage_capacity": 72.510002,
+      "graze_biomass": 5.46,
+      "graze_capacity": 2.85,
+      "habitability": 0.000087,
+      "mass": 0.000195,
+      "mountain_kind": 1,
+      "mountain_relief": 9.56,
+      "river_channel": 113,
+      "river_edges": 122,
+      "river_inflow": 15,
+      "temperature": 0.000017,
+      "terrain": 8,
+      "terrain_tags": 46,
+      "underlying_terrain": 9,
+      "x": 0,
+      "y": 2
+    },
+    {
+      "culture_layer": 84,
+      "element": 12,
+      "entity": 9,
+      "forage_capacity": 2.22,
+      "graze_biomass": 82.739998,
+      "graze_capacity": 108.610001,
+      "habitability": 0.000198,
+      "mass": 0.000134,
+      "mountain_kind": 1,
+      "mountain_relief": 4.27,
+      "river_channel": 50,
+      "river_edges": 85,
+      "river_inflow": 154,
+      "temperature": 0.00017,
+      "terrain": 9,
+      "terrain_tags": 171,
+      "underlying_terrain": 10,
+      "x": 1,
+      "y": 2
+    },
+    {
+      "culture_layer": 200,
+      "element": 184,
+      "entity": 10,
+      "forage_capacity": 31.68,
+      "graze_biomass": 59.52,
+      "graze_capacity": 89.190002,
+      "habitability": 0.00009,
+      "mass": 0.00017,
+      "mountain_kind": 1,
+      "mountain_relief": 14.48,
+      "river_channel": 110,
+      "river_edges": 185,
+      "river_inflow": 126,
+      "temperature": 0.000054,
+      "terrain": 10,
+      "terrain_tags": 111,
+      "underlying_terrain": 11,
+      "x": 2,
+      "y": 2
+    },
+    {
+      "culture_layer": 67,
+      "element": 111,
+      "entity": 11,
+      "forage_capacity": 7.16,
+      "graze_biomass": 87.830002,
+      "graze_capacity": 54.779999,
+      "habitability": 0.000187,
+      "mass": 0.000039,
+      "mountain_kind": 1,
+      "mountain_relief": 48.48,
+      "river_channel": 197,
+      "river_edges": 54,
+      "river_inflow": 35,
+      "temperature": 0.000181,
+      "terrain": 11,
+      "terrain_tags": 90,
+      "underlying_terrain": 12,
+      "x": 3,
+      "y": 2
+    }
+  ],
+  "trade_links": [
+    {
+      "entity": 181,
+      "from_faction": 121,
+      "from_tile": 165,
+      "knowledge": {
+        "decay": 0.000118,
+        "decay_raw": 118,
+        "last_discovery": 157,
+        "leak_timer": 81,
+        "openness": 0.000143,
+        "openness_raw": 143
+      },
+      "pending_fragments": [
+        {
+          "discovery": 195,
+          "fidelity": 0.000031,
+          "progress": 0.000004,
+          "progress_raw": 4
+        },
+        {
+          "discovery": 134,
+          "fidelity": 0.000154,
+          "progress": 0.000177,
+          "progress_raw": 177
+        }
+      ],
+      "tariff": 0.000186,
+      "throughput": 0.000114,
+      "to_faction": 46,
+      "to_tile": 16
+    },
+    {
+      "entity": 24,
+      "from_faction": 168,
+      "from_tile": 198,
+      "knowledge": {
+        "decay": 0.000121,
+        "decay_raw": 121,
+        "last_discovery": 68,
+        "leak_timer": 192,
+        "openness": 0.000002,
+        "openness_raw": 2
+      },
+      "pending_fragments": [
+        {
+          "discovery": 176,
+          "fidelity": 0.000168,
+          "progress": 0.000043,
+          "progress_raw": 43
+        },
+        {
+          "discovery": 117,
+          "fidelity": 0.000101,
+          "progress": 0.000094,
+          "progress_raw": 94
+        }
+      ],
+      "tariff": 0.000043,
+      "throughput": 0.000015,
+      "to_faction": 3,
+      "to_tile": 75
+    }
+  ],
+  "turn": 41,
+  "units": [],
+  "victory": {
+    "modes": [
+      {
+        "achieved": true,
+        "id": "victory.modes[0].id",
+        "kind": "victory.modes[0].kind",
+        "kind_label": "Victory Modes[0] Kind",
+        "label": "Victory Modes[0] Id",
+        "progress": 81.019997,
+        "progress_pct": 1.0,
+        "threshold": 74.870003
+      },
+      {
+        "achieved": true,
+        "id": "victory.modes[1].id",
+        "kind": "victory.modes[1].kind",
+        "kind_label": "Victory Modes[1] Kind",
+        "label": "Victory Modes[1] Id",
+        "progress": 102.739998,
+        "progress_pct": 1.0,
+        "threshold": 57.400002
+      }
+    ],
+    "winner": {
+      "faction": 101,
+      "label": "Victory Winner Mode",
+      "mode": "victory.winner.mode",
+      "tick": 66
+    }
+  },
+  "voice_medium": [
+    {
+      "faction": 16,
+      "medium_id": "voice_medium[0].medium_id",
+      "medium_index": 190
+    },
+    {
+      "faction": 111,
+      "medium_id": "voice_medium[1].medium_id",
+      "medium_index": 103
+    }
+  ],
+  "world_epoch": 25
+}

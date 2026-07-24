@@ -5646,6 +5646,7 @@ dependencies = [
  "jsonschema",
  "serde_json",
  "sim_runtime",
+ "sim_schema",
 ]
 
 [[package]]
