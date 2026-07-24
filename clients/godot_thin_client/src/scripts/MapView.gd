@@ -86,8 +86,6 @@ const THREAT_OVERLAY_COLOR := Color(0.85, 0.16, 0.16, 1.0)       # threat red
 # first snapshot arrives (mirrors core_sim's DEFAULT_SEA_LEVEL).
 const HEIGHT_DEFAULT_SEA_LEVEL := 0.6
 const HEIGHT_BAR_SEGMENTS := 10
-# Bright outline/fill used by the Terrain-tab "highlight all tiles of type" tool.
-const TERRAIN_HIGHLIGHT_COLOR := Color(1.0, 0.25, 0.9, 1.0)
 # ---------------------------------------------------------------------------
 # Hex marker stack UX (see clients/godot_thin_client CLAUDE.md — Map markers).
 # Two marker classes share a hex: PRIMARY (player bands) own the CENTER spotlight
@@ -385,12 +383,6 @@ const TERRAIN_TAG_BLEND_WEIGHTS := {
 	TERRAIN_TAG_KEYS[11]: 0.55,
 }
 
-const CRISIS_SEVERITY_COLORS := {
-	"critical": Color(0.96, 0.28, 0.38, 0.95),
-	"warn": Color(0.97, 0.75, 0.28, 0.92),
-	"safe": Color(0.5, 0.82, 0.72, 0.85)
-}
-
 # Terrain colors and labels loaded from TerrainDefinitions (single source of truth)
 var _terrain_colors: Dictionary
 var _terrain_labels: Dictionary
@@ -460,8 +452,6 @@ var overlay_raw_channels: Dictionary = {}
 # The active map's sea level on the elevation raster's normalized 0..1 scale, streamed
 # per-snapshot. Held here so relative_height_at floors at the correct per-map value.
 var _elevation_sea_level: float = HEIGHT_DEFAULT_SEA_LEVEL
-# Terrain id to highlight on the map (from the Terrain-tab dropdown); -1 = off.
-var _terrain_highlight_id: int = -1
 var overlay_channel_labels: Dictionary = {}
 var overlay_channel_descriptions: Dictionary = {}
 var overlay_placeholder_flags: Dictionary = {}
@@ -473,7 +463,6 @@ var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
-var routes: Array = []
 var herds: Array = []
 var herd_trails: Dictionary = {}
 var food_sites: Array = []
@@ -505,10 +494,6 @@ var tile_graze: Dictionary = {}
 # for tiles that carry human-food potential (capacity > 0), so the map-wide zeros (deep ocean/glacier/
 # lava) fall out as the barren count rather than dragging the "poorest" figure to 0.
 var tile_forage: Dictionary = {}
-var trade_links_overlay: Array = []
-var trade_overlay_enabled: bool = false
-var selected_trade_entity: int = -1
-var crisis_annotations: Array = []
 # Per-tile river-edge mask (12 bits, 2 per odd-r direction — see RIVER_DEFAULT_* / the shader's river
 # pass), keyed by Vector2i(x, y). Feeds the river-map splatmap's R/G; the shader does the drawing.
 var tile_river_edges: Dictionary = {}
@@ -542,11 +527,6 @@ var highlighted_culture_layer_set: Dictionary = {}
 var highlighted_culture_context: String = ""
 
 var selected_tile: Vector2i = Vector2i(-1, -1)
-# Active command-targeting overlay, mirrored from the HUD's pending state via
-# `set_targeting`. Drives the reticle / valid-target glow / hover ETA in _draw.
-# Keys: active(bool), need("band"|"tile"), command(String), origin_x/origin_y(int).
-var _targeting: Dictionary = {}
-var _targeting_time: float = 0.0
 # Animates the awaiting-orders pulse on expedition markers. Advanced (and a redraw requested)
 # only while at least one expedition is in the "awaiting" phase, tracked at marker-rebuild time.
 var _expedition_time: float = 0.0
@@ -618,6 +598,11 @@ var _secondary_markers: SecondaryMarkerRenderer = null
 # pending overlay, the travel destination, the graze-range + pen-footprint rings, and the deferred
 # yield-label batch (owned by BandOverlayRenderer — see ui/BandOverlayRenderer.gd).
 var _band_overlays: BandOverlayRenderer = null
+# Map ANNOTATIONS — the trade-diffusion links, crisis annotations, the Terrain-tab highlight, order
+# routes and the command-targeting overlay, plus that family's own state (owned by AnnotationRenderer
+# — see ui/AnnotationRenderer.gd). Its five PUBLIC seams keep same-named pass-throughs on MapView
+# because every one of them is reached reflectively; see the header of that file.
+var _annotations: AnnotationRenderer = null
 # Terrain textures + the Approach-B blend shader (owned by TerrainRenderer — see ui/TerrainRenderer.gd).
 # The CPU base pass (_draw_terrain_direct) and the _cache_* SubViewport stay on MapView.
 var _terrain: TerrainRenderer = null
@@ -655,6 +640,7 @@ func _ready() -> void:
 	_band_markers = BandMarkerRenderer.new(self)
 	_secondary_markers = SecondaryMarkerRenderer.new(self)
 	_band_overlays = BandOverlayRenderer.new(self)
+	_annotations = AnnotationRenderer.new(self)
 	# Note: the MinimapPanel node is created lazily from _minimap.update()
 	# This allows Main.gd to set_hud_reference() before the minimap is created
 
@@ -815,13 +801,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			var id := int(raw_id)
 			if culture_layer_map.has(id):
 				culture_layer_map.erase(id)
-	crisis_annotations = []
-	var crisis_annotations_variant: Variant = overlays.get("crisis_annotations", [])
-	if crisis_annotations_variant is Array:
-		for entry in crisis_annotations_variant:
-			if entry is Dictionary:
-				crisis_annotations.append((entry as Dictionary).duplicate(true))
-	routes = Array(snapshot.get("orders", []))
+	_annotations.set_crisis_annotations(overlays.get("crisis_annotations", []))
+	_annotations.set_routes(snapshot.get("orders", []))
 	food_sites = []
 	food_site_lookup.clear()
 	harvest_sites.clear()
@@ -981,7 +962,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	if snapshot.has("trade_links"):
 		var trade_variant: Variant = snapshot.get("trade_links")
 		if trade_variant is Array:
-			update_trade_overlay(trade_variant, trade_overlay_enabled)
+			update_trade_overlay(trade_variant, _annotations.is_trade_overlay_enabled())
 
 	if dimensions_changed:
 		zoom_factor = 1.0
@@ -1151,11 +1132,11 @@ func _draw() -> void:
 
 	# === OVERLAYS (always drawn fresh) ===
 	# These need to respond to hover, selection, and other dynamic state
-	_draw_terrain_highlight(radius, origin, viewport_size)
-	_draw_trade_overlay(radius, origin)
+	_annotations.draw_terrain_highlight(radius, origin, viewport_size)
+	_annotations.draw_trade_overlay(radius, origin)
 	# (No river draw here: Minor/Major rivers are painted by terrain_blend.gdshader's river pass, off the
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
-	_draw_crisis_annotations(radius, origin)
+	_annotations.draw_crisis_annotations(radius, origin)
 
 	# Selected + hovered hex outlines (drawn under the markers).
 	_draw_tile_selection_highlight(radius, origin)
@@ -1189,10 +1170,9 @@ func _draw() -> void:
 	_secondary_markers.draw_harvest_markers(radius, origin)
 	_secondary_markers.draw_scout_markers(radius, origin)
 
-	for order in routes:
-		_draw_route(order, radius, origin)
+	_annotations.draw_routes(radius, origin)
 
-	_draw_targeting(radius, origin)
+	_annotations.draw_targeting(radius, origin)
 
 	# TOPMOST: the selected band's per-source yield labels, collected during the overlay renderer's
 	# draw_band_work_highlights and held back to here. They annotate the map, so they must survive
@@ -1213,41 +1193,12 @@ func _draw() -> void:
 			_draw_frame_times.clear()
 
 ## Highlights all hexes of a given terrain id (Terrain-tab dropdown). Pass -1 to clear.
+## THIN PASS-THROUGH to AnnotationRenderer, and the NAME cannot move: TerrainPanel.gd pushes it via
+## has_method/call, so a rename would silently do nothing rather than error. The renderer reports
+## whether the id actually changed, preserving the old setter's no-op early-out.
 func set_terrain_highlight(terrain_id: int) -> void:
-	if _terrain_highlight_id == terrain_id:
-		return
-	_terrain_highlight_id = terrain_id
-	queue_redraw()
-
-## Overlay pass: outline + tint every visible tile matching `_terrain_highlight_id`.
-## Draws map-wide (ignores Fog of War) so it doubles as a worldgen debugging tool.
-func _draw_terrain_highlight(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
-	if _terrain_highlight_id < 0 or terrain_overlay.is_empty() or grid_width == 0:
-		return
-	var hex_col_width := SQRT3 * radius
-	var hex_row_height := 1.5 * radius
-	var col_start: int = int((-origin.x) / hex_col_width) - 2
-	var col_end: int = int((viewport_size.x - origin.x) / hex_col_width) + 2
-	var row_start: int = maxi(0, int((-origin.y) / hex_row_height) - 2)
-	var row_end: int = mini(grid_height, int((viewport_size.y - origin.y) / hex_row_height) + 2)
-	if not _wrap_horizontal:
-		col_start = maxi(0, col_start)
-		col_end = mini(grid_width, col_end)
-	var fill := TERRAIN_HIGHLIGHT_COLOR
-	fill.a = 0.35
-	var fill_colors := PackedColorArray([fill, fill, fill, fill, fill, fill])
-	for y in range(row_start, row_end):
-		for logical_x in range(col_start, col_end):
-			var data_x: int = posmod(logical_x, grid_width) if _wrap_horizontal else logical_x
-			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
-				continue
-			if _terrain_id_at(data_x, y) != _terrain_highlight_id:
-				continue
-			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
-			var pts := _hex_points(center, radius)
-			draw_polygon(pts, fill_colors)
-			var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
-			draw_polyline(outline, TERRAIN_HIGHLIGHT_COLOR, 2.5, true)
+	if _annotations.set_terrain_highlight(terrain_id):
+		queue_redraw()
 
 func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
 	## Direct terrain rendering (fallback when cache is disabled or unavailable)
@@ -1300,22 +1251,21 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 
 
 
-func update_trade_overlay(trade_links: Array, enabled: bool = trade_overlay_enabled) -> void:
-	trade_links_overlay = []
-	if trade_links is Array:
-		for entry in trade_links:
-			if entry is Dictionary:
-				trade_links_overlay.append((entry as Dictionary).duplicate(true))
-	trade_overlay_enabled = enabled
+## The three Trade-tab overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these
+## THREE NAMES can move: TradePanel.gd reaches every one of them via has_method/call, so a rename
+## would silently do nothing rather than error.
+func update_trade_overlay(trade_links: Array, enabled: bool = _annotations.is_trade_overlay_enabled()) -> void:
+	_annotations.update_trade_overlay(trade_links, enabled)
 	queue_redraw()
 
 func set_trade_overlay_enabled(enabled: bool) -> void:
-	trade_overlay_enabled = enabled
+	_annotations.set_trade_overlay_enabled(enabled)
 	queue_redraw()
 
+## Only redraws when the overlay is actually showing — a selection change is invisible otherwise, and
+## the renderer reports that condition back.
 func set_trade_overlay_selection(entity_id: int) -> void:
-	selected_trade_entity = entity_id
-	if trade_overlay_enabled:
+	if _annotations.set_trade_overlay_selection(entity_id):
 		queue_redraw()
 
 func set_culture_layer_highlight(layer_ids: PackedInt32Array, context_label: String = "") -> void:
@@ -1404,122 +1354,12 @@ func _compute_explored_bounds_world(grid_bounds: Rect2i, radius: float) -> Rect2
 
 	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
-func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
-	if active_overlay_key != "crisis":
-		return
-	if crisis_annotations.is_empty():
-		return
-	for entry_variant in crisis_annotations:
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		var severity := String(entry.get("severity", "safe"))
-		var color: Color = CRISIS_SEVERITY_COLORS.get(severity, CRISIS_COLOR)
-		var stroke_color: Color = color
-		stroke_color.a = max(color.a, 0.9)
-		var fill_color: Color = color
-		fill_color.a = min(color.a, 0.45)
-		var coords: Array[Vector2] = []
-		var path_variant: Variant = entry.get("path", PackedInt32Array())
-		if path_variant is PackedInt32Array:
-			var packed: PackedInt32Array = path_variant
-			var length: int = packed.size()
-			if length < 2:
-				continue
-			for idx in range(0, length, 2):
-				if idx + 1 >= length:
-					break
-				var col := int(packed[idx])
-				var row := int(packed[idx + 1])
-				coords.append(_hex_center(col, row, radius, origin))
-		elif path_variant is Array:
-			var arr: Array = path_variant
-			if arr.is_empty():
-				continue
-			for step in arr:
-				if step is Array and step.size() >= 2:
-					var col := int(step[0])
-					var row := int(step[1])
-					coords.append(_hex_center(col, row, radius, origin))
-		if coords.is_empty():
-			continue
-		var stroke_width: float = clamp(radius * 0.18, 2.0, 8.0)
-		if coords.size() == 1:
-			var center: Vector2 = coords[0]
-			var halo_color: Color = fill_color
-			halo_color.a = max(fill_color.a, 0.35)
-			draw_circle(center, radius * 0.55, halo_color)
-			var core_color: Color = stroke_color
-			core_color.a = max(stroke_color.a, 0.85)
-			draw_circle(center, radius * 0.32, core_color)
-		else:
-			var polyline := PackedVector2Array()
-			for point in coords:
-				polyline.append(point)
-			draw_polyline(polyline, stroke_color, stroke_width, true)
-			var head: Vector2 = coords[coords.size() - 1]
-			var tail: Vector2 = coords[0]
-			var head_radius: float = clamp(radius * 0.28, 4.0, 12.0)
-			var tail_radius: float = clamp(radius * 0.2, 3.0, 10.0)
-			draw_circle(head, head_radius, stroke_color)
-			var tail_color: Color = fill_color
-			tail_color.a = max(fill_color.a, 0.55)
-			draw_circle(tail, tail_radius, tail_color)
-		var label: String = String(entry.get("label", ""))
-		if label != "":
-			var anchor: Vector2 = coords[coords.size() - 1]
-			var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
-			_draw_label(anchor + Vector2(radius * 0.3, -radius * 0.22), label, -1.0, font_size, Color(0.95, 0.96, 0.98, 0.95))
-
-func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
-	if not trade_overlay_enabled:
-		return
-	if trade_links_overlay.is_empty():
-		return
-	if tile_lookup.is_empty():
-		return
-
-	for entry in trade_links_overlay:
-		if not (entry is Dictionary):
-			continue
-		var link: Dictionary = entry
-		var from_tile: int = int(link.get("from_tile", -1))
-		var to_tile: int = int(link.get("to_tile", -1))
-		if not tile_lookup.has(from_tile) or not tile_lookup.has(to_tile):
-			continue
-		var from_pos: Vector2i = tile_lookup[from_tile]
-		var to_pos: Vector2i = tile_lookup[to_tile]
-		var start: Vector2 = _hex_center(from_pos.x, from_pos.y, radius, origin)
-		var end: Vector2 = _hex_center(to_pos.x, to_pos.y, radius, origin)
-		var knowledge_variant: Variant = link.get("knowledge", {})
-		var openness: float = 0.0
-		var leak_timer: int = 0
-		if knowledge_variant is Dictionary:
-			var knowledge_dict: Dictionary = knowledge_variant
-			openness = float(knowledge_dict.get("openness", 0.0))
-			leak_timer = int(knowledge_dict.get("leak_timer", 0))
-		var throughput: float = float(link.get("throughput", 0.0))
-		var intensity: float = clamp(abs(throughput) * 0.25, 0.0, 2.5)
-		var opacity: float = clamp(0.25 + openness * 0.6, 0.3, 0.95)
-		var base_color: Color = Color(0.95, 0.74, 0.22, opacity)
-		var width: float = 2.0 + intensity
-		var entity_id: int = int(link.get("entity", -1))
-		if entity_id == selected_trade_entity:
-			base_color = Color(0.3, 0.95, 0.7, 0.95)
-			width += 2.0
-
-		draw_line(start, end, base_color, width)
-
-		if leak_timer <= 1:
-			var midpoint: Vector2 = start.lerp(end, 0.5)
-			draw_circle(midpoint, 4.5, Color(1.0, 0.35, 0.28, 0.85))
-
 func _unhandled_input(event: InputEvent) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
 	# While a command is targeting, Esc / right-click back out of it (instead of
 	# panning), matching the targeting-mode contract.
-	if _targeting.get("active", false):
+	if _annotations.is_targeting_active():
 		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 			emit_signal("targeting_cancel_requested")
 			_mark_input_handled()
@@ -1765,20 +1605,6 @@ func _draw_count_pill(center: Vector2, text: String) -> void:
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
 	_draw_pill_plate(center, text_size, MARKER_BADGE_PAD_X, MARKER_BADGE_BG)
 	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
-func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
-	var path: Array = order.get("path", [])
-	if path.is_empty():
-		return
-	var color: Color = faction_colors.get(order.get("faction", ""), Color(0.95, 0.9, 0.6, 0.8))
-	var points: Array[Vector2] = []
-	for waypoint in path:
-		if waypoint.size() != 2:
-			continue
-		points.append(_hex_center(int(waypoint[0]), int(waypoint[1]), radius, origin))
-	if points.size() < 2:
-		return
-	for i in range(points.size() - 1):
-		draw_line(points[i], points[i + 1], color, 3.0)
 
 func _overlay_array(key: String) -> PackedFloat32Array:
 	var variant: Variant = overlay_channels.get(key, null)
@@ -3659,82 +3485,21 @@ func _process(delta: float) -> void:
 		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * delta, viewport_center)
 	# Animate the targeting overlay (pulsing glow / reticle) while a command is
 	# being targeted.
-	if _targeting.get("active", false):
-		_targeting_time += delta
+	if _annotations.is_targeting_active():
+		_annotations.advance_targeting_time(delta)
 		queue_redraw()
 	# Animate the awaiting-orders pulse on any expedition idle at its objective.
 	if _has_awaiting_expedition:
 		_expedition_time += delta
 		queue_redraw()
 
-## Mirror the HUD's pending command-targeting state so the map can draw the
-## reticle / valid-target glow / hover ETA. Pass {} to clear.
+## Mirror the HUD's pending command-targeting state so the map can draw the reticle / valid-target
+## glow / hover ETA. Pass {} to clear. THIN PASS-THROUGH to AnnotationRenderer, and the NAME cannot
+## move: Main.gd connects the HUD's `targeting_changed` signal to it BY NAME (has_method +
+## Callable(map_view, "set_targeting")), so a rename would silently do nothing rather than error.
 func set_targeting(info: Dictionary) -> void:
-	_targeting = info if info is Dictionary else {}
-	if not bool(_targeting.get("active", false)):
-		_targeting_time = 0.0
+	_annotations.set_targeting(info)
 	queue_redraw()
-
-func _draw_targeting(radius: float, origin: Vector2) -> void:
-	if not bool(_targeting.get("active", false)):
-		return
-	var need := String(_targeting.get("need", ""))
-	var pulse: float = 0.5 + 0.5 * sin(_targeting_time * 3.2)
-	var cyan := HudStyle.SIGNAL
-	if need == "band":
-		# Only the player's own bands can fulfill a harvest/hunt, so only they get
-		# the valid-target glow / ETA — not other factions' visible units.
-		for unit in units:
-			if not _is_player_unit(unit):
-				continue
-			var pos: Array = Array(unit.get("pos", []))
-			if pos.size() != 2:
-				continue
-			var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
-			var ring_radius: float = radius * (0.62 + 0.10 * pulse)
-			var ring_color := Color(cyan.r, cyan.g, cyan.b, 0.5 + 0.35 * pulse)
-			draw_arc(center, ring_radius, 0, TAU, 32, ring_color, 2.5)
-		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
-			for unit in units:
-				if not _is_player_unit(unit):
-					continue
-				var hpos: Array = Array(unit.get("pos", []))
-				if hpos.size() == 2 and int(hpos[0]) == _hovered_tile.x and int(hpos[1]) == _hovered_tile.y:
-					_draw_targeting_hover_label(unit, radius, origin)
-					break
-	elif need == "herd":
-		# Quarry targeting: glow the herds that are valid targets + reticle the hovered hex, so it
-		# reads "click on a herd".
-		# `min_distance` is the outfitting band's `hunt_reach`, and this test is the RENDER-SIDE
-		# MIRROR of `Hud._is_expedition_quarry` — a herd within reach is a LOCAL hunt, not a party's
-		# job, and `Hud._try_pick_quarry` refuses it. The halo must never promise a target the pick
-		# will refuse, nor hide one it would accept, so the two tests must be changed together.
-		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
-		var min_distance := int(_targeting.get("min_distance", 0))
-		for herd in herds:
-			if not bool(herd.get("huntable", false)):
-				continue
-			var hx := int(herd.get("x", -1))
-			var hy := int(herd.get("y", -1))
-			# Fog-gated like the herd marker itself: glowing a herd you can't see would BE the leak
-			# (it would draw a "valid target here" halo onto an empty-looking fogged hex).
-			if hx < 0 or hy < 0 or not _is_tile_visible(hx, hy):
-				continue
-			# An UNKNOWN distance (`-1`, origin missing) skips too — `_is_expedition_quarry` also
-			# refuses one, so the mirror holds at the degenerate end as well.
-			if _targeting_distance(hx, hy) <= min_distance:
-				continue
-			var hcenter: Vector2 = _hex_center_wrapped(hx, hy, radius, origin)
-			var hring_radius: float = radius * (0.55 + 0.10 * pulse)
-			var hring_color := Color(cyan.r, cyan.g, cyan.b, 0.5 + 0.35 * pulse)
-			draw_arc(hcenter, hring_radius, 0, TAU, 32, hring_color, 2.5)
-		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
-			var herd_reticle: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)
-			_draw_reticle(herd_reticle, radius * 0.82, cyan, pulse)
-	elif need == "tile":
-		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
-			var reticle_center: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)
-			_draw_reticle(reticle_center, radius * 0.82, cyan, pulse)
 
 func _is_player_unit(unit: Dictionary) -> bool:
 	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
@@ -3764,29 +3529,6 @@ func _draw_reticle(center: Vector2, r: float, color: Color, pulse: float) -> voi
 	draw_line(center + Vector2(0, -r), center + Vector2(0, -g), a, 2.0)
 	draw_line(center + Vector2(0, g), center + Vector2(0, r), a, 2.0)
 
-func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector2) -> void:
-	var pos: Array = Array(unit.get("pos", []))
-	if pos.size() != 2:
-		return
-	var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
-	var text: String = str(unit.get("id", "Band"))
-	var dist := _targeting_distance(int(pos[0]), int(pos[1]))
-	if dist >= 0:
-		text += " · %d tiles" % dist
-	var font: Font = ThemeDB.fallback_font
-	if font == null:
-		return
-	var font_size := 13
-	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-	var pad := Vector2(8, 5)
-	var box_pos: Vector2 = center + Vector2(radius * 0.7, -radius * 0.7 - text_size.y - pad.y * 2)
-	box_pos.x = clampf(box_pos.x, 4.0, _get_adjusted_viewport_size().x - text_size.x - pad.x * 2 - 4.0)
-	box_pos.y = maxf(box_pos.y, 4.0)
-	var rect := Rect2(box_pos, text_size + pad * 2)
-	draw_rect(rect, Color(0.03, 0.055, 0.06, 0.95))
-	draw_rect(rect, HudStyle.SIGNAL, false, 1.0)
-	draw_string(font, box_pos + Vector2(pad.x, pad.y + text_size.y * 0.8), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.87, 0.98, 0.96))
-
 ## True odd-r hex distance between two offset (col,row) tiles, mirroring the sim's
 ## `hex_distance_wrapped` (offset→axial via _offset_to_axial, then cube distance). Callers
 ## must first bring both tiles into a common column frame (e.g. via _wrapped_col_delta /
@@ -3797,21 +3539,6 @@ func _hex_distance(a_col: int, a_row: int, b_col: int, b_row: int) -> int:
 	var dq: int = a.x - b.x
 	var dr: int = a.y - b.y
 	return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
-
-## Wrap-aware hex distance from the targeting ORIGIN to (col,row), the render-side mirror of
-## Hud._hex_distance_wrapped (which Hud._is_expedition_quarry — the authoritative quarry pick —
-## routes through). Bring the target into the origin's column frame via _wrapped_col_delta BEFORE
-## the row-parity-sensitive offset→axial conversion (the same pre-wrap the work-range rings use), so
-## a herd across the horizontal wrap seam measures the SHORT way round. Without this the herd-glow
-## filter could halo a herd the pick refuses (or hide one it accepts) near the seam. Returns -1 when
-## the origin (or the target) is unknown, matching the Hud helper.
-func _targeting_distance(col: int, row: int) -> int:
-	var ox := int(_targeting.get("origin_x", -1))
-	var oy := int(_targeting.get("origin_y", -1))
-	if ox < 0 or oy < 0 or col < 0 or row < 0:
-		return -1
-	var eff_col := ox + _wrapped_col_delta(ox, col)
-	return _hex_distance(ox, oy, eff_col, row)
 
 func _apply_pan(delta: Vector2) -> void:
 	if delta == Vector2.ZERO:

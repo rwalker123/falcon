@@ -333,6 +333,61 @@ clean tree first. `blend_probe`'s bit-identity references are likewise untouched
 `Engine.time_scale`, and BANK is its only state carrying a `TIME`-scrolled navigable-river
 channel. Applying map_preview's freeze there would make that set a strict reference too.
 
+### `MapView.gd` annotation family (issue #298) — landed
+
+Deferred follow-up 3 is done, in two parts and strictly in that order — **the fixtures were
+built and proven before the extraction touched anything**, because unlike follow-ups 1 and 2
+this family had no pixel safety net to fall into and one had to be built first.
+
+**Part 1 — four new `map_preview` states** (`map_trade_overlay`, `map_crisis_annotations`,
+`map_terrain_highlight`, `map_routes`). Each was written after reading its draw function, so
+the frame exercises the real branches rather than rendering an empty overlay that would sail
+through a byte-diff proving nothing: the trade frame drives the exact TradePanel call sequence
+and includes a *selected* link plus a leak pip and an unresolvable endpoint (the skip guard);
+crisis covers all four annotation shapes including an unknown-severity fallback; terrain
+highlight shows matched and unmatched tiles in one frame; routes covers int-keyed, string-keyed
+and unknown-faction colours plus a one-waypoint order the draw must bail on.
+
+The check was falsifiable and held: **all 56 pre-existing frames byte-identical, 4 added,
+nothing else moved**, and the new frames are themselves deterministic across three runs. The
+states are appended last in `_ready`, which makes that guarantee structural rather than
+empirical — a state leak from a new fixture can only reach another new fixture.
+
+**These four fixtures were written after the code they cover, so they encode current behaviour
+including any bugs. They prove "unchanged", not "correct".** That is the right tool for a
+decomposition safety net and the wrong one to later mistake for a correctness test.
+
+**The plan's premise was again partly stale:** it listed *targeting* among the overlays with no
+canned data, but `map_quarry_targeting` had since been added for the quarry-picker work. Four
+fixtures were needed, not five.
+
+**Part 2 — the extraction.** `clients/godot_thin_client/src/scripts/ui/AnnotationRenderer.gd`
+(521 lines) owns the trade overlay, crisis annotations, terrain highlight, routes and targeting.
+`MapView.gd`: **4,131 → 3,858**.
+
+**Five public seams keep their exact names** as MapView pass-throughs, and this is the sharpest
+naming constraint in the arc so far because every one is reached **reflectively** — `set_targeting`
+(`Main.gd`, signal connect by name), `update_trade_overlay` / `set_trade_overlay_enabled` /
+`set_trade_overlay_selection` (`TradePanel.gd` via `has_method`/`call`), and `set_terrain_highlight`
+(`TerrainPanel.gd`, same). A rename here does not error: `has_method` returns false and the call is
+**silently skipped**. The two setters that redrew *conditionally* return a bool so that condition
+survived the move.
+
+Nothing outside MapView reads or writes `crisis_annotations` or `routes` by name (the external
+`crisis_annotations` hits are the snapshot *dict key*, routed to `CrisisPanel` — a different thing),
+so both moved cleanly. `_draw_reticle` was re-grepped rather than inherited from follow-up 2's
+conclusion: its old reason evaporated when `_draw_targeting` moved, but `BandOverlayRenderer`'s
+travel-destination reticle still uses it, so it stays.
+
+Verified by byte-diff: **60 frames compared, 0 differing**, plus `blend_probe` 230/230. The final
+render was repeated with the native extension loaded, since the baselines predated building it.
+
+One GDScript trap worth remembering, found while authoring the crisis fixture:
+`const X := PackedInt32Array([...])` is **not** a constant expression, so the paths are authored as
+plain int Arrays and converted in the builder — and that conversion is load-bearing, because the
+draw branches on the exact type and a plain Array of flat ints falls into the pairs branch and
+renders nothing at all.
+
 ## Deferred follow-ups
 
 These were consciously scoped out (not missed). Each is a candidate for its own
@@ -361,11 +416,14 @@ verified pass; the `MapView.gd` remainder is also summarized in
    in Status above. **The split-lifecycle premise above was measured FALSE**: all
    three phases already lived inside the family, so the helper took the whole
    lifecycle and nothing split.
-3. **Trade / crisis / terrain-highlight annotations + targeting / routes**
+3. ~~**Trade / crisis / terrain-highlight annotations + targeting / routes**
    (`_draw_trade_overlay`, `_draw_crisis_annotations`, `_draw_terrain_highlight`).
    Cohesive, but **no `map_preview` fixture exercises them** (no canned
    trade-link/crisis/highlight/targeting data), so there is no before/after pixel
-   comparison. **Add fixtures first**, then extract under the revert-on-drift rule.
+   comparison. **Add fixtures first**, then extract under the revert-on-drift rule.~~
+   **Done** (issue #298) — see "`MapView.gd` annotation family" in Status above.
+   Fixtures were built and proven FIRST, then the extraction ran under them.
+   **Targeting already had a fixture** (`map_quarry_targeting`), so four were needed, not five.
 4. **Hud selection-panel builders** (`_build_allocation_*`, `_herd_summary_lines`).
    Read shared `_selected_*` state; defer until a selection-panel PNG fixture can
    verify them.
