@@ -58,7 +58,7 @@ const QUARRY_NEAR_HERD_ID := "game_deer_79"
 const QUARRY_NEAR_X := 72
 const QUARRY_NEAR_Y := 18
 # The two disclosure keys of `_band_fixture()` (entity 904) — the `[url]` meta payload its Food /
-# Morale rows carry, i.e. what `Hud._breakdown_key` builds for that band.
+# Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 

@@ -40,7 +40,7 @@ const PANEL_CONSUMED_KEYS := [
 	"food_consumption",    # Food summary line net rate + Eaten (people) breakdown
 	"pen_feed_upkeep",     # Food summary line net rate + Pen feed (animals) breakdown
 	"stores",              # _band_food_line provisions
-	"morale",              # _band_morale_line / _morale_is_concerning
+	"morale",              # _band_morale_line / DetailFormat.morale_is_concerning
 	"morale_delta",        # _band_morale_line trend
 	"morale_cause",        # _band_morale_line named cause
 	"output_multiplier",   # _band_output_line + the local-hunt yield preview (payout modifier)

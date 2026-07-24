@@ -2422,7 +2422,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"food_consumption": float(entry.get("food_consumption", 0.0)),
 			# The ledger's THIRD term: the food this band paid this turn to feed the pens it keeps
 			# (a corralled herd cannot graze). It comes straight off the larder and is in neither of
-			# the two rows above, so the Food line's net rate must subtract it — see Hud._band_net_food.
+			# the two rows above, so the Food line's net rate must subtract it — see DetailFormat.band_net_food.
 			"pen_feed_upkeep": float(entry.get("pen_feed_upkeep", 0.0)),
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),

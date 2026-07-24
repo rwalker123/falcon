@@ -2,7 +2,7 @@ extends RefCounted
 class_name PenStatus
 
 ## Single source of truth for "is this pen's herd starving?" — the ONE test the HUD's herd drawer
-## (`Hud._corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the
+## (`DetailFormat.corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the
 ## turn orb's `starving_pen` attention producer all ask, so no two surfaces can disagree about which
 ## pen is dying.
 ##

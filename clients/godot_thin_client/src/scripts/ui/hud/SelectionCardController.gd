@@ -125,8 +125,8 @@ func _tile_sight_chip_value(value: String) -> String:
 
 ## Value tint for the Sight chip: in-sight reads live (SIGNAL cyan — the HUD's "this is current" color),
 ## while both unseen states read dim (INK_DIM). The chip states what you KNOW, not what is wrong, so it
-## never borrows the WARN/DANGER palette. (The BBCode-hex twin `_sight_value_hex` stays on HudLayer with
-## `_format_detail_bbcode`, the shared key→tint registry that still consults it.)
+## never borrows the WARN/DANGER palette. (The BBCode-hex twin `DetailFormat.sight_value_hex` lives with
+## `DetailFormat.detail_bbcode`, the shared key→tint registry that still consults it.)
 func _sight_value_color(value: String) -> Color:
 	return HudStyle.SIGNAL if value == HudLayer.TILE_SIGHT_ACTIVE else HudStyle.INK_DIM
 

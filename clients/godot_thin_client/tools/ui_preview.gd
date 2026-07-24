@@ -96,7 +96,7 @@ const TELLING_MEDIUM_WRITTEN := "written"
 # collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
 # The reference band (`_band_fixture()`, entity 904) disclosure keys — the `[url]` meta its Food /
-# Morale rows carry, i.e. what `Hud._breakdown_key` builds for it.
+# Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for it.
 const BAND_DISCLOSURE_FOOD := "food:904"
 const BAND_DISCLOSURE_MORALE := "morale:904"
 # The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
@@ -2952,7 +2952,7 @@ func _starving_pen_band_fixture() -> Dictionary:
 	return band
 
 ## A CONCERNING food state: net-negative flow (income 0.30 < consumption 0.95 → net −0.65) and a
-## low larder runway (4 days). Both trip `_food_is_concerning`, so the category breakdown auto-shows
+## low larder runway (4 days). Both trip `DetailFormat.food_is_concerning`, so the category breakdown auto-shows
 ## under a red net figure without any click.
 func _concerning_food_band_fixture() -> Dictionary:
 	var band := _band_fixture()

@@ -345,12 +345,10 @@ const STORE_ITEM_PROVISIONS := "provisions"
 # beneath Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread
 # bill — `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
-const FOOD_UNLIMITED_GLYPH := "∞"
-# The UNIT the larder runway is spelled in, shared by the ONE renderer (`_food_turns_text`) and the
-# ONE reader (`_format_detail_bbcode`'s Food/Provisions/Carried threshold tint, which recognizes the
-# row by looking for this word). They must never drift: the tint went dead once already because the
-# renderer switched from "days" to "turns" while the guard kept testing for the old literal.
-const FOOD_RUNWAY_UNIT := "turn"
+# (The larder-runway vocabulary — `DetailFormat.FOOD_UNLIMITED_GLYPH` / `DetailFormat.FOOD_RUNWAY_UNIT`
+# — travelled to that module with BOTH its readers: the one renderer (`food_turns_text`) and the one
+# Food/Provisions/Carried threshold tint that recognizes the row by looking for that same unit word.
+# The tint went dead once already because the two drifted; they are now typed in one file.)
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 # Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
 # register into — one prefs file, its own section; the path/section constants are borrowed.
@@ -411,33 +409,18 @@ var _subject_fit_pending: bool = false
 # the last-applied drawer content height (skips a same-height reflow).
 var _tile_detail_lines_cache: Array = []
 var _subject_fit_last_height: float = NAN
-# Days-of-food of the currently-selected band's larder, so the detail formatter
-# can threshold-tint the Food row. NAN when no band is selected.
-var _selected_band_food_turns: float = NAN
-# Set by `_band_food_line`: the current player band carries real food flow, so the Food row becomes a
-# clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
+# A PRIVATE HANDSHAKE INSIDE THE BAND LINE PRODUCERS, and nothing more: `_band_food_line` sets it when
+# the band carries real food flow, and `_unit_summary_lines` — its only reader — uses it to decide
+# whether to register the Food row as a disclosure. The DETAIL FORMATTER never sees it (the caret is
+# driven by the registered disclosure state, not by this flag), so it is deliberately NOT part of the
+# render context that travels to `DetailFormat`.
 var _food_flow_present: bool = false
-# Disclosure context for the Food + Morale summary rows, rebuilt each render in `_unit_summary_lines`:
-# row-label → {key, open, concerning}. `_format_detail_bbcode` reads it to render the caret + meta.
-var _disclosure_state: Dictionary = {}
-# The breakdown rows each disclosure would show, keyed `"<kind>:<entity>"` → Array[String]. Written
-# every render by `_register_disclosure` and read by the popover, so the popover never recomputes a
-# number and a click needs no band lookup — the meta carries the key. Deliberately NOT cleared with
-# `_disclosure_state`: that one is per-render and per-host, and the other host's render must not be
-# able to empty the payload behind an open popover.
-var _breakdown_payloads: Dictionary = {}
-# The disclosure key whose popover is currently up, `""` = none. It is what "open" means now, so it
-# is also what flips the row's caret.
-var _breakdown_popover_key: String = ""
-# The one popover both hosts share, built lazily on the first disclosure click.
-var _breakdown_popover: PopupPanel = null
-var _breakdown_popover_label: RichTextLabel = null
-# Morale (0–1) of the currently-selected player band, so the detail formatter can
-# threshold-tint the Morale row. NAN when no player band is selected.
-var _selected_band_morale: float = NAN
-# Output multiplier (0–1) of the currently-selected player band, so the detail formatter
-# can threshold-tint the Output row. NAN when no band with a below-full output is selected.
-var _selected_band_output: float = NAN
+# The Food/Morale disclosure cluster (carets + the shared breakdown popover). Owns `_disclosure_state`
+# / the stashed payloads / the `PopupPanel`; `state()` feeds the per-render `DetailFormat.Context`.
+# The three per-render tint scalars it used to sit beside (`_selected_band_food_turns` / `_morale` /
+# `_output`) are GONE from this file: they were pure out-parameters of one render, so they became
+# fields on that context, constructed locally by whichever host is about to render.
+var _disclosures: DisclosureController = null
 # Early-Game Labor (docs/plan_early_game_labor.md, slice 3b). Assignment kinds mirror
 # the sim's LaborAssignment.kind; the source-centric allocation targets the single
 # player band captured from each snapshot (there is exactly one player band today).
@@ -577,7 +560,6 @@ const KNOWLEDGE_COMPLETE := 1.0
 # Herd drawer "Corral" row: the pen-build meter (0..1) reads "Building N%" until it completes, then
 # the penned badge — the herd twin of the tile card's "Cultivation N%" → "🌾 Tended Patch" row.
 const CORRAL_PROGRESS_COMPLETE := 1.0
-const CORRAL_BUILDING_LABEL := "Building"
 # The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
 const CULTIVATION_PREPARING_LABEL := "Preparing"
 const CORRAL_GLYPH := "🐄"
@@ -591,13 +573,14 @@ const FIELD_ROW := "Field"
 # MADE OF. Naming DECOMPOSES, it never adds: the shares sum to 1, so this says what the Forage number
 # already on the card consists of. Derived from the biome, so it is descriptive, not a state.
 const FLORA_COMPOSITION_ROW := "What grows here"
-const FLORA_SHARE_SEPARATOR := " · "
+# (The row's own ` · ` separator is `DetailFormat.FLORA_SHARE_SEPARATOR` — only the composition
+# formatter uses it. This FORMAT stays: the crop picker prints its rows with it too.)
 const FLORA_SHARE_FORMAT := "%s %d%%"
 # Tile card "Crop" row (flora roster S1) — the row FLORA_COMPOSITION_ROW becomes once a band commits
 # the patch to one species under Cultivate/Sow. The basket is displaced (that is the cost of tending
 # — docs/plan_flora_roster.md §4.3), so the two rows are mutually exclusive: a committed tile is one
 # plant, and showing the wild mix beside it would state what no longer grows there. Kept well under
-# `_split_detail_kv`'s 16-char key limit so it aligns as a normal table row, like the row it replaces.
+# `DetailFormat`'s 16-char key limit so it aligns as a normal table row, like the row it replaces.
 const FLORA_CROP_ROW := "Crop"
 # THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of
 # a server default. It renders only under the two rungs that actually commit a patch to one plant; the
@@ -667,22 +650,18 @@ const FLORA_CROP_NONE_LEGAL_HINT := "Nothing growing here can climb this rung."
 # control here would imply a switch the sim will refuse.
 const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
 const FLORA_CROP_COMMITTED_HINT := "Already committed — this patch stays this crop until it lapses back to wild."
-const FIELD_PROGRESS_COMPLETE := 1.0
-const FIELD_SOWING_LABEL := "Sowing"
-const FIELD_BADGE_LABEL := "Field"
 # The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
 # graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
 # share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
 # is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
-# state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView).
-const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
+# state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView); the two
+# starving LABELS are `DetailFormat.PEN_STARVING_LABEL` / `PEN_FEED_STARVING_FORMAT`, beside the row
+# builders that are their only readers.
 # The pen's feed row in the herd drawer — the NET food-larder bill THIS pen draws per turn
 # (`pen_larder_bill`, after pasture + hay), and whether it is being paid. The same bill the feed-split's
 # "larder Y.Y" term states, so the two never disagree. The band's own ledger row is the sim-summed
 # `pen_feed_upkeep` across all its pens; this is the per-herd figure, which is why the two are never added.
 const PEN_FEED_ROW := "Pen feed"
-# `SourceForecast.format_yield` already carries the "/turn" suffix — these only add the shortfall.
-const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
 # Grazing 2d-γ — the pen is fenced LAND that grazes itself. Two herd-drawer rows state it:
 #   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
 #     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
@@ -715,53 +694,41 @@ const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works
 const PEN_FENCING_LABEL := "Fencing %d%%"
 # In place of the whole husbandry section on a wild-ceiling herd, and where the corral affordance would
 # sit on a pastoral one — so the missing controls read as intentional, not a bug. Colon-free, so
-# `_format_detail_bbcode` renders them as dim informational sentences (the `kv.is_empty()` path).
+# `DetailFormat.detail_bbcode` renders them as dim informational sentences (the `kv.is_empty()` path).
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
 # needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction < 1`)
 # it DECAYS out of the pastoral rung, slips back to wild, and stops earning Penning — the silent stall
 # a playtest hit ("🐄 Domesticated" with no signal that Penning had stopped). The row makes the deficit
-# visible; the under-herded value is WARN-tinted via `_herders_value_hex`, and the slipping consequence
+# visible; the under-herded value is WARN-tinted via `DetailFormat.herders_value_hex`, and the slipping consequence
 # is spelled out below it so the player knows WHY Penning stalled and how to fix it.
 # `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also unmanaged/vanished
 # herds) — treated as "no problem". The staffed label reads "N / N" (calm); under-herded "A / N —
 # under-herded" (amber).
 const FULLY_HERDED := 1.0
 const HERDERS_ROW := "Herders"
-const HERDERS_STAFFED_FORMAT := "%d / %d"
-const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
 const HERDERS_SLIPPING_FORMAT := "Tameness slipping — teaching Herding, not Penning. Staff all %d herders to hold it."
 # Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes (tile count of its hex
 # range, so it pairs with the map ring) — a SEPARATE fact from the biomass/cap pair, which the `Biomass`
 # row now carries as a `current / max` pair (`11636 / 11636`). The `Range` key stays ≤ 16 chars so
-# `_split_detail_kv` renders it as an aligned table row beside Biomass.
+# `DetailFormat` renders it as an aligned table row beside Biomass.
 const HERD_RANGE_ROW := "Range"
 # Herd drawer size class: the `<size> game` class the roster row used to carry as its meta. The row's
 # meta slot now states the herd's STAFFING (`1 🏹`, parallel to the land row), so the size class moved
 # to the drawer — where the facts that don't fit the row live. The key stays ≤ 16 chars so
-# `_split_detail_kv` renders it as an aligned table row above Biomass.
+# `DetailFormat` renders it as an aligned table row above Biomass.
 const HERD_SIZE_ROW := "Size"
 const HERD_SIZE_CLASS_FORMAT := "%s game"
-# Herd drawer combat-component rows (Predators Phase 0). Strength is NOT danger — a mammoth is deadly
-# to HUNT (high attack × ferocity) yet no camp THREAT (aggression 0) — so the drawer shows the four RAW
-# components Elevation-style (a relative bar + the raw value, no verdict word: a word can't survive the
-# roster, since a mammoth and later mech-infantry can't both be "Deadly"). Attack / Defense are
-# open-ended, so their bars normalize against the max across the known herds (`_band_labor.world_herds()`); Ferocity
-# / Aggression are native 0..1, shown as a bar + %. Keys ≤ 16 chars so `_split_detail_kv` aligns them.
-const DANGER_ATTACK_ROW := "Attack"
-const DANGER_DEFENSE_ROW := "Defense"
-const DANGER_FEROCITY_ROW := "Fights back"
-const DANGER_AGGRESSION_ROW := "Aggressive"
-const DANGER_BAR_CELLS := 5
-# The compact derived-danger summary under the component rows: the two dangers a player actually reasons
-# about (hunt cost vs unprovoked menace), each = attack × the relevant behaviour scalar.
-const DANGER_DERIVED_ROW := "Danger"
-const DANGER_DERIVED_FORMAT := "Hunt %s · Threat %s"
+# (Herd drawer combat-component rows, Predators Phase 0 — the whole `DANGER_*` family lives in
+# `DetailFormat` with `append_danger_component_lines`, its only reader. Strength is NOT danger: a
+# mammoth is deadly to HUNT yet no camp THREAT, so the drawer shows the four RAW components
+# Elevation-style, with no verdict word. The roster it normalizes the open-ended bars against is
+# threaded IN as `_band_labor.world_herds()`, since that module holds no snapshot state.)
 # Overgrazing is a TRIVIAL honest comparison of two sim-provided numbers — biomass exceeds what the
 # range can sustainably feed, so the herd is drawing the range down and will shrink. NOT a re-derivation
 # of the ecology model (K and graze flow are the sim's). The epsilon keeps a herd sitting exactly at K
-# from flickering the warning. WARN-tinted via `_format_detail_bbcode` (the Ecology/Corral rows' path).
+# from flickering the warning. WARN-tinted via `DetailFormat.detail_bbcode` (the Ecology/Corral rows' path).
 const OVERGRAZE_EPSILON := 0.05
 const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
@@ -949,7 +916,7 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
 # Click-to-open disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label and
-# a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `_on_detail_meta_clicked`.
+# a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `DisclosureController`.
 #
 # THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE. Expanding it in place grew the vitals label — a
 # `fit_content` RichTextLabel — by several lines AFTER `_build_band_zone_content` had already chosen
@@ -959,21 +926,15 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # destructive confirms are `ConfirmationDialog`s. The work board's budgeted inline inspector strip is
 # the other idiom and does not apply here: in the SHORT tier the chart is already dropped and the role
 # cards are already hint-less, so there is nothing left to spend but PEOPLE/WORKFORCE — the content.
-const BREAKDOWN_CARET_OPEN := "▾"
-const BREAKDOWN_CARET_CLOSED := "▸"
+# The `[url]` meta prefix stays HERE: the formatter emits it, the disclosure controller parses it, and
+# both preview harnesses build one — shared vocabulary rather than either half's own. (The ▸/▾ carets
+# themselves are `DetailFormat`'s, and the popover's geometry `DisclosureController`'s.)
 const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
 const BREAKDOWN_KIND_FOOD := "food"
 const BREAKDOWN_KIND_MORALE := "morale"
-# The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
+# The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
 const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
-# The breakdown popover's card: wide enough for the longest breakdown row (`▼ −1.74  🐄 Pen feed
-# (animals)` / `▲ +1.0%  harsh terrain (Karst Cavern Mouth)`) without wrapping every line, and
-# padded like the cards it borrows its stylebox from.
-const BREAKDOWN_POPOVER_WIDTH := 300.0
-const BREAKDOWN_POPOVER_PADDING := 10
-# The gap between the clicked row and the popover's top edge, so the caret stays readable under it.
-const BREAKDOWN_POPOVER_GAP := 4.0
 # ---- Band/City panel identity grid ---------------------------------------------------------------
 # The panel's own header already states the band's name + settlement stage, so the summary rows there
 # drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
@@ -984,7 +945,7 @@ const BREAKDOWN_POPOVER_GAP := 4.0
 # Workforce bars state the same numbers as two readable charts, and a text restatement above them
 # was the third telling of one fact.
 # Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
-# through the SAME `_format_detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
+# through the SAME `DetailFormat.detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
 # eaten amber) — no inline color tags, which mis-layout between the KV table segments.
 const FOOD_LABEL_GATHERED := "Gathered"
 const FOOD_LABEL_HUNTED := "Hunted"
@@ -1421,7 +1382,7 @@ const HUNT_ANIMAL_RATE_DECIMALS := 2
 const PASTURE_KEY := "Pasture"
 # Its own row key rather than the shared "Ecology" one — a forage tile would otherwise show two rows
 # both called "Ecology" (the patch's and the pasture's) with no way to tell them apart. The LABEL and
-# the TINT are still the shared `_ecology_phase_label` / `_ecology_value_hex` path, so a stressed
+# the TINT are still the shared `DetailFormat.ecology_phase_label` / `ecology_value_hex` path, so a stressed
 # pasture reads exactly like a stressed herd or a stressed patch.
 const PASTURE_ECOLOGY_KEY := "Pasture ecology"
 # Tile-card SIGHT row — the player must ALWAYS be able to tell "there is nothing here" apart from
@@ -1606,6 +1567,12 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _drawercompose.extend_pen_requested.connect(
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
+    # The detail-row disclosure cluster (the Food/Morale carets + the breakdown popover they open).
+    # It owns that cluster's ONLY `add_child`, so it is handed the HUD CanvasLayer as the host it
+    # parents the popover into (the `TurnOrbController` pattern), plus `_refresh_disclosure_hosts` —
+    # the single inbound re-render edge, which is the one thing about the hosts HudLayer still knows.
+    _disclosures = DisclosureController.new()
+    _disclosures.setup(self, _refresh_disclosure_hosts)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _setup_tooltip()
@@ -1635,8 +1602,7 @@ func _ready() -> void:
     _ensure_targeting_banner()
     _setup_build_overlay()
     # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
-    if occupant_detail != null:
-        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(occupant_detail))
+    _disclosures.wire_label(occupant_detail)
     # Re-cap the drawer whenever its content changes SIZE, whoever changed it — a stepper tick, a
     # policy click, a per-snapshot rebuild. One hookup instead of a refit call sprinkled through
     # every early-return in the three compose builders. No feedback loop: the fit writes the
@@ -1881,9 +1847,10 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
 ## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
-## rows narrower still. Kept on HudLayer because those danger rows use it too; handed to the
-## TopBarReadouts controller as a Callable.
-func _meter_bar(score: float, cells: int) -> String:
+## rows narrower still. Kept on HudLayer because THREE clusters read it; handed to the TopBarReadouts
+## controller as a Callable and called as `HudLayer._meter_bar` by `DetailFormat`'s danger bars.
+## `static` so that all-static module can reach it without a Callable injection — it touches no member.
+static func _meter_bar(score: float, cells: int) -> String:
     var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))
     return "▰".repeat(filled) + "▱".repeat(cells - filled)
 
@@ -2075,7 +2042,10 @@ func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> in
     return SourceForecast.hex_distance_wrapped(
         a_col, a_row, b_col, b_row, _band_labor.grid_width(), _band_labor.wrap_horizontal())
 
-func _labor_assignments_of(band: Dictionary) -> Array:
+## The band's labor-assignment array, or [] when the snapshot carried none. `static` so `DetailFormat`
+## can read it as `HudLayer._labor_assignments_of` for the Gathered/Hunted sums rather than keeping a
+## fourth private copy of the same two-line accessor.
+static func _labor_assignments_of(band: Dictionary) -> Array:
     var v: Variant = band.get("labor_assignments", [])
     return v if v is Array else []
 
@@ -2167,211 +2137,6 @@ func _policy_hint(kind: String, policy: String) -> String:
         return String(FORAGE_POLICY_HINTS.get(key, ""))
     return String(LOCAL_HUNT_POLICY_HINTS.get(key, ""))
 
-## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat.
-## Positive → the larder is growing. `pen_feed_upkeep` is the sim's own answer for the third term
-## (`PopulationCohortState.penFeedUpkeep` — the food this band actually PAID for pen feed this turn,
-## summed across every pen it keeps); the client must NOT re-derive it by summing the herds'
-## `pen_upkeep`, and the identity `larder_delta == income − consumption − pen_feed` is pinned sim-side
-## (`integration_tests/tests/pen_food_ledger.rs`). Omitting the term made this row LIE: a band with a
-## Red Deer pen showed a surplus overstated by the ~1.74/turn its herd ate, then drained anyway.
-func _band_net_food(band: Dictionary) -> float:
-    return _band_food_income(band) \
-        - float(band.get("food_consumption", 0.0)) \
-        - _band_pen_feed(band)
-
-## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
-## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
-## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
-## does NOT swing. It feeds the headline net (`_band_net_food` = income − Eaten − Pen feed) and the
-## `_food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
-## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
-## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
-## for one commit and was retired as redundant; do not reintroduce it.)
-func _band_food_income(band: Dictionary) -> float:
-    return _sum_realized_yield(band, LABOR_KIND_FORAGE) \
-        + _sum_realized_yield(band, LABOR_KIND_HUNT)
-
-## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
-func _band_pen_feed(band: Dictionary) -> float:
-    return float(band.get("pen_feed_upkeep", 0.0))
-
-## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
-## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted,
-## not zeroed).
-##
-## **The income term MUST be the same `_band_food_income` the headline sums, not the wire's lumpy
-## `food_income`.** They diverged once and it hid the readout exactly when it was needed: a starving
-## band has `food_consumption` 0 (an empty larder debits nothing) and a whole-animal hunt pays 0 on a
-## wait turn, so a band with a perfectly good STEADY income failed all three tests and lost its net
-## line and breakdown entirely. Gate on the same number you display.
-func _band_has_food_flow(band: Dictionary) -> bool:
-    return _band_food_income(band) >= FOOD_FLOW_MIN \
-        or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN \
-        or _band_pen_feed(band) >= FOOD_FLOW_MIN
-
-## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
-## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
-## Hunted = hunt). Reads the steady average (not the lumpy `actual_yield`) so the rows don't swing AND
-## sum to the steady headline income (`_band_food_income`); falls back to `actual_yield` if absent.
-func _sum_realized_yield(band: Dictionary, kind: String) -> float:
-    var total := 0.0
-    for a in _labor_assignments_of(band):
-        if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
-            var d := a as Dictionary
-            total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
-    return total
-
-## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
-## mirroring `_morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything
-## (a popover that pops itself open on a snapshot would be worse than the clipping it replaced); it
-## marks the row's caret WARN, so a row with something worth reading still says so at a glance.
-func _food_is_concerning(band: Dictionary) -> bool:
-    var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-    return _band_net_food(band) < 0.0 \
-        or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
-
-## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
-func _breakdown_key(kind: String, band: Dictionary) -> String:
-    return "%s:%d" % [kind, int(band.get("entity", -1))]
-
-## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-open disclosure: stash the
-## rows its popover will show and record the caret state for `_format_detail_bbcode`. Returns whether
-## the affordance is offered at all — a row with nothing to show gets no caret. Shared by both
-## disclosure rows and by BOTH hosts (the panel's vitals label and the Occupants-card drawer), which
-## is the point: one click behaviour, no `is_panel` fork.
-func _register_disclosure(row_label: String, kind: String, band: Dictionary, lines: Array[String]) -> bool:
-    if lines.is_empty():
-        return false
-    var key := _breakdown_key(kind, band)
-    _breakdown_payloads[key] = lines
-    var concerning := _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
-    _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
-    # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
-    if _breakdown_popover_key == key:
-        _refresh_breakdown_popover_text()
-    return true
-
-## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
-## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
-## / `    ▼ −1.74  🐄 Pen feed (animals)` (income ▲ green, debits ▼ amber via the shared
-## indented-sub-line tint). Only categories above the floor — a band with no pen shows no feed row.
-##
-## THREE kinds of row, not two: the pen's feed is a debit on the same larder as the people's meals,
-## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
-func _food_breakdown_lines(band: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var gathered := _sum_realized_yield(band, LABOR_KIND_FORAGE)
-    if gathered >= FOOD_FLOW_MIN:
-        lines.append(_food_breakdown_row(gathered, FOOD_LABEL_GATHERED))
-    var hunted := _sum_realized_yield(band, LABOR_KIND_HUNT)
-    if hunted >= FOOD_FLOW_MIN:
-        lines.append(_food_breakdown_row(hunted, FOOD_LABEL_HUNTED))
-    var eaten := float(band.get("food_consumption", 0.0))
-    if eaten >= FOOD_FLOW_MIN:
-        lines.append(_food_breakdown_row(-eaten, FOOD_LABEL_EATEN))
-    var pen_feed := _band_pen_feed(band)
-    if pen_feed >= FOOD_FLOW_MIN:
-        lines.append(_food_breakdown_row(-pen_feed, FOOD_LABEL_PEN_FEED))
-    return lines
-
-## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
-func _food_breakdown_row(value: float, label: String) -> String:
-    var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else MORALE_CONTRIB_NEGATIVE_GLYPH
-    return "%s%s %s  %s" % [MORALE_BREAKDOWN_INDENT, glyph, SourceForecast.format_signed(value), label]
-
-## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure
-## key, so the handler needs no band lookup and no host flag — the SAME click behaviour wherever the
-## row renders. `anchor` is the label that emitted the click, bound at wire time; it is what the
-## popover positions under.
-func _on_detail_meta_clicked(meta: Variant, anchor: Control) -> void:
-    var payload := String(meta)
-    if not payload.begins_with(BREAKDOWN_TOGGLE_META_PREFIX):
-        return
-    var key := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
-    if _breakdown_popover_key == key:
-        _close_breakdown_popover()
-        return
-    _open_breakdown_popover(key, anchor)
-
-## Open a disclosure's breakdown in the popover, anchored under the clicked row. The anchor rect is
-## captured BEFORE the hosts re-render, because that render frees the very label we are anchoring to
-## (the panel builds a fresh vitals label each time).
-func _open_breakdown_popover(key: String, anchor: Control) -> void:
-    var lines := _breakdown_lines_for(key)
-    if lines.is_empty():
-        return
-    var anchor_rect := _breakdown_anchor_rect(anchor)
-    _breakdown_popover_key = key
-    _refresh_disclosure_hosts()
-    var popover := _ensure_breakdown_popover()
-    _refresh_breakdown_popover_text()
-    popover.popup(anchor_rect)
-
-## Dismiss the breakdown popover, if any. Idempotent — `popup_hide` runs the same teardown, so a
-## click-away / Esc and an explicit close converge on one path.
-func _close_breakdown_popover() -> void:
-    if _breakdown_popover != null and _breakdown_popover.visible:
-        _breakdown_popover.hide()
-        return
-    _on_breakdown_popover_hidden()
-
-func _on_breakdown_popover_hidden() -> void:
-    if _breakdown_popover_key == "":
-        return
-    _breakdown_popover_key = ""
-    _refresh_disclosure_hosts()
-
-## The rows a disclosure key's popover shows — stashed by `_register_disclosure`, never recomputed.
-func _breakdown_lines_for(key: String) -> Array[String]:
-    var stored: Variant = _breakdown_payloads.get(key, null)
-    var lines: Array[String] = []
-    if stored is Array:
-        for line in (stored as Array):
-            lines.append(String(line))
-    return lines
-
-## Where the popover sits: a zero-height rect at the bottom-left of the clicked row, in SCREEN space
-## (what `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas
-## stretch, both of which this HUD has.
-func _breakdown_anchor_rect(anchor: Control) -> Rect2i:
-    if anchor == null or not is_instance_valid(anchor):
-        return Rect2i()
-    var xform := anchor.get_screen_transform()
-    var below := xform * Vector2(0.0, anchor.size.y + BREAKDOWN_POPOVER_GAP)
-    return Rect2i(Vector2i(below), Vector2i.ZERO)
-
-## The popover itself: a `PopupPanel`, so it is a WINDOW — it cannot change any zone's height, which
-## is the whole reason the breakdown moved here. Styled through `HudStyle` like every other card.
-func _ensure_breakdown_popover() -> PopupPanel:
-    if _breakdown_popover != null and is_instance_valid(_breakdown_popover):
-        return _breakdown_popover
-    var popover := PopupPanel.new()
-    popover.name = "BreakdownPopover"
-    popover.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
-    var margin := MarginContainer.new()
-    for side in ["left", "top", "right", "bottom"]:
-        margin.add_theme_constant_override("margin_%s" % side, BREAKDOWN_POPOVER_PADDING)
-    popover.add_child(margin)
-    var label := RichTextLabel.new()
-    label.bbcode_enabled = true
-    label.fit_content = true
-    label.scroll_active = false
-    label.autowrap_mode = TextServer.AUTOWRAP_WORD
-    label.custom_minimum_size = Vector2(BREAKDOWN_POPOVER_WIDTH, 0.0)
-    margin.add_child(label)
-    popover.popup_hide.connect(_on_breakdown_popover_hidden)
-    add_child(popover)
-    _breakdown_popover = popover
-    _breakdown_popover_label = label
-    return popover
-
-## Restate the open popover from the current payload — the breakdown CONTENT is unchanged from the
-## inline form: the same indented ▲/▼ rows through the same shared two-tone tint path.
-func _refresh_breakdown_popover_text() -> void:
-    if _breakdown_popover_label == null or not is_instance_valid(_breakdown_popover_label):
-        return
-    _breakdown_popover_label.text = _format_detail_bbcode(_breakdown_lines_for(_breakdown_popover_key))
-
 ## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
 ## hosts, unconditionally — that is the `is_panel` fork this change exists to remove.
 func _refresh_disclosure_hosts() -> void:
@@ -2410,7 +2175,7 @@ func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 ## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
 ## than a summary line because BBCode cannot host a drawn chart.
 func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxContainer:
-    if not (_is_player_unit(band) and _band_has_food_flow(band)):
+    if not (_is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
         return null
     var arrivals := _merged_arrival_schedule(band)
     if arrivals.is_empty():
@@ -2422,7 +2187,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
     chart.set_projection(
         _band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)) + _band_pen_feed(band), _band_labor.current_turn())
+        float(band.get("food_consumption", 0.0)) + DetailFormat.band_pen_feed(band), _band_labor.current_turn())
     # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
     # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
     if compact:
@@ -2614,8 +2379,9 @@ func _build_band_zone_content(band: Dictionary, with_vitals: bool = true) -> VBo
     return col
 
 ## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
-## FRESH RichTextLabel each render (it resets and re-sets the food/morale tint context), so its
-## `meta_clicked` is wired here, bound `is_panel = true`.
+## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
+## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
+## `_unit_summary_lines` as it emits the rows, and handed straight to the formatter.
 func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     var detail_label := RichTextLabel.new()
     detail_label.bbcode_enabled = true
@@ -2623,8 +2389,9 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.scroll_active = false
     detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(detail_label))
-    detail_label.text = _format_detail_bbcode(_unit_summary_lines(band))
+    _disclosures.wire_label(detail_label)
+    var ctx := DetailFormat.Context.new()
+    detail_label.text = DetailFormat.detail_bbcode(_unit_summary_lines(band, ctx), ctx)
     return detail_label
 
 ## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
@@ -4246,11 +4013,9 @@ func _adopt_tile_info_from(occupant: Dictionary) -> void:
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
-    # Reset the band-food/morale/output tint context; `_unit_summary_lines` re-sets it if
-    # a band is being rendered into the drawer.
-    _selected_band_food_turns = NAN
-    _selected_band_morale = NAN
-    _selected_band_output = NAN
+    # No tint context is reset here any more: it is no longer a member that outlives a render. Each
+    # host below (the drawer, the panel's vitals label) constructs its own `DetailFormat.Context`
+    # immediately before it renders, so there is nothing stale for this orchestrator to clear.
     # The identity/list half — roster assembly, tile-card header + chips, auto-select, subject list —
     # lives in the controller (HUD decomposition Phase 2b); the DRAWER stays here (Phase 2c).
     _selectioncard.render(_selection.tile_info())
@@ -4280,17 +4045,6 @@ func _hide_drawer_blocks() -> void:
     if herd_assign_controls != null:
         herd_assign_controls.visible = false
 
-## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's
-## BBCode hex and the chip's Color, so the two forms cannot drift apart.
-func _sight_is_live(value: String) -> bool:
-    return value == TILE_SIGHT_ACTIVE
-
-## Value tint for the Sight row: in-sight reads live (SIGNAL cyan — the HUD's "this is current"
-## color), while both unseen states read dim (INK_DIM). The row states what you KNOW, not what is
-## wrong, so it never borrows the WARN/DANGER palette.
-func _sight_value_hex(value: String) -> String:
-    return HudStyle.SIGNAL_HEX if _sight_is_live(value) else HudStyle.INK_DIM_HEX
-
 ## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
 ## paths is visible at a time — that is what bounds the card's height.
 func _render_subject_drawer() -> void:
@@ -4316,7 +4070,9 @@ func _render_land_drawer() -> void:
     # hex, where only numbers on OTHER widgets moved.
     var lines := _tile_terrain_lines(_selection.tile_info())
     if lines != _tile_detail_lines_cache:
-        tile_detail.text = _format_detail_bbcode(lines)
+        # No context: the LAND has no band behind it, and every tint its rows take (Sight,
+        # Habitability, Ecology, Cultivation, Field) is a pure function of the row's own value.
+        tile_detail.text = DetailFormat.detail_bbcode(lines)
         _tile_detail_lines_cache = lines.duplicate()
     _drawercompose.build_forage_drawer_actions(_selection.tile_info())
     if allocation_panel != null:
@@ -4344,7 +4100,7 @@ func _render_unknown_contents_note() -> void:
     var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
         if String(_selection.tile_info().get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
         else OCCUPANTS_UNKNOWN_REMEMBERED
-    occupant_detail.text = _format_detail_bbcode([message])
+    occupant_detail.text = DetailFormat.detail_bbcode([message])
 
 ## Cap the drawer against the room left in the dock beneath the card, so a crowded hex scrolls
 ## INSIDE the drawer rather than dragging the whole dock.
@@ -4429,7 +4185,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         ])
         var graze_phase := String(tile_info.get("graze_ecology_phase", "")).strip_edges().to_lower()
         if graze_phase != "":
-            lines.append("%s: %s" % [PASTURE_ECOLOGY_KEY, _ecology_phase_label(graze_phase)])
+            lines.append("%s: %s" % [PASTURE_ECOLOGY_KEY, DetailFormat.ecology_phase_label(graze_phase)])
     if visibility_state == VISIBILITY_DISCOVERED:
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
@@ -4452,7 +4208,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
         lines.append("%s: %s" % [FLORA_CROP_ROW, crop_name])
     else:
-        var composition_text := _flora_composition_text(tile_info.get("patch_composition", []))
+        var composition_text := DetailFormat.flora_composition_text(tile_info.get("patch_composition", []))
         if composition_text != "":
             lines.append("%s: %s" % [FLORA_COMPOSITION_ROW, composition_text])
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
@@ -4465,21 +4221,21 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # Ecology phase of the patch — ALWAYS shown for any tile carrying a patch (not just a
     # cultivated one): the phase gates whether cultivation can accrue at all, so it is the
     # single most important condition on a forage tile. Same row name / label / tint as the
-    # herd's Ecology row (`_ecology_phase_label` + `_ecology_value_hex`), so a stressed patch
+    # herd's Ecology row (`DetailFormat.ecology_phase_label` + `ecology_value_hex`), so a stressed patch
     # and a stressed herd read identically.
     var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
     if patch_phase != "":
-        lines.append("Ecology: %s" % _ecology_phase_label(patch_phase))
+        lines.append("Ecology: %s" % DetailFormat.ecology_phase_label(patch_phase))
     # Forage-patch intensification ladder: while a patch is being tended it shows the
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
     # never invent a state on a patch that isn't being worked.
     if bool(tile_info.get("is_cultivated", false)):
-        lines.append("Cultivation: %s" % _cultivation_label(1.0, true))
+        lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
     elif tile_info.has("cultivation_progress"):
         var cultivation_progress := float(tile_info["cultivation_progress"])
         if cultivation_progress > 0.0:
-            lines.append("Cultivation: %s" % _cultivation_label(cultivation_progress, false))
+            lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress, false))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
     # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
@@ -4487,11 +4243,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # it lives in the top-bar knowledge strip, because it is a property of your people, not of this
     # ground. Both rows are the source's own, and both decay if the patch is abandoned.
     if bool(tile_info.get("patch_is_field", false)):
-        lines.append("%s: %s" % [FIELD_ROW, _field_label(1.0, true)])
+        lines.append("%s: %s" % [FIELD_ROW, DetailFormat.field_label(1.0, true)])
     elif tile_info.has("patch_field_progress"):
         var field_progress := float(tile_info["patch_field_progress"])
         if field_progress > 0.0:
-            lines.append("%s: %s" % [FIELD_ROW, _field_label(field_progress, false)])
+            lines.append("%s: %s" % [FIELD_ROW, DetailFormat.field_label(field_progress, false)])
     return lines
 
 ## The detail drawer + action buttons for the currently-selected occupant. Shares the one drawer
@@ -4503,9 +4259,9 @@ func _render_occupant_drawer() -> void:
         tile_detail.visible = false
     if forage_assign_controls != null:
         forage_assign_controls.visible = false
-    _selected_band_food_turns = NAN
-    _selected_band_morale = NAN
-    _selected_band_output = NAN
+    # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
+    # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
+    var ctx := DetailFormat.Context.new()
     var is_band := not _selection.unit().is_empty()
     var is_herd := not _selection.herd().is_empty()
     var is_expedition := is_band and bool(_selection.unit().get("is_expedition", false))
@@ -4519,7 +4275,7 @@ func _render_occupant_drawer() -> void:
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         occupant_detail.visible = true
-        occupant_detail.text = _format_detail_bbcode([BAND_PANEL_POINTER_TEXT])
+        occupant_detail.text = DetailFormat.detail_bbcode([BAND_PANEL_POINTER_TEXT])
         # The one order that stays HERE (§18): repositioning is a map action. Player resident bands
         # only — this branch is already player-band-gated, and a foreign band's orders aren't ours.
         _build_band_move_actions()
@@ -4532,10 +4288,10 @@ func _render_occupant_drawer() -> void:
     occupant_detail.visible = true
     var lines: Array[String] = []
     if not _selection.unit().is_empty():
-        lines = _unit_summary_lines(_selection.unit())
+        lines = _unit_summary_lines(_selection.unit(), ctx)
     elif not _selection.herd().is_empty():
         lines = _herd_summary_lines(_selection.herd())
-    occupant_detail.text = _format_detail_bbcode(lines)
+    occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())
     elif is_player_band:
@@ -4564,10 +4320,8 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # must not mutate or blank it. The zone closures below also capture this stable copy, so they
     # keep targeting the panel band regardless of the current selection.
     _band_labor.set_panel_band(unit.duplicate(true))
-    # The vitals RichTextLabel rebuilds the food/morale/output tint context from scratch each render.
-    _selected_band_food_turns = NAN
-    _selected_band_morale = NAN
-    _selected_band_output = NAN
+    # No tint-context reset here either: `_build_vitals_label` (inside the band zone below) builds its
+    # own `DetailFormat.Context` per render, so the context cannot survive from the previous one.
     # The three zone contents. Ownership passes to the panel, which frees the previous render's zones
     # and parents these into whichever shell (wide columns / narrow tabs) its width selected.
     _band_city_panel.set_zones(
@@ -4608,7 +4362,7 @@ func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
         var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
         policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
     return HudFormat.join_tooltip_lines([
-        _expedition_mission_label(mission), policy_hint,
+        DetailFormat.expedition_mission_label(mission), policy_hint,
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission),
         EXPEDITION_ROW_FOCUS_HINT])
 
@@ -4713,7 +4467,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
             # the mission + its objective, so the row is actionable without opening anything.
             "label": HudFormat.expedition_phase_label(EXPEDITION_PHASE_AWAITING),
             "detail": ATTENTION_AWAITING_DETAIL_FORMAT % [
-                _expedition_mission_label(String(exp.get("expedition_mission", ""))),
+                DetailFormat.expedition_mission_label(String(exp.get("expedition_mission", ""))),
                 _expedition_objective(exp)],
             "x": x, "y": y,
         })
@@ -4926,30 +4680,35 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## `Unit: <name>` row nor the `Size: <n>` row survives.
 ## Nor does it state the population: the band zone's People + Workforce bars carry that, and the
 ## Occupants-card drawer has no worker breakdown to show for a band that isn't ours anyway.
-func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
+func _unit_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context = null) -> Array[String]:
+    # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
+    # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
+    # harnesses can still ask for the lines alone.
+    var context := ctx if ctx != null else DetailFormat.Context.new()
     if bool(unit_data.get("is_expedition", false)):
-        return _expedition_summary_lines(unit_data)
+        return _expedition_summary_lines(unit_data, context)
     var lines: Array[String] = []
     # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
     # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
     # must not inherit the previous render's caret or its food-turns tint.
-    _disclosure_state = {}
+    _disclosures.clear_rows()
     _food_flow_present = false
-    _selected_band_food_turns = NAN
+    context.food_turns = NAN
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
     # band shows only what we can honestly observe from outside: where it is (Position) and roughly
     # how many (its roster row's size).
     if _is_player_unit(unit_data):
-        lines.append(_band_food_line(unit_data))
+        lines.append(_band_food_line(unit_data, context))
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
-        # set `_food_flow_present`; `_register_disclosure` stashes the rows for the popover and records
-        # the row so `_format_detail_bbcode` draws the caret + clickable meta. The rows are NEVER
-        # appended here — inline growth is what clipped the zone.
+        # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
+        # it); `DisclosureController.register` stashes the rows for the popover and records the row so
+        # the formatter draws the caret + clickable meta. The rows are NEVER appended here — inline
+        # growth is what clipped the zone.
         if _food_flow_present:
-            _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
-                _food_breakdown_lines(unit_data))
+            _disclosures.register(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data,
+                _disclosures.food_breakdown_lines(unit_data))
         # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
         # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
         var fodder_store := float(unit_data.get("fodder_store", 0.0))
@@ -4959,16 +4718,16 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
     if _is_player_unit(unit_data):
-        lines.append(_band_morale_line(unit_data))
+        lines.append(_band_morale_line(unit_data, context))
         # Productivity ties visibly to morale: show the Output row when discontent is
         # dragging yield below full (near Morale, tinted by how low it is).
-        var output_line := _band_output_line(unit_data)
+        var output_line := _band_output_line(unit_data, context)
         if output_line != "":
             lines.append(output_line)
         # Itemized morale breakdown: the SAME click-to-open disclosure as Food, in the same popover.
         # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
-        # the concerning recovery line) — `_register_disclosure` declines an empty payload.
-        _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data,
+        # the concerning recovery line) — `register` declines an empty payload.
+        _disclosures.register(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data,
             _morale_breakdown_lines(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
@@ -4981,6 +4740,9 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
         if not stockpile_lines.is_empty():
             lines.append("")
             lines.append_array(stockpile_lines)
+    # The carets this render registered are the LAST thing the context needs; read them back here so
+    # every caller gets a fully-filled context by simply passing it in.
+    context.disclosures = _disclosures.state()
     return lines
 
 ## Drawer readout for a selected expedition (docs/plan_exploration_and_sites.md §2 / §2b):
@@ -4992,11 +4754,14 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
 ## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
 ## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
 ## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
-func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
+func _expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context = null) -> Array[String]:
+    # Same out-parameter contract as `_unit_summary_lines`: the Carried/Provisions rows tint by the
+    # party's own food runway, which is stashed on the context below. Defaulted for the harnesses.
+    var context := ctx if ctx != null else DetailFormat.Context.new()
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
     var is_hunt := mission == EXPEDITION_MISSION_HUNT
-    lines.append("Mission: %s" % _expedition_mission_label(mission))
+    lines.append("Mission: %s" % DetailFormat.expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
         # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
@@ -5024,10 +4789,9 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
-    # turns from turnsOfFood. Reuse the food-turns tint context (`_selected_band_food_turns`, read
-    # back in `_format_detail_bbcode`).
+    # turns from turnsOfFood. Reuse the food-turns tint context, read back by the formatter.
     var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-    _selected_band_food_turns = turns
+    context.food_turns = turns
     var carried := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
@@ -5042,9 +4806,9 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
-            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, _food_turns_text(turns), full_badge])
+            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, DetailFormat.food_turns_text(turns), full_badge])
         else:
-            lines.append("Carried: %d  (%s)" % [carried, _food_turns_text(turns)])
+            lines.append("Carried: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
         # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
         # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
         # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
@@ -5054,41 +4818,34 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
         if unit_data.has("expedition_projected_delivery"):
             lines.append(_expedition_next_delivery_line(unit_data))
     else:
-        lines.append("Provisions: %d  (%s)" % [carried, _food_turns_text(turns)])
+        lines.append("Provisions: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     return lines
 
-## Humanize an expedition mission id ("scout" → "Scouting expedition"); falls back to a
-## capitalized token for an unknown/future mission (e.g. PR 2's "hunt").
-func _expedition_mission_label(mission: String) -> String:
-    var key := mission.strip_edges().to_lower()
-    if EXPEDITION_MISSION_LABELS.has(key):
-        return EXPEDITION_MISSION_LABELS[key]
-    return key.capitalize() if key != "" else "Expedition"
-
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
-## Stashes the turns on `_selected_band_food_turns` so `_format_detail_bbcode` can
+## Stashes the turns on the render context so `DetailFormat.detail_bbcode` can
 ## tint the value by the shared warn/critical thresholds.
-func _band_food_line(unit_data: Dictionary) -> String:
+func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-    _selected_band_food_turns = turns
+    ctx.food_turns = turns
     var provisions := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
-    var line := "Food: %d  (%s)" % [provisions, _food_turns_text(turns)]
+    var line := "Food: %d  (%s)" % [provisions, DetailFormat.food_turns_text(turns)]
     # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
-    # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
-    # An enemy band shows the bare larder line, exactly as before.
+    # the Food label a clickable disclosure. `_food_flow_present` is read ONLY by
+    # `_unit_summary_lines`, which decides whether to register that disclosure — the formatter never
+    # sees it. An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
-    if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
+    if _is_player_unit(unit_data) and DetailFormat.band_has_food_flow(unit_data):
         # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
         # so it no longer swings turn-to-turn) minus what the people (Eaten) and the pens (Pen feed)
         # draw off the larder. The breakdown below itemizes the income rows and the debits.
-        var net := _band_net_food(unit_data)
+        var net := DetailFormat.band_net_food(unit_data)
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, SourceForecast.format_yield(net)]
         _food_flow_present = true
@@ -5099,10 +4856,10 @@ func _band_food_line(unit_data: Dictionary) -> String:
 ## (decoded in `native/src/lib.rs population_to_dict`). A falling trend appends the named
 ## cause; Terrain names the band's tile (the "it's the hex you're on" payload). A rehydrated
 ## save reports delta 0 / cause None for one turn, so the row degrades to a bare percentage.
-## Stashes morale on `_selected_band_morale` so `_format_detail_bbcode` tints the value.
-func _band_morale_line(unit_data: Dictionary) -> String:
+## Stashes morale on the render context so `DetailFormat.detail_bbcode` tints the value.
+func _band_morale_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var morale: float = float(unit_data.get("morale", 1.0))
-    _selected_band_morale = morale
+    ctx.morale = morale
     var text := "Morale: %d%%" % int(round(morale * 100.0))
     var delta: float = float(unit_data.get("morale_delta", 0.0))
     if delta <= -MORALE_TREND_EPSILON:
@@ -5112,7 +4869,7 @@ func _band_morale_line(unit_data: Dictionary) -> String:
         # branded "harsh climate/terrain". Below the warn threshold, spell it out.
         if morale < BandFoodStatus.warn_morale():
             var cause := int(unit_data.get("morale_cause", MORALE_CAUSE_NONE))
-            var cause_label := _morale_cause_label(cause)
+            var cause_label := DetailFormat.morale_cause_label(cause)
             if cause_label != "":
                 if cause == MORALE_CAUSE_TERRAIN:
                     var terrain_label := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
@@ -5125,25 +4882,18 @@ func _band_morale_line(unit_data: Dictionary) -> String:
 
 ## Selection-panel band productivity row: "Output: 56%" — the modifier-stack result
 ## (snapshot `output_multiplier`, discontent being Phase 1's sole modifier). Only shown
-## below full output; stashes the value on `_selected_band_output` so `_format_detail_bbcode`
+## below full output; stashes the value on the render context so `DetailFormat.detail_bbcode`
 ## tints it by the output.{warn,critical} buckets (ink → amber → red).
-func _band_output_line(unit_data: Dictionary) -> String:
+func _band_output_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var output: float = float(unit_data.get("output_multiplier", OUTPUT_FULL))
     if output >= OUTPUT_FULL:
         return ""
-    _selected_band_output = output
+    ctx.output = output
     return "Output: %d%%" % int(round(output * 100.0))
-
-## True when the band's morale warrants surfacing the itemized breakdown + recovery
-## guidance: below the warn threshold, or falling by more than the trend epsilon.
-func _morale_is_concerning(unit_data: Dictionary) -> bool:
-    var morale := float(unit_data.get("morale", 1.0))
-    var delta := float(unit_data.get("morale_delta", 0.0))
-    return morale < BandFoodStatus.warn_morale() or delta <= -MORALE_TREND_EPSILON
 
 ## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS morale_delta) as
 ## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
-## (`_format_detail_bbcode` tints by sign glyph). Now a click-to-expand disclosure (like Food): the
+## (`DetailFormat.detail_bbcode` tints by sign glyph). Now a click-to-expand disclosure (like Food): the
 ## contributions always compute so the row can be manually opened in the good state; the
 ## recovery-guidance line is appended ONLY when morale is concerning (don't tell a healthy band to
 ## "recover"). Returns [] when there is nothing to disclose (no contribution + not concerning).
@@ -5172,35 +4922,9 @@ func _morale_breakdown_lines(unit_data: Dictionary) -> Array[String]:
             MORALE_BREAKDOWN_INDENT, glyph, sign_str, absf(value) * 100.0, entry[1],
         ])
     # Recovery guidance is a "you have a problem" prompt — only when concerning.
-    if _morale_is_concerning(unit_data):
+    if DetailFormat.morale_is_concerning(unit_data):
         lines.append(RECOVERY_GUIDANCE_TEXT)
     return lines
-
-## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None
-## or unknown. Shared by the drawer morale line and the losing-population alert reason.
-func _morale_cause_label(cause: int) -> String:
-    match cause:
-        MORALE_CAUSE_TERRAIN:
-            return MORALE_CAUSE_LABEL_TERRAIN
-        MORALE_CAUSE_COLD:
-            return MORALE_CAUSE_LABEL_COLD
-        MORALE_CAUSE_UNREST:
-            return MORALE_CAUSE_LABEL_UNREST
-        _:
-            return ""
-
-## Human-readable food runway: the ∞ glyph when the source is not food-limited, otherwise a
-## whole count of TURNS — spelled from the shared `FOOD_RUNWAY_UNIT`, which the Food-row tint guard
-## in `_format_detail_bbcode` also keys on, so the two can never disagree about the unit. One helper
-## feeds every surface that shows it (the band Food line, the expedition Carried/Provisions rows,
-## and the turn-orb starving alert), so the unit is stated in exactly one place.
-func _food_turns_text(runway: float) -> String:
-    if not BandFoodStatus.is_limited(runway):
-        return FOOD_UNLIMITED_GLYPH
-    var turns := int(round(runway))
-    if turns == 1:
-        return "%d %s" % [turns, FOOD_RUNWAY_UNIT]
-    return "%d %ss" % [turns, FOOD_RUNWAY_UNIT]
 
 func _format_stockpile_label(raw_value: String) -> String:
     var trimmed := raw_value.strip_edges()
@@ -5295,7 +5019,7 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     # frozen pen-time value); the penned herd keeps the merged `Biomass: X / Y` pair, plainly.
     if not corralled:
         var range_radius := int(herd_data.get("graze_range_radius", 0))
-        lines.append("%s: %s" % [HERD_RANGE_ROW, _graze_range_label(range_radius)])
+        lines.append("%s: %s" % [HERD_RANGE_ROW, DetailFormat.graze_range_label(range_radius)])
     # Overgrazing: biomass exceeds what the range can sustainably feed (both numbers sim-provided — the
     # client compares, it does NOT re-derive the ecology). Suppressed for a corralled herd and when K is
     # unknown. The `X / Y` pair above already shows X > Y; this row states the consequence.
@@ -5303,12 +5027,12 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
         lines.append(OVERGRAZING_WARNING)
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
-        lines.append("Ecology: %s" % _ecology_phase_label(phase))
+        lines.append("Ecology: %s" % DetailFormat.ecology_phase_label(phase))
     # Predators Phase 0 — the four RAW combat components (strength ≠ danger), shown for EVERY herd
     # (a rabbit reads all-empty, a mammoth reads high-attack/high-fights-back/zero-aggressive — the
     # "deadly to hunt, no camp threat" story at a glance). No verdict word; each row is a relative bar
     # + the raw value, Elevation-style.
-    _append_danger_component_lines(lines, herd_data)
+    DetailFormat.append_danger_component_lines(lines, herd_data, _band_labor.world_herds())
     # Grazing 2d-δ — how far up the husbandry ladder THIS species can climb gates the whole section.
     # A WILD-ceiling herd shows NO husbandry track at all (just the hunt-only hint); a PASTORAL one
     # keeps the domestication track but can never be penned (hint where Corral would sit); a PEN one
@@ -5319,7 +5043,7 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     else:
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:
-            lines.append("Husbandry: %s" % _husbandry_label(domestication))
+            lines.append("Husbandry: %s" % DetailFormat.husbandry_label(domestication))
         # Staffing deficit — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
         # A managed herd needs `herders_needed` herders every turn to hold its tameness; understaffed,
         # its domestication decays, the herd slips back to WILD and stops earning Penning. Surface it
@@ -5330,7 +5054,7 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
         if herders_needed > 0:
             var herded_fraction := float(herd_data.get("herded_fraction", FULLY_HERDED))
             var herders_assigned := int(round(herded_fraction * herders_needed))
-            lines.append("%s: %s" % [HERDERS_ROW, _herders_label(herders_assigned, herders_needed, herded_fraction)])
+            lines.append("%s: %s" % [HERDERS_ROW, DetailFormat.herders_label(herders_assigned, herders_needed, herded_fraction)])
             # Make the CONSEQUENCE explicit when the herd is slipping AND has real tameness to lose:
             # a muted one-liner naming why Penning has stalled and the single lever that fixes it.
             if herded_fraction < FULLY_HERDED and domestication > 0.0:
@@ -5341,7 +5065,7 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
         # "Cultivation N%" row, so the investment the player committed to is visibly under way.
         # A PENNED herd is a managed population: it eats from its keeper's larder every turn, and an
         # underfed one is shrinking right now. That is the loudest thing the drawer can say about it, so
-        # the Corral row itself flips to the starving state (DANGER-tinted via `_corral_value_hex`) and a
+        # the Corral row itself flips to the starving state (DANGER-tinted via `DetailFormat.corral_value_hex`) and a
         # "Pen feed" row states the demand and how much of it the keeper actually paid.
         # The whole corral/pen readout is PEN-ceiling only — a pastoral herd can never be penned (the
         # server never builds one), so its Corral/pen rows are suppressed and a hint stands in their place.
@@ -5349,7 +5073,7 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
             var fed_fraction := PenStatus.fed_fraction(herd_data)
             if bool(herd_data.get("corralled", false)):
-                lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
+                lines.append("Corral: %s" % DetailFormat.corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
                 # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
                 # grazed footprint covers vs what the keeper still hauls from the larder.
@@ -5372,9 +5096,9 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
                 # states (`pen_larder_bill`, net of pasture + hay), not the gross `pen_upkeep` — so a
                 # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
                 if larder_bill >= FOOD_FLOW_MIN:
-                    lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(larder_bill, fed_fraction)])
+                    lines.append("%s: %s" % [PEN_FEED_ROW, DetailFormat.pen_feed_label(larder_bill, fed_fraction)])
             elif corral_progress > 0.0:
-                lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
+                lines.append("Corral: %s" % DetailFormat.corral_label(corral_progress, false, PenStatus.FULLY_FED))
         elif ceiling == HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     var x := int(herd_data.get("x", -1))
@@ -5386,353 +5110,6 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     if next_x >= 0 and next_y >= 0:
         lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
     return lines
-
-## Player-facing label for a herd's ecology phase. Stressed/Collapsing carry a warning
-## glyph; `_format_detail_bbcode` additionally tints the value (see `_ecology_value_hex`).
-func _ecology_phase_label(phase: String) -> String:
-    match phase:
-        "collapsing":
-            return "⚠ Collapsing"
-        "stressed":
-            return "⚠ Stressed"
-        "thriving":
-            return "Thriving"
-        _:
-            return phase.capitalize()
-
-## BBCode hex for an "Ecology" value: red for a collapsing group, amber for stressed,
-## normal ink otherwise. Matched on the lowercased phase stems ("collaps"/"stress" from
-## `EcologyPhase::as_str`) so tinting survives glyph/capitalization tweaks to the label.
-func _ecology_value_hex(value: String) -> String:
-    var normalized := value.to_lower()
-    if normalized.contains("collaps"):
-        return HudStyle.DANGER_HEX
-    if normalized.contains("stress"):
-        return HudStyle.WARN_HEX
-    return HudStyle.INK_HEX
-
-## Append the Predators combat-component rows (Attack / Defense / Fights back / Aggressive) plus the
-## compact derived-danger summary. Attack + Defense are open-ended, so their bars normalize against the
-## max across the KNOWN herds (`_band_labor.world_herds()`), Elevation-style — a herd reads relative to the roster,
-## and falls back to a full bar if it IS the reference (no other herds, or it holds the max). Ferocity +
-## Aggression are native 0..1 → bar + %, using the readable behaviour labels the player parses.
-func _append_danger_component_lines(lines: Array[String], herd_data: Dictionary) -> void:
-    var attack := float(herd_data.get("attack", 0.0))
-    var defense := float(herd_data.get("defense", 0.0))
-    var ferocity := clampf(float(herd_data.get("ferocity", 0.0)), 0.0, 1.0)
-    var aggression := clampf(float(herd_data.get("aggression", 0.0)), 0.0, 1.0)
-    lines.append("%s: %s" % [DANGER_ATTACK_ROW, _danger_open_row(attack, "attack")])
-    lines.append("%s: %s" % [DANGER_DEFENSE_ROW, _danger_open_row(defense, "defense")])
-    lines.append("%s: %s" % [DANGER_FEROCITY_ROW, _danger_unit_row(ferocity)])
-    lines.append("%s: %s" % [DANGER_AGGRESSION_ROW, _danger_unit_row(aggression)])
-    # The compact derived line the player actually reasons about: hunt cost vs unprovoked menace.
-    lines.append("%s: %s" % [DANGER_DERIVED_ROW, DANGER_DERIVED_FORMAT % [
-        _format_danger_scalar(attack * ferocity), _format_danger_scalar(attack * aggression),
-    ]])
-
-## An OPEN-ENDED component (attack/defense): a bar relative to the roster max + the raw value. The bar
-## normalizes against the biggest value of that component across `_band_labor.world_herds()`; with no reference (max
-## 0 / no herds) it degrades to the bare value with no bar, since a lone herd has nothing to compare to.
-func _danger_open_row(value: float, key: String) -> String:
-    var reference := _world_herd_component_max(key)
-    var raw := _format_danger_scalar(value)
-    if reference <= 0.0:
-        return raw
-    return "%s %s" % [_meter_bar(value / reference * 100.0, DANGER_BAR_CELLS), raw]
-
-## A NATIVE 0..1 component (ferocity/aggression): a bar + percent.
-func _danger_unit_row(value: float) -> String:
-    return "%s %d%%" % [_meter_bar(value * 100.0, DANGER_BAR_CELLS), int(round(value * 100.0))]
-
-## The largest value of an open-ended combat component across the known herds — the reference the
-## Attack/Defense bars normalize against (the Elevation-view idiom for an unbounded field).
-func _world_herd_component_max(key: String) -> float:
-    var reference := 0.0
-    for herd in _band_labor.world_herds():
-        if herd is Dictionary:
-            reference = maxf(reference, float((herd as Dictionary).get(key, 0.0)))
-    return reference
-
-## Format a combat scalar for display: whole numbers bare (`8`), fractions to one decimal (`0.5`),
-## trailing zero stripped — the components read against the human-strength anchor of 1.0.
-func _format_danger_scalar(value: float) -> String:
-    if is_equal_approx(value, round(value)):
-        return "%d" % int(round(value))
-    return String.num(value, 1)
-
-## Tile-count label for a herd's grazing range from its hex radius — "the ground this herd grazes".
-## The hex-disk count `1 + 3r(r+1)`: radius 0 → 1 tile (small game, its own hex), 1 → 7, 2 → 19. Same
-## count the map ring draws, so the readout and the ring can never disagree. Singular for a lone tile.
-func _graze_range_label(range_radius: int) -> String:
-    var tiles := 1 + 3 * range_radius * (range_radius + 1)
-    if tiles == 1:
-        return "1 tile"
-    return "%d tiles" % tiles
-
-
-## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows
-## a livestock glyph; in-progress shows the percentage. `_format_detail_bbcode` tints a
-## Domesticated value via `_husbandry_value_hex`.
-func _husbandry_label(progress: float) -> String:
-    if progress >= 1.0:
-        return "🐄 Domesticated"
-    return "Domesticating %d%%" % int(round(progress * 100.0))
-
-## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal
-## ink while it's still being tamed. Matched on the label produced by `_husbandry_label`.
-func _husbandry_value_hex(value: String) -> String:
-    if value.to_lower().contains("domesticated"):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
-
-## The "Herders" row value: a calm "N / N" when fully staffed, an amber "A / N — under-herded" when
-## the herd is decaying for lack of herders. Fully staffed uses [needed, needed] (assigned == needed
-## at frac 1.0); under-herded uses the rounded assigned count. Tinted via `_herders_value_hex`.
-func _herders_label(assigned: int, needed: int, herded_fraction: float) -> String:
-    if herded_fraction >= FULLY_HERDED:
-        return HERDERS_STAFFED_FORMAT % [needed, needed]
-    return HERDERS_UNDER_FORMAT % [assigned, needed]
-
-## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded and its tameness is
-## slipping, normal ink when fully staffed. Matched on the label from `_herders_label`, mirroring
-## `_corral_value_hex` / the overgrazing warning's shared WARN tint.
-func _herders_value_hex(value: String) -> String:
-    if value.to_lower().contains("under-herded"):
-        return HudStyle.WARN_HEX
-    return HudStyle.INK_HEX
-
-## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop
-## glyph; an in-progress patch shows the percentage. Mirrors `_husbandry_label`;
-## `_format_detail_bbcode` tints a Tended value via `_cultivation_value_hex`.
-func _cultivation_label(progress: float, cultivated: bool) -> String:
-    if cultivated or progress >= 1.0:
-        return "🌾 Tended Patch"
-    # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
-    # percentage buried in the tile card was easy to miss and broke parity with the animal side.
-    return "%s %d%%" % [CULTIVATION_PREPARING_LABEL, int(round(progress * 100.0))]
-
-## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink
-## while it's still being cultivated. Matched on the label from `_cultivation_label`.
-func _cultivation_value_hex(value: String) -> String:
-    if value.to_lower().contains("tended"):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
-
-## Player-facing label for the plant RUNG-3 meter — the patch twin of `_corral_label` and the rung
-## above `_cultivation_label`. While the crop is going in it reads as a BUILD ("Sowing 40%"), using
-## the same building-verb convention as the pen's "Building 40%" / the fence's "Fencing 60%"; once
-## complete it is a **Field**, badged with its own glyph so it reads as a DIFFERENT THING from a
-## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
-func _field_label(progress: float, is_field: bool) -> String:
-    if is_field or progress >= FIELD_PROGRESS_COMPLETE:
-        return "%s %s" % [FoodIcons.for_policy(LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
-    return "%s %d%%" % [FIELD_SOWING_LABEL, HudFormat.progress_percent(progress)]
-
-## The tile's plant composition as one compact line — `Hazel 45% · Oak Mast 30% · Berry Scrub 25%`.
-##
-## The wire list is ALREADY sorted (share descending, then species key ascending) and its shares sum
-## to 1, so this only formats: the order is the sim's and is never re-derived here.
-##
-## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. Rounding each share independently can total 99 or 101
-## — a decomposition that visibly fails to decompose — so the remainder is folded into the LARGEST
-## share, i.e. the first entry, where a ±1 is proportionally smallest. Returns "" for a tile with no
-## composition (a biome that carries no forage), so no empty row renders.
-func _flora_composition_text(composition: Variant) -> String:
-    var entries := SourceForecast.flora_basket_entries(composition)
-    if entries.is_empty():
-        return ""
-    var parts: Array[String] = []
-    for entry in entries:
-        parts.append(FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
-    return FLORA_SHARE_SEPARATOR.join(parts)
-
-
-## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
-## is still going in. Matched on the label from `_field_label`, mirroring `_cultivation_value_hex`.
-func _field_value_hex(value: String) -> String:
-    if value.to_lower().contains(FIELD_BADGE_LABEL.to_lower()):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
-
-## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
-## `_cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
-## "Building N%", naming the work under way. A finished pen whose keeper did NOT pay this turn's
-## feed reads the STARVING state instead of the penned badge — the herd is losing biomass every
-## turn, which is the one fact the player must not be able to miss.
-## `_format_detail_bbcode` tints via `_corral_value_hex`.
-func _corral_label(progress: float, corralled: bool, fed_fraction: float) -> String:
-    if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
-        if PenStatus.is_starving(fed_fraction):
-            return PEN_STARVING_LABEL % int(round(fed_fraction * PROGRESS_PERCENT_SCALE))
-        return "%s Corralled" % CORRAL_GLYPH
-    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * 100.0))]
-
-## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
-## much of it was actually paid. Amber/red-tinted via `_pen_feed_value_hex`.
-func _pen_feed_label(upkeep: float, fed_fraction: float) -> String:
-    var demand := SourceForecast.format_yield(-upkeep)
-    if PenStatus.is_starving(fed_fraction):
-        return PEN_FEED_STARVING_FORMAT % [demand, int(round(fed_fraction * PROGRESS_PERCENT_SCALE))]
-    return demand
-
-## BBCode hex for a "Corral" value: DANGER for a starving pen (the herd is shrinking NOW), signal
-## (positive) once penned and fed, normal ink while it's being built. Matched on the label from
-## `_corral_label`, mirroring `_cultivation_value_hex`.
-func _corral_value_hex(value: String) -> String:
-    var normalized := value.to_lower()
-    if normalized.contains("starving"):
-        return HudStyle.DANGER_HEX
-    if normalized.contains("corralled"):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
-
-## BBCode hex for the "Pen feed" value: DANGER while the pen goes unfed (the herd is shrinking),
-## WARN otherwise — a paid pen is still a standing debit on the larder, never good news.
-func _pen_feed_value_hex(value: String) -> String:
-    if value.to_lower().contains("paid"):
-        return HudStyle.DANGER_HEX
-    return HudStyle.WARN_HEX
-
-func _join_lines(lines: Array) -> String:
-    var packed := PackedStringArray()
-    for line in lines:
-        packed.append(String(line))
-    return "\n".join(packed)
-
-## Render the selection detail lines as BBCode: consecutive "Key: value" rows
-## become a 2-column table (dim key, bright value; Food value in amber) so the
-## data aligns into columns, while sentences/section lines stay full-width and
-## muted. Matches the mockup's Tile Banner body.
-func _format_detail_bbcode(lines: Array) -> String:
-    var out := ""
-    var table_open := false
-    for raw in lines:
-        var line := String(raw)
-        if line == "":
-            if table_open:
-                out += "[/table]"
-                table_open = false
-            out += "\n"
-            continue
-        # Itemized morale / food breakdown sub-lines render full-width, tinted by their sign
-        # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
-        # `\n` after `[/table]` forces a block break: a RichTextLabel `[table]` is inline, so text
-        # emitted right after it otherwise floats onto the table's top-right when there's room.
-        if line.begins_with(MORALE_BREAKDOWN_INDENT):
-            if table_open:
-                out += "[/table]\n"
-                table_open = false
-            var row_hex := HudStyle.HEALTHY_HEX if line.contains(MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
-            out += "[color=#%s]%s[/color]\n" % [row_hex, line]
-            continue
-        # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
-        # WARN_HEX the Ecology/Corral value rows use — not a parallel styling path, just the shared color.
-        if line == OVERGRAZING_WARNING:
-            if table_open:
-                out += "[/table]\n"
-                table_open = false
-            out += "[color=#%s]%s[/color]\n" % [HudStyle.WARN_HEX, line]
-            continue
-        var kv := _split_detail_kv(line)
-        if kv.is_empty():
-            if table_open:
-                out += "[/table]\n"
-                table_open = false
-            out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_DIM_HEX, line]
-        else:
-            if not table_open:
-                out += "[table=2]"
-                table_open = true
-            var value_hex := HudStyle.INK_HEX
-            if String(kv[0]) == "Food" or String(kv[0]) == "Provisions" or String(kv[0]) == "Carried":
-                # The band larder / expedition provisions / hunt-party carried-food row tints by the
-                # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT`
-                # the one renderer (`_food_turns_text`) spells the runway with — never a bare
-                # literal, which is how this guard silently went dead when the unit changed — or by
-                # the ∞ glyph for a band that is not food-limited.
-                var food_value := String(kv[1])
-                if not is_nan(_selected_band_food_turns) and (food_value.contains(FOOD_RUNWAY_UNIT) or food_value.contains(FOOD_UNLIMITED_GLYPH)):
-                    value_hex = BandFoodStatus.hex_for_turns(_selected_band_food_turns)
-            elif String(kv[0]) == "Morale":
-                # The player band's morale row tints by the morale thresholds.
-                if not is_nan(_selected_band_morale):
-                    value_hex = BandFoodStatus.hex_for_morale(_selected_band_morale)
-            elif String(kv[0]) == "Output":
-                # The productivity row tints by the output buckets (ink → amber → red).
-                if not is_nan(_selected_band_output):
-                    value_hex = BandFoodStatus.hex_for_output(_selected_band_output)
-            elif String(kv[0]) == "Forage":
-                # The tile's gather module reads in the success/ETA amber.
-                value_hex = HudStyle.WARN_HEX
-            elif String(kv[0]) == "Habitability":
-                # The tile's habitability rating tints by its bucket (green→red).
-                value_hex = TileHabitability.hex_for_rating(String(kv[1]))
-            elif String(kv[0]) == TILE_SIGHT_KEY:
-                # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
-                value_hex = _sight_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Ecology" or String(kv[0]) == PASTURE_ECOLOGY_KEY:
-                # Shared by the herd drawer, the forage-patch tile card and the tile card's PASTURE
-                # row — one phase tint (neutral/amber/red) for every ecology in the game. The pasture
-                # row keeps its own KEY only so a forage tile doesn't print two rows named "Ecology";
-                # the styling path is deliberately not forked.
-                value_hex = _ecology_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Husbandry":
-                value_hex = _husbandry_value_hex(String(kv[1]))
-            elif String(kv[0]) == HERDERS_ROW:
-                # A managed herd's staffing: amber when under-herded (tameness slipping), ink when full.
-                value_hex = _herders_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Cultivation":
-                value_hex = _cultivation_value_hex(String(kv[1]))
-            elif String(kv[0]) == FIELD_ROW:
-                # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal
-                # once complete). Same shape as Cultivation's; kept its own case because a Field is a
-                # different rung with its own badge word, not a Tended Patch at a higher percentage.
-                value_hex = _field_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Corral":
-                value_hex = _corral_value_hex(String(kv[1]))
-            elif String(kv[0]) == PEN_FEED_ROW:
-                # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
-                value_hex = _pen_feed_value_hex(String(kv[1]))
-            # A disclosure row (Food/Morale) renders its key as a clickable `[url]` + ▸/▾ caret, which
-            # opens its breakdown in the shared POPOVER via `meta_clicked` → `_on_detail_meta_clicked`
-            # (never inline — see the BREAKDOWN_* consts). The caret is ▾ only while THIS row's
-            # popover is up. A CONCERNING row wears the caret in WARN rather than SIGNAL: the
-            # breakdown no longer opens itself, so the invitation to read it has to be visible.
-            var key_cell := "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, kv[0]]
-            if _disclosure_state.has(kv[0]):
-                var st: Dictionary = _disclosure_state[kv[0]]
-                var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
-                var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
-                key_cell = "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
-                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
-                    caret_hex, kv[0], caret,
-                ]
-            out += "[cell]%s[/cell][cell][color=#%s]%s[/color][/cell]" % [
-                key_cell, value_hex, kv[1],
-            ]
-    if table_open:
-        out += "[/table]"
-    return out
-
-## Split a "Key: value" data line into [key, value]; returns [] for sentence
-## lines (trailing period), long keys, or non-matching text so those stay
-## full-width rather than becoming a lopsided table row.
-func _split_detail_kv(line: String) -> Array:
-    if line.ends_with("."):
-        return []
-    # The recovery-guidance line reads as a dim sentence, not a lopsided table row.
-    if line.begins_with(RECOVERY_GUIDANCE_GLYPH):
-        return []
-    var idx := line.find(": ")
-    if idx <= 0:
-        return []
-    var key := line.substr(0, idx)
-    if key.length() > 16:
-        return []
-    var value := line.substr(idx + 2)
-    if value.strip_edges() == "":
-        return []
-    return [key, value]
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -5853,7 +5230,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "kind": ATTENTION_KIND_STARVING,
                 "severity": ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
-                "detail": _food_turns_text(turns),
+                "detail": DetailFormat.food_turns_text(turns),
                 "x": x, "y": y,
             })
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn).
@@ -5917,7 +5294,7 @@ func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigra
         return DECLINE_REASON_STARVING
     if last_emigrated > 0:
         return DECLINE_REASON_PEOPLE_LEAVING
-    var cause_label := _morale_cause_label(morale_cause)
+    var cause_label := DetailFormat.morale_cause_label(morale_cause)
     if cause_label != "":
         return cause_label
     if morale < BandFoodStatus.warn_morale():
