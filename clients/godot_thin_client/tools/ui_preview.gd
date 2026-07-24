@@ -640,19 +640,19 @@ func _ready() -> void:
 	# worse than the problem the picker solved, so the picker's list scrolls WITHIN itself
 	# (FLORA_CROP_LIST_MAX_HEIGHT) rather than growing the sheet. Asserted on the LONGEST basket, the
 	# only case that can trip it: the sheet's own ScrollContainer must have nothing left to scroll.
-	var sheet_scroll: ScrollContainer = _hud._compose_sheet._scroll
+	var sheet_scroll: ScrollContainer = _hud._drawercompose._compose_sheet._scroll
 	var sheet_overflow: float = sheet_scroll.get_v_scroll_bar().max_value - sheet_scroll.size.y
 	print("ui_preview: compose sheet overflow = %.1f (card %.1f)" % [
-		sheet_overflow, _hud._compose_sheet._card.size.y])
+		sheet_overflow, _hud._drawercompose._compose_sheet._card.size.y])
 	_assert_hud("a 5-plant crop picker leaves the Forage button on screen (sheet does not scroll)",
 		sheet_overflow <= 1.0)
 	# The height that bought those rows came from collapsing the OTHER rung's reasons — but ONLY while a
 	# COMMITTING rung is composed. Assert both halves here: Sow (not composed) is one short locked line,
 	# and its prerequisites are no longer spelled out on the card.
 	_assert_hud("composing Cultivate collapses the locked Sow rung to one line",
-		_has_label_containing(_hud._compose_sheet, "locked ("))
+		_has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
 	_assert_hud("…and that rung's full prerequisites leave the card",
-		not _has_label_containing(_hud._compose_sheet, "Seed Selection"))
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "Seed Selection"))
 
 	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE FORECAST. The "→ then" term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
@@ -665,13 +665,13 @@ func _ready() -> void:
 	_compose_forage(_long_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_then_emmer")
-	var then_emmer := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+	var then_emmer := _label_text_containing(_hud._drawercompose._compose_sheet, FORECAST_THEN_NEEDLE)
 
 	_hud._compose.set_forage_species("ground_nut")
 	_compose_forage(_long_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_then_groundnut")
-	var then_groundnut := _label_text_containing(_hud._compose_sheet, FORECAST_THEN_NEEDLE)
+	var then_groundnut := _label_text_containing(_hud._drawercompose._compose_sheet, FORECAST_THEN_NEEDLE)
 	print("ui_preview: then-term  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
 	_assert_hud("the forecast's 'then' payoff tracks the SELECTED crop",
 		then_emmer != "" and then_groundnut != "" and then_emmer != then_groundnut)
@@ -697,10 +697,10 @@ func _ready() -> void:
 	_compose_forage(_overlong_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_picker_overlong")
-	var overlong_scroll: ScrollContainer = _hud._compose_sheet._scroll
+	var overlong_scroll: ScrollContainer = _hud._drawercompose._compose_sheet._scroll
 	print("ui_preview: overlong-basket sheet overflow = %.1f (card %.1f)" % [
 		overlong_scroll.get_v_scroll_bar().max_value - overlong_scroll.size.y,
-		_hud._compose_sheet._card.size.y])
+		_hud._drawercompose._compose_sheet._card.size.y])
 	_assert_hud("an 8-plant crop picker still leaves the Forage button on screen",
 		overlong_scroll.get_v_scroll_bar().max_value - overlong_scroll.size.y <= 1.0)
 
@@ -724,13 +724,13 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_unstaffed")
-	var unstaffed_btn := _find_button_by_text(_hud._compose_sheet, "Forage")
+	var unstaffed_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Forage")
 	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
 		unstaffed_btn != null and unstaffed_btn.disabled)
 	_assert_hud("…and the forecast drops the 'then' promise it cannot keep",
-		not _has_label_containing(_hud._compose_sheet, "Preparing:"))
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "Preparing:"))
 	_assert_hud("…while still showing what the tile would pay once prepared",
-		_has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+		_has_label_containing(_hud._drawercompose._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
 	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
 	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
@@ -745,11 +745,11 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_unassign")
-	var unassign_btn := _find_button_by_text(_hud._compose_sheet, "Unassign")
+	var unassign_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Unassign")
 	_assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
 		unassign_btn != null and not unassign_btn.disabled)
 	_assert_hud("…and does not also tell the player to assign foragers",
-		not _has_label_containing(_hud._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+		not _has_label_containing(_hud._drawercompose._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
 	# Restore the unassigned near band for the frames that follow.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
@@ -798,9 +798,9 @@ func _ready() -> void:
 	# the collapse must NOT fire here. If this ever reads "locked (2 requirements unmet)", the opt-in has
 	# leaked out of the committing rungs and this frame's whole subject is in a tooltip.
 	_assert_hud("a non-committing compose still spells out a locked rung's prerequisites",
-		_has_label_containing(_hud._compose_sheet, "Seed Selection"))
+		_has_label_containing(_hud._drawercompose._compose_sheet, "Seed Selection"))
 	_assert_hud("…and does not collapse it to a one-liner",
-		not _has_label_containing(_hud._compose_sheet, "locked ("))
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").
@@ -1230,9 +1230,9 @@ func _ready() -> void:
 	# percent and the practice that fills it — while TAME is the composed rung. The collapse is opt-in and
 	# only the forage compose opts in, so the hunt picker must be byte-for-byte unchanged.
 	_assert_hud("the hunt picker still spells out the gated Corral's reason (collapse is forage-only)",
-		_has_label_containing(_hud._compose_sheet, "Penning"))
+		_has_label_containing(_hud._drawercompose._compose_sheet, "Penning"))
 	_assert_hud("…and collapses nothing on the herd side",
-		not _has_label_containing(_hud._compose_sheet, "locked ("))
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Market/Eradicate/Corral, ENABLED (Herding is known) and selected on a
@@ -1848,11 +1848,11 @@ func _ready() -> void:
 	_assert_hud("precondition: the sheet is open before the wheel tick",
 		_hud.is_compose_sheet_open())
 	for wheel_button in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-		_hud._compose_sheet.gui_input.emit(_mouse_button_event(wheel_button))
+		_hud._drawercompose._compose_sheet.gui_input.emit(_mouse_button_event(wheel_button))
 	await _settle()
 	_assert_hud("a wheel tick on the catcher leaves the compose sheet OPEN",
 		_hud.is_compose_sheet_open())
-	_hud._compose_sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT))
+	_hud._drawercompose._compose_sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT))
 	await _settle()
 	_assert_hud("a left-click on the catcher still CLOSES the compose sheet",
 		not _hud.is_compose_sheet_open())
@@ -2677,10 +2677,10 @@ func _stance_axes_fixture() -> Array:
 ## These two calls replace the direct `_hud._build_*_assign_controls(...)` the states used before;
 ## the builders still run, just against the sheet's content container.
 func _compose_forage(tile_info: Dictionary) -> void:
-	_hud._open_forage_compose(tile_info)
+	_hud._drawercompose.open_forage_compose(tile_info)
 
 func _compose_herd(herd: Dictionary) -> void:
-	_hud._open_herd_compose(herd)
+	_hud._drawercompose.open_herd_compose(herd)
 
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
 ## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
