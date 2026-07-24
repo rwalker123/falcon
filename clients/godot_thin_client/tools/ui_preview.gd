@@ -1858,7 +1858,7 @@ func _ready() -> void:
 		not _hud.is_compose_sheet_open())
 
 	# tile_panel_standing — §14's own frame: the drawer's CLOSED read state on a source the player
-	# already works. The summary reuses `_source_yield_readout` verbatim, so it wears the same three
+	# already works. The summary reuses `SourceForecast.source_yield_readout` verbatim, so it wears the same three
 	# parts a Band-panel Current-actions row does — the policy glyph + crew + rate, the ⚠ overdraw
 	# flag (ecological) and the "· only N of M working" overstaff note (labor). This fixture crosses
 	# the two deliberately: a Market patch that DOES overdraw, staffed 4 where only 2 are needed.
@@ -3855,7 +3855,7 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
 		# across two disjoint fixtures once, which hid every interaction between them):
 		#   • `per_worker_yield` + the `hunt_policy_ceilings` table, which drive the shared
-		#     `_forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
+		#     `SourceForecast.forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
 		#   • `hunt_trip_estimates` below (the sim's forward-simulated EXPEDITION trip answers).
 		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings ARE the
 		# band ceilings, because the sim exports one hunt model — the two paths must agree.
@@ -4100,7 +4100,7 @@ func _herd_fixture() -> Dictionary:
 		# EVERY ceiling — the four extractive rungs plus the Tame/Corral DIPS — rides this ONE list;
 		# the herd has no flat `ceiling*` scalars on the wire any more (deprecated schema slots). The
 		# sim exports a row for every one of the six `FollowPolicy::HUNT_POLICIES`, so this is the
-		# shape the decoder produces and where `_forecast_inputs` reads every herd ceiling.
+		# shape the decoder produces and where `SourceForecast.forecast_inputs` reads every herd ceiling.
 		"hunt_policy_ceilings": {
 			"sustain": 0.90,
 			"surplus": 1.80,

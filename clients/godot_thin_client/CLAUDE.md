@@ -90,7 +90,7 @@ never writes, deletes, or liveness-checks the file.
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
-| `Hud.gd` | HUD layer. The **legend card** (right-dock **TerrainLegendPanel**: `update_overlay_legend` rows `{color,label,value_text}` + the terrain-only **sort header** — `Name`/`Count` toggles with a ▲/▼ arrow, display-only field ∈ {name,count} × per-field direction, default **Count desc**, persisted across map regen) and the **command feed card** are each composed out into a controller (`ui/hud/LegendController.gd` / `ui/hud/CommandFeedController.gd`); Hud holds them as `_legend` / `_command_feed` and delegates `update_overlay_legend`/`toggle_legend`/`_on_legend_sort_pressed` and `ingest_command_events`/`reset_command_feed`/`_note_command_feed`. MapView's `_build_terrain_legend` supplies a numeric `count` per row for the count sort; non-terrain (overlay/tag) legends hide the sort control. Also: the **selection card** — ONE card, ONE list, ONE drawer (`TilePanel`, `docs/plan_tile_panel_layout.md`): a pinned `%TileChips` strip, the selectable `%SubjectList` with the LAND as its first row, and the height-capped `%SubjectScroll`/`%SubjectBody` drawer whichever row is lit fills (land → `%TileDetail` + the `%ForageAssignControls` "assign foragers" stepper; herd → `%OccupantDetail` + the `%HerdAssignControls` "assign hunters" stepper+policy picker; expedition → `%AllocationPanel` Recall/Move). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the drawer renders a one-line pointer at it) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). **The cross-cluster selection + labor state is extracted into two `RefCounted` models (Phase 0, `docs/plan_hud_decomposition.md`), held as `_selection` / `_band_labor`**: `HudSelectionState` owns the selection triplet (`tile_info()`/`unit()`/`herd()`), the lit-row kind `subject()`, the roster, and the sticky-selection guard `choice_tile()`; `HudBandLaborState` owns the snapshot-captured `player_band()` / `player_bands()` (the full player-faction list backing the band-picker + the panel cycler) / `player_expeditions()` / `panel_band()` / `world_herds()`, the grid scalars, the turn, the losing-population diff, the forage-patch / food-module lookups, and the optimistic `pending_labor()` overlay (incl. `effective_worker_map` / `effective_idle`). A THIRD model, `ComposeState` (Phase 2c-1), is held as `_compose` and owns the forage/hunt/party compose state + the open sheet's `kind`/`subject` (the sheet NODE stays on HudLayer). All three live in-file as `HudLayer` members; every former `_selected_*` / `_player_*` / `_pending_*` / `_forage_assign_*` / `_hunt_assign_*` / `_send_party_*` field is now an accessor/mutator call. (`_selected_food_module` / `_selected_food_is_hunt` were DELETED in 2c-1 — 7 writes, zero readers, since Phase 2a/2b took the readers and `SelectionCardController` re-derives `tile_info.get("food_module")` locally.) Roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
+| `Hud.gd` | HUD layer. The **legend card** (right-dock **TerrainLegendPanel**: `update_overlay_legend` rows `{color,label,value_text}` + the terrain-only **sort header** — `Name`/`Count` toggles with a ▲/▼ arrow, display-only field ∈ {name,count} × per-field direction, default **Count desc**, persisted across map regen) and the **command feed card** are each composed out into a controller (`ui/hud/LegendController.gd` / `ui/hud/CommandFeedController.gd`); Hud holds them as `_legend` / `_command_feed` and delegates `update_overlay_legend`/`toggle_legend`/`_on_legend_sort_pressed` and `ingest_command_events`/`reset_command_feed`/`_note_command_feed`. MapView's `_build_terrain_legend` supplies a numeric `count` per row for the count sort; non-terrain (overlay/tag) legends hide the sort control. Also: the **selection card** — ONE card, ONE list, ONE drawer (`TilePanel`, `docs/plan_tile_panel_layout.md`): a pinned `%TileChips` strip, the selectable `%SubjectList` with the LAND as its first row, and the height-capped `%SubjectScroll`/`%SubjectBody` drawer whichever row is lit fills (land → `%TileDetail` + the `%ForageAssignControls` "assign foragers" stepper; herd → `%OccupantDetail` + the `%HerdAssignControls` "assign hunters" stepper+policy picker; expedition → `%AllocationPanel` Recall/Move). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the drawer renders a one-line pointer at it) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). **The cross-cluster selection + labor state is extracted into two `RefCounted` models (Phase 0, `docs/plan_hud_decomposition.md`), held as `_selection` / `_band_labor`**: `HudSelectionState` owns the selection triplet (`tile_info()`/`unit()`/`herd()`), the lit-row kind `subject()`, the roster, and the sticky-selection guard `choice_tile()`; `HudBandLaborState` owns the snapshot-captured `player_band()` / `player_bands()` (the full player-faction list backing the band-picker + the panel cycler) / `player_expeditions()` / `panel_band()` / `world_herds()`, the grid scalars, the turn, the losing-population diff, the forage-patch / food-module lookups, and the optimistic `pending_labor()` overlay (incl. `effective_worker_map` / `effective_idle`). A THIRD model, `ComposeState` (Phase 2c-1), is held as `_compose` and owns the forage/hunt/party compose state + the open sheet's `kind`/`subject` (the sheet NODE stays on HudLayer). All three live in-file as `HudLayer` members; every former `_selected_*` / `_player_*` / `_pending_*` / `_forage_assign_*` / `_hunt_assign_*` / `_send_party_*` field is now an accessor/mutator call. (`_selected_food_module` / `_selected_food_is_hunt` were DELETED in 2c-1 — 7 writes, zero readers, since Phase 2a/2b took the readers and `SelectionCardController` re-derives `tile_info.get("food_module")` locally.) Roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all). **The shared forecast/estimate MATH has left this file** for `ui/hud/SourceForecast.gd` (all-`static`, stateless) — every yield readout, pre-commit forecast, worker cap and raid verdict is now a `SourceForecast.*` call, and the forecast vocabulary constants it owns are re-exported here as a labelled block of `const X = SourceForecast.X` aliases. What STAYS on `HudLayer` is the node-building side: the widget factories (`_build_policy_picker` / `_forecast_label` / `_gate_reasons`), the drawer-only compose helpers (`_forage_policy_gates` / `_hunt_policy_gates` / `_tame_stalled_hint` / `_forecast_worker_cap` / `_forecast_yield_row` / the `_flora_entry_*` sub-layer / the two local preview lines …), and the one-line `_hex_distance_wrapped` pass-through that supplies the grid pair |
 | `ui/hud/HudSelectionState.gd` | `RefCounted` state model (HUD decomposition Phase 0) — "what the player is looking at": the selection triplet (`tile_info`/`unit`/`herd`), the lit-row `subject` (`SUBJECT_LAND`/`UNIT`/`HERD`, aliased back onto `HudLayer`), the assembled roster, and the sticky-selection `choice_tile`. Encapsulated mutators (`select_tile`/`set_tile_info`/`select_unit`/`select_herd`/`select_land`/`set_subject`/`set_roster`/`note_choice_tile`/`clear`) each emit `changed(reason)` — emitted in Phase 0, consumed by nothing yet (Phase 2). Pure DATA, no node refs; accessors return by reference (matches the HUD's in-place-mutation) |
 | `ui/hud/HudBandLaborState.gd` | `RefCounted` state model (HUD decomposition Phase 0) — "the digested per-snapshot player world + optimistic overlay": `player_band`/`player_bands`/`panel_band`/`player_expeditions`, `world_herds`, grid scalars, `current_turn`, the `prev_band_sizes` losing-population diff, the `forage_patch_lookup`/`food_module_by_tile` lookups, and the `pending_labor` optimistic overlay. Ingest mutators (`set_turn`/`set_grid`/`set_world_herds`/`set_panel_band`/`ingest_snapshot_bands`/`set_food_modules`/`set_forage_patches`) + the pending API (`record_pending_assign`/`record_pending_move`/`reconcile_pending`/`pending_assigns_for`/`pending_key`) + the moved-on derived readers `effective_worker_map`/`effective_idle` (pure functions of `pending_labor` + a band) + the static `as_schedule`. Emits `changed(reason)`, consumed by nothing yet |
 | `ui/hud/ComposeState.gd` | `RefCounted` state model (HUD decomposition Phase 2c-1) — "what the player is dialing but has not committed": the tile card's **forage** compose (`forage_key`/`count`/`policy`/`species`/`band` + its autofill one-shot), the herd drawer's **hunt** compose (`hunt_key`/`count`/`policy`/`band` + its own one-shot), the Band panel's PARTIES-zone **party** compose (`party_quarry_id` + its one-shot) on its own clearly-separated accessor group so a later band-panel extraction can take it without unpicking the drawer's, and the open sheet's subject identity (`kind`/`subject`; `COMPOSE_KIND_*` alias to its `KIND_*`). Mutators are named for the transition — `begin_*_source` + `seed_*` (the two-step source-changed re-seed: the caller must resolve the actual band between them), `set_*`, `arm_*_autofill`/`consume_*_autofill`, `reset_*_source` (the harnesses' way to stage a fresh compose), `set_composing`/`clear_composing` — and the three READ-MODIFY-WRITEs get explicit ones so the field is never read and written apart: **`clamp_forage_count`/`clamp_hunt_count`** and **`resolve_forage_species(resolver: Callable)`** (the RMW is the model's; the crop RULES stay with the caller, so it holds no flora knowledge). Pure DATA — which is exactly why **`_compose_sheet` (a scene node) stays on `HudLayer`**. Deliberately **NO `changed` signal**, unlike the Phase-0 pair: nothing subscribes (the compose builders re-render explicitly) and unused API is a liability. **`hunt_policy()` is PUBLIC beyond its builder, but its readers are all HERD-DRAWER ones now** (`_tame_stalled_hint` / `_herd_crew_noun`): `_build_policy_picker`'s `selected` fallback — the one real cross-boundary read, where a work-inspector or party-compose render picked up the DRAWER's rung — was DEAD (every caller passed an explicit, provably non-empty `selected`) and is **deleted**; `selected` is a REQUIRED param, so the shared builder now owns none of its callers' state and the drawer/band-panel boundary is structural rather than conventional |
@@ -101,6 +101,7 @@ never writes, deletes, or liveness-checks the file.
 | `ui/hud/SelectionCardController.gd` | `RefCounted` controller (HUD decomposition Phase 2b, `docs/plan_hud_decomposition.md`) owning the selection card's **IDENTITY/LIST half** — the tile-card header, the pinned condition-**chip** strip, and the whole **roster / subject list** (LAND row + Bands/Wildlife sub-groups), plus the roster-row clicks and the fresh-hex auto-select. The state-isolated half (zero drawer coupling, zero shared compose/band-tint state), so it split off ahead of the drawer (Phase 2c keeps the whole drawer + compose on HudLayer). Hud holds it as `_selectioncard`, constructed in `_ready` after `_turnorb`, handed the three card nodes (`tile_panel`/`tile_chips`/`subject_list`) + the SAME `_selection`/`_band_labor` model instances (BY REFERENCE) + three Callables for HudLayer methods that stay (`_workers_for_forage`/`_workers_for_hunt` labor readers, `_alloc_hint_label`); `_is_player_unit` is a trivial private copy. Owns the moved Phase-2a diff caches `_tile_chip_slots` / `_subject_row_keys`, so the in-place chip/row updaters travel with it and a same-tile restate still patches nodes rather than tearing them down (`tile_panel_no_flash`). **The render seam:** `HudLayer._render_selection_panel` stays the ORCHESTRATOR — it resets the band-tint scalars, calls `_selectioncard.render(tile_info)` (roster + tile-card + chips + auto-select + list), then its own `_render_subject_drawer()`. **The row-click seam:** a roster/land click mutates `_selection` and emits the controller's OWN `subject_changed` → `HudLayer._on_selection_subject_changed` (close compose sheet → re-render), plus `roster_occupant_selected(kind, id)` **RELAYED** onto `HudLayer.roster_occupant_selected` → Main (the TurnOrbController pattern); the auto-pick emits only the relayed `roster_occupant_selected` (it runs mid-render). Publics HudLayer's band/labor navigation calls back into: `render`, `select_roster_occupant`, `find_roster_unit`/`find_roster_herd`, `tile_contents_unseen`. Behaviour identical to the old inlined selection-card code |
 | `ui/hud/DockScrollFit.gd` | Shared sizing for a dock card whose content grows without bound (**the command feed** and **the selection card's subject drawer**, which calls the split-out `fit_height(scroll, content_height, …)` because its body is a VBox of live controls rather than a RichTextLabel — `fit(scroll, label, …)` is now written in terms of it, so the height math exists once — the Telling panel grows to fit its own bounded page capped at `PAGE_MAX_HEIGHT` now and no longer uses this): grow to fit the label, capped by the room left in the dock's `ScrollContainer` beneath it, so the card scrolls INTERNALLY rather than dragging the fixed panels through the dock scroll. **"Room left" excludes what the cards BELOW it need** (`_height_reserved_below`, summed over *visible* following siblings): a growing card used to always be the LAST in its dock so the distinction never arose, but the command feed sits above the fixed cards in its dock, and claiming everything beneath it pushed them clean out of the visible dock. Only visible siblings count, so the both-hidden default is unchanged and toggling one on simply hands the room back. **Deliberately not `AutoSizingPanel`** — that one sizes a FREE-FLOATING control against the viewport (`global_position` + anchors + `offset_bottom`, as NarrativeForkPanel and the Inspector do), and a card inside the dock's VBoxContainer has neither: the container overwrites its size every layout pass and the ceiling that matters is the DOCK's remaining height. `PanelCard` + this helper is the container-side equivalent |
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows, a one-line standing summary and an `Assign … ▸` button. **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (root CLAUDE.md → UI Panel Sizing). **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
+| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_no_surplus` / `hunt_no_surplus_reason` / `expedition_useful_cap` / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying its own members, so there is ONE hex implementation. The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts **THREE NAMED ZONES AT A FIXED CROSS-AXIS SIZE** via **`set_zones(band, work, parties)`** (keys `&"band"`/`&"work"`/`&"parties"`; the panel OWNS and frees them). Two shells, chosen by the panel's own **WIDTH** (`WIDE_SHELL_MIN_WIDTH` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED, never hand-picked**: `ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH + WIDE_SEPARATOR_SPAN + PANEL_CHROME_H` = 300 + 300 + 380 + 50 + 26 = **1056**. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band: the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `WIDE_SEPARATOR_SPAN` / `PANEL_CHROME_H` are `const`s (a `const` cannot call `_wide_separator_span()`), shared by the threshold, `_wide_content_cap()`, `_wide_separator_span()` and `_interior_size()` so they cannot drift. **wide** (in practice T/B) = the three zones side by side, band/parties fixed `ZONE_BAND_WIDTH`/`ZONE_PARTY_WIDTH` (300), work EXPAND_FILL, `LINE_SOFT` hairlines between, no tab bar; **narrow** (in practice L/R) = a Band·Work·Parties tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `PANEL_HEIGHT_WIDE` 360 clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **There is deliberately no `ScrollContainer` anywhere in the panel** (no-scroll by design; the work zone pages itself against **`work_zone_size()`**, the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 1244×298 in a 1920 bottom dock — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`Hud._corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -1507,7 +1508,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     - **Extend-pen stays in the DRAWER.** It is a one-click standing action on a built pen, not a
       compose flow; hiding it behind a sheet you must open first would be worse. So
       `_build_herd_drawer_actions` renders it (or the "Fencing N%" badge) directly.
-    - **The standing summary reuses `_source_yield_readout` — it never recomputes a rate.**
+    - **The standing summary reuses `SourceForecast.source_yield_readout` — it never recomputes a rate.**
       `♻ 3 foragers · +2.74 /turn`, policy glyph from `FoodIcons.for_policy`, and the SAME two
       INDEPENDENT flags a Band-panel Current-actions row wears: the ⚠ overdraw (ecological, the
       sim-answered `overdraws`) and the `· only N of M working` overstaff note (labor). `has_yield` is
@@ -1564,7 +1565,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   notes `fauna_label`, the species, while the command line keeps `fauna_id`), not to teach the
   player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
   `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
-  (`_herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
+  (`SourceForecast.herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
   both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Biomass / Ecology /
   Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
   Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
@@ -1669,7 +1670,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the second row added no information and **argued with the first** — a HEALTHY-green "Expected yield"
     directly above a WARN-amber "⚠ overdraws the herd" for the same number. (The two overlapping wire
     representations should be collapsed to one server-side; tracked separately.) Both the ⚠ and the note are rendered by `_build_worker_stepper` (`warn` / `note` params)
-    off one `_source_yield_readout`, so Forage and Hunt rows share the logic.
+    off one `SourceForecast.source_yield_readout`, so Forage and Hunt rows share the logic.
     **Each source row leads with its resource glyph** — `FoodIcons.for_site(module)` for a Forage
     row (resolved from `_food_module_by_tile`, the snapshot `food_modules` array pushed by `Main` →
     **`Hud.update_food_modules`**, keyed by tile) and `FoodIcons.for_herd(species)` for a Hunt row —
@@ -1706,7 +1707,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Each stepper re-sends `assign_labor_requested` with the new count (0 removes). **The Forage/Hunt
     Current-actions rows are PER-SOURCE max-useful capped** (mirroring the compose controls' cap): each
     row's `+` is gated on `idle > 0 AND workers < max_useful` via `_source_worker_cap_state` +
-    `_max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
+    `SourceForecast.max_useful_workers`, so a single source can't absorb workers past the point they help. The Hunt
     row reads its herd's forecast from `_find_world_herd(herd_id)` (bare `BARE_FORECAST_PREFIX`); the
     Forage row reads its patch from the new `_forage_patch_lookup` (Main pushes the snapshot
     `forage_patches` → `Hud.update_forage_patches`, mirroring `update_herds`) with the SAME
@@ -1743,12 +1744,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     tile / hunted herd is labeled with its per-turn rate (food/turn, from the assignment inside
     `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
     food-income **green**. **A HUNT label headlines `sustainable_yield`** (the steady per-turn rate),
-    **a FORAGE label `actual_yield`** — the exact split `Hud._source_yield_readout` uses for the Band
+    **a FORAGE label `actual_yield`** — the exact split `SourceForecast.source_yield_readout` uses for the Band
     panel (a hunt's `actual_yield` is the kill-credit PULSE — 0 on a wait turn, a spike on a kill turn —
     so its honest rate is `sustainable_yield`; forage has no pulse, `actual == sustainable`), so the map
     label and the Band panel's hunt headline can never disagree. A source that overdraws (the
     **sim-answered `overdraws` bool** on the assignment — the SAME wire flag the Band panel's
-    `_source_yield_readout` reads, NOT the client-derived `actual > sustainable`, which false-positives on a
+    `SourceForecast.source_yield_readout` reads, NOT the client-derived `actual > sustainable`, which false-positives on a
     hunt's kill turn) reads
     **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage patch now that the forage
     policy axis can decline one (a Sustain forage gathers at regrowth, so it stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
@@ -1838,8 +1839,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     policy, herd — is known at compose time, and the block re-renders on every stepper tick / policy
     click, so it's live, not a confirmation; missing levers/ceilings → no line, panel otherwise
     unchanged): the **expedition** branch renders the SAME raid line as the targeting banner
-    (`_hunt_trip_forecast` → `_hunt_forecast_line_bbcode`, shared — the two entry points can't quote
-    different numbers) and gives the **button itself** the verdict (`_style_send_hunt_button`).
+    (`SourceForecast.hunt_trip_forecast` → `SourceForecast.hunt_forecast_line_bbcode`, shared — the two entry points can't quote
+    different numbers) and gives the **button itself** the verdict (`SourceForecast.style_send_hunt_button`).
     **A hunting expedition is a GREEDY RAID** (server `5a130e0`): it grabs the herd's standing surplus
     above the policy floor in a burst and comes home. A party too small to carry a whole animal now
     **kills one and hauls only the fraction its pack holds, wasting the rest** (mirroring the local hunt's
@@ -1853,7 +1854,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `wastedFood / (deliveredFood + wastedFood)`). A high waste % is **informative, not a block** — the
     button stays enabled. **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel is NOT in it;
     the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL** itself
-    (`_round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
+    (`SourceForecast.round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
     hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total** trip length, spelling
     the split out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. `band_move_tiles_per_turn` (a
     LaborConfig scalar echoed per-cohort) is **now decoded in `native/src/lib.rs` and flowed onto the band
@@ -1861,21 +1862,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     wire (it degrades to hunting turns only if a snapshot omits it).
     **WARNED vs BLOCKED — the line that matters:** a **slow** raid (the **TOTAL** trip —
     `hunt_turns + round-trip travel`, NOT hunting-only `turnsToFill` — past `viability_warn_turns`;
-    see `_hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
+    see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
     alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
     `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
     false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
-    (`_hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
+    (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
     would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
     (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
     big game now delivers a partial (`animalsTaken 1`, high waste), which is NOT too lean; only a genuinely
     at-floor herd blocks. Party size cannot fix it — **surplus is a property of the HERD, not the party** —
-    so the reason (`_hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size**
-    (the old row-scan / `_recommended_party` / step-up-impossible machinery is retired). `_hunt_estimate_key`
+    so the reason (`SourceForecast.hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size**
+    (the old row-scan / `_recommended_party` / step-up-impossible machinery is retired). `SourceForecast.hunt_estimate_key`
     is the one definition of the `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and
     the max-useful scan.
-    **The party stepper caps at MAX-USEFUL on both branches** (`_expedition_useful_cap`): **`deliveredFood`**
+    **The party stepper caps at MAX-USEFUL on both branches** (`SourceForecast.expedition_useful_cap`): **`deliveredFood`**
     PLATEAUS with party size once the herd's surplus (not the pack) binds, so extra hunters past the plateau
     raid no more food — a table SCAN for the smallest size at which delivered food stops rising, capped there
     with the SAME "max N useful here — more would be idle" note the local hunt uses (`MAX_USEFUL_NOTE_FORMAT`).
@@ -1888,7 +1889,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
     the manual `−/+` stepper is untouched (it never sets the flag).
     The **band-panel launch flow gates identically, in its own form**: its compose sheet picks the
-    quarry first and then styles its Send with the SAME `_style_send_hunt_button` + `_hunt_no_surplus_reason`,
+    quarry first and then styles its Send with the SAME `SourceForecast.style_send_hunt_button` + `SourceForecast.hunt_no_surplus_reason`,
     so a no-surplus herd disables there too. The quarry PICKER itself (`_try_pick_quarry`) deliberately
     does NOT test surplus — no policy is chosen at that point, so the verdict is unknowable; it only
     nudges "No huntable herd there — click on a herd." so a click is never silently swallowed. The **local** branch has no carry cap, so a raid readout is meaningless and
@@ -1920,7 +1921,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
     `carryCap / rate` division is WRONG for Surplus/Market), while the local line is carry arithmetic over
     the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_delivered_and_waste`
-    / `_hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
+    / `SourceForecast.hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
     is NEVER re-derived client-side.
     Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
     `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
@@ -1959,7 +1960,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
     on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
     bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
-    compact `+0.96` (just `_format_signed(ceiling)`, fed by `_forage_policy_takes` off `_forecast_inputs`),
+    compact `+0.96` (just `SourceForecast.format_signed(ceiling)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`
     (`POLICY_PAYOFF_COMPACT`), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
     `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
@@ -1974,9 +1975,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
     locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
     forage / local hunt / expedition — now wear an **identical** face + metric: `+X` (extractive, `up to
-    X/turn` via `POLICY_CAP_FORMAT` / `_extractive_take`) and `→+X` (investment, Cultivate/Sow AND
+    X/turn` via `POLICY_CAP_FORMAT` / `SourceForecast.extractive_take`) and `→+X` (investment, Cultivate/Sow AND
     Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
-    is retired) — `_expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
+    is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
     Surplus < Market. **Eradicate is denial** (`deliversFood == false`, never qualifies) → no rate, falls back
@@ -1996,7 +1997,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):
     **within range** → enabled **Forage**; **beyond range** → the button is **disabled** + an
     out-of-range hint (`"(x,y) is N tiles away — beyond this band's forage range (R)"`), no alternative.
-    Reuses the same `_hex_distance_wrapped` / `_band_tile` / grid-dim plumbing and explicit
+    Reuses the same `_hex_distance_wrapped` / `SourceForecast.band_tile` / grid-dim plumbing and explicit
     selected-band threading as the herd hunt. Covered by ui_preview states `food_tile` (in range) /
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
@@ -2079,7 +2080,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       offered here would only fail unreadably). This is the only gate reason on either ladder a player
       answers by **moving** rather than by working. ui_preview `forage_sow_too_dry` /
       `forage_sow_too_poor`.
-    - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
+    - **The forecast states the deal.** `SourceForecast.forecast_inputs` maps an investment policy's ceiling to the
       DIP yield and additionally returns its `payoff`; `_forecast_yield_row` (now INVESTMENT-only) then
       reads **`Preparing: +0.24 /turn → then +1.20 /turn`** — the deal, not a single rate — both halves
       scaled by the band's `output_multiplier` like every other forecast. The managed source reports
@@ -2102,9 +2103,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
       wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
       `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
-      `_forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
+      `SourceForecast.forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
       (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
-      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `_hunt_policy_ceiling`, falling back to the
+      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `SourceForecast.hunt_policy_ceiling`, falling back to the
       list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**: a herd dict
       and a raw wire forage-patch dict both carry the forecast fields bare, so they share the ONE
       `BARE_FORECAST_PREFIX` and a prefix test cannot separate them. That is not merely a convention —
@@ -2166,7 +2167,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
       slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
       playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
-    - **The hunt row headlines the honest RATE, never the kill-credit PULSE** (`Hud._source_yield_readout`,
+    - **The hunt row headlines the honest RATE, never the kill-credit PULSE** (`SourceForecast.source_yield_readout`,
       slice 8b UX + the local-hunt UX cleanup): a Current-actions Hunt SUMMARY row + the local-hunt preview
       show `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on
       a kill turn — the "+0.00 /turn" lie). **The summary row is now JUST the food rate + glyphs** — it reads
@@ -2190,7 +2191,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
       (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
-      (`_is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
+      (`SourceForecast.is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
       the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
       row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
     - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt
@@ -2256,7 +2257,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     new cap; an UNBOUNDED forecast stays unbounded), so the maintenance crew is always staffable and the
     "max N useful here" note reads the corrected N. Auto-max on policy-select fills to it. A wild herd
     reports `herders_needed 0`, so `max(useful, 0)` is a no-op there. **Local hunt ONLY** — the
-    expedition party has no herding crew, so `_expedition_useful_cap` is left alone. The Herders drawer
+    expedition party has no herding crew, so `SourceForecast.expedition_useful_cap` is left alone. The Herders drawer
     row (`N / N — under-herded`) and the tameness-slipping consequence line read the SAME
     `herders_needed`, so the cap, the row and the consequence never contradict.
     **When the *labor* cap binds instead** (idle workers run out *below* the usefulness ceiling), the
@@ -2265,7 +2266,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     the expedition's party-size sub-case, `idle >= max_party_size`, reads `PARTY_SIZE_BOUND_NOTE_FORMAT`
     = "N of M useful — at the max party size"). The cap value is unchanged (still `min(labor,
     usefulness)`); only the note now names *which* ceiling bound and the M you're working toward, so a
-    disabled `+` is never mute. (`_expedition_useful_cap` scans the full estimate table for M even past
+    disabled `+` is never mute. (`SourceForecast.expedition_useful_cap` scans the full estimate table for M even past
     the fieldable party, so "of M" can exceed the party you can currently staff.)
     **ONE forecast row per rung, and forage now mirrors the local hunt exactly** (`Hud.gd`): an
     **INVESTMENT** rung (Cultivate/Sow — the `_forage_assign_policy in INVESTMENT_POLICIES` branch)
@@ -2278,7 +2279,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     is gone and `_forecast_yield_row`'s non-investment `else` branch was unreachable and removed — its
     only two callers, hunt via `forecast_active` and forage via the `INVESTMENT_POLICIES` guard, both
     gate on an investment rung) and fixes the gap where an Eradicate/Market forage rendered no overdraw
-    warning. Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
+    warning. Shared helpers `SourceForecast.forecast_inputs` / `SourceForecast.max_useful_workers` / `SourceForecast.expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` (investment-only now) serve both controls. **Guards:**
     `per_worker_yield == 0` (a dead-season tile) → no row,
     no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
@@ -2433,7 +2434,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the
   whole ladder — the string says how far this species can go: **`"wild"`** hunt-only, **`"pastoral"`**
   tameable + roams but never pennable, **`"pen"`** (or **empty/absent** ⇒ treated as pen) the full
-  ladder. `Hud._husbandry_ceiling(herd)` normalizes it (unknown → `"pen"`, so an un-tagged herd behaves
+  ladder. `SourceForecast.husbandry_ceiling(herd)` normalizes it (unknown → `"pen"`, so an un-tagged herd behaves
   exactly as before the field shipped). Two gates, both keyed off it:
   - **Herd drawer** (`_herd_summary_lines`): `"wild"` shows **no** husbandry track at all (no
     domestication / corral / pen rows), just the dim `Wild game — hunt only` hint; `"pastoral"` keeps
@@ -2574,7 +2575,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   COMMITTING rungs** (`FLORA_COMMITTING_POLICIES` = Cultivate + Sow) — the extractive rungs gather the
   whole basket and choose nothing, so a crop control there would be noise. One row per basket entry in
   **wire order** (`Wild Emmer 34%`), sharing the F1 percentages through the extracted
-  `_flora_basket_entries` (the ONE decomposition of the composition list, rounding already resolved),
+  `SourceForecast.flora_basket_entries` (the ONE decomposition of the composition list, rounding already resolved),
   so the picker and the "What grows here" row can never quote different numbers for one plant.
   **THE TWO FLAGS ARE SPECIES-GLOBAL** — "can this plant *ever* climb this rung", not "is this a good
   idea here" — and the gate reads **the composed rung's own flag** (`_flora_entry_allows`), which is
@@ -2611,7 +2612,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `FLORA_CROP_STRONG_RATIO` *"strong ground for it"*, and the honest middle *"worth committing to"*.
   Amber is now the exception rather than the rule on good ground, which is the intended read.
   **AND THE `→ then` TERM FOLLOWS THE SELECTED CROP** (`cultivatePayoff` / `sowPayoff` →
-  `cultivate_payoff` / `sow_payoff`, carried through `_flora_basket_entries` and substituted by
+  `cultivate_payoff` / `sow_payoff`, carried through `SourceForecast.flora_basket_entries` and substituted by
   `_forecast_for_selected_crop`). Without it the forecast quoted a species-BLIND patch, so committing to
   Ground Nut displayed Wild Emmer's payoff and **the picker appeared to change nothing above it**. Same
   units and output-multiplier convention as the forecast `payoff` it replaces, so this is a
@@ -2620,7 +2621,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   handler rebuilds the whole controls, so changing the crop moves the line on the same frame — pinned by
   the `forage_crop_then_emmer` / `forage_crop_then_groundnut` pair, whose assertion is that the two
   frames' forecast lines **differ** (`+1.35` vs `+0.45`); asserting the line merely *exists* would pass
-  against a hardcoded one. **Carrying the payoff through `_flora_basket_entries` is the load-bearing
+  against a hardcoded one. **Carrying the payoff through `SourceForecast.flora_basket_entries` is the load-bearing
   half** — the substitution silently no-ops if the basket entry drops the field, which is exactly how it
   first failed.
   **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
@@ -3186,8 +3187,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   MapView glow the huntable herds): it carries only the band, dispatches nothing, and on a hit stores the
   herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
   and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's
-  beyond-reach branch uses (`_expedition_policy_takes` · `_expedition_useful_cap` · `_hunt_trip_forecast` →
-  `_hunt_forecast_line_bbcode` · `_style_send_hunt_button` · `_hunt_no_surplus_reason`), so the two entry
+  beyond-reach branch uses (`SourceForecast.expedition_policy_takes` · `SourceForecast.expedition_useful_cap` · `SourceForecast.hunt_trip_forecast` →
+  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_no_surplus_reason`), so the two entry
   points structurally cannot quote different numbers. The line reads cyan
   `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
   over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
@@ -3199,7 +3200,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   **The food total** is `HuntTripEstimate.deliveredFood` — the sim's forward-simulated landed food (NOT
   `animals × foodPerAnimal`, which counts the whole kill and overstates a partial), set on the returned dict
   as `food` (always present on a delivering forecast); the waste % is `wastedFood / (deliveredFood +
-  wastedFood)`. All rendered by the shared `_hunt_forecast_line_bbcode` at **both** entry points (the party
+  wastedFood)`. All rendered by the shared `SourceForecast.hunt_forecast_line_bbcode` at **both** entry points (the party
   compose sheet + the herd drawer), so the two can never quote different numbers.
   **The client does ZERO arithmetic for an expedition's raid — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
@@ -3208,7 +3209,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken, delivered_food,
     wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
     the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
-    appended fields 6× now, always audit it first**). `_hunt_trip_forecast` just looks it up:
+    appended fields 6× now, always audit it first**). `SourceForecast.hunt_trip_forecast` just looks it up:
     `delivers_food == false` → **denial** (Eradicate — "delivers no food", the SIM decides this, the client
     never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
     case — the raid returns empty at every party size; NOT `animals_taken == 0`, which is now ≥ 1 whenever
@@ -3216,7 +3217,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     raid delivers `delivered_food` food (`animals_taken` kills, `wasted_food` rotted), with `turns_to_fill
     == 0` meaning a **long raid** (ran the whole horizon) and `> expeditionViabilityWarnTurns` flagged
     **slow**. `deliveredFood` PLATEAUS with party size once the surplus binds — that plateau is the
-    **max-useful** party the stepper caps at (`_expedition_useful_cap`), and the per-policy picker cap is the
+    **max-useful** party the stepper caps at (`SourceForecast.expedition_useful_cap`), and the per-policy picker cap is the
     max over party sizes of `deliveredFood / (turnsToFill + travel)`. **Do not re-derive any of this** — the
     sim forward-simulates the raid (the herd's state moves under the party, a horizon bounds the answer) and
     exports the numbers.
@@ -3487,7 +3488,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   quarry picker); with no quarry the sheet renders the hint plus a **visible, disabled** Send and nothing
   else. **A quarry must lie strictly BEYOND the band's `hunt_reach`** — a hunting party exists for game
   the band cannot work from home, so a nearer herd is a local hunt. `_is_expedition_quarry` is the ONE
-  definition (`_band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
+  definition (`SourceForecast.band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
   route through it: MapView's glow rings only eligible herds (via `min_distance` — see Command
   Targeting), `_try_pick_quarry` REFUSES an in-reach herd and stays in targeting with a
   `QUARRY_WITHIN_REACH_FORMAT` nudge naming the herd, the distance, the reach and the local alternative
