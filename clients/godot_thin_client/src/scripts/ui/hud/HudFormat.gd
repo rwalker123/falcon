@@ -15,6 +15,38 @@ class_name HudFormat
 ## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) stay on
 ## `HudLayer` and are read back as `HudLayer.X`, so there is still exactly one place a phrase is typed.
 
+## A food module the table cannot name and whose key is empty — the tile carries no module at all.
+const FOOD_MODULE_UNKNOWN_LABEL := "Unknown"
+## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
+const BAND_DISPLAY_NAME_FORMAT := "Band %d"
+
+## The food-module display names. This table came here WITH `food_module_label`, its only reader —
+## the words belong to the vocabulary layer, not to the compose builders that print them.
+const FOOD_MODULE_LABELS := {
+    "coastal_littoral": "Coastal Littoral",
+    "riverine_delta": "Riverine Delta",
+    "savanna_grassland": "Savanna Grassland",
+    "temperate_forest": "Temperate Forest",
+    "boreal_arctic": "Boreal Arctic",
+    "montane_highland": "Montane Highland",
+    "wetland_swamp": "Wetland Swamp",
+    "semi_arid_scrub": "Semi-Arid Scrub",
+    "coastal_upwelling": "Coastal Upwelling",
+    "mixed_woodland": "Mixed Woodland",
+}
+
+## A food module's display name, from the table above; an unlisted key humanizes its own id, and an
+## empty one reads "Unknown" (the compose sheet's header fallback when the tile carries no label).
+static func food_module_label(module_key: String) -> String:
+    if module_key == "":
+        return FOOD_MODULE_UNKNOWN_LABEL
+    return String(FOOD_MODULE_LABELS.get(module_key, module_key.capitalize().replace("_", " ")))
+
+## Best-effort readable band name: a positional "Band N". (Cohorts carry no top-level
+## band label in the snapshot yet — see the server-side follow-up.)
+static func band_display_name(_entry: Dictionary, index: int) -> String:
+    return BAND_DISPLAY_NAME_FORMAT % index
+
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.
 static func source_icon_prefix(icon: String) -> String:

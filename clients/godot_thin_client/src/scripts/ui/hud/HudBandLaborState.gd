@@ -42,9 +42,13 @@ var _world_herds: Array = []
 var _pending_labor: Dictionary = {}
 # The authoritative snapshot turn (header tick) — reconciles pending against the server's processing.
 var _current_turn: int = -1
-# Map grid dimensions (horizontal wrap stays a HUD member — it is not shared labor state).
+# Map grid geometry: the dimensions AND the horizontal-wrap flag, all three arriving together on the
+# snapshot `grid` key. Wrap lives here beside the width it is meaningless without — every wrap-aware
+# hex distance needs the pair, so splitting them left the HUD threading one from a member and the
+# other from this model.
 var _grid_width: int = 0
 var _grid_height: int = 0
+var _wrap_horizontal: bool = false
 # Previous per-band size (entity -> size) so a shrink is detectable across snapshots.
 var _prev_band_sizes: Dictionary = {}
 # Snapshot forage patches keyed by tile (the Current-actions Forage row's max-useful forecast source).
@@ -81,6 +85,10 @@ func grid_width() -> int:
 func grid_height() -> int:
 	return _grid_height
 
+## Does the map wrap east-west? Fed to `SourceForecast.hex_distance_wrapped` beside `grid_width()`.
+func wrap_horizontal() -> bool:
+	return _wrap_horizontal
+
 func prev_band_sizes() -> Dictionary:
 	return _prev_band_sizes
 
@@ -96,9 +104,10 @@ func set_turn(turn: int) -> void:
 	_current_turn = turn
 	changed.emit(&"turn")
 
-func set_grid(width: int, height: int) -> void:
+func set_grid(width: int, height: int, wrap_horizontal_flag: bool) -> void:
 	_grid_width = width
 	_grid_height = height
+	_wrap_horizontal = wrap_horizontal_flag
 	changed.emit(&"grid")
 
 func set_world_herds(herds: Array) -> void:

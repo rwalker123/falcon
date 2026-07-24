@@ -697,6 +697,15 @@ static func hunt_trip_no_surplus(forecast: Dictionary) -> bool:
 static func hunt_no_surplus_reason(herd: Dictionary) -> String:
     return SEND_HUNT_NO_SURPLUS_REASON % herd_display_name(herd)
 
+## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
+## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`). The SUPPLY
+## side of the party stepper — what the band can spare; `expedition_useful_cap` below is the DEMAND
+## side (what the raid can use), and the stepper takes the tighter of the two.
+static func expedition_party_cap(band: Dictionary) -> int:
+    var idle := int(band.get("idle_workers", 0))
+    var cap := int(band.get("max_expedition_party_size", 0))
+    return mini(idle, cap) if cap > 0 else idle
+
 ## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
 ## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the current
 ## policy's row for the smallest size at which delivered food stops rising and cap there — the raid twin of

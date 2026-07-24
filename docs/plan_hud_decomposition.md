@@ -165,13 +165,29 @@ is dissolved **first**, in place, before any code moves files.
       the clearest evidence the shared layer was overdue. Left behind deliberately:
       `_build_extend_pen_control` (emits `extend_pen_requested`, one drawer-only
       caller, diffing twins adjacent) → goes with the drawer.
-    - Still outstanding for the drawer: a little forecast-adjacent math that should
-      join `SourceForecast` (`_is_overdraw`, `_payoff_take`, `_hunt_take_rate`,
-      `_hunt_delivered_and_waste`) — scope it when 2c-2b starts.
-    - Then **2c-2b** proper: `DrawerComposeController` (~1,279 lines incl. the 15
-      controller-only forecast/gate/picker fns). Injection surface after (i)+(ii) is
-      roughly **one threaded `int`** plus the normal per-call `on_pick`/`on_change`
-      Callables that are legitimate factory arguments.
+    - **2c-2b DONE — `DrawerComposeController`** (~1,400 lines / 54 fns across four
+      spans; `Hud.gd` 7,643 → 6,222). The prerequisites did what they were for:
+      **the injection surface measured 36 before them and shipped at 3** —
+      `_resolve_assign_band`, `_herd_label_for_id`, `_emit_assign_labor`, each with
+      real callers outside the boundary. 114 former `HudLayer` call sites are now
+      static-module calls. The four "stray forecast-math" fns turned out
+      controller-only and pure, so they rode along — no `SourceForecast` top-up was
+      needed. Four absorptions kept the count at 3: `_expedition_party_cap` →
+      `SourceForecast`, `_format_food_module_label` and **`_band_display_name`** →
+      `HudFormat` (the latter a 4th cross-boundary call the spec missed, found by
+      re-verifying rather than trusting the list), and **`_grid_wrap_horizontal` →
+      `HudBandLaborState.wrap_horizontal()`** — an *unlisted member-state*
+      dependency (a plain `bool`, invisible to a call-graph scan) whose fold also
+      deleted the `_hex_distance_wrapped` injection outright.
+      **Two** signals are relayed, not one (`extend_pen_requested` joined
+      `send_hunt_expedition_requested` once `_build_extend_pen_control` travelled).
+      `is_compose_sheet_open`/`close_compose_sheet` stay as `HudLayer` delegators —
+      they are `has_method`-probed by `Main.gd` and ~11 harness sites, so breaking
+      them fails **silently**.
+      One idiom note: `Callable.call` returns `Variant`, which trips the project's
+      warnings-as-errors, so the three injected Callables are stored as `*_fn` and
+      reached through typed private adapters keeping the original names — which also
+      left every moved body byte-identical.
   - **`HudFormat`** — `format_signed` / `format_magnitude` / `format_yield` currently
     live in `SourceForecast` because its math genuinely needs them and duplicating
     them is forbidden. They are formatting, not forecasting. The seam is already
