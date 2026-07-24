@@ -1212,7 +1212,7 @@ func _assert_quarry_eligibility() -> void:
 	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
 
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
-## Current-actions Hunt row reads via `_find_world_herd` + `_forecast_inputs` — `per_worker_yield`
+## Current-actions Hunt row reads via `_find_world_herd` + `SourceForecast.forecast_inputs` — `per_worker_yield`
 ## plus the herd's ONLY ceiling representation, the `hunt_policy_ceilings` table (a herd has no flat
 ## `ceiling_*` scalars; the forage patches below still do).
 ## max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.

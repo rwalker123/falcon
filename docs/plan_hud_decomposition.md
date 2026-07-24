@@ -66,9 +66,28 @@ is dissolved **first**, in place, before any code moves files.
       Also **deletes `_selected_food_module` / `_selected_food_is_hunt`** — 7 writes
       and *zero readers* anywhere (Phase 2a/2b took the readers, left the writers).
       Pure state relocation, no node moves, no signal rewiring.
-    - **2c-2 — `DrawerComposeController`.** The compose lifecycle + drawer-action
-      block + the two big compose builders (~780 lines). Deliberately leaves the
-      shared forecast/gate/picker layer and `_format_detail_bbcode` on `HudLayer`.
+    - **2c-2a — `SourceForecast` (prerequisite, measured).** Extracting the drawer
+      first is blocked: it depends on the forecast/gate/picker layer, which the
+      band-panel **work zone** and **parties zone** also call, so that layer cannot
+      travel with it. Measured injection surface for a pure-Callable design: **54
+      Callables** (29 of them with a single call site) — a hand-written vtable, not
+      a boundary. A `_hud` back-ref was rejected too: it would cement to the god
+      object a layer that is **already pure in 26 of its 29 functions**, and the
+      later band-panel extraction would need a second back-ref to the same place.
+      So the shared math/estimate core gets its own file first and all three
+      consumers depend on *that*. Its entire impurity is 4 members over ~10 read
+      sites; in practice only the grid-wrap pair (reached transitively by the raid
+      estimates) needs solving. The node-building widget factories
+      (`_build_policy_picker`, `_forecast_label`, `_gate_reasons`) stay behind for a
+      later shared-widget extraction, and the **15 group-(a) functions with no
+      caller outside the drawer** are not shared at all — they move with the
+      controller in 2c-2b.
+    - **2c-2b — `DrawerComposeController`.** The compose lifecycle + drawer-action
+      block + the two big compose builders (~780 lines) plus the 15 controller-only
+      forecast functions, depending on `SourceForecast`. Emits **one** signal
+      (`send_hunt_expedition_requested`) for `HudLayer` to relay; `assign_labor` and
+      `extend_pen` stay indirect through helpers that don't move. Realistic final
+      injection surface after the precursor: ~10–12 Callables + 4 collaborator refs.
     - **2c-3 — the drawer render dispatch** (~155 lines). Held until the band-panel
       half has its own boundary, else it reaches back into `HudLayer` four times
       per render.
@@ -115,6 +134,20 @@ is dissolved **first**, in place, before any code moves files.
   - **`BandPanelController`** — the band/work/parties zone builders + the cycler
     (~1,935 lines), driven by the BandCityPanel and `update_band_alerts`, not by
     selection. The largest remaining mass.
+  - **Two collapses the 2c-2a measurement surfaced**, both of which shrink every
+    later boundary: (i) eight thin readers over `_band_labor` +
+    `_forage_assignment_of`/`_hunt_assignment_of` (`_workers_for_*`,
+    `_policy_for_*`, `_effective_*_workers`, `_assignable_*_workers`) belong **on
+    `HudBandLaborState`**, not on `HudLayer`; (ii) six HudStyle-adjacent widget
+    factories (`_alloc_hint_label`, `_build_row_note_label`, `_build_status_part`,
+    `_set_label_tooltip`, `_build_worker_stepper`, `_compact_control`) are a shared
+    widget layer deserving their own `ui/hud/` file — together with the three
+    pickers left behind by 2c-2a.
+  - **`HudFormat`** — `format_signed` / `format_magnitude` / `format_yield` currently
+    live in `SourceForecast` because its math genuinely needs them and duplicating
+    them is forbidden. They are formatting, not forecasting. The seam is already
+    visible (every use is a qualified `SourceForecast.format_*`), so the move is
+    mechanical whenever a second non-forecast consumer wants them.
   - Then the labor model and targeting.
 
 Phases 1–3 are sketched at the end; the body below specifies **Phase 0**.

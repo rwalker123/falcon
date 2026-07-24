@@ -2077,7 +2077,7 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			_outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
 			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
 			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
-			# `Hud._source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
+			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _hex_center(tcol, trow, radius, origin)
@@ -2100,7 +2100,7 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
 			# Depletable herd: HEADLINE the STEADY realized average (`realized_yield`), NOT the
 			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
-			# the Band panel's hunt-headline rule in `Hud._source_yield_readout` (which now reads
+			# the Band panel's hunt-headline rule in `SourceForecast.source_yield_readout` (which now reads
 			# `realized_yield` for both hunt and forage), so the map label and the Band panel can never
 			# disagree. Falls back to the old `sustainable_yield` if `realized_yield` is absent. The
 			# overhunt ⚠ flag is the sim-answered `overdraws` bool (policy-driven, false for Sustain) —
@@ -2325,8 +2325,8 @@ func _band_effective_col(col: int, radius: float, origin: Vector2) -> int:
 ## target tile renders adjacent to the band rather than across the whole map.
 ## Mirrors the sim's `grid_utils::shortest_delta_x` exactly: keep the direct delta when it is
 ## within half the width, else shift by one width. The exact-half tie (`abs(d) == width/2`)
-## resolves to the POSITIVE direct value, matching the sim — NOT `round()`'s half-away-from-zero
-## (which flipped the sign at the antipode and pointed the travel line the wrong seam direction).
+## keeps the DIRECT signed value (so `-width/2` stays negative), matching the sim — NOT `round()`'s
+## half-away-from-zero (which flipped the sign at the antipode and pointed the travel line the wrong seam direction).
 func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 	var d := to_col - from_col
 	if _wrap_horizontal and grid_width > 0:
@@ -2481,7 +2481,7 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 	_draw_marker_glyph(label_center, text, font_size, color)
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
-## Hud's `_format_signed` (separate script); actual yields are ≥0 but the sign keeps it explicit.
+## the HUD's `SourceForecast.format_signed`; actual yields are ≥0 but the sign keeps it explicit.
 func _format_yield_signed(value: float) -> String:
 	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)
 	return ("+" if value >= 0.0 else "-") + magnitude

@@ -75,7 +75,7 @@ const PANEL_CONSUMED_KEYS := [
 	"expedition_recurring",           # hunt expedition recurring ↻ badge (detail panel Next-delivery line)
 	"home_band_entity",       # Band/City panel groups a band's active expeditions by this
 	# Global config levers echoed on every cohort. NEITHER computes an expedition's trip length —
-	# that is a pure lookup into the herd's `hunt_trip_estimates` (Hud._hunt_trip_forecast), which
+	# that is a pure lookup into the herd's `hunt_trip_estimates` (SourceForecast.hunt_trip_forecast), which
 	# divides nothing. Band = flow arithmetic; expedition = lookup.
 	"hunt_per_worker_provisions",      # RESIDENT-BAND local-hunt take rate (Hud._hunt_take_rate)
 	"expedition_viability_warn_turns", # viable/not-viable threshold applied to turns_to_fill
