@@ -1,6 +1,10 @@
 # Decomposition: snapshot pipeline + systems/god-file split
 
-**Status:** in progress (single PR, four steps)
+**Status:** COMPLETE. The four numbered steps landed, and every deferred
+follow-up below is now resolved — 1/2/3 as their own extraction PRs (#310/#312/#314,
+`MapView.gd` **5,430 → 3,858**), 5 as the native `lib.rs` split (#295), 6/7 in
+`8a55f06`, and **4 was absorbed by the separate HUD-decomposition arc** rather than
+done here (see follow-up 4). Nothing in this plan remains open.
 **Goal:** Cut cross-workflow merge conflicts by giving each subsystem arc its own
 edit surface. Today a handful of shared "hero" files sit on the path of nearly
 every feature arc, so concurrent PRs collide constantly.
@@ -424,9 +428,19 @@ verified pass; the `MapView.gd` remainder is also summarized in
    **Done** (issue #298) — see "`MapView.gd` annotation family" in Status above.
    Fixtures were built and proven FIRST, then the extraction ran under them.
    **Targeting already had a fixture** (`map_quarry_targeting`), so four were needed, not five.
-4. **Hud selection-panel builders** (`_build_allocation_*`, `_herd_summary_lines`).
+4. ~~**Hud selection-panel builders** (`_build_allocation_*`, `_herd_summary_lines`).
    Read shared `_selected_*` state; defer until a selection-panel PNG fixture can
-   verify them.
+   verify them.~~ **Done — absorbed by the separate HUD-decomposition arc**
+   (`docs/plan_hud_decomposition.md`), not this one. By the time this arc reached
+   follow-up 4, that arc had already lifted every named builder out of the
+   `Hud.gd` god-file and verified them under `ui_preview`: `_build_allocation_panel`
+   / `_build_expedition_panel` → `ui/hud/SubjectDrawerController.gd`,
+   `_unit_summary_lines` → `ui/hud/BandDetailLines.gd`, `_herd_summary_lines` →
+   `DetailFormat.herd_summary_lines` (a static). `Hud.gd` is down from ~5,800 to
+   ~1,400 lines and holds no selection builders; there is no residual work and the
+   deferred PNG-fixture prerequisite is moot. The two arcs shared the god-file-split
+   goal for this surface, and the HUD arc got there first — recorded here so the
+   ledger reflects reality rather than implying an open item.
 5. ~~**`native/src/lib.rs`** remains a single-file hotspot (Step 1 re-routed ~90
    read sites through section accessors but did not split the file). Splitting it
    by domain is a candidate if it stays a conflict source.~~ **Done** (issue #295)
@@ -439,10 +453,12 @@ verbatim* from the old monolithic `snapshot.rs` — they pre-date the refactor a
 were left untouched to keep the split behavior-preserving. Worth a small
 follow-up PR:
 
-6. **`#[allow(clippy::too_many_arguments)]`** on `fog_raster_from_discoveries`
+6. ~~**`#[allow(clippy::too_many_arguments)]`** on `fog_raster_from_discoveries`
    (`snapshot/vision.rs`) and `population_state` (`snapshot/population.rs`).
    Replace each with a parameter struct so the allow can be dropped, rather than
-   suppressing the lint.
-7. **Per-capture `tracing::info!`** in `visibility_raster_from_ledger`
+   suppressing the lint.~~ **Done** (commit `8a55f06`) — both take a `*Inputs`
+   parameter struct (`FogRasterInputs` / `PopulationStateInputs`) and the allows
+   are gone.
+7. ~~**Per-capture `tracing::info!`** in `visibility_raster_from_ledger`
    (`snapshot/vision.rs`) fires once per snapshot capture (every tick). Downgrade
-   to `debug!` or gate behind a flag.
+   to `debug!` or gate behind a flag.~~ **Done** (commit `8a55f06`) — now `debug!`.
