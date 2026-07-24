@@ -468,6 +468,14 @@ pub struct Herd {
     /// freshly-tamed or rehydrated-uninitialized managed herd, for which [`herd_herders_needed`]
     /// falls back to the raw ceil until the next `advance_husbandry` seeds this.
     pub herders_needed: u32,
+    /// **Edge-gate for the under-herded feed line** (neglect-escape slice 2,
+    /// `docs/plan_fauna_neglect_escape.md` §4 item 1): `true` while the herd is *already known* to be
+    /// under-contained — too few herders to hold all its animals, so it is shedding this turn. Set on
+    /// the `false → true` transition (`advance_husbandry` fires the notice **once**), cleared the turn
+    /// it recovers (fully staffed / no overage) so a later relapse re-announces. The herder-shortfall
+    /// twin of `pen_starving`, but **snapshot-persisted** (like `herders_needed`) so a rollback rewinds
+    /// the edge and it does not spuriously re-fire after a restore.
+    pub under_herded: bool,
 }
 
 impl Herd {
@@ -541,6 +549,8 @@ impl Herd {
             // A fresh herd is wild (no owner, no pen), so it needs no keepers; `stabilize_herders_needed`
             // seeds the real requirement the first turn it becomes managed. `0` = "not yet stabilized".
             herders_needed: 0,
+            // A fresh herd is fully contained (nothing to hold yet).
+            under_herded: false,
         }
     }
 
@@ -1261,6 +1271,9 @@ fn herd_from_state(state: &HerdState) -> Herd {
         // Persisted authoritative sim state (like `corral_progress`): a rollback restores the
         // hysteresis-remembered requirement rather than re-flickering for a turn.
         herders_needed: state.herders_needed,
+        // Persisted edge-gate (slice 2): a rollback restores the under-herded state so the notice does
+        // not spuriously re-fire (unlike the transient `pen_starving`, which re-announces on restore).
+        under_herded: state.under_herded,
     }
 }
 
@@ -2656,10 +2669,45 @@ pub fn advance_husbandry(
             herd.id.hash(&mut hasher);
             SmallRng::seed_from_u64(base_seed ^ ESCAPE_SEED_SALT ^ hasher.finish())
         };
-        if let Some(event) =
-            shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng)
-        {
+        let shed = shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng);
+        // A shed occurring **is** the "under-contained this turn" signal: `shed_uncontained_animals`
+        // returns `Some` exactly when the herd has a real overage (herded_fraction < 1 with ≥ 1 animal
+        // over its labor capacity), i.e. its herders can't hold all its animals and it is drifting off.
+        let under_contained = shed.is_some();
+        if let Some(event) = shed {
             shed_events.push(event);
+        }
+
+        // **UNDER-HERDED EDGE NOTICE (slice 2, `docs/plan_fauna_neglect_escape.md` §4 item 1).** Fire a
+        // command-feed line the turn a managed herd **becomes** under-contained — edge-gated on the
+        // persisted `under_herded` bool so it fires **once** on the `false → true` transition, not every
+        // turn it stays under-contained, and re-fires after a recovery + relapse. Cleared the turn the
+        // herd is no longer shedding (fully staffed / within capacity). Distinct from the pen-*lost*
+        // (`announce_pen_lost`) and pen-*starving* (`starve_underfed_pen`) edges — this is the
+        // herder-shortfall edge, and it fires for pastoral herds too. The precedent is the pen-starving
+        // edge gate (`Herd::pen_starving`); this bool is persisted so a rollback doesn't re-fire it.
+        if under_contained {
+            if !herd.under_herded {
+                herd.under_herded = true;
+                if let Some(owner) = herd.owner {
+                    let pos = herd.position();
+                    event_log.push(CommandEventEntry::new(
+                        tick.0,
+                        CommandEventKind::HerdUnderHerded,
+                        owner,
+                        format!(
+                            "The {} has too few herders — animals are drifting off",
+                            herd.species
+                        ),
+                        Some(format!(
+                            "status=under_herded herded={:.2} needed={} herd={} x={} y={}",
+                            herded_last_turn, herd.herders_needed, herd.id, pos.x, pos.y
+                        )),
+                    ));
+                }
+            }
+        } else {
+            herd.under_herded = false;
         }
 
         // **BLEED-OUT ON TOTAL ABANDONMENT (§2.4).** A herd with ZERO herders last turn

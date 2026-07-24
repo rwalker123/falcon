@@ -245,6 +245,8 @@ mod tests {
             // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
             // rollback restores it rather than re-flickering for a turn.
             herders_needed: 3,
+            // Slice 2: the under-herded edge-gate round-trips (persisted, unlike `pen_starving`).
+            under_herded: true,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,

@@ -1338,8 +1338,23 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   `a_partially_herded_pastoral_herd_stays_tame_with_regrowth`,
 >   `a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming`, `neglect_never_un_tames_a_herd`,
 >   `a_pen_sheds_slower_than_a_pastoral_herd`, `total_abandonment_sheds_the_flock_and_loses_the_pen`,
->   `shed_animals_appear_in_the_wild_web`, `the_shed_is_deterministic`. **Slice 2 (not built here):** the
->   edge-gated command-feed line when a herd *becomes* under-contained.
+>   `shed_animals_appear_in_the_wild_web`, `the_shed_is_deterministic`.
+> - **The under-herded EDGE NOTICE (slice 2).** When a managed herd *becomes* under-contained (a shed
+>   occurs — its herders can't hold all its animals), `advance_husbandry` pushes a
+>   **`CommandEventKind::HerdUnderHerded`** (`"herd_under_herded"`) feed line to the owner, naming the
+>   species — *"The Rabbit Warren has too few herders — animals are drifting off"* — with detail
+>   `status=under_herded herded=<f> needed=<n> herd=<id> x=<x> y=<y>`. **Edge-gated on the persisted
+>   `Herd::under_herded` bool**: it fires **once** on the `false → true` transition (not every turn it
+>   stays under-contained), clears the turn the herd recovers (fully staffed / within capacity), and
+>   re-fires on a later relapse. Distinct from the pen-*lost* (`announce_pen_lost`, Corral) and
+>   pen-*starving* (`starve_underfed_pen`, Corral) edges — this is the herder-shortfall edge and it
+>   fires for pastoral herds too. Unlike the transient `pen_starving`, `under_herded` is
+>   **snapshot-persisted** (rewinds with rollback) so a restore does not spuriously re-announce. Pinned
+>   by `fauna_husbandry`'s `the_under_herded_notice_{fires_once_on_becoming_under_contained,
+>   re_fires_after_recovery_then_relapse}` + `the_persisted_under_herded_flag_suppresses_a_re_fire`,
+>   `snapshot::mod`'s herd-state identity round-trip, and
+>   `integration_tests/fauna_rollback::under_herded_edge_state_rewinds_on_rollback`. **Slice 3 (client,
+>   not built):** rendering this line + the panel warning icon.
 
 **Retired: single-task model → labor allocation (Early-Game Labor slice 3a).** The
 one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`

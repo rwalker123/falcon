@@ -4850,6 +4850,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::ExpeditionArrived => "Expedition arrived",
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",
         CommandEventKind::ExpeditionReturned => "Expedition returned",
+        CommandEventKind::HerdUnderHerded => "Under-herded",
     }
 }
 

@@ -2132,3 +2132,171 @@ fn the_shed_is_deterministic() {
         "two runs of the same shed scenario must be bit-identical (seeded RNG, no wall-clock rand)"
     );
 }
+
+// ==========================================================================================
+// Neglect-escape SLICE 2 (`docs/plan_fauna_neglect_escape.md` §4 item 1): the edge-gated
+// under-herded command-feed notice. Fires the turn a managed herd BECOMES under-contained
+// (too few herders to hold all its animals, so it sheds), once per transition, re-arming after
+// recovery. Persisted `Herd::under_herded` gates it so a rollback does not spuriously re-fire.
+// ==========================================================================================
+
+/// The `herd_under_herded` command-feed entries.
+fn under_herded_lines(app: &App) -> Vec<CommandEventEntry> {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|e| matches!(e.kind, CommandEventKind::HerdUnderHerded))
+        .cloned()
+        .collect()
+}
+
+/// Seat an owned, over-stocked pastoral herd well above a `herders`-hand labor capacity, so it sheds
+/// (is under-contained) under partial staffing — and its ecological K is high enough that it does not
+/// bleed out over the test's turns.
+fn seat_over_stocked_managed(app: &mut App, id: &str, herders: f32, aph: f32, body_mass: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    let capacity_animals = herders * aph;
+    herd.carrying_capacity = capacity_animals * body_mass * 8.0;
+    herd.biomass = capacity_animals * body_mass * 4.0; // 4× the labor capacity
+}
+
+fn set_herded_fraction(app: &mut App, id: &str, fraction: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .unwrap()
+        .herded_fraction = fraction;
+}
+
+fn set_under_herded(app: &mut App, id: &str, value: bool) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .unwrap()
+        .under_herded = value;
+}
+
+/// **The under-herded notice fires ONCE on the transition, not every turn it stays under-contained**
+/// (`docs/plan_fauna_neglect_escape.md` §4 item 1). The line names the species and carries the
+/// machine-readable shortfall in its detail.
+#[test]
+fn the_under_herded_notice_fires_once_on_becoming_under_contained() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+    let herders = 3.0;
+    seat_over_stocked_managed(&mut app, &id, herders, aph, body_mass);
+    let species = herd_of(&app, &id).species.clone();
+
+    // Turn 1: understaffed ⇒ it sheds ⇒ the notice fires exactly once.
+    seat_staffing(&mut app, &id, herders, aph);
+    app.world.run_system_once(advance_husbandry);
+    let lines = under_herded_lines(&app);
+    assert_eq!(
+        lines.len(),
+        1,
+        "exactly one notice on becoming under-contained"
+    );
+    let entry = &lines[0];
+    assert_eq!(entry.faction, FactionId(0), "the owner is told");
+    assert!(
+        entry.label.contains(&species) && entry.label.contains("too few herders"),
+        "the line names the species and the shortfall: {}",
+        entry.label
+    );
+    let detail = entry.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("status=under_herded") && detail.contains(&format!("herd={id}")),
+        "the detail carries the machine-readable fields: {detail}"
+    );
+
+    // It stays under-contained for several more turns — NO new notices.
+    for _ in 0..5 {
+        seat_staffing(&mut app, &id, herders, aph);
+        app.world.run_system_once(advance_husbandry);
+    }
+    assert_eq!(
+        under_herded_lines(&app).len(),
+        1,
+        "the edge does not re-fire while the herd stays under-contained"
+    );
+}
+
+/// **The notice RE-FIRES after a recovery and a relapse** — staff it back to full (the flag clears,
+/// nothing fires), then understaff again (a fresh notice).
+#[test]
+fn the_under_herded_notice_re_fires_after_recovery_then_relapse() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+    let herders = 3.0;
+    seat_over_stocked_managed(&mut app, &id, herders, aph, body_mass);
+
+    // Understaffed ⇒ fire once.
+    seat_staffing(&mut app, &id, herders, aph);
+    app.world.run_system_once(advance_husbandry);
+    assert_eq!(under_herded_lines(&app).len(), 1);
+
+    // Fully staff it ⇒ the flag clears, no new notice.
+    for _ in 0..2 {
+        set_herded_fraction(&mut app, &id, FULLY_HERDED);
+        app.world.run_system_once(advance_husbandry);
+    }
+    assert_eq!(
+        under_herded_lines(&app).len(),
+        1,
+        "recovery announces nothing"
+    );
+    assert!(
+        !herd_of(&app, &id).under_herded,
+        "the edge-gate flag cleared on recovery"
+    );
+
+    // Relapse: understaff again ⇒ a NEW notice.
+    set_herded_fraction(&mut app, &id, 0.0);
+    app.world.run_system_once(advance_husbandry);
+    assert_eq!(
+        under_herded_lines(&app).len(),
+        2,
+        "a relapse re-fires the notice"
+    );
+}
+
+/// **The persisted `under_herded` flag suppresses a spurious re-fire** — the rollback guarantee at the
+/// unit level (`docs/plan_fauna_neglect_escape.md` §4 item 1). A rollback restores the flag (proven to
+/// round-trip by `snapshot::mod`'s herd-state identity test and `integration_tests/fauna_rollback`); a
+/// herd restored with the edge already latched does not re-announce, where a transient (reset) flag —
+/// the `pen_starving` treatment — would. That contrast is what makes persisting it load-bearing.
+#[test]
+fn the_persisted_under_herded_flag_suppresses_a_re_fire() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+    let herders = 3.0;
+    seat_over_stocked_managed(&mut app, &id, herders, aph, body_mass);
+
+    // Simulate the restored state: the flag is preserved true while the herd is still under-contained.
+    set_under_herded(&mut app, &id, true);
+    seat_staffing(&mut app, &id, herders, aph);
+    app.world.run_system_once(advance_husbandry);
+    assert!(
+        under_herded_lines(&app).is_empty(),
+        "a herd restored with the edge already latched does not re-announce"
+    );
+
+    // Contrast — a transient (reset-to-false) flag re-fires on the same under-contained turn.
+    set_under_herded(&mut app, &id, false);
+    seat_staffing(&mut app, &id, herders, aph);
+    app.world.run_system_once(advance_husbandry);
+    assert_eq!(
+        under_herded_lines(&app).len(),
+        1,
+        "a reset (transient) edge would re-fire — so persisting it is load-bearing"
+    );
+}

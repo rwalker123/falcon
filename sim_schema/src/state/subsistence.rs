@@ -661,6 +661,14 @@ pub struct HerdState {
     /// `animals_per_herder` head-count boundary.
     #[serde(default)]
     pub herders_needed: u32,
+    /// **Edge-gate for the under-herded feed line** (`Herd::under_herded`, neglect-escape slice 2) —
+    /// `true` while the herd is *already known* to be under-contained (too few herders to hold all its
+    /// animals, so it is shedding), so `advance_husbandry` announces it **once** on the transition
+    /// turn rather than every turn it continues, and re-announces after a recovery + relapse.
+    /// **Persisted** (sim-side rollback only) — unlike the transient `pen_starving`, this rewinds with
+    /// rollback so the edge does not spuriously re-fire after a restore.
+    #[serde(default)]
+    pub under_herded: bool,
     #[serde(default)]
     pub ecology: EcologyState,
 }

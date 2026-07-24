@@ -29,6 +29,7 @@ pub(crate) fn herd_state(herd: &Herd) -> HerdState {
         hunt_credit: herd.hunt_credit,
         husbandry_ceiling: herd.husbandry_ceiling.as_str().to_string(),
         herders_needed: herd.herders_needed,
+        under_herded: herd.under_herded,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
