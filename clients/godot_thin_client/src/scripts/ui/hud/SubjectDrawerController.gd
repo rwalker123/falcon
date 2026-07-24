@@ -15,11 +15,10 @@ extends RefCounted
 ## disclosure fan-out (`_refresh_disclosure_hosts`) on the HUD node calling IN, and connects the two fit
 ## signals + `_refit_left_dock` to this controller's `fit_subject_drawer`.
 ##
-## THE INJECTION SURFACE IS ONE CALLABLE — `_on_move_band_pressed`, retained on `HudLayer` because it
-## drives `_pending_move_band` + `_refresh_targeting` (the targeting machinery, with three other modes).
-## It is only ever `.connect()`ed to a button, never `.call()`ed, so it is stored as a plain Callable and
-## needs no typed adapter (the `DrawerComposeController` `Callable.call → Variant` hazard never arises).
-## `_is_player_unit` is a trivial private COPY (the SelectionCardController / BandPanelController precedent).
+## THE MOVE VERB IS A TYPED COLLABORATOR, not a Callable — the drawer's Move button `.connect()`s
+## straight to `TargetingController.begin_move_band`, which owns the `_pending_move_band` state and the
+## banner (the targeting machinery, with three other modes). `_is_player_unit` is a trivial private COPY
+## (the SelectionCardController / BandPanelController precedent).
 ##
 ## THE FIT PATH IS THE HIGH-RISK PIECE. `fit_subject_drawer` does `await _host.get_tree().process_frame`
 ## — a `RefCounted` has no `get_tree()`, so the frame wait is threaded through the injected HOST node
@@ -48,9 +47,9 @@ var _banddetail: BandDetailLines = null
 # The HUD CanvasLayer — a `RefCounted` has no `get_tree()`, so the fit's frame wait goes through it.
 var _host: Node = null
 
-# --- The one retained HudLayer helper, injected (see the class header) ---
-# Only ever `.connect()`ed to a Move button, never `.call()`ed, so a plain Callable field suffices.
-var _on_move_band_pressed: Callable
+# --- The command-targeting cluster (see the class header) ---
+# The drawer's Move button `.connect()`s straight to `_targeting.begin_move_band`.
+var _targeting: TargetingController = null
 
 # --- Scene nodes (handed in by HudLayer; they keep their `@onready` there — a `%Name` node loses
 #     `unique_name_in_owner` if reparented, so the nodes stay put and the controller only writes them) ---
@@ -78,7 +77,7 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
         subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
-        on_move_band_pressed: Callable) -> void:
+        targeting: TargetingController) -> void:
     _selection = selection
     _band_labor = band_labor
     _selectioncard = selectioncard
@@ -94,7 +93,7 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
-    _on_move_band_pressed = on_move_band_pressed
+    _targeting = targeting
 
 ## Player-faction check for a roster/drawer band (a trivial private copy of HudLayer's, the
 ## SelectionCardController / BandPanelController precedent — a one-line predicate is not worth a Callable).
@@ -414,7 +413,7 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
 ## `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
 ## exclusive on the selected occupant, so the fallback path's own Orders Move is never doubled.
 ##
-## Wired straight to `_on_move_band_pressed`, which resolves through `_resolve_assign_band()` and so
+## Wired straight to `_targeting.begin_move_band`, which resolves through `_resolve_assign_band()` and so
 ## already targets the band selected in THIS list — the whole point on a hex carrying several.
 ## `Clear all` is deliberately NOT here: it returns every worker to idle, a heavier action that
 ## belongs beside the labor allocation it clears.
@@ -439,7 +438,7 @@ func _make_band_move_actions() -> HBoxContainer:
     move_btn.text = HudSelectionVocab.MOVE_BAND_BUTTON_TEXT
     HudStyle.apply_button(move_btn, "ghost")
     move_btn.tooltip_text = HudSelectionVocab.MOVE_BAND_BUTTON_TOOLTIP
-    move_btn.pressed.connect(_on_move_band_pressed)
+    move_btn.pressed.connect(_targeting.begin_move_band)
     actions.add_child(move_btn)
     return actions
 
@@ -466,7 +465,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     move_btn.text = "Move"
     HudStyle.apply_button(move_btn, "ghost")
     move_btn.tooltip_text = "Send the expedition onward, then click a target tile."
-    move_btn.pressed.connect(_on_move_band_pressed)
+    move_btn.pressed.connect(_targeting.begin_move_band)
     actions.add_child(move_btn)
     # Already homeward-bound: the button reads its state ("Returning", disabled) rather than a
     # mysterious grayed-out "Recall". Otherwise it's an enabled "Recall" that folds the party home.

@@ -653,7 +653,7 @@ func _ready() -> void:
 	# State M2 — QUARRY targeting: the party compose sheet asks for a herd, and the map glows the
 	# VALID ones. A hunting party is for game the band cannot work from home, so only a herd strictly
 	# beyond the band's `hunt_reach` qualifies — carried on the targeting info as `min_distance`, the
-	# render-side mirror of `Hud._is_expedition_quarry`. Both herds here are huntable and visible;
+	# render-side mirror of `TargetingController.is_expedition_quarry`. Both herds here are huntable and visible;
 	# ONLY the far one may wear the pulsing ring. A ring on the near herd would promise a target the
 	# pick refuses.
 	_map.set_fow_enabled(false)

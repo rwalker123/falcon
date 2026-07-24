@@ -20,16 +20,14 @@ extends RefCounted
 ## injected?" (`_refresh_disclosure_hosts` and `_render_occupant_drawer`, which forks the band detail
 ## into the dock when one is), so they ask `has_panel()` instead of holding the node.
 ##
-## THE BOUNDARY BACK TO `HudLayer` IS SIX CALLABLES, each retained there for a reason the
+## THE BOUNDARY BACK TO `HudLayer` IS TWO CALLABLES, each retained there for a reason the
 ## "an injection you still have to hold is relocated, not eliminated" test settles:
 ##   • `_emit_assign_labor` — owns the `assign_labor_requested` emit, the optimistic pending write and
 ##     `_after_pending_change()`. So `assign_labor` stays INDIRECT here, while the three commands with
 ##     no other emitter (`cancel_order` / `send_hunt_expedition` / `recall_expedition`) are signals.
 ##   • `_herd_label_for_id` — the herd vocabulary, also read by the targeting banner + command feed.
-##   • `_on_send_expedition_pressed` + the QUARRY TRIO (`_on_pick_quarry_pressed` /
-##     `_cancel_pending_pick_quarry` / `_is_expedition_quarry`) — HudLayer's targeting machinery, which
-##     has three other modes and its own `_pending_*` state. Bundling the trio behind a façade was
-##     considered and rejected: `HudLayer` would still construct it from the same three Callables.
+## The send-expedition + quarry (begin / cancel / eligibility) verbs the parties zone drives are no
+## longer four Callables into HudLayer — they are a typed `TargetingController` collaborator now.
 ##
 ## Everything else arrives as a collaborator: the two state models, the selection card (roster lookup +
 ## pinning, for the map-focus routing, and the one selection read the vitals rows need —
@@ -69,15 +67,14 @@ var _banddetail: BandDetailLines = null
 # The HUD CanvasLayer, so this RefCounted has a node to parent the confirm dialog into.
 var _host: Node = null
 
-# --- The six retained HudLayer helpers, injected as Callables (see the class header) ---
+# --- The two retained HudLayer helpers, injected as Callables (see the class header) ---
 # Each is reached through a typed adapter below rather than called raw: `Callable.call` returns
 # `Variant`, which would push an untyped value into every consumer here.
 var _emit_assign_labor_fn: Callable
 var _herd_label_for_id_fn: Callable
-var _on_send_expedition_pressed_fn: Callable
-var _on_pick_quarry_pressed_fn: Callable
-var _cancel_pending_pick_quarry_fn: Callable
-var _is_expedition_quarry_fn: Callable
+# The command-targeting cluster. The send-expedition + quarry (begin/cancel/eligibility) verbs the
+# parties zone drives now live here, not behind Callables into HudLayer.
+var _targeting: TargetingController = null
 
 # --- Owned state (moved off HudLayer) ---
 # The dockable Band/City command center (docs/plan_band_city_dock.md §3), injected by Main through
@@ -120,8 +117,7 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
         banddetail: BandDetailLines, host: Node,
         emit_assign_labor: Callable, herd_label_for_id: Callable,
-        on_send_expedition_pressed: Callable, on_pick_quarry_pressed: Callable,
-        cancel_pending_pick_quarry: Callable, is_expedition_quarry: Callable) -> void:
+        targeting: TargetingController) -> void:
     _band_labor = band_labor
     _compose = compose
     _selectioncard = selectioncard
@@ -130,12 +126,9 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _host = host
     _emit_assign_labor_fn = emit_assign_labor
     _herd_label_for_id_fn = herd_label_for_id
-    _on_send_expedition_pressed_fn = on_send_expedition_pressed
-    _on_pick_quarry_pressed_fn = on_pick_quarry_pressed
-    _cancel_pending_pick_quarry_fn = cancel_pending_pick_quarry
-    _is_expedition_quarry_fn = is_expedition_quarry
+    _targeting = targeting
 
-# ---- Typed adapters over the six injected HudLayer helpers -------------------------------------
+# ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
 ## the optimistic pending-labor write and `_after_pending_change()`.
@@ -147,26 +140,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## the command feed from it.
 func _herd_label_for_id(herd_id: String) -> String:
     return _herd_label_for_id_fn.call(herd_id)
-
-## Outfit a scouting party and enter TILE-targeting for its destination. Retained on HudLayer with the
-## `_pending_send_expedition` state and the three other targeting modes.
-func _on_send_expedition_pressed(band: Dictionary, party_workers: int) -> void:
-    _on_send_expedition_pressed_fn.call(band, party_workers)
-
-## Enter HERD-targeting so the next map click names the hunting party's quarry. Retained on HudLayer
-## with `_pending_pick_quarry`.
-func _on_pick_quarry_pressed(band: Dictionary) -> void:
-    _on_pick_quarry_pressed_fn.call(band)
-
-## Abandon an in-flight quarry pick (the chosen quarry, if any, stays chosen). Retained on HudLayer
-## with the targeting refresh it drives.
-func _cancel_pending_pick_quarry() -> void:
-    _cancel_pending_pick_quarry_fn.call()
-
-## Is `herd` a valid quarry for a DETACHED party from `band` (strictly beyond its hunt reach)? THE
-## single definition, retained on HudLayer where the pick and MapView's glow also read it.
-func _is_expedition_quarry(band: Dictionary, herd: Dictionary) -> bool:
-    return bool(_is_expedition_quarry_fn.call(band, herd))
 
 ## Player-faction check for a band (a trivial private copy of HudLayer's, the SelectionCardController
 ## precedent — a one-line predicate is not worth a Callable).
@@ -1228,7 +1201,7 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     confirm.tooltip_text = HudComposeVocab.SEND_EXPEDITION_HINT
     confirm.pressed.connect(func() -> void:
         _close_party_compose()
-        _on_send_expedition_pressed(band, _send_expedition_count))
+        _targeting.begin_send_expedition(band, _send_expedition_count))
     sheet.add_child(confirm)
     return sheet
 
@@ -1244,7 +1217,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
     # should not make.
     var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _is_expedition_quarry(band, herd):
+    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
         herd = {}
         _compose.clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
@@ -1345,7 +1318,7 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
         ]
         HudStyle.apply_button(pick, "ghost")
-    pick.pressed.connect(func() -> void: _on_pick_quarry_pressed(band))
+    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band))
     row.add_child(pick)
     return row
 
@@ -1363,7 +1336,7 @@ func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
     _compose.clear_party_quarry()
-    _cancel_pending_pick_quarry()
+    _targeting.cancel_pick_quarry()
     rerender()
 
 # ---- badges -----------------------------------------------------------------

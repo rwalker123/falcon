@@ -237,20 +237,13 @@ var _banddetail: BandDetailLines = null
 
 # The authoritative snapshot turn, the grid scalars, and the optimistic pending-labor overlay all
 # live on `_band_labor` (`current_turn()` / `grid_width()` / `grid_height()` / `pending_labor()`).
-# Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the
-# band dict whose move is being targeted.
-var _pending_move_band: Dictionary = {}
-# Send-expedition targeting: the pending expedition-launch tile pick. {} when inactive. Holds the
-# resident band being outfitted plus the chosen party size (mirrors `_pending_move_band`).
-var _pending_send_expedition: Dictionary = {}
-# Quarry-pick targeting: the pending HERD pick for the party compose sheet (the click resolves to a
-# huntable herd on the clicked hex, not a tile). {} when inactive. It carries only the band — party
-# size and policy are chosen in the sheet AFTER the quarry, which is what the pick is for.
-var _pending_pick_quarry: Dictionary = {}
 # The forage / hunt / party compose state (the dialed worker counts, policies, crop, actor bands, the
 # party's quarry and the two autofill one-shots) lives on `_compose` — see `ComposeState`.
-var _targeting_banner: PanelContainer = null
-var _targeting_banner_label: RichTextLabel = null
+# The COMMAND-TARGETING cluster (HUD decomposition): the three pending flows (move-band /
+# send-expedition / pick-quarry), the floating banner, and the dispatch. It emits its OWN signals;
+# HudLayer relays each. HudLayer keeps thin reflective delegators (`is_targeting_active` /
+# `cancel_active_targeting` / `try_dispatch`). Constructed AFTER `_drawercompose` + BEFORE `_bandpanel`.
+var _targeting: TargetingController = null
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
 var left_dock: PanelDock
@@ -280,8 +273,8 @@ var _bandpanel: BandPanelController = null
 # The selection drawer's RENDER DISPATCH (HUD decomposition Phase 2c-3): the one-drawer land/occupant
 # dispatch, the land-drawer terrain-line producer, the `%AllocationPanel` occupant/expedition/band-move
 # branches, and the height-capping fit path. HudLayer keeps the reflectively-reached `_render_selection_panel`
-# and the two-host `_refresh_disclosure_hosts` calling in, and `_on_move_band_pressed` (the one injection,
-# targeting machinery). Constructed AFTER `_bandpanel` — it dispatches into it and `_drawercompose`.
+# and the two-host `_refresh_disclosure_hosts` calling in, and `_targeting` (its Move button connects to
+# `begin_move_band`). Constructed AFTER `_bandpanel` — it dispatches into it and `_drawercompose`.
 var _drawer: SubjectDrawerController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
@@ -334,6 +327,19 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _drawercompose.extend_pen_requested.connect(
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
+    # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
+    # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
+    # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
+    # populated by the time a quarry is picked. It emits its OWN signals; HudLayer relays each (the
+    # controller never emits a HudLayer signal). Handed the HUD CanvasLayer as the host it parents the
+    # banner into (a RefCounted can't).
+    _targeting = TargetingController.new(
+        _band_labor, _compose, _drawercompose, _command_feed, self,
+        _resolve_assign_band, _after_pending_change, func() -> void: _bandpanel.rerender())
+    _targeting.targeting_changed.connect(func(info: Dictionary) -> void: targeting_changed.emit(info))
+    _targeting.move_band_requested.connect(func(payload: Dictionary) -> void: move_band_requested.emit(payload))
+    _targeting.send_expedition_requested.connect(
+        func(payload: Dictionary) -> void: send_expedition_requested.emit(payload))
     # The detail-row disclosure cluster (the Food/Morale carets + the breakdown popover they open).
     # It owns that cluster's ONLY `add_child`, so it is handed the HUD CanvasLayer as the host it
     # parents the popover into (the `TurnOrbController` pattern), plus `_refresh_disclosure_hosts` —
@@ -354,8 +360,7 @@ func _ready() -> void:
     # relays onto the HudLayer signal Main connects to.
     _bandpanel = BandPanelController.new(
         _band_labor, _compose, _selectioncard, _disclosures, _banddetail, self,
-        _emit_assign_labor, _herd_label_for_id, _on_send_expedition_pressed, _on_pick_quarry_pressed,
-        _cancel_pending_pick_quarry, _is_expedition_quarry)
+        _emit_assign_labor, _herd_label_for_id, _targeting)
     _bandpanel.cancel_order_requested.connect(
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.send_hunt_expedition_requested.connect(
@@ -370,11 +375,11 @@ func _ready() -> void:
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
     # HUD CanvasLayer as the host its fit awaits a frame through (a RefCounted has no `get_tree()`), the
     # drawer scene nodes it writes (kept `@onready` here — a `%Name` node loses `unique_name_in_owner`
-    # if reparented), and the one HudLayer helper that keeps a caller on this side, `_on_move_band_pressed`.
+    # if reparented), and the targeting controller whose `begin_move_band` its Move button connects to.
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        subject_body, subject_scroll, left_dock_scroll, _on_move_band_pressed)
+        subject_body, subject_scroll, left_dock_scroll, _targeting)
     _load_ui_balance_config()
     _connect_zoom_rail()
     _setup_tooltip()
@@ -401,7 +406,6 @@ func _ready() -> void:
     if stockpile_title != null:
         stockpile_title.text = "Stockpiles"
     _apply_hud_style()
-    _ensure_targeting_banner()
     _setup_build_overlay()
     # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
     _disclosures.wire_label(occupant_detail)
@@ -435,165 +439,16 @@ func _apply_hud_style() -> void:
     if victory_panel != null:
         victory_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
 
-## Floating targeting banner, pinned to the top-centre of the map. Shown only
-## while a command is choosing its target; it names the command + what to click
-## next and offers Cancel. This is the primary targeting feedback — it replaces
-## the easy-to-miss "select a band…" line buried in the selection panel.
-func _ensure_targeting_banner() -> void:
-    if _targeting_banner != null:
-        return
-    var center := CenterContainer.new()
-    center.name = "TargetingBannerCenter"
-    center.anchor_left = 0.0
-    center.anchor_right = 1.0
-    center.anchor_top = 0.0
-    center.anchor_bottom = 0.0
-    center.offset_top = 12.0
-    # Anchored to the top edge with zero anchored height; grow downward so the
-    # container takes its child's (the banner's) height instead of a 0/negative
-    # rect that could clip it.
-    center.grow_vertical = Control.GROW_DIRECTION_END
-    center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    layout_root.add_child(center)
-
-    var banner := PanelContainer.new()
-    banner.name = "TargetingBanner"
-    banner.add_theme_stylebox_override("panel", HudStyle.banner_stylebox())
-    banner.visible = false
-    center.add_child(banner)
-
-    var hbox := HBoxContainer.new()
-    hbox.add_theme_constant_override("separation", 12)
-    banner.add_child(hbox)
-
-    var reticle := Label.new()
-    reticle.text = "⌖"  # ⌖ target reticle
-    reticle.add_theme_color_override("font_color", HudStyle.SIGNAL)
-    reticle.add_theme_font_size_override("font_size", 20)
-    reticle.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    hbox.add_child(reticle)
-
-    var label := RichTextLabel.new()
-    label.name = "TargetingLabel"
-    label.bbcode_enabled = true
-    label.fit_content = true
-    label.scroll_active = false
-    label.autowrap_mode = TextServer.AUTOWRAP_OFF
-    label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
-    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    hbox.add_child(label)
-
-    var cancel := Button.new()
-    cancel.text = "Cancel  (Esc)"
-    HudStyle.apply_button(cancel, "ghost")
-    cancel.pressed.connect(cancel_active_targeting)
-    hbox.add_child(cancel)
-
-    _targeting_banner = banner
-    _targeting_banner_label = label
-
-## Recompute targeting state from the pending flows, update the banner, and
-## notify listeners (Main -> MapView). Call after any pending change.
-func _refresh_targeting() -> void:
-    _ensure_targeting_banner()
-    var info := _current_targeting_info()
-    if info.is_empty():
-        _targeting_banner.visible = false
-    else:
-        _targeting_banner.visible = true
-        _targeting_banner_label.text = _targeting_banner_bbcode(info)
-    emit_signal("targeting_changed", info)
-
-## True while any command-targeting flow is armed (move-band / send-expedition /
-## send-hunt-expedition). The ESC pause menu (Main._unhandled_input) checks this so it
-## yields ESC to MapView's targeting-cancel path instead of stealing it to open the menu.
+## True while any command-targeting flow is armed. Reflective delegator: Main._unhandled_input probes it
+## BY NAME so Esc yields to MapView's targeting-cancel, and a has_method probe fails SILENTLY — so it must
+## resolve on the HUD node.
 func is_targeting_active() -> bool:
-    return not _current_targeting_info().is_empty()
+    return _targeting.is_targeting_active()
 
-## The active targeting descriptor, or {} when nothing is targeting. A pending
-## harvest/hunt needs a band; a pending scout needs a tile.
-## The active targeting descriptor, or {} when nothing is targeting. Move-band is the
-## one remaining targeting flow (the single-task Harvest/Hunt/Scout flows were retired
-## with the labor-allocation model): it needs a destination tile.
-func _current_targeting_info() -> Dictionary:
-    if not _pending_move_band.is_empty():
-        var pos: Array = Array(_pending_move_band.get("pos", []))
-        var ox := int(pos[0]) if pos.size() == 2 else int(_pending_move_band.get("current_x", -1))
-        var oy := int(pos[1]) if pos.size() == 2 else int(_pending_move_band.get("current_y", -1))
-        return {
-            "active": true,
-            "command": "move",
-            "need": "tile",
-            "origin_x": ox,
-            "origin_y": oy,
-            "context_label": String(_pending_move_band.get("id", "Band")),
-        }
-    if not _pending_send_expedition.is_empty():
-        var band: Dictionary = _pending_send_expedition.get("band", {})
-        var pos: Array = Array(band.get("pos", []))
-        var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
-        var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
-        return {
-            "active": true,
-            "command": "expedition",
-            "need": "tile",
-            "origin_x": ox,
-            "origin_y": oy,
-            "context_label": "%s · %d" % [
-                String(band.get("id", "Band")), int(_pending_send_expedition.get("party_workers", 0)),
-            ],
-        }
-    if not _pending_pick_quarry.is_empty():
-        var band: Dictionary = _pending_pick_quarry.get("band", {})
-        var pos: Array = Array(band.get("pos", []))
-        var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
-        var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
-        # `need: "herd"` is what makes MapView glow the huntable herds. No party size in the label —
-        # none is chosen yet; the sheet asks for it once the quarry is known.
-        # `min_distance`: a valid target must lie STRICTLY farther than this from the origin — the
-        # render-side half of `_is_expedition_quarry`, so the halo cannot offer a herd the pick will
-        # refuse. Every other targeting mode omits the key and MapView defaults it to 0, which admits
-        # everything and so changes nothing for move/scout-tile targeting.
-        return {
-            "active": true,
-            "command": "quarry",
-            "need": "herd",
-            "origin_x": ox,
-            "origin_y": oy,
-            "min_distance": int(band.get("hunt_reach", 0)),
-            "context_label": String(band.get("id", "Band")),
-        }
-    return {}
-
-func _targeting_banner_bbcode(info: Dictionary) -> String:
-    var cmd := String(info.get("command", "")).to_upper()
-    var need := String(info.get("need", ""))
-    var ctx := String(info.get("context_label", ""))
-    var loc := ""
-    if need == "band":
-        loc = "  [color=#%s](%d, %d)[/color]" % [
-            HudStyle.INK_DIM_HEX, int(info.get("origin_x", 0)), int(info.get("origin_y", 0)),
-        ]
-    var instruction := ""
-    if need == "band":
-        instruction = "click a band to send it here"
-    elif cmd == "MOVE":
-        instruction = "click a destination tile"
-    elif cmd == "EXPEDITION":
-        instruction = "click a target tile to scout"
-    elif cmd == "QUARRY":
-        instruction = "click on a herd to hunt"
-    else:
-        instruction = "click a tile to survey"
-    return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
-        HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
-    ]
-
-## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
+## Cancel the active targeting (banner Cancel / Esc / right-click all route here). Reflective delegator:
+## Main relays MapView's targeting_cancel_requested to it BY NAME.
 func cancel_active_targeting() -> void:
-    _cancel_pending_move_band()
-    _cancel_pending_send_expedition()
-    _cancel_pending_pick_quarry()
+    _targeting.cancel_active_targeting()
 
 ## Bottom-CENTRE version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. It lives centre-bottom rather than
@@ -916,163 +771,6 @@ func close_compose_sheet() -> void:
     _drawercompose.close_compose_sheet()
 
 
-## Move-band: enter tile-targeting; the destination click emits move_band_requested.
-func _on_move_band_pressed() -> void:
-    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
-    close_compose_sheet()
-    var band := _resolve_assign_band()
-    if band.is_empty():
-        return
-    _pending_move_band = band.duplicate(true)
-    _refresh_targeting()
-
-func _cancel_pending_move_band() -> void:
-    if _pending_move_band.is_empty():
-        return
-    _pending_move_band = {}
-    _refresh_targeting()
-
-func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
-    if _pending_move_band.is_empty() or tile_info.is_empty():
-        return
-    var x := int(tile_info.get("x", -1))
-    var y := int(tile_info.get("y", -1))
-    if x < 0 or y < 0:
-        return
-    var band := _pending_move_band
-    var bits := int(band.get("entity", -1))
-    emit_signal("move_band_requested", {
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "band": bits,
-        "x": x,
-        "y": y,
-    })
-    _pending_move_band = {}
-    _refresh_targeting()
-    # Optimistic feedback: mark the destination pending until a newer-turn snapshot confirms.
-    _band_labor.record_pending_move(bits, x, y)
-    _after_pending_change()
-
-## Send-expedition: outfit `band` with `party_workers` and enter tile-targeting; the next tile
-## click emits send_expedition_requested. Mirrors the move-band pending flow.
-func _on_send_expedition_pressed(band: Dictionary, party_workers: int) -> void:
-    # Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
-    close_compose_sheet()
-    if band.is_empty() or party_workers <= 0:
-        return
-    _pending_send_expedition = {"band": band.duplicate(true), "party_workers": party_workers}
-    _refresh_targeting()
-
-func _cancel_pending_send_expedition() -> void:
-    if _pending_send_expedition.is_empty():
-        return
-    _pending_send_expedition = {}
-    _refresh_targeting()
-
-func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
-    if _pending_send_expedition.is_empty() or tile_info.is_empty():
-        return
-    var x := int(tile_info.get("x", -1))
-    var y := int(tile_info.get("y", -1))
-    if x < 0 or y < 0:
-        return
-    var band: Dictionary = _pending_send_expedition.get("band", {})
-    emit_signal("send_expedition_requested", {
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "band": int(band.get("entity", -1)),
-        "party_workers": int(_pending_send_expedition.get("party_workers", 0)),
-        "x": x,
-        "y": y,
-    })
-    _pending_send_expedition = {}
-    _refresh_targeting()
-
-## Quarry PICK: enter HERD-targeting so the next map click names the herd the compose sheet is aimed
-## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Quarry row in,
-## then asks for policy and party size against that herd. (`_pending_send_hunt_expedition`, which used
-## to mean "party is outfitted, now click a herd and send it", was repurposed into this.)
-func _on_pick_quarry_pressed(band: Dictionary) -> void:
-    # Targeting asks the player to click the map — the tile panel's FLOATING sheet over it is a trap
-    # (§15). The DOCKED party sheet is not floating and deliberately stays open.
-    close_compose_sheet()
-    if band.is_empty():
-        return
-    _pending_pick_quarry = {"band": band.duplicate(true)}
-    _refresh_targeting()
-
-func _cancel_pending_pick_quarry() -> void:
-    if _pending_pick_quarry.is_empty():
-        return
-    # Only the PICK is cancelled: a quarry chosen earlier stays chosen, so Esc during a re-pick
-    # returns the player to the form they already had rather than emptying it.
-    _pending_pick_quarry = {}
-    _refresh_targeting()
-
-func _try_pick_quarry(tile_info: Dictionary) -> void:
-    if _pending_pick_quarry.is_empty() or tile_info.is_empty():
-        return
-    # Resolve the target from the clicked hex's herds (herd markers occupy the hex, so a click on a
-    # herd lands here). Pick the first huntable herd on the tile; if none, keep targeting and nudge.
-    var herd := _huntable_herd_on_tile(tile_info)
-    var fauna_id := String(herd.get("id", "")).strip_edges()
-    if fauna_id == "":
-        _note_command_feed("Hunt expedition", "No huntable herd there — click on a herd.")
-        return
-    # A herd INSIDE the band's hunt reach is a local hunt, not a party's job. Refuse it here and stay
-    # in targeting, exactly like the miss above — and say why, since the reach split is invisible on
-    # the map. (MapView doesn't glow these, so this is the belt to that braces.)
-    var band: Dictionary = _pending_pick_quarry.get("band", {})
-    if not _is_expedition_quarry(band, herd):
-        var band_tile := SourceForecast.band_tile(band)
-        _note_command_feed("Hunt expedition", HudComposeVocab.QUARRY_WITHIN_REACH_FORMAT % [
-            SourceForecast.herd_display_name(herd),
-            _hex_distance_wrapped(band_tile.x, band_tile.y,
-                int(herd.get("x", -1)), int(herd.get("y", -1))),
-            String(band.get("id", "this band")),
-            int(band.get("hunt_reach", 0)),
-        ])
-        return
-    # NO no-surplus check here: no policy is chosen yet, so that verdict is unknowable. It lives
-    # entirely on the sheet's Send button, which has every input.
-    _compose.set_party_quarry(fauna_id)
-    # Fill the party to this herd's max-useful cap for the default policy, same one-shot a policy
-    # click sets. Party size is meaningless until the quarry is known (the useful count is a property
-    # of the HERD), so picking one is the first moment we CAN default it — "give me everyone this raid
-    # can use". Consumed on the next render before the clamp; a −/+ tick still overrides freely.
-    _compose.arm_party_autofill()
-    _pending_pick_quarry = {}
-    _refresh_targeting()
-    _bandpanel.rerender()
-
-## Is `herd` a valid quarry for a DETACHED party from `band`? A hunting party exists precisely for
-## game the band cannot work from home, so the answer is the SAME split the herd drawer makes when it
-## chooses between "Assign Local Hunt" and the expedition branch: strictly beyond the band's
-## `hunt_reach`, wrap-aware, measured from the band's own tile. THE single definition — the pick, the
-## sheet's re-validation and MapView's glow all route through it (the map must never promise a target
-## the pick refuses). An unknown distance (missing tiles) is NOT a quarry, mirroring the drawer's
-## fallback to the local hunt.
-func _is_expedition_quarry(band: Dictionary, herd: Dictionary) -> bool:
-    var band_tile := SourceForecast.band_tile(band)
-    var distance := _hex_distance_wrapped(
-        band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
-    return distance >= 0 and distance > int(band.get("hunt_reach", 0))
-
-
-## The first huntable herd DICT on a hex's tile_info, or {} when there is none. The target click
-## resolves its id from this; the hovered-herd forecast additionally needs the herd's exported
-## `hunt_policy_ceilings`, so both read the same herd through one helper.
-func _huntable_herd_on_tile(tile_info: Dictionary) -> Dictionary:
-    var herds_variant: Variant = tile_info.get("herds", [])
-    if not (herds_variant is Array):
-        return {}
-    for herd_variant in (herds_variant as Array):
-        if herd_variant is Dictionary and bool((herd_variant as Dictionary).get("huntable", false)):
-            var herd: Dictionary = herd_variant as Dictionary
-            if String(herd.get("id", "")).strip_edges() != "":
-                return herd
-    return {}
-
-
 ## Map double-click convenience (Main forwards `MapView.herd_quick_hunt_requested`): assign
 ## ALL of the player band's currently-idle workers to hunt `herd_id` at the default Sustain
 ## policy. A no-op (with a command-feed note) when there's no player band or no idle workers,
@@ -1165,16 +863,12 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     close_compose_sheet()
     _selection.select_tile(tile_info.duplicate(true) if tile_info is Dictionary else {})
     _render_selection_panel(_selection.tile_info(), {}, {})
-    _try_dispatch_pending_move_band(_selection.tile_info())
-    _try_dispatch_pending_send_expedition(_selection.tile_info())
-    _try_pick_quarry(_selection.tile_info())
+    _targeting.try_dispatch(_selection.tile_info())
 
 func notify_hex_selected(tile_info: Dictionary) -> void:
     if tile_info.is_empty():
         return
-    _try_dispatch_pending_move_band(tile_info)
-    _try_dispatch_pending_send_expedition(tile_info)
-    _try_pick_quarry(tile_info)
+    _targeting.try_dispatch(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
