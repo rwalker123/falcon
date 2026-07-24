@@ -367,6 +367,19 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FODDER, fodder);
                             band_fodder_inflow += fodder.to_f32();
                         }
+                        // **The TRADE-GOODS account (Flora Roster F4).** The SAME managed harvest, routed by the yield
+                        // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
+                        // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
+                        // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
+                        // FactionInventory, exactly as the Market-forage arm's wild sale does.
+                        let trade_production =
+                            field_trade_goods(patch, &labor.forage, &flora, mult_f);
+                        let trade_collection = workers as f32
+                            * managed_per_worker_trade(patch, &labor.forage, &flora, mult_f);
+                        let trade_goods = (trade_production.min(trade_collection)).round() as i64;
+                        if trade_goods > 0 {
+                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                        }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the

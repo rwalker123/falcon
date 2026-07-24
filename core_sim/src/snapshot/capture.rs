@@ -1475,6 +1475,20 @@ pub fn capture_snapshot(
                             &labor_config.forage,
                             FORECAST_OUTPUT_MULTIPLIER,
                         ),
+                        // **What a cash-crop Field of this plant would pay into the TRADE account**
+                        // (F4) — the exact trade twin, through the same `commit_trade_payoff` seam
+                        // the sim's `field_trade_goods` pays with, so the picker can show a cash
+                        // crop's value where `sow_yield_ratio` reads 0×. `0` for a staple/hay or a
+                        // plant that cannot Sow here.
+                        sow_trade_payoff: commit_trade_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        ),
                     }
                 })
                 .collect();

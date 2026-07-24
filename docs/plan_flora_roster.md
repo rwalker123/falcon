@@ -427,6 +427,20 @@ data shape**; it does not build market pricing. When the Market/yield-vector arc
 `yield.trade_goods_per_biomass` per species and can extend the vector to a per-good map without
 re-cutting the schema.
 
+> **F4 landed (supply side).** The **trade account now routes per-species** exactly as fodder does:
+> a Field's harvest credits `field_trade_goods` (biomass × the field rung's one rate dial ×
+> `species_trade_rate / wild_provisions_rate`) to the faction **`trade_goods` stockpile** — a
+> faction-level commodity, so unlike FOOD/FODDER it lands in `FactionInventory`, mirroring the Market
+> wild-sale arm. **No `role` branch**: a staple's `field_trade_goods` is the negligible flat token, a
+> cash crop's is dominant, all through one commodity-generic seam. The **wild Market path stays flat
+> and unchanged** — `field_trade_goods` deliberately does **not** apply the Market
+> `trade_goods_multiplier`, which is a Market-policy markup for wild commercial gathering, not a
+> managed harvest. Four cash crops ship — cotton (0.20) / flax (0.15) / tobacco (0.18) / tea (0.16),
+> playtest dials — hosting sowable **Floodplain** (so cash contests grain on real sowable ground) +
+> uplands, kept off AlluvialPlain/RiverDelta so their staples stay dominant on best country. The
+> picker quote is `commit_trade_payoff` → `FloraShareInfo.sowTradePayoff`. Client half (decode +
+> render the cash row/badge) remains.
+
 ---
 
 ## 7. What this does *not* change
@@ -469,8 +483,11 @@ block carries its weight, then mass-fill.**
   balance* — measure it in a live campaign.
 - **F3 — Fodder, both halves.** Fodder store, the fodder Field, `Foddering` (2007), the `K_pen`
   term. Measure: a pen on thin pasture must be *survivable but expensive*, never free.
-- **F4 — Cash crops.** Trade-dominant vectors, the land-use tension, per-species trade rate replacing
-  the flat one.
+- **F4 — Cash crops. LANDED.** Trade-dominant vectors, the land-use tension, per-species trade rate
+  replacing the flat one — the exact twin of F3's fodder work. `field_trade_goods` routes the vector's
+  trade component to the faction `trade_goods` stockpile (`commit_trade_payoff` →
+  `FloraShareInfo.sowTradePayoff`); the wild Market path stays flat. Four crops (cotton/flax/tobacco/
+  tea) on sowable Floodplain + uplands. Client half (decode + render) remains.
 - **F5 — Mass-fill + client.** The full roster across all non-zero biomes, icons, labels, tile-card
   composition readout.
 

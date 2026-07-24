@@ -283,6 +283,79 @@
         "trade_goods_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
+    },
+    "cotton": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6). A trade-DOMINANT species: its yield vector pays into the trade-goods account, NOT provisions (cotton is worthless as food — provisions_per_biomass is a SAFE, intended 0.0: patch_species_quality divides by the WILD provisions rate, never the species rate, so a cash Field yields exactly 0 food with no divide-by-zero, and the vector's trade component keeps YieldVector::pays_something() true) and NOT fodder. `role: cash` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a cotton Field's harvest credits the faction trade_goods stockpile, a grain Field's the FOOD store, a hay Field's the FODDER store, through the SAME commodity-generic code — F4 is the exact twin of F3's fodder work). `cultivation_ceiling: field` because you SOW it — an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts Floodplain — RIVER-VALLEY SOWABLE FARMLAND (capacity 205 >= the 195 field-rung floor, so it is one of the ~49 sowable tiles) — so it COMPETES WITH GRAIN AND HAY for the same scarce sowable ground: calories OR herd-ceiling OR cash from one river-valley tile, the sharp 'pays no calories' land-use tension. It is kept OFF AlluvialPlain/RiverDelta so those baskets' staples (wild_emmer / reed_and_root) stay dominant on their best country (the S1 commit-worthiness bar, core_sim/tests/flora_roster.rs + flora_commitment.rs); RollingHills adds a non-sowable upland presence. Adding it DILUTES the existing shares on its hosted biomes (the F1 normalization) — economy-neutral at the wild rung by construction, and only a patch a crew COMMITS to cotton ever reads its vector. `trade_goods_per_biomass` (0.20) is a PLAYTEST DIAL: raise it to make cash cropping more tempting against food, lower it if cash crowds out staples.",
+      "display_name": "Cotton Fields",
+      "plural": "cotton",
+      "adjective": "cotton",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "Floodplain": 0.22,
+        "RollingHills": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.2
+      },
+      "regrowth_rate": 0.25
+    },
+    "flax": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — the trade twin of cotton. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — see the cotton comment) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay on sowable Floodplain: cash OR calories OR herd-ceiling from one river-valley tile. Hosts Floodplain (sowable) + RollingHills (upland), kept off AlluvialPlain/RiverDelta so the staples stay dominant there. `trade_goods_per_biomass` (0.15) is a PLAYTEST DIAL — deliberately below cotton's 0.20 so cotton is the richer cash crop and flax the marginal one.",
+      "display_name": "Flax Fields",
+      "plural": "flax",
+      "adjective": "flax",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "Floodplain": 0.18,
+        "RollingHills": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.15
+      },
+      "regrowth_rate": 0.25
+    },
+    "tobacco": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — same shape as cotton/flax. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — patch_species_quality divides by the WILD provisions rate, never the species rate) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay on sowable Floodplain (real river-deposit ground, so the land-use tension lands), plus a RollingHills upland presence. Kept off AlluvialPlain/RiverDelta so their staples stay dominant. Weights kept modest so the staples stay dominant in each basket. `trade_goods_per_biomass` (0.18) is a PLAYTEST DIAL.",
+      "display_name": "Tobacco Fields",
+      "plural": "tobacco",
+      "adjective": "tobacco",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "Floodplain": 0.15,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.18
+      },
+      "regrowth_rate": 0.25
+    },
+    "tea": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — same shape as cotton/flax/tobacco. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay on sowable Floodplain, and reaching upland/woodland baskets (RollingHills/MixedWoodland) cotton/flax do not. Kept off AlluvialPlain/RiverDelta so their staples stay dominant. Weights kept modest so staples stay dominant. `trade_goods_per_biomass` (0.16) is a PLAYTEST DIAL.",
+      "display_name": "Tea Gardens",
+      "plural": "tea",
+      "adjective": "tea",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "Floodplain": 0.12,
+        "RollingHills": 0.2,
+        "MixedWoodland": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.16
+      },
+      "regrowth_rate": 0.25
     }
   }
 }

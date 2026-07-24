@@ -735,9 +735,9 @@ mod tests {
         let config = FloraConfig::builtin();
         assert_eq!(
             config.species.len(),
-            14,
+            18,
             "13 broad staple families (12 keyed on biome + river_fish, the channel itself) + the F3 \
-             fodder crop hay_grass"
+             fodder crop hay_grass + the four F4 cash crops (cotton/flax/tobacco/tea)"
         );
         // The channel is named separately from the valley it cut — see `navigable_composition`.
         assert_eq!(
