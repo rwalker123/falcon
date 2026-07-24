@@ -49,7 +49,7 @@ const HERD_SPECIES := {
 # Take-policy glyphs (the extractive `LABOR_HUNT_POLICIES` set shared by forage + hunt, plus the two
 # INVESTMENT rungs — Cultivate is forage-only, Corral is hunt-only). ONE source of
 # truth, read by BOTH consumers: the Hud policy-picker buttons (`HudWidgets.build_policy_picker`) and the
-# map's worked-source yield labels (`MapView._draw_yield_label`), so a policy always reads the
+# map's worked-source yield labels (`BandOverlayRenderer._draw_yield_label`), so a policy always reads the
 # same on the panel and on the map. Sustain = take only the regrowth; Surplus = take more now,
 # accept a slow decline; Market = harvest for trade goods; Eradicate = strip it bare. Cultivate =
 # prepare the patch into a tended one (low yield while working, then a much higher tended yield);
