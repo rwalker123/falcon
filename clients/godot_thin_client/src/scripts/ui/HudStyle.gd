@@ -152,6 +152,45 @@ static func hairline_stylebox() -> StyleBoxFlat:
 	sb.bg_color = LINE_SOFT
 	return sb
 
+# ---- Band/City panel zone chrome -------------------------------------------
+# The bordered-card treatment the panel's standing-role cards and its work-inspector strip share, plus
+# the flat row backing the work board's rows draw. Geometry lives here beside the stylebox that reads
+# it, exactly as the nav-backing and chip blocks above do.
+const ROLE_CARD_PADDING := 6
+const ROLE_CARD_CORNER_RADIUS := 4
+const WORK_ROW_PADDING_H := 4
+const WORK_ROW_PADDING_V := 2
+
+## A standing-role CARD (Scout / Warrior): a bordered, rounded, slightly-raised panel. The border is
+## what makes a role read as "a standing role" rather than as one more worked source in a list.
+static func role_card_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = GROUND_2
+	sb.set_border_width_all(1)
+	sb.border_color = LINE
+	sb.set_corner_radius_all(ROLE_CARD_CORNER_RADIUS)
+	sb.content_margin_left = ROLE_CARD_PADDING
+	sb.content_margin_right = ROLE_CARD_PADDING
+	sb.content_margin_top = ROLE_CARD_PADDING
+	sb.content_margin_bottom = ROLE_CARD_PADDING
+	return sb
+
+## The work board's row backing: a SIGNAL wash while the row's inspector is open, fully transparent at
+## rest. Padding only — a row must draw at exactly `WORK_ROW_HEIGHT` or the page overflows its zone.
+static func work_row_stylebox(open: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = SIGNAL_WASH if open else Color(0.0, 0.0, 0.0, 0.0)
+	sb.content_margin_left = WORK_ROW_PADDING_H
+	sb.content_margin_right = WORK_ROW_PADDING_H
+	sb.content_margin_top = WORK_ROW_PADDING_V
+	sb.content_margin_bottom = WORK_ROW_PADDING_V
+	return sb
+
+## The inspector strip under a work-board / parties row — the role card's chrome, reused so a strip
+## and a card read as the same kind of raised surface.
+static func work_inspector_stylebox() -> StyleBoxFlat:
+	return role_card_stylebox()
+
 # ---- buttons ---------------------------------------------------------------
 static func _button_stylebox(bg: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()

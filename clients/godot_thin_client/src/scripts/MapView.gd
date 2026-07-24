@@ -1987,7 +1987,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# Age structure of THIS band (children / working / elders). Distinct from `working_age`
 			# above, which counts assignable workers — hence the `age_` prefix on all three.
 			# FRACTIONAL, like every other Scalar on this block: the decoder runs them through
-			# `fixed64_to_f64`, and truncating here zeroes every remainder, so `Hud._apportion_people`
+			# `fixed64_to_f64`, and truncating here zeroes every remainder, so `HudFormat.apportion_people`
 			# has nothing left to redistribute and the PEOPLE header undercounts the band.
 			"age_children": float(entry.get("age_children", 0.0)),
 			"age_working": float(entry.get("age_working", 0.0)),

@@ -4,9 +4,12 @@ class_name HudWidgets
 ##
 ## WHAT THIS IS. Every reusable Control the HUD builds out of raw Godot nodes and this project's own
 ## chrome vocabulary: the −/+ worker stepper in both its forms, the row labels and note/status parts
-## it composes from, the zone section head and its `⋯` menu, the take-policy picker, the dim
-## hint/section labels, the inline text link, the BBCode forecast readout — plus the two MUTATORS
-## (`compact`, `set_label_tooltip`) that fix up a Control someone else made.
+## it composes from, the zone CHROME (the column / block / plain-`Control` wrapper / child-clearing
+## primitives all three Band-panel zones and the flat fallback host are assembled from), the stacked
+## composition bar + its key (one primitive, two questions — PEOPLE and WORKFORCE), the zone section
+## head and its `⋯` menu, the take-policy picker, the dim hint/section labels, the inline text link,
+## the BBCode forecast readout — plus the two MUTATORS (`compact`, `set_label_tooltip`) that fix up a
+## Control someone else made.
 ##
 ## WHY IT IS ITS OWN FILE. These are called from FOUR clusters that are being split apart: the drawer's
 ## compose blocks, the Band panel's WORK zone, its PARTIES zone, and the selection card. Lifting the
@@ -23,8 +26,9 @@ class_name HudWidgets
 ## WHAT DELIBERATELY DID NOT MOVE. A factory that EMITS a HudLayer signal is not a widget factory —
 ## `_build_extend_pen_control` wires straight into `extend_pen_requested`, so it stays on `HudLayer`
 ## until it travels to `DrawerComposeController` with its diffing twins. So do the factories that read
-## HudLayer members (`_build_band_picker`, `_build_compose_open_button`) and the stylebox factories
-## (that is `HudStyle`'s remit).
+## HudLayer members (`_build_band_picker`, `_build_compose_open_button`). The stylebox factories are
+## `HudStyle`'s remit and now LIVE there (`role_card_stylebox` / `work_row_stylebox` /
+## `work_inspector_stylebox`) — a zone builder styles through `HudStyle`, never by hand.
 ##
 ## CONSTS STAY ON `HudLayer` and are read back as `HudLayer.X` — the established pattern
 ## `SelectionCardController` and `TopBarReadouts` already use. Word/format VOCABULARY lives next door in
@@ -288,6 +292,101 @@ static func forecast_label(bbcode: String) -> RichTextLabel:
     label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
     label.text = bbcode
     return label
+
+# ---- Zone chrome (the containers all three zones + the flat fallback host are built from) --------
+
+## The bar's height and its cell gap. Named here with `build_composition_bar`, their only reader.
+const COMPOSITION_BAR_HEIGHT := 9.0
+const COMPOSITION_BAR_SEPARATION := 2
+## A segment's stretch ratio floor, so a 1-person segment is still a visible sliver rather than 0px.
+const COMPOSITION_MIN_RATIO := 1.0
+const COMPOSITION_SWATCH_SIZE := Vector2(8.0, 8.0)
+const COMPOSITION_SWATCH_SEPARATION := 4
+## The gap between a zone column's SECTIONS (blocks); the tighter within-block gap is
+## `HudLayer.ZONE_BLOCK_SEPARATION`, which has readers on both sides of this boundary.
+const ZONE_SECTION_SEPARATION := 12
+
+## A proportional stacked bar. `segments` are `{key, count, color, tooltip}`; zero-count segments are
+## dropped by the caller. Widths come from `size_flags_stretch_ratio`, so the bar fills its zone at
+## any width without any measuring. Shared by the band zone's PEOPLE and WORKFORCE blocks — one
+## stacked-bar primitive, two questions.
+static func build_composition_bar(segments: Array) -> HBoxContainer:
+    var bar := HBoxContainer.new()
+    bar.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
+    bar.add_theme_constant_override("separation", COMPOSITION_BAR_SEPARATION)
+    for segment_variant in segments:
+        var segment: Dictionary = segment_variant
+        var cell := ColorRect.new()
+        cell.color = segment.get("color", HudStyle.INK_FAINT)
+        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        cell.size_flags_stretch_ratio = maxf(float(segment.get("count", 0)), COMPOSITION_MIN_RATIO)
+        cell.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
+        cell.tooltip_text = String(segment.get("tooltip", ""))
+        cell.mouse_filter = Control.MOUSE_FILTER_STOP
+        bar.add_child(cell)
+    return bar
+
+## The key under a stacked bar: one `▪ <key> <count>` chip per segment. An `HFlowContainer` so a
+## narrow zone wraps the key rather than widening (the zone has a fixed width to respect).
+static func build_composition_key(segments: Array, trailing: Control = null) -> HFlowContainer:
+    var key := HFlowContainer.new()
+    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    key.add_theme_constant_override("h_separation", HudLayer.COMPOSITION_KEY_SEPARATION)
+    for segment_variant in segments:
+        var segment: Dictionary = segment_variant
+        var chip := HBoxContainer.new()
+        chip.add_theme_constant_override("separation", COMPOSITION_SWATCH_SEPARATION)
+        chip.tooltip_text = String(segment.get("tooltip", ""))
+        var swatch := ColorRect.new()
+        swatch.color = segment.get("color", HudStyle.INK_FAINT)
+        swatch.custom_minimum_size = COMPOSITION_SWATCH_SIZE
+        swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+        swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        chip.add_child(swatch)
+        var text := Label.new()
+        text.text = "%s %d" % [String(segment.get("key", "")), int(segment.get("count", 0))]
+        text.add_theme_font_size_override("font_size", HudLayer.COMPOSITION_KEY_FONT_SIZE)
+        text.add_theme_color_override("font_color", HudStyle.INK_DIM)
+        text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        chip.add_child(text)
+        key.add_child(chip)
+    if trailing != null:
+        key.add_child(trailing)
+    return key
+
+## A zone's content column: the VBox every zone builder fills.
+static func make_zone_column() -> VBoxContainer:
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", ZONE_SECTION_SEPARATION)
+    return col
+
+## A tight sub-block inside a zone (bar + key + cards belong together, closer than the zone's own
+## section spacing).
+static func make_zone_block() -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudLayer.ZONE_BLOCK_SEPARATION)
+    return block
+
+## Wrap a zone column in the plain `Control` the panel parents into its fixed-size zone host (the host
+## reports no minimum size, so the content must anchor itself — see BandCityPanel `_make_zone_host`).
+static func wrap_zone(content: VBoxContainer) -> Control:
+    var host := Control.new()
+    host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    host.add_child(content)
+    content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    return host
+
+## Detach-then-free a container's children. `queue_free` alone leaves them parented for the rest of
+## the frame, so a rebuild-in-place (the work zone's re-page) would briefly stack old rows under new.
+static func clear_children(node: Node) -> void:
+    for child in node.get_children():
+        node.remove_child(child)
+        child.queue_free()
 
 ## A zone section head: an uppercase title on the left, a dim readout on the right, and an optional
 ## trailing `⋯` menu button. The one head vocabulary all three zones use.

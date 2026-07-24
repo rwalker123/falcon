@@ -630,7 +630,7 @@ const FLORA_CROP_BREAK_EVEN_RATIO := 1.0
 # NOT budgeted for — the cut-off row is itself the "there is more below" affordance.
 const FLORA_CROP_ROW_HEIGHT := 22.0
 const FLORA_CROP_ROW_FONT_SIZE := WORK_ROW_FONT_SIZE
-const FLORA_CROP_ROW_PADDING_V := WORK_ROW_PADDING_V
+const FLORA_CROP_ROW_PADDING_V := HudStyle.WORK_ROW_PADDING_V
 # MEASURED, not chosen — and set so that NO SHIPPED BASKET EVER HIDES A CROP. The longest a tile can
 # carry today is 5 (a navigable hex blends the valley's basket with the channel's fishery), so at 5 the
 # whole basket is on screen and the player compares it rather than peering at it through a slot: a
@@ -820,9 +820,6 @@ const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
-# A food module whose kind is a game trail is HUNTED, not gathered — `FoodIcons.for_site` swaps in the
-# hunt glyph for it. Mirrors `MapView._draw_food_site`'s `kind == "game_trail"` test.
-const FOOD_SITE_KIND_GAME_TRAIL := "game_trail"
 # Appended to a clickable Current-actions row's tooltip: the row's LABEL is an inline link that jumps
 # the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
 # are band-wide roles with no tile, so their rows stay plain labels and never carry this.
@@ -908,9 +905,6 @@ const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would
 # when you need the kind; a prefix only ever tells you how to spell a key.
 const BARE_FORECAST_PREFIX := ""
 const FORAGE_FORECAST_PREFIX := "patch_"
-# A Current-actions row's `+` disabled because the SOURCE is fully staffed (not because idle ran out):
-# spelled out in the row tooltip rather than as a visible note, to keep the compact row uncluttered.
-const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
 # Band food flow lives on the Food summary line: `Food 15 (19 turns) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -980,10 +974,6 @@ const EXPEDITION_PHASE_LABELS := {
 	"hunting": "Hunting",
 	"delivering": "Delivering",
 }
-# Band/City panel "Active expeditions" section — mission glyphs mirror the map markers
-# (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
-const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
-const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 # Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Market
 # policy). Distinct from the Market policy glyph already shown (`FoodIcons.for_policy("market")` = ⇄),
 # so the two never read as duplicated: ↻ = "this trip repeats", ⇄ = "the take is sold as trade goods".
@@ -1037,9 +1027,9 @@ const COMPOSE_KIND_HERD := ComposeState.KIND_HERD
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
 
 # ---- Band/City panel zones (docs/band_panel_ux_proposal.html) ---------------
-## Gap between a zone's top-level sections (vitals / people / outlook / workforce), and the tighter
-## gap between the parts of one section (bar → key → cards).
-const ZONE_SECTION_SEPARATION := 12
+## The tighter gap between the parts of one zone SECTION (bar → key → cards). The gap between the
+## sections themselves travelled to `HudWidgets.ZONE_SECTION_SEPARATION` with `make_zone_column`, its
+## only reader; this one has readers on both sides (the work board's capacity maths), so it stays.
 const ZONE_BLOCK_SEPARATION := 6
 ## The zone box assumed when no dock is injected (the HUD-only ui_preview host), so the work board
 ## still pages against a sane measure instead of collapsing to one row.
@@ -1060,15 +1050,11 @@ const ZONE_HEADER_WORKFORCE := "Workforce"
 const ZONE_HEADER_WORK := "Work"
 const ZONE_HEADER_PARTIES := "Parties"
 
-## Stacked-bar geometry, shared by the People and Workforce bars.
-const COMPOSITION_BAR_HEIGHT := 9.0
-const COMPOSITION_BAR_SEPARATION := 2
-## A present-but-tiny segment still needs a visible sliver, so the stretch ratio never falls to 0.
-const COMPOSITION_MIN_RATIO := 1.0
+## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
+## with `build_composition_bar` / `build_composition_key`; these two stay because the parties zone's
+## link row and the dependency chip read them outside those builders.
 const COMPOSITION_KEY_SEPARATION := 12
 const COMPOSITION_KEY_FONT_SIZE := 11
-const COMPOSITION_SWATCH_SIZE := Vector2(8.0, 8.0)
-const COMPOSITION_SWATCH_SEPARATION := 4
 
 ## PEOPLE key glyphs + words (the words live in the tooltips the glyphs replaced).
 const PEOPLE_GLYPH_CHILDREN := "👶"
@@ -1077,22 +1063,15 @@ const PEOPLE_GLYPH_ELDERS := "🧓"
 const PEOPLE_LABEL_CHILDREN := "children"
 const PEOPLE_LABEL_WORKING := "working age"
 const PEOPLE_LABEL_ELDERS := "elders"
-## Dependency ratio: dependents per this many working-age adults.
-const PEOPLE_DEPENDENCY_BASE := 100
-## Above this many dependents per 100 workers the band carries more mouths than hands → WARN.
+## Above this many dependents per 100 workers the band carries more mouths than hands → WARN. Stays
+## here because the chip's own tint reads it beside the tooltip that `HudFormat.dependency_tooltip`
+## now writes; the ratio BASE and the two tooltip strings travelled with that formatter.
 const PEOPLE_DEPENDENCY_HEAVY := 100
 ## The chip says the COUNT, not the ratio. `dep 88/100` was the analyst's framing of a number the
 ## player has to act on — it reads as a score out of 100 (and the game's designer could not tell what
 ## it meant), while the bar beside it already shows the split. "14 dependents" is the fact; the ratio
 ## and what it implies live in the tooltip, which is where the teaching belongs.
 const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
-## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
-## dependent IS and who carries them. The long version (which also quoted the ratio) explained the
-## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
-const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from the larder but cannot be put to work.
-%d working-age adults support them."""
-## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
-const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
 
 ## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
 ## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
@@ -1124,8 +1103,6 @@ const ROLE_NAME_WARRIOR := "Warrior"
 ## Trimmed to what the SHORT tier affords: at 8/8 the band zone stood 5px past a 360px T/B dock
 ## (measured by `band_panel_preview`'s zone-bounds assertion, which is why it exists).
 const ROLE_CARD_SEPARATION := 6
-const ROLE_CARD_PADDING := 6
-const ROLE_CARD_CORNER_RADIUS := 4
 const ROLE_CARD_NAME_FONT_SIZE := 12
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.
@@ -1161,8 +1138,6 @@ const WORK_ROW_SEPARATION := 4
 const WORK_ROW_ICON_WIDTH := 16.0
 const WORK_ROW_RATE_WIDTH := 46.0
 const WORK_ROW_MARKS_WIDTH := 20.0
-const WORK_ROW_PADDING_H := 4
-const WORK_ROW_PADDING_V := 2
 ## A board row must be EXACTLY `WORK_ROW_HEIGHT` — the capacity maths divides by it, so a row that
 ## renders taller silently overflows the page off the bottom of the zone. The default button chrome
 ## (`HudStyle._button_stylebox`, 9px of vertical padding) makes a stepper ~42px tall on its own, so a
@@ -1987,16 +1962,6 @@ func update_herds(herds_variant: Variant) -> void:
         return
     _band_labor.set_world_herds(herds_variant)
 
-## The snapshot herd with this id, wherever it is on the map; {} when unknown.
-## Mirrors `MapView._herd_by_id` (the hunted-herd ring's resolver).
-func _find_world_herd(herd_id: String) -> Dictionary:
-    if herd_id == "":
-        return {}
-    for herd in _band_labor.world_herds():
-        if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
-            return herd
-    return {}
-
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
 ## lookup lives on `_band_labor` (`food_module_by_tile()`).
@@ -2008,18 +1973,6 @@ func update_food_modules(modules_variant: Variant) -> void:
 ## per-tile lookup lives on `_band_labor` (`forage_patch_lookup()`).
 func update_forage_patches(patches_variant: Variant) -> void:
     _band_labor.set_forage_patches(patches_variant)
-
-## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
-## there. "" when the tile has no known module (undiscovered), so the row renders
-## bare rather than with a misleading fallback sprig.
-func _food_module_icon(x: int, y: int) -> String:
-    var site: Variant = _band_labor.food_module_by_tile().get(Vector2i(x, y), null)
-    if not (site is Dictionary):
-        return ""
-    var module_key := String((site as Dictionary).get("module", ""))
-    var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
-    return FoodIcons.for_site(module_key, is_hunt, int((site as Dictionary).get("terrain_id", -1)))
-
 
 ## The player's starting band tile (col,row) — the first player-faction band captured this snapshot
 ## into `_band_labor.player_band()` (via update_band_alerts). Returns (-1,-1) when there is no player band, so a
@@ -2049,13 +2002,6 @@ static func _labor_assignments_of(band: Dictionary) -> Array:
     var v: Variant = band.get("labor_assignments", [])
     return v if v is Array else []
 
-## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed.
-func _workers_for_role(band: Dictionary, kind: String) -> int:
-    for entry in _labor_assignments_of(band):
-        if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
-            return int((entry as Dictionary).get("workers", 0))
-    return 0
-
 ## A friendlier label for a herd id — the roster/selected herd's label when known, else the
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
 ## so the roster alone left those rows reading the raw `game_deer_07` id).
@@ -2065,7 +2011,7 @@ func _herd_label_for_id(herd_id: String) -> String:
         return String(herd.get("species", herd.get("label", herd_id)))
     if String(_selection.herd().get("id", "")) == herd_id:
         return String(_selection.herd().get("species", _selection.herd().get("label", herd_id)))
-    var world_herd := _find_world_herd(herd_id)
+    var world_herd := _band_labor.find_world_herd(herd_id)
     if not world_herd.is_empty():
         return String(world_herd.get("species", world_herd.get("label", herd_id)))
     return herd_id
@@ -2118,14 +2064,6 @@ func _reconcile_pending() -> void:
     if _band_labor.reconcile_pending(_band_labor.current_turn()):
         emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
-## Effective worker count for one role/source, overlaying any pending value.
-func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
-    var key := _band_labor.pending_key(kind, -1, -1, "")
-    var pend := _band_labor.pending_assigns_for(int(band.get("entity", -1)))
-    if pend.has(key):
-        return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
-    return {"workers": _workers_for_role(band, kind), "pending": false}
-
 ## The behaviour hint for a source's take policy, so the row's policy GLYPH is spelled out on hover.
 ## Reuses the picker's existing hint strings (kind-specific: gathering a patch vs culling a herd) —
 ## the same sentence the player read when they chose the policy. A worked source row is ALWAYS a
@@ -2144,32 +2082,6 @@ func _refresh_disclosure_hosts() -> void:
         _render_band_into_panel(_band_labor.panel_band())
     _render_subject_drawer()
 
-## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
-## the number the Food summary row prints (rounded there).
-func _band_provisions(band: Dictionary) -> float:
-    var stores_variant: Variant = band.get("stores", {})
-    if stores_variant is Dictionary:
-        return float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))
-    return 0.0
-
-## The band-wide merged arrival schedule: element-wise sum of every source's `arrival_schedule`, so
-## slot i is ALL the food landing i+1 turns from now. Length = the longest schedule present (they are
-## all `arrivals_horizon_turns` long in practice); empty when no source was projected, which is the
-## signal to omit the Food-outlook block entirely rather than draw a flat starving line.
-func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
-    var merged := PackedFloat32Array()
-    for a in _labor_assignments_of(band):
-        if not (a is Dictionary):
-            continue
-        var schedule := HudBandLaborState.as_schedule((a as Dictionary).get("arrival_schedule", null))
-        if schedule.is_empty():
-            continue
-        if merged.size() < schedule.size():
-            merged.resize(schedule.size())
-        for i in range(schedule.size()):
-            merged[i] += schedule[i]
-    return merged
-
 ## "FOOD OUTLOOK" section block: the merged larder projection chart (`FoodOutlookChart`). Returns null
 ## — the block is omitted — for a non-player band, a band with no real food flow (same gate as the Food
 ## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
@@ -2177,7 +2089,7 @@ func _merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxContainer:
     if not (_is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
         return null
-    var arrivals := _merged_arrival_schedule(band)
+    var arrivals := DetailFormat.merged_arrival_schedule(band)
     if arrivals.is_empty():
         return null
     var block := _make_alloc_block()
@@ -2186,7 +2098,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
     # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
     chart.set_projection(
-        _band_provisions(band), arrivals,
+        DetailFormat.band_provisions(band), arrivals,
         float(band.get("food_consumption", 0.0)) + DetailFormat.band_pen_feed(band), _band_labor.current_turn())
     # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
     # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
@@ -2211,7 +2123,7 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     var container: VBoxContainer = target if target != null else allocation_panel
     if container == null:
         return
-    _clear_children(container)
+    HudWidgets.clear_children(container)
     var is_player := not band.is_empty() and _is_player_unit(band)
     container.visible = is_player
     if not is_player:
@@ -2223,32 +2135,12 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     # selected player band has no way to be moved at all here (see `_make_band_move_actions`).
     container.add_child(_make_band_move_actions())
 
-## Per-SOURCE `+`-gate for a Current-actions Forage/Hunt row: the compose controls cap the stepper at
-## max-useful (`_forecast_worker_cap`), and a confirmed row must cap the same way — a source's `+` may
-## add a worker only while the band has an idle worker AND this source is below its own max-useful
-## ceiling, so a single source can't absorb workers past the point they help. An unknown forecast
-## (MAX_USEFUL_UNBOUNDED — no wire data) falls back to the plain `idle > 0` gate. Returns
-## `{can_add, note}`; `note` is set ONLY when max-useful (not idle) is what stopped the `+`, so the
-## row tooltip explains a dead button rather than leaving it mysterious (the idle-exhausted gate
-## explains itself). Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate.
-func _source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
-    var useful := SourceForecast.max_useful_workers(forecast)
-    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
-        return {"can_add": idle > 0, "note": ""}
-    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
-    # when idle workers remain (else the idle-exhausted gate already reads for itself).
-    var note := ""
-    if idle > 0:
-        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
-        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
-    return {"can_add": false, "note": note}
-
 ## ============================================================================
 ## Band/City panel ZONES (docs/band_panel_ux_proposal.html §02/§05)
 ## ----------------------------------------------------------------------------
 ## The panel hosts three named zones at a FIXED size (see BandCityPanel): `band`
 ## (who they are + what they do), `work` (the paged board of worked sources) and
-## `parties`. Each builder below returns a bare VBox; `_wrap_zone` anchors it into
+## `parties`. Each builder below returns a bare VBox; `HudWidgets.wrap_zone` anchors it into
 ## the plain-Control zone host the panel hands out, and the legacy flat host
 ## (`_build_allocation_panel`, the no-dock ui_preview fallback) simply stacks the
 ## same three VBoxes — ONE set of builders, never a second layout.
@@ -2257,32 +2149,6 @@ func _source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> 
 ## `BandCityPanel.work_zone_size()`; a ScrollContainer would reintroduce exactly
 ## the content-dependent height the panel rework removed.
 ## ============================================================================
-
-## A zone's content column: the VBox every zone builder fills.
-func _make_zone_column() -> VBoxContainer:
-    var col := VBoxContainer.new()
-    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    col.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    col.add_theme_constant_override("separation", ZONE_SECTION_SEPARATION)
-    return col
-
-## Wrap a zone column in the plain `Control` the panel parents into its fixed-size zone host (the host
-## reports no minimum size, so the content must anchor itself — see BandCityPanel `_make_zone_host`).
-func _wrap_zone(content: VBoxContainer) -> Control:
-    var host := Control.new()
-    host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    host.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    host.add_child(content)
-    content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    return host
-
-## Detach-then-free a container's children. `queue_free` alone leaves them parented for the rest of
-## the frame, so a rebuild-in-place (the work zone's re-page) would briefly stack old rows under new.
-func _clear_children(node: Node) -> void:
-    for child in node.get_children():
-        node.remove_child(child)
-        child.queue_free()
 
 ## The interior box a zone's content may fill, in canvas px. The panel answers it from its FIXED
 ## geometry (`work_zone_size`), so it is a pure function of dock/collapse/window — never of content.
@@ -2309,62 +2175,13 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
     add_child(dialog)
     dialog.popup_centered()
 
-# ---- shared stacked bar (People + Workforce) --------------------------------
-
-## A proportional stacked bar. `segments` are `{key, count, color, tooltip}`; zero-count segments are
-## dropped by the caller. Widths come from `size_flags_stretch_ratio`, so the bar fills its zone at
-## any width without any measuring.
-func _build_composition_bar(segments: Array) -> HBoxContainer:
-    var bar := HBoxContainer.new()
-    bar.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
-    bar.add_theme_constant_override("separation", COMPOSITION_BAR_SEPARATION)
-    for segment_variant in segments:
-        var segment: Dictionary = segment_variant
-        var cell := ColorRect.new()
-        cell.color = segment.get("color", HudStyle.INK_FAINT)
-        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        cell.size_flags_stretch_ratio = maxf(float(segment.get("count", 0)), COMPOSITION_MIN_RATIO)
-        cell.custom_minimum_size = Vector2(0.0, COMPOSITION_BAR_HEIGHT)
-        cell.tooltip_text = String(segment.get("tooltip", ""))
-        cell.mouse_filter = Control.MOUSE_FILTER_STOP
-        bar.add_child(cell)
-    return bar
-
-## The key under a stacked bar: one `▪ <key> <count>` chip per segment. An `HFlowContainer` so a
-## narrow zone wraps the key rather than widening (the zone has a fixed width to respect).
-func _build_composition_key(segments: Array, trailing: Control = null) -> HFlowContainer:
-    var key := HFlowContainer.new()
-    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    key.add_theme_constant_override("h_separation", COMPOSITION_KEY_SEPARATION)
-    for segment_variant in segments:
-        var segment: Dictionary = segment_variant
-        var chip := HBoxContainer.new()
-        chip.add_theme_constant_override("separation", COMPOSITION_SWATCH_SEPARATION)
-        chip.tooltip_text = String(segment.get("tooltip", ""))
-        var swatch := ColorRect.new()
-        swatch.color = segment.get("color", HudStyle.INK_FAINT)
-        swatch.custom_minimum_size = COMPOSITION_SWATCH_SIZE
-        swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-        swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        chip.add_child(swatch)
-        var text := Label.new()
-        text.text = "%s %d" % [String(segment.get("key", "")), int(segment.get("count", 0))]
-        text.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
-        text.add_theme_color_override("font_color", HudStyle.INK_DIM)
-        text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        chip.add_child(text)
-        key.add_child(chip)
-    if trailing != null:
-        key.add_child(trailing)
-    return key
-
 # ---- zone `band` ------------------------------------------------------------
 
 ## Zone `band`: vitals · people · food outlook · workforce (+ the two role cards).
 ## `with_vitals` is false for the legacy flat host, whose Occupants card already renders the very
 ## same Food/Morale/Position rows in its own `%OccupantDetail` drawer above this.
 func _build_band_zone_content(band: Dictionary, with_vitals: bool = true) -> VBoxContainer:
-    var col := _make_zone_column()
+    var col := HudWidgets.make_zone_column()
     _band_zone_tier = _band_zone_tier_for(_zone_box().y)
     if with_vitals:
         col.add_child(_build_vitals_label(band))
@@ -2394,35 +2211,6 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = DetailFormat.detail_bbcode(_unit_summary_lines(band, ctx), ctx)
     return detail_label
 
-## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
-## largest-remainder method: floor every part, then hand the leftover people out to the biggest
-## fractions, biggest first. `round()` per part does NOT preserve the total (9.29 + 16.54 + 4.64 =
-## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
-## people are in the band reads as a bug in both.
-func _apportion_people(parts: Array[float]) -> Array[int]:
-    var whole: Array[int] = []
-    var assigned := 0
-    var total := 0.0
-    for part in parts:
-        var floored: int = maxi(int(floor(part)), 0)
-        whole.append(floored)
-        assigned += floored
-        total += maxf(part, 0.0)
-    var leftover := roundi(total) - assigned
-    while leftover > 0:
-        var best := -1
-        var best_fraction := -1.0
-        for i in range(parts.size()):
-            var fraction: float = maxf(parts[i], 0.0) - float(whole[i])
-            if fraction > best_fraction:
-                best_fraction = fraction
-                best = i
-        if best < 0:
-            break
-        whole[best] += 1
-        leftover -= 1
-    return whole
-
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
 ## dependency ratio. Returns null when the snapshot carries no age structure at all, so the block is
 ## OMITTED rather than rendered from a fabricated split.
@@ -2442,7 +2230,7 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
     # quantity that happens to track it). Fall back to the latter when the cohort field is absent.
     if raw[1] <= 0.0:
         raw[1] = float(band.get("working_age", 0))
-    var whole := _apportion_people(raw)
+    var whole := HudFormat.apportion_people(raw)
     var children: int = whole[0]
     var working: int = whole[1]
     var elders: int = whole[2]
@@ -2459,25 +2247,11 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
     if elders > 0:
         segments.append({"key": PEOPLE_GLYPH_ELDERS, "count": elders,
             "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, PEOPLE_LABEL_ELDERS]})
-    var block := _make_zone_block()
+    var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(ZONE_HEADER_PEOPLE, str(total)))
-    block.add_child(_build_composition_bar(segments))
-    block.add_child(_build_composition_key(segments, _build_dependency_chip(children, working, elders)))
+    block.add_child(HudWidgets.build_composition_bar(segments))
+    block.add_child(HudWidgets.build_composition_key(segments, _build_dependency_chip(children, working, elders)))
     return block
-
-## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
-func _dependency_per_hundred(dependents: int, working: int) -> int:
-    if working <= 0:
-        return 0
-    return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
-
-## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
-## decides the WARN tint — so it stays out of the words too.
-func _dependency_tooltip(dependents: int, working: int) -> String:
-    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
-    if _dependency_per_hundred(dependents, working) > PEOPLE_DEPENDENCY_HEAVY:
-        text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
-    return text
 
 ## The dependency ratio chip: dependents (children + elders) per 100 working-age adults, WARN-tinted
 ## once the band carries more mouths than hands. Null when there is no working-age cohort to divide by.
@@ -2485,13 +2259,13 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
     if working <= 0:
         return null
     var dependents := children + elders
-    var per_hundred := _dependency_per_hundred(dependents, working)
+    var per_hundred := HudFormat.dependency_per_hundred(dependents, working)
     var chip := Label.new()
     chip.text = PEOPLE_DEPENDENCY_FORMAT % dependents
     chip.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
     chip.add_theme_color_override("font_color",
         HudStyle.WARN if per_hundred > PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
-    HudWidgets.set_label_tooltip(chip, _dependency_tooltip(dependents, working))
+    HudWidgets.set_label_tooltip(chip, HudFormat.dependency_tooltip(dependents, working))
     chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     return chip
@@ -2509,10 +2283,10 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
         match String(m.get("kind", "")):
             LABOR_KIND_FORAGE: forage_workers += workers
             LABOR_KIND_HUNT: hunt_workers += workers
-    var scout_eff := _effective_role_workers(band, LABOR_KIND_SCOUT)
-    var warrior_eff := _effective_role_workers(band, LABOR_KIND_WARRIOR)
+    var scout_eff := _band_labor.effective_role_workers(band, LABOR_KIND_SCOUT)
+    var warrior_eff := _band_labor.effective_role_workers(band, LABOR_KIND_WARRIOR)
     var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0))
-    var party_workers := _band_party_workers(band)
+    var party_workers := _band_labor.band_party_workers(band)
     var segments: Array = []
     for spec in [
         [WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
@@ -2524,13 +2298,13 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
-    var block := _make_zone_block()
+    var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(ZONE_HEADER_WORKFORCE,
         WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
     if not segments.is_empty():
-        block.add_child(_build_composition_bar(segments))
-        block.add_child(_build_composition_key(segments))
+        block.add_child(HudWidgets.build_composition_bar(segments))
+        block.add_child(HudWidgets.build_composition_key(segments))
     # The two standing roles as CARDS, side by side — a bordered card reads as "a standing role", not
     # as one more worked source in a list (the complaint the card treatment fixes).
     var cards := HBoxContainer.new()
@@ -2548,7 +2322,7 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    card.add_theme_stylebox_override("panel", _role_card_stylebox())
+    card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
     # In a short zone the hint moves to the card's tooltip — the words survive, the two lines do not.
     card.tooltip_text = hint
     var col := VBoxContainer.new()
@@ -2571,32 +2345,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     col.add_child(stepper)
     return card
 
-func _role_card_stylebox() -> StyleBoxFlat:
-    var sb := StyleBoxFlat.new()
-    sb.bg_color = HudStyle.GROUND_2
-    sb.set_border_width_all(1)
-    sb.border_color = HudStyle.LINE
-    sb.set_corner_radius_all(ROLE_CARD_CORNER_RADIUS)
-    sb.content_margin_left = ROLE_CARD_PADDING
-    sb.content_margin_right = ROLE_CARD_PADDING
-    sb.content_margin_top = ROLE_CARD_PADDING
-    sb.content_margin_bottom = ROLE_CARD_PADDING
-    return sb
-
-## A tight sub-block inside a zone (bar + key + cards belong together, closer than the zone's own
-## section spacing).
-func _make_zone_block() -> VBoxContainer:
-    var block := VBoxContainer.new()
-    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    block.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
-    return block
-
 # ---- zone `work` (the paged board) ------------------------------------------
 
 ## Zone `work`: header · filter chips · the paged board · pager · inspector strip. The column keeps a
 ## reference to itself so `zones_resized` can RE-PAGE in place rather than re-render the whole panel.
 func _build_work_zone_content(band: Dictionary) -> VBoxContainer:
-    var col := _make_zone_column()
+    var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
     _work_zone_host = col
     _work_zone_band = band
@@ -2626,7 +2380,7 @@ func _band_zone_tier_for(zone_height: float) -> int:
 func _repage_work_zone() -> void:
     if _work_zone_host == null or not is_instance_valid(_work_zone_host) or _work_zone_band.is_empty():
         return
-    _clear_children(_work_zone_host)
+    HudWidgets.clear_children(_work_zone_host)
     _fill_work_zone(_work_zone_host, _work_zone_band)
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
@@ -2781,7 +2535,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
     row.tooltip_text = String(model.get("tooltip", ""))
-    row.add_theme_stylebox_override("panel", _work_row_stylebox(open))
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
     row.gui_input.connect(func(event: InputEvent) -> void:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
             _toggle_work_inspector(String(model.get("key", ""))))
@@ -2841,15 +2595,6 @@ func _work_row_stripe_color(model: Dictionary) -> Color:
         return HudStyle.SIGNAL
     return Color(0.0, 0.0, 0.0, 0.0)
 
-func _work_row_stylebox(open: bool) -> StyleBoxFlat:
-    var sb := StyleBoxFlat.new()
-    sb.bg_color = HudStyle.SIGNAL_WASH if open else Color(0.0, 0.0, 0.0, 0.0)
-    sb.content_margin_left = WORK_ROW_PADDING_H
-    sb.content_margin_right = WORK_ROW_PADDING_H
-    sb.content_margin_top = WORK_ROW_PADDING_V
-    sb.content_margin_bottom = WORK_ROW_PADDING_V
-    return sb
-
 ## The pager, shown only when one page cannot hold the filtered set.
 func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HBoxContainer:
     var pager := HBoxContainer.new()
@@ -2896,7 +2641,7 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     strip.custom_minimum_size = Vector2(0.0, _work_inspector_height(model))
-    strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
+    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
     strip.add_child(col)
@@ -2986,18 +2731,6 @@ func _work_inspector_height(model: Dictionary) -> float:
         return WORK_INSPECTOR_POLICY_HEIGHT + WORK_INSPECTOR_STANDING_LINE_HEIGHT
     return WORK_INSPECTOR_POLICY_HEIGHT
 
-func _work_inspector_stylebox() -> StyleBoxFlat:
-    var sb := StyleBoxFlat.new()
-    sb.bg_color = HudStyle.GROUND_2
-    sb.set_border_width_all(1)
-    sb.border_color = HudStyle.LINE
-    sb.set_corner_radius_all(ROLE_CARD_CORNER_RADIUS)
-    sb.content_margin_left = ROLE_CARD_PADDING
-    sb.content_margin_right = ROLE_CARD_PADDING
-    sb.content_margin_top = ROLE_CARD_PADDING
-    sb.content_margin_bottom = ROLE_CARD_PADDING
-    return sb
-
 ## The inspector's one-sentence readout: rate · policy in WORDS · status · assigned workers.
 func _work_inspector_sentence(model: Dictionary) -> String:
     var parts: Array[String] = []
@@ -3042,9 +2775,9 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
-            icon = _food_module_icon(x, y)
+            icon = _band_labor.food_module_icon(x, y)
             label = WORK_ROW_FORAGE_FORMAT % [x, y]
-            cap = _source_worker_cap_state(SourceForecast.forecast_inputs(
+            cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
                 _band_labor.forage_patch_lookup().get(Vector2i(x, y), {}), SOURCE_KIND_FORAGE,
                 BARE_FORECAST_PREFIX, policy), workers, idle)
         else:
@@ -3055,8 +2788,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             label = WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
-            cap = _source_worker_cap_state(SourceForecast.forecast_inputs(
-                _find_world_herd(herd_id), SOURCE_KIND_HERD,
+            cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
+                _band_labor.find_world_herd(herd_id), SOURCE_KIND_HERD,
                 BARE_FORECAST_PREFIX, policy), workers, idle)
         var note := String(yld.get("note", ""))
         var marks := FoodIcons.for_policy(policy)
@@ -3172,15 +2905,15 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
 func _build_parties_zone_content(band: Dictionary) -> VBoxContainer:
-    var col := _make_zone_column()
+    var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
-    var parties := _band_parties(band)
+    var parties := _band_labor.band_parties(band)
     var menu := HudWidgets.build_section_menu([
         {"label": PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
             "on_pick": func() -> void: _on_recall_all_parties_pressed(parties)},
     ], PARTY_MENU_TOOLTIP)
     col.add_child(HudWidgets.zone_head(ZONE_HEADER_PARTIES,
-        PARTIES_HEADER_FORMAT % [parties.size(), _band_party_workers(band)], menu))
+        PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
     if parties.is_empty():
         col.add_child(HudWidgets.alloc_hint_label(PARTIES_EMPTY_HINT))
     else:
@@ -3228,7 +2961,7 @@ func _toggle_parties_inspector(key: String) -> void:
 func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
+    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", PARTIES_INSPECTOR_LINE_SEPARATION)
     strip.add_child(col)
@@ -3238,7 +2971,7 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
     var title := Label.new()
-    title.text = _panel_expedition_summary(exp)
+    title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
     title.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3263,32 +2996,16 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     col.add_child(links)
     return strip
 
-## The player expeditions this band detached (grouped by `home_band_entity`).
-func _band_parties(band: Dictionary) -> Array:
-    var band_entity := int(band.get("entity", -1))
-    var rows: Array = []
-    for exp_variant in _band_labor.player_expeditions():
-        if exp_variant is Dictionary and int((exp_variant as Dictionary).get("home_band_entity", 0)) == band_entity:
-            rows.append(exp_variant)
-    return rows
-
-## Workers currently out with this band's parties — the Workforce bar's Parties segment.
-func _band_party_workers(band: Dictionary) -> int:
-    var total := 0
-    for exp in _band_parties(band):
-        total += int((exp as Dictionary).get("size", 0))
-    return total
-
 ## One party row: mission glyph · subject · phase chip · an always-visible recall `✕` (dimmed at rest,
 ## bright on hover) as the quick removal path. Clicking the row BODY toggles the parties inspector
 ## strip (the full Mission/Target/…/Next-delivery detail), mirroring the work board's row → inspector.
 func _build_party_row(exp: Dictionary) -> HBoxContainer:
-    var phase := _expedition_phase_key(exp)
+    var phase := HudFormat.expedition_phase_key(exp)
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORK_ROW_SEPARATION)
     var body := Button.new()
-    body.text = _panel_expedition_summary(exp)
+    body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
     body.alignment = HORIZONTAL_ALIGNMENT_LEFT
     body.focus_mode = Control.FOCUS_NONE
     body.clip_text = true
@@ -3341,7 +3058,7 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
 ## expeditions look like they had been removed from the game.
 func _build_party_footer(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
-    var foot := _make_zone_block()
+    var foot := HudWidgets.make_zone_block()
     if _party_compose_open and _party_compose_mission != "" and idle > 0:
         foot.add_child(_build_compose_sheet(band, idle))
         return foot
@@ -3378,7 +3095,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
 ## sit above the scouting button and read as if it modified it). `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var is_hunt := _party_compose_mission == COMPOSE_MISSION_HUNT
-    var sheet := _make_zone_block()
+    var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
     title.text = COMPOSE_TITLE_HUNT if is_hunt else COMPOSE_TITLE_SCOUT
@@ -3428,7 +3145,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # that MIGRATES into the band's hunt reach fails for the same reason — it is no longer a party's
     # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
     # should not make.
-    var herd := _find_world_herd(_compose.party_quarry_id())
+    var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
     if herd.is_empty() or not _is_expedition_quarry(band, herd):
         herd = {}
         _compose.clear_party_quarry()
@@ -3564,10 +3281,10 @@ func _push_zone_badges(band: Dictionary) -> void:
     _band_city_panel.set_tab_badge(BandCityPanel.ZONE_WORK,
         str(attention.size()) if not attention.is_empty() else str(models.size()),
         not attention.is_empty())
-    var parties := _band_parties(band)
+    var parties := _band_labor.band_parties(band)
     var awaiting := false
     for exp in parties:
-        if _expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
             awaiting = true
     _band_city_panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
@@ -4325,9 +4042,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # The three zone contents. Ownership passes to the panel, which frees the previous render's zones
     # and parents these into whichever shell (wide columns / narrow tabs) its width selected.
     _band_city_panel.set_zones(
-        _wrap_zone(_build_band_zone_content(_band_labor.panel_band())),
-        _wrap_zone(_build_work_zone_content(_band_labor.panel_band())),
-        _wrap_zone(_build_parties_zone_content(_band_labor.panel_band())))
+        HudWidgets.wrap_zone(_build_band_zone_content(_band_labor.panel_band())),
+        HudWidgets.wrap_zone(_build_work_zone_content(_band_labor.panel_band())),
+        HudWidgets.wrap_zone(_build_parties_zone_content(_band_labor.panel_band())))
     _push_zone_badges(_band_labor.panel_band())
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
@@ -4340,18 +4057,6 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     _band_city_panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _band_city_panel.set_shown(true)
-
-## The expedition's sim phase key, normalized (the wire's `ExpeditionPhase` string).
-func _expedition_phase_key(exp: Dictionary) -> String:
-    return String(exp.get("expedition_phase", "")).strip_edges().to_lower()
-
-## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
-## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
-func _expedition_phase_suffix(phase: String) -> String:
-    var suffix := HudFormat.row_glyph_suffix(FoodIcons.for_status(phase))
-    if phase == EXPEDITION_PHASE_AWAITING:
-        return "%s %s" % [suffix, HudFormat.expedition_phase_label(phase)]
-    return suffix
 
 ## The row's hover text: everything the glyphs encode, in words — the mission, the hunt policy's
 ## behaviour hint, the phase + what it means, and the click affordance.
@@ -4387,7 +4092,7 @@ func _expedition_next_delivery_line(exp: Dictionary) -> String:
     var delivery := float(exp.get("expedition_projected_delivery", 0.0))
     if delivery <= 0.0:
         var target_id := String(exp.get("expedition_target_herd", "")).strip_edges()
-        var target := _find_world_herd(target_id) if target_id != "" else {}
+        var target := _band_labor.find_world_herd(target_id) if target_id != "" else {}
         if target.is_empty():
             return EXPEDITION_NEXT_DELIVERY_TARGET_LOST
         return EXPEDITION_NEXT_DELIVERY_NO_SURPLUS
@@ -4402,27 +4107,6 @@ func _expedition_next_delivery_line(exp: Dictionary) -> String:
     if bool(exp.get("expedition_recurring", false)):
         line += "  %s" % EXPEDITION_RECURRING_GLYPH
     return line
-
-## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
-## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
-## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
-## live in the tooltip. A scout has no policy → `for_policy` returns "" → `HudFormat.row_glyph_suffix` emits
-## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
-## its words (`_expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
-## parties inspector strip a row click opens (`_build_parties_inspector` → `_expedition_summary_lines`).
-func _panel_expedition_summary(exp: Dictionary) -> String:
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
-    var policy_suffix := HudFormat.row_glyph_suffix(
-        FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
-    if mission == EXPEDITION_MISSION_HUNT:
-        var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-        return "%s %s%s%s" % [
-            PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
-    var x := int(exp.get("current_x", -1))
-    var y := int(exp.get("current_y", -1))
-    return "%s → (%d, %d)%s%s" % [
-        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
 
 ## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
 ## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
@@ -4443,7 +4127,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
-        if _expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
             awaiting.append(exp)
     var items: Array = []
     for i in awaiting.size():
@@ -4493,7 +4177,7 @@ func _starving_pen_attention(band: Dictionary) -> Array:
         if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
             continue
         var herd_id := String(a.get("fauna_id", ""))
-        var herd := _find_world_herd(herd_id)
+        var herd := _band_labor.find_world_herd(herd_id)
         if herd.is_empty() or not PenStatus.herd_is_starving(herd):
             continue
         var fed := PenStatus.fed_fraction(herd)
@@ -4524,7 +4208,7 @@ func _starving_pen_at(x: int, y: int) -> String:
             if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
                 continue
             var herd_id := String(a.get("fauna_id", ""))
-            var herd := _find_world_herd(herd_id)
+            var herd := _band_labor.find_world_herd(herd_id)
             if herd.is_empty() or not PenStatus.herd_is_starving(herd):
                 continue
             if int(herd.get("x", -1)) == x and int(herd.get("y", -1)) == y:
@@ -4536,7 +4220,7 @@ func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
         if not (exp_variant is Dictionary):
             continue
         var exp: Dictionary = exp_variant
-        if _expedition_phase_key(exp) != EXPEDITION_PHASE_AWAITING:
+        if HudFormat.expedition_phase_key(exp) != EXPEDITION_PHASE_AWAITING:
             continue
         if int(exp.get("current_x", -1)) == x and int(exp.get("current_y", -1)) == y:
             return exp
@@ -4580,7 +4264,7 @@ func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
 ## `BandOverlayRenderer.draw_band_work_highlights` resolves the hunted-herd ring (`_herd_by_id`, falling back to
 ## the assignment target when the herd is unknown — e.g. it left the visible fauna set).
 func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> void:
-    var herd := _find_world_herd(herd_id)
+    var herd := _band_labor.find_world_herd(herd_id)
     var x := int(herd.get("x", fallback_x))
     var y := int(herd.get("y", fallback_y))
     _focus_labor_source(x, y, herd_id)
@@ -4772,7 +4456,7 @@ func _expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context 
         var herd_id := String(unit_data.get("expedition_target_herd", "")).strip_edges()
         if herd_id != "":
             var target_line := "Target: %s" % _herd_label_for_id(herd_id)
-            var target_herd := _find_world_herd(herd_id)
+            var target_herd := _band_labor.find_world_herd(herd_id)
             if not target_herd.is_empty():
                 var tx := int(target_herd.get("x", -1))
                 var ty := int(target_herd.get("y", -1))

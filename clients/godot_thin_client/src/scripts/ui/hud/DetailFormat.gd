@@ -5,8 +5,9 @@ class_name DetailFormat
 ## WHAT THIS IS. Everything that turns a list of `"Key: value"` detail LINES into the BBCode the HUD's
 ## detail surfaces actually show — the renderer (`detail_bbcode`), the per-row key→tint registry it
 ## consults, and the ~20 label / `*_value_hex` leaves those tints and the line PRODUCERS share. Plus
-## the pure band-dict arithmetic behind the Food row (`band_net_food` and friends), which the Band
-## panel's food-outlook chart reads too.
+## the pure band-dict arithmetic behind the Food row (`band_net_food` and friends) and behind the Band
+## panel's food-outlook chart, which reads the same family (`band_provisions` = the larder the
+## projection starts from, `merged_arrival_schedule` = every source's arrivals summed slot-by-slot).
 ##
 ## WHY IT IS ITS OWN FILE. Four clusters render detail rows through one formatter — the selection
 ## card's land drawer, its occupant drawer, the Band/City panel's vitals label and the disclosure
@@ -563,6 +564,33 @@ static func band_food_income(band: Dictionary) -> float:
 ## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
 static func band_pen_feed(band: Dictionary) -> float:
     return float(band.get("pen_feed_upkeep", 0.0))
+
+## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
+## the number the Food summary row prints (rounded there). Here beside the rest of the band food
+## arithmetic the chart and the Food line share.
+static func band_provisions(band: Dictionary) -> float:
+    var stores_variant: Variant = band.get("stores", {})
+    if stores_variant is Dictionary:
+        return float((stores_variant as Dictionary).get(HudLayer.STORE_ITEM_PROVISIONS, 0.0))
+    return 0.0
+
+## The band-wide merged arrival schedule: element-wise sum of every source's `arrival_schedule`, so
+## slot i is ALL the food landing i+1 turns from now. Length = the longest schedule present (they are
+## all `arrivals_horizon_turns` long in practice); empty when no source was projected, which is the
+## signal to omit the Food-outlook block entirely rather than draw a flat starving line.
+static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
+    var merged := PackedFloat32Array()
+    for a in HudLayer._labor_assignments_of(band):
+        if not (a is Dictionary):
+            continue
+        var schedule := HudBandLaborState.as_schedule((a as Dictionary).get("arrival_schedule", null))
+        if schedule.is_empty():
+            continue
+        if merged.size() < schedule.size():
+            merged.resize(schedule.size())
+        for i in range(schedule.size()):
+            merged[i] += schedule[i]
+    return merged
 
 ## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
 ## floor) — so a decode miss reads as "no flow" (net readout + breakdown omitted, not zeroed).
