@@ -166,6 +166,10 @@ const HUNT_PEAK_DROP_BANK_BONUS := 1
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
 const MAX_USEFUL_NOUN_ONE := "worker"
 const MAX_USEFUL_NOUN_MANY := "workers"
+# The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
+# (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
+# the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
+const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
 # The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
@@ -428,6 +432,26 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         var peak_drop_food := float(animals) * food_per_animal
         return ceili(peak_drop_food / per_worker)
     return int(ceilf(ceiling / per_worker))
+
+## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
+## compose stepper's `max_useful_workers` cap, and beside it so the two can never disagree. A source's
+## `+` may add a worker only while the band has an idle worker AND this source is below its own
+## max-useful ceiling, so a single source can't absorb workers past the point they help. An unknown
+## forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls back to the plain `idle > 0` gate. Returns
+## `{can_add, note}`; `note` is set ONLY when max-useful (not idle) is what stopped the `+`, so the row
+## tooltip explains a dead button rather than leaving it mysterious (the idle-exhausted gate explains
+## itself). Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never call this.
+static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
+    var useful := max_useful_workers(forecast)
+    if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
+        return {"can_add": idle > 0, "note": ""}
+    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
+    # when idle workers remain (else the idle-exhausted gate already reads for itself).
+    var note := ""
+    if idle > 0:
+        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
+    return {"can_add": false, "note": note}
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
 ## acting band's output multiplier (the sim exports the forecast at 1.0).

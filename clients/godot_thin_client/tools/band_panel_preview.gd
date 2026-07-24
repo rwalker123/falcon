@@ -348,7 +348,7 @@ func _ready() -> void:
 	# truncation bug — so it could never have caught it. The map path feeds the panel MapView's unit
 	# MARKER instead (`_rebuild_unit_markers` → `refresh_selection_payload` → `show_unit_selection` →
 	# `_render_band_into_panel`), and a marker that narrowed the fractional age brackets with `int()`
-	# zeroes every remainder, leaving `_apportion_people` nothing to redistribute: 9 + 16 + 4 = 29 in
+	# zeroes every remainder, leaving `HudFormat.apportion_people` nothing to redistribute: 9 + 16 + 4 = 29 in
 	# the PEOPLE header against a band of 30. Driven through the REAL MapView, never a hand-built dict.
 	var map_path_view: Node2D = MAP_VIEW_SCRIPT.new()
 	map_path_view.visible = false   # data only — a visible map would render behind every later frame
@@ -726,7 +726,7 @@ func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
 		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
 
 ## GUARD: the PEOPLE block's three brackets must account for EVERY person in the band. They arrive
-## fractional (Scalar), so `Hud._apportion_people` distributes the remainders by largest remainder —
+## fractional (Scalar), so `HudFormat.apportion_people` distributes the remainders by largest remainder —
 ## which only works if the remainders survive the trip. A marker that narrowed them with `int()`
 ## truncates every one to zero, and the header then undercounts against the band's own size.
 func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> void:
@@ -735,7 +735,7 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 		float(band.get("age_working", 0.0)),
 		float(band.get("age_elders", 0.0)),
 	]
-	var whole := _hud._apportion_people(raw)
+	var whole := HudFormat.apportion_people(raw)
 	var total := 0
 	for part in whole:
 		total += part
@@ -781,7 +781,7 @@ func _assert_zone_content_fits() -> void:
 		push_error("band_panel_preview: %s — %s" % [_current_state, failure])
 
 ## Walk a zone host looking for content the BOX cannot hold. The zone content roots are plain
-## `Control` wrappers (`Hud._wrap_zone`) that report NO minimum size, so the measurable thing is the
+## `Control` wrappers (`HudWidgets.wrap_zone`) that report NO minimum size, so the measurable thing is the
 ## column inside them — hence the recursion past every zero-minimum wrapper. A control that DOES
 ## report a minimum height is measured from where it sits (its top, relative to the zone) and then
 ## not descended into: its own minimum already accounts for its children.
@@ -1212,7 +1212,7 @@ func _assert_quarry_eligibility() -> void:
 	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
 
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
-## Current-actions Hunt row reads via `_find_world_herd` + `SourceForecast.forecast_inputs` — `per_worker_yield`
+## Current-actions Hunt row reads via `HudBandLaborState.find_world_herd` + `SourceForecast.forecast_inputs` — `per_worker_yield`
 ## plus the herd's ONLY ceiling representation, the `hunt_policy_ceilings` table (a herd has no flat
 ## `ceiling_*` scalars; the forage patches below still do).
 ## max-useful = ceil(0.20 / 0.10) = 2, so a Hunt row staffed at 2 is AT its cap.
@@ -1523,7 +1523,7 @@ func _lean_hunt_expedition_fixture() -> Dictionary:
 	}
 
 ## A hunt party whose target herd is GONE from `_world_herds` (lost/replaced) — a projected-0 forecast
-## that is NOT "no surplus": `_find_world_herd` returns {} for the target id, so the delivery line must
+## that is NOT "no surplus": `find_world_herd` returns {} for the target id, so the delivery line must
 ## read "target herd lost — the party is returning home", distinct from the at-floor no-surplus case.
 func _lost_hunt_expedition_fixture() -> Dictionary:
 	return {

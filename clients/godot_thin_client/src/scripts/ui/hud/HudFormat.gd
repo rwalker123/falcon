@@ -4,7 +4,9 @@ class_name HudFormat
 ##
 ## WHAT THIS IS. The pure `String`/`int` helpers that decide how the HUD SAYS a thing, with no Control
 ## anywhere in sight: the status-glyph → words → tooltip-line → joined-tooltip chain, the row glyph
-## affixes, the policy face, the expedition phase words, and the one 0..1 → whole-percent conversion.
+## affixes, the policy face, the expedition ROW vocabulary (phase key → phase suffix → the compact
+## one-line party summary), the largest-remainder people apportionment + the dependency tooltip, and
+## the one 0..1 → whole-percent conversion.
 ##
 ## WHY IT IS SEPARATE FROM `HudWidgets`. `TopBarReadouts` needs `progress_percent` and nothing else;
 ## the drawer and the Band panel need the whole status chain AND the widget factory. Keeping the words
@@ -14,9 +16,25 @@ class_name HudFormat
 ## EVERYTHING HERE IS `static`, STATELESS AND PURE — same invariant as `SourceForecast` and
 ## `HudWidgets`. The word TABLES (`STATUS_LABELS`, `STATUS_HINTS`, `EXPEDITION_PHASE_LABELS`) stay on
 ## `HudLayer` and are read back as `HudLayer.X`, so there is still exactly one place a phrase is typed.
+## Where a formatter needs HUD state it takes it as a PARAMETER rather than reaching for it — see
+## `panel_expedition_summary`'s `herd_label_for_id` Callable, the `HudWidgets.build_worker_stepper`
+## `current_turn` precedent.
 
 ## A food module the table cannot name and whose key is empty — the tile carries no module at all.
 const FOOD_MODULE_UNKNOWN_LABEL := "Unknown"
+## Dependency ratio: dependents per this many working-age adults.
+const PEOPLE_DEPENDENCY_BASE := 100
+## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
+## dependent IS and who carries them. The long version (which also quoted the ratio) explained the
+## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
+const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from the larder but cannot be put to work.
+%d working-age adults support them."""
+## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
+const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
+## Band/City panel "Active expeditions" mission glyphs — they mirror the map markers
+## (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
+const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
+const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 ## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
 const BAND_DISPLAY_NAME_FORMAT := "Band %d"
 
@@ -112,3 +130,89 @@ static func policy_face(policy: String) -> String:
 ## a gate reason — it tells the player they haven't started the track at all.
 static func progress_percent(progress: float) -> int:
     return int(round(clampf(progress, 0.0, 1.0) * HudLayer.PROGRESS_PERCENT_SCALE))
+
+# ---- People: apportionment + the dependency vocabulary -------------------------------------------
+
+## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
+## largest-remainder method: floor every part, then hand the leftover people out to the biggest
+## fractions, biggest first. `round()` per part does NOT preserve the total (9.29 + 16.54 + 4.64 =
+## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
+## people are in the band reads as a bug in both.
+static func apportion_people(parts: Array[float]) -> Array[int]:
+    var whole: Array[int] = []
+    var assigned := 0
+    var total := 0.0
+    for part in parts:
+        var floored: int = maxi(int(floor(part)), 0)
+        whole.append(floored)
+        assigned += floored
+        total += maxf(part, 0.0)
+    var leftover := roundi(total) - assigned
+    while leftover > 0:
+        var best := -1
+        var best_fraction := -1.0
+        for i in range(parts.size()):
+            var fraction: float = maxf(parts[i], 0.0) - float(whole[i])
+            if fraction > best_fraction:
+                best_fraction = fraction
+                best = i
+        if best < 0:
+            break
+        whole[best] += 1
+        leftover -= 1
+    return whole
+
+## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
+static func dependency_per_hundred(dependents: int, working: int) -> int:
+    if working <= 0:
+        return 0
+    return int(round(float(dependents) / float(working) * float(PEOPLE_DEPENDENCY_BASE)))
+
+## What "dependents" MEANS, in the player's terms. The ratio is no longer shown anywhere — it only
+## decides the WARN tint — so it stays out of the words too. `PEOPLE_DEPENDENCY_HEAVY` stays on
+## `HudLayer` (the chip's own tint reads it too) and is read back, the established convention.
+static func dependency_tooltip(dependents: int, working: int) -> String:
+    var text: String = PEOPLE_DEPENDENCY_TOOLTIP % working
+    if dependency_per_hundred(dependents, working) > HudLayer.PEOPLE_DEPENDENCY_HEAVY:
+        text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
+    return text
+
+# ---- Expedition row vocabulary -------------------------------------------------------------------
+
+## The expedition's sim phase key, normalized (the wire's `ExpeditionPhase` string).
+static func expedition_phase_key(exp: Dictionary) -> String:
+    return String(exp.get("expedition_phase", "")).strip_edges().to_lower()
+
+## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
+## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
+static func expedition_phase_suffix(phase: String) -> String:
+    var suffix := row_glyph_suffix(FoodIcons.for_status(phase))
+    if phase == HudLayer.EXPEDITION_PHASE_AWAITING:
+        return "%s %s" % [suffix, expedition_phase_label(phase)]
+    return suffix
+
+## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
+## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
+## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
+## live in the tooltip. A scout has no policy → `for_policy` returns "" → `row_glyph_suffix` emits
+## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
+## its words (`expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
+## parties inspector strip a row click opens (`_build_parties_inspector` → `_expedition_summary_lines`).
+##
+## `herd_label_for_id` is the herd vocabulary, THREADED IN rather than reached for: resolving a herd id
+## to a species needs the roster + the current selection + the snapshot herd list, which is HUD state
+## this stateless layer must not hold (the `HudWidgets.build_worker_stepper` `current_turn` precedent).
+## It is called ONLY on the hunt branch, so a scout row resolves nothing.
+static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
+    var policy_suffix := row_glyph_suffix(
+        FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
+    if mission == HudLayer.EXPEDITION_MISSION_HUNT:
+        var herd := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
+        return "%s %s%s%s" % [
+            PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    return "%s → (%d, %d)%s%s" % [
+        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]

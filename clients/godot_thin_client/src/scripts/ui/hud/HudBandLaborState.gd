@@ -4,9 +4,12 @@ extends RefCounted
 ## "The digested per-snapshot player world + the optimistic overlay" — the player-faction bands and
 ## expeditions captured each snapshot, the herds / forage-patch / food-module lookups the labor UI
 ## reads, the grid scalars for hex math, the losing-population diff, and the optimistic pending-labor
-## overlay. Pure DATA: it never holds a scene node or a `%Name` lookup. `changed(reason)` is emitted
-## on snapshot ingest and on a pending mutation; nothing consumes it yet (Phase 0 emits, Phase 2+
-## subscribes).
+## overlay. Pure DATA: it never holds a scene node or a `%Name` lookup — the derived READS over those
+## tables (`find_world_herd`, `food_module_icon`, `band_parties`/`band_party_workers`,
+## `effective_role_workers`) live here too, because a pure filter of the model's own tables IS the
+## model's remit; keeping them on the HUD is what made the band zone reach into the parties zone.
+## `changed(reason)` is emitted on snapshot ingest and on a pending mutation; nothing consumes it yet
+## (Phase 0 emits, Phase 2+ subscribes).
 ##
 ## Dictionaries/Arrays are returned BY REFERENCE from the read accessors, matching the HUD's existing
 ## in-place-read behaviour — callers must NOT assume a copy.
@@ -26,6 +29,11 @@ const LABOR_KIND_HUNT := "hunt"
 const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
 const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
 const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
+
+# The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
+# `FoodIcons.for_site` needs to pick a quarry glyph over a forage sprig. Lives here with
+# `food_module_icon`, its only reader.
+const FOOD_SITE_KIND_GAME_TRAIL := "game_trail"
 
 # Every player-faction resident band from the latest snapshot (roster order; first == `_player_band`).
 var _player_bands: Array = []
@@ -97,6 +105,48 @@ func forage_patch_lookup() -> Dictionary:
 
 func food_module_by_tile() -> Dictionary:
 	return _food_module_by_tile
+
+# ---- Snapshot lookups (derived reads over the ingested tables) -----------------------------------
+
+## The snapshot herd with this id, wherever it is on the map; {} when unknown. Herds MIGRATE every
+## turn, so `_world_herds` — not a hunt assignment's launch-time `target_x/target_y` — is the
+## authority on where a hunted herd IS. Mirrors `MapView._herd_by_id` (the hunted-herd ring's resolver).
+func find_world_herd(herd_id: String) -> Dictionary:
+	if herd_id == "":
+		return {}
+	for herd in _world_herds:
+		if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
+			return herd
+	return {}
+
+## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
+## there. "" when the tile has no known module (undiscovered), so the row renders bare rather than
+## with a misleading fallback sprig.
+func food_module_icon(x: int, y: int) -> String:
+	var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
+	if not (site is Dictionary):
+		return ""
+	var module_key := String((site as Dictionary).get("module", ""))
+	var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
+	return FoodIcons.for_site(module_key, is_hunt, int((site as Dictionary).get("terrain_id", -1)))
+
+## The player expeditions this band detached (grouped by `home_band_entity`) — the parties zone's row
+## set and the Workforce bar's Parties segment both read it, so the two can never disagree about which
+## parties belong to the band.
+func band_parties(band: Dictionary) -> Array:
+	var band_entity := int(band.get("entity", -1))
+	var rows: Array = []
+	for exp_variant in _player_expeditions:
+		if exp_variant is Dictionary and int((exp_variant as Dictionary).get("home_band_entity", 0)) == band_entity:
+			rows.append(exp_variant)
+	return rows
+
+## Workers currently out with this band's parties — the Workforce bar's Parties segment.
+func band_party_workers(band: Dictionary) -> int:
+	var total := 0
+	for exp in band_parties(band):
+		total += int((exp as Dictionary).get("size", 0))
+	return total
 
 # ---- Snapshot ingest / mutators (emit `changed`) -------------------------------------------------
 
@@ -283,6 +333,25 @@ func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
 	if pend.has(key):
 		return int((pend[key] as Dictionary).get("workers", 0))
 	return workers_for_hunt(band, herd_id)
+
+## Effective worker count on a band-wide ROLE (scout/warrior), overlaying any pending value — the
+## role twin of `effective_forage_workers` / `effective_hunt_workers`. Roles key by kind alone (one
+## band-wide slot each), so there is no tile/herd to pass. Returns `{workers, pending}` because the
+## role CARDS tint their title amber while an optimistic edit is unconfirmed.
+func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
+	var key := pending_key(kind, -1, -1, "")
+	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	if pend.has(key):
+		return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
+	return {"workers": workers_for_role(band, kind), "pending": false}
+
+## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed. The role sibling of
+## `workers_for_forage` / `workers_for_hunt`.
+func workers_for_role(band: Dictionary, kind: String) -> int:
+	for entry in _labor_assignments_of(band):
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+			return int((entry as Dictionary).get("workers", 0))
+	return 0
 
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.
