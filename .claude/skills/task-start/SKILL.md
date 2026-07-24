@@ -1,6 +1,6 @@
 ---
 name: task-start
-description: Begin work on a Falcon backlog issue — set it In Progress, create a worktree, and scaffold a PR body with Closes #N. Use when the user says they want to start working on a task/issue.
+description: Begin work on a Falcon backlog issue — set it In Progress, create a worktree, and take the work through commit/push/PR with Closes #N (the human merges). Use when the user says they want to start working on a task/issue.
 ---
 
 # /task-start — start work on an issue
@@ -19,12 +19,14 @@ Read the issue and its linked `docs/plan_*.md` spec so you understand the work b
    then create it with `EnterWorktree` (branches fresh off `origin/main`). Run every
    build/edit/commit from the worktree root — confirm with `git rev-parse --show-toplevel`
    before builds or commits (see CLAUDE.md → Working from a Git Worktree).
-4. Draft a PR body the user can reuse, including `Closes #<NUM>` so the merge auto-closes
-   the issue and moves it to Done.
+4. Draft the PR body you will open the PR with, including `Closes #<NUM>` so the merge
+   auto-closes the issue and moves it to Done.
 
 ## Git ownership — READ THIS
 - **The agent owns commit, push, and opening the PR.** Once the work is implemented and
-  self-verified, commit it to the worktree branch, push, and open the PR with `gh`.
+  self-verified, commit it to the worktree branch, push, and open the PR with `gh` — this
+  is the repo default for worktree work, not something to ask about each time
+  (CLAUDE.md → Git, Branches & PRs).
 - **The human owns the MERGE.** Never merge the PR — that is the human's call through their
   own review flow.
 - Stage only the specific files you changed, by explicit path (never `git add -A`/`.`/`<dir>`).
