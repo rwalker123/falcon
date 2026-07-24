@@ -19,7 +19,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -196,6 +196,62 @@ fn run_turns_untended(app: &mut App, turns: u32) {
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_husbandry);
     }
+}
+
+/// Run untended turns one at a time until the pen is lost (a "drifted off" corral feed line appears),
+/// up to `cap`. The pen is announced lost the turn the fully-abandoned herd bleeds out, and the empty
+/// managed entity is despawned that same `advance_husbandry` pass — so after this returns the herd is
+/// **gone from the registry**. Returns the turn count, or `None` if the pen was not lost within `cap`.
+fn run_untended_until_pen_lost(app: &mut App, cap: u32) -> Option<u32> {
+    for turn in 1..=cap {
+        run_turns_untended(app, 1);
+        if corral_feed_lines(app)
+            .iter()
+            .any(|e| e.label.contains("drifted off"))
+        {
+            return Some(turn);
+        }
+    }
+    None
+}
+
+/// Count the wild (unowned, uncorralled, undomesticated) herds of `species` in the registry — the wild
+/// web the shed drifts escapees into.
+fn wild_herds_of(app: &App, species: &str) -> Vec<Herd> {
+    app.world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .filter(|h| {
+            h.owner.is_none()
+                && !h.is_corralled()
+                && h.domestication_progress == 0.0
+                && h.species == species
+        })
+        .cloned()
+        .collect()
+}
+
+/// A fingerprint of the whole herd registry, for the determinism guard: `(id, biomass, x, y)` per herd,
+/// sorted by id, biomass quantised so two runs compare bit-for-bit rather than on raw f32 noise.
+fn herd_fingerprint(app: &App) -> Vec<(String, i64, u32, u32)> {
+    let mut rows: Vec<(String, i64, u32, u32)> = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .map(|h| {
+            let pos = h.position();
+            (
+                h.id.clone(),
+                (h.biomass * 1_000.0).round() as i64,
+                pos.x,
+                pos.y,
+            )
+        })
+        .collect();
+    rows.sort();
+    rows
 }
 
 /// The live herd (panics if it despawned — every test here expects it to survive).
@@ -484,43 +540,12 @@ fn taming_speed_is_a_per_species_dial_on_the_shared_rung() {
     );
 }
 
-/// **The multiplier is a TIMESCALE, not a speed — the decay scales with it.** From the *same*
-/// partial taming, a Steppe Runner bleeds progress ~5× slower than a rabbit: slow to tame, slow to
-/// forget. This is what keeps the rung's build:decay ratio invariant per species (and is why the
-/// ladder's "taming must out-run its decay" bound needs no per-species restatement).
-#[test]
-fn a_slow_taming_species_is_equally_slow_to_forget() {
-    /// A partial taming both species start the decay from — well clear of the `0.0` clamp, so
-    /// neither run bottoms out and flatters the ratio.
-    const PARTIAL_TAMING: f32 = 0.5;
-    const ABANDONED_TURNS: u32 = 10;
-
-    let progress_lost = |species_key: &str| -> f32 {
-        let mut app = spawn_world();
-        let id = prime_thriving_herd(&mut app);
-        rebadge_as(&mut app, &id, species_key);
-        {
-            let mut registry = app.world.resource_mut::<HerdRegistry>();
-            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.accrue_domestication(FactionId(0), PARTIAL_TAMING);
-        }
-        assert_eq!(progress_of(&app, &id), PARTIAL_TAMING);
-        // Nobody is working it: the herd goes feral at its species' own decay.
-        run_turns_untended(&mut app, ABANDONED_TURNS);
-        PARTIAL_TAMING - progress_of(&app, &id)
-    };
-
-    let rabbit = progress_lost("rabbit");
-    let steppe_runner = progress_lost("steppe_runner");
-    assert!(
-        rabbit > 0.0 && steppe_runner > 0.0,
-        "an abandoned part-tamed herd of either species must bleed: {rabbit} / {steppe_runner}"
-    );
-    assert!(
-        (rabbit / steppe_runner - 5.0).abs() < 0.05,
-        "a steppe runner must forget 5× slower than a rabbit: lost {rabbit} vs {steppe_runner}"
-    );
-}
+// **RETIRED (`docs/plan_fauna_neglect_escape.md` §2.1):** `a_slow_taming_species_is_equally_slow_to_forget`
+// measured the per-species *forget* rate — the tameness-decay timescale. Neglect no longer decays
+// tameness at all (it sheds animals), so there is no forget rate to scale. The *taming* half of that
+// per-species timescale is still live and covered by `taming_speed_is_a_per_species_dial_on_the_shared_rung`
+// above; the forget half is gone. Neglect's new cost is guarded by `neglect_never_un_tames_a_herd` and
+// the shed tests at the bottom of this file.
 
 /// Only a Sustain hunt tames; an Eradicate hunt never accrues husbandry.
 #[test]
@@ -536,42 +561,69 @@ fn eradicate_hunt_does_not_domesticate() {
     );
 }
 
-/// **Abandoning a taming decays the meter**, and ownership lapses at zero — the herd goes feral, the
-/// animal mirror of an abandoned Cultivate patch reverting.
-///
-/// **Retargeted from `progress_decays_without_sustained_hunt`:** the guarantee (partial taming bleeds
-/// away when you walk off, and a herd at zero progress keeps no stale owner) is unchanged; the meter
-/// is now *built* by `Tame` rather than by `Sustain`, so that is what gets abandoned. The decay rate
-/// itself now comes off the `animal:pastoral` rung, not `fauna_config.husbandry`.
+/// **A fully-abandoned pastoral herd goes FERAL — it bleeds its whole flock into the wild web and
+/// DESPAWNS — and its taming is never decayed on the way** (`docs/plan_fauna_neglect_escape.md` §2.4;
+/// the inverse of the retired `abandoning_a_tame_decays_the_progress`). Walking off costs you the
+/// ANIMALS: with no keeper and no regrowth the shed drives the herd down until it can shed no more, then
+/// the empty entity is removed — no ownerless husk. The tameness meter is **never reset**; it reads
+/// exactly what was earned right up to the turn the herd is gone, because the tameness leaves with the
+/// animals (each shed batch is a wild herd at domestication 0).
 #[test]
-fn abandoning_a_tame_decays_the_progress() {
+fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
+    let species = herd_of(&app, &id).species.clone();
+    let wild_before: f32 = wild_herds_of(&app, &species)
+        .iter()
+        .map(|h| h.biomass)
+        .sum();
     grant_herding(&mut app);
     let band = spawn_hunter(&mut app, &id, FollowPolicy::Tame);
     run_turns_with_hunt(&mut app, 6);
     let built = progress_of(&app, &id);
     assert!(built > 0.0, "some progress should have accrued");
 
-    // Stop hunting, then let husbandry decay run.
+    // Nobody keeps it: it bleeds out and despawns. Every turn it is still alive, its taming meter must
+    // read exactly what was earned — never decayed toward the wild.
     app.world.despawn(band);
-    run_turns_untended(&mut app, 6);
-    let decayed = progress_of(&app, &id);
+    let mut despawned = false;
+    for _ in 0..200 {
+        run_turns_untended(&mut app, 1);
+        match app.world.resource::<HerdRegistry>().find(&id) {
+            Some(herd) => assert_eq!(
+                herd.domestication_progress, built,
+                "tameness is never decayed by neglect: {built} -> {}",
+                herd.domestication_progress
+            ),
+            None => {
+                despawned = true;
+                break;
+            }
+        }
+    }
     assert!(
-        decayed < built,
-        "progress should decay: {built} -> {decayed}"
+        despawned,
+        "a fully-abandoned pastoral herd eventually bleeds out entirely and despawns"
     );
-
-    // Decay all the way down clears ownership.
-    run_turns_untended(&mut app, 60);
-    let registry = app.world.resource::<HerdRegistry>();
-    let herd = registry.find(&id).expect("herd still exists");
-    assert_eq!(herd.domestication_progress, 0.0);
-    assert_eq!(herd.owner, None, "ownership lapses at zero progress");
+    // Its animals went to the wild web, not into thin air.
+    let wild_after: f32 = wild_herds_of(&app, &species)
+        .iter()
+        .map(|h| h.biomass)
+        .sum();
+    assert!(
+        wild_after > wild_before,
+        "the abandoned flock re-entered the wild web: {wild_before} -> {wild_after}"
+    );
 }
 
 /// A domesticated (managed) herd is immune to the overhunting collapse: driven below the Allee
 /// threshold it recovers logistically instead of crashing to extinction.
+///
+/// **Collapse-immunity is an ECOLOGY property, so the herd must stay HERDED** (the neglect-escape
+/// model, `docs/plan_fauna_neglect_escape.md` §2.4 option B): a *fully abandoned* domesticated herd now
+/// goes feral (regrowth suppressed → sheds to zero), which is a different mechanic. Here a keeper is
+/// present every turn (`herded_fraction` re-seeded full), so nothing sheds and the only question is
+/// whether the ecology curve recovers or crashes.
 #[test]
 fn domesticated_herd_is_collapse_immune() {
     let mut app = spawn_world();
@@ -586,7 +638,16 @@ fn domesticated_herd_is_collapse_immune() {
         low
     };
 
-    run_turns_untended(&mut app, 10);
+    // A keeper is with the herd every turn (full staffing), so it does not shed — it just regrows.
+    for _ in 0..10 {
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.herded_fraction = FULLY_HERDED;
+        }
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+    }
 
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry
@@ -628,9 +689,12 @@ fn a_pastoral_herd_pays_nothing_without_workers() {
         0.0,
         "an unworked tame herd must yield its owner NOTHING — the passive rung is retired"
     );
+    // Under the neglect-escape model an unherded tame herd SHEDS animals over its (zero-worker) labor
+    // capacity into the wild web, so it no longer sits at capacity — but the shed is not a yield: the
+    // owner's larder stays empty (asserted above). The cost of neglect landed on the herd, not the pot.
     assert!(
-        (herd_of(&app, &id).biomass - cap).abs() < cap * 1e-3,
-        "and nothing harvested it, so it sits at capacity"
+        herd_of(&app, &id).biomass < cap,
+        "an unherded tame herd sheds animals (the visible cost of neglect), it does not sit at capacity"
     );
 }
 
@@ -1314,85 +1378,21 @@ fn seat_species_traits(app: &mut App, id: &str, r: f32, body_mass: f32) {
     herd.body_mass = body_mass;
 }
 
-/// **A properly-herded tamed herd does NOT rot — including one you are merely HARVESTING**
-/// (intensification ladder slice 8).
-///
-/// This is the guarantee that had to survive deleting `decay_domestication`'s `is_domesticated()`
-/// early return. That return made a tamed herd permanently tame for **zero labor**; removing it makes
-/// husbandry a standing cost — but it must not make *harvesting your own herd* corrode it. A crew is
-/// standing right there under Sustain: the animals stay gentled.
-///
-/// So the rule is staffing, **not** the verb: enough herders ⇒ no decay under *any* policy. `Tame` is
-/// what makes the meter go *up*; it is not what stops it going down.
-#[test]
-fn a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy() {
-    let mut app = spawn_world();
-    let id = prime_thriving_herd(&mut app);
-    domesticate(&mut app, &id);
-    // A big crew, so `herders_needed` is comfortably met however the biomass breathes.
-    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+// **RETIRED (`docs/plan_fauna_neglect_escape.md`):** the two tameness-bleed tests
+// `a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy` and
+// `an_under_herded_tamed_herd_decays_proportionally_and_recovers` are gone with `decay_under_herded`.
+// Neglect no longer touches `domestication_progress` at all — it sheds ANIMALS. The replacement
+// guarantee ("tameness does not change under neglect") is `neglect_never_un_tames_a_herd` below, and
+// the shed mechanic itself is covered by `an_over_stocked_managed_herd_converges_to_its_labor_capacity`,
+// `a_pen_sheds_slower_than_a_pastoral_herd`, `total_abandonment_sheds_the_flock_and_loses_the_pen`,
+// `shed_animals_appear_in_the_wild_web`, and `the_shed_is_deterministic`.
 
-    run_turns_with_hunt(&mut app, 20);
-
-    let herd = herd_of(&app, &id);
-    assert_eq!(
-        herd.domestication_progress, RUNG_COMPLETE,
-        "a fully-staffed Sustain hunt must not rot its own tamed herd: {} after 20 turns",
-        herd.domestication_progress
-    );
-    assert!(herd.is_domesticated(), "and it is still a pastoral herd");
-}
-
-/// **An UNDER-herded tamed herd forgets — proportionally, and it recovers.** The other half of
-/// `a_properly_herded_tamed_herd_does_not_decay_under_a_harvest_policy`, and the reason the decay is a
-/// *fraction* rather than a threshold: half the herders you need ⇒ half the decay, nothing snaps, and
-/// staffing it again stops the bleed. A binary escape here would void a ~32-turn taming investment on
-/// rounding, as biomass breathes across a herder boundary.
-#[test]
-fn an_under_herded_tamed_herd_decays_proportionally_and_recovers() {
-    let mut app = spawn_world();
-    let id = prime_thriving_herd(&mut app);
-    domesticate(&mut app, &id);
-
-    // Nobody herding at all — the abandonment case, full decay.
-    run_turns_untended(&mut app, 6);
-    let abandoned = herd_of(&app, &id).domestication_progress;
-    assert!(
-        abandoned < RUNG_COMPLETE,
-        "an unherded tamed herd starts forgetting: {abandoned}"
-    );
-    assert!(
-        abandoned > 0.9,
-        "but it forgets SLOWLY — the investment is not destroyed: {abandoned}"
-    );
-
-    // A crew returns under a plain harvest policy: the bleed stops dead, with no `Tame` needed.
-    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
-    run_turns_with_hunt(&mut app, 1); // one turn to write `herded_fraction`
-    let before = herd_of(&app, &id).domestication_progress;
-    run_turns_with_hunt(&mut app, 6);
-    let after = herd_of(&app, &id).domestication_progress;
-    assert_eq!(
-        after, before,
-        "staffing the herd again stops the decay outright: {before} -> {after}"
-    );
-}
-
-/// A corralled herd left untended **escapes**: `advance_husbandry` clears `corralled_at`, reverting it
-/// to a mobile herd that keeps its taming **investment**.
-///
-/// **What "still domesticated" means changed in slice 8, and the guarantee is stated more precisely
-/// here.** This used to assert `is_domesticated()` outright — true only because
-/// `decay_domestication` opened with an `is_domesticated()` early return, i.e. a tamed herd was
-/// permanently tame for **zero labor**. That return is deleted (§3: every rung is worked), so an
-/// abandoned herd — nobody feeding it, nobody herding it — begins going feral **immediately**, exactly
-/// as an abandoned tended patch does on the plant web (`is_cultivated()` is the same `>= 1.0`
-/// threshold, and `advance_cultivation` drops it below on the first untended turn).
-///
-/// So the escape costs the **pen**, not the **taming**: `corral_progress` is zeroed outright (25 turns
-/// gone) while `domestication_progress` is merely *bleeding* at the rung's `decay_per_turn` — still
-/// ~99% intact after the turn it broke out, and cheap to top back up with `Tame`. That is the real
-/// invariant, and asserting the meter rather than the flag is what makes it legible.
+/// A corralled herd left **totally untended** no longer breaks out in one turn — under the neglect-escape
+/// model it **sheds its flock to the wild web over many turns** and, when the last animal is gone, the
+/// pen is announced lost and the empty entity **despawns** (`docs/plan_fauna_neglect_escape.md` §2.4).
+/// What survives from the old binary escape: the pen IS eventually lost — just gradually and visibly,
+/// not on a silent turn-2 flip. Fully asserted by `total_abandonment_sheds_the_flock_and_loses_the_pen`
+/// below; this stub keeps the old name pointed at the new behaviour so a future reader greps here.
 #[test]
 fn untended_corral_escapes_to_mobile() {
     let mut app = spawn_world();
@@ -1405,21 +1405,27 @@ fn untended_corral_escapes_to_mobile() {
         .unwrap()
         .is_corralled());
 
-    // No keeper: the one-turn grace is consumed, then it breaks out.
+    // A handful of untended turns is NOT enough to lose the pen now — the flock is still shedding.
     run_turns_untended(&mut app, 3);
-
-    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
-    assert!(!herd.is_corralled(), "an untended corral escapes");
-    // The **taming investment survives the escape** — it is bleeding (nobody is herding them), not
-    // reset. Losing the pen must not also delete the ~32 turns of gentling underneath it.
     assert!(
-        herd.domestication_progress > 0.9,
-        "the escape costs the PEN, not the taming: domestication still {} after breaking out",
-        herd.domestication_progress
+        corral_feed_lines(&app).is_empty(),
+        "the pen is not lost after 3 turns — it sheds gradually now, not in a binary escape"
+    );
+
+    // Run it out: the flock bleeds to nothing, the pen is announced lost, and the entity despawns.
+    assert!(
+        run_untended_until_pen_lost(&mut app, 200).is_some(),
+        "an untended pen eventually sheds to nothing and loses the pen"
     );
     assert!(
-        herd.owner.is_some(),
-        "and it is still the owner's herd — feral takes ~100 turns, not 3"
+        corral_feed_lines(&app)
+            .iter()
+            .any(|e| e.label.contains("drifted off") && e.label.contains("pen is lost")),
+        "the loss is announced in the feed"
+    );
+    assert!(
+        app.world.resource::<HerdRegistry>().find(&id).is_none(),
+        "the bled-out herd is gone from the registry — no ownerless husk"
     );
 }
 
@@ -1448,9 +1454,10 @@ fn freshly_penned_herd_survives_its_grace_turn() {
     );
 }
 
-/// The escape **destroys a 25-turn investment**, so it must never be silent: it pushes a
-/// `CommandEventKind::Corral` feed line naming the **species** (not the internal herd id) and saying
-/// both what happened and why, with the machine-readable bits in the detail field.
+/// Losing the pen (now on shed-to-zero, `docs/plan_fauna_neglect_escape.md` §2.4) **destroys a 25-turn
+/// investment**, so it must never be silent: it pushes a `CommandEventKind::Corral` feed line naming the
+/// **species** (not the internal herd id) and saying both what happened and why, with the
+/// machine-readable bits in the detail field.
 #[test]
 fn corral_escape_announces_the_lost_pen_in_the_feed() {
     let mut app = spawn_world();
@@ -1464,10 +1471,14 @@ fn corral_escape_announces_the_lost_pen_in_the_feed() {
         .species
         .clone();
 
-    run_turns_untended(&mut app, 3);
+    // Run the abandonment out to the bleed-out, when the pen is lost and the entity despawns.
+    assert!(
+        run_untended_until_pen_lost(&mut app, 200).is_some(),
+        "an untended pen eventually bleeds out and loses the pen"
+    );
 
     let lines = corral_feed_lines(&app);
-    assert_eq!(lines.len(), 1, "exactly one escape line: {lines:?}");
+    assert_eq!(lines.len(), 1, "exactly one pen-lost line: {lines:?}");
     let entry = &lines[0];
     assert_eq!(entry.faction, FactionId(0), "the owner is told");
     assert!(
@@ -1476,7 +1487,7 @@ fn corral_escape_announces_the_lost_pen_in_the_feed() {
         entry.label
     );
     assert!(
-        entry.label.contains("broke out") && entry.label.contains("pen is lost"),
+        entry.label.contains("drifted off") && entry.label.contains("pen is lost"),
         "the line says what happened AND why: {}",
         entry.label
     );
@@ -1489,58 +1500,32 @@ fn corral_escape_announces_the_lost_pen_in_the_feed() {
     );
 }
 
-/// **The pen is lost, not merely opened.** An escaping herd resets `corral_progress` to `0.0`, so the
-/// next `Corral` turn does NOT instantly re-pen it (at whatever tile it has roamed to) — the keeper
-/// must pay the full rebuild investment again.
+/// **The pen is lost, not merely opened — the whole entity is gone.** When an untended pen bleeds out,
+/// the empty managed herd **despawns** (`docs/plan_fauna_neglect_escape.md` §2.4): nothing is inherited
+/// because nothing remains. Re-penning is a fresh herd's fresh investment, not a snap-back from a
+/// retained meter — there is no herd to snap back.
 #[test]
 fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     corral_herd(&mut app, &id);
-    let build_per_turn = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::AnimalPen)
-        .build_accrual(FollowPolicy::Corral, true, RUNG_TIMESCALE_UNSCALED);
 
-    // No keeper: the grace turn is consumed, then the herd breaks out.
-    run_turns_untended(&mut app, 3);
-    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
-    assert!(!herd.is_corralled(), "an untended corral escapes");
-    assert_eq!(
-        herd.corral_progress, 0.0,
-        "the escaped herd's pen is lost — progress resets"
-    );
-
-    // A keeper returns under the Corral policy: it must REBUILD, not snap straight back to penned.
-    //
-    // **Re-tame first (slice 8).** The abandoned herd has been bleeding its taming since it broke out
-    // (nobody was herding it — `decay_domestication`'s `is_domesticated()` early return is gone), so
-    // it is a hair under the `>= 1.0` bar `Corral` gates on and would accrue nothing. That is real
-    // behaviour and it is `untended_corral_escapes_to_mobile`'s subject; here it is *setup noise*, so
-    // top the meter back up and keep this test on its own question: **does the pen rebuild from zero?**
-    domesticate(&mut app, &id);
-    grant_penning(&mut app);
-    spawn_hunter(&mut app, &id, FollowPolicy::Corral);
-    run_turns_with_hunt(&mut app, 1);
-
-    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    // Bleed the flock out — the pen is lost and the entity despawns the turn the last animal goes.
     assert!(
-        !herd.is_corralled(),
-        "one Corral turn must not instantly re-pen an escaped herd"
+        run_untended_until_pen_lost(&mut app, 200).is_some(),
+        "an untended pen eventually bleeds out and loses the pen"
     );
     assert!(
-        (herd.corral_progress - build_per_turn).abs() < 1e-4,
-        "re-penning restarts the investment from zero: {} after one turn",
-        herd.corral_progress
+        app.world.resource::<HerdRegistry>().find(&id).is_none(),
+        "the pen — and the herd with it — is gone, so nothing is inherited on re-penning"
     );
 }
 
-/// **The lost pen tears down its whole FENCE, not just the build meter** (Grazing 2d). A completed pen
-/// with a grown radius (and even a ring mid-extension) that escapes untended resets `pen_radius` /
-/// `pen_extend_progress` / `pen_extending` to defaults, so a re-corralled herd starts at radius 0 —
-/// it does NOT inherit its old fenced radius for free (skipping the ~25-turn-per-ring ExtendPen labor).
+/// **The lost pen's whole FENCE dies with the entity** (`docs/plan_fauna_neglect_escape.md` §2.4). A
+/// completed pen with a grown radius (and even a ring mid-extension) that bleeds out despawns entirely,
+/// so `pen_radius` / `pen_extend_progress` / `pen_extending` cannot be inherited for free — the entity
+/// that carried them is gone. (The old model reset the fields on a surviving mobile herd; the refined
+/// one removes the herd, which is the same guarantee with less state to keep straight.)
 #[test]
 fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
     let mut app = spawn_world();
@@ -1553,35 +1538,18 @@ fn escaped_corral_resets_the_fenced_footprint_no_free_extension() {
         herd.pen_radius = 2;
         herd.pen_extend_progress = 0.5;
         herd.pen_extending = true;
-        // A lush pasture share left over from being penned — must not survive going mobile.
         herd.pen_pasture_fraction = 1.0;
     }
 
-    // No keeper: the grace turn is consumed, then the herd breaks out.
-    run_turns_untended(&mut app, 3);
-    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
-    assert!(!herd.is_corralled(), "an untended corral escapes");
-    assert_eq!(
-        herd.pen_radius, 0,
-        "the lost pen's fence is torn down to radius 0"
+    // Bleed the flock out — the pen is lost and the whole entity (fence and all) despawns.
+    assert!(
+        run_untended_until_pen_lost(&mut app, 200).is_some(),
+        "an untended pen eventually bleeds out and loses the pen"
     );
-    assert!(!herd.pen_extending, "its in-flight extension is cancelled");
-    assert_eq!(herd.pen_extend_progress, 0.0, "with zero ring progress");
-    assert_eq!(
-        herd.pen_pasture_fraction, 0.0,
-        "and the stale penned pasture share is cleared (the wire's '0.0 when unpenned' contract)"
+    assert!(
+        app.world.resource::<HerdRegistry>().find(&id).is_none(),
+        "the grown fence is gone with the despawned herd — nothing to inherit"
     );
-
-    // Re-corralling comes back at radius 0 — the old fence is NOT inherited for free.
-    corral_herd(&mut app, &id);
-    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
-    assert!(herd.is_corralled(), "the herd re-pens");
-    assert_eq!(
-        herd.pen_radius, 0,
-        "a re-corralled herd starts at radius 0 — no free extension"
-    );
-    assert!(!herd.pen_extending);
-    assert_eq!(herd.pen_extend_progress, 0.0);
 }
 
 /// Guard against over-reaching the escape fix: a **half-built** pen whose gate lapses (its keeper
@@ -1842,5 +1810,325 @@ fn penning_accrues_every_worked_turn_not_only_on_kill_turns() {
         wait_turns > 0,
         "the fixture must include a 0-kill wait-turn, or it does not exercise the kill-decoupling \
          (Penning still reached completion across {turns} turns)"
+    );
+}
+
+// ==========================================================================================
+// Neglect-escape arc (`docs/plan_fauna_neglect_escape.md`): neglect sheds ANIMALS, it does not
+// un-tame them. Below the fixture helpers isolate the shed from regrowth/harvest by running only
+// `advance_husbandry` (the Logistics pass that sheds) with a manually-seated `herded_fraction`.
+// ==========================================================================================
+
+/// The `animals_per_herder` for the fixture species, and a herd's `body_mass` — the two numbers the
+/// shed's overage/whole-animal math is denominated in.
+fn species_shed_params(app: &App, id: &str) -> (f32, f32) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).unwrap();
+    (fauna.animals_per_herder_for(&herd.species), herd.body_mass)
+}
+
+/// Seat the herd's `herded_fraction` exactly as the labor arm would for a keeper of `herders` hands —
+/// `min(1, herders / ceil(animals / animals_per_herder))` — so the shed's `overage = current − capacity`
+/// tracks the herd as it shrinks (the §2.2 convergence, without running the labor system).
+fn seat_staffing(app: &mut App, id: &str, herders: f32, aph: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    let animals = (herd.biomass / herd.body_mass).max(0.0);
+    let needed = (animals / aph).ceil().max(1.0);
+    herd.herded_fraction = (herders / needed).min(1.0);
+}
+
+/// **The shed self-limits: an over-stocked managed herd converges to its labor capacity from above and
+/// STOPS there** (`docs/plan_fauna_neglect_escape.md` §2.2). It sheds a fraction of the *overage*, not
+/// the total, so as the herd shrinks toward what its keepers can hold, fewer leave each turn and it
+/// halts at capacity — it never overshoots to zero (only total abandonment does that).
+#[test]
+fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+
+    // A fixed keeper crew of `herders` hands ⇒ a labor capacity of `herders × aph` animals. Over-stock
+    // the herd well above it, owned + domesticated (so it is managed and sheds).
+    let herders = 3.0_f32;
+    let capacity_animals = herders * aph;
+    let start_animals = capacity_animals * 4.0;
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.carrying_capacity = start_animals * body_mass * 2.0; // K well above the stock
+        herd.biomass = start_animals * body_mass;
+    }
+
+    // Only the shed runs (no regrowth), with staffing re-seated each turn to track the shrinking herd.
+    for _ in 0..200 {
+        seat_staffing(&mut app, &id, herders, aph);
+        app.world.run_system_once(advance_husbandry);
+    }
+
+    let herd = herd_of(&app, &id);
+    let final_animals = herd.biomass / body_mass;
+    assert!(
+        final_animals > capacity_animals * 0.5,
+        "it converged to its labor capacity, it did NOT overshoot to zero: {final_animals} animals \
+         vs capacity {capacity_animals}"
+    );
+    assert!(
+        final_animals <= capacity_animals + 1.0,
+        "and it did not stall well above capacity: {final_animals} animals vs capacity \
+         {capacity_animals}"
+    );
+    // PARTIAL neglect keeps the herd TAME and OWNED — it settled smaller, it did not go feral.
+    assert!(
+        herd.owner.is_some(),
+        "a partially-herded herd stays the owner's — only shed-to-zero clears ownership"
+    );
+    assert_eq!(
+        herd.domestication_progress, RUNG_COMPLETE,
+        "and its tameness is untouched by the shedding: {}",
+        herd.domestication_progress
+    );
+}
+
+/// **Partial neglect with REGROWTH active keeps a stable smaller TAME herd** (`docs/plan_fauna_neglect_escape.md`
+/// §2.4 option B) — the counterpart to `a_fully_abandoned_pastoral_herd_goes_feral...`. An understaffed
+/// (but not abandoned) herd runs the full turn loop — `advance_herds` regrows it, `advance_husbandry`
+/// sheds its overage — and settles into a stable herd **below** its ecological `K`, with `owner` intact
+/// and `domestication_progress` unchanged. Regrowth is suppressed ONLY at zero herders; with some
+/// herders it refills, so the herd never sheds to the floor and never goes feral.
+#[test]
+fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+    let herders = 3.0_f32;
+    let capacity_animals = herders * aph;
+    let cap = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        // Ecological K modestly above the labor capacity, over-stocked to full K.
+        let cap = capacity_animals * body_mass * 1.5;
+        herd.carrying_capacity = cap;
+        herd.biomass = cap;
+        cap
+    };
+    let floor = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        herd_ecology(&herd_of(&app, &id), &fauna).extinction_floor * cap
+    };
+
+    // Full turn loop with a fixed, understaffed keeper crew re-seated each turn.
+    for _ in 0..80 {
+        seat_staffing(&mut app, &id, herders, aph);
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+    }
+    let mid = herd_of(&app, &id).biomass;
+    for _ in 0..40 {
+        seat_staffing(&mut app, &id, herders, aph);
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+    }
+    let herd = herd_of(&app, &id);
+
+    assert!(
+        herd.owner.is_some(),
+        "an understaffed herd stays TAME and owned — it never sheds to zero"
+    );
+    assert_eq!(
+        herd.domestication_progress, RUNG_COMPLETE,
+        "and its tameness is untouched: {}",
+        herd.domestication_progress
+    );
+    assert!(
+        herd.biomass > floor * 4.0,
+        "it is a healthy smaller herd, not a feral remnant at the floor: {} vs floor {floor}",
+        herd.biomass
+    );
+    assert!(
+        herd.biomass < cap,
+        "the shed bound it BELOW its ecological K (labor-limited): {} vs K {cap}",
+        herd.biomass
+    );
+    assert!(
+        (herd.biomass - mid).abs() < cap * 0.10,
+        "and it settled to a STABLE size (turn 80 {mid} ≈ turn 120 {})",
+        herd.biomass
+    );
+}
+
+/// **Tameness does not change under neglect — it leaves with the animals** (`docs/plan_fauna_neglect_escape.md`
+/// §2.1/§2.4) — the replacement for the retired `an_under_herded_tamed_herd_decays_proportionally_and_recovers`.
+/// `domestication_progress` is monotone-up (earned via `Tame`), **never** bled by an unherded turn: a
+/// fully-abandoned herd sheds its ANIMALS to the wild web and, when it can shed no more, **despawns** —
+/// the tameness meter reads exactly what was earned right up to the moment the entity is gone. There is
+/// no husk with a decayed (or reset) meter.
+#[test]
+fn neglect_never_un_tames_a_herd() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    // A PARTIALLY-tamed, owned, fully-abandoned herd — a partial meter is the sensitive case (a full
+    // 1.0 could hide a small decay under the clamp).
+    let partial = 0.5_f32;
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.owner = Some(FactionId(0));
+        herd.domestication_progress = partial;
+        herd.herded_fraction = 0.0; // nobody herding — maximum shed pressure
+    }
+
+    // Pure shed (no regrowth): the meter must not move a bit on any turn the herd still exists, and the
+    // herd must eventually bleed out and despawn.
+    let mut despawned = false;
+    for _ in 0..200 {
+        app.world.run_system_once(advance_husbandry);
+        match app.world.resource::<HerdRegistry>().find(&id) {
+            Some(herd) => assert_eq!(
+                herd.domestication_progress, partial,
+                "neglect sheds animals, it never touches tameness: {}",
+                herd.domestication_progress
+            ),
+            None => {
+                despawned = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        despawned,
+        "a fully-abandoned herd bleeds out entirely and despawns — no ownerless husk survives"
+    );
+}
+
+/// **A pen sheds SLOWER than a pastoral herd at the same shortfall** (`docs/plan_fauna_neglect_escape.md`
+/// §2.2) — the fence buys time (`pen_escape_fraction` < `pastoral_escape_fraction`, validated).
+#[test]
+fn a_pen_sheds_slower_than_a_pastoral_herd() {
+    // Two independent worlds, same fixture, same full-shortfall neglect — one pastoral, one penned.
+    let shed_biomass = |corral: bool| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+            herd.biomass = herd.carrying_capacity;
+            herd.herded_fraction = 0.0;
+        }
+        if corral {
+            let tile = herd_of(&app, &id).position();
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            assert!(herd.corral_at(tile));
+            herd.herded_fraction = 0.0;
+            // Skip the one-turn penning grace so both start shedding on turn 1.
+            herd.corralled_tended_this_turn = false;
+        }
+        // Pure shed, no regrowth, several turns so the per-rung rate dominates the ±jitter.
+        for _ in 0..6 {
+            app.world.run_system_once(advance_husbandry);
+        }
+        herd_of(&app, &id).biomass
+    };
+
+    let pastoral_left = shed_biomass(false);
+    let pen_left = shed_biomass(true);
+    assert!(
+        pen_left > pastoral_left,
+        "the pen (slower shed) retains MORE than the open-range herd: pen {pen_left} vs pastoral \
+         {pastoral_left}"
+    );
+}
+
+/// **Total abandonment bleeds the whole flock into the wild web over turns, loses the pen, and despawns
+/// the empty herd** (`docs/plan_fauna_neglect_escape.md` §2.4): no separate "escape" branch, just the
+/// `herded_fraction == 0` limit of the same shed carried all the way to zero animals. The flock is
+/// preserved in the wild web; only the emptied managed entity is removed.
+#[test]
+fn total_abandonment_sheds_the_flock_and_loses_the_pen() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let species = herd_of(&app, &id).species.clone();
+    let wild_before: f32 = wild_herds_of(&app, &species)
+        .iter()
+        .map(|h| h.biomass)
+        .sum();
+    corral_herd(&mut app, &id);
+
+    assert!(
+        run_untended_until_pen_lost(&mut app, 200).is_some(),
+        "an untended pen eventually bleeds out and loses the pen"
+    );
+
+    // The empty managed entity is gone — no ownerless husk, no pen.
+    assert!(
+        app.world.resource::<HerdRegistry>().find(&id).is_none(),
+        "the bled-out herd is despawned, pen and all"
+    );
+    // The flock did not vanish — it went to the wild web (at domestication 0).
+    let wild_after: f32 = wild_herds_of(&app, &species)
+        .iter()
+        .map(|h| h.biomass)
+        .sum();
+    assert!(
+        wild_after > wild_before,
+        "the shed flock re-entered the wild web: wild biomass {wild_before} -> {wild_after}"
+    );
+}
+
+/// **Shed animals appear in the wild web** (`docs/plan_fauna_neglect_escape.md` §2.3) — a same-species
+/// wild herd on/adjacent gains the biomass (merge), or a fresh wild herd spawns adjacent
+/// (`owner = None`, `domestication_progress = 0`). Either way the escapees are re-huntable, not vaporized.
+#[test]
+fn shed_animals_appear_in_the_wild_web() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let species = herd_of(&app, &id).species.clone();
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.biomass = herd.carrying_capacity;
+        herd.herded_fraction = 0.0; // fully under-contained ⇒ a real shed this turn
+    }
+    let wild_before: f32 = wild_herds_of(&app, &species)
+        .iter()
+        .map(|h| h.biomass)
+        .sum();
+
+    // A single shed pass (no regrowth), so the ONLY change to wild biomass is the placed escapees.
+    app.world.run_system_once(advance_husbandry);
+
+    let wild = wild_herds_of(&app, &species);
+    let wild_after: f32 = wild.iter().map(|h| h.biomass).sum();
+    assert!(
+        wild_after > wild_before,
+        "the escapees landed in the wild web (merge or spawn): {wild_before} -> {wild_after}"
+    );
+    for h in &wild {
+        assert!(h.owner.is_none(), "a wild carrier is unowned");
+        assert_eq!(h.domestication_progress, 0.0, "and undomesticated");
+    }
+}
+
+/// **The shed is deterministic under rollback** (`docs/plan_fauna_neglect_escape.md` §3.1): the jitter
+/// draws from the world seed stream, so two runs of the identical scenario are bit-identical.
+#[test]
+fn the_shed_is_deterministic() {
+    let run = || -> Vec<(String, i64, u32, u32)> {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        corral_herd(&mut app, &id);
+        run_turns_untended(&mut app, 30);
+        herd_fingerprint(&app)
+    };
+    assert_eq!(
+        run(),
+        run(),
+        "two runs of the same shed scenario must be bit-identical (seeded RNG, no wall-clock rand)"
     );
 }
