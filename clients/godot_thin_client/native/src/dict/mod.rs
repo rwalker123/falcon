@@ -1,5 +1,5 @@
 //! Snapshot section -> `Dictionary` converters, partitioned along the same nine
-//! domain sections `sim_schema/snapshot.fbs` uses. A new snapshot field's converter
+//! domain sections `sim_schema/schemas/snapshot.fbs` uses. A new snapshot field's converter
 //! belongs in its section's module here; only helpers with consumers in two or more
 //! sections live in this file.
 
