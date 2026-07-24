@@ -2,7 +2,8 @@
 //!
 //! The crate is partitioned along the **nine domain sections of `snapshot.fbs`**:
 //!
-//! - [`state`] — the world-state structs and enums, one module per section.
+//! - [`state`] — the world-state structs and enums, one module per section (Vision has none: its
+//!   three rasters are `ScalarRasterState` fields on [`WorldSnapshot`] itself).
 //! - [`world`] — the flat [`WorldSnapshot`] / [`WorldDelta`] payloads, their header, and the
 //!   bincode / JSON codecs plus the on-disk [`MapExport`].
 //! - [`codec`] — the FlatBuffers encoders, one module per section.

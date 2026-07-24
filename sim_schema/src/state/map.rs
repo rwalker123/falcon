@@ -1,11 +1,5 @@
 //! Map-section state: terrain, elevation, climate bands, rivers, and the raster carriers.
 
-// `TileState::graze_ecology_phase` is documented in terms of the subsistence section's phase
-// codes; imported so those intra-doc links keep resolving from this module.
-#[allow(unused_imports)]
-use crate::state::subsistence::{
-    GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
-};
 use serde::{Deserialize, Serialize};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 
@@ -462,11 +456,13 @@ pub struct TileState {
     /// health (and, from Phase 2b, the overgrazing signal).
     #[serde(default)]
     pub graze_capacity: f32,
-    /// The tile's pasture phase, as [`GRAZE_PHASE_NONE`] / [`GRAZE_PHASE_THRIVING`] /
-    /// [`GRAZE_PHASE_STRESSED`] / [`GRAZE_PHASE_COLLAPSING`]. A compact code rather than the string
-    /// the sparse herd/forage payloads use, because this rides *every* tile (the `moraleCause:ubyte`
-    /// idiom). `NONE` is the default, so "this biome has no pasture" is never confused with "this
-    /// pasture is healthy".
+    /// The tile's pasture phase, as [`GRAZE_PHASE_NONE`](crate::state::subsistence::GRAZE_PHASE_NONE)
+    /// / [`GRAZE_PHASE_THRIVING`](crate::state::subsistence::GRAZE_PHASE_THRIVING) /
+    /// [`GRAZE_PHASE_STRESSED`](crate::state::subsistence::GRAZE_PHASE_STRESSED) /
+    /// [`GRAZE_PHASE_COLLAPSING`](crate::state::subsistence::GRAZE_PHASE_COLLAPSING). A compact code
+    /// rather than the string the sparse herd/forage payloads use, because this rides *every* tile
+    /// (the `moraleCause:ubyte` idiom). `NONE` is the default, so "this biome has no pasture" is
+    /// never confused with "this pasture is healthy".
     #[serde(default)]
     pub graze_ecology_phase: u8,
     /// **Forage potential** — the *human-edible* twin of [`graze_capacity`](Self::graze_capacity).

@@ -1,10 +1,6 @@
 //! Population-section state: cohorts, demographics, labor assignments, and tasks.
 
 use crate::state::economy::KnownTechFragment;
-// `HarvestTaskState` is documented against the subsistence section's hunt-trip estimate; imported
-// so that intra-doc link keeps resolving from this module.
-#[allow(unused_imports)]
-use crate::state::subsistence::HuntTripEstimateState;
 use serde::{Deserialize, Serialize};
 
 /// Per-faction age structure aggregated over the faction's population cohorts. The client
@@ -309,7 +305,8 @@ pub struct PopulationCohortState {
     /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
     ///
     /// The pre-launch **expedition** trip length is **not** computed from these: the client reads the
-    /// sim's simulated answer out of the target herd's [`HuntTripEstimateState`] table
+    /// sim's simulated answer out of the target herd's
+    /// [`HuntTripEstimateState`](crate::state::subsistence::HuntTripEstimateState) table
     /// (policy × `party_workers` → `turns_to_fill`) and flags NOT VIABLE when `turns_to_fill >
     /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
     /// party has `delivers_food == false`: render "no food delivered (denial)", never an ETA.
