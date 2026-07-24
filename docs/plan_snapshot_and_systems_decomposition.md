@@ -205,6 +205,23 @@ Extracted in Step 4:
   geometry/glyph/pill/fog primitives, marker source arrays, and selection state
   stay on MapView).
 
+### `sim_schema` façade split (issue #274) — landed
+
+Step 1 repartitioned the *wire* into nine sections but left `sim_schema/src/lib.rs`
+a single 6.1k-line flat module, so it stayed the same append-target hotspot the
+`.fbs` had been. It is now a module tree along the **same nine sections**:
+`state/{map,economy,population,subsistence,knowledge,governance,culture,campaign}.rs`,
+`world.rs` (the deliberately flat `WorldSnapshot`/`WorldDelta` + bincode/JSON), and
+`codec/{mod,map,economy,population,subsistence,knowledge,governance,culture,vision,campaign}.rs`.
+`lib.rs` is module declarations plus glob re-exports, so every `sim_schema::Foo`
+path still resolves and no caller outside the crate changed. Pure code motion:
+verified byte-identical `encode_snapshot_flatbuffer` / `encode_delta_flatbuffer`
+output on a snapshot populated across all nine sections.
+
+The remaining deferred items below are now tracked as issues **#295–#299**
+(native `lib.rs` split; the three `MapView.gd` families; the snapshot
+clippy-allow and per-capture `tracing` cleanups).
+
 ## Deferred follow-ups
 
 These were consciously scoped out (not missed). Each is a candidate for its own
