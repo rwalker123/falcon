@@ -3040,6 +3040,56 @@ hunts a harmless species — wiring casualties into the launch forecast is a Pha
 See Also: `docs/plan_predators.md` (the whole arc), "Fauna & Wild Game" (the `SpeciesDef` table + the
 Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam casualties apply at).
 
+### Predation (Phase 1a) — carnivore herds
+
+**A predator is an ordinary `Herd` whose food layer is *other herds* (prey) instead of the per-tile
+`GrazeRegistry`** — the trophic transpose of the grazer model. `SpeciesDef.diet` (`herbivore` |
+`carnivore`, inert since Phase 0) is now consumed at the **one K seam**. Design: `docs/plan_predators.md`
+§ "Phase 1a"; **1b (the raid trigger + Warrior) is a later PR — untouched here.**
+
+- **Diet-branched carrying capacity** (`fauna::ecological_carrying_capacity`): an herbivore is unchanged
+  (graze path); a **carnivore**'s `K_pred = Σ_prey prey_sustainable_flow(prey) / prey_per_biomass` over
+  the prey herds in its **prey-sensing disk**, ignoring graze / `fodder_per_biomass` /
+  `herd_density_gain` entirely. `prey_sustainable_flow(B, cap, r)` is `graze_sustainable_flow`'s exact
+  logistic shape against the **prey herd's own** `regrowth_rate`, read at the prey's **current** (drawn-
+  down) biomass — so a thinned prey base lowers `K_pred` (the coupled feedback). `SpeciesDef.prey_per_biomass`
+  (`#[serde(default)]` 0.0, inert for herbivores) is the carnivore analog of `fodder_per_biomass`;
+  `validate` requires a carnivore's `prey_per_biomass > 0` **and** `combat.attack > 0` (a predator that
+  clears no defense is incoherent).
+- **Prey = herbivore herds in range whose `defense ≤ predator.attack`** — the pure `attack ≥ defense`
+  rule (idea 7: a wolf's `attack 3` never counts a mammoth's `defense 12` or an aurochs' `6`), no
+  `is_prey` flag. The **prey-sensing disk** (`predators.prey_sense_radius`, default **3**) is
+  deliberately **wider** than a graze footprint (0–1) because prey are sparse points; a graze-sized disk
+  would contain zero prey most turns and snap `K→0`.
+- **The cross-herd borrow.** `ecological_carrying_capacity` runs inside `advance_herds`' `iter_mut`
+  loop, so it cannot read the other live herds. `advance_herds` snapshots a **prey index**
+  (`Vec<PreyDatum>`, one per herbivore herd) in an immutable pass *before* the loop — start-of-turn prey
+  biomass, the same one-turn lag graze `K` has — and passes it in.
+- **`advance_predation`** (new system) mirrors `advance_herd_grazing` with prey herds as the layer: each
+  carnivore demands `prey_per_biomass × biomass` and draws it from the in-range prey herds it can clear,
+  **proportional to each prey herd's available biomass** (above the functional-response floor
+  `predators.predation_escapement_fraction × prey.cap`, default **0.15**) — the taper that makes a pack
+  take less as prey thins and stop before zero. Index-based over the herd Vec (predator `i` mutates prey
+  `j`, always distinct), deterministic in registry order. **Credits no food to anyone** (a wolf's dinner
+  is abstracted biomass). Registered in Logistics **after `advance_herd_grazing`, before
+  `advance_graze_regrowth`**.
+- **Idea 6 falls out of shared machinery:** a pack with no prey in its disk gets `K_pred → 0`,
+  `regrow_biomass`'s `clamp(0, cap)` drives its biomass to 0, and the existing extinction `retain`
+  despawns it — no game, they leave/die.
+- **The dedicated predator pass** (`spawn_predators`, called from `spawn_initial_herds` after
+  `spawn_short_range_game`): draws **only carnivore** species, capped at `predators.max_packs` (4) and
+  spaced by `predators.min_spacing` (6), so predators are rare and do **not** consume the
+  `abundance.max_total_game` prey budget. Predator ids carry the `pred_` prefix. Carnivores are filtered
+  **out** of the herbivore short-range pool *and* `repopulate_fauna` immigration
+  (`game_species_for_biome` is now herbivore-only; `carnivore_species_for_biome` is its twin), so a
+  predator seeds **once** and does not respawn.
+- **The wolf row** (`fauna_config.json`, playtest anchors): `Grey Wolf Pack`, `diet carnivore`,
+  `combat { attack 3, defense 3 }`, `prey_per_biomass 0.3`, `regrowth_rate 0.15`, `ferocity 0.8`,
+  `aggression 0.6` (set now, **inert until 1b**), `husbandry_ceiling wild`, hosting savanna /
+  temperate-forest / boreal / highland. `attack 3` fixes its prey set for free. Plus a **`predators`
+  config block** (`per_biome` / `max_packs` / `min_spacing` / `predation_escapement_fraction` /
+  `prey_sense_radius`, all validated).
+
 ---
 
 ## Pre-commit Yield Forecast (per-source, on the wire)

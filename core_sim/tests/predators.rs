@@ -10,15 +10,18 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
+use bevy::math::UVec2;
+
 use core_sim::{
-    advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_herds, spawn_initial_world, CombatConfig, CommandEventLog, CreaturesConfig,
-    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfig,
-    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_labor_allocation, advance_predation, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CombatConfig,
+    CommandEventLog, CreaturesConfig, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfig, FaunaConfigHandle, FogRevealLedger, FollowPolicy,
+    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle,
 };
 
@@ -363,5 +366,402 @@ fn combat_and_creatures_configs_reject_broken_dials() {
         )
         .is_err(),
         "a roster missing the base person must be rejected"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Phase 1a — carnivore herds: diet + prey-limited carrying capacity + the predation draw-down.
+// ---------------------------------------------------------------------------------------------------
+
+/// The shipped carnivore. `attack 3` clears deer/boar (defense ≤ 3) but not aurochs (6) or mammoth (12).
+const WOLF: &str = "Grey Wolf Pack";
+/// A herbivore whose `combat.defense` (1.0) the wolf's attack clears — prey.
+const DEER: &str = "Red Deer";
+/// A herbivore whose `combat.defense` (6.0) the wolf's attack does NOT clear — not prey (idea 7).
+const AUROCHS: &str = "Wild Aurochs";
+
+/// A minimal app carrying just the three resources `advance_predation` reads — no world needed, since
+/// predation is a pure draw-down over the `HerdRegistry` keyed on config levers.
+fn predation_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.world.insert_resource(SimulationConfig::builtin());
+    app.world.insert_resource(HerdRegistry::default());
+    app.world.insert_resource(FaunaConfigHandle::default());
+    app
+}
+
+/// Seat a hand-built **stationary** (Small, single-tile) herd of `species` at `pos`. `fodder_per_biomass`
+/// is `0.0` (so a herbivore's `K` stays its constant `cap` and a wolf never grazes) and `body_mass`
+/// is irrelevant to predation; `r` is the cached wild regrowth rate the prey index reads.
+fn seat(app: &mut App, id: &str, species: &str, pos: UVec2, biomass: f32, cap: f32, r: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry.herds.push(Herd::new(
+        id.to_string(),
+        species.to_string(),
+        SizeClass::Small,
+        vec![pos],
+        biomass,
+        cap,
+        0.0,
+        r,
+        30.0,
+    ));
+}
+
+/// The current biomass of the herd with `id`.
+fn biomass_of(app: &App, id: &str) -> f32 {
+    app.world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .map(|h| h.biomass)
+        .unwrap_or_else(|| panic!("herd {id} present"))
+}
+
+/// A full earthlike world with the herd registry **empty** (so tests seat herds by hand). Returns the
+/// app plus a guaranteed **land tile** (a tile a real herd spawned on) to seat the fixtures on.
+fn seeded_world() -> (App, UVec2) {
+    let mut app = spawn_world();
+    let land = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .map(|h| h.position())
+            .next()
+            .expect("the world seeded at least one herd")
+    };
+    app.world.resource_mut::<HerdRegistry>().herds.clear();
+    (app, land)
+}
+
+/// A wolf pack next to a healthy deer herd draws the deer's biomass **down** (predation take > 0).
+#[test]
+fn a_wolf_pack_draws_a_nearby_deer_herd_down() {
+    let mut app = predation_app();
+    seat(
+        &mut app,
+        "pred_wolf",
+        WOLF,
+        UVec2::new(10, 10),
+        120.0,
+        120.0,
+        0.15,
+    );
+    seat(
+        &mut app,
+        "game_deer",
+        DEER,
+        UVec2::new(11, 10),
+        1200.0,
+        1200.0,
+        0.10,
+    );
+
+    let before = biomass_of(&app, "game_deer");
+    app.world.run_system_once(advance_predation);
+    let after = biomass_of(&app, "game_deer");
+    assert!(
+        after < before,
+        "wolf predation must draw the deer herd down: {before} -> {after}"
+    );
+}
+
+/// **Idea 7, for free.** A wolf (`attack 3`) does not count a mammoth (`defense 12`) or an aurochs
+/// (`defense 6`) as prey — its predation ignores them (zero draw), because the pure `attack ≥ defense`
+/// rule leaves them out of its prey set.
+#[test]
+fn a_wolf_ignores_prey_it_cannot_bring_down() {
+    let mut app = predation_app();
+    seat(
+        &mut app,
+        "pred_wolf",
+        WOLF,
+        UVec2::new(10, 10),
+        120.0,
+        120.0,
+        0.15,
+    );
+    seat(
+        &mut app,
+        "game_mammoth",
+        MAMMOTH,
+        UVec2::new(10, 10),
+        9000.0,
+        12000.0,
+        0.04,
+    );
+    seat(
+        &mut app,
+        "game_aurochs",
+        AUROCHS,
+        UVec2::new(11, 10),
+        900.0,
+        1000.0,
+        0.09,
+    );
+
+    let mammoth_before = biomass_of(&app, "game_mammoth");
+    let aurochs_before = biomass_of(&app, "game_aurochs");
+    app.world.run_system_once(advance_predation);
+    assert_eq!(
+        biomass_of(&app, "game_mammoth"),
+        mammoth_before,
+        "a wolf must not touch a mammoth (defense 12 > attack 3)"
+    );
+    assert_eq!(
+        biomass_of(&app, "game_aurochs"),
+        aurochs_before,
+        "a wolf must not touch an aurochs (defense 6 > attack 3)"
+    );
+}
+
+/// A **carnivore-free** map leaves predation a pure no-op: every herbivore's biomass is byte-identical
+/// after `advance_predation` (pins that the herbivore path did not regress).
+#[test]
+fn a_carnivore_free_map_leaves_predation_a_no_op() {
+    let mut app = predation_app();
+    seat(
+        &mut app,
+        "game_deer",
+        DEER,
+        UVec2::new(10, 10),
+        1200.0,
+        1200.0,
+        0.10,
+    );
+    seat(
+        &mut app,
+        "game_aurochs",
+        AUROCHS,
+        UVec2::new(11, 10),
+        900.0,
+        1000.0,
+        0.09,
+    );
+    seat(
+        &mut app,
+        "game_mammoth",
+        MAMMOTH,
+        UVec2::new(12, 10),
+        9000.0,
+        12000.0,
+        0.04,
+    );
+
+    let before: Vec<f32> = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .map(|h| h.biomass)
+        .collect();
+    app.world.run_system_once(advance_predation);
+    let after: Vec<f32> = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .map(|h| h.biomass)
+        .collect();
+    assert_eq!(
+        before, after,
+        "no carnivore ⇒ predation must not touch any herd"
+    );
+}
+
+/// **Determinism.** Two identical predation setups draw bit-identical prey biomass.
+#[test]
+fn predation_is_deterministic() {
+    let run = || -> Vec<f32> {
+        let mut app = predation_app();
+        // Two wolves and two deer at varied distances — a non-trivial proportional split.
+        seat(
+            &mut app,
+            "pred_a",
+            WOLF,
+            UVec2::new(10, 10),
+            120.0,
+            120.0,
+            0.15,
+        );
+        seat(
+            &mut app,
+            "pred_b",
+            WOLF,
+            UVec2::new(12, 11),
+            90.0,
+            120.0,
+            0.15,
+        );
+        seat(
+            &mut app,
+            "game_d1",
+            DEER,
+            UVec2::new(11, 10),
+            1200.0,
+            1200.0,
+            0.10,
+        );
+        seat(
+            &mut app,
+            "game_d2",
+            DEER,
+            UVec2::new(12, 10),
+            900.0,
+            1200.0,
+            0.10,
+        );
+        app.world.run_system_once(advance_predation);
+        app.world
+            .resource::<HerdRegistry>()
+            .herds
+            .iter()
+            .map(|h| h.biomass)
+            .collect()
+    };
+    assert_eq!(
+        run(),
+        run(),
+        "predation must be bit-identical across identical runs"
+    );
+}
+
+/// A wolf pack's carrying capacity **tracks its prey**: with a deer herd in range its `K_pred` is high
+/// and the pack grows toward it; remove the prey and `K_pred → 0`, the pack collapses and is
+/// **despawned** from the registry (idea 6 — no game, they leave/die).
+#[test]
+fn a_wolf_packs_capacity_tracks_its_prey_and_it_despawns_when_prey_vanish() {
+    let (mut app, land) = seeded_world();
+    seat(&mut app, "pred_wolf", WOLF, land, 60.0, 120.0, 0.15);
+    seat(&mut app, "game_deer", DEER, land, 1200.0, 1200.0, 0.10);
+
+    // Grow the pack toward its prey-derived K over a few turns.
+    let start = biomass_of(&app, "pred_wolf");
+    for _ in 0..6 {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_predation);
+    }
+    let wolf = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id == "pred_wolf")
+            .cloned()
+            .expect("the wolf pack is alive while prey are present")
+    };
+    assert!(
+        wolf.carrying_capacity > 0.0,
+        "with deer in range the wolf's K_pred must be positive: {}",
+        wolf.carrying_capacity
+    );
+    assert!(
+        wolf.biomass > start,
+        "the pack must grow toward its prey-derived K: {start} -> {}",
+        wolf.biomass
+    );
+
+    // Remove all prey — the wolf's K_pred collapses to 0, `regrow_biomass`'s clamp drives its biomass
+    // down, and the extinction `retain` despawns it.
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .retain(|h| h.id != "game_deer");
+    app.world.run_system_once(advance_herds);
+    assert!(
+        !app.world
+            .resource::<HerdRegistry>()
+            .herds
+            .iter()
+            .any(|h| h.id == "pred_wolf"),
+        "with no prey in range the pack's K_pred → 0 and it must despawn"
+    );
+}
+
+/// The dedicated predator pass seats **only carnivores**, and the herbivore short-range pool excludes
+/// them (so the wolf never seats from — or immigrates through — the prey budget).
+#[test]
+fn the_carnivore_pool_is_separate_from_the_herbivore_pool() {
+    let fauna = FaunaConfig::builtin();
+    let carnivores = fauna.carnivore_species_for_biome("temperate_forest");
+    assert!(
+        carnivores.iter().any(|(_, def)| def.display_name == WOLF),
+        "the wolf must be in the carnivore pool for a biome it hosts"
+    );
+    let herbivores = fauna.game_species_for_biome("temperate_forest");
+    assert!(
+        !herbivores.iter().any(|(_, def)| def.display_name == WOLF),
+        "the wolf must NOT be in the herbivore short-range/immigration pool"
+    );
+    assert!(
+        herbivores.iter().any(|(_, def)| def.display_name == DEER),
+        "the herbivore pool must still carry its herbivores (deer)"
+    );
+}
+
+/// Config validation rejects the illegitimate carnivore/predator-block dials (one per bound, mirroring
+/// the ferocity/aggression rejection tests).
+#[test]
+fn fauna_config_rejects_illegitimate_predator_dials() {
+    let builtin = core_sim::BUILTIN_FAUNA_CONFIG;
+
+    // A carnivore with a `0` prey_per_biomass — an infinite-K denominator — is rejected.
+    assert!(
+        FaunaConfig::from_json_str(
+            &builtin.replace(r#""prey_per_biomass": 0.3,"#, r#""prey_per_biomass": 0.0,"#)
+        )
+        .is_err(),
+        "a carnivore's prey_per_biomass of 0 (a denominator) must be rejected"
+    );
+
+    // A carnivore whose attack clears no defense (empty prey set) is rejected.
+    assert!(
+        FaunaConfig::from_json_str(&builtin.replace(
+            r#""attack": 3.0, "defense": 3.0, "range": "melee""#,
+            r#""attack": 0.0, "defense": 3.0, "range": "melee""#,
+        ))
+        .is_err(),
+        "a carnivore with combat.attack 0 must be rejected"
+    );
+
+    // predation_escapement_fraction outside (0, 0.5) is rejected.
+    assert!(
+        FaunaConfig::from_json_str(&builtin.replace(
+            r#""predation_escapement_fraction": 0.15,"#,
+            r#""predation_escapement_fraction": 0.6,"#,
+        ))
+        .is_err(),
+        "a predation_escapement_fraction ≥ the prey MSY point must be rejected"
+    );
+
+    // A prey_sense_radius of 0 (a disk that senses no prey) is rejected.
+    assert!(
+        FaunaConfig::from_json_str(
+            &builtin.replace(r#""prey_sense_radius": 3"#, r#""prey_sense_radius": 0"#)
+        )
+        .is_err(),
+        "a prey_sense_radius of 0 must be rejected"
+    );
+
+    // A predator min_spacing of 0 (stacked packs) is rejected.
+    assert!(
+        FaunaConfig::from_json_str(
+            &builtin.replace(r#""min_spacing": 6,"#, r#""min_spacing": 0,"#)
+        )
+        .is_err(),
+        "a predators.min_spacing of 0 must be rejected"
+    );
+
+    // A per-biome predator probability above 1 is rejected.
+    assert!(
+        FaunaConfig::from_json_str(&builtin.replace(
+            r#""savanna_grassland": 0.02,"#,
+            r#""savanna_grassland": 1.5,"#,
+        ))
+        .is_err(),
+        "a predators.per_biome probability above 1 must be rejected"
     );
 }
