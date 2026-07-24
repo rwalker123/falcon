@@ -6,6 +6,33 @@ by both the runtime (`sim_runtime`, `core_sim`) and tooling (the Godot thin
 client plus external consumers) and purposely avoids Bevy or other heavy
 dependencies.
 
+## Module map
+
+The crate is partitioned along the **same nine domain sections `schemas/snapshot.fbs`
+uses**, so each feature arc appends into its own file instead of colliding in one
+6k-line module. `src/lib.rs` is module declarations plus glob re-exports, so every
+item is still reachable as `sim_schema::Foo` — consumers never name a submodule.
+
+| Path | Contents |
+|---|---|
+| `src/state/map.rs` | `TileState`, `TerrainType`/`TerrainTags`/`TerrainSample`, `MountainKind`, terrain & elevation overlays, `ClimateBandsState`, `StartMarkerState`, `RiverClass`/`RiverChannel`, `ScalarRasterState`/`FloatRasterState` |
+| `src/state/economy.rs` | logistics links, trade links + knowledge, faction inventories |
+| `src/state/population.rs` | cohorts, demographics, generations, labor assignments, harvest/scout tasks, stockpiles |
+| `src/state/subsistence.rs` | herds + herd telemetry, forage/graze registries, forage patches, food modules, sedentarization, intensification knowledge, `GRAZE_PHASE_*` |
+| `src/state/knowledge.rs` | the leak ledger + countermeasures/infiltrations/modifiers, knowledge timeline & metrics, great discoveries, discovered sites |
+| `src/state/governance.rs` | power nodes/incidents/telemetry, corruption ledger, crisis gauges + overlay |
+| `src/state/culture.rs` | culture layers/traits/tensions, influential individuals, influence domains, sentiment telemetry |
+| `src/state/campaign.rs` | campaign profiles, command events, victory, and the whole Telling family (beats, voice, forks, stance) |
+| `src/world.rs` | the deliberately **flat** `WorldSnapshot`/`WorldDelta`, `SnapshotHeader`, `hash_snapshot`, `MapExport`, and the bincode/JSON codecs |
+| `src/codec/mod.rs` | `encode_snapshot_flatbuffer`/`encode_delta_flatbuffer`, the `build_*_flatbuffer` envelope assembly, and helpers shared by two or more sections (`create_scalar_raster`, `create_float_raster`, `create_known_fragments`) |
+| `src/codec/<section>.rs` | that section's `serialize_<section>_section` + `_delta` plus the `create_*`/`to_fb_*` helpers only those two use. `vision` is codec-only — its state is the rasters in `state/map.rs` |
+
+**The rule when you add a snapshot field:** append it to your section's
+`state/` file *and* that section's `codec/` file (and to your section table in
+`schemas/snapshot.fbs`, which is append-only — see the FlatBuffers slot-order
+discipline). Nothing else should need to change. If a codec helper gains a second
+section as a consumer, hoist it to `codec/mod.rs` rather than duplicating it.
+
 ## Terrain Overlay Channel
 - `WorldSnapshot` now carries a `terrainOverlay` table (width, height, packed
   samples of `TerrainType` + `TerrainTags`).
