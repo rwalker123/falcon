@@ -1889,7 +1889,7 @@ func _ready() -> void:
 	sticky_map.unit_selected.connect(_hud.show_unit_selection)
 	_hud.roster_occupant_selected.connect(sticky_map.select_occupant)
 	sticky_map.handle_hex_click(STICKY_TILE.x, STICKY_TILE.y, MOUSE_BUTTON_LEFT)  # lands on a band
-	_hud._on_land_row_selected()                                                  # the player picks LAND
+	_hud._selectioncard._on_land_row_selected()                                   # the player picks LAND
 	# The next snapshot: Main asks MapView what is selected and replays it into the HUD.
 	var sticky_payload: Dictionary = sticky_map.refresh_selection_payload()
 	_hud.reapply_selection(String(sticky_payload.get("kind", "none")), sticky_payload.get("data", {}))
@@ -1935,7 +1935,7 @@ func _ready() -> void:
 	tile_panel_band_subject["tile_info"] = _crowded_tile_fixture()
 	_hud.show_unit_selection(tile_panel_band_subject)
 	# The player then picks the SECOND band, through the real subject-list selection path.
-	_hud._select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
+	_hud._selectioncard.select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
 	await _settle()
 	await _save("tile_panel_band")
 

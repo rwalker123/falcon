@@ -30,10 +30,10 @@ is dissolved **first**, in place, before any code moves files.
     `_on_turn_orb_focus` routes into band-panel helpers, and `_band_attention` is
     written by `update_band_alerts` and only read by the orb. Done with a
     `set_band_attention()` seam + relayed signals — its own focused PR.
-- **Phase 2 — The selection core**, split into two PRs after the render-path map
-  showed the flash is independent of the ~2,000-line compose/allocation builder
-  mass, and that extract-first is the *harder* path (the ~850-line core is welded
-  to the builders by a large Callable web):
+- **Phase 2 — The selection core**, split into three PRs after the render-path +
+  seam maps showed the flash is independent of the ~2,000-line compose/allocation
+  builder mass, and that extract-first is the *harder* path (the ~850-line core is
+  welded to the builders by shared mutable state, not just a Callable web):
   - **2a — Fix the flash in place.** `_render_selection_panel` runs every snapshot
     and unconditionally tears down + recreates the card sub-widgets (chips,
     subject rows, forage/herd drawer actions) + reassigns `tile_detail` +
@@ -42,10 +42,24 @@ is dissolved **first**, in place, before any code moves files.
     when the structure is unchanged**, rebuilding only on a structural change
     (chip-slot set, roster membership, action shape). No extraction. The
     smaller, safer PR, and it delivers the original bug report.
-  - **2b — Extract the SelectionCard.** The now-diff-based core (chips / subject
-    list / drawer host / `tile_detail`) becomes a controller, severing the
-    core↔builder Callable web. Structural cleanup; no behaviour change.
-  - **Verification caveat:** the flash is a *transient* during turn-advance; the
+  - **2b — Extract the identity/list half into `SelectionCardController`.** The
+    seam map showed the *full* SelectionCard can't be one safe PR: the drawer
+    drags shared mutable state across any boundary — the **compose state**
+    (`_forage_assign_*` / `_hunt_assign_*` / `_send_party_*` / `_selected_food_module`)
+    and the **band-tint scalars** (`_selected_band_food_turns` / `_morale` /
+    `_output`). So 2b extracts only the state-isolated half: the tile-card header,
+    the chips, the whole roster/subject list, and auto-select/row-clicks — **zero
+    builder coupling, zero shared compose state** (its diff caches `_tile_chip_slots`
+    / `_subject_row_keys` split off cleanly; the drawer-shape/fit caches AND the
+    terrain-lines producer + `_tile_detail_lines_cache` stay on `HudLayer` with the
+    drawer, which sets `tile_detail`). `HudLayer` keeps the whole drawer. ~500–600
+    lines, low risk.
+  - **2c — Lift `ComposeState`, then extract the drawer/compose half.** First lift
+    the shared compose state into a small `RefCounted` `ComposeState` (the Phase-0
+    idiom that made this whole arc tractable) so neither side reaches across; then
+    the drawer render, drawer-action builders, `_refresh_compose_sheet`, occupant/
+    band-into-panel, and the two big compose builders can move without a state seam.
+  - **Verification caveat (2a):** the flash is a *transient* during turn-advance; the
     static ui_preview PNG harness cannot capture it. 2a is guarded by (i) settled
     frames staying pixel-identical and (ii) a new behavioural assertion that the
     chip/row/action **nodes are the same instances** across a same-tile restate

@@ -367,18 +367,22 @@ var _selection: HudSelectionState = null
 # `_band_labor.world_herds()` / `_band_labor.pending_labor()` / `_band_labor.current_turn()` / `_grid_*` / `_band_labor.prev_band_sizes()` /
 # `_band_labor.forage_patch_lookup()` / `_band_labor.food_module_by_tile()` members live here now.
 var _band_labor: HudBandLaborState = null
+# The IDENTITY/LIST half of the selection card (HUD decomposition Phase 2b) — the tile-card header,
+# the condition-chip strip, the roster/subject list, the row clicks + the fresh-hex auto-select. It
+# is handed the SAME `_selection`/`_band_labor` instances; HudLayer relays its `roster_occupant_selected`
+# and re-renders on its `subject_changed`. The DRAWER + compose stay on HudLayer (Phase 2c).
+var _selectioncard: SelectionCardController = null
 # One drawer fit in flight at a time — see `_fit_subject_drawer`.
 var _subject_fit_pending: bool = false
 # ---- Selection-card in-place update caches (docs/plan_hud_decomposition.md §2a) --------------
 # The selection card re-renders on EVERY snapshot; to avoid a one-frame teardown/reflow flash each
 # of these caches the last-rendered STRUCTURE of its widget, so an unchanged restate PATCHES the
 # existing nodes in place instead of freeing + rebuilding them (rebuild only on a structural change).
-# `_tile_chip_slots` = the ordered chip-slot keys; `_subject_row_keys` = the ordered roster-row keys
-# (identity + structural flags); `_forage_drawer_shape`/`_herd_drawer_shape` = the drawer-actions
-# shape signatures; `_tile_detail_lines_cache` = the last land-drawer BBCode line array;
-# `_subject_fit_last_height` = the last-applied drawer content height (skips a same-height reflow).
-var _tile_chip_slots: Array = []
-var _subject_row_keys: Array = []
+# The chip-slot / roster-row caches (`_tile_chip_slots` / `_subject_row_keys`) moved WITH the
+# identity/list code into `SelectionCardController` (Phase 2b). What remains here is the DRAWER's
+# diff state: `_forage_drawer_shape`/`_herd_drawer_shape` = the drawer-actions shape signatures;
+# `_tile_detail_lines_cache` = the last land-drawer BBCode line array; `_subject_fit_last_height` =
+# the last-applied drawer content height (skips a same-height reflow).
 var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
 var _tile_detail_lines_cache: Array = []
@@ -1795,6 +1799,14 @@ func _ready() -> void:
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
     _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
     _turnorb.focus_requested.connect(_on_turn_orb_focus)
+    # The selection card's identity/list half. Handed the three card nodes + the SAME selection/labor
+    # models; the two labor readers stay on HudLayer (Callables). A row/land click emits `subject_changed`
+    # (HudLayer closes the compose sheet + re-renders), and `roster_occupant_selected` relays to Main.
+    _selectioncard = SelectionCardController.new(
+        tile_panel, tile_chips, subject_list, _selection, _band_labor,
+        _workers_for_forage, _workers_for_hunt, _alloc_hint_label)
+    _selectioncard.subject_changed.connect(_on_selection_subject_changed)
+    _selectioncard.roster_occupant_selected.connect(func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     _load_ui_balance_config()
     _connect_zoom_rail()
     _setup_tooltip()
@@ -2768,7 +2780,7 @@ func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
 ## so the roster alone left those rows reading the raw `game_deer_07` id).
 func _herd_label_for_id(herd_id: String) -> String:
-    var herd := _find_roster_herd(herd_id)
+    var herd := _selectioncard.find_roster_herd(herd_id)
     if not herd.is_empty():
         return String(herd.get("species", herd.get("label", herd_id)))
     if String(_selection.herd().get("id", "")) == herd_id:
@@ -6197,7 +6209,7 @@ func _compose_anchor_rect() -> Rect2:
 func _forage_compose_available(tile_info: Dictionary) -> bool:
     return String(tile_info.get("food_module", "")).strip_edges() != "" \
         and not _resolve_assign_band().is_empty() \
-        and not _tile_contents_unseen(tile_info)
+        and not _selectioncard.tile_contents_unseen(tile_info)
 
 ## Can this HERD offer a hunt/herding compose? Huntable, with a player band to staff it. (A penned
 ## herd's Extend-pen action is NOT a compose — it stays in the drawer, see `_build_herd_drawer_actions`.)
@@ -6867,11 +6879,19 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
     _selected_band_food_turns = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
-    _assemble_roster(_selection.tile_info())
-    _render_tile_card(_selection.tile_info())
-    _resolve_auto_selected_subject()
-    _rebuild_subject_list()
+    # The identity/list half — roster assembly, tile-card header + chips, auto-select, subject list —
+    # lives in the controller (HUD decomposition Phase 2b); the DRAWER stays here (Phase 2c).
+    _selectioncard.render(_selection.tile_info())
     _render_subject_drawer()
+
+## The controller changed the lit subject via a roster/land CLICK. Re-render BOTH halves: close the
+## compose sheet (a selection change invalidates the subject being composed, §15) then re-run the whole
+## panel (which resets the tint context, re-renders the list accent, and re-renders the drawer for the
+## new subject). The auto-pick does NOT route here — it emits only `roster_occupant_selected`, since it
+## runs mid-`render`.
+func _on_selection_subject_changed() -> void:
+    close_compose_sheet()
+    _render_selection_panel(_selection.tile_info(), {}, {})
 
 ## Hide the whole selection card (no tile, no occupant). One place, so the drawer's three
 ## compose blocks can't be left visible behind a hidden card.
@@ -6888,70 +6908,6 @@ func _hide_drawer_blocks() -> void:
     if herd_assign_controls != null:
         herd_assign_controls.visible = false
 
-## Assemble the roster for the current hex from the tile's `units`/`herds`, then
-## ensure the currently-selected occupant is represented even when the tile_info
-## doesn't list it (an inspector-driven herd selection carries an empty tile_info).
-func _assemble_roster(tile_info: Dictionary) -> void:
-    # Reset then build in place: the roster arrays are mutated by reference (like the old members),
-    # so `_find_roster_unit` / `_find_roster_herd` see the in-progress roster during assembly.
-    _selection.set_roster([], [])
-    # Occupants are LIVE state, so on a hex the player cannot currently see they are redacted — MapView
-    # fog-gates them out of `tile_info` at source, and this re-reads the SAME state flag it tagged (not
-    # a second visibility test) so the roster stays honest no matter who feeds it.
-    # THE ONE EXCEPTION: your OWN bands are always listed, even on an Unexplored hex. A scouting party
-    # is deliberately excluded from fog reveal server-side, so it ROUTINELY stands on a tile it cannot
-    # see — hiding it would delete your own expedition from the roster exactly while you're using it.
-    # Mirrors `MapView._unit_hidden_by_fog`, which is the same rule for the map/click side.
-    var unseen := _tile_contents_unseen(tile_info)
-    var units_variant: Variant = tile_info.get("units", [])
-    if units_variant is Array:
-        for entry in units_variant:
-            if entry is Dictionary and (not unseen or _is_player_unit(entry as Dictionary)):
-                _selection.roster_units().append(entry)
-    # Wildlife is never ours — an unseen hex lists no herds at all.
-    if not unseen:
-        var herds_variant: Variant = tile_info.get("herds", [])
-        if herds_variant is Array:
-            for entry in herds_variant:
-                if entry is Dictionary:
-                    _selection.roster_herds().append(entry)
-    if _selection.has_unit() and _find_roster_unit(int(_selection.unit().get("entity", -1))).is_empty():
-        _selection.roster_units().append(_selection.unit())
-    if _selection.has_herd() and _find_roster_herd(String(_selection.herd().get("id", ""))).is_empty():
-        _selection.roster_herds().append(_selection.herd())
-
-## The card's chrome: the coordinates as the title, and the pinned chip strip. The terrain ROWS
-## are no longer here — they are the land subject's drawer content, rendered by
-## `_render_subject_drawer` when the land row is the lit one.
-func _render_tile_card(tile_info: Dictionary) -> void:
-    if tile_panel == null or tile_detail == null:
-        return
-    tile_panel.visible = true
-    tile_panel.set_card_kind("Tile")
-    var title_text := "—"
-    if not tile_info.is_empty():
-        title_text = "(%d, %d)" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
-    tile_panel.set_card_title(title_text)
-    _build_tile_chips(tile_info)
-
-## The sight state in plain words — the FULL form, which is the chip's tooltip. "" (FoW off) yields
-## no chip at all.
-func _tile_sight_value(visibility_state: String) -> String:
-    match visibility_state:
-        VISIBILITY_ACTIVE:
-            return TILE_SIGHT_ACTIVE
-        VISIBILITY_DISCOVERED:
-            return TILE_SIGHT_REMEMBERED
-        VISIBILITY_UNEXPLORED:
-            return TILE_SIGHT_UNEXPLORED
-        _:
-            return ""
-
-## The chip FACE: one or two words. Only the remembered state has a long form to shorten — the
-## other two already ARE their short form, so they pass through and cannot drift out of step.
-func _tile_sight_chip_value(value: String) -> String:
-    return TILE_SIGHT_REMEMBERED_SHORT if value == TILE_SIGHT_REMEMBERED else value
-
 ## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's
 ## BBCode hex and the chip's Color, so the two forms cannot drift apart.
 func _sight_is_live(value: String) -> bool:
@@ -6962,153 +6918,6 @@ func _sight_is_live(value: String) -> bool:
 ## wrong, so it never borrows the WARN/DANGER palette.
 func _sight_value_hex(value: String) -> String:
     return HudStyle.SIGNAL_HEX if _sight_is_live(value) else HudStyle.INK_DIM_HEX
-
-func _sight_value_color(value: String) -> Color:
-    return HudStyle.SIGNAL if _sight_is_live(value) else HudStyle.INK_DIM
-
-# ---- The chip strip ---------------------------------------------------------
-# Chips carry the tile's STANDING CONDITION — the one-word states you reason with while composing
-# an action — pinned above the list so they never scroll away. Numbers stay as rows in the land
-# drawer, where their subject is. Each chip is SKIPPED when its field is absent, exactly as the
-# equivalent row is: a rehydrated tile must never show an invented rating.
-func _build_tile_chips(tile_info: Dictionary) -> void:
-    if tile_chips == null:
-        return
-    if tile_info.is_empty():
-        for child in tile_chips.get_children():
-            child.queue_free()
-        _tile_chip_slots = []
-        tile_chips.visible = false
-        return
-    tile_chips.visible = true
-    var descriptors := _tile_chip_descriptors(tile_info)
-    var slots: Array = []
-    for descriptor in descriptors:
-        slots.append(descriptor["key"])
-    # Same SET of chip slots as last render → patch each chip's face/tint/tooltip in place, so a
-    # per-snapshot restate never frees + recreates the strip (the reflow that flashes). A slot
-    # appearing or disappearing moves the signature → full rebuild.
-    if slots == _tile_chip_slots and tile_chips.get_child_count() == descriptors.size():
-        for i in range(descriptors.size()):
-            _update_chip(tile_chips.get_child(i) as PanelContainer, descriptors[i])
-        return
-    for child in tile_chips.get_children():
-        child.queue_free()
-    for descriptor in descriptors:
-        tile_chips.add_child(_make_chip(descriptor["text"], descriptor["tint"], descriptor["tooltip"]))
-    _tile_chip_slots = slots
-
-## The ordered chip descriptors for a tile — one entry per PRESENT slot, each carrying a stable `key`
-## (so a render can diff the SET of slots) plus the face/tint/tooltip the chip shows. Mirrors the
-## build order EXACTLY: sight → habitability → climate → tags → site, each skipped when its field is
-## absent, exactly as the equivalent row is.
-func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
-    var out: Array = []
-    var visibility_state := String(tile_info.get("visibility_state", ""))
-    var sight_value := _tile_sight_value(visibility_state)
-    if sight_value != "":
-        # Short face, full sentence on hover — same value behind both, so they cannot disagree.
-        out.append({"key": "sight", "text": _tile_sight_chip_value(sight_value),
-            "tint": _sight_value_color(sight_value), "tooltip": sight_value})
-    # Nothing else is knowable on ground nobody has stood on — not even its biome.
-    if visibility_state == VISIBILITY_UNEXPLORED:
-        return out
-    if tile_info.has("habitability"):
-        var habitability := float(tile_info["habitability"])
-        out.append({"key": "habitability", "text": TileHabitability.rating_for(habitability),
-            "tint": TileHabitability.color_for(habitability), "tooltip": ""})
-    # Climate is INFORMATIONAL, so it wears neutral ink and never the warning palette; the cut
-    # points are the SIM's, so until they are published there is no chip rather than a guess.
-    if tile_info.has("temperature") and TileClimate.has_bands():
-        out.append({"key": "climate", "text": TileClimate.band_for(float(tile_info["temperature"])),
-            "tint": HudStyle.INK_DIM, "tooltip": ""})
-    var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
-    if tags_text != "" and tags_text.to_lower() != CHIP_TAGS_NONE:
-        out.append({"key": "tags", "text": tags_text, "tint": HudStyle.INK_DIM, "tooltip": ""})
-    var site_name := String(tile_info.get("site_name", "")).strip_edges()
-    if site_name != "":
-        out.append({"key": "site", "text": site_name, "tint": HudStyle.INK_DIM, "tooltip": ""})
-    return out
-
-## Patch an existing chip in place to a new descriptor — the same node the slot held last render, so
-## a restate updates the FACE without a teardown. Mirrors `_make_chip`'s tooltip/mouse-filter rule.
-func _update_chip(chip: PanelContainer, descriptor: Dictionary) -> void:
-    if chip == null:
-        return
-    var tint: Color = descriptor["tint"]
-    var text: String = descriptor["text"]
-    var tooltip: String = descriptor["tooltip"]
-    chip.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(tint))
-    if tooltip != "" and tooltip != text:
-        chip.tooltip_text = tooltip
-        chip.mouse_filter = Control.MOUSE_FILTER_STOP
-    else:
-        chip.tooltip_text = ""
-        chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    var label := chip.get_child(0) as Label
-    if label != null:
-        label.text = text
-        label.add_theme_color_override("font_color", tint)
-
-## One chip: a pill wearing the palette's chip chrome, tinted by the condition it states. An
-## optional `tooltip` carries the long form of a condition whose face had to be short; a chip
-## without one stays mouse-transparent, exactly as before.
-func _make_chip(text: String, tint: Color, tooltip: String = "") -> PanelContainer:
-    var chip := PanelContainer.new()
-    chip.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(tint))
-    chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    if tooltip != "" and tooltip != text:
-        chip.tooltip_text = tooltip
-        chip.mouse_filter = Control.MOUSE_FILTER_STOP
-    var label := Label.new()
-    label.text = text
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.add_theme_color_override("font_color", tint)
-    label.add_theme_font_size_override("font_size", CHIP_FONT_SIZE)
-    chip.add_child(label)
-    return chip
-
-## True when the hex's LIVE contents (occupants, workable sources) are unknowable right now — a
-## remembered or a never-seen tile. MapView already redacts them from `tile_info` at source (it strips
-## `herds`/`units`/`food_module*` and fog-gates `_herds_on_tile`); this re-reads the SAME state flag it
-## tagged — not a second visibility test — so every consumer stays honest regardless of who feeds it.
-## Terrain rows are exempt by design: geography is remembered knowledge, live contents are not.
-func _tile_contents_unseen(tile_info: Dictionary) -> bool:
-    var state := String(tile_info.get("visibility_state", ""))
-    return state == VISIBILITY_DISCOVERED or state == VISIBILITY_UNEXPLORED
-
-## The selected hex's coordinates, as the one key an explicit subject choice is remembered against.
-func _selected_tile_coords() -> Vector2i:
-    return Vector2i(int(_selection.tile_info().get("x", -1)), int(_selection.tile_info().get("y", -1)))
-
-## Auto-select the subject whose drawer opens on a fresh tile click.
-##
-## THE RULE IS DELIBERATELY UNCHANGED, PLUS A LAND FALLBACK: first roster unit → else first herd →
-## else the land. A hex with no occupants used to hide the Occupants card and leave the Tile card
-## showing terrain, which IS "the land is selected" — so the fallback preserves today's behaviour
-## rather than introducing a new default. Selecting the land emits `roster_occupant_selected("land",
-## …)`, which moves no ring (the hex outline already marks the tile) but CLEARS MapView's occupant
-## selection — see `_on_land_row_selected`.
-func _resolve_auto_selected_subject() -> void:
-    if not _selection.unit().is_empty() or not _selection.herd().is_empty():
-        return
-    # THE DEFAULT ONLY APPLIES WHERE THE PLAYER HAS NOT ALREADY CHOSEN. Both occupant dicts are
-    # empty either because this is a fresh hex (auto-select) or because the player picked the LAND
-    # row here (honour it) — and only the choice tile can tell the two apart. Without this, the
-    # per-snapshot `reapply_selection("tile", …)` re-ran the default every turn and stole a
-    # deliberately-chosen land selection back to the first band. A genuinely new hex has different
-    # coords, so today's first-band → first-herd → land default is preserved exactly.
-    if not _selection.tile_info().is_empty() and _selection.choice_tile() == _selected_tile_coords():
-        _selection.set_subject(SUBJECT_LAND)
-        return
-    if not _selection.roster_units().is_empty():
-        _selection.select_unit((_selection.roster_units()[0] as Dictionary).duplicate(true))
-        emit_signal("roster_occupant_selected", "unit", int(_selection.unit().get("entity", -1)))
-    elif not _selection.roster_herds().is_empty():
-        _selection.select_herd((_selection.roster_herds()[0] as Dictionary).duplicate(true))
-        emit_signal("roster_occupant_selected", "herd", String(_selection.herd().get("id", "")))
-    else:
-        _selection.set_subject(SUBJECT_LAND)
 
 ## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
 ## paths is visible at a time — that is what bounds the card's height.
@@ -7153,7 +6962,7 @@ func _render_land_drawer() -> void:
 func _render_unknown_contents_note() -> void:
     if occupant_detail == null:
         return
-    var unseen := _tile_contents_unseen(_selection.tile_info())
+    var unseen := _selectioncard.tile_contents_unseen(_selection.tile_info())
     var roster_empty := _selection.roster_units().is_empty() and _selection.roster_herds().is_empty()
     if not unseen or not roster_empty:
         occupant_detail.visible = false
@@ -7312,461 +7121,6 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         if field_progress > 0.0:
             lines.append("%s: %s" % [FIELD_ROW, _field_label(field_progress, false)])
     return lines
-
-# ---- The subject list ------------------------------------------------------
-
-## Rebuild the subject rows: the LAND first (no group header — it is not one of a group), then a
-## `Bands (N)` sub-group and a `Wildlife (N)` sub-group, each a dim uppercase header + one
-## selectable row per occupant. The row matching the current selection is styled as selected.
-func _rebuild_subject_list() -> void:
-    if subject_list == null:
-        return
-    var descriptors := _subject_row_descriptors()
-    var keys: Array = []
-    for descriptor in descriptors:
-        keys.append(descriptor["key"])
-    # Membership (the ordered set of row identities + their structural flags) unchanged → patch every
-    # row in place, so a per-snapshot restate updates names/sizes/dots/selection without freeing the
-    # Buttons (whose `pressed` bindings we keep intact). A band/herd entering or leaving the hex — or a
-    # row's own structure changing — moves a key, so the whole list rebuilds.
-    if keys == _subject_row_keys and subject_list.get_child_count() == descriptors.size():
-        for i in range(descriptors.size()):
-            _update_subject_row(subject_list.get_child(i), descriptors[i])
-        return
-    for child in subject_list.get_children():
-        child.queue_free()
-    for descriptor in descriptors:
-        subject_list.add_child(_build_subject_row(descriptor))
-    _subject_row_keys = keys
-
-## The ordered subject-row descriptors: the LAND first, then a `Bands (N)` sub-group and a
-## `Wildlife (N)` sub-group, then the unseen-hint. Each carries a stable `key` — the row's identity
-## PLUS the structural flags that decide its optional child nodes (a band's activity glyph, a herd's
-## staffing meta) — so a key change is exactly the case that must rebuild rather than patch.
-func _subject_row_descriptors() -> Array:
-    var rows: Array = []
-    if not _selection.tile_info().is_empty():
-        rows.append({"key": ["land"], "kind": "land"})
-    if not _selection.roster_units().is_empty():
-        rows.append({"key": ["header", "bands"], "kind": "header",
-            "title": "Bands", "count": _selection.roster_units().size()})
-        for unit in _selection.roster_units():
-            var u: Dictionary = unit
-            rows.append({"key": ["band", int(u.get("entity", -1)), _is_player_unit(u)], "kind": "band", "data": u})
-    if not _selection.roster_herds().is_empty():
-        rows.append({"key": ["header", "wildlife"], "kind": "header",
-            "title": "Wildlife", "count": _selection.roster_herds().size()})
-        for herd in _selection.roster_herds():
-            var h: Dictionary = herd
-            rows.append({"key": ["herd", String(h.get("id", "")), _herd_row_meta(h) != ""], "kind": "herd", "data": h})
-    # Reached only when your OWN unit is on a hex you can't see (everything else was redacted): say so,
-    # or the lone row would read as "and nothing else is here" — which we cannot know.
-    if _tile_contents_unseen(_selection.tile_info()) and not (_selection.roster_units().is_empty() and _selection.roster_herds().is_empty()):
-        rows.append({"key": ["hint"], "kind": "hint"})
-    return rows
-
-## Build the node for one subject-row descriptor.
-func _build_subject_row(descriptor: Dictionary) -> Control:
-    match String(descriptor["kind"]):
-        "land":
-            return _build_land_row(_selection.tile_info())
-        "header":
-            return _roster_group_header(String(descriptor["title"]), int(descriptor["count"]))
-        "band":
-            return _build_band_row(descriptor["data"])
-        "herd":
-            return _build_herd_row(descriptor["data"])
-        _:
-            return _alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT)
-
-## Patch one existing subject-row node in place. Headers + the hint are static once membership is
-## fixed (their counts are implied by it), so only the three selectable rows carry an updater.
-func _update_subject_row(node: Node, descriptor: Dictionary) -> void:
-    match String(descriptor["kind"]):
-        "land":
-            _update_land_row(node as Button, _selection.tile_info())
-        "band":
-            _update_band_row(node as Button, descriptor["data"])
-        "herd":
-            _update_herd_row(node as Button, descriptor["data"])
-
-## The LAND row — the same shape as a band/herd row, because the land is the same KIND of thing:
-## a subject on this hex you can put workers on.
-##
-## Label = the BIOME name (more informative than a generic "The land", and it leaves the card title
-## as the coordinates). Glyph = the tile's food-module icon where it carries one — the SAME icon the
-## map marker draws, so a source reads identically in the panel and on the map — else the neutral
-## `◈`. Dot = the patch's ecology tier, the same vitality vocabulary as the band/herd dots.
-func _build_land_row(tile_info: Dictionary) -> Button:
-    var selected := _selection.subject() == SUBJECT_LAND
-    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
-    var dot_color := _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT
-    var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    var glyph := LAND_ROW_GLYPH
-    if module_key != "":
-        glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
-    var button := _make_roster_button(selected)
-    var row := _make_roster_row(selected, dot_color)
-    var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
-    var name_label := _roster_name_label("%s %s" % [glyph, terrain_label], selected)
-    row.add_child(name_label)
-    var meta := _land_row_meta(tile_info)
-    var meta_label: Label = null
-    if meta != "":
-        meta_label = _roster_meta_label(meta)
-        row.add_child(meta_label)
-    button.add_child(row)
-    button.pressed.connect(_on_land_row_selected)
-    _store_row_refs(button, row, name_label, meta_label, null)
-    return button
-
-## The land row's meta is never empty (`_land_row_meta` returns `No forage` at minimum), so its label
-## always exists — the `_update_land_row` patch relies on that.
-func _update_land_row(button: Button, tile_info: Dictionary) -> void:
-    var selected := _selection.subject() == SUBJECT_LAND
-    _apply_row_selection(button, selected)
-    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
-    _set_row_dot(button, _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT)
-    var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    var glyph := LAND_ROW_GLYPH
-    if module_key != "":
-        glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
-    _set_row_name(button, "%s %s" % [glyph, String(tile_info.get("terrain_label", "Unknown"))], selected)
-    _set_row_meta(button, _land_row_meta(tile_info))
-
-## The land row's meta, shortest true form: the foragers on this hex · else that the patch is
-## unworked · else that there is nothing to gather here.
-func _land_row_meta(tile_info: Dictionary) -> String:
-    var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-    # Gated on the module KEY, never on its label: a tile with no module still ships the label
-    # `"None"`, which would render as a source called "None" instead of the honest "No forage".
-    if workers > 0 or String(tile_info.get("food_module", "")).strip_edges() != "":
-        # An UNWORKED patch reads `0 🌾`, not its module label. The row already LEADS with that
-        # module's own glyph, so the label restated it — and at dock width the row was the ONE
-        # place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
-        # compose sheet's header both printed it whole. The zero form is parallel to the staffed
-        # one, so "nobody is working this" reads at a glance instead of needing a comparison.
-        return LAND_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_FORAGE]]
-    return LAND_META_NO_FORAGE
-
-## Foragers this faction has on (x, y), summed across every player band — the row states the hex's
-## staffing, not one band's share of it.
-func _forage_workers_on_tile(x: int, y: int) -> int:
-    if x < 0 or y < 0:
-        return 0
-    var total := 0
-    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
-    for band_variant in bands:
-        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
-            total += _workers_for_forage(band_variant, x, y)
-    return total
-
-## The land row was clicked. It emits `roster_occupant_selected` with the THIRD kind, `"land"` (an
-## additive kind on the existing `(kind, id)` contract — no id, so `LAND_SUBJECT_ID`), because
-## MapView holds its OWN occupant selection: picking a band there clears the herd, and picking the
-## land must clear both. There is still no map ring to move — the hex outline already marks the tile
-## and `selected_tile` is untouched — but without this the next snapshot's
-## `refresh_selection_payload` keeps answering `kind: "unit"` off the stale `selected_unit_id` and
-## restores the band, which made the land unselectable on any occupied hex.
-func _on_land_row_selected() -> void:
-    # A selection change invalidates the subject being composed (§15).
-    close_compose_sheet()
-    _selection.note_choice_tile(_selected_tile_coords())
-    _selection.select_land()
-    _selected_band_food_turns = NAN
-    _selected_band_morale = NAN
-    _selected_band_output = NAN
-    _rebuild_subject_list()
-    _render_subject_drawer()
-    emit_signal("roster_occupant_selected", SUBJECT_LAND, LAND_SUBJECT_ID)
-
-func _roster_group_header(title: String, count: int) -> Label:
-    var label := Label.new()
-    label.text = "%s (%d)" % [title.to_upper(), count]
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", ROSTER_HEADER_FONT_SIZE)
-    return label
-
-## One selectable band row. A Button (row click) hosts a mouse-transparent HBox
-## laying out: a selection accent, a vitality dot (BandFoodStatus color for a
-## player band, neutral for others), the name, the size, and an activity glyph.
-func _build_band_row(unit: Dictionary) -> Button:
-    var entity_id := int(unit.get("entity", -1))
-    var is_player := _is_player_unit(unit)
-    var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
-    # Neutral tint for a non-player band's vitality dot (we can't see their larder).
-    var dot_color := HudStyle.INK_FAINT
-    var glyph := ""
-    if is_player:
-        dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
-        glyph = _activity_glyph(String(unit.get("activity", "")))
-    var button := _make_roster_button(selected)
-    var row := _make_roster_row(selected, dot_color)
-    var name_label := _roster_name_label(String(unit.get("id", "Band")), selected)
-    row.add_child(name_label)
-    var meta_label := _roster_meta_label(str(int(unit.get("size", 0))))
-    row.add_child(meta_label)
-    var glyph_label: Label = null
-    if glyph != "":
-        glyph_label = _roster_glyph_label(glyph, String(unit.get("activity", "")) == BAND_ACTIVITY_IDLE)
-        row.add_child(glyph_label)
-    # Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
-    # the band has no resolved stage (pre-stage / missing snapshot).
-    var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
-    if stage_label != "":
-        button.tooltip_text = stage_label
-    button.add_child(row)
-    button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
-    _store_row_refs(button, row, name_label, meta_label, glyph_label)
-    return button
-
-## Patch a band row in place. `is_player` (hence the glyph's presence) is stable per entity and rides
-## the row key, so the glyph label is present here exactly when it was built.
-func _update_band_row(button: Button, unit: Dictionary) -> void:
-    var entity_id := int(unit.get("entity", -1))
-    var is_player := _is_player_unit(unit)
-    var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
-    _apply_row_selection(button, selected)
-    var dot_color := HudStyle.INK_FAINT
-    if is_player:
-        dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
-    _set_row_dot(button, dot_color)
-    _set_row_name(button, String(unit.get("id", "Band")), selected)
-    _set_row_meta(button, str(int(unit.get("size", 0))))
-    if is_player and button.has_meta("glyph_label"):
-        var activity := String(unit.get("activity", ""))
-        var glyph_label := button.get_meta("glyph_label") as Label
-        glyph_label.text = _activity_glyph(activity)
-        glyph_label.add_theme_color_override("font_color",
-            HudStyle.INK_FAINT if activity == BAND_ACTIVITY_IDLE else HudStyle.INK_DIM)
-    button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()
-
-## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
-## the hunters on it. Selecting it drives the drawer + the map ring to the herd.
-func _build_herd_row(herd: Dictionary) -> Button:
-    var herd_id := String(herd.get("id", ""))
-    var selected := not _selection.herd().is_empty() and String(_selection.herd().get("id", "")) == herd_id
-    var dot_color := _ecology_tier_color(String(herd.get("ecology_phase", "")))
-    var button := _make_roster_button(selected)
-    var row := _make_roster_row(selected, dot_color)
-    var label := String(herd.get("label", herd.get("id", "Herd")))
-    var glyph := FoodIcons.for_herd(label)
-    var name_text := String(herd.get("species", label))
-    var name_label := _roster_name_label("%s %s" % [glyph, name_text], selected)
-    row.add_child(name_label)
-    # The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
-    # code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
-    # `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
-    # shows the species and, as its meta, how many hunters are on it; the size class reads in the
-    # drawer.
-    var meta := _herd_row_meta(herd)
-    var meta_label: Label = null
-    if meta != "":
-        meta_label = _roster_meta_label(meta)
-        row.add_child(meta_label)
-    button.tooltip_text = label
-    button.add_child(row)
-    button.pressed.connect(_on_roster_row_selected.bind("herd", herd_id))
-    _store_row_refs(button, row, name_label, meta_label, null)
-    return button
-
-## Patch a herd row in place. The meta's presence (huntable-or-staffed) is stable per herd and rides
-## the row key, so the meta label is present here exactly when it was built.
-func _update_herd_row(button: Button, herd: Dictionary) -> void:
-    var herd_id := String(herd.get("id", ""))
-    var selected := not _selection.herd().is_empty() and String(_selection.herd().get("id", "")) == herd_id
-    _apply_row_selection(button, selected)
-    _set_row_dot(button, _ecology_tier_color(String(herd.get("ecology_phase", ""))))
-    var label := String(herd.get("label", herd.get("id", "Herd")))
-    var glyph := FoodIcons.for_herd(label)
-    _set_row_name(button, "%s %s" % [glyph, String(herd.get("species", label))], selected)
-    _set_row_meta(button, _herd_row_meta(herd))
-    button.tooltip_text = label
-
-## The herd row's meta — the deliberate twin of `_land_row_meta`'s rule: a workable source states
-## its staffing, anything else states nothing. A huntable herd with nobody on it reads `0 🏹`,
-## parallel to the staffed form (and to the land row's `0 🌾`), so "nobody is working this" reads at
-## a glance. A NON-huntable herd is not a source at all, so it earns no meta — exactly as a
-## module-less tile earns no worker meta.
-func _herd_row_meta(herd: Dictionary) -> String:
-    var herd_id := String(herd.get("id", "")).strip_edges()
-    var workers := _hunt_workers_on_herd(herd_id)
-    if workers > 0 or bool(herd.get("huntable", false)):
-        return HERD_META_WORKERS_FORMAT % [workers, ACTIVITY_GLYPHS[LABOR_KIND_HUNT]]
-    return ""
-
-## Hunters this faction has on `herd_id`, summed across BOTH ways a herd can be worked: standing
-## local hunts assigned by any player band, and detached hunting expeditions committed to it (in
-## whatever phase — a party en route to a herd is hunting it). The row states the herd's TOTAL
-## staffing, not one band's or one mechanism's share of it — the same rule
-## `_forage_workers_on_tile` documents for a hex.
-func _hunt_workers_on_herd(herd_id: String) -> int:
-    if herd_id == "":
-        return 0
-    var total := 0
-    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() else [_band_labor.player_band()]
-    for band_variant in bands:
-        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
-            total += _workers_for_hunt(band_variant, herd_id)
-    for exp_variant in _band_labor.player_expeditions():
-        if not (exp_variant is Dictionary):
-            continue
-        var exp: Dictionary = exp_variant
-        if String(exp.get("expedition_mission", "")).strip_edges().to_lower() != EXPEDITION_MISSION_HUNT:
-            continue
-        if String(exp.get("expedition_target_herd", "")).strip_edges() != herd_id:
-            continue
-        total += int(exp.get("size", 0))
-    return total
-
-## A roster row's clickable Button shell: selected rows read as "primary", others
-## as "ghost". Toggle_mode is off — selection is driven by a rebuild, not the
-## button's own toggle state, so re-clicking the selected row can't un-highlight it.
-func _make_roster_button(selected: bool) -> Button:
-    var button := Button.new()
-    button.focus_mode = Control.FOCUS_NONE
-    button.custom_minimum_size = Vector2(0, ROSTER_ROW_MIN_HEIGHT)
-    HudStyle.apply_button(button, "primary" if selected else "ghost")
-    return button
-
-## The mouse-transparent HBox overlaying a roster button, anchored to fill it,
-## carrying the left selection accent + the vitality/ecology dot.
-func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    row.set_anchors_preset(Control.PRESET_FULL_RECT)
-    row.offset_left = ROSTER_ROW_H_PADDING
-    row.offset_right = -ROSTER_ROW_H_PADDING
-    row.add_theme_constant_override("separation", ROSTER_ROW_SEPARATION)
-    var accent := ColorRect.new()
-    accent.custom_minimum_size = Vector2(ROSTER_ACCENT_WIDTH, 0)
-    accent.color = HudStyle.SIGNAL if selected else Color(0, 0, 0, 0)
-    accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    row.add_child(accent)
-    var dot := ColorRect.new()
-    dot.custom_minimum_size = Vector2(ROSTER_DOT_SIZE, ROSTER_DOT_SIZE)
-    dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    dot.color = dot_color
-    dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    row.add_child(dot)
-    # Stash the accent + dot so an in-place row update can reach them without indexing children.
-    row.set_meta("accent", accent)
-    row.set_meta("dot", dot)
-    return row
-
-## Stash a row's inner widgets on its Button, so `_update_*_row` patches them without positional
-## child indexing (whose offsets vary with the optional meta/glyph labels). The accent + dot live on
-## the row HBox; the caller passes the labels it built (a null one is simply not stored).
-func _store_row_refs(button: Button, row: HBoxContainer, name_label: Label, meta_label, glyph_label) -> void:
-    button.set_meta("accent", row.get_meta("accent"))
-    button.set_meta("dot", row.get_meta("dot"))
-    button.set_meta("name_label", name_label)
-    if meta_label != null:
-        button.set_meta("meta_label", meta_label)
-    if glyph_label != null:
-        button.set_meta("glyph_label", glyph_label)
-
-## Re-apply a row's selection styling in place: the button's primary/ghost chrome + the left accent.
-func _apply_row_selection(button: Button, selected: bool) -> void:
-    HudStyle.apply_button(button, "primary" if selected else "ghost")
-    if button.has_meta("accent"):
-        (button.get_meta("accent") as ColorRect).color = HudStyle.SIGNAL if selected else Color(0, 0, 0, 0)
-
-func _set_row_dot(button: Button, color: Color) -> void:
-    if button.has_meta("dot"):
-        (button.get_meta("dot") as ColorRect).color = color
-
-func _set_row_name(button: Button, text: String, selected: bool) -> void:
-    if not button.has_meta("name_label"):
-        return
-    var label := button.get_meta("name_label") as Label
-    label.text = text
-    label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
-
-func _set_row_meta(button: Button, text: String) -> void:
-    if button.has_meta("meta_label"):
-        (button.get_meta("meta_label") as Label).text = text
-
-## The row's IDENTITY — never elastic, never truncated. It takes its natural width and the meta
-## beside it absorbs whatever is left (see `_roster_meta_label`).
-func _roster_name_label(text: String, selected: bool) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
-    return label
-
-func _roster_meta_label(text: String) -> Label:
-    var label := Label.new()
-    label.text = text
-    # The META is the row's ELASTIC, EXPENDABLE half: it claims the slack after the name (hence the
-    # right alignment the rows have always read with) and, when the row runs out of width in a 320px
-    # dock, it is the meta that gives — ellipsised, not hard-cut, and never the name, which is the
-    # row's identity. Free for the short band/herd metas ("120", "1 🏹"); it is the land row's
-    # long module label that would otherwise push past the card's edge, and that label also reads in
-    # full in the drawer.
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    label.clip_text = true
-    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    return label
-
-func _roster_glyph_label(glyph: String, dim: bool) -> Label:
-    var label := Label.new()
-    label.text = glyph
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT if dim else HudStyle.INK_DIM)
-    return label
-
-func _activity_glyph(activity: String) -> String:
-    return String(ACTIVITY_GLYPHS.get(activity.strip_edges().to_lower(), ACTIVITY_GLYPHS[BAND_ACTIVITY_IDLE]))
-
-## Shared green/amber/red tier for a herd's ecology phase, matching the band
-## food dot so map/roster/drawer agree: thriving→green, stressed→amber,
-## collapsing→red. Matched on the phase stems from `EcologyPhase::as_str`.
-func _ecology_tier_color(phase: String) -> Color:
-    var normalized := phase.strip_edges().to_lower()
-    if normalized.contains("collaps"):
-        return HudStyle.DANGER
-    if normalized.contains("stress"):
-        return HudStyle.WARN
-    return HudStyle.HEALTHY
-
-func _find_roster_unit(entity_id: int) -> Dictionary:
-    for unit in _selection.roster_units():
-        if unit is Dictionary and int((unit as Dictionary).get("entity", -1)) == entity_id:
-            return unit
-    return {}
-
-func _find_roster_herd(herd_id: String) -> Dictionary:
-    if herd_id == "":
-        return {}
-    for herd in _selection.roster_herds():
-        if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
-            return herd
-    return {}
-
-## A roster row was clicked: make it the selected occupant, refresh the cards, and
-## notify the map so the selection ring follows.
-func _on_roster_row_selected(kind: String, id: Variant) -> void:
-    _select_roster_occupant(kind, id)
-    emit_signal("roster_occupant_selected", kind, id)
-
-func _select_roster_occupant(kind: String, id: Variant) -> void:
-    # A selection change invalidates the subject being composed (§15).
-    close_compose_sheet()
-    _selection.note_choice_tile(_selected_tile_coords())
-    if kind == "unit":
-        _selection.select_unit(_find_roster_unit(int(id)).duplicate(true))
-    else:
-        _selection.select_herd(_find_roster_herd(String(id)).duplicate(true))
-    _selected_band_food_turns = NAN
-    _selected_band_morale = NAN
-    _selected_band_output = NAN
-    _rebuild_subject_list()
-    _render_subject_drawer()
 
 ## The detail drawer + action buttons for the currently-selected occupant. Shares the one drawer
 ## with the land, so it hides the land's content first — exactly one subject fills it.
@@ -8071,8 +7425,8 @@ func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
     var panel_band_keep: Dictionary = _band_labor.panel_band().duplicate(true) if not _band_labor.panel_band().is_empty() else {}
     if x >= 0 and y >= 0:
         emit_signal("alert_focus_requested", x, y)
-    if not _find_roster_unit(entity).is_empty():
-        _select_roster_occupant("unit", entity)
+    if not _selectioncard.find_roster_unit(entity).is_empty():
+        _selectioncard.select_roster_occupant("unit", entity)
         emit_signal("roster_occupant_selected", "unit", entity)
     if not panel_band_keep.is_empty() and int(_band_labor.panel_band().get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
@@ -8089,8 +7443,8 @@ func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
     var panel_band_keep: Dictionary = _band_labor.panel_band().duplicate(true) if not _band_labor.panel_band().is_empty() else {}
     emit_signal("alert_focus_requested", x, y)
     # The focus above rebuilt the hex's roster, so the herd is resolvable now.
-    if herd_id != "" and not _find_roster_herd(herd_id).is_empty():
-        _select_roster_occupant("herd", herd_id)
+    if herd_id != "" and not _selectioncard.find_roster_herd(herd_id).is_empty():
+        _selectioncard.select_roster_occupant("herd", herd_id)
         emit_signal("roster_occupant_selected", "herd", herd_id)
     if not panel_band_keep.is_empty() and int(_band_labor.panel_band().get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
@@ -8184,8 +7538,8 @@ func _select_band_on_map(band: Dictionary) -> void:
     var y := int(band.get("current_y", -1))
     if x >= 0 and y >= 0:
         emit_signal("alert_focus_requested", x, y)
-    if not _find_roster_unit(entity).is_empty():
-        _select_roster_occupant("unit", entity)
+    if not _selectioncard.find_roster_unit(entity).is_empty():
+        _selectioncard.select_roster_occupant("unit", entity)
         emit_signal("roster_occupant_selected", "unit", entity)
     else:
         _render_band_into_panel(band)
