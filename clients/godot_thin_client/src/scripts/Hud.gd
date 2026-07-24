@@ -1312,6 +1312,9 @@ const WORK_PAGER_HEIGHT := 24.0
 const WORK_INSPECTOR_HEIGHT := 118.0
 ## The inspector with its policy picker open (an extra rung row + its hint).
 const WORK_INSPECTOR_POLICY_HEIGHT := 186.0
+## …plus the standing-investment line (`WORK_INSPECT_STANDING_INVESTMENT_FORMAT`), which only renders
+## on a source standing on an investment rung. One `ALLOC_SECTION_FONT_SIZE` line and its separation.
+const WORK_INSPECTOR_STANDING_LINE_HEIGHT := 22.0
 ## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
 const WORK_ZONE_GAP_COUNT := 3.0
 const WORK_COLUMN_RULE_WIDTH := 1.0
@@ -1380,6 +1383,14 @@ const PARTY_INSPECT_RECALL := "Recall"
 const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
+## The inspector's picker offers the four EXTRACTIVE rungs only — the INVESTMENT rungs are ladder
+## COMMITMENTS made at the source's own compose control, where their gates and payoff forecasts live.
+## So a source STANDING on an investment rung highlights none of the four, which without a word reads
+## as an unset control on a very-much-set assignment. These two say what is actually true: the rung
+## it stands on, and that picking here ENDS it (a part-built pen/field is discarded, not paused).
+const WORK_INSPECT_STANDING_INVESTMENT_FORMAT := "Currently %s — picking a rung here ends it."
+const WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT := "End %s on %s and take at %s instead? The work done toward it is lost."
+const WORK_INSPECT_END_INVESTMENT_CONFIRM_OK := "End it"
 
 const PAGER_PREV_GLYPH := "‹"
 const PAGER_NEXT_GLYPH := "›"
@@ -4129,7 +4140,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
         return
-    var capacity := _work_board_capacity(filtered.size(), not inspected.is_empty())
+    var capacity := _work_board_capacity(filtered.size(), inspected)
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -4147,12 +4158,11 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ##                  is actually needed) the pager — each of which reserves the very height it draws at.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
-func _work_board_capacity(count: int, inspector_open: bool) -> Dictionary:
+## `inspected` is the open inspector's model, EMPTY when none is open.
+func _work_board_capacity(count: int, inspected: Dictionary) -> Dictionary:
     var box := _zone_box()
     var cols := clampi(int(box.x / WORK_COLUMN_MIN_WIDTH), 1, WORK_MAX_COLUMNS)
-    var inspector_h := 0.0
-    if inspector_open:
-        inspector_h = WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open else WORK_INSPECTOR_HEIGHT
+    var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var chrome := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + inspector_h \
         + float(ZONE_BLOCK_SEPARATION) * WORK_ZONE_GAP_COUNT
     var rows := maxi(1, int((box.y - chrome) / WORK_ROW_HEIGHT))
@@ -4374,8 +4384,7 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.custom_minimum_size = Vector2(0.0,
-        WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open else WORK_INSPECTOR_HEIGHT)
+    strip.custom_minimum_size = Vector2(0.0, _work_inspector_height(model))
     strip.add_theme_stylebox_override("panel", _work_inspector_stylebox())
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
@@ -4425,11 +4434,46 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         # The four EXTRACTIVE rungs only. The investment rungs (cultivate/sow/tame/corral) are ladder
         # COMMITMENTS made at the source's own compose control, where their knowledge gates and payoff
         # forecasts live; changing an existing assignment's take needs no gate.
+        var standing := String(model.get("policy", ""))
+        if standing in INVESTMENT_POLICIES:
+            # The picker highlights NOTHING on an investment assignment (the standing rung is not one
+            # of the four), and an unhighlighted radio reads as unset. This line is what explains it.
+            col.add_child(_build_status_part(
+                WORK_INSPECT_STANDING_INVESTMENT_FORMAT % _policy_face(standing), HudStyle.WARN))
         col.add_child(_build_policy_picker(func(policy: String) -> void:
-            _work_policy_open = false
-            _emit_work_assign(band, model, int(model.get("workers", 0)), policy),
-            String(model.get("policy", "")), LABOR_HUNT_POLICIES, {}, {}, ZONE_POLICY_PICKER_COLUMNS))
+            _on_work_policy_picked(band, model, policy),
+            standing, LABOR_HUNT_POLICIES, {}, {}, ZONE_POLICY_PICKER_COLUMNS))
     return strip
+
+## A rung picked in the work inspector. On the ordinary (EXTRACTIVE) standing policy this re-sends the
+## assignment immediately, exactly as it always has. On an INVESTMENT one the pick DISCARDS a ladder
+## build worth ~25 turns, so it asks first — the same `_confirm_destructive` treatment "Unassign all
+## work" and "Recall all parties" get. The picker stays open until the answer comes back, so a cancel
+## leaves the frame exactly as it was rather than silently closing on a change that never happened.
+func _on_work_policy_picked(band: Dictionary, model: Dictionary, policy: String) -> void:
+    if String(model.get("policy", "")) in INVESTMENT_POLICIES:
+        _confirm_destructive(
+            WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT % [
+                _policy_face(String(model.get("policy", ""))),
+                String(model.get("label", "")),
+                _policy_face(policy)],
+            WORK_INSPECT_END_INVESTMENT_CONFIRM_OK,
+            func() -> void: _commit_work_policy(band, model, policy))
+        return
+    _commit_work_policy(band, model, policy)
+
+func _commit_work_policy(band: Dictionary, model: Dictionary, policy: String) -> void:
+    _work_policy_open = false
+    _emit_work_assign(band, model, int(model.get("workers", 0)), policy)
+
+## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
+## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
+func _work_inspector_height(model: Dictionary) -> float:
+    if not _work_policy_open:
+        return WORK_INSPECTOR_HEIGHT
+    if String(model.get("policy", "")) in INVESTMENT_POLICIES:
+        return WORK_INSPECTOR_POLICY_HEIGHT + WORK_INSPECTOR_STANDING_LINE_HEIGHT
+    return WORK_INSPECTOR_POLICY_HEIGHT
 
 func _work_inspector_stylebox() -> StyleBoxFlat:
     var sb := StyleBoxFlat.new()
@@ -5688,10 +5732,13 @@ func _tame_stalled_hint(herd: Dictionary) -> String:
     return TAME_STALLED_HINT_FORMAT % phase.capitalize()
 
 ## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
-## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
-## send-hunt-expedition picker passes `_send_hunt_policy`). `options` is the option set for this
-## source kind — the four extractive rungs by default, plus that kind's INVESTMENT rung on the
-## forage/herd assign controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS).
+## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
+## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
+## forage drawer) and owns none of their state. `options` is the option set for this source kind —
+## the four extractive rungs by default, plus that kind's INVESTMENT rungs on the forage/herd assign
+## controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS). A `selected` that is not in `options`
+## simply highlights nothing; a caller offering a narrower set than its source can stand on owes the
+## player a line saying so (see `WORK_INSPECT_STANDING_INVESTMENT_FORMAT`).
 ##
 ## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
 ## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
@@ -5701,17 +5748,13 @@ func _tame_stalled_hint(herd: Dictionary) -> String:
 ## player discovers the rung, what it costs to unlock, AND how to unlock it, BEFORE trying to use it.
 func _build_policy_picker(
     on_pick: Callable,
-    selected: String = "",
+    selected: String,
     options: Array = LABOR_HUNT_POLICIES,
     gates: Dictionary = {},
     takes: Dictionary = {},
     columns: int = 0,
     collapse_other_gates: bool = false) -> VBoxContainer:
-    # PRESERVED VERBATIM (HUD decomposition Phase 2c-1): with no explicit `selected`, this falls back
-    # to the HERD DRAWER's composed rung — so a work-inspector or party-compose render reads the
-    # drawer's state. A real cross-boundary read, arguably a latent bug; it is fixed as its own
-    # labelled change, never as a side effect of the state lift.
-    var current := selected if selected != "" else _compose.hunt_policy()
+    var current := selected
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
@@ -5769,8 +5812,7 @@ func _build_policy_picker(
         var reasons := _gate_reasons(gates, policy_key)
         if reasons.is_empty():
             continue
-        var titled := "%s%s" % [
-            _source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()]
+        var titled := _policy_face(policy_key)
         if collapse_other_gates and policy_key != current:
             # Collapsed: the count, plus every reason in the line's own tooltip. A Label ignores the
             # mouse by default, so the filter must be set with the text or the tooltip never shows.
@@ -5787,6 +5829,12 @@ func _build_policy_picker(
         for reason in reasons:
             block.add_child(_alloc_hint_label(GATE_REASON_BULLET_FORMAT % reason))
     return block
+
+## A rung's display FACE — its `FoodIcons` glyph welded to its name. The one policy vocabulary every
+## rung readout shares (the gate-reason lines, the work inspector's standing-investment line and its
+## confirm), so a rung can never read one way beside the picker and another in the dialog.
+func _policy_face(policy: String) -> String:
+    return "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(policy)), policy.capitalize()]
 
 ## The unmet-prerequisite reasons a `gates` dict holds for one policy — empty (available) for an
 ## absent key. The single reader of the gates contract, so callers never re-assert its shape.

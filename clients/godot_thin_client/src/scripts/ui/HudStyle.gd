@@ -25,6 +25,10 @@ const SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)
 const WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
 const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
 const HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
+## The `primary` button variant's resting fill. Named because it is the ONLY marker of "this control
+## is the selected/committing one" — a policy picker's chosen rung wears it and nothing else does —
+## so a test that asks "which rung is lit?" has to read it back off the stylebox.
+const BUTTON_PRIMARY_BG := Color(0.086, 0.227, 0.204, 1.0)   # #163a34
 
 # ---- The Telling: voice-medium accents -------------------------------------
 # The narrator's voice AGES as the civilization crosses medium thresholds (oral -> painted ->
@@ -173,7 +177,7 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	var text: Color
 	match variant:
 		"primary":
-			bg_normal = Color(0.086, 0.227, 0.204, 1.0)   # #163a34
+			bg_normal = BUTTON_PRIMARY_BG
 			bg_hover = Color(0.110, 0.275, 0.251, 1.0)    # #1c4640
 			border_normal = SIGNAL_DEEP
 			border_hover = SIGNAL

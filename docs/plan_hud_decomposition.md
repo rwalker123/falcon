@@ -72,19 +72,31 @@ is dissolved **first**, in place, before any code moves files.
     - **2c-3 — the drawer render dispatch** (~155 lines). Held until the band-panel
       half has its own boundary, else it reaches back into `HudLayer` four times
       per render.
-  - **2c-1b — fix the policy-picker cross-boundary fallback.** Its own PR, landing
-    **after 2c-1 and before 2c-2.** `_build_policy_picker` falls back to the
-    *drawer's* hunt policy when invoked with no explicit selection — but two of its
-    four callers are the band-panel **work inspector** and the **parties-zone party
-    compose**, so a band-panel render can silently inherit the tile drawer's rung.
-    2c-1 preserves this byte-identically (a state relocation must not smuggle in a
-    behaviour change); this PR fixes it. **Scoping note:** the fix is *not* a
-    one-liner — each caller needs the right source of truth determined first (the
-    work inspector should read the inspected row's own assignment policy; the party
-    compose its own party rung), so it starts with a small investigation, and it
-    needs a behavioural assertion that a band-panel render no longer tracks the
-    drawer's rung. Doing it before 2c-2 means the drawer extraction moves *correct*
-    code rather than carrying the bug across a new boundary.
+  - **2c-1b — the work-inspector policy picker.** Its own PR, landing **after 2c-1
+    and before 2c-2**, so the drawer extraction moves correct code.
+    **CORRECTION — the "cross-boundary fallback" written here through 2c-1 was
+    WRONG.** `_build_policy_picker`'s `else _compose.hunt_policy()` branch is **dead
+    code**: all four callers pass an explicit, provably non-empty `selected` (work
+    inspector → `model["policy"]`, normalised and never empty; party compose →
+    `_send_hunt_policy`, clamped immediately before the call; the two drawer
+    builders → their own re-validated rung). It is a leftover from a commit whose
+    signature had no `selected` at all. No band-panel render has ever inherited the
+    drawer's rung. The claim was propagated from a seam-map assertion without
+    checking the branch was *reachable* — verify reachability, not just presence.
+    **What IS real, at the same call site, and is what this PR fixes:** the work
+    inspector passes `options = LABOR_HUNT_POLICIES` (the four EXTRACTIVE rungs)
+    while `model["policy"]` can legitimately be an **investment** rung
+    (`corral`/`cultivate`/`tame`/`sow`). So the picker highlights *nothing* — reading
+    as an unset control on a very-much-set assignment — and pressing any rung emits
+    `assign_labor` with an extractive policy, **silently discarding a ~25-turn
+    investment** with no confirmation. It also had **zero frame coverage**
+    (`_work_policy_open` is never set true in either harness).
+    The fix keeps the extractive four (investment rungs are ladder commitments that
+    belong at the source's own compose control — the documented design intent) and
+    instead makes the standing investment **visible** and its loss **explicit**,
+    routing the pick through the band panel's existing `_confirm_destructive`
+    precedent. Plus: delete the dead fallback (make `selected` required) and the
+    stale comments describing the read that never existed.
   - **Verification caveat (2a):** the flash is a *transient* during turn-advance; the
     static ui_preview PNG harness cannot capture it. 2a is guarded by (i) settled
     frames staying pixel-identical and (ii) a new behavioural assertion that the
