@@ -54,18 +54,56 @@ is dissolved **first**, in place, before any code moves files.
     terrain-lines producer + `_tile_detail_lines_cache` stay on `HudLayer` with the
     drawer, which sets `tile_detail`). `HudLayer` keeps the whole drawer. ~500–600
     lines, low risk.
-  - **2c — Lift `ComposeState`, then extract the drawer/compose half.** First lift
-    the shared compose state into a small `RefCounted` `ComposeState` (the Phase-0
-    idiom that made this whole arc tractable) so neither side reaches across; then
-    the drawer render, drawer-action builders, `_refresh_compose_sheet`, occupant/
-    band-into-panel, and the two big compose builders can move without a state seam.
+  - **2c — three PRs.** The compose/drawer map showed the forecast/gate/picker
+    layer (~500 lines) is *shared with the band-panel work zone*, and
+    `_render_band_into_panel` has five of six callers outside the drawer — so the
+    band-panel half needs its own boundary and cannot ride along:
+    - **2c-1 — Lift `ComposeState`.** ~122 reference sites onto encapsulated
+      accessors/mutators (the Phase-0 idiom). Forage compose is entirely inside
+      one builder; hunt compose leaks three reads (`_tame_stalled_hint`,
+      `_build_policy_picker`, `_herd_crew_noun`); the `_send_party_*` pair belongs
+      to the **parties zone**, not the drawer, so it goes on its own sub-struct.
+      Also **deletes `_selected_food_module` / `_selected_food_is_hunt`** — 7 writes
+      and *zero readers* anywhere (Phase 2a/2b took the readers, left the writers).
+      Pure state relocation, no node moves, no signal rewiring.
+    - **2c-2 — `DrawerComposeController`.** The compose lifecycle + drawer-action
+      block + the two big compose builders (~780 lines). Deliberately leaves the
+      shared forecast/gate/picker layer and `_format_detail_bbcode` on `HudLayer`.
+    - **2c-3 — the drawer render dispatch** (~155 lines). Held until the band-panel
+      half has its own boundary, else it reaches back into `HudLayer` four times
+      per render.
+  - **2c-1b — fix the policy-picker cross-boundary fallback.** Its own PR, landing
+    **after 2c-1 and before 2c-2.** `_build_policy_picker` falls back to the
+    *drawer's* hunt policy when invoked with no explicit selection — but two of its
+    four callers are the band-panel **work inspector** and the **parties-zone party
+    compose**, so a band-panel render can silently inherit the tile drawer's rung.
+    2c-1 preserves this byte-identically (a state relocation must not smuggle in a
+    behaviour change); this PR fixes it. **Scoping note:** the fix is *not* a
+    one-liner — each caller needs the right source of truth determined first (the
+    work inspector should read the inspected row's own assignment policy; the party
+    compose its own party rung), so it starts with a small investigation, and it
+    needs a behavioural assertion that a band-panel render no longer tracks the
+    drawer's rung. Doing it before 2c-2 means the drawer extraction moves *correct*
+    code rather than carrying the bug across a new boundary.
   - **Verification caveat (2a):** the flash is a *transient* during turn-advance; the
     static ui_preview PNG harness cannot capture it. 2a is guarded by (i) settled
     frames staying pixel-identical and (ii) a new behavioural assertion that the
     chip/row/action **nodes are the same instances** across a same-tile restate
     (proven to fail against the current teardown). The actual flash is confirmed
     by the human in the running app.
-- **Phase 3+ — Band panel bridge, labor model, targeting.** As they come.
+- **Phase 3+ — the remaining boundaries**, each independently clean (sized by the
+  2c map, in rough ascending risk):
+  - **`DisclosureController`** — the Food/Morale breakdown popover cluster
+    (~150 lines, ~20 state sites), self-contained apart from a two-host fan-out.
+  - **`DetailRenderContext` + the detail renderer** — `_format_detail_bbcode`, the
+    detail-line producers, and the band-tint scalars they smuggle through members
+    (~873 lines, ~25 tint sites). The tint scalars are a *detail-render* concern
+    shared by drawer + band panel + popover, which is why 2c deliberately leaves
+    them alone.
+  - **`BandPanelController`** — the band/work/parties zone builders + the cycler
+    (~1,935 lines), driven by the BandCityPanel and `update_band_alerts`, not by
+    selection. The largest remaining mass.
+  - Then the labor model and targeting.
 
 Phases 1–3 are sketched at the end; the body below specifies **Phase 0**.
 
