@@ -6,11 +6,13 @@ extends RefCounted
 ## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
-## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Three helpers stay
-## on HudLayer because they are shared beyond this cluster and are passed in as Callables: `_meter_bar`
-## (the herd-drawer danger bars use it), `_format_stockpile_label` (the accessible-stockpile lines use
-## it) and `_progress_percent` (the policy gate reasons use it). The gate helpers read this cluster's
-## knowledge back through the public `faction_knowledge()`.
+## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Two helpers stay on
+## HudLayer because they are shared beyond this cluster and are still HudLayer METHODS, so they are
+## passed in as Callables: `_meter_bar` (the herd-drawer danger bars use it) and
+## `_format_stockpile_label` (the accessible-stockpile lines use it). The shared FORMATTING left
+## HudLayer entirely — `HudFormat.progress_percent` and `HudWidgets.set_label_tooltip` are all-static,
+## so this cluster calls them directly rather than injecting or duplicating them. The gate helpers read
+## this cluster's knowledge back through the public `faction_knowledge()`.
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
 # The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on
@@ -90,7 +92,6 @@ var _command_feed: CommandFeedController = null
 # Shared-beyond-cluster helpers kept on HudLayer, called back through these Callables (see header).
 var _meter_bar_fn: Callable
 var _format_stockpile_label_fn: Callable
-var _progress_percent_fn: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
@@ -115,7 +116,6 @@ func _init(
 	command_feed: CommandFeedController,
 	meter_bar_fn: Callable,
 	format_stockpile_label_fn: Callable,
-	progress_percent_fn: Callable,
 ) -> void:
 	turn_label = turn_label_
 	metrics_label = metrics_label_
@@ -130,7 +130,6 @@ func _init(
 	_command_feed = command_feed
 	_meter_bar_fn = meter_bar_fn
 	_format_stockpile_label_fn = format_stockpile_label_fn
-	_progress_percent_fn = progress_percent_fn
 
 ## The LABEL-rendering half of HudLayer.update_overlay's fan-out: the turn readout + the metrics line.
 ## The turn-orb / band-labor side effects stay on HudLayer (they are not top-bar readouts).
@@ -277,7 +276,7 @@ func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
 	label.text = glyph if glyph != "" else DISCOVERIES_UNKNOWN_GLYPH
 	label.add_theme_color_override("font_color", HudStyle.SIGNAL)
 	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_set_label_tooltip(label, site_name)
+	HudWidgets.set_label_tooltip(label, site_name)
 	return label
 
 ## THE FACTION HALF OF THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the player
@@ -405,7 +404,7 @@ func _knowledge_meter_text(progress: float) -> String:
 		return KNOWLEDGE_KNOWN_BADGE
 	return "%s %d%%" % [
 		_meter_bar_fn.call(progress * HudLayer.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
-		_progress_percent_fn.call(progress)]
+		HudFormat.progress_percent(progress)]
 
 ## Tint the Sedentarization readout: cyan when the pressure is hard, amber when soft, neutral otherwise.
 func _sedentarization_color(stage: String) -> Color:
@@ -493,11 +492,3 @@ func _build_stockpile_row(entry: Dictionary) -> Control:
 		row.add_child(delta_label)
 	return row
 
-## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
-## `MOUSE_FILTER_IGNORE`**, so setting `tooltip_text` on one and walking away is a SILENT no-op — the
-## text is stored, the mouse never reaches the control, nothing ever appears. A trivial private copy of
-## HudLayer._set_label_tooltip (the generic helper is shared beyond this cluster and stays there; this
-## 2-line Label helper is cheaper to duplicate than to reach back through a HudLayer ref for).
-func _set_label_tooltip(label: Label, text: String) -> void:
-	label.tooltip_text = text
-	label.mouse_filter = Control.MOUSE_FILTER_STOP if text != "" else Control.MOUSE_FILTER_IGNORE

@@ -33,10 +33,6 @@ var _subject_list: VBoxContainer = null
 # The SAME instances HudLayer holds — pure data, no scene refs. This controller reads + mutates them.
 var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
-# The shared alloc chrome (Phase-1 Callable idiom). The forage/hunt worker readers moved onto
-# `HudBandLaborState`, so this controller calls `_band_labor.workers_for_*` directly.
-var _alloc_hint_label: Callable
-
 # --- Owned Phase-2a in-place-diff caches (moved off HudLayer) ---
 # The ordered chip-slot keys + the ordered roster-row keys (identity + structural flags) last rendered, so an
 # unchanged restate patches the existing nodes rather than freeing + rebuilding them (the reflow that flashes).
@@ -44,13 +40,12 @@ var _tile_chip_slots: Array = []
 var _subject_row_keys: Array = []
 
 func _init(tile_panel: PanelCard, tile_chips: HFlowContainer, subject_list: VBoxContainer,
-		selection: HudSelectionState, band_labor: HudBandLaborState, alloc_hint_label: Callable) -> void:
+		selection: HudSelectionState, band_labor: HudBandLaborState) -> void:
 	_tile_panel = tile_panel
 	_tile_chips = tile_chips
 	_subject_list = subject_list
 	_selection = selection
 	_band_labor = band_labor
-	_alloc_hint_label = alloc_hint_label
 
 ## The identity/list render, driven from HudLayer._render_selection_panel: assemble the hex's roster, draw the
 ## tile-card header + chips, auto-select the fresh-hex subject, and (re)build the subject list. The DRAWER is
@@ -345,7 +340,7 @@ func _build_subject_row(descriptor: Dictionary) -> Control:
 		"herd":
 			return _build_herd_row(descriptor["data"])
 		_:
-			return _alloc_hint_label.call(HudLayer.OCCUPANTS_UNSEEN_OTHERS_HINT) as Control
+			return HudWidgets.alloc_hint_label(HudLayer.OCCUPANTS_UNSEEN_OTHERS_HINT)
 
 ## Patch one existing subject-row node in place. Headers + the hint are static once membership is
 ## fixed (their counts are implied by it), so only the three selectable rows carry an updater.
@@ -732,6 +727,6 @@ func select_roster_occupant(kind: String, id: Variant) -> void:
 	emit_signal("subject_changed")
 
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit / HudLayer._is_player_unit —
-## a trivial pure predicate kept local rather than threaded as a fourth Callable).
+## a trivial pure predicate kept local rather than threaded in as a Callable).
 func _is_player_unit(unit: Dictionary) -> bool:
 	return int(unit.get("faction", HudLayer.PLAYER_FACTION_ID)) == HudLayer.PLAYER_FACTION_ID

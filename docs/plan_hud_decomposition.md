@@ -78,10 +78,11 @@ is dissolved **first**, in place, before any code moves files.
       consumers depend on *that*. Its entire impurity is 4 members over ~10 read
       sites; in practice only the grid-wrap pair (reached transitively by the raid
       estimates) needs solving. The node-building widget factories
-      (`_build_policy_picker`, `_forecast_label`, `_gate_reasons`) stay behind for a
-      later shared-widget extraction, and the **15 group-(a) functions with no
-      caller outside the drawer** are not shared at all — they move with the
-      controller in 2c-2b.
+      (`_build_policy_picker`, `_forecast_label`, `_gate_reasons`) stayed behind for
+      the shared-widget extraction — since done, they are now
+      `HudWidgets.build_policy_picker` / `forecast_label` / `gate_reasons`. The
+      **15 group-(a) functions with no caller outside the drawer** are not shared at
+      all — they move with the controller in 2c-2b.
     - **2c-2b — `DrawerComposeController`.** The compose lifecycle + drawer-action
       block + the two big compose builders (~780 lines) plus the 15 controller-only
       forecast functions, depending on `SourceForecast`. Emits **one** signal
@@ -148,16 +149,29 @@ is dissolved **first**, in place, before any code moves files.
       `SelectionCardController` (it holds `_band_labor` already). Left on `HudLayer`:
       `_resolve_assign_band` (reads `_selection`), `_emit_assign_labor` (emits a
       HudLayer signal), `_herd_label_for_id` (cross-controller resolver).
-    - **(ii) NEXT — widget factories → a shared `ui/hud/` module.** `_alloc_hint_label`
-      (12 drawer call sites alone), `_build_worker_stepper`, `_build_policy_picker`,
-      `_forecast_label`, `_gate_reasons`, `_build_row_note_label`, `_build_status_part`,
-      `_compact_control`, `_progress_percent`, `_set_label_tooltip`,
-      `_alloc_section_label`, `_build_extend_pen_control` — all shared with the
-      band-panel zones. Plus a handful of forecast-adjacent math that should join
-      `SourceForecast` (`_is_overdraw`, `_payoff_take`, `_hunt_take_rate`,
-      `_hunt_delivered_and_waste`) and formatters that should join `HudFormat`.
+    - **(ii) DONE — widget factories → `HudWidgets` + `HudFormat`.** Two all-static
+      modules, not one: the scoping found `_progress_percent` and the status/tooltip
+      vocabulary are *formatting*, not widgets, and splitting them is what lets
+      `TopBarReadouts` depend on the formatters without importing a widget factory.
+      `HudWidgets` took the stepper family, zone chrome, the policy picker and the
+      label leaves; `HudFormat` took the percent + status/tooltip/policy-face
+      vocabulary. Stragglers folded in rather than left for a later pass —
+      `_add_stepper_controls` turned out **more** shared than `_build_worker_stepper`
+      itself (5 sites, 4 clusters), plus `_zone_head`, `_build_inline_link`,
+      `_build_section_menu`. Three injections deleted: `SelectionCardController`'s
+      `alloc_hint_label` Callable, `TopBarReadouts`' `progress_percent_fn`, and
+      **`TopBarReadouts`' verbatim private copy of `_set_label_tooltip`** — a prior
+      extraction had duplicated it rather than reach back into `HudLayer`, which is
+      the clearest evidence the shared layer was overdue. Left behind deliberately:
+      `_build_extend_pen_control` (emits `extend_pen_requested`, one drawer-only
+      caller, diffing twins adjacent) → goes with the drawer.
+    - Still outstanding for the drawer: a little forecast-adjacent math that should
+      join `SourceForecast` (`_is_overdraw`, `_payoff_take`, `_hunt_take_rate`,
+      `_hunt_delivered_and_waste`) — scope it when 2c-2b starts.
     - Then **2c-2b** proper: `DrawerComposeController` (~1,279 lines incl. the 15
-      controller-only forecast/gate/picker fns), with a handful of injections left.
+      controller-only forecast/gate/picker fns). Injection surface after (i)+(ii) is
+      roughly **one threaded `int`** plus the normal per-call `on_pick`/`on_change`
+      Callables that are legitimate factory arguments.
   - **`HudFormat`** — `format_signed` / `format_magnitude` / `format_yield` currently
     live in `SourceForecast` because its math genuinely needs them and duplicating
     them is forbidden. They are formatting, not forecasting. The seam is already

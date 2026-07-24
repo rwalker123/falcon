@@ -570,7 +570,7 @@ const GATE_REASON_BULLET_FORMAT := "   · %s"
 # button are what paid. But spelled-out reasons are also how the ladder TEACHES — several frames exist
 # precisely to show a NON-composed rung's full prerequisites (`forage_cultivate_locked`,
 # `forage_sow_locked`, `herd_corral_locked*`, and `two_meter_split`, whose whole subject is the gated
-# Corral's reason line while Tame is composed). So this is NOT the shared default: `_build_policy_picker`
+# Corral's reason line while Tame is composed). So this is NOT the shared default: `HudWidgets.build_policy_picker`
 # collapses only when its caller asks, and the only caller that asks is the forage compose while a
 # COMMITTING rung is selected — i.e. exactly when the crop picker is on the card competing for height.
 # Every other picker (hunt, expedition, work board) is byte-for-byte unchanged.
@@ -838,7 +838,7 @@ const WORKER_STEPPER_SEPARATION := 6
 # a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
 const POLICY_PICKER_COLUMNS := 3
 const POLICY_PICKER_MAX_SINGLE_ROW := 4
-# Passed for `columns` to keep `_build_policy_picker`'s width-driven default — a caller that only wants
+# Passed for `columns` to keep `HudWidgets.build_policy_picker`'s width-driven default — a caller that only wants
 # to set a LATER argument must still name this one, and a bare 0 there reads as "no columns".
 const POLICY_PICKER_AUTO_COLUMNS := 0
 # Two-line worker-stepper form (opt-in via `status_line`, used by the Forage/Hunt Current-actions
@@ -1105,7 +1105,7 @@ const SECTION_MENU_GLYPH := "⋯"
 const SECTION_MENU_WIDTH := 22.0
 const CONFIRM_DIALOG_TITLE := "Confirm"
 
-## Zone section headers (uppercased by `_alloc_section_label`).
+## Zone section headers (uppercased by `HudWidgets.alloc_section_label`).
 const ZONE_HEADER_PEOPLE := "People"
 const ZONE_HEADER_WORKFORCE := "Workforce"
 const ZONE_HEADER_WORK := "Work"
@@ -1481,7 +1481,7 @@ const OCCUPANTS_UNSEEN_OTHERS_HINT := "Out of sight — you can't see anything h
 # Separates a row's trailing glyphs from its label (and from each other): "🌰 Forage (27, 26)  ♻  ●".
 const ROW_GLYPH_SEPARATOR := "  "
 # Word forms for the two ORDER-level statuses. The expedition PHASE words are NOT duplicated here —
-# `_status_label` reads them from `EXPEDITION_PHASE_LABELS`, their single source of truth.
+# `HudFormat.status_label` reads them from `EXPEDITION_PHASE_LABELS`, their single source of truth.
 const STATUS_LABELS := {
 	FoodIcons.STATUS_PENDING: "Pending",
 	FoodIcons.STATUS_WORKING: "Working",
@@ -1584,13 +1584,14 @@ func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
-    # knowledge-unlock nudge straight through it. The three shared-beyond-cluster helpers (_meter_bar,
-    # _format_stockpile_label, _progress_percent) stay on HudLayer and are passed as Callables.
+    # knowledge-unlock nudge straight through it. The two shared-beyond-cluster helpers that are still
+    # HudLayer METHODS (_meter_bar, _format_stockpile_label) stay here and are passed as Callables; the
+    # percent formatter is `HudFormat.progress_percent` now, which the cluster calls directly.
     _topbar = TopBarReadouts.new(
         turn_label, metrics_label, sedentarization_label, demographics_label,
         discoveries_row, discoveries_label, discoveries_strip, intensification_label,
         stockpile_panel, stockpile_list, _command_feed,
-        _meter_bar, _format_stockpile_label, _progress_percent)
+        _meter_bar, _format_stockpile_label)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -1607,7 +1608,7 @@ func _ready() -> void:
     # `subject_changed` (HudLayer closes the compose sheet + re-renders), and `roster_occupant_selected`
     # relays to Main.
     _selectioncard = SelectionCardController.new(
-        tile_panel, tile_chips, subject_list, _selection, _band_labor, _alloc_hint_label)
+        tile_panel, tile_chips, subject_list, _selection, _band_labor)
     _selectioncard.subject_changed.connect(_on_selection_subject_changed)
     _selectioncard.roster_occupant_selected.connect(func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     _load_ui_balance_config()
@@ -2243,11 +2244,6 @@ func update_food_modules(modules_variant: Variant) -> void:
 func update_forage_patches(patches_variant: Variant) -> void:
     _band_labor.set_forage_patches(patches_variant)
 
-## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
-## (no stray leading space) when the resource can't be resolved.
-func _source_icon_prefix(icon: String) -> String:
-    return "%s " % icon if icon != "" else ""
-
 ## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
 ## there. "" when the tile has no known module (undiscovered), so the row renders
 ## bare rather than with a misleading fallback sprig.
@@ -2400,49 +2396,6 @@ func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
         return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
     return {"workers": _workers_for_role(band, kind), "pending": false}
 
-## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
-## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
-func _row_glyph_suffix(glyph: String) -> String:
-    return "" if glyph == "" else ROW_GLYPH_SEPARATOR + glyph
-
-## The WORDS behind a status glyph. Order-level statuses come from `STATUS_LABELS`; an expedition
-## PHASE reads from `EXPEDITION_PHASE_LABELS` (`_expedition_phase_label`), which stays the single
-## source of truth for the phase words — they are never re-typed here.
-func _status_label(status: String) -> String:
-    var key := status.strip_edges().to_lower()
-    if key == "":
-        return ""
-    if STATUS_LABELS.has(key):
-        return String(STATUS_LABELS[key])
-    return _expedition_phase_label(key)
-
-## One tooltip line spelling a status glyph out: the word plus its behaviour hint ("Pending — starts
-## when you advance the turn"); a status whose word says it all (`Working`) renders bare.
-func _status_tooltip_line(status: String) -> String:
-    var label := _status_label(status)
-    if label == "":
-        return ""
-    var hint := String(STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
-    return label if hint == "" else STATUS_HINT_FORMAT % [label, hint]
-
-## Append the status words to a row tooltip. The glyph on the row is terse by design, so the hover
-## must carry what it encodes — composed WITH the tooltip the row already had (yield readout,
-## overstaffing explanation, policy hint), never replacing it.
-func _append_status_tooltip(tooltip: String, status: String) -> String:
-    var status_line := _status_tooltip_line(status)
-    if status_line == "":
-        return tooltip
-    return status_line if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + status_line
-
-## Join the non-empty parts of a row tooltip (yield readout · policy behaviour · …) into one block.
-func _join_tooltip_lines(lines: Array) -> String:
-    var parts: Array[String] = []
-    for line in lines:
-        var text := String(line)
-        if text != "":
-            parts.append(text)
-    return TOOLTIP_LINE_SEPARATOR.join(parts)
-
 ## The behaviour hint for a source's take policy, so the row's policy GLYPH is spelled out on hover.
 ## Reuses the picker's existing hint strings (kind-specific: gathering a patch vs culling a herd) —
 ## the same sentence the player read when they chose the policy. A worked source row is ALWAYS a
@@ -2453,228 +2406,6 @@ func _policy_hint(kind: String, policy: String) -> String:
     if kind == LABOR_KIND_FORAGE:
         return String(FORAGE_POLICY_HINTS.get(key, ""))
     return String(LOCAL_HUNT_POLICY_HINTS.get(key, ""))
-
-## A "<label>   − N +" worker-count row. `on_change` is called with the new count
-## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
-## `status` is the row's action status (`FoodIcons.STATUS_WORKING` for a confirmed forage/hunt
-## source; "" for the band-wide Scout/Warrior roles, which report no per-action state), and
-## `pending` marks an optimistic (not-yet-confirmed) ORDER, which overrides the status: the row
-## renders the `◌` glyph instead of `●` and its label reads amber, tying it to the amber pending hex
-## on the map. Either way the state is a GLYPH, never a word — `tooltip` carries the words (see the
-## action-status vocabulary above); the status line is appended to it here so every caller composes
-## it the same way.
-## `on_focus_source` (optional) makes the LABEL a clickable inline link that jumps the map to the
-## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
-## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
-## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
-## `status_line` (default "") is the OPT-IN to the two-line form used ONLY by the Forage/Hunt
-## Current-actions rows: when non-empty the title (icon + action + location) + the −/+ stepper ride
-## line 1, and the yield/policy text (`status_line`) + the status glyph + the ⚠/overstaff/wasted notes
-## drop to an indented, smaller secondary line 2 that WRAPS rather than widening the panel. When "",
-## every existing caller (Scout/Warrior, the compose steppers) renders the unchanged single-line HBox.
-## `arrival_schedule` (default empty) is the source's projected per-turn deliveries. When it has a GAP
-## (`ArrivalStrip.has_gap`) the two-line form gains a third, indented line: the arrival tick strip that
-## shows WHEN the steady average actually lands. A continuous source (or an unprojected row) has no
-## lumpiness to explain and gets no strip. Ignored by the single-line form.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "", muted_note: String = "", status_line: String = "", arrival_schedule: PackedFloat32Array = PackedFloat32Array()) -> Control:
-    # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
-    var status_key := FoodIcons.STATUS_PENDING if pending else status
-    var row_tooltip := _append_status_tooltip(tooltip, status_key)
-    # Pending tints the row's IDENTITY amber (the title — it ties to the amber pending hex on the map);
-    # a settled row reads plain INK.
-    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
-    if status_line != "":
-        return _build_two_line_stepper(
-            label_text, count, plus_enabled, on_change, warn, row_tooltip, note,
-            on_focus_source, status_key, muted_note, status_line, row_ink, arrival_schedule)
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    if row_tooltip != "":
-        row.tooltip_text = row_tooltip
-    var row_text := label_text + _row_glyph_suffix(FoodIcons.for_status(status_key))
-    row.add_child(_build_row_name_label(row_text, row_ink, row_tooltip, on_focus_source))
-    # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
-    # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
-    if warn:
-        row.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, row_tooltip))
-    # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
-    # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
-    # means "overdrawing" (ecological); this means "extra workers idle here" (see
-    # `SourceForecast.source_yield_readout`). The tooltip carries the full explanation.
-    if note != "":
-        row.add_child(_build_row_note_label(note, HudStyle.WARN, row_tooltip))
-    # Understaffing note ("· 1.7 wasted"): MUTED (INK_FAINT), the low-key mirror of the WARN overstaff
-    # note — it says "the source offered more than the crew carried home" (add workers), a softer nudge
-    # than the ecological ⚠. Fed by `wasted_yield`; tooltip carries the full explanation.
-    if muted_note != "":
-        row.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, row_tooltip))
-    # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
-    # label + ⚠ adjacent at the left.
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(spacer)
-    _add_stepper_controls(row, count, plus_enabled, on_change)
-    return row
-
-## The two-line form of a worker-stepper row (see `_build_worker_stepper`'s `status_line`): line 1 =
-## the clickable title + spacer + −/+ stepper; line 2 = an indented, smaller secondary status carrying
-## the yield/policy text, the status glyph, then the ⚠/overstaff/wasted notes — the SAME per-part
-## colors the single-line path uses, just relocated below. Pending tints the TITLE amber (row 1's
-## identity) and shows the ◌ glyph on row 2.
-func _build_two_line_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, warn: bool, row_tooltip: String, note: String, on_focus_source: Callable, status_key: String, muted_note: String, status_line: String, row_ink: Color, arrival_schedule: PackedFloat32Array) -> VBoxContainer:
-    var col := VBoxContainer.new()
-    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    col.add_theme_constant_override("separation", TWO_LINE_STEPPER_SEPARATION)
-    # Line 1: title + spacer + stepper. The status glyph is NOT appended to the title here (it lives on
-    # line 2); the title keeps its click-to-jump link (or a plain Label for band-wide roles).
-    var title_row := HBoxContainer.new()
-    title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    title_row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    title_row.add_child(_build_row_name_label(label_text, row_ink, row_tooltip, on_focus_source))
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    title_row.add_child(spacer)
-    _add_stepper_controls(title_row, count, plus_enabled, on_change)
-    col.add_child(title_row)
-    # Line 2: indented, smaller, wrapping status. A MarginContainer insets it past the icon; an
-    # HFlowContainer wraps the parts to the next line rather than widening the panel (its min width is
-    # the widest single part, small by construction).
-    var status_margin := MarginContainer.new()
-    status_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    status_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
-    var status_flow := HFlowContainer.new()
-    status_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    status_flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
-    if row_tooltip != "":
-        status_flow.tooltip_text = row_tooltip
-    # The yield + policy glyph the caller composed (INK), then the status glyph (row_ink — WARN with the
-    # ◌ when pending, tying it to the amber title), then ⚠ (WARN), the overstaff note (WARN), and the
-    # wasted note (INK_FAINT).
-    status_flow.add_child(_build_status_part(status_line, HudStyle.INK))
-    var status_glyph := FoodIcons.for_status(status_key)
-    if status_glyph != "":
-        status_flow.add_child(_build_status_part(status_glyph, row_ink))
-    if warn:
-        status_flow.add_child(_build_status_part(OVERHUNT_FLAG, HudStyle.WARN))
-    if note != "":
-        status_flow.add_child(_build_status_part(note, HudStyle.WARN))
-    if muted_note != "":
-        status_flow.add_child(_build_status_part(muted_note, HudStyle.INK_FAINT))
-    status_margin.add_child(status_flow)
-    col.add_child(status_margin)
-    # Line 3 (only when the deliveries are LUMPY): the arrival tick strip, indented onto the same
-    # gutter as line 2 so it reads as part of the row's secondary information. It stays INSIDE this
-    # row's container, so the panel's section-block layout and the wide/tall packing are untouched.
-    if ArrivalStrip.has_gap(arrival_schedule):
-        var strip_margin := MarginContainer.new()
-        strip_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        strip_margin.add_theme_constant_override("margin_left", int(STATUS_LINE_INDENT))
-        var strip := ArrivalStrip.new()
-        strip.set_schedule(arrival_schedule, _band_labor.current_turn())
-        strip_margin.add_child(strip)
-        col.add_child(strip_margin)
-    return col
-
-## The clickable title (or plain Label) shared by both stepper forms. `on_focus_source` (when valid)
-## makes it an inline link that jumps the map to the source; a band-wide role passes nothing.
-func _build_row_name_label(text: String, ink: Color, row_tooltip: String, on_focus_source: Callable) -> Control:
-    if on_focus_source.is_valid():
-        var link := Button.new()
-        link.text = text
-        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
-        HudStyle.apply_link_button(link, ink)
-        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
-        link.pressed.connect(func() -> void: on_focus_source.call())
-        return link
-    var plain := Label.new()
-    plain.text = text
-    plain.add_theme_color_override("font_color", ink)
-    _set_label_tooltip(plain, row_tooltip)
-    return plain
-
-## A single-line note Label (⚠ / overstaff / wasted) for the one-line stepper form.
-func _build_row_note_label(text: String, color: Color, row_tooltip: String) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_color_override("font_color", color)
-    _set_label_tooltip(label, row_tooltip)
-    return label
-
-## A secondary status part (line 2 of the two-line form): rendered a touch smaller
-## (`ALLOC_SECTION_FONT_SIZE`) than the title.
-func _build_status_part(text: String, color: Color) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_color_override("font_color", color)
-    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
-    return label
-
-## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
-## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
-func _add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact: bool = false) -> void:
-    var minus := Button.new()
-    minus.text = "−"
-    minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
-    HudStyle.apply_button(minus, "ghost")
-    minus.disabled = count <= 0
-    minus.pressed.connect(func() -> void: on_change.call(count - WORKER_STEP))
-    row.add_child(minus)
-    var value := Label.new()
-    value.text = str(count)
-    value.custom_minimum_size = Vector2(WORKER_STEPPER_VALUE_WIDTH, 0)
-    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    value.add_theme_color_override("font_color", HudStyle.INK if count > 0 else HudStyle.INK_FAINT)
-    row.add_child(value)
-    var plus := Button.new()
-    plus.text = "+"
-    plus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
-    HudStyle.apply_button(plus, "ghost")
-    plus.disabled = not plus_enabled
-    plus.pressed.connect(func() -> void: on_change.call(count + WORKER_STEP))
-    row.add_child(plus)
-    if compact:
-        for control in [minus, value, plus]:
-            _compact_control(control, WORK_STEPPER_FONT_SIZE, WORK_STEPPER_PADDING_V)
-
-## Squeeze a control into a zone's fixed-height chrome row: smaller type, and a button's stylebox
-## chrome trimmed vertically. `HudStyle._button_stylebox` pads 9px top and bottom, which alone makes a
-## plain Button ~40px tall — taller than `WORK_ROW_HEIGHT`, `ZONE_HEAD_HEIGHT`, `WORK_CHIPS_HEIGHT`
-## and `WORK_PAGER_HEIGHT` put together. Every one of those consts is a height the board's capacity
-## maths SUBTRACTS, so a control that renders taller pushes the page off the bottom of the zone.
-func _compact_control(control: Control, font_size: int, padding_v: int) -> void:
-    control.add_theme_font_size_override("font_size", font_size)
-    if not (control is Button):
-        return
-    for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-        var box: StyleBox = control.get_theme_stylebox(state)
-        if box == null:
-            continue
-        var squeezed: StyleBox = box.duplicate()
-        squeezed.content_margin_top = padding_v
-        squeezed.content_margin_bottom = padding_v
-        control.add_theme_stylebox_override(state, squeezed)
-
-## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
-## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
-## Each source/role row re-sends assign_labor with the new count (0 removes).
-## A dim uppercase section header inside the allocation panel ("Current actions" / "Band roles").
-func _alloc_section_label(text: String) -> Label:
-    var label := Label.new()
-    label.text = text.to_upper()
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
-    return label
-
-## A dim wrapping hint line (role explanation / empty-state prompt).
-func _alloc_hint_label(text: String) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
-    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    return label
 
 
 
@@ -3004,7 +2735,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     if arrivals.is_empty():
         return null
     var block := _make_alloc_block()
-    block.add_child(_alloc_section_label(ALLOC_HEADER_FOOD_OUTLOOK))
+    block.add_child(HudWidgets.alloc_section_label(ALLOC_HEADER_FOOD_OUTLOOK))
     var chart := FoodOutlookChart.new()
     # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
     # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
@@ -3116,55 +2847,6 @@ func _zone_box() -> Vector2:
         if box.x > 0.0 and box.y > 0.0:
             return box
     return ZONE_FALLBACK_SIZE
-
-## A zone section head: an uppercase title on the left, a dim readout on the right, and an optional
-## trailing `⋯` menu button. The one head vocabulary all three zones use.
-func _zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "") -> HBoxContainer:
-    var head := HBoxContainer.new()
-    head.custom_minimum_size = Vector2(0.0, ZONE_HEAD_HEIGHT)
-    head.add_theme_constant_override("separation", ZONE_HEAD_SEPARATION)
-    head.add_child(_alloc_section_label(title))
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    head.add_child(spacer)
-    if readout != "":
-        var right := Label.new()
-        right.text = readout
-        right.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
-        right.add_theme_color_override("font_color", readout_color)
-        _set_label_tooltip(right, readout_tooltip)
-        head.add_child(right)
-    if menu != null:
-        head.add_child(menu)
-    return head
-
-## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
-## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries.
-func _build_section_menu(entries: Array, tooltip: String) -> MenuButton:
-    var button := MenuButton.new()
-    button.text = SECTION_MENU_GLYPH
-    button.tooltip_text = tooltip
-    button.focus_mode = Control.FOCUS_NONE
-    button.custom_minimum_size = Vector2(SECTION_MENU_WIDTH, 0.0)
-    HudStyle.apply_button(button, "ghost")
-    _compact_control(button, ZONE_HEAD_FONT_SIZE, ZONE_MENU_PADDING_V)
-    var popup := button.get_popup()
-    var picks: Array[Callable] = []
-    for entry_variant in entries:
-        if not (entry_variant is Dictionary):
-            continue
-        var entry: Dictionary = entry_variant
-        var index := picks.size()
-        popup.add_item(String(entry.get("label", "")), index)
-        popup.set_item_disabled(index, bool(entry.get("disabled", false)))
-        var pick: Variant = entry.get("on_pick", null)
-        picks.append(pick if pick is Callable else Callable())
-    popup.id_pressed.connect(func(id: int) -> void:
-        if id >= 0 and id < picks.size() and picks[id].is_valid():
-            picks[id].call())
-    return button
 
 ## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
 ## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
@@ -3330,18 +3012,10 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
         segments.append({"key": PEOPLE_GLYPH_ELDERS, "count": elders,
             "color": HudStyle.VOICE_INK, "tooltip": "%d %s" % [elders, PEOPLE_LABEL_ELDERS]})
     var block := _make_zone_block()
-    block.add_child(_zone_head(ZONE_HEADER_PEOPLE, str(total)))
+    block.add_child(HudWidgets.zone_head(ZONE_HEADER_PEOPLE, str(total)))
     block.add_child(_build_composition_bar(segments))
     block.add_child(_build_composition_key(segments, _build_dependency_chip(children, working, elders)))
     return block
-
-## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
-## `MOUSE_FILTER_IGNORE`**, so setting `tooltip_text` on one and walking away is a SILENT no-op — the
-## text is stored, the mouse never reaches the control, nothing ever appears. Six labels across this
-## HUD shipped tooltips that had never once been seen. Route every Label tooltip through here.
-func _set_label_tooltip(label: Label, text: String) -> void:
-    label.tooltip_text = text
-    label.mouse_filter = Control.MOUSE_FILTER_STOP if text != "" else Control.MOUSE_FILTER_IGNORE
 
 ## Dependents per 100 working-age adults — the ratio itself, which only the tooltips render now.
 func _dependency_per_hundred(dependents: int, working: int) -> int:
@@ -3369,7 +3043,7 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
     chip.add_theme_font_size_override("font_size", COMPOSITION_KEY_FONT_SIZE)
     chip.add_theme_color_override("font_color",
         HudStyle.WARN if per_hundred > PEOPLE_DEPENDENCY_HEAVY else HudStyle.INK_FAINT)
-    _set_label_tooltip(chip, _dependency_tooltip(dependents, working))
+    HudWidgets.set_label_tooltip(chip, _dependency_tooltip(dependents, working))
     chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     return chip
@@ -3403,7 +3077,7 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
     var block := _make_zone_block()
-    block.add_child(_zone_head(ZONE_HEADER_WORKFORCE,
+    block.add_child(HudWidgets.zone_head(ZONE_HEADER_WORKFORCE,
         WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
         null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
     if not segments.is_empty():
@@ -3438,13 +3112,13 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     col.add_child(title)
     if not compact:
-        var hint_label := _alloc_hint_label(hint)
+        var hint_label := HudWidgets.alloc_hint_label(hint)
         hint_label.custom_minimum_size = Vector2(0.0, ROLE_CARD_HINT_HEIGHT)
         col.add_child(hint_label)
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    _add_stepper_controls(stepper, workers, idle > 0,
+    HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         func(n: int) -> void: _emit_assign_labor(band, kind, n, -1, -1, "", ""))
     col.add_child(stepper)
     return card
@@ -3525,7 +3199,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         _work_open_key = ""
         _work_policy_open = false
     if filtered.is_empty():
-        var hint := _alloc_hint_label(WORK_EMPTY_HINT)
+        var hint := HudWidgets.alloc_hint_label(WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
         return
@@ -3590,19 +3264,19 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
 
 ## The zone's head row: WORK · n sources · the band's total rate · the `⋯` section menu.
 func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxContainer:
-    var menu := _build_section_menu([
+    var menu := HudWidgets.build_section_menu([
         {"label": WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(WORK_SORT_YIELD)},
         {"label": WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(WORK_SORT_NAME)},
         {"label": WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
             "on_pick": func() -> void: _on_work_unassign_all_pressed(band, models.size())},
     ], WORK_MENU_TOOLTIP)
-    var head := _zone_head(ZONE_HEADER_WORK, WORK_SOURCES_FORMAT % models.size(), menu)
+    var head := HudWidgets.zone_head(ZONE_HEADER_WORK, WORK_SOURCES_FORMAT % models.size(), menu)
     # The total sits between the count and the menu, tinted like the Food line's net rate.
     var total := Label.new()
     total.text = SourceForecast.format_yield(income)
     total.add_theme_font_size_override("font_size", ZONE_HEAD_FONT_SIZE)
     total.add_theme_color_override("font_color", HudStyle.HEALTHY if income > 0.0 else HudStyle.INK_DIM)
-    _set_label_tooltip(total, WORK_TOTAL_TOOLTIP)
+    HudWidgets.set_label_tooltip(total, WORK_TOTAL_TOOLTIP)
     head.add_child(total)
     head.move_child(total, head.get_child_count() - 2)
     return head
@@ -3642,7 +3316,7 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
     chip.text = text
     chip.focus_mode = Control.FOCUS_NONE
     HudStyle.apply_button(chip, "primary" if active else "ghost")
-    _compact_control(chip, WORK_CHIP_FONT_SIZE, WORK_CHIP_PADDING_V)
+    HudWidgets.compact(chip, WORK_CHIP_FONT_SIZE, WORK_CHIP_PADDING_V)
     if alert and not active:
         chip.add_theme_color_override("font_color", HudStyle.WARN)
     chip.tooltip_text = WORK_CHIP_TOOLTIP
@@ -3708,7 +3382,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     marks.add_theme_font_size_override("font_size", WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marks)
-    _add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
+    HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
         func(n: int) -> void: _emit_work_assign(band, model, n), true)
     return row
 
@@ -3739,7 +3413,7 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
     prev.disabled = _work_page <= 0
     prev.tooltip_text = PAGER_PREV_TOOLTIP
     HudStyle.apply_button(prev, "ghost")
-    _compact_control(prev, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
+    HudWidgets.compact(prev, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
     prev.pressed.connect(func() -> void: _step_work_page(-1))
     pager.add_child(prev)
     var label := Label.new()
@@ -3753,7 +3427,7 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
     next.disabled = _work_page >= pages - 1
     next.tooltip_text = PAGER_NEXT_TOOLTIP
     HudStyle.apply_button(next, "ghost")
-    _compact_control(next, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
+    HudWidgets.compact(next, WORK_CHIP_FONT_SIZE, WORK_PAGER_PADDING_V)
     next.pressed.connect(func() -> void: _step_work_page(1))
     pager.add_child(next)
     var range_label := Label.new()
@@ -3791,17 +3465,17 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     close.focus_mode = Control.FOCUS_NONE
     close.tooltip_text = INSPECTOR_CLOSE_TOOLTIP
     HudStyle.apply_button(close, "ghost")
-    _compact_control(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
+    HudWidgets.compact(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
     close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
     head.add_child(close)
     col.add_child(head)
-    col.add_child(_build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM))
+    col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM))
     if bool(model.get("warn", false)):
-        col.add_child(_build_status_part(WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
+        col.add_child(HudWidgets.build_status_part(WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
     if String(model.get("note", "")) != "":
-        col.add_child(_build_status_part(String(model.get("note", "")), HudStyle.WARN))
+        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")), HudStyle.WARN))
     if String(model.get("muted_note", "")) != "":
-        col.add_child(_build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT))
+        col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         var arrivals := ArrivalStrip.new()
@@ -3809,12 +3483,12 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         col.add_child(arrivals)
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
-    links.add_child(_build_inline_link(WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
         _focus_work_source(model)))
-    links.add_child(_build_inline_link(WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
         _work_policy_open = not _work_policy_open
         _repage_work_zone()))
-    links.add_child(_build_inline_link(WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
         _work_open_key = ""
         _work_policy_open = false
         _emit_work_assign(band, model, 0)))
@@ -3827,9 +3501,9 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         if standing in INVESTMENT_POLICIES:
             # The picker highlights NOTHING on an investment assignment (the standing rung is not one
             # of the four), and an unhighlighted radio reads as unset. This line is what explains it.
-            col.add_child(_build_status_part(
-                WORK_INSPECT_STANDING_INVESTMENT_FORMAT % _policy_face(standing), HudStyle.WARN))
-        col.add_child(_build_policy_picker(func(policy: String) -> void:
+            col.add_child(HudWidgets.build_status_part(
+                WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(standing), HudStyle.WARN))
+        col.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
             _on_work_policy_picked(band, model, policy),
             standing, LABOR_HUNT_POLICIES, {}, {}, ZONE_POLICY_PICKER_COLUMNS))
     return strip
@@ -3843,9 +3517,9 @@ func _on_work_policy_picked(band: Dictionary, model: Dictionary, policy: String)
     if String(model.get("policy", "")) in INVESTMENT_POLICIES:
         _confirm_destructive(
             WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT % [
-                _policy_face(String(model.get("policy", ""))),
+                HudFormat.policy_face(String(model.get("policy", ""))),
                 String(model.get("label", "")),
-                _policy_face(policy)],
+                HudFormat.policy_face(policy)],
             WORK_INSPECT_END_INVESTMENT_CONFIRM_OK,
             func() -> void: _commit_work_policy(band, model, policy))
         return
@@ -3884,20 +3558,10 @@ func _work_inspector_sentence(model: Dictionary) -> String:
     var policy := String(model.get("policy", ""))
     if policy != "":
         parts.append(policy.capitalize())
-    parts.append(_status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
+    parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
         else FoodIcons.STATUS_WORKING))
     parts.append(WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
     return WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
-
-## An inline text link (the inspector's three actions / the parties footer reasons).
-func _build_inline_link(text: String, ink: Color, on_press: Callable) -> Button:
-    var link := Button.new()
-    link.text = text
-    link.focus_mode = Control.FOCUS_NONE
-    link.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
-    HudStyle.apply_link_button(link, ink)
-    link.pressed.connect(func() -> void: on_press.call())
-    return link
 
 # ---- work-zone models + state ----------------------------------------------
 
@@ -3928,7 +3592,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             if not (policy in FORAGE_POLICY_OPTIONS):
                 policy = DEFAULT_HUNT_POLICY
             # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
-            # `_source_icon_prefix`, which welds it to the label with a trailing space for the
+            # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _food_module_icon(x, y)
             label = WORK_ROW_FORAGE_FORMAT % [x, y]
@@ -3958,7 +3622,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
-            "tooltip": _join_tooltip_lines([String(yld.get("tooltip", "")),
+            "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 _policy_hint(kind, policy), String(cap.get("note", "")), WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
             "attention": bool(yld.get("warn", false)) or note != "" or pending,
@@ -4063,14 +3727,14 @@ func _build_parties_zone_content(band: Dictionary) -> VBoxContainer:
     var col := _make_zone_column()
     col.add_theme_constant_override("separation", ZONE_BLOCK_SEPARATION)
     var parties := _band_parties(band)
-    var menu := _build_section_menu([
+    var menu := HudWidgets.build_section_menu([
         {"label": PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
             "on_pick": func() -> void: _on_recall_all_parties_pressed(parties)},
     ], PARTY_MENU_TOOLTIP)
-    col.add_child(_zone_head(ZONE_HEADER_PARTIES,
+    col.add_child(HudWidgets.zone_head(ZONE_HEADER_PARTIES,
         PARTIES_HEADER_FORMAT % [parties.size(), _band_party_workers(band)], menu))
     if parties.is_empty():
-        col.add_child(_alloc_hint_label(PARTIES_EMPTY_HINT))
+        col.add_child(HudWidgets.alloc_hint_label(PARTIES_EMPTY_HINT))
     else:
         for exp in parties:
             col.add_child(_build_party_row(exp))
@@ -4136,17 +3800,17 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     close.focus_mode = Control.FOCUS_NONE
     close.tooltip_text = INSPECTOR_CLOSE_TOOLTIP
     HudStyle.apply_button(close, "ghost")
-    _compact_control(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
+    HudWidgets.compact(close, WORK_ROW_FONT_SIZE, INSPECTOR_CLOSE_PADDING_V)
     close.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     head.add_child(close)
     col.add_child(head)
     for line in _expedition_summary_lines(exp):
-        col.add_child(_build_status_part(line, HudStyle.INK_DIM))
+        col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM))
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", COMPOSITION_KEY_SEPARATION)
-    links.add_child(_build_inline_link(PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
         _on_panel_expedition_selected(entity, x, y)))
-    links.add_child(_build_inline_link(PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
         _confirm_recall_expedition(exp)))
     col.add_child(links)
     return strip
@@ -4241,7 +3905,7 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
         COMPOSE_MISSION_LABEL_HUNT, SEND_HUNT_EXPEDITION_HINT, idle))
     foot.add_child(missions)
     if idle <= 0:
-        foot.add_child(_alloc_hint_label(SEND_PARTY_NO_IDLE_REASON))
+        foot.add_child(HudWidgets.alloc_hint_label(SEND_PARTY_NO_IDLE_REASON))
     return foot
 
 ## One footer mission button: opens the compose sheet already committed to `mission`.
@@ -4288,12 +3952,12 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     # depends on where it is going, so the destination is still picked on the map after the send.
     var party_max := _scout_party_max(band, idle)
     _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, party_max)
-    sheet.add_child(_build_party_stepper_row(_send_expedition_count, party_max,
+    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, WORKER_STEP, party_max)
             _rerender_panel_allocation()))
-    sheet.add_child(_alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
-    sheet.add_child(_alloc_hint_label(SEND_EXPEDITION_HINT))
+    sheet.add_child(HudWidgets.alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
+    sheet.add_child(HudWidgets.alloc_hint_label(SEND_EXPEDITION_HINT))
     var confirm := Button.new()
     confirm.text = SEND_EXPEDITION_BUTTON
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4324,7 +3988,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
         # shown so the shape of the form is legible, and it says why it is not yet pressable.
-        sheet.add_child(_alloc_hint_label(COMPOSE_QUARRY_HINT))
+        sheet.add_child(HudWidgets.alloc_hint_label(COMPOSE_QUARRY_HINT))
         var blocked := Button.new()
         blocked.text = SEND_HUNTING_EXPEDITION_BUTTON
         blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4335,17 +3999,17 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         return
     if not (_send_hunt_policy in LABOR_HUNT_POLICIES):
         _send_hunt_policy = DEFAULT_HUNT_POLICY
-    sheet.add_child(_alloc_section_label(COMPOSE_FIELD_POLICY))
+    sheet.add_child(HudWidgets.alloc_section_label(COMPOSE_FIELD_POLICY))
     # With a herd in hand the four rungs finally carry their ascending per-policy metric — the same
     # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
-    sheet.add_child(_build_policy_picker(func(policy: String) -> void:
+    sheet.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
         _send_hunt_policy = policy
         # Auto-max on policy select, exactly as the herd drawer does: "give me everything this herd
         # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
         _rerender_panel_allocation(), _send_hunt_policy, LABOR_HUNT_POLICIES,
         {}, SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _grid_wrap_horizontal), ZONE_POLICY_PICKER_COLUMNS))
-    sheet.add_child(_alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
+    sheet.add_child(HudWidgets.alloc_hint_label(String(SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
     # Party size, capped at the raid's max-useful plateau for THIS herd + policy (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill.
     var assignable := _scout_party_max(band, idle)
@@ -4354,21 +4018,21 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     if _compose.consume_party_autofill():
         _send_expedition_count = cap
     _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, cap)
-    sheet.add_child(_build_party_stepper_row(_send_expedition_count, cap,
+    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, cap,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, WORKER_STEP, cap)
             _rerender_panel_allocation()))
-    sheet.add_child(_alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
+    sheet.add_child(HudWidgets.alloc_hint_label(COMPOSE_OF_IDLE_FORMAT % idle))
     var cap_note := String(capped["note"])
     if cap_note != "":
-        sheet.add_child(_alloc_hint_label(cap_note))
+        sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
     # LIVE raid forecast for the quarry + policy + party now dialed — the same trip lookup and the
     # same one-line renderer the herd drawer uses.
     var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_policy, _send_expedition_count,
         _band_labor.grid_width(), _grid_wrap_horizontal)
     var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
     if forecast_line != "":
-        sheet.add_child(_forecast_label(forecast_line))
+        sheet.add_child(HudWidgets.forecast_label(forecast_line))
     var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
     var reason := SourceForecast.hunt_no_surplus_reason(herd) if no_surplus else ""
     var confirm := Button.new()
@@ -4377,7 +4041,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # herd with no surplus disables. `SourceForecast.style_send_hunt_button` owns the text in every branch.
     SourceForecast.style_send_hunt_button(confirm, trip, reason)
     if no_surplus:
-        sheet.add_child(_alloc_hint_label(reason))
+        sheet.add_child(HudWidgets.alloc_hint_label(reason))
     var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:
         emit_signal("send_hunt_expedition_requested", {
@@ -4420,17 +4084,6 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
         HudStyle.apply_button(pick, "ghost")
     pick.pressed.connect(func() -> void: _on_pick_quarry_pressed(band))
     row.add_child(pick)
-    return row
-
-## The party stepper row, shared by both missions so they cannot drift apart in shape.
-func _build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    var key := Label.new()
-    key.text = COMPOSE_FIELD_PARTY
-    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(key)
-    _add_stepper_controls(row, count, count < party_max, on_change)
     return row
 
 ## The party size the band can field at all: idle workers, capped by the server's party-size limit.
@@ -4518,7 +4171,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
         return
     var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
     if phase == EXPEDITION_PHASE_AWAITING:
-        var callout := _alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
+        var callout := HudWidgets.alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
         callout.add_theme_color_override("font_color", HudStyle.WARN)
         allocation_panel.add_child(callout)
     var actions := HBoxContainer.new()
@@ -4663,7 +4316,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
     if not (_compose.hunt_policy() in hunt_options) \
-            or not _gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty():
+            or not HudWidgets.gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty():
         _compose.set_hunt_policy(DEFAULT_HUNT_POLICY)
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
@@ -4709,21 +4362,21 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
     var crew_label := HERD_CREW_LABEL if SourceForecast.is_managed_hunt_source(herd, _compose.hunt_policy()) \
         else HUNT_CREW_LABEL
-    target.add_child(_build_worker_stepper(
+    target.add_child(HudWidgets.build_worker_stepper(
         "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
             _compose.set_hunt_count(clampi(n, 0, cap))
             _build_herd_assign_controls(herd, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
-        target.add_child(_alloc_hint_label(cap_note))
+        target.add_child(HudWidgets.alloc_hint_label(cap_note))
     # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
     # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
     # Market < Eradicate). Worker-independent on both branches (the expedition's is the max over party
     # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
     var policy_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _grid_wrap_horizontal) if is_expedition \
         else _hunt_policy_takes(herd)
-    target.add_child(_build_policy_picker(func(policy: String) -> void:
+    target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
         _compose.set_hunt_policy(policy)
         # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
         _compose.arm_hunt_autofill()
@@ -4736,7 +4389,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(
             _forecast_yield_row(forecast, _compose.hunt_count(), band, crew_label))
     if is_expedition:
-        target.add_child(_alloc_hint_label(
+        target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
     var assign_btn := Button.new()
@@ -4752,7 +4405,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             _band_labor.grid_width(), _grid_wrap_horizontal)
         var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
-            target.add_child(_forecast_label(forecast_line))
+            target.add_child(HudWidgets.forecast_label(forecast_line))
         # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
         var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
@@ -4760,12 +4413,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         SourceForecast.style_send_hunt_button(assign_btn, trip, reason)
         # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
         if no_surplus:
-            target.add_child(_alloc_hint_label(reason))
+            target.add_child(HudWidgets.alloc_hint_label(reason))
     else:
         # What this policy DOES for a resident band (the forecast line below carries the number; this
         # carries the consequence — above all what Sustain actually teaches, which is otherwise
         # invisible). Deliberately NOT the expedition hints: a party earns neither.
-        target.add_child(_alloc_hint_label(
+        target.add_child(HudWidgets.alloc_hint_label(
             String(LOCAL_HUNT_POLICY_HINTS.get(_compose.hunt_policy(), ""))))
         # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
         # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
@@ -4776,13 +4429,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         if not (_compose.hunt_policy() in INVESTMENT_POLICIES):
             var window_turns := _hunt_avg_window_turns(herd, _compose.hunt_policy())
             if window_turns > 0:
-                target.add_child(_alloc_hint_label(
+                target.add_child(HudWidgets.alloc_hint_label(
                     HUNT_AVG_WINDOW_FORMAT % window_turns))
         # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
         # than left to be guessed. See `_tame_stalled_hint`.
         var stalled := _tame_stalled_hint(herd)
         if stalled != "":
-            var stalled_label := _alloc_hint_label(stalled)
+            var stalled_label := HudWidgets.alloc_hint_label(stalled)
             stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
             target.add_child(stalled_label)
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
@@ -4795,7 +4448,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             var yield_line := _local_hunt_preview_bbcode(
                 band, herd, _compose.hunt_policy(), _compose.hunt_count())
             if yield_line != "":
-                target.add_child(_forecast_label(yield_line))
+                target.add_child(HudWidgets.forecast_label(yield_line))
         assign_btn.text = ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
@@ -4855,25 +4508,6 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
             takes[policy] = _payoff_take(payoff)
     return takes
 
-## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
-## Sized like the hint lines it sits among, but BBCode-capable so the forecast keeps its state colors.
-func _forecast_label(bbcode: String) -> RichTextLabel:
-    var label := RichTextLabel.new()
-    label.bbcode_enabled = true
-    label.fit_content = true
-    label.scroll_active = false
-    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    label.add_theme_font_size_override("normal_font_size", ALLOC_SECTION_FONT_SIZE)
-    label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
-    label.text = bbcode
-    return label
-
-## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
-## a gate reason — it tells the player they haven't started the track at all.
-func _progress_percent(progress: float) -> int:
-    return int(round(clampf(progress, 0.0, 1.0) * PROGRESS_PERCENT_SCALE))
-
 ## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed
 ## policy → Array[String] of reasons (each already carrying its own remedy). Empty when every rung is
 ## available. Mirrors the sim's `assign_labor` validation.
@@ -4892,7 +4526,7 @@ func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     var cultivation := _topbar.faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
     if cultivation < KNOWLEDGE_COMPLETE:
         cultivate_reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
-            _progress_percent(cultivation), sustain_icon])
+            HudFormat.progress_percent(cultivation), sustain_icon])
     var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
     if phase != ECOLOGY_PHASE_THRIVING:
         var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
@@ -4909,7 +4543,7 @@ func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
     var seed_selection := _topbar.faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_SEED_SELECTION)
     if seed_selection < KNOWLEDGE_COMPLETE:
         sow_reasons.append(GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
-            _progress_percent(seed_selection), sustain_icon])
+            HudFormat.progress_percent(seed_selection), sustain_icon])
     var refusal := _sow_site_refusal_reason(tile_info)
     if refusal != "":
         sow_reasons.append(refusal)
@@ -4952,17 +4586,17 @@ func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
     var herding := _topbar.faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     if herding < KNOWLEDGE_COMPLETE:
         tame_reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
-            _progress_percent(herding), sustain_icon])
+            HudFormat.progress_percent(herding), sustain_icon])
     if not tame_reasons.is_empty():
         gates[LABOR_POLICY_TAME] = tame_reasons
     var corral_reasons: Array[String] = []
     var penning := _topbar.faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_PENNING)
     if penning < KNOWLEDGE_COMPLETE:
         corral_reasons.append(GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
-            _progress_percent(penning), sustain_icon])
+            HudFormat.progress_percent(penning), sustain_icon])
     if domestication < DOMESTICATION_COMPLETE:
         corral_reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-            _progress_percent(domestication), FoodIcons.for_policy(LABOR_POLICY_TAME)])
+            HudFormat.progress_percent(domestication), FoodIcons.for_policy(LABOR_POLICY_TAME)])
     if not corral_reasons.is_empty():
         gates[LABOR_POLICY_CORRAL] = corral_reasons
     return gates
@@ -4985,117 +4619,6 @@ func _tame_stalled_hint(herd: Dictionary) -> String:
     if phase == "" or phase == ECOLOGY_PHASE_THRIVING:
         return ""
     return TAME_STALLED_HINT_FORMAT % phase.capitalize()
-
-## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
-## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
-## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
-## forage drawer) and owns none of their state. `options` is the option set for this source kind —
-## the four extractive rungs by default, plus that kind's INVESTMENT rungs on the forage/herd assign
-## controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS). A `selected` that is not in `options`
-## simply highlights nothing; a caller offering a narrower set than its source can stand on owes the
-## player a line saying so (see `WORK_INSPECT_STANDING_INVESTMENT_FORMAT`).
-##
-## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
-## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
-## its tooltip carries every reason (one per line), and the reasons render under the row — one
-## compact line when there is a single reason, a "<policy> needs:" header + one bullet per reason
-## when there are several (each reason now names its remedy, so two on one line would not fit). The
-## player discovers the rung, what it costs to unlock, AND how to unlock it, BEFORE trying to use it.
-func _build_policy_picker(
-    on_pick: Callable,
-    selected: String,
-    options: Array = LABOR_HUNT_POLICIES,
-    gates: Dictionary = {},
-    takes: Dictionary = {},
-    columns: int = 0,
-    collapse_other_gates: bool = false) -> VBoxContainer:
-    var current := selected
-    var block := VBoxContainer.new()
-    block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
-    # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
-    # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
-    var grid := GridContainer.new()
-    # `columns > 0` overrides the width-driven default: a zone is a FIXED-width box, and a picker whose
-    # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column
-    # out past its host (where it is clipped) — taking the section menu beside it off the edge.
-    if columns > 0:
-        grid.columns = columns
-    else:
-        grid.columns = maxi(1, options.size()) if options.size() <= POLICY_PICKER_MAX_SINGLE_ROW else POLICY_PICKER_COLUMNS
-    grid.add_theme_constant_override("h_separation", WORKER_STEPPER_SEPARATION)
-    grid.add_theme_constant_override("v_separation", WORKER_STEPPER_SEPARATION)
-    for policy in options:
-        var policy_key := String(policy)
-        var icon := FoodIcons.for_policy(policy_key)
-        var reasons := _gate_reasons(gates, policy_key)
-        var btn := Button.new()
-        # ONE-LINE FACE: the FoodIcons policy glyph (the same icon the map's yield labels append, so a
-        # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
-        # metric, NO name — so the rungs stay compact enough to wrap 3-per-row (see the grid above)
-        # without overflow. The name + full metric live in the
-        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Market < Eradicate). A rung
-        # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
-        # is never a lone glyph.
-        var take: Variant = takes.get(policy_key, null)
-        var compact := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
-        var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        var face := compact if compact != "" else policy_key.capitalize()
-        btn.text = "%s%s" % [_source_icon_prefix(icon), face]
-        # EXPAND_FILL so the buttons sharing a grid row are equal width and fill the panel content width.
-        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
-        # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
-        # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
-        # it is locked.
-        var name_line := POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
-            if full != "" else policy_key.capitalize()
-        var tooltip_lines: Array[String] = [name_line]
-        btn.disabled = not reasons.is_empty()
-        if btn.disabled:
-            tooltip_lines.append_array(reasons)
-        else:
-            btn.pressed.connect(func() -> void: on_pick.call(policy_key))
-        btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
-        grid.add_child(btn)
-    block.add_child(grid)
-    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach. A caller
-    # that is TIGHT ON HEIGHT may opt into collapsing the rungs it is not composing (see
-    # GATE_REASON_COLLAPSED_ONE_FORMAT); by default every gated rung still teaches in full.
-    for policy in options:
-        var policy_key := String(policy)
-        var reasons := _gate_reasons(gates, policy_key)
-        if reasons.is_empty():
-            continue
-        var titled := _policy_face(policy_key)
-        if collapse_other_gates and policy_key != current:
-            # Collapsed: the count, plus every reason in the line's own tooltip. A Label ignores the
-            # mouse by default, so the filter must be set with the text or the tooltip never shows.
-            var collapsed := _alloc_hint_label(GATE_REASON_COLLAPSED_ONE_FORMAT % titled \
-                if reasons.size() == 1 \
-                else GATE_REASON_COLLAPSED_MANY_FORMAT % [titled, reasons.size()])
-            _set_label_tooltip(collapsed, GATE_REASON_TOOLTIP_SEPARATOR.join(reasons))
-            block.add_child(collapsed)
-            continue
-        if reasons.size() == 1:
-            block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
-            continue
-        block.add_child(_alloc_hint_label(GATE_REASON_HEADER_FORMAT % titled))
-        for reason in reasons:
-            block.add_child(_alloc_hint_label(GATE_REASON_BULLET_FORMAT % reason))
-    return block
-
-## A rung's display FACE — its `FoodIcons` glyph welded to its name. The one policy vocabulary every
-## rung readout shares (the gate-reason lines, the work inspector's standing-investment line and its
-## confirm), so a rung can never read one way beside the picker and another in the dialog.
-func _policy_face(policy: String) -> String:
-    return "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(policy)), policy.capitalize()]
-
-## The unmet-prerequisite reasons a `gates` dict holds for one policy — empty (available) for an
-## absent key. The single reader of the gates contract, so callers never re-assert its shape.
-func _gate_reasons(gates: Dictionary, policy: String) -> Array:
-    var reasons: Variant = gates.get(policy, null)
-    return reasons if reasons is Array else []
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
 ## tile with a food module while a player band exists to staff it — and only on a hex the player can
@@ -5184,16 +4707,16 @@ func _build_crop_picker(
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", FLORA_CROP_BLOCK_SEPARATION)
     if committed_name != "":
-        block.add_child(_alloc_section_label(FLORA_CROP_COMMITTED_HEADER))
+        block.add_child(HudWidgets.alloc_section_label(FLORA_CROP_COMMITTED_HEADER))
         var committed_label := Label.new()
         committed_label.text = committed_name
         committed_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
         block.add_child(committed_label)
-        block.add_child(_alloc_hint_label(FLORA_CROP_COMMITTED_HINT))
+        block.add_child(HudWidgets.alloc_hint_label(FLORA_CROP_COMMITTED_HINT))
         return block
     if entries.is_empty():
         return null
-    block.add_child(_alloc_section_label(FLORA_CROP_PICKER_HEADER))
+    block.add_child(HudWidgets.alloc_section_label(FLORA_CROP_PICKER_HEADER))
     var rows := VBoxContainer.new()
     rows.add_theme_constant_override("separation", FLORA_CROP_BLOCK_SEPARATION)
     rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -5222,7 +4745,7 @@ func _build_crop_picker(
         HudStyle.apply_button(btn, "primary" if legal and species == selected else "ghost")
         # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
         # wearing the default button chrome would silently break that maths (the work board's rule).
-        _compact_control(btn, FLORA_CROP_ROW_FONT_SIZE, FLORA_CROP_ROW_PADDING_V)
+        HudWidgets.compact(btn, FLORA_CROP_ROW_FONT_SIZE, FLORA_CROP_ROW_PADDING_V)
         btn.custom_minimum_size = Vector2(0.0, FLORA_CROP_ROW_HEIGHT)
         btn.disabled = not legal
         if legal:
@@ -5266,7 +4789,7 @@ func _build_crop_picker(
     # The ONLY standing line under the list is the one that REPLACES content rather than adding to it:
     # a basket with nothing this rung can take has no pressable row to carry the explanation.
     if not any_legal:
-        block.add_child(_alloc_hint_label(FLORA_CROP_NONE_LEGAL_HINT))
+        block.add_child(HudWidgets.alloc_hint_label(FLORA_CROP_NONE_LEGAL_HINT))
     return block
 
 func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
@@ -5317,13 +4840,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # A gated rung can never be the composed policy — the patch may have left Thriving under a
     # standing Cultivate selection, so re-validate every render, not just on a tile change.
     if not (_compose.forage_policy() in FORAGE_POLICY_OPTIONS) \
-            or not _gate_reasons(forage_gates, _compose.forage_policy()).is_empty():
+            or not HudWidgets.gate_reasons(forage_gates, _compose.forage_policy()).is_empty():
         _compose.set_forage_policy(DEFAULT_HUNT_POLICY)
     # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
     # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
     # like Corral — their dip→payoff is stated by the forecast row below).
     var forage_takes := _forage_policy_takes(tile_info)
-    target.add_child(_build_policy_picker(func(policy: String) -> void:
+    target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
         _compose.set_forage_policy(policy)
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
         _compose.arm_forage_autofill()
@@ -5332,7 +4855,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         # Collapse the OTHER rungs' reasons only while a committing rung is composed — that is the one
         # card that also carries the crop picker, and the only place the height is not there.
         _compose.forage_policy() in FLORA_COMMITTING_POLICIES))
-    target.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_compose.forage_policy(), ""))))
+    target.add_child(HudWidgets.alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_compose.forage_policy(), ""))))
     # WHICH CROP this rung commits the patch to (flora roster S1). Only the two COMMITTING rungs show
     # it; the selection is re-resolved every render (a policy switch changes which plants are legal),
     # so the composed crop can never name a plant this tile+rung cannot take — and "" always
@@ -5370,14 +4893,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if _compose.consume_forage_autofill():
         _compose.set_forage_count(cap)
     _compose.clamp_forage_count(cap)
-    target.add_child(_build_worker_stepper(
+    target.add_child(HudWidgets.build_worker_stepper(
         FORAGE_CREW_LABEL, _compose.forage_count(), _compose.forage_count() < cap,
         func(n: int) -> void:
             _compose.set_forage_count(clampi(n, 0, cap))
             _build_forage_assign_controls(tile_info, target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
-        target.add_child(_alloc_hint_label(cap_note))
+        target.add_child(HudWidgets.alloc_hint_label(cap_note))
     # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
@@ -5405,7 +4928,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         var yield_line := _local_forage_preview_bbcode(
             band, tile_info, _compose.forage_policy(), _compose.forage_count())
         if yield_line != "":
-            target.add_child(_forecast_label(yield_line))
+            target.add_child(HudWidgets.forecast_label(yield_line))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
@@ -5415,12 +4938,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var distance := _hex_distance_wrapped(band_tile.x, band_tile.y, x, y)
     var out_of_range := distance >= 0 and distance > work_range
     if out_of_range:
-        target.add_child(_alloc_hint_label(
+        target.add_child(HudWidgets.alloc_hint_label(
             "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
     # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
     # the cap note has not already said it, so the panel never states one fact twice.
     if is_noop and cap_note == "":
-        target.add_child(_alloc_hint_label(FORAGE_NOOP_HINT))
+        target.add_child(HudWidgets.alloc_hint_label(FORAGE_NOOP_HINT))
     var assign_btn := Button.new()
     assign_btn.text = FORAGE_UNASSIGN_BUTTON if is_unassign else FORAGE_ASSIGN_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
@@ -5753,17 +5276,17 @@ func _build_standing_summary_from_model(model: Dictionary) -> Control:
     flow.add_theme_constant_override("h_separation", STATUS_LINE_SEPARATION)
     if tooltip != "":
         flow.tooltip_text = tooltip
-    flow.add_child(_build_status_part(String(model["text"]), HudStyle.INK))
+    flow.add_child(HudWidgets.build_status_part(String(model["text"]), HudStyle.INK))
     # ⚠ = ecological (the take outruns regrowth); the notes = labor (extra workers idle here / the
     # crew could not carry what the source offered). Same three parts, same three colours as a row.
     if bool(model["warn"]):
-        flow.add_child(_build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, tooltip))
+        flow.add_child(HudWidgets.build_row_note_label(OVERHUNT_FLAG, HudStyle.WARN, tooltip))
     var note := String(model["note"])
     if note != "":
-        flow.add_child(_build_row_note_label(note, HudStyle.WARN, tooltip))
+        flow.add_child(HudWidgets.build_row_note_label(note, HudStyle.WARN, tooltip))
     var muted_note := String(model["muted_note"])
     if muted_note != "":
-        flow.add_child(_build_row_note_label(muted_note, HudStyle.INK_FAINT, tooltip))
+        flow.add_child(HudWidgets.build_row_note_label(muted_note, HudStyle.INK_FAINT, tooltip))
     return flow
 
 ## Patch an existing standing-summary flow in place. Child 0 is the main status part; the optional
@@ -5778,19 +5301,19 @@ func _update_standing_summary(flow: HFlowContainer, model: Dictionary) -> void:
     (flow.get_child(idx) as Label).text = String(model["text"])
     idx += 1
     if bool(model["warn"]):
-        _set_label_tooltip(flow.get_child(idx) as Label, tooltip)  # OVERHUNT_FLAG face is constant
+        HudWidgets.set_label_tooltip(flow.get_child(idx) as Label, tooltip)  # OVERHUNT_FLAG face is constant
         idx += 1
     var note := String(model["note"])
     if note != "":
         var note_label := flow.get_child(idx) as Label
         note_label.text = note
-        _set_label_tooltip(note_label, tooltip)
+        HudWidgets.set_label_tooltip(note_label, tooltip)
         idx += 1
     var muted_note := String(model["muted_note"])
     if muted_note != "":
         var muted_label := flow.get_child(idx) as Label
         muted_label.text = muted_note
-        _set_label_tooltip(muted_label, tooltip)
+        HudWidgets.set_label_tooltip(muted_label, tooltip)
 
 ## Move-band: enter tile-targeting; the destination click emits move_band_requested.
 func _on_move_band_pressed() -> void:
@@ -6482,9 +6005,9 @@ func _expedition_phase_key(exp: Dictionary) -> String:
 ## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
 ## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
 func _expedition_phase_suffix(phase: String) -> String:
-    var suffix := _row_glyph_suffix(FoodIcons.for_status(phase))
+    var suffix := HudFormat.row_glyph_suffix(FoodIcons.for_status(phase))
     if phase == EXPEDITION_PHASE_AWAITING:
-        return "%s %s" % [suffix, _expedition_phase_label(phase)]
+        return "%s %s" % [suffix, HudFormat.expedition_phase_label(phase)]
     return suffix
 
 ## The row's hover text: everything the glyphs encode, in words — the mission, the hunt policy's
@@ -6495,14 +6018,14 @@ func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
     if mission == EXPEDITION_MISSION_HUNT:
         var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
         policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
-    return _join_tooltip_lines([
+    return HudFormat.join_tooltip_lines([
         _expedition_mission_label(mission), policy_hint,
-        _status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission),
+        HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission),
         EXPEDITION_ROW_FOCUS_HINT])
 
 ## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
 ## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
-## drawer's `_expedition_summary_lines` prints. Empty (dropped by `_join_tooltip_lines`) for a scout
+## drawer's `_expedition_summary_lines` prints. Empty (dropped by `HudFormat.join_tooltip_lines`) for a scout
 ## party or a party not yet projecting a delivery.
 func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String) -> String:
     if mission != EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
@@ -6540,14 +6063,14 @@ func _expedition_next_delivery_line(exp: Dictionary) -> String:
 ## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
 ## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
 ## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
-## live in the tooltip. A scout has no policy → `for_policy` returns "" → `_row_glyph_suffix` emits
+## live in the tooltip. A scout has no policy → `for_policy` returns "" → `HudFormat.row_glyph_suffix` emits
 ## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
 ## its words (`_expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
 ## parties inspector strip a row click opens (`_build_parties_inspector` → `_expedition_summary_lines`).
 func _panel_expedition_summary(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
-    var policy_suffix := _row_glyph_suffix(
+    var policy_suffix := HudFormat.row_glyph_suffix(
         FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
     if mission == EXPEDITION_MISSION_HUNT:
         var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
@@ -6599,7 +6122,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
             "severity": ATTENTION_SEVERITY_WARN,
             # The demand headline reuses the phase words ("Awaiting orders"); the context line names
             # the mission + its objective, so the row is actionable without opening anything.
-            "label": _expedition_phase_label(EXPEDITION_PHASE_AWAITING),
+            "label": HudFormat.expedition_phase_label(EXPEDITION_PHASE_AWAITING),
             "detail": ATTENTION_AWAITING_DETAIL_FORMAT % [
                 _expedition_mission_label(String(exp.get("expedition_mission", ""))),
                 _expedition_objective(exp)],
@@ -6908,7 +6431,7 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
             lines.append("Policy: %s" % policy.capitalize())
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
-        lines.append("Phase: %s" % _expedition_phase_label(phase))
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
@@ -6955,13 +6478,6 @@ func _expedition_mission_label(mission: String) -> String:
     if EXPEDITION_MISSION_LABELS.has(key):
         return EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
-
-## Humanize an expedition phase id ("awaiting" → "Awaiting orders").
-func _expedition_phase_label(phase: String) -> String:
-    var key := phase.strip_edges().to_lower()
-    if EXPEDITION_PHASE_LABELS.has(key):
-        return EXPEDITION_PHASE_LABELS[key]
-    return key.capitalize()
 
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
@@ -7426,7 +6942,7 @@ func _cultivation_value_hex(value: String) -> String:
 func _field_label(progress: float, is_field: bool) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
         return "%s %s" % [FoodIcons.for_policy(LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
-    return "%s %d%%" % [FIELD_SOWING_LABEL, _progress_percent(progress)]
+    return "%s %d%%" % [FIELD_SOWING_LABEL, HudFormat.progress_percent(progress)]
 
 ## The tile's plant composition as one compact line — `Hazel 45% · Oak Mast 30% · Berry Scrub 25%`.
 ##
