@@ -209,29 +209,52 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) band_move_tiles_per_turn: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn population_state(
-    entity: Entity,
-    cohort: &PopulationCohort,
-    allocation: Option<&LaborAllocation>,
-    expedition: Option<&Expedition>,
-    home_position: Option<UVec2>,
-    current_position: Option<UVec2>,
-    is_traveling: bool,
-    stockpile_radius: u32,
-    start_position: Option<UVec2>,
-    inventory: &FactionInventory,
-    demographics: &DemographicsConfig,
-    wellbeing: &crate::wellbeing_config::WellbeingConfig,
-    supply_membership: &SupplyNetworkMembership,
-    work_range: u32,
-    scout_vantage_distance: u32,
-    expedition_levers: &ExpeditionLevers,
-    settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
-    travel_target: Option<UVec2>,
-    hunt_reach: u32,
-    expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
-) -> PopulationCohortState {
+pub(crate) struct PopulationStateInputs<'a> {
+    pub(crate) entity: Entity,
+    pub(crate) cohort: &'a PopulationCohort,
+    pub(crate) allocation: Option<&'a LaborAllocation>,
+    pub(crate) expedition: Option<&'a Expedition>,
+    pub(crate) home_position: Option<UVec2>,
+    pub(crate) current_position: Option<UVec2>,
+    pub(crate) is_traveling: bool,
+    pub(crate) stockpile_radius: u32,
+    pub(crate) start_position: Option<UVec2>,
+    pub(crate) inventory: &'a FactionInventory,
+    pub(crate) demographics: &'a DemographicsConfig,
+    pub(crate) wellbeing: &'a crate::wellbeing_config::WellbeingConfig,
+    pub(crate) supply_membership: &'a SupplyNetworkMembership,
+    pub(crate) work_range: u32,
+    pub(crate) scout_vantage_distance: u32,
+    pub(crate) expedition_levers: &'a ExpeditionLevers,
+    pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
+    pub(crate) travel_target: Option<UVec2>,
+    pub(crate) hunt_reach: u32,
+    pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
+}
+
+pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
+    let PopulationStateInputs {
+        entity,
+        cohort,
+        allocation,
+        expedition,
+        home_position,
+        current_position,
+        is_traveling,
+        stockpile_radius,
+        start_position,
+        inventory,
+        demographics,
+        wellbeing,
+        supply_membership,
+        work_range,
+        scout_vantage_distance,
+        expedition_levers,
+        settlement_stage_config,
+        travel_target,
+        hunt_reach,
+        expedition_delivery,
+    } = inputs;
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
@@ -609,28 +632,29 @@ mod tests {
         allocation: Option<&LaborAllocation>,
         expedition: Option<&Expedition>,
     ) -> f32 {
-        population_state(
-            Entity::from_raw(1),
+        population_state(PopulationStateInputs {
+            entity: Entity::from_raw(1),
             cohort,
             allocation,
             expedition,
-            None,
-            None,
-            false,
-            0,
-            None,
-            &FactionInventory::default(),
-            &DemographicsConfig::builtin(),
-            &crate::wellbeing_config::WellbeingConfig::builtin(),
-            &SupplyNetworkMembership::default(),
-            0,
-            0,
-            &levers(),
-            &crate::settlement_stage_config::SettlementStageConfig::builtin(),
-            None,
-            0,
-            None,
-        )
+            home_position: None,
+            current_position: None,
+            is_traveling: false,
+            stockpile_radius: 0,
+            start_position: None,
+            inventory: &FactionInventory::default(),
+            demographics: &DemographicsConfig::builtin(),
+            wellbeing: &crate::wellbeing_config::WellbeingConfig::builtin(),
+            supply_membership: &SupplyNetworkMembership::default(),
+            work_range: 0,
+            scout_vantage_distance: 0,
+            expedition_levers: &levers(),
+            settlement_stage_config:
+                &crate::settlement_stage_config::SettlementStageConfig::builtin(),
+            travel_target: None,
+            hunt_reach: 0,
+            expedition_delivery: None,
+        })
         .turns_of_food
     }
 
