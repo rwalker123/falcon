@@ -1858,16 +1858,22 @@ pub fn capture_snapshot(
         .into_iter()
         .map(|entry| entry.to_schema())
         .collect();
-    let herd_states = herd_snapshot_entries(
-        &herds,
-        &herd_registry,
-        &fauna_config,
-        &ladder_config,
-        &labor_config,
-        &expedition_cfg,
-        config.grid_size,
-        config.map_topology.wrap_horizontal,
-    );
+    // The client's DISPLAY herd list, fog-filtered for the viewer faction — the same ledger and the
+    // same faction `visibility_raster` below is rendered from, so the two can never disagree about
+    // whether a herd is on visible ground. The authoritative `herd_registry_states` below is
+    // deliberately UNFILTERED: it is sim state (rollback + `export_map` ground truth), not a view.
+    let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
+        telemetry: &herds,
+        registry: &herd_registry,
+        fauna: &fauna_config,
+        ladder: &ladder_config,
+        labor: &labor_config,
+        expedition: &expedition_cfg,
+        grid_size: config.grid_size,
+        wrap_horizontal: config.map_topology.wrap_horizontal,
+        visibility: &visibility_ledger,
+        viewer: viewer_faction.0,
+    });
     // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
     // sorted deterministically by herd id like the generation states.
     let mut herd_registry_states: Vec<HerdState> =

@@ -1159,6 +1159,47 @@ flow to telemetry, the `HerdDensityMap`, and the snapshot (`HerdTelemetryState`,
 which now also carries `size_class` + `huntable` so the client can offer the right
 verbs — a free-form `species` string means new species need no schema change).
 
+> ### Herd display telemetry is FOG-FILTERED; the herd registry is not
+>
+> **`WorldSnapshot.herds` publishes a herd only if the viewer faction's tile is `Active` for it this
+> turn, or the viewer owns it** (`snapshot/subsistence.rs`, `HerdSnapshotInputs::herd_is_visible`).
+> Before this the list went out unfiltered, so the client received the position, species, biomass,
+> heading and full hunt-estimate table of every animal on the map — *wire-level fog was decorative
+> for fauna*, and no client-side masking could fix a leak that had already crossed the socket.
+>
+> - **`Active`, not `Discovered`.** Ground you saw two hundred turns ago says nothing about where a
+>   herd stands today, so `Discovered` would leak live positions across the whole explored map.
+>   Remembering the **last seen** herd is a separate, deliberate feature (issue #214) layered on top
+>   of this — never a weaker filter.
+> - **Ownership is not a leak.** A tamed or penned herd is your property. Without that clause a
+>   pastoral herd drifting a hex out of sight would take its `corralProgress` /
+>   `penFedFraction` starving warning with it, and a pen alert that vanishes because of fog is a bug.
+> - **The heading arrow is filtered separately** — `next_x`/`next_y` name a *second* tile, so a herd
+>   visible at the edge of your sight would otherwise hand you a free look at where it is walking.
+>   Withheld as the existing `-1` "no heading" sentinel.
+> - **It fails CLOSED.** With no faction map for the viewer (before the first `calculate_visibility`,
+>   or the turn after a rollback clears the ledger) **every** herd is hidden — which is exactly what
+>   `visibility_raster_from_ledger` does in the same state (an all-unexplored, black raster). The two
+>   read the same ledger for the same faction, so they cannot disagree about a herd on dark ground.
+> - **Only the VIEW is filtered.** `WorldSnapshot.herd_registry` — the authoritative rollback record,
+>   and `export_map`'s ground truth — carries every live herd. Restore rebuilds `HerdTelemetry` from
+>   the registry (never from `snapshot.herds`), so rollback is untouched. **Consequence:** an
+>   `export_map` JSON's `snapshot.herds` is now the *player's view*; read `snapshot.herd_registry`
+>   for the full roster.
+> - **A hunted herd stays visible for free** — `calculate_visibility` reveals `worked_source_sight_range`
+>   around each worked Hunt herd's tile, so a herd your band is working is always `Active`.
+> - **Known gap:** a hunting **expedition**'s target herd is *not* revealed (an expedition is
+>   `Without<Expedition>`-excluded from live faction reveal; its discoveries are comm-range gated), so
+>   a distant target is not published. The in-flight readout is unaffected — `expeditionEtaTurns` /
+>   `expeditionProjectedDelivery` ride the *cohort*, not the herd.
+> - **Per-faction snapshots are still a future arc.** The capture has ONE `ViewerFaction`, so this
+>   closes the leak for the single-viewer stream the game ships today; true competitive MP needs a
+>   per-faction capture.
+>
+> Guarded by `core_sim/src/snapshot/mod.rs` unit tests (unseen / owned-in-the-dark / empty-ledger /
+> heading suppression) and `integration_tests/tests/fauna_fog.rs`, which asserts on the **encoded
+> FlatBuffers bytes** the client actually receives, decoded through the client's own accessor chain.
+
 **Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_entity_bits]`
 command (`handle_hunt_fauna`, `server.rs`; full plumbing in `command.proto` /
 `commands.rs` / `command_text.rs`) attaches a `FaunaPursuit` component (`components.rs`)
@@ -4494,6 +4535,15 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
 **Snapshot Export**: `visibility_raster` emits a per-faction `ScalarRasterState` (fixed-point i64 samples) encoding Unexplored=0.0, Discovered=0.5, Active=1.0; the client decodes these to floats and renders black / cloudy / full-color. (`FactionVisibilityMap::to_byte_raster` still exists as a 0/1/2 byte view, but is not the snapshot export.)
+
+**The ledger also GATES what the snapshot publishes, not just how the map is shaded.** Two payloads
+are filtered against it for the `ViewerFaction`, and both must keep reading the *same* ledger the
+raster is rendered from or the client will draw something on ground it is painting black:
+`discoveredSites` (per-faction — an undiscovered site is never in `TileState` at all; see "Wondrous
+Sites") and the **herd display telemetry** (`Active`-or-owned; see "Herd display telemetry is
+FOG-FILTERED" under Fauna & Wild Game). Anything else that publishes a live entity position — the
+predator-raid layer, a future rival-band marker — needs the same gate; the tile layer itself is
+still shipped whole and masked by the raster client-side.
 
 ---
 
