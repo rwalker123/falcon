@@ -474,6 +474,32 @@ EOF
 HUB_BLURB_CORE_SIM="${HUB_BLURB_CORE_SIM:-scripts/hub_blurb_core_sim.md}"
 HUB_BLURB_CLIENT="${HUB_BLURB_CLIENT:-scripts/hub_blurb_client.md}"
 
+# -------------------------------------------------- post-split re-run guard
+# The split landed in PR #343. Since then, edits go straight into the hubs and
+# the rule files, while the BLOB_* pins above are still the PRE-split originals
+# — so a re-run does not "regenerate" anything, it REVERTS every edit made
+# since. Known casualties, both correctness fixes (issue #344): the `TurnStage`
+# ordering line in the core_sim hub's H1 region, and the "Fourth in turn chain"
+# claim about power in .claude/rules/core_sim/ecs-systems.md. Both sit in the
+# pinned blob in their wrong form, so a re-run reinstates the bugs.
+#
+# Re-pin BLOB_* to a blob carrying the post-split edits FIRST, then re-run with
+# the override. This guard is the loud stop the header only described in prose.
+if [ "${SPLIT_CLAUDE_MD_ACK_REVERT:-}" != "1" ]; then
+  cat >&2 <<'MSG'
+REFUSING TO RUN: this would revert post-split edits.
+
+The BLOB_* pins in this script are the PRE-split CLAUDE.md files. Re-running
+overwrites the hubs and every .claude/rules/**/*.md with the pre-split text,
+discarding all edits made since PR #343 — including the TurnStage ordering
+fixes from issue #344.
+
+  1. Re-pin BLOB_CORE_SIM / BLOB_CLIENT to blobs carrying the current text.
+  2. Re-run with:  SPLIT_CLAUDE_MD_ACK_REVERT=1 scripts/split_claude_md.sh
+MSG
+  exit 3
+fi
+
 case "${1:-both}" in
   core_sim) split_core_sim ;;
   client)   split_client ;;

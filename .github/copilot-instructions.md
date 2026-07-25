@@ -48,7 +48,7 @@ The schema in `sim_schema/schemas/snapshot.fbs` is the authoritative contract be
 
 ## 4. `core_sim` — Simulation Engine (Bevy ECS)
 
-- **Turn loop ordering matters.** Systems execute in a defined `TurnStage` sequence (materials → logistics → population → visibility → crisis → power → tick → snapshot; see `core_sim/CLAUDE.md` for the authoritative order). A new system must be registered in the correct stage; flag additions that run in the wrong phase or bypass `run_turn`.
+- **Turn loop ordering matters.** Systems execute in a defined `TurnStage` sequence (Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot; `core_sim/src/lib.rs` defines it, `core_sim/CLAUDE.md` is the doc-side authority). Note power is not a stage — `simulate_power` runs inside `Finalize`. A new system must be registered in the correct stage; flag additions that run in the wrong phase or bypass `run_turn`.
 - **Respect capability gating.** Systems are inert until their `CapabilityFlags` bit is set. New subsystems should gate behind the appropriate flag rather than always running.
 - **Config-driven, hot-reloadable.** New tuning surfaces should be loadable via the existing `reload_config` paths where applicable (turn / overlay / crisis / visibility). Don't add a config file with no loader.
 - **Determinism.** The simulation must be reproducible from a seed. Flag nondeterministic sources in turn resolution — wall-clock time, unseeded RNG, or iteration over unordered collections (`HashMap`) where output order affects results. Use seeded RNG and stable ordering.
