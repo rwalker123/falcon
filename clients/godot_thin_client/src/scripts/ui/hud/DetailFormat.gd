@@ -179,6 +179,10 @@ const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 # intentional, not a bug. Colon-free, so `detail_bbcode` renders them as dim informational sentences
 # (the `kv.is_empty()` path).
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
+# A predator is a hunter, not quarry — "game" is a category error for a wolf pack. "hunt only" stays
+# correct (you CAN hunt/eradicate a predator); only the "game" noun is wrong. Branched on
+# `is_predator` (`prey_sense_radius > 0`) in `herd_summary_lines`.
+const HUSBANDRY_WILD_PREDATOR_HINT := "Wild predator — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 
 # ---- The under-herded CONSEQUENCE line. A managed herd slipping below full staffing loses tameness,
@@ -193,6 +197,9 @@ const HERD_RANGE_ROW := "Range"
 # row's meta slot now states the herd's STAFFING, so the size class moved to the drawer.
 const HERD_SIZE_ROW := "Size"
 const HERD_SIZE_CLASS_FORMAT := "%s game"
+# A predator's size class reads "Big predator", not "Big game" — a carnivore is a hunter, not quarry.
+# Branched on `is_predator` (`prey_sense_radius > 0`) in `herd_summary_lines`.
+const HERD_SIZE_CLASS_PREDATOR_FORMAT := "%s predator"
 
 # ---- Overgrazing: a TRIVIAL honest comparison of two sim-provided numbers (the ecology model is the
 # sim's). The epsilon keeps a herd sitting exactly at K from flickering the warning; the warning SENTENCE
@@ -799,9 +806,13 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## what makes this producer pure. Callers pass `HudBandLaborState.world_herds()`.
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Array[String]:
     var lines: Array[String] = []
+    # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
+    # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
+    var is_predator := int(herd_data.get("prey_sense_radius", 0)) > 0
     var size_class := String(herd_data.get("size_class", "")).strip_edges()
     if size_class != "":
-        lines.append("%s: %s" % [HERD_SIZE_ROW, HERD_SIZE_CLASS_FORMAT % size_class.capitalize()])
+        var size_format := HERD_SIZE_CLASS_PREDATOR_FORMAT if is_predator else HERD_SIZE_CLASS_FORMAT
+        lines.append("%s: %s" % [HERD_SIZE_ROW, size_format % size_class.capitalize()])
     # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
     # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
     # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
@@ -844,7 +855,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
     # (or empty/absent) shows the full ladder, exactly as before.
     var ceiling := SourceForecast.husbandry_ceiling(herd_data)
     if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
-        lines.append(HUSBANDRY_WILD_HINT)
+        lines.append(HUSBANDRY_WILD_PREDATOR_HINT if is_predator else HUSBANDRY_WILD_HINT)
     else:
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:

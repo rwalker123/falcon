@@ -1043,6 +1043,22 @@ func _ready() -> void:
 	assert(_danger_row_value(mammoth_lines, "Fights back").ends_with("90%"))
 	assert(_danger_row_value(mammoth_lines, "Aggressive").ends_with("0%"))
 
+	# State 3b-predator (Predators Phase 1a) — a carnivore (Grey Wolf Pack, prey_sense_radius 4): a
+	# predator is a HUNTER, not quarry, so the Size row reads "Big predator" (not "Big game") and the
+	# wild-ceiling hint reads "Wild predator — hunt only" (not "Wild game — hunt only").
+	_hud.show_herd_selection(_predator_herd_fixture())
+	await _settle()
+	await _save("herd_predator")
+	var wolf_lines := DetailFormat.herd_summary_lines(_predator_herd_fixture(), _hud._band_labor.world_herds())
+	var wolf_text := "\n".join(wolf_lines)
+	assert(wolf_text.contains("Big predator"))
+	assert(wolf_text.contains("Wild predator — hunt only"))
+	assert(not wolf_text.contains("Big game"))
+	assert(not wolf_text.contains("Wild game"))
+	# A HERBIVORE (the deer, prey_sense_radius absent/0) is byte-for-byte unchanged — still "game".
+	var deer_size_lines := DetailFormat.herd_summary_lines(_herd_fixture(), _hud._band_labor.world_herds())
+	assert("\n".join(deer_size_lines).contains("game"))
+
 	# State 3b — an overhunted herd: the ecology readout warns "⚠ Collapsing" in red.
 	_hud.show_herd_selection(_collapsing_herd_fixture())
 	await _settle()
@@ -4196,6 +4212,24 @@ func _deadly_herd_fixture() -> Dictionary:
 	fixture["defense"] = 12.0
 	fixture["ferocity"] = 0.9
 	fixture["aggression"] = 0.0
+	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## A PREDATOR (Predators Phase 1a): a Grey Wolf Pack — big, wild-ceiling, carnivore. `prey_sense_radius`
+## 4 (`> 0`) is BOTH the "this is a predator" signal AND the map ring radius, so the drawer must read
+## "Size: Big predator" (not "Big game") and "Wild predator — hunt only" (not "Wild game — hunt only").
+func _predator_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["id"] = "predator_wolf_01"
+	fixture["label"] = "Grey Wolf Pack (predator_wolf_01)"
+	fixture["species"] = "Grey Wolf Pack"
+	fixture["size_class"] = "big"
+	fixture["husbandry_ceiling"] = "wild"
+	fixture["prey_sense_radius"] = 4
+	fixture["attack"] = 5.0
+	fixture["defense"] = 3.0
+	fixture["ferocity"] = 0.8
+	fixture["aggression"] = 0.7
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
 

@@ -1448,6 +1448,13 @@ table HerdTelemetryState {
   defense:float = 0;
   ferocity:float = 0;
   aggression:float = 0;
+  // --- Predators Phase 1a (docs/plan_predators.md, appended last) --- the herd's prey-SENSING radius,
+  // in hexes (`fauna.predators.prey_sense_radius`) when this herd's species is a CARNIVORE, else 0. So
+  // `preySenseRadius > 0` is BOTH the client's "this is a predator" signal AND its view-ring radius: a
+  // carnivore's graze-range ring is meaningless (it eats other herds, not the tile's graze), so the
+  // client draws a prey-sense "view" ring of this radius instead. A herbivore reads 0 and the client
+  // keeps drawing its `grazeRangeRadius` ring. Appended (append-only schema discipline).
+  preySenseRadius:uint = 0;
 }
 
 table CommandEventState {

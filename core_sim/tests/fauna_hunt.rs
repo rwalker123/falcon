@@ -183,13 +183,20 @@ fn biomass_regrows_and_extinct_group_despawns() {
     let mut app = spawn_world();
 
     // Choose two herds: one to draw down (regrowth), one to zero out (extinction).
+    // Count only NON-predator herds: a freshly-spawned wolf pack (`pred_`) with no prey in its
+    // sensing disk gets `K_pred → 0` and despawns on this same `advance_herds` turn (Predators
+    // Phase 1a — idea 6), which is legitimate churn this herbivore-extinction test must ignore.
     let (regrow_id, extinct_id, count_before) = {
         let registry = app.world.resource::<HerdRegistry>();
         assert!(registry.herds.len() >= 2, "need at least two herds");
         (
             registry.herds[0].id.clone(),
             registry.herds[1].id.clone(),
-            registry.herds.len(),
+            registry
+                .herds
+                .iter()
+                .filter(|h| !h.id.starts_with("pred_"))
+                .count(),
         )
     };
 
@@ -218,8 +225,12 @@ fn biomass_regrows_and_extinct_group_despawns() {
         "expected the zero-biomass group to despawn (local extinction)"
     );
     assert_eq!(
-        registry.herds.len(),
+        registry
+            .herds
+            .iter()
+            .filter(|h| !h.id.starts_with("pred_"))
+            .count(),
         count_before - 1,
-        "exactly one herd should have gone extinct"
+        "exactly one non-predator herd should have gone extinct"
     );
 }

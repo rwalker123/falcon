@@ -76,6 +76,14 @@ const HUNT_WORKED_LINK_WIDTH := 2.5
 const HERD_RANGE_FILL := Color(0.82, 0.55, 0.14, 0.22)     # warm graze amber, translucent region
 const HERD_RANGE_OUTLINE := Color(0.96, 0.72, 0.24, 0.80)  # gold rim on each range tile
 const HERD_RANGE_OUTLINE_WIDTH := 2.0
+# Selected-CARNIVORE PREY-SENSE RANGE (Predators Phase 1a): a wolf pack doesn't graze, so its graze
+# ring is meaningless — when `prey_sense_radius > 0` we draw THIS ring at that radius INSTEAD (a
+# replacement, not an addition), the reach the pack senses/feeds on prey over. Same "perimeter of a hex
+# disk of radius N" shape as the graze ring, just a distinct PREDATOR orange (echoing MapView's
+# `HUNT_DANGER_OVERLAY_COLOR`) so it reads as "predator" and never as a grazer's gold range.
+const PREY_SENSE_RING_FILL := Color(0.93, 0.42, 0.13, 0.20)    # predator orange, translucent region
+const PREY_SENSE_RING_OUTLINE := Color(0.98, 0.56, 0.18, 0.85) # clearer orange rim on each sensed tile
+const PREY_SENSE_RING_OUTLINE_WIDTH := 2.0
 # Selected-CORRALLED-herd PEN FOOTPRINT (Grazing 2d-γ): the fenced hex disk of radius `pen_radius`
 # around the pen's anchor (a penned herd's own tile), the ground it grazes to offset its larder bill.
 # Deliberately a DISTINCT "fenced" tint — a cool enclosure green — NOT the warm gold of a wild herd's
@@ -256,6 +264,11 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 ## it sits on the actual graze. `graze_range_radius == 0` (small game) → the herd's own single tile.
 ## Reuses the same hex-distance / fill / outline primitives as the band work-range ring (styled
 ## distinctly). A CORRALLED herd draws NOTHING — a penned herd doesn't roam-graze a range.
+##
+## CARNIVORE PREY-SENSE (Predators Phase 1a): a wolf pack doesn't graze, so `prey_sense_radius > 0`
+## (the sim's carnivore signal AND ring radius) REPLACES the graze ring — same disk shape, drawn at
+## the prey-sense radius in a distinct predator orange. A herbivore (`prey_sense_radius == 0`) is
+## unchanged: it draws its gold graze ring.
 func draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 	if _view.selected_herd_id == "":
 		return
@@ -270,7 +283,14 @@ func draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 		return
 	if not _view._is_tile_visible(x, y):
 		return
-	var range_radius := int(herd.get("graze_range_radius", 0))
+	# A predator (`prey_sense_radius > 0`) draws its prey-sense ring INSTEAD of the graze ring — the
+	# radius and the "this is a carnivore" test are the same wire field; a herbivore keeps the graze ring.
+	var prey_sense_radius := int(herd.get("prey_sense_radius", 0))
+	var is_predator := prey_sense_radius > 0
+	var range_radius := prey_sense_radius if is_predator else int(herd.get("graze_range_radius", 0))
+	var fill_color := PREY_SENSE_RING_FILL if is_predator else HERD_RANGE_FILL
+	var outline_color := PREY_SENSE_RING_OUTLINE if is_predator else HERD_RANGE_OUTLINE
+	var outline_width := PREY_SENSE_RING_OUTLINE_WIDTH if is_predator else HERD_RANGE_OUTLINE_WIDTH
 	# Render in the herd's wrapped column frame so the ring stays contiguous across the seam (mirrors
 	# the band work-range ring). A ±range_radius col/row bounding box is a superset of the hex disc;
 	# keep only tiles whose true odd-r hex distance from the herd is within range (radius 0 → its tile).
@@ -285,8 +305,8 @@ func draw_herd_range_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			if not _view._wrap_horizontal and (col < 0 or col >= _view.grid_width):
 				continue
-			_view._fill_hex(col, row, radius, origin, HERD_RANGE_FILL)
-			_view._outline_hex(col, row, radius, origin, HERD_RANGE_OUTLINE, HERD_RANGE_OUTLINE_WIDTH)
+			_view._fill_hex(col, row, radius, origin, fill_color)
+			_view._outline_hex(col, row, radius, origin, outline_color, outline_width)
 
 ## Draw the selected CORRALLED herd's PEN FOOTPRINT (Grazing 2d-γ) — the fenced hex disk of radius
 ## `pen_radius` around the pen's anchor (a penned herd sits AT `corralled_at`, so its own tile is the

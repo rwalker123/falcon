@@ -1805,6 +1805,75 @@ mod tests {
         );
     }
 
+    /// **The predator's prey-sense ring on the wire** (Predators Phase 1a). A **carnivore** publishes
+    /// `prey_sense_radius = fauna.predators.prey_sense_radius` (`> 0`) — the client's "this is a
+    /// predator" signal AND its view-ring radius, since a carnivore's graze-range ring is meaningless
+    /// (it hunts other herds). A **herbivore** publishes `0`, so the client keeps drawing its graze ring.
+    #[test]
+    fn herd_snapshot_reports_prey_sense_radius_for_carnivores_only() {
+        use crate::fauna_config::SizeClass;
+
+        let fauna = FaunaConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+
+        let mut registry = HerdRegistry::default();
+        // A wolf pack (carnivore) and a deer (herbivore) — both real roster species so
+        // `species_by_display` resolves the diet.
+        registry.herds.push(Herd::new(
+            "pred_wolf".to_string(),
+            "Grey Wolf Pack".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(3, 3)],
+            50.0,
+            100.0,
+            0.0,
+            0.15,
+            60.0,
+        ));
+        registry.herds.push(Herd::new(
+            "herd_deer".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(5, 5)],
+            50.0,
+            100.0,
+            0.0,
+            0.10,
+            60.0,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        // Merge reconciliation: origin/main's fog-filter refactored `herd_snapshot_entries` to take
+        // `HerdSnapshotInputs` (with a visibility ledger + viewer). Reuse the sibling helpers — an
+        // all-seeing ledger, since this test is about WHAT a carnivore exports, not whether fog hides it.
+        let states = export_herds(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &expedition,
+            &all_seeing_ledger(64),
+        );
+
+        let wolf = states.iter().find(|h| h.id == "pred_wolf").unwrap();
+        assert_eq!(
+            wolf.prey_sense_radius, fauna.predators.prey_sense_radius,
+            "a carnivore publishes the predators' prey-sense radius",
+        );
+        assert!(
+            wolf.prey_sense_radius > 0,
+            "the shipped prey-sense radius is positive, so it doubles as the is-a-predator flag",
+        );
+        let deer = states.iter().find(|h| h.id == "herd_deer").unwrap();
+        assert_eq!(
+            deer.prey_sense_radius, 0,
+            "a herbivore publishes 0 and the client keeps drawing its graze ring",
+        );
+    }
+
     /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
     /// (`pen_upkeep = pen.upkeep_per_biomass × biomass`) alongside its **gross** `corral_yield`, plus
     /// last turn's `pen_fed_fraction` (`< 1` = starving) — what the client needs for the herd drawer

@@ -125,6 +125,12 @@ const PASTURE_HERD_ID := "game_deer_09"
 const PASTURE_HERD_COL := 9
 const PASTURE_HERD_ROW := 7
 const PASTURE_HERD_RANGE_RADIUS := 1
+# Predators Phase 1a — a selected Grey Wolf Pack (a carnivore) parked mid-prairie with some prey around
+# it. Its `prey_sense_radius` (4) is BOTH the "this is a predator" signal and the ring radius, so the map
+# must draw the radius-4 predator-orange PREY-SENSE ring (a 61-tile disk) INSTEAD of the small gold graze
+# ring. Col 9 / row 7 leaves the radius-4 disc (cols 5–13, rows 3–11) inside the grid (26×18).
+const PASTURE_WOLF_ID := "predator_wolf_09"
+const PASTURE_WOLF_PREY_SENSE_RADIUS := 4
 # MapView is COVER-fit, so a grid whose aspect differs from the window's is CROPPED at the fit zoom —
 # and a pasture distribution you can only see two thirds of is exactly the frame this state exists to
 # avoid. The pointy-top odd-r extents of this grid are ≈ (W + 0.5)·√3 × (1.5·H + 0.5) hex radii, i.e.
@@ -890,6 +896,19 @@ func _ready() -> void:
 	await _save("map_pasture_herd_range")
 	_map.selected_herd_id = ""
 
+	# State "predator prey-sense ring" — a selected Grey Wolf Pack (Predators Phase 1a). A carnivore
+	# doesn't graze, so `prey_sense_radius` (4) REPLACES the graze ring: the map must draw the wide
+	# radius-4 predator-ORANGE ring (a 61-tile disk), NOT the small gold graze ring. A prey deer sits
+	# nearby to prove the two herd kinds coexist (selecting IT would draw the gold graze ring — the
+	# replacement is carnivore-only). Read against map_pasture_herd_range.png: bigger disk, orange not gold.
+	_map.display_snapshot(_snapshot_pasture_wolf())
+	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
+	_map.selected_herd_id = PASTURE_WOLF_ID
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_predator_prey_sense")
+	_map.selected_herd_id = ""
+
 	# State "pasture pen footprint" — the SAME frame, but the herd is CORRALLED with pen_radius 1 (Grazing
 	# 2d-γ). A penned herd draws no roam-range ring; instead its fenced FOOTPRINT (the 7-tile hex disk of
 	# radius 1 around the pen anchor) reads in the distinct enclosure-GREEN tint — deliberately NOT the gold
@@ -1402,6 +1421,42 @@ func _snapshot_pasture_herd() -> Dictionary:
 	}]
 	return snapshot
 
+## The pasture snapshot with a selected Grey Wolf Pack (a CARNIVORE) mid-prairie and some prey herds
+## around it — for the prey-sense-ring state (Predators Phase 1a). The wolf carries
+## `prey_sense_radius` (4), so MapView draws its radius-4 predator ring INSTEAD of a graze ring; the
+## deer alongside it are herbivores (`prey_sense_radius` absent → 0), so if one is selected it still
+## draws the small gold graze ring — the replacement is carnivore-only.
+func _snapshot_pasture_wolf() -> Dictionary:
+	var snapshot := _snapshot_pasture()
+	snapshot["herds"] = [
+		{
+			"id": PASTURE_WOLF_ID,
+			"label": "Grey Wolf Pack (%s)" % PASTURE_WOLF_ID,
+			"species": "Grey Wolf Pack",
+			"size_class": "big",
+			"huntable": false,
+			"ecology_phase": "thriving",
+			"x": PASTURE_HERD_COL,
+			"y": PASTURE_HERD_ROW,
+			"biomass": 320.0,
+			"prey_sense_radius": PASTURE_WOLF_PREY_SENSE_RADIUS,
+		},
+		{
+			"id": PASTURE_HERD_ID,
+			"label": "Red Deer (%s)" % PASTURE_HERD_ID,
+			"species": "Red Deer",
+			"size_class": "big",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"x": PASTURE_HERD_COL + 3,
+			"y": PASTURE_HERD_ROW + 2,
+			"biomass": 1480.0,
+			"carrying_capacity": 2150.0,
+			"graze_range_radius": PASTURE_HERD_RANGE_RADIUS,
+		},
+	]
+	return snapshot
+
 ## The pasture snapshot with a CORRALLED herd (pen_radius 1) at the same tile — for the pen-footprint
 ## state. Same herd position as `_snapshot_pasture_herd()`, but penned: MapView draws the fenced
 ## footprint disc (enclosure green) instead of the roam-range ring.
@@ -1646,10 +1701,11 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_horse_01", "Wild Horse"],
 	["game_sheep_01", "Sheep"],
 	["game_fowl_01", "Jungle Fowl"],
+	["game_wolf_01", "Grey Wolf Pack"],
 ]
 ## The roster is laid out as ONE row: MapView is cover-fit, so on this wide preview window only a
 ## few middle rows are on screen and a second roster row is cropped away unseen.
-const FAUNA_ROSTER_COLUMNS := 10
+const FAUNA_ROSTER_COLUMNS := 11
 ## A middle row (well inside the cover-fit crop) and a leading margin off the map border.
 const FAUNA_ROSTER_ORIGIN := Vector2i(3, 5)
 ## Hexes between roster entries — one apart, so ten fit across GRID_W without markers colliding.

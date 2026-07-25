@@ -139,13 +139,14 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herd_grazing, advance_herds, advance_husbandry, forecast_expected_take, herd_capacity,
-    herd_ecology, herd_herders_needed, herded_fraction, herders_needed, hunt_credit_ceiling,
-    hunt_policy_rate, hunt_provisions, hunt_source_yield_preview, pen_upkeep,
-    project_arrivals_hunt, project_realized_hunt, quantise_animal_take, repopulate_fauna,
-    spawn_initial_herds, AnimalTake, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID,
-    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, build_prey_index,
+    carnivore_k_at, forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed,
+    herded_fraction, herders_needed, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
+    hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, repopulate_fauna, spawn_initial_herds, AnimalTake, EcologyPhase, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, PreyDatum, RoamState,
+    SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -656,6 +657,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_logistics,
                 advance_herds,
                 advance_herd_grazing,
+                advance_predation,
                 advance_forage_regrowth,
                 advance_graze_regrowth,
                 advance_cultivation,
