@@ -67,6 +67,8 @@ const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 ## highlight nothing) and `sustain` is the ordinary control.
 const INVESTMENT_ROW_POLICY := "corral"
 const INVESTMENT_ROW_HERD_ID := "game_aurochs_11"
+## The crew that mid-build pen owes. Set through `_set_managed_herders`, so BOTH herder counts carry it.
+const INVESTMENT_ROW_HERDERS_NEEDED := 3
 const EXTRACTIVE_ROW_POLICY := "sustain"
 const EXTRACTIVE_ROW_HERD_ID := "game_deer_07"
 ## The rung both assertions PRESS. Extractive, so on the investment row it is a genuine "discard the
@@ -76,6 +78,9 @@ const PICKED_RUNG_POLICY := "surplus"
 ## The under-contained managed herd (fauna neglect-escape arc): a Corralled herd that needs 4 herders
 ## but is staffed with only 2, so it sheds animals — the work-board ⚠ / drifting-off note case.
 const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
+## The crew that pen owes — the SAME number as the row's `workers_needed`, which is where the shed
+## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
+const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 
 # The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
 const HUNT_DELIVERING_ENTITY := 952
@@ -659,6 +664,7 @@ func _ready() -> void:
 
 	await _render_dock_row_states()
 
+	_assert_herd_field_pairs()
 	get_tree().quit()
 
 # ---- THE DOCK-ROW REFLOW (issue #324) ---------------------------------------------------------
@@ -1168,17 +1174,19 @@ func _investment_policy_band_fixture() -> Dictionary:
 ## The two herds those rows work. The pen is mid-build (`corral_progress`), which is exactly the
 ## ~25-turn investment a pick in the work inspector would throw away.
 func _investment_policy_herd_fixtures() -> Array:
-	return [
-		{
-			"id": INVESTMENT_ROW_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
-			"population": 210, "ecology_phase": "thriving", "huntable": true,
-			"domestication": 1.0, "corral_progress": 0.4, "herders_needed": 3,
-			"per_worker_yield": 0.25,
-			"hunt_policy_ceilings": {
-				"sustain": 0.40, "surplus": 1.10, "market": 1.60, "eradicate": 2.40,
-				"tame": 0.20, INVESTMENT_ROW_POLICY: 0.75,
-			},
+	var penned := {
+		"id": INVESTMENT_ROW_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
+		"population": 210, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 1.0, "corral_progress": 0.4,
+		"per_worker_yield": 0.25,
+		"hunt_policy_ceilings": {
+			"sustain": 0.40, "surplus": 1.10, "market": 1.60, "eradicate": 2.40,
+			"tame": 0.20, INVESTMENT_ROW_POLICY: 0.75,
 		},
+	}
+	_set_managed_herders(penned, INVESTMENT_ROW_HERDERS_NEEDED)
+	return [
+		penned,
 		{
 			"id": EXTRACTIVE_ROW_HERD_ID, "species": "Red Deer", "x": 69, "y": 19,
 			"population": 90, "ecology_phase": "thriving", "huntable": true,
@@ -1197,7 +1205,8 @@ func _under_herded_work_band_fixture() -> Dictionary:
 	band["entity"] = 918
 	band["id"] = "Band 18"
 	band["labor_assignments"] = [
-		{"kind": "hunt", "workers": 2, "workers_needed": 4, "policy": "corral",
+		{"kind": "hunt", "workers": 2, "workers_needed": UNDER_HERDED_WORK_HERDERS_NEEDED,
+			"policy": "corral",
 			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 5.40, "sustainable_yield": 5.40, "overdraws": false},
 		{"kind": "scout", "workers": 1},
@@ -1207,18 +1216,18 @@ func _under_herded_work_band_fixture() -> Dictionary:
 ## The Corralled herd that row works: needs 4 herders, `herded_fraction` a stale 1.0 (the OLD code
 ## would have read it "fully herded"), so only the actual staffed count exposes the shed.
 func _under_herded_work_herd_fixtures() -> Array:
-	return [
-		{
-			"id": UNDER_HERDED_WORK_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
-			"population": 210, "ecology_phase": "thriving", "huntable": true,
-			"domestication": 1.0, "corralled": true, "herders_needed": 4, "herded_fraction": 1.0,
-			"per_worker_yield": 5.40,
-			"hunt_policy_ceilings": {
-				"sustain": 5.40, "surplus": 6.0, "market": 7.0, "eradicate": 8.0,
-				"tame": 5.40, "corral": 5.40,
-			},
+	var penned := {
+		"id": UNDER_HERDED_WORK_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
+		"population": 210, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 1.0, "corralled": true, "herded_fraction": 1.0,
+		"per_worker_yield": 5.40,
+		"hunt_policy_ceilings": {
+			"sustain": 5.40, "surplus": 6.0, "market": 7.0, "eradicate": 8.0,
+			"tame": 5.40, "corral": 5.40,
 		},
-	]
+	}
+	_set_managed_herders(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
+	return [penned]
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
 ## `under_herded` model flag the row + inspector tint from.
@@ -1443,6 +1452,9 @@ func _settle() -> void:
 
 func _save(name: String) -> void:
 	_current_state = name
+	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
+	# it silently mis-renders rather than against nothing at all.
+	_guard_frame_herd_fields(name)
 	var image := get_viewport().get_texture().get_image()
 	if image == null:
 		push_warning("band_panel_preview: null image (dummy renderer?) — skipping %s.png; run without --headless" % name)
@@ -1474,6 +1486,93 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 			return found
 	return null
 
+
+# ---- the herd herders_needed FIELD-PAIR guard ---------------------------------------------------
+# The sim exports TWO herder counts per herd and the client reads DIFFERENT ones by rung, so a fixture
+# that sets only one is a silent lie rather than an error:
+#   • `herders_needed` — OWNERSHIP-GATED (`fauna::herd_herders_needed`): 0 unless the herd is
+#     corralled or owned. The extractive rungs' field, and what the drawer's "Herders A / N" row reads.
+#   • `herders_needed_if_managed` — ownership-INDEPENDENT (`fauna::would_be_herders_needed`): the crew
+#     the herd WOULD owe, 0 only for a species that can never be tamed. `DrawerComposeController`'s
+#     `_forecast_worker_cap` floor reads THIS one for the INVESTMENT rungs (Tame / Corral).
+# Both this harness's managed herds set only the first, so any state that opened a compose sheet on
+# them would floor the investment cap at 0 — no error, just a wrong number on a frame whose whole job
+# is to be read. Half-setting the pair is not catchable by eye, so it is caught here.
+#
+# THE INVARIANT, from the sim, not from guesswork: `would_be_herders_needed` is identical to
+# `herd_herders_needed` except its gate, so the two agree on every herd EXCEPT a not-yet-owned tameable
+# one (gated 0, would-be crew real). A herd whose gated count is `> 0` is by definition managed
+# (corralled or owned) and therefore tameable, so the ungated field takes the same branch:
+#     herders_needed > 0  ⇒  herders_needed_if_managed == herders_needed
+# and, in general, `herders_needed_if_managed >= herders_needed`.
+const HERDERS_NEEDED_KEY := "herders_needed"
+const HERDERS_NEEDED_IF_MANAGED_KEY := "herders_needed_if_managed"
+## Deep-scan bound. Fixtures are trees, but a bound turns a future self-referencing one into a stop
+## rather than an infinite walk.
+const HERD_SCAN_MAX_DEPTH := 8
+
+var _herd_pair_scans := 0
+var _herd_pair_violations := 0
+
+## Set BOTH herder counts on a MANAGED herd fixture. The sim exports them EQUAL there (see the
+## invariant above), and setting them one at a time is precisely the mistake the guard exists to
+## catch — so managed fixtures set them together, through this. A still-WILD but tameable herd is the
+## one case where they differ; this harness has none, and one added later writes them by hand.
+func _set_managed_herders(fixture: Dictionary, needed: int) -> void:
+	fixture[HERDERS_NEEDED_KEY] = needed
+	fixture[HERDERS_NEEDED_IF_MANAGED_KEY] = needed
+
+## Walk everything reachable from `subject` and check the pair on every dict that carries either half.
+## Deliberately a SCAN and not a per-fixture assertion: a guard you have to remember to call for each
+## new fixture is the same failure mode as remembering to set the second field.
+func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void:
+	if depth > HERD_SCAN_MAX_DEPTH:
+		return
+	if subject is Array:
+		for item in (subject as Array):
+			_guard_herd_fields(item, where, depth + 1)
+		return
+	if not (subject is Dictionary):
+		return
+	var dict: Dictionary = subject
+	if dict.has(HERDERS_NEEDED_KEY) or dict.has(HERDERS_NEEDED_IF_MANAGED_KEY):
+		_herd_pair_scans += 1
+		var needed := int(dict.get(HERDERS_NEEDED_KEY, 0))
+		var if_managed := int(dict.get(HERDERS_NEEDED_IF_MANAGED_KEY, 0))
+		if if_managed < needed:
+			_herd_pair_violations += 1
+			push_error(("band_panel_preview: %s — herd \"%s\" declares %s %d but %s %d. The would-be "
+				+ "crew can never be SMALLER than the ownership-gated one, and on a herd with herders "
+				+ "(i.e. a managed one) the sim exports them EQUAL — the investment rungs' worker cap "
+				+ "floors on the second field, so half-setting the pair silently caps the crew at the "
+				+ "take-side count. Set both through _set_managed_herders.") % [where,
+				String(dict.get("id", "?")), HERDERS_NEEDED_KEY, needed,
+				HERDERS_NEEDED_IF_MANAGED_KEY, if_managed])
+
+	for value in dict.values():
+		_guard_herd_fields(value, where, depth + 1)
+
+## Every herd dictionary the HUD is holding as this frame renders — the world list, the panel's band
+## and the roster around it, plus the selection state (whose `tile_info` carries herds too).
+func _guard_frame_herd_fields(state: String) -> void:
+	_guard_herd_fields(_hud._band_labor._world_herds, state)
+	_guard_herd_fields(_hud._band_labor._player_band, state)
+	_guard_herd_fields(_hud._band_labor._player_bands, state)
+	_guard_herd_fields(_hud._band_labor._panel_band, state)
+	_guard_herd_fields(_hud._selection._selected_herd, state)
+	_guard_herd_fields(_hud._selection._roster_herds, state)
+	_guard_herd_fields(_hud._selection._selected_tile_info, state)
+
+## The field-pair guard's verdict, ONE line for the whole run (each violation has already been
+## push_error'd against the frame it rendered in). The scanned count is part of the claim: a guard that
+## walked nothing would pass vacuously, and "0 herd dicts scanned" says so out loud.
+func _assert_herd_field_pairs() -> void:
+	if _herd_pair_violations > 0:
+		push_error("band_panel_preview: %d herd dict(s) of %d scanned half-set the herders_needed pair"
+			% [_herd_pair_violations, _herd_pair_scans])
+		return
+	print("band_panel_preview: assert OK — every herd fixture keeps the herders_needed pair consistent (%d herd dicts scanned)"
+		% _herd_pair_scans)
 
 ## The snapshot's herd list (shape `Hud.update_herds` / `MapView._rebuild_herd_markers` consume).
 ## The hunted herd sits at (68, 15) — NOT the (70, 17) its hunt assignment was launched at — so the
