@@ -6,7 +6,7 @@ paths:
   - "core_sim/tests/telling_support/**"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 3447-3881.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 3569-4003.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

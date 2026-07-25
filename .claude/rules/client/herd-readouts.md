@@ -5,7 +5,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/inspector/FaunaPanel.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 2475-2694.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 2475-2704.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 
@@ -136,23 +136,33 @@ paths:
   §4.1) — taming as a hidden Sustain side effect, with a visible-but-disabled `Corral` beside it, is
   the exact UX problem that arc exists to fix. See `core_sim` Fauna & Wild Game — Domestication /
   husbandry.
-- **Herd staffing / "Herders" row — the under-herded deficit made VISIBLE** (`Hud.gd`
-  `_herd_summary_lines`; snapshot `HerdTelemetryState.herdersNeeded` / `herdedFraction` → decoded in
-  `native/src/lib.rs herds_to_array` as `herders_needed` (int) / `herded_fraction` (float)). A managed
-  herd needs `herders_needed` herders every turn to HOLD its tameness; understaffed (`herded_fraction <
-  1`) its domestication decays, it slips back to WILD, and stops earning Penning — the silent stall a
-  playtest hit ("🐄 Domesticated" with no signal Penning had stopped). Immediately after the Husbandry
-  row, ONLY when `herders_needed > 0` (0 = wild/unmanaged, `herded_fraction` defaults to `FULLY_HERDED`
-  = 1.0 = "no problem"), a **Herders** row shows a calm `N / N` when fully staffed (neutral ink) or an
-  amber `A / N — under-herded` (`assigned = round(herded_fraction · needed)`) when slipping, tinted via
-  `_herders_value_hex` (WARN, the shared overgrazing/pen-debit path). When under-herded AND
-  `domestication > 0`, a muted consequence line — `Tameness slipping — teaching Herding, not Penning.
-  Staff all N herders to hold it.` — states WHY Penning stalled and the one lever that fixes it. The
-  honest-label choice: the Husbandry label is LEFT as-is (0.98 still reads "Domesticating 100%") — the
-  new Herders + consequence lines carry the warning. ui_preview `herd_fully_herded` (calm `4 / 4`) /
-  `herd_under_herded` (amber `2 / 4 — under-herded` + the slipping line, Husbandry 98%). **Server half
-  (`herdersNeeded`/`herdedFraction` on `HerdTelemetryState`) already landed** — this is the client
-  consumer.
+- **Herd staffing / "Herders" row — the under-herded deficit made VISIBLE** (`DetailFormat.herd_summary_lines`;
+  snapshot `HerdTelemetryState.herdersNeeded` / `herdedFraction` → decoded in `native/src/lib.rs
+  herds_to_array` as `herders_needed` (int) / `herded_fraction` (float)). A managed herd needs
+  `herders_needed` herders every turn to HOLD the herd; understaffed it **sheds whole animals over its
+  labor capacity into a nearby WILD herd** — the animals *drift off*, tameness is never decayed (it
+  leaves with them), and a fully-abandoned herd bleeds out and despawns (fauna neglect-escape arc,
+  `docs/plan_fauna_neglect_escape.md`; supersedes the retired tameness-decay model). Immediately after
+  the Husbandry row, ONLY when `herders_needed > 0` (0 = wild/unmanaged, so `find_world_herd` reports 0
+  herders_needed and it never trips), a **Herders** row shows a calm `A / N` when fully staffed (neutral
+  ink) or an amber `A / N — under-herded` (WARN, `herders_value_hex`, the shared overgrazing/pen-debit
+  path) when short. **`A` is the ACTUAL herders staffed/staged**, from
+  `HudBandLaborState.assigned_herders_for(herd_id)` — the sum of the player's `Hunt` assignments on the
+  herd across bands, pending-aware — threaded into `herd_summary_lines` as a parameter (the `world_herds`
+  treatment). It is NEVER reconstructed as `round(herded_fraction · needed)`: that read last turn's
+  RESOLVED fraction and so showed a stale, self-contradictory "only 2 of 5 working" the instant the
+  player assigned a herder. When under-herded (`A < N`) AND `domestication > 0`, a muted consequence line
+  — **`Under-herded — animals are drifting off. Staff all N herders to hold the herd.`** (`HERDERS_SHED_FORMAT`;
+  the "tameness slipping" copy is retired) — states the shed and the one lever that stops it. ui_preview
+  `herd_fully_herded` (calm `4 / 4` — 4 staffed, `herded_fraction` a stale 0.4, so the OLD code would have
+  read `2 / 4`) / `herd_under_herded` (amber `4 / 6 — under-herded` + the drifting-off line, `herded_fraction`
+  a stale 1.0). **Server half already landed (this worktree's slices 1–2)** — this is the client consumer.
+  The **worker/assignment panel flags it too** (`BandPanelController._work_source_models` hunt branch):
+  a Hunt row whose herd is under-contained (`assigned_herders_for < herders_needed`) gets the established
+  overhunt ⚠ (amber marks + severity stripe + the `⚠` attention filter chip) and the
+  `WORK_ROW_UNDER_HERDED_NOTE` ("Too few herders — animals are drifting off.") in its inspector strip, so
+  the shed reads WHEREVER the herd is listed, not only in its drawer. band_panel_preview
+  `band_panel_under_herded`.
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
   `docs/plan_grazing_2d.md` §4a; snapshot `HerdTelemetryState.husbandryCeiling` → `husbandry_ceiling`,
   decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the

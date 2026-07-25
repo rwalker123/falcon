@@ -200,6 +200,8 @@ fn create_herds<'a>(
                 // Prey-sensing radius (Predators Phase 1a) — the predator's view-ring / "is a predator"
                 // signal. Appended last (append-only wire).
                 preySenseRadius: herd.prey_sense_radius,
+                // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
+                herdersNeededIfManaged: herd.herders_needed_if_managed,
             },
         );
         entries.push(entry);

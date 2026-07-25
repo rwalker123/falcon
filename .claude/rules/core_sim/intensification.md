@@ -4,7 +4,7 @@ paths:
   - "core_sim/src/data/intensification_ladder.json"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 1984-2119.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2063-2198.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

@@ -4,7 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/inspector/OverlayPanel.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 4017-4134.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 4027-4144.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

@@ -4,7 +4,7 @@ paths:
   - "core_sim/tests/grazing_*.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2747-3114.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2826-3193.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

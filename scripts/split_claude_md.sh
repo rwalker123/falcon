@@ -3,57 +3,87 @@
 #
 # Usage:  scripts/split_claude_md.sh [core_sim|client]     (no arg = both)
 #
-# The extraction is BYTE-EXACT: every rule file is assembled from `sed` line
-# ranges of the committed original, so no rationale can be silently paraphrased
-# away. Two transformations may be applied, both declared per section:
+# BOUNDARIES ARE ANCHORS, NOT LINE NUMBERS. Each cut is a literal line of the
+# source (a heading, a table row, or the lead of a top-level bullet where a
+# section has no headings). That is what makes this survive upstream merges:
+# a PR that rewrites 70 lines inside "World Generation Pipeline" changes every
+# line number after it, but the anchors still resolve, so re-running re-cuts
+# correctly with no hand re-mapping. The first cut of this tool was pinned to
+# line numbers and needed all 34 ranges re-derived after the first merge.
 #
-#   promote=yes   shift every heading up one level (`## `->`# `, `### `->`## `),
-#                 so a file carrying exactly one original `##` section gets it
-#                 as the H1. Safe: neither original has `##`/`###` inside a
-#                 fenced code block.
-#   table=yes     the file receives rows lifted out of a "Key Scripts Reference"
-#                 markdown table. Re-emit the 2-line table header so the rows
-#                 render, under their own `## Key scripts` heading. Row ranges
-#                 always sort below the prose ranges, so they land first.
+# Every anchor must match EXACTLY ONCE and the list must be in file order; both
+# are asserted, so an upstream edit that renames or duplicates a heading fails
+# loudly here instead of silently misfiling a section.
 #
-# Ranges are `A-B` or `A-B;C-D;...`, emitted in the order written.
+# The extraction is BYTE-EXACT: a rule file is `sed` line ranges of the source,
+# so no rationale can be silently paraphrased. Two declared transformations:
 #
-# Run from the repo root. The source is a PINNED pre-split blob, not a ref: once
-# the split lands, `HEAD:` is the slim hub, so re-running against HEAD would
-# re-split the hub. Pinning makes the tool re-runnable forever — edit the tables
-# below and re-run to re-cut boundaries against the true original.
+#   promote=yes   shift headings up one level (`## `->`# `, `### `->`## `), so a
+#                 file carrying one original `##` section gets it as the H1.
+#                 Safe: neither source has `##`/`###` inside a fenced block.
+#   table=yes     the file receives rows lifted out of "Key Scripts Reference".
+#                 Re-emit the 2-line table header so they render, under a
+#                 `## Key scripts` heading. Row anchors sort above the prose
+#                 anchors, so the rows land first.
+#
+# SOURCE is a PINNED pre-split blob, not `HEAD:` — once the split lands, `HEAD:`
+# is the slim hub and re-running against it would re-split the hub. Re-pin when
+# merging upstream changes into the unsplit file. NOTE: after this migration
+# lands, edits go straight into the rule files; re-running then re-cuts from the
+# pinned original and would drop rule-file edits made since. Re-pin first.
 set -euo pipefail
 
-# Pre-split blobs. Verify with: git cat-file blob <sha> | wc -l
-BLOB_CORE_SIM=79501afb38d3e40b5b3b46b53e737ace2283bfdd   # 4804 lines
-BLOB_CLIENT=7e98bc9f17e43705f30f8b1e26a04c34ca19055a     # 4268 lines
+# Pre-split blobs (origin/main @ PR #329/#341/#342 merges).
+# Verify with: git cat-file blob <sha> | wc -l
+BLOB_CORE_SIM=dcc757587f8c9308590997ee600abc64a34e6712   # 4926 lines
+BLOB_CLIENT=20553fb8f9b193b80338a8c06765d511b81b601e     # 4278 lines
 
-ORIG="$(mktemp)"; trap 'rm -f "$ORIG"' EXIT
+ORIG="$(mktemp)"; TMP="$(mktemp)"; trap 'rm -f "$ORIG" "$TMP"' EXIT
 
-# ---------------------------------------------------------------- helpers
-# Emit the concatenation of a `;`-separated range list from $ORIG.
-extract() {
-  local spec="$1" r
-  IFS=';' read -ra r <<< "$spec"
-  for range in "${r[@]}"; do
-    sed -n "${range%-*},${range#*-}p" "$ORIG"
+# ------------------------------------------------------------------ helpers
+# Resolve CUTS -> REGION_DEST[i] / REGION_START[i] / REGION_END[i].
+# Asserts each anchor matches exactly once and that the list is in file order.
+resolve_cuts() {
+  local total; total=$(wc -l < "$ORIG" | tr -d ' ')
+  REGION_DEST=(); REGION_START=(); REGION_END=()
+  local prev=0 i=0 entry anchor dest n line
+  for entry in "${CUTS[@]}"; do
+    # Split on the LAST `|`, not the first: table-row anchors are themselves
+    # markdown rows and contain `|`, so `%%|*` would yield an empty anchor.
+    anchor="${entry%|*}"; dest="${entry##*|}"
+    n=$(grep -cF -- "$anchor" "$ORIG" || true)
+    [ "$n" -eq 1 ] || { echo "  ANCHOR '$anchor' matched $n times (need exactly 1)" >&2; exit 1; }
+    line=$(grep -nF -- "$anchor" "$ORIG" | cut -d: -f1)
+    [ "$line" -gt "$prev" ] || { echo "  ANCHOR '$anchor' at line $line is out of order (previous $prev)" >&2; exit 1; }
+    [ $i -gt 0 ] && REGION_END[$((i-1))]=$((line-1))
+    REGION_DEST[$i]="$dest"; REGION_START[$i]="$line"
+    prev=$line; i=$((i+1))
   done
+  REGION_END[$((i-1))]=$total
 }
 
-# Total lines a range list covers.
-count() {
-  local spec="$1" r total=0
-  IFS=';' read -ra r <<< "$spec"
-  for range in "${r[@]}"; do
-    total=$(( total + ${range#*-} - ${range%-*} + 1 ))
+# Echo the `;`-separated range list for a destination, in file order.
+ranges_for_dest() {
+  local want="$1" i out=""
+  for i in "${!REGION_DEST[@]}"; do
+    [ "${REGION_DEST[$i]%^}" = "$want" ] && out="$out;${REGION_START[$i]}-${REGION_END[$i]}"
   done
-  echo "$total"
+  echo "${out#;}"
 }
 
-# emit_rule <outdir> <name> <ranges> <h1> <promote> <table>
+extract() { local r; IFS=';' read -ra r <<< "$1"
+  for range in "${r[@]}"; do sed -n "${range%-*},${range#*-}p" "$ORIG"; done; }
+
+count() { local r total=0; IFS=';' read -ra r <<< "$1"
+  for range in "${r[@]}"; do total=$(( total + ${range#*-} - ${range%-*} + 1 )); done; echo "$total"; }
+
+meta_for() { local n; for n in "${META[@]}"; do [ "${n%%|*}" = "$1" ] && { echo "${n#*|}"; return; }; done; echo "||no|no"; }
+
 emit_rule() {
-  local outdir="$1" name="$2" ranges="$3" h1="$4" promote="$5" table="$6"
-  local f="$outdir/$name.md"
+  local outdir="$1" name="$2" ranges h1 promote table m f
+  ranges="$(ranges_for_dest "$name")"
+  m="$(meta_for "$name")"; h1="${m%%|*}"; m="${m#*|}"; promote="${m%%|*}"; table="${m#*|}"
+  f="$outdir/$name.md"
   {
     echo "---"; echo "paths:"; paths_for "$name"; echo "---"; echo
     # Block-level HTML comments are stripped before a rule enters context, so
@@ -63,72 +93,92 @@ emit_rule() {
     echo "     Regenerate with scripts/split_claude_md.sh -->"
     echo
     [ -n "$h1" ] && { echo "$h1"; echo; }
-    [ "$table" = yes ] && {
-      echo "## Key scripts"; echo
-      echo "| Script | Purpose |"; echo "|--------|---------|"
-    }
+    [ "$table" = yes ] && { echo "## Key scripts"; echo; echo "| Script | Purpose |"; echo "|--------|---------|"; }
     # Portable BRE: BSD sed (macOS) has no `\+`, so `#\(#\+ \)` matches nothing.
     if [ "$promote" = yes ]; then extract "$ranges" | sed 's/^##\(#*\) /#\1 /'
     else                          extract "$ranges"; fi
   } > "$f"
-  printf '  %-24s %5d lines %7d B -> %s\n' \
-    "$name" "$(count "$ranges")" "$(wc -c < "$f" | tr -d ' ')" "$f"
+  printf '  %-24s %5d lines %7d B\n' "$name" "$(count "$ranges")" "$(wc -c < "$f" | tr -d ' ')"
 }
 
-# Reassemble each rule file and diff it against the original line ranges.
-verify() {
-  local outdir="$1" fail=0 entry name ranges h1 promote table n inv
-  for entry in "${SECTIONS[@]}"; do
-    IFS='|' read -r name ranges h1 promote table <<< "$entry"
-    n=$(count "$ranges")
+emit_hub() {
+  local blurb="$1" i
+  : > "$TMP"
+  for i in "${!REGION_DEST[@]}"; do
+    [ "${REGION_DEST[$i]%^}" = hub ] || continue
+    sed -n "${REGION_START[$i]},${REGION_END[$i]}p" "$ORIG" >> "$TMP"
+    [ "${REGION_DEST[$i]}" = "hub^" ] && cat "$blurb" >> "$TMP"
+  done
+  cp "$TMP" "$SRC"
+  printf '  hub: %s lines, %s B\n' "$(wc -l < "$SRC" | tr -d ' ')" "$(wc -c < "$SRC" | tr -d ' ')"
+}
+
+# Reassemble each rule and diff against the source ranges; assert full coverage.
+verify_and_account() {
+  local outdir="$1" total fail=0 name ranges m promote n inv moved=0 kept
+  total=$(wc -l < "$ORIG" | tr -d ' ')
+  for name in $(printf '%s\n' "${REGION_DEST[@]}" | sed 's/\^$//' | grep -v '^hub$' | sort -u); do
+    ranges="$(ranges_for_dest "$name")"; n=$(count "$ranges"); moved=$((moved+n))
+    m="$(meta_for "$name")"; m="${m#*|}"; promote="${m%%|*}"
     [ "$promote" = yes ] && inv='s/^#\(#*\) /##\1 /' || inv=''
     if diff -q <(extract "$ranges") \
-               <(tail -n "$n" "$outdir/$name.md" | { [ -n "$inv" ] && sed "$inv" || cat; }) \
-       >/dev/null
+               <(tail -n "$n" "$outdir/$name.md" | { [ -n "$inv" ] && sed "$inv" || cat; }) >/dev/null
     then printf '  OK    %-24s %5d\n' "$name" "$n"
     else printf '  FAIL  %-24s\n' "$name"
          diff <(extract "$ranges") <(tail -n "$n" "$outdir/$name.md" | { [ -n "$inv" ] && sed "$inv" || cat; }) | head -6
          fail=1; fi
   done
-  return $fail
+  kept=$(count "$(ranges_for_dest hub)")
+  echo "  accounting: $kept kept + $moved moved = $((kept+moved)) of $total original lines"
+  [ $((kept+moved)) -eq "$total" ] || { echo "  LINE ACCOUNTING MISMATCH"; return 1; }
+  [ $fail -eq 0 ] || return 1
+  echo "  OK: every original line is in the hub or in exactly one rule file, byte-exact."
 }
 
-# Assert every original line is in the hub or in exactly one rule file.
-account() {
-  local total="$1" kept="$2" entry moved=0
-  for entry in "${SECTIONS[@]}"; do
-    IFS='|' read -r _ ranges _ _ _ <<< "$entry"
-    moved=$(( moved + $(count "$ranges") ))
+run() { # <blob> <src> <outdir> <blurb>
+  git cat-file blob "$1" > "$ORIG"
+  SRC="$2"; local outdir="$3"
+  echo "== $SRC ($(wc -l < "$ORIG" | tr -d ' ') lines) =="
+  mkdir -p "$outdir"
+  resolve_cuts
+  local name
+  for name in $(printf '%s\n' "${REGION_DEST[@]}" | sed 's/\^$//' | grep -v '^hub$' | sort -u); do
+    emit_rule "$outdir" "$name"
   done
-  echo "  accounting: $kept kept + $moved moved = $(( kept + moved )) of $total original lines"
-  [ $(( kept + moved )) -eq "$total" ] || { echo "  LINE ACCOUNTING MISMATCH"; return 1; }
-  echo "  OK: every original line is either kept in the hub or moved to exactly one rule file."
+  emit_hub "$4"
+  echo "  -- verify --"; verify_and_account "$outdir"
 }
 
 # ============================================================ core_sim
 split_core_sim() {
-  SRC="core_sim/CLAUDE.md"
-  local OUT=".claude/rules/core_sim"
-  git cat-file blob "$BLOB_CORE_SIM" > "$ORIG"
-  local TOTAL; TOTAL=$(wc -l < "$ORIG" | tr -d ' ')
-  echo "== $SRC ($TOTAL lines) =="
-  mkdir -p "$OUT"
-
-  # name|ranges|extra-h1|promote|table
-  SECTIONS=(
-    "worldgen|112-1034||yes|no"
-    "fauna|1070-1506||yes|no"
-    "husbandry|1507-1983|# Husbandry — the yield ladder, the \`Tame\` verb, Corral|yes|no"
-    "intensification|1984-2119||yes|no"
-    "flora|2120-2474||yes|no"
-    "cultivation|2475-2746|# Cultivation and the \`Sow\` verb — the plant twin of the pen|yes|no"
-    "graze|2747-3114||yes|no"
-    "combat|3115-3307||yes|no"
-    "yield-forecast|3308-3446||yes|no"
-    "telling|3447-3881||yes|no"
-    "expeditions|3882-4259|# Expeditions — wondrous sites, scouting, and the hunt|no|no"
-    "campaign|4260-4638||yes|no"
-    "ecs-systems|4668-4798|# ECS systems reference — power, crisis, culture, knowledge, fog of war|no|no"
+  # anchor|destination   (hub^ = emit the routing blurb after this region)
+  CUTS=(
+    "# core_sim - Simulation Engine|hub^"
+    "## Configuration Files|hub"
+    "## World Generation Pipeline|worldgen"
+    "## Ecosystem Food Modules|hub"
+    "## Fauna & Wild Game|fauna"
+    "### The husbandry yield ladder — every rung pays MSY|husbandry"
+    "## The Intensification Ladder|intensification"
+    "## Depletable Forage (Intensification §0-ii)|flora"
+    "### Cultivation (Intensification Phase 1a)|cultivation"
+    "## The Graze (Pasture) Layer (Grazing Phase 2a)|graze"
+    "## Combat & Casualties (Predators arc — Phase 0)|combat"
+    "## Pre-commit Yield Forecast (per-source, on the wire)|yield-forecast"
+    "## The Telling — the narrative beat engine|telling"
+    "## Wondrous Sites|expeditions"
+    "## Campaign Loop & System Activation|campaign"
+    "## Turn Loop|hub"
+    "## ECS Systems Reference|ecs-systems"
+    "## See Also|hub"
+  )
+  META=(
+    "husbandry|# Husbandry — the yield ladder, the \`Tame\` verb, Corral|yes|no"
+    "cultivation|# Cultivation and the \`Sow\` verb — the plant twin of the pen|yes|no"
+    "expeditions|# Expeditions — wondrous sites, scouting, and the hunt|no|no"
+    "ecs-systems|# ECS systems reference — power, crisis, culture, knowledge, fog of war|no|no"
+    "worldgen||yes|no" "fauna||yes|no" "intensification||yes|no" "flora||yes|no"
+    "graze||yes|no" "combat||yes|no" "yield-forecast||yes|no" "telling||yes|no" "campaign||yes|no"
   )
   paths_for() {
     case "$1" in
@@ -208,53 +258,86 @@ EOF
 EOF
 ;;    esac
   }
-
-  local entry
-  for entry in "${SECTIONS[@]}"; do
-    IFS='|' read -r n r h p t <<< "$entry"; emit_rule "$OUT" "$n" "$r" "$h" "$p" "$t"
-  done
-
-  { extract "1-20"; cat "$HUB_BLURB_CORE_SIM"; extract "21-111;1035-1069;4639-4667;4799-4804"; } > "$SRC"
-  echo "  hub: $(wc -l < "$SRC" | tr -d ' ') lines, $(wc -c < "$SRC" | tr -d ' ') B"
-  account "$TOTAL" "$(count '1-20;21-111;1035-1069;4639-4667;4799-4804')"
-  echo "  -- verify --"; verify "$OUT"
+  run "$BLOB_CORE_SIM" "core_sim/CLAUDE.md" ".claude/rules/core_sim" "$HUB_BLURB_CORE_SIM"
 }
 
 # ============================================================== client
 split_client() {
-  SRC="clients/godot_thin_client/CLAUDE.md"
-  local OUT=".claude/rules/client"
-  git cat-file blob "$BLOB_CLIENT" > "$ORIG"
-  local TOTAL; TOTAL=$(wc -l < "$ORIG" | tr -d ' ')
-  echo "== $SRC ($TOTAL lines) =="
-  mkdir -p "$OUT"
-
-  # Rows 139-222 are the Key Scripts Reference table, routed row-group by
-  # row-group to the rule that owns each script. Row ranges always sort below
-  # the prose ranges, so `extract` lays them out first, under the re-emitted
-  # table header. Rows 139-144 (boot/menu/settings) stay in the hub.
-  SECTIONS=(
-    "native-extension|243-336|# Native extension — the GDExtension module map|yes|no"
-    "map-renderers|145-151;337-395|# MapView renderers and the 2D minimap|no|yes"
-    "terrain-textures|220-221;396-501|# Terrain textures — assets, config, loading, 2D pipeline|no|yes"
-    "terrain-blend-shader|502-1446|# The terrain blend shader — edge blending, shore, canopy, peaks, rivers|yes|no"
-    "panel-framework|203-203;1447-1552|# HUD panel framework — docked PanelCards|no|yes"
-    "map-markers|1553-1605||yes|no"
-    "selection-card|178-178;180-180;1612-1775|# The selection card — ONE card, ONE list, ONE drawer|no|yes"
-    "labor-ui|171-172;179-179;185-186;1776-2474|# Labor allocation UI — the compose sheet and forecasts|no|yes"
-    "herd-readouts|2475-2694|# Herd readouts — fog gate, ecology, husbandry, corral, the pen|no|no"
-    "land-readouts|2695-2947|# Land readouts — forage, flora, the crop picker, pasture, the meters|no|no"
-    "band-readouts|191-191;193-193;2948-3182|# Band readouts — demographics, food, morale, wellbeing, tile facts|no|yes"
-    "turn-orb|176-177;201-201;3183-3280|# The turn orb and the attention model|no|yes"
-    "targeting|181-181;1606-1611;3281-3464|# Command targeting — move-band and expeditions|no|yes"
-    "band-city-panel|182-182;192-192;194-194;3465-3902|# The Band/City dockable panel|no|yes"
-    "inspector-panels|152-168;3903-4016|# Inspector panels|no|yes"
-    "overlay-channels|4017-4134||yes|no"
-    "hud-modules|169-170;173-175;183-184;187-190;222-222|# Hud.gd and the ui/hud module reference|no|yes"
-    "telling-panel|211-213|# The Telling panel and the narrative fork|no|yes"
-    "sprites-widgets|195-200;202-202;204-210|# Sprites, icons, styling and small widgets|no|yes"
-    "test-harnesses|214-219|# Headless verification harnesses (tools/)|no|yes"
-    "scripting-capability|4178-4237||yes|no"
+  # Rows of the Key Scripts Reference table are routed to the rule that owns
+  # each script; the boot/menu/settings rows stay in the hub.
+  CUTS=(
+    "# Godot Thin Client|hub^"
+    "| \`MapView.gd\` ||map-renderers"
+    "| \`Inspector.gd\` ||inspector-panels"
+    "| \`Hud.gd\` ||hud-modules"
+    "| \`ui/hud/HudBandLaborState.gd\` ||labor-ui"
+    "| \`ui/hud/LegendController.gd\` ||hud-modules"
+    "| \`ui/hud/TurnOrbController.gd\` ||turn-orb"
+    "| \`ui/hud/SelectionCardController.gd\` ||selection-card"
+    "| \`ui/hud/DrawerComposeController.gd\` ||labor-ui"
+    "| \`ui/hud/SubjectDrawerController.gd\` ||selection-card"
+    "| \`ui/hud/TargetingController.gd\` ||targeting"
+    "| \`ui/hud/BandPanelController.gd\` ||band-city-panel"
+    "| \`ui/hud/DockScrollFit.gd\` ||hud-modules"
+    "| \`ui/hud/ComposeSheet.gd\` ||labor-ui"
+    "| \`ui/hud/HudWidgets.gd\` ||hud-modules"
+    "| \`ui/hud/BandDetailLines.gd\` ||band-readouts"
+    "| \`ui/BandCityPanel.gd\` / \`.tscn\` ||band-city-panel"
+    "| \`ui/BandFoodStatus.gd\` ||band-readouts"
+    "| \`ui/PenStatus.gd\` ||band-city-panel"
+    "| \`ui/TileHabitability.gd\` ||sprites-widgets"
+    "| \`ui/TurnOrb.gd\` / \`ui/TurnOrb.tscn\` ||turn-orb"
+    "| \`ui/MagnifierButton.gd\` ||sprites-widgets"
+    "| \`ui/AutoSizingPanel.gd\` ||panel-framework"
+    "| \`ui/HudStyle.gd\` ||sprites-widgets"
+    "| \`ui/NarrativeForkPanel.gd\` ||telling-panel"
+    "| \`tools/ui_preview.gd\` / \`.tscn\` ||test-harnesses"
+    "| \`assets/terrain/TerrainTextureManager.gd\` ||terrain-textures"
+    "| \`ui/hud/hud_const.gd\` ·|hud-modules"
+    "## Architecture|hub"
+    "### Native Extension|native-extension"
+    "## Minimap System|map-renderers"
+    "## Terrain Texture System|terrain-textures"
+    "### Edge Blending — per-pixel biome-blend shader (Approach B)|terrain-blend-shader"
+    "## HUD Panel Framework (Docked PanelCards)|panel-framework"
+    "## Map markers (MapView hex-icon stack UX)|map-markers"
+    "## Command Targeting|targeting"
+    "- **The selection card|selection-card"
+    "- **Labor allocation UI**|labor-ui"
+    "- **Fog gate on live tile contents|herd-readouts"
+    "- **Forage-patch cultivation readout**|land-readouts"
+    "- **Demographics readout**|band-readouts"
+    "- **Band alerts → the turn orb**|turn-orb"
+    "- **Targeting: move-band + send-expedition|targeting"
+    "## Band/City dockable panel|band-city-panel"
+    "## Inspector Panels|inspector-panels"
+    "## Overlay Channels|overlay-channels"
+    "## Typography & Theming|hub"
+    "## Scripting Capability Model|scripting-capability"
+    "## Hotkeys|hub"
+  )
+  META=(
+    "native-extension|# Native extension — the GDExtension module map|yes|no"
+    "map-renderers|# MapView renderers and the 2D minimap|no|yes"
+    "terrain-textures|# Terrain textures — assets, config, loading, 2D pipeline|no|yes"
+    "terrain-blend-shader|# The terrain blend shader — edge blending, shore, canopy, peaks, rivers|yes|no"
+    "panel-framework|# HUD panel framework — docked PanelCards|no|yes"
+    "map-markers||yes|no"
+    "selection-card|# The selection card — ONE card, ONE list, ONE drawer|no|yes"
+    "labor-ui|# Labor allocation UI — the compose sheet and forecasts|no|yes"
+    "herd-readouts|# Herd readouts — fog gate, ecology, husbandry, corral, the pen|no|no"
+    "land-readouts|# Land readouts — forage, flora, the crop picker, pasture, the meters|no|no"
+    "band-readouts|# Band readouts — demographics, food, morale, wellbeing, tile facts|no|yes"
+    "turn-orb|# The turn orb and the attention model|no|yes"
+    "targeting|# Command targeting — move-band and expeditions|no|yes"
+    "band-city-panel|# The Band/City dockable panel|no|yes"
+    "inspector-panels|# Inspector panels|no|yes"
+    "overlay-channels||yes|no"
+    "hud-modules|# Hud.gd and the ui/hud module reference|no|yes"
+    "telling-panel|# The Telling panel and the narrative fork|no|yes"
+    "sprites-widgets|# Sprites, icons, styling and small widgets|no|yes"
+    "test-harnesses|# Headless verification harnesses (tools/)|no|yes"
+    "scripting-capability||yes|no"
   )
   paths_for() {
     local C="clients/godot_thin_client"
@@ -353,16 +436,7 @@ EOF
 EOF
 ;;    esac
   }
-
-  local entry
-  for entry in "${SECTIONS[@]}"; do
-    IFS='|' read -r n r h p t <<< "$entry"; emit_rule "$OUT" "$n" "$r" "$h" "$p" "$t"
-  done
-
-  { extract "1-144"; cat "$HUB_BLURB_CLIENT"; extract "223-242;4135-4177;4238-4268"; } > "$SRC"
-  echo "  hub: $(wc -l < "$SRC" | tr -d ' ') lines, $(wc -c < "$SRC" | tr -d ' ') B"
-  account "$TOTAL" "$(count '1-144;223-242;4135-4177;4238-4268')"
-  echo "  -- verify --"; verify "$OUT"
+  run "$BLOB_CLIENT" "clients/godot_thin_client/CLAUDE.md" ".claude/rules/client" "$HUB_BLURB_CLIENT"
 }
 
 HUB_BLURB_CORE_SIM="${HUB_BLURB_CORE_SIM:-scripts/hub_blurb_core_sim.md}"

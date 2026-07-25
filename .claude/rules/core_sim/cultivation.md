@@ -4,7 +4,7 @@ paths:
   - "core_sim/tests/forage_*.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2475-2746.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2554-2825.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

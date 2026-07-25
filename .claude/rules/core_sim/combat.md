@@ -6,7 +6,7 @@ paths:
   - "core_sim/tests/predators.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 3115-3307.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 3194-3429.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 
@@ -200,6 +200,49 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   instead; a herbivore reads 0 and keeps drawing its `grazeRangeRadius` ring. **Client half (a separate
   task):** the native reader + the view-ring render. Guard:
   `snapshot::tests::herd_snapshot_reports_prey_sense_radius_for_carnivores_only`.
+
+## Predator raids (Phase 1b) — the raid trigger + the Warrior goes live
+
+**A carnivore with `aggression > 0` within `predators.raid_radius` of a resident band raids its camp**,
+and the band is defended by its **Warriors** — the long-inert Warrior role's **first live consumer**.
+Design: `docs/plan_predators.md` § "Phase 1b". `SpeciesDef.aggression` (set on the wolf row since
+Phase 0, inert until now) is the trigger; `diet` gates it to carnivores.
+
+- **`advance_predator_raids`** (`systems/labor.rs`, sibling of the Phase-0 hunt-danger adapter) runs in
+  the **Population stage right after `advance_labor_allocation`** (so warrior counts and band positions
+  are current) and **before `advance_population_migration`**. For each `ResidentBand` × each carnivore
+  herd, if the pack's **raid attack `= combat.attack × aggression > 0`** (aggression 0 ⇒ no raid) and it
+  is within `predators.raid_radius` (odd-r `hex_distance_wrapped`) of the band, it builds a
+  `FightPayload`, resolves it through the neutral `combat::resolve_fight`, and applies **only the
+  band/defender side's** casualties — **working-age only this phase** (`cohort.apply_combat_casualties`,
+  one mutation per band; multiple raiders are additive/order-independent). `wounded` is surfaced in the
+  feed but mechanically inert (recovery is a later slice, exactly as in Phase 0).
+- **The band side is TWO contingents, and that is load-bearing** — the placeholder resolver clamps a
+  side's losses to *its own* headcount, so a `count 0` side takes ZERO losses. A warriors-only band side
+  would therefore give a **0-warrior band zero casualties** — the exact inverse of "an under-guarded
+  band costs it people". So the fight is: **Aggressor** = one representative of the pack
+  (`count 1.0`, profile `combat` with `attack = attack × aggression`) — a Phase-1b simplification that
+  keeps `power_enemy` modest so a handful of warriors can meaningfully cut the loss ratio (the whole pack
+  engaged would make every raid a massacre); **Defender** = the band's **Warriors** (`count =
+  workers_on(Warrior)` clamped to working-age, profile = the creatures roster's `person` — the armed
+  defenders that add power and shift the split toward wounded) **plus the exposed populace**
+  (`count = min(predators.raid_exposure, working_age − warriors)`, profile `{ attack 0, person.defense,
+  person.range }` — the unarmed folk that can die and dilute the blow but add no offense). The seed is
+  rollback-stable and distinct per (predator, band) pair (both the herd id and the band entity hashed).
+- **Config** — two `#[serde(default)]` levers on `PredatorConfig` (`fauna_config.json` `predators`
+  block), both playtest dials: **`raid_radius`** (`2` — how close the pack must be to raid; its own
+  lever, deliberately tighter than the `prey_sense_radius` disk) and **`raid_exposure`** (`4.0` — how
+  many working-age folk stand exposed beyond the warriors, bounding a raid to a skirmish).
+  `FaunaConfig::validate` rejects `raid_radius < 1` and a non-finite/`<= 0` `raid_exposure`.
+- **Feed** — `CommandEventKind::PredatorRaid` (`"predator_raid"`, server label "Predator raid") fires
+  each casualty-causing raid turn: label names the **species** (`"A {species} raid cost {N} lives"`),
+  detail carries the fractional `killed`/`wounded` + `warriors` + `species`. Edge-gating a repeated raid
+  to one line is deferred to Phase 3.
+- **The Warrior labor branch stays a no-op in the labor pass** (warriors do no per-worker yield) but is
+  **no longer inert overall** — the warrior head-count is consumed here as the band's defending
+  contingent. Tests: `core_sim/tests/predator_raid.rs` (unguarded band bleeds + narrates; warriors cut
+  losses; no raid from a herbivore or an out-of-range carnivore; aggression scales lethality;
+  determinism) + the two `fauna_config` rejection tests.
 
 ---
 

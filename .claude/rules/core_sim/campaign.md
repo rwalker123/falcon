@@ -8,7 +8,7 @@ paths:
   - "core_sim/tests/{supply_network,sedentarization}.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 4260-4638.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 4382-4760.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

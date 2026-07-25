@@ -404,7 +404,7 @@
     }
   },
   "predators": {
-    "_comment": "THE DEDICATED PREDATOR PASS + PREY-LIMITED ECOLOGY (Predators Phase 1a). per_biome is the carnivore twin of abundance.per_biome (per-tile pack-spawn probability by food module). There is NO max_packs cap: the pack count is PREY-DERIVED per carnivore species — round(eligible_prey_herds x SpeciesDef.prey_ratio) — because a predator population is defined by its prey base (the ratio lives on the predator's own row). min_spacing keeps packs apart; predators stay OFF the max_total_game prey budget by seeding from this pass alone. predation_escapement_fraction is the functional-response taper — predation draws a prey herd down to this fraction of its cap but no lower in one turn (the predator twin of graze.overgraze_escapement_fraction). prey_sense_radius is the SINGLE prey-sensing-disk dial (a global lever, not a per-species field) — deliberately WIDER than a graze footprint (0-1) because prey are sparse points, so a graze-sized disk would contain zero prey most turns and snap K to 0 (widened 3->4 to cut transient-zero-prey despawns of roaming packs). PLAYTEST DIALS.",
+    "_comment": "THE DEDICATED PREDATOR PASS + PREY-LIMITED ECOLOGY (Predators Phase 1a). per_biome is the carnivore twin of abundance.per_biome (per-tile pack-spawn probability by food module). There is NO max_packs cap: the pack count is PREY-DERIVED per carnivore species — round(eligible_prey_herds x SpeciesDef.prey_ratio) — because a predator population is defined by its prey base (the ratio lives on the predator's own row). min_spacing keeps packs apart; predators stay OFF the max_total_game prey budget by seeding from this pass alone. predation_escapement_fraction is the functional-response taper — predation draws a prey herd down to this fraction of its cap but no lower in one turn (the predator twin of graze.overgraze_escapement_fraction). prey_sense_radius is the SINGLE prey-sensing-disk dial (a global lever, not a per-species field) — deliberately WIDER than a graze footprint (0-1) because prey are sparse points, so a graze-sized disk would contain zero prey most turns and snap K to 0 (widened 3->4 to cut transient-zero-prey despawns of roaming packs). PREDATORS PHASE 1b — THE RAID TRIGGER: raid_radius is how close (odd-r hex distance) a carnivore with aggression>0 must be to a band to raid its camp (systems::advance_predator_raids), its OWN dial and deliberately TIGHTER than the prey_sense_radius disk (a raid is the pack reaching the camp, not merely sensing game). The band is defended by its Warriors; raid_exposure bounds the exposed populace (the working-age folk beyond the warriors who stand in the pack's path) so a raid is a skirmish, not a massacre. PLAYTEST DIALS.",
     "per_biome": {
       "savanna_grassland": 0.02,
       "temperate_forest": 0.02,
@@ -413,7 +413,9 @@
     },
     "min_spacing": 6,
     "predation_escapement_fraction": 0.15,
-    "prey_sense_radius": 4
+    "prey_sense_radius": 4,
+    "raid_radius": 2,
+    "raid_exposure": 4.0
   },
   "abundance": {
     "per_biome": {
@@ -469,6 +471,10 @@
     "pen_radius_max": 2,
     "_comment_herders_hysteresis_fraction": "HERDER-REQUIREMENT HYSTERESIS DEADBAND, as a fraction of animals_per_herder. herders_needed = ceil(animals / animals_per_herder) flickers +/-1 every turn when a Sustain-hunted slow herd's biomass breathes across an animals_per_herder multiple (the lumpy whole-animal kill) -- e.g. a Wild Aurochs near 12 head flips 1<->2, and since the herded_fraction decay lags a turn behind, the player is told 'staff all 1' then 'staff all 2' and can't satisfy either, slipping the tameness. Herd::stabilize_herders_needed (run every turn in advance_husbandry) breaks the flicker asymmetrically: UP IMMEDIATELY when the raw need rises (under-herding is harmful), DOWN only once the herd falls below (current-1)*animals_per_herder - animals_per_herder*this (a genuine multi-band drop, not a one-animal dip). 0.25 ~ a quarter of a herder's flock, enough to absorb the +/-1 oscillation; 0 disables the deadband (raw stateless flicker). PLAYTEST DIAL.",
     "herders_hysteresis_fraction": 0.25,
+    "_comment_escape_fractions": "NEGLECT SHEDS ANIMALS, IT DOES NOT UN-TAME THEM (docs/plan_fauna_neglect_escape.md). An under-contained managed herd sheds whole animals over its labor capacity into a nearby WILD herd of the same species; tameness (domestication_progress) NEVER decays from neglect. Each turn the OVERAGE (= (1 - herded_fraction) * current_animals) sheds at rate * (1 + seeded_jitter), quantised to whole animals with a min-1 floor when overage >= 1, so the herd self-limits toward its labor capacity and stops (no overshoot to zero unless capacity is 0 = total abandonment). pastoral_escape_fraction 0.25 (unfenced, faster) > pen_escape_fraction 0.10 (the fence buys time) — validate() enforces pen < pastoral so 'a pen that leaks faster than open range' is unrepresentable. escape_fraction_jitter 0.25 = the seeded RNG varies each rate +/-25% turn to turn (deterministic under rollback, off the world seed stream). PLAYTEST DIALS.",
+    "pastoral_escape_fraction": 0.25,
+    "pen_escape_fraction": 0.10,
+    "escape_fraction_jitter": 0.25,
     "pastoral": {
       "_comment": "The MOBILE DOMESTICATED rung: passive (no worker, no upkeep — a roaming herd grazes for free). Its growth is now PER-SPECIES (wild_r * pastoral_gain, capped), so a tamed herd grows faster than a wild one but by a MULTIPLE of its own rate. The ecology block below carries only the shared phase bands; its regrowth_rate is unused (folded per-species by fauna::herd_ecology).",
       "ecology": {}

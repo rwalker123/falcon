@@ -5,7 +5,7 @@ paths:
   - "core_sim/tests/flora_*.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2120-2474.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2199-2553.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

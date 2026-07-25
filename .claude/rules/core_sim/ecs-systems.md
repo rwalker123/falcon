@@ -7,7 +7,7 @@ paths:
   - "core_sim/tests/capability_gating.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 4668-4798.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 4790-4920.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

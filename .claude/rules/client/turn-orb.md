@@ -4,7 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/TurnOrb.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 176-177;201-201;3183-3280.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 176-177;201-201;3193-3290.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

@@ -4,7 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/inspector/**"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 152-168;3903-4016.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 152-168;3913-4026.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

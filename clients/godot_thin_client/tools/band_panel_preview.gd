@@ -73,6 +73,10 @@ const EXTRACTIVE_ROW_HERD_ID := "game_deer_07"
 ## pen and take at Surplus instead", and on the control row an ordinary change of take.
 const PICKED_RUNG_POLICY := "surplus"
 
+## The under-contained managed herd (fauna neglect-escape arc): a Corralled herd that needs 4 herders
+## but is staffed with only 2, so it sheds animals — the work-board ⚠ / drifting-off note case.
+const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
+
 # The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
 const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
@@ -455,6 +459,25 @@ func _ready() -> void:
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_POLICY, false)
 	_hud._bandpanel._work_policy_open = false
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
+	# UNDER-CONTAINED managed herd in the WORK board (fauna neglect-escape arc): a Corralled herd that
+	# needs 4 herders but is staffed with only 2 sheds animals to the wild. It must read as trouble
+	# WHEREVER it is listed — here, on its work row — with the established overhunt ⚠ (amber marks +
+	# amber severity stripe) and the "Too few herders — animals are drifting off." note in the
+	# inspector, not only in its own drawer.
+	_hud.update_herds(_under_herded_work_herd_fixtures())
+	_hud.update_band_alerts([_under_herded_work_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_under_herded")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
+	# Restore the reference band so later states start from their usual subject.
+	_hud.update_herds(_herd_fixtures())
+	_hud.update_band_alerts([_band_fixture()])
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
 	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
@@ -1165,6 +1188,58 @@ func _investment_policy_herd_fixtures() -> Array:
 			},
 		},
 	]
+
+## A band keeping an UNDER-CONTAINED pen: one keeper works the Corralled herd, but it needs 4 herders.
+## The work board must flag its Hunt row (fauna neglect-escape arc). `herded_fraction` is left STALE at
+## 1.0 to prove the flag derives from the ACTUAL staffed count (2 < needed 4), not the lagging fraction.
+func _under_herded_work_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 918
+	band["id"] = "Band 18"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 2, "workers_needed": 4, "policy": "corral",
+			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": 5.40, "sustainable_yield": 5.40, "overdraws": false},
+		{"kind": "scout", "workers": 1},
+	]
+	return band
+
+## The Corralled herd that row works: needs 4 herders, `herded_fraction` a stale 1.0 (the OLD code
+## would have read it "fully herded"), so only the actual staffed count exposes the shed.
+func _under_herded_work_herd_fixtures() -> Array:
+	return [
+		{
+			"id": UNDER_HERDED_WORK_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
+			"population": 210, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 1.0, "corralled": true, "herders_needed": 4, "herded_fraction": 1.0,
+			"per_worker_yield": 5.40,
+			"hunt_policy_ceilings": {
+				"sustain": 5.40, "surplus": 6.0, "market": 7.0, "eradicate": 8.0,
+				"tame": 5.40, "corral": 5.40,
+			},
+		},
+	]
+
+## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
+## `under_herded` model flag the row + inspector tint from.
+func _assert_under_herded_work_row(herd_id: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var found := false
+	for model in _hud._bandpanel._work_source_models(band, 0):
+		var m: Dictionary = model
+		if String(m.get("herd_id", "")) != herd_id:
+			continue
+		found = true
+		if not bool(m.get("under_herded", false)):
+			push_error("band_panel_preview: expected under_herded on the Hunt row for %s" % herd_id)
+		elif not String(m.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
+			push_error("band_panel_preview: expected the ⚠ mark on the under-herded row for %s" % herd_id)
+		elif not String(m.get("note", "")).contains("drifting off"):
+			push_error("band_panel_preview: expected the drifting-off note on the under-herded row for %s" % herd_id)
+		else:
+			print("band_panel_preview: assert OK — under-herded Hunt row flags the shed (⚠ + note)")
+	if not found:
+		push_error("band_panel_preview: no Hunt work row for %s" % herd_id)
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
 ## repage so the picker actually renders. `_work_policy_open` is otherwise never true in either

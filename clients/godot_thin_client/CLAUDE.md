@@ -190,9 +190,6 @@ arc — that is what keeps two concurrent worktrees off the same file. A new
 script's row goes in that rule's `## Key scripts` table, not here. Only add here
 if it is true of all client work.
 
-
----
-
 ## Architecture
 
 ### Scene Structure

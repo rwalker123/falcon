@@ -287,7 +287,7 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation,
+    advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
     expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
     output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
     TradeDiffusionEvent,
@@ -720,6 +720,10 @@ pub fn build_headless_app() -> App {
                 // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
                 systems::advance_expeditions,
                 systems::advance_labor_allocation,
+                // Predator raids fire right after labor so warrior counts and band positions are
+                // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
+                // raids its camp, the band defended by its Warriors (the role's first live consumer).
+                systems::advance_predator_raids,
                 // Wellbeing migration runs after demographics + this turn's yield payouts so
                 // morale/discontent are current and productivity has already been applied at each
                 // yield site; it then relocates discontented people (population conserved).

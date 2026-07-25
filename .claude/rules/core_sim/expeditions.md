@@ -6,7 +6,7 @@ paths:
   - "core_sim/tests/expedition_hunt.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 3882-4259.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 4004-4381.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

@@ -4,7 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/{FoodIcons,TileHabitability,TileClimate}.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 2695-2947.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 2705-2957.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

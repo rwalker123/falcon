@@ -5,7 +5,7 @@ paths:
   - "core_sim/tests/{fauna_husbandry,grazing_2d_pen,rollback_tended_survival}.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 1507-1983.
+<!-- Extracted verbatim from core_sim/CLAUDE.md lines 1589-2062.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 
@@ -183,15 +183,13 @@ gated, **paid** verb, so both food webs read the same:
   either. Ownership is **not** in the gate: `accrue_domestication` owns the
   `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
   Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
-- **Feral if abandoned.** `advance_husbandry` spares a herd worked under `Tame` **last** turn
-  (`Herd::tamed_this_turn` — a transient, non-persisted flag, the animal twin of
-  `ForagePatch::tended_this_turn` with the same deliberate Logistics-reads-what-Population-wrote lag);
-  an abandoned part-tamed herd bleeds the `animal:pastoral` rung's `decay_per_turn` **× the same
-  species `taming_rate`** (slice 3c — the multiplier is a *timescale*: a Steppe Runner forgets 5×
-  slower than a rabbit, so the rung's 4:1 build:decay ratio holds for every species and the ladder's
-  "taming must out-run its decay" bound needs no per-species restatement — only `taming_rate > 0`,
-  which `FaunaConfig::validate` enforces), its owner lapsing at zero. **Distinct from an ordinary hunt
-  at any other policy**: a Sustain hunt *harvests* a herd, it must not hold the taming meter up.
+- **Tameness is PERMANENT once earned (neglect-escape arc, `docs/plan_fauna_neglect_escape.md` §2.1).**
+  `domestication_progress` is monotone-up: `Tame` builds it and **nothing decays it** — the tameness-bleed
+  (`decay_under_herded`/`decay_domestication`) is deleted. An abandoned part-tamed herd keeps its earned
+  progress; what neglect costs is **animals** (the shed, see "Herding is standing labor"). `Herd::tamed_this_turn`
+  is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
+  `taming_rate` now scales only the `Tame` *build* (progress-up), never a decay. **Distinct from an ordinary
+  hunt at any other policy**: a Sustain hunt *harvests* a herd; only `Tame` raises the taming meter.
 - **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
   `CommandEventKind::Tame`) — **sets the `Tame` policy** on the bands already hunting the herd, the
   command form of the client's policy picker. It **tames nothing outright**. It targets a **herd id**
@@ -319,28 +317,27 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     on staying**: it out-pays every other rung, but only while you feed it, every turn, forever — and
     its food cost lands **exactly when food is scarce**, so a bad winter forces a real choice (eat the
     seed corn and lose future yield, or go hungry).
-  - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
-    deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
-    tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
-    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated (pastoral) herd —
-    which, since slice 3b, pays **nothing at all** until a band hunts it again. **The pen is lost, not
-    merely opened** — re-penning pays the
-    full 25-turn `Corral` investment again, at the herd's new position. *Why zero, when a patch's
-    `cultivation_progress` only decays gradually:* **a patch is a place and a herd is not.**
-    `cultivation_progress` can survive partially because the improvement sits on a tile that cannot
-    move, so leftover progress still refers to the same patch; `corral_progress` lives on the **herd**,
-    which roams — so any retained progress would re-materialize the pen at whatever tile the animal has
-    since wandered to (a teleporting corral) and make abandoning a pen cost **one** turn instead of the
-    rebuild. Losing the pen is what makes the tending obligation real (the "pins the band" mechanic).
-    Because the escape now **destroys a 25-turn investment**, it is **never silent**: it pushes a
-    `CommandEventKind::Corral` feed line to the owner — the same kind the pen's *completion* pushes
-    (one kind for the pen's whole life) — reading `"The <species> herd broke out — untended, the pen
-    is lost"` (human text names the **species**, never the internal herd id) with
-    `status=escaped reason=untended action=corral herd=<id> x=<x> y=<y>` in the detail field.
-    A corralled herd is exempt from the pastoral even-split here (it's paid place-local by its keeper).
-    `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
-    tend it. **This binary escape is the *no-keeper* case only** — nobody is minding the gate. A keeper
-    who is present but *broke* starves the herd instead (above); it never breaks out.
+  - *Sheds-if-under-contained (neglect-escape arc, `docs/plan_fauna_neglect_escape.md`)* — the binary
+    escape is **retired**. In `advance_husbandry` (Logistics, before Population — the one-turn-lag flag,
+    like `ForagePatch::tended_this_turn`) an under-contained pen **sheds whole animals over its labor
+    capacity** into the wild web at `pen_escape_fraction` (slower than pastoral — the fence buys time),
+    and an untended one is BOTH un-herded (sheds) and un-fed (`pen_fed_fraction = NOT_FED`, so it does
+    not regrow — a fast breeder's growth would otherwise cancel the shed). A **fully-abandoned pen bleeds
+    its whole flock out and DESPAWNS**: it keeps shedding until it can no longer shed a whole animal
+    (`biomass < body_mass`), then the emptied entity is removed (`advance_husbandry` Phase 3) — the pen,
+    fence and all, dies with it (no field reset needed — the entity is gone). `owner`/`corralled_at`
+    are **never cleared at a floor** (that would stop the shed and strand a husk); the herd stays
+    corralled and bleeds down. The flock is already in the wild web via the shed (at domestication 0),
+    so nothing is lost but the empty pen — and losing it is what makes the tending obligation real (the
+    "pins the band" mechanic), re-penning being a fresh herd's full 25-turn investment. Because loss
+    **destroys a 25-turn investment**, it is **never silent**: `announce_pen_lost` pushes the same
+    `CommandEventKind::Corral` feed line the pen's *completion* pushes (one kind for the pen's whole
+    life), reading `"The <species> herd has drifted off — untended, the pen is lost"` with
+    `status=escaped reason=untended action=corral herd=<id> x=<x> y=<y>` in the detail. `corral_at`
+    grants a one-turn grace so a freshly-penned herd doesn't shed before its keeper takes up tending. A
+    keeper who is present but *broke* **starves** the herd (above) — it produces no shed (a keeper holds
+    the flock, `herded_fraction > 0`), so it keeps its pen and recovers when fed; only animals *leaving*
+    empty a herd.
 - **Persistence** — `corralled_at`, `corral_progress`, **and `pen_radius` / `pen_extend_progress` /
   `pen_extending` (Grazing 2d)** round-trip through the rollback snapshot on `HerdState` (authoritative
   sim state), so a rollback rewinds a half-built pen (or an in-flight fence extension) rather than losing

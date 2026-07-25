@@ -5,7 +5,7 @@ paths:
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 182-182;192-192;194-194;3465-3902.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 182-182;192-192;194-194;3475-3912.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 

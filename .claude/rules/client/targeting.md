@@ -4,7 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/AnnotationRenderer.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 181-181;1606-1611;3281-3464.
+<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 181-181;1606-1611;3291-3474.
      Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
      Regenerate with scripts/split_claude_md.sh -->
 
