@@ -154,6 +154,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // (`HerdTelemetryState.fodderDraw`) to shrink the bread bill it would otherwise pay from the food
     // larder. 0 for a forager band with no fodder economy.
     let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
+    // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
+    //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
+    //                  aggressive carnivore herd must be to raid this band's larder. The band panel
+    //                  uses it to decide whether a *visible* threatening predator is in exact raid
+    //                  range and to raise the live "Predator nearby" Warrior-card alert. The
+    //                  `work_range` idiom above (a plain `uint` reach) — decoded the same way.
+    let _ = dict.insert("raid_radius", cohort.raidRadius() as i64);
+    //   raid_forfeit — food this band lost to predator raids THIS turn (the raid twin of
+    //                  `pen_feed_upkeep`): a negative food-ledger line the sim answers, never
+    //                  re-derived client-side. 0 when no raid landed → the ledger omits the row.
+    //                  Full net is larder_delta == food_income − food_consumption − pen_feed_upkeep
+    //                  − raid_forfeit.
+    let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback

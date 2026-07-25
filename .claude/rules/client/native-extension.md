@@ -44,6 +44,14 @@ inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
 (`dict/population.rs`), which is the one part of this crate `cargo test` can reach
 (`VarDictionary` cannot be built outside a live engine).
 
+`population_to_dict` decodes two **Predators Phase 3** cohort keys (appended after `fodderStore` in
+the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
+NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's
+larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the food this band lost to
+raids THIS turn — the raid twin of `pen_feed_upkeep`. Both are consumed client-side by the band panel:
+`raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
+from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
+
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single
 `cohort_decode_tests` module for so long. Run it from the workspace root:

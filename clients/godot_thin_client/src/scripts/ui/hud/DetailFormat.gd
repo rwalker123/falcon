@@ -113,6 +113,14 @@ const FOOD_LABEL_EATEN := "Eaten (people)"
 
 const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 
+# The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the raid twin
+# of Pen feed. The sim answers it as `PopulationCohortState.raidForfeit` (the client never re-derives
+# it), and it is the fourth term of the larder identity
+# `larder_delta == income − consumption − pen_feed − raid_forfeit`. Crossed-swords glyph so the row
+# reads as a loss to an attacker, matching the command feed's `predator_raid` alert.
+const RAID_GLYPH := "⚔"
+const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
+
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 
@@ -742,17 +750,22 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 #  FOOD OUTLOOK chart — which is why it lives here rather than travelling with either one.
 # =====================================================================================
 
-## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat.
-## Positive → the larder is growing. `pen_feed_upkeep` is the sim's own answer for the third term
-## (`PopulationCohortState.penFeedUpkeep` — the food this band actually PAID for pen feed this turn,
-## summed across every pen it keeps); the client must NOT re-derive it by summing the herds'
-## `pen_upkeep`, and the identity `larder_delta == income − consumption − pen_feed` is pinned sim-side
-## (`integration_tests/tests/pen_food_ledger.rs`). Omitting the term made this row LIE: a band with a
-## Red Deer pen showed a surplus overstated by the ~1.74/turn its herd ate, then drained anyway.
+## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat − what
+## PREDATORS raided off the larder this turn. Positive → the larder is growing. `pen_feed_upkeep` is
+## the sim's own answer for the third term (`PopulationCohortState.penFeedUpkeep` — the food this band
+## actually PAID for pen feed this turn, summed across every pen it keeps) and `raid_forfeit` is the
+## fourth (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
+## client must NOT re-derive either, and the full identity
+## `larder_delta == income − consumption − pen_feed − raid_forfeit` is pinned sim-side
+## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger}.rs`). Including both keeps this headline
+## equal to the sum of the itemized breakdown rows; omitting a term makes the row LIE. Raids are
+## EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart deliberately
+## does NOT project raid_forfeit forward (a past loss is not a steady drain).
 static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
-        - band_pen_feed(band)
+        - band_pen_feed(band) \
+        - band_raid_forfeit(band)
 
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
@@ -769,6 +782,11 @@ static func band_food_income(band: Dictionary) -> float:
 ## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
 static func band_pen_feed(band: Dictionary) -> float:
     return float(band.get("pen_feed_upkeep", 0.0))
+
+## What predators raided off this band's larder this turn (food, `PopulationCohortState.raidForfeit`).
+## 0 when no raid landed — the ledger then omits the row entirely, exactly like Pen feed.
+static func band_raid_forfeit(band: Dictionary) -> float:
+    return float(band.get("raid_forfeit", 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
@@ -808,7 +826,8 @@ static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN
+        or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN
 
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,

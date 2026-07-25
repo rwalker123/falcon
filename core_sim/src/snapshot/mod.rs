@@ -692,6 +692,7 @@ mod tests {
             wellbeing: &wellbeing,
             supply_membership: &membership,
             work_range: 0,
+            raid_radius: 0,
             scout_vantage_distance: 0,
             expedition_levers: &levers,
             settlement_stage_config: &stages,
@@ -750,6 +751,7 @@ mod tests {
                 },
             ],
             last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
         };
         let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -807,6 +809,7 @@ mod tests {
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),

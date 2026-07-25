@@ -137,6 +137,12 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var pen_feed := DetailFormat.band_pen_feed(band)
     if pen_feed >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-pen_feed, DetailFormat.FOOD_LABEL_PEN_FEED))
+    # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A FOURTH kind
+    # of row beside Pen feed — same larder, different decision (guard the camp vs feed the herd) — so it
+    # gets its own line, and only when a raid actually landed (0 → omitted, like Pen feed).
+    var raid_forfeit := DetailFormat.band_raid_forfeit(band)
+    if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
     return lines
 
 ## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure

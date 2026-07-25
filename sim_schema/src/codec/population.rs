@@ -350,6 +350,9 @@ fn create_populations<'a>(
                     fertilityHunger: cohort.fertility_hunger,
                     fertilityReserve: cohort.fertility_reserve,
                     fertilityTrend: cohort.fertility_trend,
+                    // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
+                    raidRadius: cohort.raid_radius,
+                    raidForfeit: cohort.raid_forfeit,
                 },
             )
         })

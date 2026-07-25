@@ -22,6 +22,17 @@ const COMMAND_FEED_MAX_DOCK_FRACTION := 0.4
 
 const COMMAND_TURN_COLOR_HEX := "8fd4ff"
 
+# THREAT / CASUALTY events must read as ALERTS, not blend into the routine receipt stream. Each named
+# kind gets a glyph before its label and the label tinted with the matching DANGER-overlay hue (from the
+# shared HudStyle palette), so a raid line in the feed carries the same crimson as the `threat` map
+# overlay and a hunt-danger line the same amber as the `hunt_danger` overlay — the feed accent and the
+# map wash speak one danger language. The table is EXTENSIBLE and consulted only for the kinds it names;
+# every other kind renders byte-identically to before (plain bold `kind.capitalize()` in the turn color).
+const KIND_STYLE := {
+	"predator_raid": {"glyph": "⚔", "color": HudStyle.THREAT_ACCENT},
+	"hunt_danger": {"glyph": "⚠", "color": HudStyle.HUNT_DANGER_ACCENT},
+}
+
 var _panel: PanelCard = null
 var _scroll: ScrollContainer = null
 var _label: RichTextLabel = null
@@ -86,7 +97,15 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 	var turn_fragment := ""
 	if tick >= 0:
 		turn_fragment = "[color=#%s]Turn %d[/color]  " % [COMMAND_TURN_COLOR_HEX, tick]
-	var message := "%s[b]%s[/b]" % [turn_fragment, prefix]
+	# Threat/casualty kinds render as an alert: glyph + label tinted with the matching overlay hue.
+	# Any kind absent from KIND_STYLE keeps the byte-identical plain-bold rendering.
+	var prefix_markup := "[b]%s[/b]" % prefix
+	var style_variant: Variant = KIND_STYLE.get(kind, null)
+	if style_variant is Dictionary:
+		var style: Dictionary = style_variant
+		var accent_hex: String = (style["color"] as Color).to_html(false)
+		prefix_markup = "[color=#%s]%s [b]%s[/b][/color]" % [accent_hex, String(style["glyph"]), prefix]
+	var message := "%s%s" % [turn_fragment, prefix_markup]
 	if summary != "" and summary != prefix:
 		message += " — %s" % summary
 	if detail != "":

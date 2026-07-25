@@ -315,7 +315,17 @@ negligible-take floor that ends the loop). Reuses the shared model helpers (`reg
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
-`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` ledger identity.
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit` ledger identity.
+
+> **The ledger identity gained a fourth term with Predators Phase 3 (`combat.md`).**
+> `PopulationCohortState.raidForfeit` (`LaborAllocation::last_raid_forfeit`) is the food a
+> casualty-causing predator raid forfeits — `predators.raid_yield_forfeit_fraction` of that turn's
+> income, a real `LocalStore::take` debit that lands in **neither** `foodIncome` nor `foodConsumption`,
+> exactly like `penFeedUpkeep`. So the identity is now
+> `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`, pinned through a real
+> raid turn by `integration_tests/tests/raid_food_ledger.rs`. **It is a PAST-turn stochastic debit, not
+> a recurring cost, so — unlike `penFeedUpkeep` — it does NOT enter the `turnsOfFood` forward-runway
+> drain** (the runway drains only by `consumption + penFeedUpkeep`; see the runway callout above).
 
 > **RETIRED: the band-level `PopulationCohortState.foodIncomeAverage` (= Σ `realized`).** The client
 > sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown

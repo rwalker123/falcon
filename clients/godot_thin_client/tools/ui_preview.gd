@@ -481,6 +481,36 @@ func _ready() -> void:
 	await _settle()
 	await _save("discoveries")
 
+	# State 1d — Predators Phase 3 threat/casualty feed alerts (CommandFeedController.KIND_STYLE).
+	# `predator_raid` renders a ⚔ + crimson-tinted label, `hunt_danger` a ⚠ + amber label, and a plain
+	# `site_discovered` row rides alongside for contrast — the styled kinds must read as ALERTS distinct
+	# from the routine receipt.
+	_hud.ingest_command_events([
+		{"tick": 51, "kind": "predator_raid", "label": "Wolves raided Band 2", "detail": "Lost 1.2 provisions to the pack."},
+		{"tick": 51, "kind": "hunt_danger", "label": "Mammoth gored a hunter", "detail": "The hunt turned costly."},
+		{"tick": 51, "kind": "site_discovered", "label": "Discovered Verdant Basin", "detail": "A routine receipt, for contrast."},
+	])
+	_hud.clear_selection()
+	_hud.toggle_command_feed()   # hidden by default (opens on `R`) — reveal it to judge the styled rows
+	await _settle()
+	await _save("predator_feed")
+	_hud.toggle_command_feed()   # hide again so it does not leak into later states
+
+	# State 1e — Predators Phase 3 band readout: the Warrior-card "⚠ Predator nearby — N on guard"
+	# crimson alert AND the "⚔ Lost to raids −1.20" ledger row, both lit at once. A threatening predator
+	# is placed within raid range in the world-herd list so the client-derived proximity check fires; the
+	# food breakdown popover is opened to show the forfeit row. The shared herd list is restored after.
+	_hud.update_herds([_raiding_predator_herd_fixture()])
+	var raided_band := _raided_band_fixture()
+	_hud._band_labor._player_band = raided_band
+	_hud.show_unit_selection(raided_band)
+	await _settle()
+	_click_disclosure(BAND_DISCLOSURE_FOOD)
+	await _settle()
+	await _save("predator_band_raided")
+	_click_disclosure(BAND_DISCLOSURE_FOOD)
+	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
@@ -4524,6 +4554,33 @@ func _predator_herd_fixture() -> Dictionary:
 	fixture["aggression"] = 0.7
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
+
+## Predators Phase 3 — a band UNDER an active raid, both legibility surfaces lit at once:
+##   • `raid_radius` 3 (the sim's echoed `predators.raid_radius`) + a VISIBLE camp-menacing predator
+##     placed one tile off the band's [71,18] in the world-herd list (`_raiding_predator_herd_fixture`)
+##     → the Warrior card's live crimson "⚠ Predator nearby — N on guard" alert.
+##   • `raid_forfeit` 1.20 (`PopulationCohortState.raidForfeit`, food lost to raids THIS turn) → the
+##     "⚔ Lost to raids −1.20" food-ledger row and a net dragged negative the turn the raid landed.
+## Reuses entity 904, so `BAND_DISCLOSURE_FOOD` opens its ledger popover.
+func _raided_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["raid_radius"] = 3
+	band["raid_forfeit"] = 1.20
+	return band
+
+## The VISIBLE predator the raided band can see: one tile off its [71,18] (hex distance 1, well inside
+## `raid_radius` 3). `prey_sense_radius > 0` marks it a predator and `attack × aggression > 0` marks it a
+## camp menace — the exact THREAT product `_band_predator_threat_present` (and the map overlay) key off.
+func _raiding_predator_herd_fixture() -> Dictionary:
+	return {
+		"id": "predator_wolf_02",
+		"species": "Grey Wolf Pack",
+		"x": 70, "y": 18,
+		"prey_sense_radius": 4,
+		"attack": 5.0,
+		"aggression": 0.7,
+		"food_per_animal": 0.0,
+	}
 
 ## Assertion helpers for the Predators component rows. `_danger_component_rows_present` = all four
 ## component keys emitted; `_danger_verdict_word_present` = the OLD danger vocabulary must be gone (a

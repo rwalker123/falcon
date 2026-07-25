@@ -668,6 +668,13 @@ pub struct PredatorConfig {
     /// finite `> 0`. A playtest dial.
     #[serde(default = "default_raid_exposure")]
     pub raid_exposure: f32,
+    /// **The share of a band's food income a casualty-causing raid forfeits** (Predators Phase 3,
+    /// `docs/plan_predators.md`) — the band's people were defending or fleeing, not gathering, so a raid
+    /// that costs lives also costs a fraction of **that turn's** food income, debited from the larder
+    /// (capped at what it holds). `0.0` = a raid costs only people; `1.0` = it forfeits the whole turn's
+    /// income. Validated finite and in `[0, 1]`. A playtest dial.
+    #[serde(default = "default_raid_yield_forfeit_fraction")]
+    pub raid_yield_forfeit_fraction: f32,
 }
 
 impl Default for PredatorConfig {
@@ -680,6 +687,7 @@ impl Default for PredatorConfig {
             pursuit_radius: default_pursuit_radius(),
             raid_radius: default_raid_radius(),
             raid_exposure: default_raid_exposure(),
+            raid_yield_forfeit_fraction: default_raid_yield_forfeit_fraction(),
         }
     }
 }
@@ -717,6 +725,11 @@ fn default_raid_radius() -> u32 {
 /// [`PredatorConfig::raid_exposure`].
 fn default_raid_exposure() -> f32 {
     4.0
+}
+/// Default share of a band's food income a casualty-causing raid forfeits. See
+/// [`PredatorConfig::raid_yield_forfeit_fraction`].
+fn default_raid_yield_forfeit_fraction() -> f32 {
+    0.25
 }
 
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
@@ -1899,6 +1912,10 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.raid_exposure.to_string(),
         });
     }
+    require_in_unit_range(
+        "predators.raid_yield_forfeit_fraction",
+        predators.raid_yield_forfeit_fraction,
+    )?;
     // Every per-biome probability finite in `[0, 1]`, iterated in stable key order for a deterministic
     // error message (the `species` loop convention).
     let mut per_biome: Vec<(&String, &f32)> = predators.per_biome.iter().collect();
@@ -2701,6 +2718,18 @@ mod tests {
     fn validate_rejects_a_non_positive_raid_exposure() {
         let err = reject(|json| json["predators"]["raid_exposure"] = (0.0).into());
         assert_rejects_field(err, "predators.raid_exposure");
+    }
+
+    /// The raid yield-forfeit is a FRACTION of the band's food income (Predators Phase 3): a value
+    /// below 0 or above 1 is out of range (0 = a raid costs only people; 1 = the whole turn's income).
+    #[test]
+    fn validate_rejects_an_out_of_range_raid_yield_forfeit_fraction() {
+        for bad in [-0.01, 1.01] {
+            let err =
+                reject(|json| json["predators"]["raid_yield_forfeit_fraction"] = (bad).into());
+            assert_rejects_field(err, "predators.raid_yield_forfeit_fraction");
+        }
+        assert!(FaunaConfig::builtin().validate().is_ok());
     }
 
     #[test]
