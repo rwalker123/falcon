@@ -32,34 +32,53 @@
 //! what [`Distances`] measures, and why the histogram tail must start outside the whole 9-tile
 //! mountain belt rather than at the alpine core.
 //!
-//! # WHAT THIS MEASURED (issue #291) — the report is false as stated, a different defect is real
+//! # WHAT THIS MEASURED (issue #291) — the report was false as stated; the defect it exposed is FIXED (#332)
 //!
-//! **Rivers DO issue out of the ranges.** Source placement is strongly enriched just outside them —
-//! peaking at **3.4x chance 5 hexes from the alpine core** — and suppressed to 0.05-0.45x within 3
-//! hexes. The ranges are the headwater ground; the water is mountain water.
+//! **Rivers DO issue out of the ranges.** Source placement is strongly enriched just outside them
+//! and suppressed within the belt itself. The ranges are the headwater ground; the water is mountain
+//! water.
 //!
-//! **What is real is a channel-free COLLAR**, so a river appears out on the plain, visually detached
-//! from the range feeding it. An alpine tile sits **6.20 hexes from the nearest river against 3.31
-//! for average land**, and ranges >= 10 tiles run to a **28-hex** worst case.
+//! **What was real is a channel-free COLLAR**, so a river appeared out on the plain, visually
+//! detached from the range feeding it — an alpine tile sat **6.20 hexes from the nearest river
+//! against 3.31 for average land**.
 //!
-//! **Root cause, isolated by [`what_dries_the_alpine_belt`]: the mountain belt casts its rain shadow
-//! onto ITSELF.** Each mountain tile adds `rain_shadow_strength x relief` to a shadow subtracted
-//! from everything downwind — including the rest of a 9-tile belt — and the shipped
-//! `rain_shadow_strength = 0.65` at alpine relief >= 1.85 is ~**1.20 per tile** against a 2.0 clamp,
-//! decaying at only `rain_shadow_decay = 0.04`, while `windward_moisture_bonus = 0.12` lifts only
-//! ~0.22. Shadow outweighs orographic lift ~5:1, so **82.8% of alpine tiles receive literally zero
-//! rain** while the belt's windward strip reaches 0.818, the map maximum — bimodal, not merely dry.
+//! **Root cause, isolated by [`what_dries_the_alpine_belt`] rather than inferred: the mountain belt
+//! cast its rain shadow onto ITSELF.** Every mountain tile added `rain_shadow_strength x relief` to a
+//! shadow subtracted from everything downwind — including the rest of the same 9-tile belt — so
+//! shadow beat orographic lift ~5:1 and **82.8% of alpine tiles received literally zero rain**,
+//! bimodal rather than merely dry (mean 0.083, median 0.000), with precipitation *rising* with
+//! distance from the belt core.
 //!
-//! Turning the rain shadow off **inverts the precipitation profile** (mountains become the wettest
-//! ground: 0.360 vs 0.213 for land, bone-dry share 82.8% -> **0.0%**) and largely closes the collar
-//! (near-range source enrichment 0.28x/0.45x/1.63x -> **2.11x/2.65x/3.50x** at distance 2/3/4).
-//! Turning **interior aridity** off instead wets the whole map but leaves the belt relatively dry
-//! and the collar intact — so the shadow is the cause and interior aridity is not.
+//! **Fixed by releasing a range's shadow at its CREST** (`plan_orographic_row` in `mapgen.rs`; see
+//! `core_sim/CLAUDE.md` -> "A range's rain shadow starts at its CREST"). A contiguous run of mountain
+//! cells along the wind is one range: it is windward up to and including its crest, and its whole
+//! shadow lands behind that crest. **No config value changed.** Measured here, 6 seeds on
+//! [`BIG_GRID`]:
 //!
-//! **The zero-on-alpine figure does NOT move** (0.00% -> 0.05% with the shadow off), confirming the
-//! section above: that half is ribbon geometry against the channel threshold, not climate. Two
-//! separate mechanisms, and only the second is a defect.
+//! | figure | before | after |
+//! |---|---|---|
+//! | alpine precip mean / median | 0.083 / 0.000 | **0.265 / 0.204** |
+//! | alpine bone-dry | 82.8% | **29.1%** |
+//! | all-land mean / bone-dry | 0.151 / 45.1% | 0.171 / **36.9%** |
+//! | precip by distance from the core | 0.083 -> 0.190 (rising) | 0.265 -> 0.196 (falling) |
+//! | alpine -> nearest river (all land) | 6.20 (3.31) | **5.26** (3.20) |
+//! | source enrichment at 2/3/4 hexes | 0.28x/0.45x/1.63x | **1.31x/1.93x/2.42x** |
+//! | rivers over the sweep | 3721 | **4034** |
+//!
+//! The belt is now the wettest ground on the map and the profile falls away from it. The collar
+//! narrows by about a hex rather than vanishing — the remaining width is the channel threshold, not
+//! climate.
+//!
+//! **The zero-on-alpine figure did NOT move** (0.00% -> **0.02%**), confirming the section above:
+//! that half is ribbon geometry against `river_channel_min_discharge`, not climate. Two separate
+//! mechanisms, and only the shadow was a defect.
+//!
+//! Because humidity feeds `dryness_thresholds` -> the biome ladder -> forage and graze capacity, the
+//! aggregate block also prints a **biome-share census of land**: a moisture change is a balance
+//! change, and reporting only rivers would hide it. The crest fix moved exactly one biome by more
+//! than 0.1 pp (`CanyonBadlands` 3.88% -> 3.47%, into `RollingHills` and `HighPlateau`).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::app::App;
@@ -449,16 +468,22 @@ struct AlpineCensus {
     alpine_with_river: usize,
     other_land_with_river: usize,
     /// Every alpine tile's precipitation, and every land tile's — kept as distributions rather than
-    /// means because the mean cannot tell "the belt is uniformly dry" from "the belt shadows itself"
-    /// (`mapgen.rs` adds `rain_shadow_strength × relief` per mountain tile to a shadow that clamps
-    /// at 2.0 and is subtracted from tiles *downwind*, so a 9-tile belt should read as a wet
-    /// windward strip and a dead lee — bimodal, not tight).
+    /// means because the mean cannot tell "the belt is uniformly dry" from "the belt shadows itself".
+    /// A self-shadowing belt reads *bimodal*: a wet windward strip against a dead interior. That is
+    /// what this caught in #291, and a regression to it would show up here as the median collapsing
+    /// to 0.000 while the max stays at the map maximum.
     alpine_precip: Vec<f32>,
     land_precip: Vec<f32>,
     /// Summed precipitation by hex distance from the nearest alpine tile, with the tile counts to
     /// divide it by — the profile across the belt, which is what a self-shadowing belt shows as a
     /// dip at the core recovering outward.
     precip_by_distance: Vec<(f64, usize)>,
+    /// How many land tiles each `TerrainType` claims. **A change to the moisture field is a balance
+    /// change, and this is where it shows.** Humidity feeds `dryness_thresholds` -> the biome ladder
+    /// -> per-tile forage and graze capacity, so re-shaping the rain shadow moves the whole
+    /// vegetation economy, not just the river census. Reporting only rivers would hide a desert
+    /// turning to grassland (or the reverse) behind an unchanged channel count.
+    biome_counts: HashMap<TerrainType, usize>,
     ranges: Vec<Range>,
 }
 
@@ -477,6 +502,7 @@ impl AlpineCensus {
         let mut alpine_precip: Vec<f32> = Vec::new();
         let mut land_precip: Vec<f32> = Vec::new();
         let mut precip_by_distance = vec![(0.0f64, 0usize); DISTANCE_TAIL as usize + 1];
+        let mut biome_counts: HashMap<TerrainType, usize> = HashMap::new();
         let mut land_to_alpine = Distances::new();
         let mut land_to_river = Distances::new();
         let mut alpine_to_river = Distances::new();
@@ -486,6 +512,7 @@ impl AlpineCensus {
                 continue;
             }
             land += 1;
+            *biome_counts.entry(terrain.terrain[i]).or_insert(0) += 1;
             land_to_alpine.push(to_alpine[i]);
             land_to_river.push(to_river[i]);
             land_precip.push(terrain.precip[i]);
@@ -583,6 +610,7 @@ impl AlpineCensus {
             alpine_precip,
             land_precip,
             precip_by_distance,
+            biome_counts,
             ranges,
         }
     }
@@ -697,6 +725,7 @@ fn measure(grid: UVec2, tag: &str, climate: Climate) {
     let mut agg_alpine_precip: Vec<f32> = Vec::new();
     let mut agg_land_precip: Vec<f32> = Vec::new();
     let mut agg_precip_by_distance = vec![(0.0f64, 0usize); DISTANCE_TAIL as usize + 1];
+    let mut agg_biomes: HashMap<TerrainType, usize> = HashMap::new();
 
     for seed in SEEDS {
         let world = world_with(seed, grid, presets.clone());
@@ -738,6 +767,9 @@ fn measure(grid: UVec2, tag: &str, climate: Climate) {
         for (slot, band) in agg_precip_by_distance.iter_mut().zip(&c.precip_by_distance) {
             slot.0 += band.0;
             slot.1 += band.1;
+        }
+        for (ty, n) in &c.biome_counts {
+            *agg_biomes.entry(*ty).or_insert(0) += n;
         }
         for r in c
             .ranges
@@ -809,6 +841,27 @@ fn measure(grid: UVec2, tag: &str, climate: Climate) {
         profile.join(" ")
     );
 
+    // The downstream half of the same causal chain: precipitation feeds `dryness_thresholds`, which
+    // picks the biome, which sets forage and graze capacity. Any change to the moisture field must
+    // therefore be reported as a **biome-distribution movement** and not only as a river census —
+    // the rivers can sit still while the vegetation economy moves under them.
+    let mut biome_rows: Vec<(TerrainType, usize)> = agg_biomes.into_iter().collect();
+    // Share descending, name ascending as the tie-break so the table is byte-stable across runs
+    // (`HashMap` iteration order is not).
+    biome_rows.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+    });
+    println!("  -- biome shares of land, aggregated over seeds --");
+    for (ty, n) in &biome_rows {
+        println!(
+            "     {:<20} {:>7}  {:>6.2}%",
+            format!("{ty:?}"),
+            n,
+            pct(*n, agg_land)
+        );
+    }
+
     println!("  -- how far a SOURCE is from a range, against the null of all land --");
     println!("     sources  {}", agg_source_to_alpine.render());
     println!("     all land {}", agg_land_to_alpine.render());
@@ -860,9 +913,15 @@ fn alpine_headwater_census() {
     measure(BIG_GRID, "statistics grid", SHIPPED);
 }
 
-/// **Which term dries the belt?** The census above measures that alpine ground is bone-dry; it
-/// cannot say why. These two arms turn off one climate term each, so the mechanism is isolated by
-/// measurement rather than inferred from reading the humidity loop.
+/// **Which term dries the belt?** Each arm turns off one climate term, so the mechanism is isolated
+/// by measurement rather than inferred from reading the humidity loop. This is what identified the
+/// self-shadowing belt: before the crest fix, `rain_shadow_strength = 0` **inverted** the profile
+/// while `interior_aridity_strength = 0` wet the whole map and left the belt relatively dry.
+///
+/// Post-fix the shipped arm already looks like the shadow-off arm in shape (mountains wettest, precip
+/// falling away from the core) and the arms now differ in degree, not in sign — alpine 0.265 shipped
+/// vs 0.343 with no shadow, bone-dry 29.1% vs 0.0%. **That is the point**: the shadow still exists
+/// and still dries the lee, it just no longer eats the range that casts it.
 #[test]
 #[ignore]
 fn what_dries_the_alpine_belt() {
