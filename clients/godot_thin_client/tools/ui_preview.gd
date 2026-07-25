@@ -473,6 +473,20 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile_crop")
 
+	# State 2-growing — the "What grows here" SECTION on the bare tile card (no compose sheet): a header
+	# then one 🌿 row per realized plant, name + share%, in wire order (share DESC). The pair is TWO
+	# "Alluvial Plain" tiles with DIFFERENT realized baskets (Wild Emmer 70% + Flax 30% vs Cotton 55% +
+	# Flax 45%), so read side by side they are the visible proof that same-biome tiles no longer carry a
+	# uniform per-biome roster — the per-tile realization the compose picker already shows, now on the
+	# card a player gets by just inspecting a tile. Compose source reset so only the card renders.
+	_hud._compose.reset_forage_source()
+	_hud.show_tile_selection(_cash_basket_tile_fixture())
+	await _settle()
+	await _save("tile_growing_here")
+	_hud.show_tile_selection(_cash_variant_basket_tile_fixture())
+	await _settle()
+	await _save("tile_growing_here_variant")
+
 	_hud.show_tile_selection(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
 	await _settle()
