@@ -596,7 +596,7 @@ pub struct MigratoryAbundanceConfig {
 impl Default for MigratoryAbundanceConfig {
     /// Mirrors the shipped JSON, so a config that omits the block behaves like the shipped one rather
     /// than deriving all-zeros (`AbundanceConfig` is `#[serde(default)]`, so an omitted block is
-    /// reachable) — a `tiles_per_herd: 0` would divide by zero in `determine_herd_count`.
+    /// reachable) — a `tiles_per_herd: 0` is the divisor in [`Self::herds_for_map`].
     fn default() -> Self {
         Self {
             tiles_per_herd: 800,

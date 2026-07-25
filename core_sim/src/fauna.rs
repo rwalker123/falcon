@@ -1589,6 +1589,20 @@ fn spawn_migratory_herds(
         herds.push(herd);
         idx += 1;
     }
+    if idx < herd_target {
+        // UNDER-FILL AND REPORT, never relax the budget — the same contract the tag solver's
+        // `mapgen.tag_solver.under_filled_climate_gated` states. Every migratory row's route was
+        // unbuildable often enough to exhaust the retries, which means the map genuinely cannot seat
+        // the budget (no land, or no host biome anywhere). Silence here is what made the retired
+        // slot-eating `continue` cost a herd per ~120 maps with nothing to read.
+        info!(
+            target: "shadow_scale::fauna",
+            shortfall = herd_target - idx,
+            target = herd_target,
+            seated = idx,
+            "fauna.migratory.under_filled"
+        );
+    }
 }
 
 /// How many `build_migratory_route` attempts each migratory slot is allowed before the slot is given

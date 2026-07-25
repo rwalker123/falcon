@@ -97,28 +97,44 @@ never density. Raise `max_total_game` if the intent is more game, not different 
 > `[2, 6]`), which is how the single number deciding whether a migratory species appears on a map
 > became untunable — and, worse, *inert*.
 >
-> **Measured over 120 generated earthlike maps** at the shipped 80×52 grid
+> **Measured over 120 generated earthlike maps** at the shipped 80×52 grid, each built through the
+> **real Startup chain** — worldgen → hydrology → tag budget solver → biome palette clamp → coastal
+> shelf reconcile → `spawn_initial_herds`, via `build_headless_app()` + `run_schedule(Startup)`
 > (`core_sim/tests/fauna_migratory_representation.rs`, a report-only harness — run it with `--ignored
 > --nocapture`; it asserts no bound deliberately, because the point is the number and a floor on a
-> probabilistic draw is the sitting-on-its-own-floor trap the seal guard already paid for):
+> probabilistic draw is the sitting-on-its-own-floor trap the seal guard already paid for). It reports
+> **both** budgets over the same seeds on the same pipeline, so the before/after below is a controlled
+> comparison rather than two readings taken under different conditions:
 >
 > | species | maps carrying it, `3000`/2 slots | **after, `800`/5 slots** | mean host tiles |
 > |---|---|---|---|
-> | Thunder Mammoths | 39% | **70%** | 775 (min 314) |
-> | Marsh Grazers | 37% | **68%** | 276 (min 124) |
-> | Wild Reindeer | 31% | **69%** | 775 (min 314) |
-> | Wild Horses | 34% | **65%** | 412 (min 197) |
-> | Steppe Runners | 32% | **62%** | 286 (min 120) |
+> | Thunder Mammoths | 32% | **69%** | 620 (min 252) |
+> | Marsh Grazers | 38% | **68%** | 410 (min 271) |
+> | Wild Reindeer | 32% | **64%** | 620 (min 252) |
+> | Wild Horses | 38% | **70%** | 350 (min 117) |
+> | Steppe Runners | 41% | **71%** | 262 (min 116) |
 >
 > **The slot count was the whole cause — the roster draw was never biased.** An 80×52 map is area
 > 4160, so `4160/3000` computed **1** and was **clamp-floored to 2**: the density lever was inert at
 > the shipped size and `min_herds` silently decided everything. Two slots drawn uniformly **with
 > replacement** from five rows predicts `1 − (4/5)² = 36%` presence per species; the sweep measured
-> 31–39%, and χ² against a uniform draw was **2.9 (df 4)** against the 13.3 a biased pick would need.
-> A doubled draw (~20% of maps) spent the second slot on a species the map already had.
+> 32–41% (mean 36.2%), and χ² against a uniform draw is **1.8 (df 4)** against the 13.3 a biased pick
+> would need — 2.7 after the fix. A doubled draw (~20% of maps at 2 slots) spent the second slot on a
+> species the map already had.
 >
-> **So "mammoth & marsh-grazer are under-represented" was measured FALSE as stated** — they were the
-> *two best-represented* migratory species, and the defect was roster-wide.
+> **So "mammoth & marsh-grazer are under-represented" was measured FALSE — but read the reason
+> carefully, because the obvious phrasing is itself a noise artifact.** The five species were
+> **statistically indistinguishable**: χ² = 1.8 on df 4 means the 32–41% spread is pure draw variance
+> and the per-species *ordering within it carries no signal at all*. The premise is false not because
+> the mammoth was well-represented — at 32% it was joint-lowest — but because **there was no
+> per-species effect to find**. The shortage was roster-wide, and the only honest per-species statement
+> is "all five, at the ~36% the slot count predicts".
+>
+> > **This block's own first draft got that wrong**, and the error is instructive enough to keep: it
+> > read the then-measured 39%/37% and called mammoth and marsh grazer "the two best-represented"
+> > species — ranking five samples whose χ² says they are one distribution. Re-measured on the correct
+> > pipeline the ranking simply *reshuffled* (mammoth 39% → 32%, joint-last; Steppe Runners 32% → 41%,
+> > first) while the aggregate barely moved. **Do not rank per-species presence off a 120-map sweep.**
 >
 > **Presence is NOT linear in the slot count** — with `n` rows it is `1 − ((n−1)/n)^herds`, so at 5
 > rows: 2 → 36%, 3 → 49%, **5 → 67%**, 8 → 83%, 12 → 93%. Each extra slot buys less. `tiles_per_herd:
@@ -131,17 +147,36 @@ never density. Raise `max_total_game` if the intent is more game, not different 
 > **Raising it raises migratory BIOMASS steeply** — a migratory herd carries 4,000–12,000 biomass
 > against a deer's 600–1,200 — so it is a **food-economy dial, not a variety dial**. Playtest dial.
 >
-> **Habitat was never the constraint** — mammoth/reindeer average 775 host tiles (never below 314) and
-> the marsh grazer 276 (never below 124). Raising presence was a *slot* question, not a `host_biomes`
-> or abundance-table one, and `abundance.max_total_game` (120) is a **separate, already-saturated**
-> budget that migratory herds do not draw from (so the map total moved 122 → 125, not 120).
+> **Habitat was never the constraint** — mammoth/reindeer average 620 host tiles (never below 252) and
+> the marsh grazer 410 (never below 271), against 2 slots. Raising presence was a *slot* question, not a
+> `host_biomes` or abundance-table one, and `abundance.max_total_game` (120) is a **separate,
+> already-saturated** budget that migratory herds do not draw from (so the map total moved 122 → 125,
+> not 120).
+>
+> > **The habitat column is a POST-SOLVER quantity and must be measured as one.** The first version of
+> > this table was read off a hand-rolled harness that ran `spawn_initial_world` and `spawn_initial_herds`
+> > and *skipped* `generate_hydrology` → `apply_tag_budget_solver` → `apply_biome_palette_clamp` →
+> > `reconcile_coastal_shelf`. Those passes rewrite exactly these modules — `earthlike` locks `Fertile`
+> > (0.22) and `Wetland` (0.06), so the solver repaints into `riverine_delta`/`wetland_swamp`, and
+> > hydrology stamps `RiverDelta`/`Floodplain`/`FreshwaterMarsh`/`NavigableRiver` into the same two — so
+> > the pre-solver reading **understated the marsh grazer's habitat by ~50%** (276/min 124 → 410/min 271)
+> > and **overstated the mammoth's by 25%** (775/min 314 → 620/min 252). Caught in review, not by the
+> > harness. The sibling sweeps (`fauna_coastal_habitat.rs`, `fauna_wet_biome_roster.rs`) were already
+> > doing it correctly via `build_headless_app()` + `run_schedule(Startup)`, and
+> > `.claude/rules/core_sim/worldgen.md` already recorded this exact defect faking a whole finding once
+> > (`forage_field.rs`'s "sowable tiles 46 → 0"). **Any fauna sweep must run the shipped schedule.**
 >
 > **A failed route no longer eats a slot.** `spawn_migratory_herds` used to `continue` the
 > `0..herd_target` loop when `build_migratory_route` returned `None`, consuming the slot — measured: 1
-> map in 120 (seed 104) spawned only **one** migratory herd. The loop now counts **seated** herds and
-> re-draws on failure, bounded by `MIGRATORY_ROUTE_ATTEMPTS_PER_HERD` (8) so a map that can seat none
-> still terminates. The budget names how many herds a map should *hold*, and now it does: the post-fix
-> sweep reads min 5 / max 5 across all 120 maps.
+> map in 120 spawned only **one** migratory herd (re-measured on the correct pipeline by pinning
+> `MIGRATORY_ROUTE_ATTEMPTS_PER_HERD` to 1, which reproduces the old behaviour exactly: 239/240 herds at
+> the 2-slot budget, 599/600 at the 5-slot one — so the frequency is real terrain, not the harness
+> defect above). The loop now counts **seated** herds and re-draws on failure, bounded by that same
+> constant (8) so a map that can seat none still terminates. The budget names how many herds a map
+> should *hold*, and now it does: the post-fix sweep reads min 5 / max 5 across all 120 maps. An
+> exhausted budget **logs** `fauna.migratory.under_filled` rather than passing silently — the tag
+> solver's `under_filled_climate_gated` contract, and the readout whose absence let the old slot-eating
+> `continue` cost a herd per ~120 maps unnoticed.
 >
 > **Beware the small sweep here.** At 24 maps this same harness read Steppe Runners at **1 herd / 4%
 > of maps** — a 2σ small-sample artifact that reads exactly like a broken `host_biomes` key, and it
