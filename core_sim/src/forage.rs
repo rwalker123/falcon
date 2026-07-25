@@ -1925,6 +1925,9 @@ pub fn forage_source_yield_preview(
         &forecast,
         sustainable,
         patch.is_field(),
+        // A forage patch has no herders — the crew is purely the gatherers, so the herder term is 0 and
+        // `workers_needed` keeps the continuous overstaffing inversion.
+        0,
         workers,
         policy,
         realized,

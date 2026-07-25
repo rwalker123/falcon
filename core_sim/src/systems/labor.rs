@@ -716,7 +716,22 @@ pub fn advance_labor_allocation(
                     //
                     // A **wild** herd writes nothing here: it isn't yours to maintain
                     // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
-                    let herders_needed = fauna::herd_herders_needed(herd, &fauna);
+                    //
+                    // **An INVESTMENT policy (Tame/Corral) uses the ownership-INDEPENDENT would-be crew**
+                    // (taming-startup-lag fix): a Tame/Corral assignment *means* the herd is being
+                    // managed, but ownership is only recorded later this turn (Population, the Tame arm's
+                    // `accrue_domestication`), so the ownership-gated `herd_herders_needed` reads `0` on
+                    // the turn taming starts and the crew collapses to the take-side hauler count — "1 of
+                    // 3 working" on a full crew. `would_be_herders_needed` is the biomass-derived crew
+                    // regardless of recorded ownership (0 only for a `wild`-ceiling species, which cannot
+                    // be tamed). **Extractive policies stay ownership-gated** — a wild Sustain-hunted herd
+                    // must read `0` here, or its `herded_fraction` would drop below 1 and it would falsely
+                    // read under-herded and shed.
+                    let herders_needed = if policy.is_investment() {
+                        fauna::would_be_herders_needed(herd, &fauna)
+                    } else {
+                        fauna::herd_herders_needed(herd, &fauna)
+                    };
                     if herders_needed > 0 {
                         herd.herded_fraction = fauna::herded_fraction(workers, herders_needed);
                     }
@@ -2235,6 +2250,125 @@ mod labor_yield_tests {
             herders.max(haulers),
             "the pen reports ONE crew sized by whichever job binds — minding {herders} head vs hauling \
              the take ({haulers}): {corral:?}"
+        );
+    }
+
+    /// **A wild herd being TAMED reports its full would-be crew from turn one — no ownership lag**
+    /// (taming-startup-lag fix). On the turn a `Tame` assignment starts, ownership is set only later in
+    /// Population (`accrue_domestication`), so the ownership-gated `herd_herders_needed` reads `0` and the
+    /// crew used to collapse to the tiny Tame-dip haul count — "1 of N working" on a full crew. An
+    /// investment policy now sizes the herder term ownership-INDEPENDENTLY (`would_be_herders_needed`), so
+    /// **both** the assign-time seed AND the resolved row report the real crew even while the herd is
+    /// unowned; and an **extractive** policy still drops the herder term (a wild Sustain herd stays at the
+    /// haul count, so it is never falsely flagged under-herded).
+    #[test]
+    fn a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag() {
+        let (mut world, tile) = world_with_source(CAP);
+        // Reseat the wild fixture so its would-be herder crew clearly EXCEEDS the Tame-dip haul crew
+        // (the rabbit-warren shape where the lag showed).
+        let crew = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.body_mass = 1.0;
+            herd.carrying_capacity = 200.0;
+            herd.biomass = 200.0; // 200 animals ⇒ crew = ceil(200 / DEFAULT_ANIMALS_PER_HERDER 25) = 8
+            herd.refresh_ecology_phase(&fauna);
+            assert!(
+                herd.owner.is_none() && !herd.is_corralled(),
+                "the herd starts WILD (unowned, unpenned)"
+            );
+            crate::fauna::would_be_herders_needed(herd, &fauna)
+        };
+        assert!(
+            crew >= 2,
+            "the fixture crew must be non-trivial to observe the fix: {crew}"
+        );
+
+        // Snapshots to compute the expected haul crew (the value the OLD code collapsed to) + confirm the
+        // ownership gate.
+        let (haul, gated) = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            let herd = &registry.herds[0];
+            let forecast = crate::fauna::hunt_forecast(
+                herd,
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                1.0,
+            );
+            let haul = crate::fauna::hunt_haul_workers(
+                forecast.ceiling_for(FollowPolicy::Tame),
+                forecast.body_mass_yield,
+                forecast.per_worker_yield,
+            );
+            (haul, crate::fauna::herd_herders_needed(herd, &fauna))
+        };
+        assert_eq!(
+            gated, 0,
+            "an unowned herd's ownership-gated herder count is 0 — the collapse this fix routes around"
+        );
+        assert!(
+            crew > haul,
+            "the crew must exceed the haul count, or the fix is invisible: crew {crew} vs haul {haul}"
+        );
+
+        // Build the two seeds (Tame vs Sustain) on the still-WILD herd.
+        let seed = |policy: FollowPolicy, world: &World| {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            crate::fauna::hunt_source_yield_preview(
+                &registry.herds[0],
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                1.0,
+                crew,
+                policy,
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
+            )
+        };
+        let tame_seed = seed(FollowPolicy::Tame, &world);
+        assert_eq!(
+            tame_seed.workers_needed, crew,
+            "the assign-time seed reports the full would-be crew for a Tame source, not the haul: \
+             {tame_seed:?}"
+        );
+        // The extractive contrast: Sustain on the same WILD herd drops the herder term → haul only.
+        let sustain_seed = seed(FollowPolicy::Sustain, &world);
+        assert_eq!(
+            sustain_seed.workers_needed, haul,
+            "an extractive policy on a wild herd stays at the haul count (herder term 0): {sustain_seed:?}"
+        );
+
+        // The RESOLVED row: a real Tame keeper of `crew` hunters, one turn.
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Tame,
+                },
+                workers: crew,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let resolved = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].clone();
+        assert_eq!(
+            resolved.workers_needed, crew,
+            "the resolved row reports the same full crew — the herd was unowned when it was sized: \
+             {resolved:?}"
+        );
+        assert_eq!(
+            tame_seed.workers_needed, resolved.workers_needed,
+            "seed == resolved (no jump between the pending assign and the turn it resolves)"
         );
     }
 

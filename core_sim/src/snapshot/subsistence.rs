@@ -401,18 +401,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // ownership-INDEPENDENTLY from biomass so the client can floor the Tame-compose worker
                 // cap at it up front — before ownership is set in the Population stage, which is what
                 // leaves the ownership-gated `herders_needed` above reading 0 on the turn taming starts.
-                // A `wild`-ceiling species (mammoth/deer) never tames, so it exports 0; a
-                // pastoral/pen-ceiling herd exports its raw crew size regardless of current ownership,
-                // via the SAME `fauna::herders_needed` the stabilized path uses.
+                // A `wild`-ceiling species (mammoth/deer) never tames, so `would_be_herders_needed`
+                // returns 0; the same helper the labor arm reads for an investment policy — one seam.
                 herders_needed_if_managed: herd
-                    .filter(|herd| herd.can_domesticate())
-                    .map(|herd| {
-                        herders_needed(
-                            herd.biomass,
-                            herd.body_mass,
-                            fauna.animals_per_herder_for(&herd.species),
-                        )
-                    })
+                    .map(|herd| would_be_herders_needed(herd, fauna))
                     .unwrap_or(0),
             }
         })

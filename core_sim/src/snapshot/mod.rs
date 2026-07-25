@@ -53,8 +53,8 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        herd_herders_needed, herders_needed, hunt_forecast, pen_upkeep, EcologyPhase, Herd,
-        HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED,
+        herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
+        Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED,
         HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,

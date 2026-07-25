@@ -1326,6 +1326,20 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   5 vs 4), big-bodied ones are **haul-bound** (Crag Goats 2 vs 7; Boar 1 vs 3; Aurochs 2 vs 3). Do not
 >   "simplify" the `max()` away.
 >
+> - **An INVESTMENT policy (Tame/Corral) sizes the herder term ownership-INDEPENDENTLY**
+>   (`fauna::would_be_herders_needed`, the taming-startup-lag fix). `herd_herders_needed` is
+>   ownership-gated to `0` until Population's `accrue_domestication` records `owner`, so on the turn a
+>   Tame assignment *starts* the crew used to collapse to the tiny Tame-dip haul count — "1 of N working"
+>   on a full crew. `would_be_herders_needed` returns the biomass-derived crew for a species that *can* be
+>   tamed regardless of recorded ownership (`0` only for a `wild` ceiling), preferring the stabilized
+>   `herders_needed` so an already-managed herd is identical to `herd_herders_needed` (no re-flicker). The
+>   labor arm's `herded_fraction`/`workers_needed` **and** the assign-time seed (`forecast_source_yield`,
+>   which now folds the herder term into a hunt row's `workers_needed`) both apply it for an investment
+>   policy, `herd_herders_needed` for an extractive one — a wild Sustain-hunted herd must stay
+>   ownership-gated to `0` or it would read `herded_fraction < 1` and falsely shed. One definition, shared
+>   with the `herdersNeededIfManaged` wire field. Pinned by
+>   `labor::a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag`.
+>
 > - **The haul term is the STEADY carry crew, not this turn's `carried`** (`fauna::hunt_haul_workers`).
 >   `workers_needed`'s hauling component is the crew that carries home the **peak per-turn animal drop**
 >   — `ceil((floor(rate/body) + 1)·body / per_worker)`, off the policy's **steady** `hunt_policy_rate`

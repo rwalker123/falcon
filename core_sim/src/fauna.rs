@@ -1097,6 +1097,40 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
     )
 }
 
+/// **The crew this herd WOULD owe if it were managed** — ownership-INDEPENDENT (fauna neglect-escape,
+/// the taming-startup-lag fix). Identical to [`herd_herders_needed`] **except the gate**: it returns `0`
+/// only for a species that can never be tamed (`!can_domesticate()` — a `Wild` husbandry ceiling), where
+/// `herd_herders_needed` returns `0` for any herd not *yet* owned/corralled.
+///
+/// On the turn a **Tame/Corral** (investment) assignment starts, ownership has not been set yet
+/// (`accrue_domestication` runs later, in Population), so the ownership-gated count reads `0` and the crew
+/// collapses to the take-side hauler count — the herd reads "1 of N working" on a full crew for a turn. An
+/// investment assignment *means* the herd is being managed, so its herder requirement is the
+/// biomass-derived crew regardless of whether ownership is recorded yet. Call this for an investment
+/// policy, [`herd_herders_needed`] for an extractive one (a wild Sustain-hunted herd must stay
+/// ownership-gated to `0`, or its `herded_fraction` would drop below `1` and it would falsely read
+/// under-herded and shed). Both the labor arm and the `herdersNeededIfManaged` wire field resolve through
+/// this — one definition.
+///
+/// **Prefers the hysteresis-stabilized `Herd::herders_needed`** exactly as `herd_herders_needed` does, so
+/// an *already-managed* herd (owner set — e.g. a corralled herd under `Corral`) returns the stabilized
+/// count and does not re-flicker ±1; only a not-yet-owned tameable herd (field `0`) falls back to the raw
+/// ceil. So for every managed herd this equals `herd_herders_needed` — they diverge only where the
+/// ownership gate does.
+pub fn would_be_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
+    if !herd.can_domesticate() {
+        return 0;
+    }
+    if herd.herders_needed > 0 {
+        return herd.herders_needed;
+    }
+    herders_needed(
+        herd.biomass,
+        herd.body_mass,
+        fauna.animals_per_herder_for(&herd.species),
+    )
+}
+
 /// **How well a managed herd is staffed this turn** — `min(1, assigned / needed)`, the herding twin of
 /// `Herd::pen_fed_fraction`.
 ///
@@ -3552,10 +3586,12 @@ fn forecast_production_and_take(
 ///
 /// Every signal is computed for **every** rung, from the one expected take: the rung-kinds differ in
 /// what their ceilings mean, never in whether the crew has to carry the food home.
+#[allow(clippy::too_many_arguments)] // one row's worth of yield context — bundling it would just move the noise
 pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
     managed: bool,
+    herders_needed: u32,
     workers: u32,
     policy: FollowPolicy,
     realized: f32,
@@ -3574,19 +3610,22 @@ pub(crate) fn forecast_source_yield(
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
         wasted: (production - actual).max(0.0),
-        // **A whole-animal (hunt) source reports its STEADY carry crew, not this-turn's carried.**
-        // `actual` is the lumpy quantised take — `0` on a wait turn for a slow breeder whose MSY <
-        // `body_mass` — so inverting it collapses `workers_needed` and contradicts `wasted`. The steady
-        // peak-drop crew ([`hunt_haul_workers`], off the policy's steady ceiling) equals the client's
-        // `_max_useful_workers`, so the compose cap and the band-panel overstaff note agree. A
-        // **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is un-lumpy, so it
-        // keeps the ordinary overstaffing inversion.
+        // **A whole-animal (hunt) source reports its whole CREW: `max(herders, steady carry crew)`** —
+        // the SAME `managed_crew_needed` shape the resolved Hunt arm records, so the assign-time seed and
+        // the post-turn row agree (no "1 of N" on a pending Tame). `actual` is the lumpy quantised take —
+        // `0` on a wait turn for a slow breeder whose MSY < `body_mass` — so inverting it collapses
+        // `workers_needed` and contradicts `wasted`; the steady peak-drop crew ([`hunt_haul_workers`],
+        // off the policy's steady ceiling) equals the client's `_max_useful_workers`. The caller passes
+        // the herder term ownership-INDEPENDENTLY for an investment policy (`would_be_herders_needed`), so
+        // a not-yet-owned Tame source seeds its real crew; `0` for a wild herd, collapsing the `max` to
+        // the haul side. A **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is
+        // un-lumpy, so it keeps the ordinary overstaffing inversion (its herder term is `0`).
         workers_needed: if forecast.body_mass_yield > 0.0 {
-            hunt_haul_workers(
+            herders_needed.max(hunt_haul_workers(
                 forecast.ceiling_for(policy),
                 forecast.body_mass_yield,
                 forecast.per_worker_yield,
-            )
+            ))
         } else {
             workers_needed_for_take(actual, forecast.per_worker_yield, workers)
         },
@@ -3653,10 +3692,22 @@ pub fn hunt_source_yield_preview(
         policy,
         arrivals_horizon,
     );
+    // **The herder term, ownership-INDEPENDENT for an investment policy** (taming-startup-lag fix): a
+    // Tame/Corral compose means the herd is being managed, but ownership is set only later in Population,
+    // so `herd_herders_needed` would read `0` on the compose turn and the seed's `workers_needed` would
+    // collapse to the haul crew ("1 of N" on a pending Tame). `would_be_herders_needed` is the real crew
+    // regardless of recorded ownership; an extractive policy stays ownership-gated (wild = 0). This is the
+    // SAME rule the resolved Hunt arm applies at its `managed_crew_needed`, so seed == resolved.
+    let herders_needed = if policy.is_investment() {
+        would_be_herders_needed(herd, fauna)
+    } else {
+        herd_herders_needed(herd, fauna)
+    };
     forecast_source_yield(
         &forecast,
         sustainable,
         herd.is_corralled(),
+        herders_needed,
         workers,
         policy,
         realized,
