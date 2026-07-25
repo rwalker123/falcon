@@ -1,9 +1,10 @@
 ---
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{HudStyle,IconSprites,FoodIcons,FaunaSprites}.gd"
-  - "clients/godot_thin_client/src/scripts/ui/{SiteSprites,WonderSprites,StageSprites,MagnifierButton}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/{SiteSprites,WonderSprites,StageSprites}.gd"
+  - "clients/godot_thin_client/src/ui/MagnifierButton.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TileHabitability,TileClimate,RiverEdges,MinimapPanel}.gd"
-  - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandBridge,Typography}.gd"
+  - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandClient,Typography}.gd"
 ---
 
 <!-- Extracted verbatim from lines 195-200;202-202;204-210 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -26,9 +27,11 @@ exist**: there is **no `INSPECTOR_FONT_SIZE` constant** anywhere in the client, 
 `control` typography map.
 
 `src/scripts/Typography.gd` is a **37-line shim** — `apply()`, `apply_theme()`, `theme()` and
-`size_for()` all return null or do nothing. Only `DEFAULT_FONT_SIZE := 18` and
-`base_font_size()` carry real values, consumed at a handful of `Inspector.gd` call sites (the
-file's only consumer; the live base size is `Inspector.get_resolved_font_size()`).
+`size_for()` all return null or do nothing. **That is the trap: ~14 files across
+`ui/inspector/` preload it and call `Typography.apply`, and every one of those calls is a
+no-op.** Only `DEFAULT_FONT_SIZE := 18` and `base_font_size()` carry real values, and
+`base_font_size()`'s sole caller is `Inspector.gd` (the live base size is
+`Inspector.get_resolved_font_size()`).
 
 **Building a panel that expects `Typography` to style it is the trap this note exists to
 prevent** — every method returns without error, so it fails silently and looks like a layout
@@ -42,7 +45,7 @@ bug rather than a missing system.
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate LABELS + classification: maps `TileState.temperature` (°) into **Polar/Boreal/Temperate/Tropical** using the SIM's PUBLISHED cut points (`MapSection.climateBands`, adopted via `set_cut_points` from MapView's overlay ingest — the client no longer keeps its own `cool_min`, retired with the Climate Authority arc so the shown climate can't disagree with the sim's biome). Mirrors `climate::climate_band_for_temperature` exactly (inclusive upper bounds). `has_bands()` gates the row — until the sim publishes, the Climate row is skipped (no invented threshold). INFORMATIONAL only — neutral ink, no HEALTHY/WARN/DANGER tint. Consumed by `Hud._tile_terrain_lines` |
 | `ui/RiverEdges.gd` | Single source of truth for the TEXT reading of hex-EDGE rivers: owns the class vocabulary (Minor/Major), the 6 direction names, and the mask bit-widths as named constants, and formats `TileState.riverEdges` into `Major River: NE, NW` / `Minor River: SW` rows (`summary_lines`, Major first, directions in compass order from NE). Consumed by BOTH `Hud._tile_terrain_lines` (Tile card) and `Hud.show_tooltip` (map hover) — one formatter, two surfaces. See Edge Blending → Rivers |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
-| `CommandBridge.gd` | Issues Protobuf commands to server |
+| `CommandClient.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
 | `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, `chip_stylebox(border)` (the selection card's pinned condition pills), `hairline_stylebox()` (a standalone 1px LINE_SOFT rule inside a card — the list ↔ drawer boundary; the caller owns the thickness), the Band/City panel's three zone styleboxes + their geometry (`role_card_stylebox()` — the bordered standing-role card; `work_row_stylebox(open)` — the work board's row backing, SIGNAL-washed while its inspector is open; `work_inspector_stylebox()` — the inspector strip, written as the role card's chrome REUSED rather than a second identical copy), and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |

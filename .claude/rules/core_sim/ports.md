@@ -4,7 +4,8 @@ paths:
   - "core_sim/src/bin/server.rs"
   - "core_sim/src/resources.rs"
   - "clients/godot_thin_client/src/scripts/ServerPortsFile.gd"
-  - "clients/godot_thin_client/src/scripts/{Main,LogsPanel}.gd"
+  - "clients/godot_thin_client/src/scripts/Main.gd"
+  - "clients/godot_thin_client/src/scripts/ui/inspector/LogsPanel.gd"
   - "scripts/run_stack.sh"
 ---
 
