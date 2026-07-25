@@ -36,7 +36,7 @@ names a *section heading*, not a file. Resolve it with
 `grep -rn '^#* The knowledge pattern' .claude/rules/core_sim/`. Directional words
 ("below"/"above") are only reliable *within* one file.
 
-**Adding to these docs.** Put per-arc rationale in the rule file that owns the
-arc — that is what keeps two concurrent worktrees off the same file. Only add
-here if it is true of all `core_sim` work.
+**Adding to these docs.** Per-arc rationale goes in the rule file that owns the
+arc; a new arc gets a **row above**, not a section here. See the hub banner at
+the top of this file for the test.
 
