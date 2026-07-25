@@ -655,7 +655,7 @@ navigable counts belong to the pre-arc landmass and are ~0 at this size today; s
 Measured by `core_sim/tests/alpine_headwaters.rs` (6 seeds × 2 grids), which exists because a
 playtest reported "not enough rivers issue out of Alpine ranges".
 
-`apply_moisture_transport` (`mapgen.rs`) walks each row downwind and, at every mountain-mask cell,
+`compute_moisture_field` (`mapgen.rs`) walks each row downwind and, at every mountain-mask cell,
 adds `rain_shadow_strength × relief` to a `shadow` it subtracts from every cell **after** it. A fold
 belt is ~9 tiles wide (`belt_width_tiles = 4` dilated both ways), so **the belt's own windward tiles
 shadow its interior**. At the shipped earthlike numbers the shadow overwhelms the lift ~5:1:

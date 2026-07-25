@@ -253,11 +253,18 @@ impl Terrain {
             has_river_edge.push(tile.has_any_river_edge());
         }
         let moisture = world.resource::<MoistureRaster>();
-        assert_eq!(
+        // Match `PrecipField::new`'s usability gate EXACTLY (width AND height AND len). A transposed
+        // raster of the same area passes a length-only check, indexes the wrong tile's precipitation
+        // here, AND makes hydrology fall back to uniform precip — precisely the fabrication this
+        // assert exists to prevent.
+        assert!(
+            moisture.width == width && moisture.height == height && moisture.values.len() == total,
+            "MoistureRaster must cover the grid ({width}x{height}, {total} samples), got {}x{} with \
+             {} samples — hydrology falls back to uniform precip when it does not, which would make \
+             every moisture figure below a fabrication",
+            moisture.width,
+            moisture.height,
             moisture.values.len(),
-            total,
-            "MoistureRaster must cover the grid — hydrology falls back to uniform precip when it \
-             does not, which would make every moisture figure below a fabrication"
         );
         Self {
             width,
