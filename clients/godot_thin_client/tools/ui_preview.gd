@@ -2522,6 +2522,67 @@ func _ready() -> void:
 	# Restore the default strip for any later frame.
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
 
+	# STALE-CLOSURE GUARD (herd) — the drawer diff-cache patches a same-SHAPE restate in place and
+	# DELIBERATELY keeps the compose-open button's `pressed` closure intact. Before the fix
+	# `_herd_actions_shape` omitted the herd id, so switching to a DIFFERENT herd of identical structure
+	# took the PATCH path and left "Assign hunters ▸" opening the PREVIOUS herd's compose (playtest: the
+	# rabbit's button opened the boar's Tame sheet). Two wild huntable herds share the "assign-button, no
+	# summary" shape, so the buggy patch path fires; pressing the button must open herd B's compose, not A's.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._compose.reset_hunt_source()
+	var stale_herd_a := _wild_herd_fixture()
+	var stale_herd_b := _wild_herd_fixture()
+	stale_herd_b["id"] = "game_deer_stale_99"
+	stale_herd_b["species"] = "Roe Deer"
+	stale_herd_b["label"] = "Roe Deer (game_deer_stale_99)"
+	# Drive the REAL drawer-actions path (`refresh_drawer_actions` calls these), settling a frame between
+	# each so the diff-cache's deferred `queue_free` completes: without the settles, stale buttons linger
+	# in-tree, the child-count patch test misreads, and `_find_button_by_text` grabs the wrong node.
+	_hud._drawercompose._clear_herd_drawer()   # drop any prior-state button so A gets a FRESH closure
+	await _settle()
+	_hud._drawercompose.build_herd_drawer_actions(stale_herd_a)   # full rebuild → button opens A
+	await _settle()
+	_hud._drawercompose.build_herd_drawer_actions(stale_herd_b)   # same shape → the patch path under test
+	await _settle()
+	var stale_herd_btn := _find_button_by_text(
+		_hud.herd_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower())
+	assert(stale_herd_btn != null)
+	stale_herd_btn.pressed.emit()
+	await _settle()
+	await _save("herd_assign_button_targets_selected_herd")
+	# The opened compose must be herd B (the herd now shown), never the herd A it was first wired against.
+	assert(_hud._compose.kind() == ComposeState.KIND_HERD)
+	assert(_hud._compose.subject() == String(stale_herd_b["id"]))
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_hunt_source()
+
+	# STALE-CLOSURE GUARD (forage) — the identical diff-cache pattern on the forage drawer. Before the fix
+	# the forage-actions shape omitted the tile subject key, so switching between two food tiles of the same
+	# shape kept "Assign foragers ▸" opening the PREVIOUS tile's forage compose. Same drive, other drawer.
+	_hud._compose.reset_forage_source()
+	var stale_tile_a := _food_tile_fixture()
+	var stale_tile_b := _food_tile_fixture()
+	stale_tile_b["x"] = 70
+	stale_tile_b["y"] = 20
+	_hud._drawercompose._clear_forage_drawer()   # drop any prior-state button so tile A gets a FRESH closure
+	await _settle()
+	_hud._drawercompose.build_forage_drawer_actions(stale_tile_a)   # full rebuild → button opens tile A
+	await _settle()
+	_hud._drawercompose.build_forage_drawer_actions(stale_tile_b)   # same shape → the patch path under test
+	await _settle()
+	var stale_forage_btn := _find_button_by_text(
+		_hud.forage_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
+	assert(stale_forage_btn != null)
+	stale_forage_btn.pressed.emit()
+	await _settle()
+	await _save("forage_assign_button_targets_selected_tile")
+	# The opened compose must be tile B (subject key "70,20"), never tile A ("66,10") it was first wired to.
+	assert(_hud._compose.kind() == ComposeState.KIND_FORAGE)
+	assert(_hud._compose.subject() == "70,20")
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_forage_source()
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()

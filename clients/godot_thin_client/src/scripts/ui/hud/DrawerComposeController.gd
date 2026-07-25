@@ -1317,7 +1317,12 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
     if not standing.is_empty():
         summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE, HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
     var subject_key := _forage_source_key(tile_info)
-    var shape := _standing_actions_shape(summary_model)
+    # The subject key LEADS the shape signature so switching to a different tile — even one of
+    # identical structure — forces a full rebuild and re-wires the compose-open button's
+    # `open_forage_compose(tile_info)` closure to the current tile. The same-shape patch path keeps
+    # that closure intact by design, so without the key a same-shape restate leaves the button
+    # opening the PREVIOUS tile's forage compose (the herd drawer's stale-closure bug, twinned here).
+    var shape := [subject_key] + _standing_actions_shape(summary_model)
     var expected_children := (1 if not summary_model.is_empty() else 0) + 1
     # Same shape (summary present + its warn/note structure) → patch the summary + compose button in
     # place, so the per-snapshot restate never tears down the drawer (the "worst around Forage" flash).
@@ -1367,7 +1372,7 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
         var standing := _standing_assignment(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id)
         if not standing.is_empty():
             summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_HUNT, noun.to_lower())
-    var shape := _herd_actions_shape(corralled, extending, available, summary_model)
+    var shape := _herd_actions_shape(herd_id, corralled, extending, available, summary_model)
     var expected_children := (1 if corralled else 0) + (1 if not summary_model.is_empty() else 0) + (1 if available else 0)
     # Same shape (extend kind + summary structure + compose button presence) → patch each part in
     # place, so a per-snapshot restate never tears the herd drawer down.
@@ -1400,19 +1405,26 @@ func _clear_herd_drawer() -> void:
         child.queue_free()
     _herd_drawer_shape = []
 
-## The forage drawer-actions shape: `[has_summary, warn, has_note, has_muted]` — the full set of
-## optional child slots, so any structural change (summary appearing/disappearing, a warn/note/muted
-## label appearing) moves the signature and forces a rebuild rather than a stale positional patch.
+## The STANDING-SUMMARY child-slot structure shared by both drawers: `[has_summary, warn, has_note,
+## has_muted]` — the full set of optional summary child slots, so any structural change (summary
+## appearing/disappearing, a warn/note/muted label appearing) moves the signature and forces a rebuild
+## rather than a stale positional patch. Each caller PREPENDS its own subject key (the forage tile key /
+## the herd id) so a subject change also forces a rebuild — see `build_forage_drawer_actions` /
+## `_herd_actions_shape`.
 func _standing_actions_shape(summary_model: Dictionary) -> Array:
     if summary_model.is_empty():
         return [false, false, false, false]
     return [true, bool(summary_model["warn"]),
         String(summary_model["note"]) != "", String(summary_model["muted_note"]) != ""]
 
-## The herd drawer-actions shape: the extend control's kind + the summary structure + whether the
-## compose button is present. Any change forces a rebuild rather than a positional patch.
-func _herd_actions_shape(corralled: bool, extending: bool, available: bool, summary_model: Dictionary) -> Array:
-    return [corralled, extending, available] + _standing_actions_shape(summary_model)
+## The herd drawer-actions shape: the herd SUBJECT KEY + the extend control's kind + the summary
+## structure + whether the compose button is present. The subject key LEADS because the compose-open
+## button's `pressed` closure captures THIS herd, and the same-shape patch path deliberately keeps
+## that closure intact — so a subject change (even to a herd of identical structure) must move the
+## signature and force a full rebuild, or the button re-wires against the wrong herd (stale-closure
+## bug). Any other structural change forces a rebuild too, rather than a positional patch.
+func _herd_actions_shape(herd_id: String, corralled: bool, extending: bool, available: bool, summary_model: Dictionary) -> Array:
+    return [herd_id, corralled, extending, available] + _standing_actions_shape(summary_model)
 
 ## Patch an extend-pen control in place. It is a Fencing-N% BADGE while a ring is in flight, else a
 ## plain button; WHICH one rides the shape signature (`extending`), so here it is only ever the same
