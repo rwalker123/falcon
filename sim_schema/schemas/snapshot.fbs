@@ -1141,6 +1141,15 @@ table FloraShareInfo {
   // yield vector pays no fodder) or a plant that cannot climb to the Field rung here. Produced by the
   // same `field_fodder` payoff function the sim pays with, so the quote and the payout cannot drift.
   sowFodderPayoff:float = 0;
+  // --- WHAT A CASH-CROP FIELD WOULD PAY (appended, flora roster F4) ---
+  // Trade goods/turn a sown Field of THIS plant would credit to the faction trade_goods stockpile on
+  // this tile, in the same convention as `sowFodderPayoff` but routed to the TRADE account. A cash
+  // crop's payoff is NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as
+  // food) — this is the number that lets the picker show a cash crop's real value instead of a bare
+  // 0x. `0` for a staple/hay (its yield vector pays no trade beyond the flat token) or a plant that
+  // cannot climb to the Field rung here. Produced by the same `field_trade_goods` payoff function the
+  // sim pays with, so the quote and the payout cannot drift.
+  sowTradePayoff:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

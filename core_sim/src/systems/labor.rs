@@ -230,15 +230,38 @@ pub fn advance_labor_allocation(
                                 RungKey::PlantTended
                             };
                             tiles.get(tile_entity).ok().and_then(|ground| {
-                                let composition =
-                                    tile_flora_composition(&flora, &labor.forage, ground);
-                                resolve_committed_species(
-                                    species.as_deref(),
-                                    &composition,
-                                    &flora,
-                                    rung,
-                                )
-                                .ok()
+                                // §10 scoping: Cultivate and a Sow that **upgrades** an existing
+                                // patch commit against the tile's **realized** basket (what is
+                                // growing here); a Sow that **creates** a patch on bare ground has no
+                                // realized basket, so it reads the **affinity** roster (what CAN grow
+                                // here). The create case does not occur on a generated map — every
+                                // food-bearing tile already carries a patch — but the branch keeps the
+                                // "you sow what grows here; unwilling ground is rung 4" rule honest.
+                                let sow_from_nothing = matches!(policy, FollowPolicy::Sow)
+                                    && forage_registry.patch(*tile).is_none();
+                                if sow_from_nothing {
+                                    resolve_committed_species(
+                                        species.as_deref(),
+                                        flora.composition(ground.resource_terrain()),
+                                        &flora,
+                                        rung,
+                                    )
+                                    .ok()
+                                } else {
+                                    let composition = tile_flora_composition(
+                                        &flora,
+                                        &labor.forage,
+                                        ground,
+                                        map_seed,
+                                    );
+                                    resolve_committed_species(
+                                        species.as_deref(),
+                                        &composition,
+                                        &flora,
+                                        rung,
+                                    )
+                                    .ok()
+                                }
                             })
                         })
                         .flatten();
@@ -366,6 +389,19 @@ pub fn advance_labor_allocation(
                         if fodder > scalar_zero() {
                             cohort.stores.add(FODDER, fodder);
                             band_fodder_inflow += fodder.to_f32();
+                        }
+                        // **The TRADE-GOODS account (Flora Roster F4).** The SAME managed harvest, routed by the yield
+                        // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
+                        // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
+                        // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
+                        // FactionInventory, exactly as the Market-forage arm's wild sale does.
+                        let trade_production =
+                            field_trade_goods(patch, &labor.forage, &flora, mult_f);
+                        let trade_collection = workers as f32
+                            * managed_per_worker_trade(patch, &labor.forage, &flora, mult_f);
+                        let trade_goods = (trade_production.min(trade_collection)).round() as i64;
+                        if trade_goods > 0 {
+                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
                         }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the

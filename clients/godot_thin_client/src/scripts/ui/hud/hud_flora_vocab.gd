@@ -184,6 +184,15 @@ const FLORA_CROP_FODDER_ROW_FORMAT := "%s %d%% · %.1f hay"
 
 const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.1f fodder/turn as a sown field — feed for penned animals, not food for people."
 
+# A CASH crop pays TRADE, not provisions or fodder, so both its provisions ratio and its hay payoff are
+# 0 and the `N.N×` row would read it as worthless (Flora roster F4). When `sow_trade_payoff > 0` the row
+# instead states the trade value in its own account — `Flax 30% · 2.4 trade` — so a valuable cash crop
+# never reads as a loss. Detected the same way hay is: purely from the payoff being > 0 (the client
+# holds no roster and `role` is not on the wire).
+const FLORA_CROP_TRADE_ROW_FORMAT := "%s %d%% · %.1f trade"
+
+const FLORA_CROP_TRADE_TOOLTIP_FORMAT := "%s pays %.1f trade/turn as a sown field — goods for your stockpile, not food for people."
+
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea
 # and the ratio exists to stop that being invisible, not to prevent it.

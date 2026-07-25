@@ -336,6 +336,13 @@ pub(crate) fn forage_patches_to_array(
                 // food but valuable as feed. The crop picker shows this hay value in place of the 0×
                 // provisions ratio so a fodder crop does not read as a loss. 0 for a normal crop.
                 let _ = share_dict.insert("sow_fodder_payoff", share.sowFodderPayoff());
+                // The TRADE twin of `sow_payoff` (Flora roster F4): trade goods a Sown Field of THIS
+                // species would credit to the faction trade_goods stockpile per turn. >0 marks a CASH
+                // crop (e.g. flax), whose provisions payoff/ratio AND fodder payoff read 0 — worthless
+                // as food or feed but valuable as trade. The crop picker shows this trade value in
+                // place of the 0× provisions ratio so a cash crop does not read as a loss. 0 for a
+                // normal or fodder crop.
+                let _ = share_dict.insert("sow_trade_payoff", share.sowTradePayoff());
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

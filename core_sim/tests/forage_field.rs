@@ -242,7 +242,8 @@ fn default_sowable_species(app: &App, coord: UVec2) -> Option<String> {
         .resource::<TileRegistry>()
         .index(coord.x, coord.y)?;
     let ground = app.world.get::<Tile>(entity)?;
-    let composition = tile_flora_composition(&flora, &labor.forage, ground);
+    let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
     default_species_for_rung(&composition, &flora, RungKey::PlantField)
 }
 

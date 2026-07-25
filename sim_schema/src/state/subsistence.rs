@@ -523,6 +523,12 @@ pub struct FloraShareInfo {
     /// plant that cannot climb to the Field rung here. Appended (append-only).
     #[serde(default)]
     pub sow_fodder_payoff: f32,
+    /// Trade goods/turn a sown Field of this plant would credit to the faction `trade_goods` stockpile
+    /// on this tile (Flora Roster F4). A cash crop's payoff is in this account, not provisions, so the
+    /// picker can show a cash crop's value instead of the bare `0×` its `sow_yield_ratio` reads. `0`
+    /// for a staple/hay or a plant that cannot climb to the Field rung here. Appended (append-only).
+    #[serde(default)]
+    pub sow_trade_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

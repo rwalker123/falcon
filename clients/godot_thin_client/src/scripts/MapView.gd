@@ -1385,11 +1385,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse_event: InputEventMouseButton = event
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
-			_apply_zoom(MOUSE_ZOOM_STEP, get_local_mouse_position())
+			_apply_zoom(MOUSE_ZOOM_STEP * ClientSettings.zoom_speed_multiplier, get_local_mouse_position())
 			_mark_input_handled()
 			return
 		elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
-			_apply_zoom(-MOUSE_ZOOM_STEP, get_local_mouse_position())
+			_apply_zoom(-MOUSE_ZOOM_STEP * ClientSettings.zoom_speed_multiplier, get_local_mouse_position())
 			_mark_input_handled()
 			return
 		elif (mouse_event.button_index == MOUSE_BUTTON_MIDDLE or mouse_event.button_index == MOUSE_BUTTON_RIGHT):
@@ -1449,11 +1449,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		var gesture: InputEventPanGesture = event
 		if gesture.alt_pressed:
 			return
-		_apply_pan(-gesture.delta)
+		_apply_pan(-gesture.delta * ClientSettings.pan_speed_multiplier)
 		_mark_input_handled()
 	elif event is InputEventMagnifyGesture:
 		var magnify: InputEventMagnifyGesture = event
-		var amount: float = (magnify.factor - 1.0) * KEYBOARD_ZOOM_SPEED
+		var amount: float = (magnify.factor - 1.0) * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier
 		if not is_zero_approx(amount):
 			_apply_zoom(amount, get_local_mouse_position())
 			_mark_input_handled()
@@ -3478,11 +3478,11 @@ func _process(delta: float) -> void:
 	if pan_input != Vector2.ZERO:
 		if pan_input.length_squared() > 1.0:
 			pan_input = pan_input.normalized()
-		_apply_pan(pan_input * KEYBOARD_PAN_SPEED * delta)
+		_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
 	var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
 	if not is_zero_approx(zoom_direction):
 		var viewport_center: Vector2 = get_viewport_rect().size * 0.5
-		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * delta, viewport_center)
+		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
 	# Animate the targeting overlay (pulsing glow / reticle) while a command is
 	# being targeted.
 	if _annotations.is_targeting_active():
@@ -3588,7 +3588,7 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 ## `direction` is +1 (in) / -1 (out); the pivot is the map center so button-zoom
 ## doesn't drift the view.
 func zoom_step(direction: int) -> void:
-	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP, _viewport_center_pivot())
+	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP * ClientSettings.zoom_speed_multiplier, _viewport_center_pivot())
 
 ## Absolute zoom setter — jump straight to a target `zoom_factor` (clamped to
 ## [MIN,MAX]), pivoting on the map centre. Reuses the single `_apply_zoom` path by

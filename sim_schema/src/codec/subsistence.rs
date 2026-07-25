@@ -281,6 +281,8 @@ fn create_flora_shares<'a>(
                 sowPayoff: share.sow_payoff,
                 // The fodder a hay Field would pay — appended last (append-only wire, F3).
                 sowFodderPayoff: share.sow_fodder_payoff,
+                // The trade goods a cash Field would pay — appended last (append-only wire, F4).
+                sowTradePayoff: share.sow_trade_payoff,
             },
         );
         entries.push(entry);

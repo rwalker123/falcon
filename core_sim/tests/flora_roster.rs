@@ -7,6 +7,7 @@
 //! Every assertion is made against the **loaded** `labor_config`, never a literal, so if either
 //! table drifts the test fails instead of quietly agreeing with a stale copy of itself.
 
+use bevy::math::UVec2;
 use core_sim::{FloraConfig, LaborConfig, BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY};
 use sim_runtime::TerrainType;
 
@@ -17,9 +18,32 @@ const SHARE_EPSILON: f32 = 1e-5;
 /// relative bound is the honest one for f32).
 const CAPACITY_RELATIVE_EPSILON: f32 = 1e-5;
 
+/// A pinned seed for every per-tile realization sweep (§10) — so "best/worst realization" is the same
+/// measured extreme run to run.
+const SWEEP_SEED: u64 = 0x_F10A_5EED_2EA1_0010;
+/// Side of the tile grid each sweep samples per biome (8×8 = 64 tiles — enough draws that a species
+/// realizes both dominant and absent across its hosted ground).
+const SWEEP_SIDE: u32 = 8;
+
 fn labor() -> LaborConfig {
     LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG)
         .expect("builtin labor config should parse and validate")
+}
+
+/// The tile coords a realization sweep samples — a small deterministic grid.
+fn sweep_tiles() -> impl Iterator<Item = UVec2> {
+    (0..SWEEP_SIDE).flat_map(|x| (0..SWEEP_SIDE).map(move |y| UVec2::new(x, y)))
+}
+
+/// `species`' realized share of `terrain`'s basket on tile `coord` under [`SWEEP_SEED`] — `0.0` where
+/// the tile does not realize it.
+fn realized_share(flora: &FloraConfig, terrain: TerrainType, species: &str, coord: UVec2) -> f32 {
+    flora
+        .realized_composition(terrain, coord, SWEEP_SEED)
+        .iter()
+        .find(|entry| entry.species == species)
+        .map(|entry| entry.share)
+        .unwrap_or(0.0)
 }
 
 #[test]
@@ -157,9 +181,17 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
     let flora = FloraConfig::builtin();
     let forage = labor().forage;
 
+    let flat_trade = forage.market.trade_goods_per_biomass;
     let mut fodder_crops = 0;
+    let mut cash_crops = 0;
     for (key, def) in &flora.species {
         let is_fodder_crop = def.yield_.fodder_per_biomass > 0.0;
+        // A CASH crop (Flora Roster F4) pays into the trade account alone: no food, no fodder, and a
+        // trade rate ABOVE the flat F1 token every staple still carries. The three categories are
+        // read off the *vector*, never the display `role` (which is derived from exactly this).
+        let is_cash_crop = !is_fodder_crop
+            && def.yield_.provisions_per_biomass == 0.0
+            && def.yield_.trade_goods_per_biomass > flat_trade;
         if is_fodder_crop {
             // A fodder crop pays into the fodder account, NOT provisions and NOT trade.
             fodder_crops += 1;
@@ -171,6 +203,23 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
                 def.yield_.trade_goods_per_biomass, 0.0,
                 "fodder crop `{key}` must pay no trade — its payoff is the fodder account"
             );
+        } else if is_cash_crop {
+            // A cash crop pays into the trade account alone (F4): no food, no fodder, trade dominant.
+            cash_crops += 1;
+            assert_eq!(
+                def.yield_.provisions_per_biomass, 0.0,
+                "cash crop `{key}` must pay no provisions — it is worthless as food"
+            );
+            assert_eq!(
+                def.yield_.fodder_per_biomass, 0.0,
+                "cash crop `{key}` must pay no fodder — its payoff is the trade account"
+            );
+            assert!(
+                def.yield_.trade_goods_per_biomass > flat_trade,
+                "cash crop `{key}` must pay trade ABOVE the flat token that differentiates it \
+                 ({} vs {flat_trade})",
+                def.yield_.trade_goods_per_biomass
+            );
         } else {
             // A staple converts biomass to food positively, pays the flat F1 trade rate, and — since
             // the fodder account is for hay alone — pays no fodder.
@@ -179,8 +228,8 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
                 "staple `{key}` must convert biomass into food at some positive rate"
             );
             assert_eq!(
-                def.yield_.trade_goods_per_biomass, forage.market.trade_goods_per_biomass,
-                "staple `{key}` must still carry the flat trade rate verbatim — F4 owns cash crops"
+                def.yield_.trade_goods_per_biomass, flat_trade,
+                "staple `{key}` must still carry the flat trade token verbatim — F4 owns cash crops"
             );
             assert_eq!(
                 def.yield_.fodder_per_biomass, 0.0,
@@ -189,12 +238,16 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
         }
         assert_eq!(
             def.regrowth_rate, forage.ecology.regrowth_rate,
-            "`{key}` must regrow at forage.ecology.regrowth_rate — S1/F3 move no regrowth"
+            "`{key}` must regrow at forage.ecology.regrowth_rate — S1/F3/F4 move no regrowth"
         );
     }
     assert_eq!(
         fodder_crops, 1,
-        "F3 ships exactly one fodder crop (hay_grass); the rest are staples"
+        "F3 ships exactly one fodder crop (hay_grass)"
+    );
+    assert_eq!(
+        cash_crops, 4,
+        "F4 ships exactly four cash crops (cotton, flax, tobacco, tea)"
     );
     assert!(
         flora
@@ -227,61 +280,63 @@ fn the_gathered_wild_things_never_beat_the_basket_average() {
     }
 }
 
-/// **THE commit trade, asserted as the design states it** (§4.3):
+/// **THE commit trade, asserted as the design states it** (§4.3), now on the PER-TILE REALIZED share
+/// (§10):
 ///
 /// ```text
 /// tending is worth it  ⟺  concentration × species_rate  >  1.0 × wild_rate
 /// ```
 ///
-/// For every species that *can* climb, the roster must make that true **somewhere** — on its best
-/// country — and false on its worst hosted ground. A species that clears the bar everywhere it grows
-/// is a free lunch; one that clears it nowhere is a rung nobody would ever climb.
+/// The commit bar is per-tile: a species is worth committing on a tile where it **realizes a high
+/// local share** — its own tiles — and not where it is absent or marginal. So for every climbing
+/// species the roster must make that true on its **best realization** (some tile clears the bar) and
+/// false on its **worst** (some tile — where it is absent, or crowded in with richer neighbours —
+/// does not). This is exactly what lets cash crops sit on AlluvialPlain without tripping the wheat
+/// bar: wheat still dominates *its* alluvial tiles, cotton dominates cotton tiles. Swept over a grid
+/// of tiles at a pinned seed, so "best/worst realization" is a measured extreme, not the uniform
+/// biome share the pre-§10 test read.
 #[test]
-fn every_climbing_species_is_worth_committing_on_its_best_country_and_not_on_its_worst() {
+fn every_climbing_species_is_worth_committing_on_its_best_realization_and_not_on_its_worst() {
     let flora = FloraConfig::builtin();
     let labor = labor();
     let forage = &labor.forage;
     let tended_gain = forage.cultivation.tended_concentration_gain;
+    let wild = forage.provisions_per_biomass;
 
     for (key, def) in &flora.species {
         if !def.cultivation_ceiling.allows_cultivate() {
             continue;
         }
-        // A **fodder crop** climbs the ladder too, but its payoff is in the fodder account, not
-        // provisions — the provisions bar below would read its `0.0` food rate as "never worth
-        // tending". Its own worth-it bar is asserted in `the_fodder_crop_pays_a_positive_fodder_yield`.
-        if def.yield_.fodder_per_biomass > 0.0 {
+        // A **fodder crop** (F3) or a **cash crop** (F4) climbs the ladder too, but its payoff is in
+        // the fodder / trade account, not provisions — the provisions bar below would read its `0.0`
+        // food rate as "never worth tending". A fodder crop's worth-it bar is
+        // `the_fodder_crop_pays_a_positive_fodder_yield`; a cash crop's is
+        // `the_cash_crops_pay_a_positive_trade_yield` (and, end to end, `flora_f4_cash.rs`).
+        if def.yield_.provisions_per_biomass == 0.0 {
             continue;
         }
-        // The commit value on each biome this species hosts: `min(1, share × gain) × rate`, against
-        // the wild basket's `1.0 × forage.provisions_per_biomass`.
-        let mut values: Vec<(TerrainType, f32)> = def
-            .host_biomes
-            .keys()
-            .map(|terrain| {
-                let share = flora
-                    .composition(*terrain)
-                    .iter()
-                    .find(|entry| entry.species == *key)
-                    .map(|entry| entry.share)
-                    .expect("a hosted biome names its host");
-                let concentration = (share * tended_gain).min(1.0);
-                (*terrain, concentration * def.yield_.provisions_per_biomass)
-            })
-            .collect();
-        values.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let wild = forage.provisions_per_biomass;
-        let (best_biome, best) = values[0];
-        let (worst_biome, worst) = *values.last().expect("a species hosts at least one biome");
+        // The realized commit value on each hosted biome × a tile sweep: `min(1, realized_share ×
+        // gain) × rate` (0 where the tile does not realize this crop), against the wild basket's
+        // `1.0 × wild_rate`.
+        let mut best = f32::MIN;
+        let mut worst = f32::MAX;
+        for terrain in def.host_biomes.keys() {
+            for coord in sweep_tiles() {
+                let share = realized_share(&flora, *terrain, key, coord);
+                let value = (share * tended_gain).min(1.0) * def.yield_.provisions_per_biomass;
+                best = best.max(value);
+                worst = worst.min(value);
+            }
+        }
         assert!(
             best > wild,
-            "`{key}` is never worth tending — best country {best_biome:?} pays {best} against the \
-             wild basket's {wild}"
+            "`{key}` is never worth tending on any realized tile — best realization pays {best} \
+             against the wild basket's {wild}"
         );
         assert!(
             worst < wild,
-            "`{key}` is worth tending even on {worst_biome:?}, where it is marginal ({worst} vs \
-             {wild}) — a commitment that is right everywhere is not a decision"
+            "`{key}` is worth tending on every realized tile ({worst} vs {wild}) — a commitment that \
+             is right everywhere is not a decision"
         );
     }
 }
@@ -321,6 +376,59 @@ fn the_fodder_crop_pays_a_positive_fodder_yield() {
         assert!(
             contested,
             "`{key}` hosts {terrain:?} but no staple does — hay must contest grain's ground"
+        );
+    }
+}
+
+/// **The cash crops pay a positive trade yield, and they compete with grain on SOWABLE ground**
+/// (Flora Roster F4, `docs/plan_flora_roster.md` §6). A cash crop's worth-it bar is the trade
+/// account, not provisions: a cash Field's harvest credits the faction `trade_goods` stockpile,
+/// which the worth-committing bar above (provisions-only) deliberately skips. The land-use tension is
+/// real only if a cash crop grows where grain could: each must host at least one biome that also
+/// hosts a **sowable** staple (one that reaches the field rung), so growing cash genuinely displaces
+/// calories on ground a Field could have taken.
+#[test]
+fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
+    let flora = FloraConfig::builtin();
+    let flat_trade = labor().forage.market.trade_goods_per_biomass;
+
+    let cash: Vec<(&String, &_)> = flora
+        .species
+        .iter()
+        .filter(|(_, def)| {
+            def.yield_.provisions_per_biomass == 0.0
+                && def.yield_.fodder_per_biomass == 0.0
+                && def.yield_.trade_goods_per_biomass > flat_trade
+        })
+        .collect();
+    assert_eq!(
+        cash.len(),
+        4,
+        "F4 ships exactly four cash crops (cotton, flax, tobacco, tea)"
+    );
+
+    for (key, def) in cash {
+        assert!(
+            def.yield_.trade_goods_per_biomass > flat_trade,
+            "`{key}` must pay a trade rate above the flat token — it is what a cash Field credits"
+        );
+        assert!(
+            def.cultivation_ceiling.allows_sow(),
+            "`{key}` is a Field crop (you Sow it) — it must reach the field rung"
+        );
+        // It must contest a sowable staple's ground: at least one biome it hosts also hosts a staple
+        // that itself reaches the field rung, so growing cash there genuinely forgoes calories.
+        let contests_sowable_grain = def.host_biomes.keys().any(|terrain| {
+            flora.composition(*terrain).iter().any(|share| {
+                let staple = &flora.species[&share.species];
+                staple.yield_.provisions_per_biomass > 0.0
+                    && staple.cultivation_ceiling.allows_sow()
+            })
+        });
+        assert!(
+            contests_sowable_grain,
+            "`{key}` must host at least one biome where a sowable grain also grows — cash must \
+             contest grain's SOWABLE ground for the land-use tension to land"
         );
     }
 }

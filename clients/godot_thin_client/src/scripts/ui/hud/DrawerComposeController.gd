@@ -853,6 +853,13 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
 func _flora_entry_fodder_payoff(entry: Dictionary) -> float:
     return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
 
+## The TRADE this entry would credit to the faction trade_goods stockpile per turn as a sown field —
+## >0 marks a CASH crop, whose provisions ratio AND fodder payoff both read 0. Routed to the trade
+## account, so the picker shows it in place of the 0× ratio. `FLORA_CROP_RATIO_NONE` (0) for a normal
+## provisions or fodder crop. Trade is a Field payoff only. (Flora roster F4, twin of fodder above.)
+func _flora_entry_trade_payoff(entry: Dictionary) -> float:
+    return float(entry.get("sow_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+
 ## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
 ## substituted) on a rung the species cannot climb.
@@ -934,16 +941,21 @@ func _build_crop_picker(
         var percent := int(entry["percent"])
         var legal := _flora_entry_allows(entry, policy)
         var ratio := _flora_entry_ratio(entry, policy)
-        # A fodder crop pays hay, not provisions: its ratio is 0, so its face states the hay value in
-        # its own account instead of a worthless-looking "0.0×".
+        # A fodder crop pays hay and a cash crop pays trade, not provisions: their ratio is 0, so each
+        # face states the value in its own account instead of a worthless-looking "0.0×".
         var fodder_payoff := _flora_entry_fodder_payoff(entry)
         var is_fodder := fodder_payoff > SourceForecast.FLORA_CROP_RATIO_NONE
+        var trade_payoff := _flora_entry_trade_payoff(entry)
+        var is_cash := trade_payoff > SourceForecast.FLORA_CROP_RATIO_NONE
         var btn := Button.new()
-        # The payoff rides the face ONLY where there is one: a fodder crop shows its hay value, a
-        # provisions crop its ratio, and a row greyed by the climbability flags carries the 0 sentinel
-        # (printing "0.0×" there would read as "a crop worth nothing" rather than "not a crop at this rung").
+        # The payoff rides the face ONLY where there is one: a fodder crop shows its hay value, a cash
+        # crop its trade value, a provisions crop its ratio, and a row greyed by the climbability flags
+        # carries the 0 sentinel (printing "0.0×" there would read as "a crop worth nothing" rather than
+        # "not a crop at this rung").
         if is_fodder:
             btn.text = HudFloraVocab.FLORA_CROP_FODDER_ROW_FORMAT % [crop_name, percent, fodder_payoff]
+        elif is_cash:
+            btn.text = HudFloraVocab.FLORA_CROP_TRADE_ROW_FORMAT % [crop_name, percent, trade_payoff]
         elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
             btn.text = HudFloraVocab.FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio]
         else:
@@ -957,11 +969,13 @@ func _build_crop_picker(
         btn.disabled = not legal
         if legal:
             any_legal = true
-            # A fodder crop is valuable in the FODDER account, not the provisions one, so it never
-            # takes the loss-warn ink its 0 provisions ratio would otherwise earn: its tooltip names
-            # the hay it pays instead.
+            # A fodder crop is valuable in the FODDER account and a cash crop in the TRADE account, not
+            # the provisions one, so neither takes the loss-warn ink its 0 provisions ratio would
+            # otherwise earn: its tooltip names the hay or trade it pays instead.
             if is_fodder:
                 btn.tooltip_text = HudFloraVocab.FLORA_CROP_FODDER_TOOLTIP_FORMAT % [crop_name, fodder_payoff]
+            elif is_cash:
+                btn.tooltip_text = HudFloraVocab.FLORA_CROP_TRADE_TOOLTIP_FORMAT % [crop_name, trade_payoff]
             # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
             # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
             elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE and ratio < HudFloraVocab.FLORA_CROP_BREAK_EVEN_RATIO:

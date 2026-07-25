@@ -427,6 +427,23 @@ data shape**; it does not build market pricing. When the Market/yield-vector arc
 `yield.trade_goods_per_biomass` per species and can extend the vector to a per-good map without
 re-cutting the schema.
 
+> **F4 landed (supply side).** The **trade account now routes per-species** exactly as fodder does:
+> a Field's harvest credits `field_trade_goods` (biomass × the field rung's one rate dial ×
+> `species_trade_rate / wild_provisions_rate`) to the faction **`trade_goods` stockpile** — a
+> faction-level commodity, so unlike FOOD/FODDER it lands in `FactionInventory`, mirroring the Market
+> wild-sale arm. **No `role` branch**: a staple's `field_trade_goods` is the negligible flat token, a
+> cash crop's is dominant, all through one commodity-generic seam. The **wild Market path stays flat
+> and unchanged** — `field_trade_goods` deliberately does **not** apply the Market
+> `trade_goods_multiplier`, which is a Market-policy markup for wild commercial gathering, not a
+> managed harvest. Four cash crops ship — cotton (0.20) / flax (0.15) / tobacco (0.18) / tea (0.16),
+> playtest dials — hosted **honestly on the river valleys** (cotton/tobacco/flax on
+> AlluvialPlain/Floodplain/RiverDelta, tea on the uplands): **per-tile realization (§10) is what keeps
+> the staples dominant on their own realized tiles** (the local-share commit bar), so cash and grain
+> share that ground without a global % table eroding wheat. The picker quote is `commit_trade_payoff`
+> → `FloraShareInfo.sowTradePayoff`. **Client done**: the native reader decodes `sowTradePayoff` and
+> the crop picker renders a cash-crop trade row (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was
+> deliberately omitted for parity with fodder — no role-badge mechanism exists for either.
+
 ---
 
 ## 7. What this does *not* change
@@ -469,8 +486,18 @@ block carries its weight, then mass-fill.**
   balance* — measure it in a live campaign.
 - **F3 — Fodder, both halves.** Fodder store, the fodder Field, `Foddering` (2007), the `K_pen`
   term. Measure: a pen on thin pasture must be *survivable but expensive*, never free.
-- **F4 — Cash crops.** Trade-dominant vectors, the land-use tension, per-species trade rate replacing
-  the flat one.
+- **F4 — Cash crops. LANDED.** Trade-dominant vectors, the land-use tension, per-species trade rate
+  replacing the flat one — the exact twin of F3's fodder work. `field_trade_goods` routes the vector's
+  trade component to the faction `trade_goods` stockpile (`commit_trade_payoff` →
+  `FloraShareInfo.sowTradePayoff`); the wild Market path stays flat. Four crops (cotton/flax/tobacco/
+  tea). Client done: native `sowTradePayoff` decode + crop-picker trade row
+  (`FLORA_CROP_TRADE_ROW_FORMAT`); the cash badge was intentionally omitted for fodder parity.
+- **§10 — Per-tile realization. LANDED.** Split affinity (*what can grow*) from realization (*what is
+  growing*): `tile_flora_composition` now realizes a seeded 2–4-species subset per tile, so two tiles
+  of one biome differ. Dissolved the F4 dilution bind — cash crops re-hosted honestly on
+  AlluvialPlain/Floodplain/RiverDelta (cotton/tobacco/flax) and the uplands (tea), and the commit bar
+  reframed around the tile's local realized share. Client shows the varying basket for free (needs a
+  two-tile ui_preview fixture).
 - **F5 — Mass-fill + client.** The full roster across all non-zero biomes, icons, labels, tile-card
   composition readout.
 
@@ -494,13 +521,112 @@ The lesson of PR #119 and of grazing 2b: levers that pass every unit test can st
    ladder: `K_pen` gains a term, so every penned species' equilibrium moves.
 5. **Cash crops are refused on thin ground** (F4) — if they are worth sowing everywhere they are
    priced wrong.
+6. **Realization moves nothing at the wild rung** (§10) — map-wide and per-tile wild forage capacity
+   identical to the pre-realization uniform basket (a tile's realized shares still sum to 1). And
+   **two tiles of one biome show different baskets** — look at the tile cards, the point of the whole
+   slice. The map-wide realized species mix must still track the affinity table within tolerance.
 
 ---
 
-## 10. Deferred (tracked, not built)
+## 10. Per-tile realization — "what *can* grow" vs "what *is* growing"
 
-- **Per-component wild stocks** — gather the berries out and leave the acorns (§4.2). Real, and it
-  would make wild depletion selective; not foundational.
+> **LANDED.** `FloraConfig::realized_composition` / `realized_navigable_composition` +
+> `tile_flora_composition(.., map_seed)`; dials `realized_species_min` (2) / `realized_species_max` (4)
+> in `flora_config.json`. Cash crops re-hosted honestly (cotton/tobacco/flax on the river valleys, tea
+> on the uplands). Pinned by `core_sim/tests/flora_realization.rs` (neutrality, variance, aggregate,
+> bit-exact determinism) and the reframed `flora_roster.rs`/`flora_commitment.rs` commit-bar tests. See
+> `core_sim/CLAUDE.md` → "Per-tile realization". Client render is free (needs a two-tile ui_preview
+> fixture); "Sow reads affinity everywhere" stays deferred (§11).
+
+**The problem F1–F4 left standing.** `FloraConfig::composition(terrain)` is a **per-biome** share
+table, and *every tile of a biome publishes the identical basket*. So every alluvial plain is
+byte-identical — wheat + tuber + hay at the same percentages — and none is a wheat tile while its
+neighbour is a tobacco tile. The roster answers **"what can grow here"** and nothing answers **"what
+is *actually* growing here"**, which should be a *subset*.
+
+That uniformity is also the sole cause of the F4 cash-crop placement bind: adding tobacco to
+AlluvialPlain dilutes wheat's share on **every** alluvial tile at once, so it trips the rung-2
+commit bar (`flora_roster.rs`) everywhere simultaneously — wheat had only ~0.08 of weight headroom
+on its one passing biome. That is a tuning artifact of a global % table doing a per-tile job, not a
+real economic constraint.
+
+**The model: split affinity from realization.**
+
+| concept | function | meaning | keyed by |
+|---|---|---|---|
+| **affinity** | `FloraConfig::composition(terrain)` (existing, unchanged) | *what CAN grow here* | biome |
+| **realization** | `tile_flora_composition(map_seed, tile, terrain, flora)` (extended) | *what IS growing here* | **tile** |
+
+- **Realization is a seeded subset of the affinity roster.** For each tile, draw
+  `k = clamp(realized_species_count, 1, hosted_count)` species from the biome's affinity roster by
+  **weighted sampling without replacement** (probability ∝ affinity weight), then renormalize the
+  picked species' weights into local shares. `k` is a small config range
+  (`realized_species_min` 2 / `realized_species_max` 4, playtest dials; clamped to the number the
+  biome actually hosts).
+- **Deterministic, no stored state.** The draw's entropy is a pure hash
+  `splitmix64(map_seed ^ FLORA_REALIZATION_SALT ^ fnv(tile.x, tile.y))` — no RNG stream, no
+  `HashMap` iteration order (sort the roster before sampling), f32 sums ordered (the existing
+  `build_composition` determinism discipline). A pure function of `(seed, tile, terrain, affinities)`
+  ⇒ **deterministic under rollback for free** and **no snapshot/wire bloat** — realization is
+  *derived*, exactly as "naming decomposes, it does not add" intends. Ties break by species key
+  ascending.
+- **`tile_flora_composition` stays THE seam** every caller reads (it already blends the navigable
+  channel + underlying biome; realization applies to the biome basket inside it). It now takes the
+  seed + tile. This one function feeds wild-gather display, rung-2 Cultivate legality + the
+  concentration term, and the wire `ForagePatchState.composition`.
+
+**Invariants — realization moves nothing at the wild rung** (the same discipline as F1's "F1 moved
+nothing", now per-tile):
+- **Per-tile neutrality holds by construction.** Realized shares renormalize to sum to 1, so
+  `Σ share × capacity == capacity` on every tile — a tile still yields its **full biome capacity**
+  gathered wild, just composed of different species. Wild forage income is byte-identical; only
+  *which* species name a tile's basket changes. Pinned.
+- **Map-wide aggregate ≈ affinity.** Averaged over a biome's tiles the realized composition
+  approximates the affinity table (weighted sampling is ~unbiased), so the biome-wide species mix is
+  unmoved. A **measured** test (tolerance), not a hard assert.
+- **The commit bar becomes per-tile, and that dissolves the dilution bind.** A species is "worth
+  committing" on a tile where it **realizes a high local share** — not where it is absent or
+  marginal. With 2–4 species per tile instead of the whole roster, local shares are *large*, so a
+  wheat-dominant tile clears the rung-2 bar for wheat and a tobacco-dominant tile clears it for
+  tobacco. Adding cash crops to a biome no longer erodes the staples — each dominates its **own**
+  realized tiles. `every_climbing_species_is_worth_committing_on_its_best_country` is reframed around
+  the *realized* share (its best realization vs its worst), not the uniform biome share.
+
+**Consequences this unlocks:**
+- **Cash crops go on the land they'd grow on.** With dilution gone, host cotton/tobacco/flax on
+  AlluvialPlain/Floodplain/RiverDelta (warm/temperate river valleys) and tea on
+  RollingHills/MixedWoodland/HighPlateau (hill crop), at honest affinities. Realization spreads them
+  — some alluvial tiles are wheat, some tobacco, some cotton — instead of every tile carrying a
+  diluted slice of all of them.
+- **Scouting means something.** *"What grows here"* is now a real per-tile question, and finding a
+  tile where your cash crop dominates is a discovery worth acting on.
+
+**Scoping for this slice.** `composition` = the **realized** basket (is-growing), read everywhere:
+display, wild gather, Cultivate, and Sow-**upgrade** of an existing patch. `Sow`-from-nothing (the
+create-a-patch-on-bare-ground case, which does not occur on a generated map — every food-bearing tile
+already carries a patch) reads the **affinity** roster, since there is no realized basket to read. The
+fuller **"carry seed to ground where it is not growing wild"** model — `Sow` reading affinity
+*everywhere*, so you can plant cotton on a wheat tile — is a clean follow-up that needs a second wire
+list (the affinity roster beside the realized one); it is deliberately **not** in this slice.
+Thematically, this slice's line is: you **tend and sow what grows here**; making unwilling ground grow
+a new crop is rung 4 (Worked Land).
+
+**Config** (`flora_config.json`, new): `realized_species_min` (2) / `realized_species_max` (4),
+validated `1 <= min <= max`. **Wire:** no schema change — `ForagePatchState.composition` simply
+carries the realized subset now. **Client:** the crop picker already renders `composition`, so it
+"just works" and shows what is growing on the selected tile, varying tile to tile — verify with
+ui_preview that two tiles of the same biome show different baskets.
+
+---
+
+## 11. Deferred (tracked, not built)
+
+- **`Sow` reads affinity everywhere** — carry seed to suitable ground where the crop is not *growing*
+  wild (§10 scoping note). Needs a second wire list (the biome affinity roster beside the realized
+  basket) so the Sow picker can offer "can grow here" while the Cultivate picker offers "is growing
+  here."
+- **Per-component wild stocks** — gather the berries out and leave the acorns (§4.2), now atop the
+  per-tile realized basket (§10). Real, and it would make wild depletion selective; not foundational.
 - **Fodder over the supply network** — hay hauled beyond a band's work range (§5).
 - **Per-good trade demand** — tobacco vs cotton as distinct priced goods; belongs to the Market arc
   (§6).

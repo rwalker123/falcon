@@ -2628,6 +2628,7 @@ dependencies = [
  "core_sim",
  "serde",
  "serde_json",
+ "shadow_scale_flatbuffers",
  "sim_runtime",
  "sim_schema",
 ]
@@ -5642,10 +5643,13 @@ checksum = "6fd8403733700263c6eb89f192880191f1b83e332f7a20371ddcf421c4a337c7"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "flatbuffers",
  "glob",
  "jsonschema",
  "serde_json",
+ "shadow_scale_flatbuffers",
  "sim_runtime",
+ "sim_schema",
 ]
 
 [[package]]

@@ -688,8 +688,27 @@ fn snapshot_dict(
 
     dict
 }
-pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
-    let header = snapshot.header().unwrap();
+/// Walks a `WorldSnapshot` FlatBuffer into the client dictionary.
+///
+/// **Returns `None` when the envelope carries no header, rather than panicking.** `header` has no
+/// `required` attribute in `sim_schema/schemas/snapshot.fbs`, and `root_as_envelope` verifies table
+/// STRUCTURE only — it does not enforce the presence of optional fields — so a
+/// malformed-but-verifiable snapshot can reach here with the field absent. This used to
+/// `unwrap()`, which took down the whole Godot client on a frame it could simply have ignored.
+///
+/// **Dropping the frame, rather than decoding it with header defaults, is the deliberate half of
+/// the fix.** The header carries the frame's IDENTITY (`tick`, `worldEpoch`) and the grid's
+/// TOPOLOGY (`wrapHorizontal`), and every one of those has a plausible-looking zero value: a
+/// default-filled decode would publish a coherent-looking world whose wrap flag is a guess, and a
+/// wrong wrap flag silently corrupts every seam-crossing hex distance in the client rather than
+/// failing anywhere. The one caller, `SnapshotLoader.poll_stream`, already skips an empty
+/// dictionary (`decode_snapshot` returns one for any payload it cannot parse) and keeps polling, so
+/// a headerless frame is ignored and the next well-formed one renders normally.
+///
+/// The delta path in `bridge/decoder.rs` reaches the same "never unwrap" outcome by its own route
+/// (`if let Some(header)`), which is what this function was inconsistent with.
+pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDictionary> {
+    let header = snapshot.header()?;
 
     let mut logistics_grid: Vec<f32> = Vec::new();
     let mut logistics_dims = (0u32, 0u32);
@@ -1592,5 +1611,5 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary
         let _ = dict.insert("discovery_progress", &discovery_progress_to_array(progress));
     }
 
-    dict
+    Some(dict)
 }

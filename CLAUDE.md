@@ -37,21 +37,29 @@ This repository uses a layered documentation structure:
 
 ## Git, Branches & PRs — READ BEFORE ANY GIT COMMAND
 
-This repo is worked by **multiple concurrent sessions committing to the same branch/PR**,
-and the human owns all git topology. Violating the rules below has cost real work.
+This repo is worked by **multiple concurrent sessions**, so the unit of isolation is the
+worktree: each piece of work gets its own checkout, its own branch, and its own PR. The
+human owns the merge. Violating the rules below has cost real work.
 
-- **Never create a branch, or open / close / merge a PR, without an explicit, current
-  "yes" from the human.** "Do the work", "go implement", "fix this" do **not** authorize a
-  branch or PR. Announcing a plan ("I'll branch off X and stack it…") is **not** approval —
-  stop and ask which branch the work lands on. Default to committing on the branch already
-  checked out.
+- **The worktree flow is the default.** New work starts by creating a fresh worktree
+  branched off `origin/main` (`EnterWorktree`, or `/task-start` for a tracked issue). That
+  branch is yours: **commit, push, and open the PR without asking** — implementing the work
+  authorizes the git that carries it. See "Working from a Git Worktree" below for the
+  isolation rules that make this safe.
+- **Landing work anywhere else needs an explicit, current "yes".** Committing onto a branch
+  you didn't create — the checked-out branch of a shared session, an existing PR, `main`,
+  or stacking on someone else's branch — is a topology decision, not an implementation
+  detail. "Do the work", "go implement", "fix this" do **not** authorize it, and announcing
+  a plan ("I'll branch off X and stack it…") is **not** approval. Stop and ask.
 - **Never `git add` broad paths** — no `git add -A`, `git add .`, or `git add <dir>`.
   Another session (or the human) often has unrelated uncommitted edits in the same working
   tree; a broad add silently sweeps their work into your commit and onto the wrong branch.
   **Stage only the specific files you changed, by explicit path.** If unsure what's yours,
   run `git status` and ask.
-- **The human merges PRs** through their own review flow — you never merge.
-- Before every commit, `git status` and confirm each staged path is one you intended.
+- **The human merges PRs** through their own review flow — you never merge, close, or
+  reopen a PR.
+- Before every commit, `git status` and confirm each staged path is one you intended, and
+  `git rev-parse --show-toplevel` to confirm you are committing from the worktree you meant.
 
 ## PR Expectations for Agents
 - Mention in summaries which document(s) were touched and why
