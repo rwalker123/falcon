@@ -139,6 +139,7 @@ fn the_food_module_tag_matches_the_final_terrain() {
 
 #[test]
 fn every_river_delta_has_a_forage_patch() {
+    let mut deltas_by_grid: BTreeMap<(u32, u32), usize> = BTreeMap::new();
     for grid in [CENSUS_GRID, NAVIGABLE_FIXTURE_GRID] {
         for seed in CENSUS_SEEDS {
             let app = generated_world(seed, grid);
@@ -158,6 +159,7 @@ fn every_river_delta_has_a_forage_patch() {
                     missing.push(tile.position);
                 }
             }
+            *deltas_by_grid.entry((grid.x, grid.y)).or_default() += deltas;
             assert!(
                 missing.is_empty(),
                 "seed {seed} at {}x{}: {} of {deltas} RiverDelta tile(s) carry no ForagePatch \
@@ -170,4 +172,34 @@ fn every_river_delta_has_a_forage_patch() {
             );
         }
     }
+
+    let census_deltas = deltas_by_grid
+        .get(&(CENSUS_GRID.x, CENSUS_GRID.y))
+        .copied()
+        .unwrap_or_default();
+    let fixture_deltas = deltas_by_grid
+        .get(&(NAVIGABLE_FIXTURE_GRID.x, NAVIGABLE_FIXTURE_GRID.y))
+        .copied()
+        .unwrap_or_default();
+    println!(
+        "RiverDelta tiles swept: {census_deltas} at {}x{}, {fixture_deltas} at {}x{}",
+        CENSUS_GRID.x, CENSUS_GRID.y, NAVIGABLE_FIXTURE_GRID.x, NAVIGABLE_FIXTURE_GRID.y
+    );
+
+    // The per-case assertion above only bites on tiles it actually finds, so the delta count it
+    // already tracks has to be *asserted* somewhere — a counted-but-unasserted quantity is a
+    // vacuous guard, silently passing on a map with no deltas at all. Like `hydrology_earthlike.rs`,
+    // non-vacuity is claimed across the sweep and on the river-capable fixture, never per
+    // (seed, grid): deltas are legitimately absent from an individual small-grid map, but
+    // [`NAVIGABLE_FIXTURE_GRID`] is the size whose basins clear the navigable-discharge threshold,
+    // so river mouths — and their deltas — reliably exist there.
+    assert!(
+        fixture_deltas > 0,
+        "no RiverDelta tiles at all at {}x{} across the seed sweep ({census_deltas} at {}x{}): this \
+         guard has gone vacuous and no longer proves that deltas carry a ForagePatch",
+        NAVIGABLE_FIXTURE_GRID.x,
+        NAVIGABLE_FIXTURE_GRID.y,
+        CENSUS_GRID.x,
+        CENSUS_GRID.y
+    );
 }
