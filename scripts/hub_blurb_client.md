@@ -41,8 +41,8 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 `grep -rn '^#* Map markers' .claude/rules/client/`. Directional words
 ("below"/"above") are only reliable *within* one file.
 
-**Adding to these docs.** Put per-arc rationale in the rule file that owns the
-arc — that is what keeps two concurrent worktrees off the same file. A new
-script's row goes in that rule's `## Key scripts` table, not here. Only add here
-if it is true of all client work.
+**Adding to these docs.** Per-arc rationale goes in the rule file that owns the
+arc, and a new script's row in that rule's `## Key scripts` table; a new arc gets
+a **row above**, not a section here. See the hub banner at the top of this file
+for the test.
 
