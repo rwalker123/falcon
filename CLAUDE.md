@@ -11,7 +11,13 @@ This repository uses a layered documentation structure:
 - `docs/architecture.md` — System-wide implementation overview. Cross-system data flow, extensibility patterns, and configuration reference.
 
 ### Subsystem Documentation
-- `core_sim/CLAUDE.md` — Simulation engine: ECS systems, world generation, turn loop, power/crisis/culture/knowledge subsystems
+- `core_sim/CLAUDE.md` — Simulation engine **hub**: build/config/ports, shared food-module
+  vocabulary, turn loop, and a routing table to the per-arc rules below
+- `.claude/rules/core_sim/*.md` — the per-arc engineering rationale for `core_sim`
+  (worldgen, fauna, husbandry, flora, graze, telling, campaign, …). Each carries `paths:`
+  frontmatter and **loads only when you touch the code it describes**. Put new per-arc
+  rationale in the rule file that owns the arc — that is what keeps two concurrent
+  worktrees off the same file.
 - `clients/godot_thin_client/CLAUDE.md` — Godot inspector: 2D hex map rendering, panels, overlays, scripting capability model
 - `sim_schema/README.md` — FlatBuffers schema contracts
 - `sim_runtime/README.md` — Shared runtime utilities
