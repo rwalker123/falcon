@@ -4,8 +4,9 @@ paths:
   - "core_sim/tests/grazing_*.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2826-3193.
-     Routing table and shared vocabulary live in core_sim/CLAUDE.md.
+<!-- Extracted verbatim from lines 2826-3193 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+     (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
+     core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
 # The Graze (Pasture) Layer (Grazing Phase 2a)

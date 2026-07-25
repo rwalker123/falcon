@@ -5,8 +5,9 @@ paths:
   - "core_sim/tests/flora_*.rs"
 ---
 
-<!-- Extracted verbatim from core_sim/CLAUDE.md lines 2199-2553.
-     Routing table and shared vocabulary live in core_sim/CLAUDE.md.
+<!-- Extracted verbatim from lines 2199-2553 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+     (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
+     core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
 # Depletable Forage (Intensification §0-ii)

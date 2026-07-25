@@ -88,8 +88,12 @@ emit_rule() {
     echo "---"; echo "paths:"; paths_for "$name"; echo "---"; echo
     # Block-level HTML comments are stripped before a rule enters context, so
     # this provenance note is free for Claude and visible to humans.
-    echo "<!-- Extracted verbatim from $SRC lines $ranges."
-    echo "     Routing table and shared vocabulary live in $SRC."
+    # Name the BLOB, not just the path: these line numbers are in the pre-split
+    # original, while $SRC itself is now the slim hub, so a reader who takes
+    # them literally goes looking for line 4790 in a 213-line file.
+    echo "<!-- Extracted verbatim from lines $ranges of $SRC at blob $SRC_BLOB"
+    echo "     (the PRE-SPLIT original — read it with \`git cat-file blob $SRC_BLOB\`;"
+    echo "     $SRC itself is now the hub, where the routing table lives)."
     echo "     Regenerate with scripts/split_claude_md.sh -->"
     echo
     [ -n "$h1" ] && { echo "$h1"; echo; }
@@ -137,7 +141,7 @@ verify_and_account() {
 
 run() { # <blob> <src> <outdir> <blurb>
   git cat-file blob "$1" > "$ORIG"
-  SRC="$2"; local outdir="$3"
+  SRC_BLOB="$1"; SRC="$2"; local outdir="$3"
   echo "== $SRC ($(wc -l < "$ORIG" | tr -d ' ') lines) =="
   mkdir -p "$outdir"
   resolve_cuts

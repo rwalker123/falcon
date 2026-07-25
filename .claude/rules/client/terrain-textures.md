@@ -5,8 +5,9 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/TerrainRenderer.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 220-221;396-501.
-     Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
+<!-- Extracted verbatim from lines 220-221;396-501 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
+     (the PRE-SPLIT original — read it with `git cat-file blob 20553fb8f9b193b80338a8c06765d511b81b601e`;
+     clients/godot_thin_client/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
 # Terrain textures — assets, config, loading, 2D pipeline

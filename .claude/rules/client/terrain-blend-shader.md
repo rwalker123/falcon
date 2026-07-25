@@ -5,8 +5,9 @@ paths:
   - "clients/godot_thin_client/tools/blend_probe.gd"
 ---
 
-<!-- Extracted verbatim from clients/godot_thin_client/CLAUDE.md lines 502-1446.
-     Routing table and shared vocabulary live in clients/godot_thin_client/CLAUDE.md.
+<!-- Extracted verbatim from lines 502-1446 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
+     (the PRE-SPLIT original — read it with `git cat-file blob 20553fb8f9b193b80338a8c06765d511b81b601e`;
+     clients/godot_thin_client/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
 # The terrain blend shader — edge blending, shore, canopy, peaks, rivers
