@@ -1,6 +1,6 @@
 # Plan: The Hunt Yield Model — product × intensity
 
-Status: **Design — not yet implemented.** Tracked as issue **#337**. The authoritative spec for decoupling *what a hunt yields*
+Status: **Implemented — Phase 0 and Phase 1 both shipped.** Tracked as issue **#337**. The authoritative spec for decoupling *what a hunt yields*
 (the species) from *how hard you hunt* (the policy). It is the answer to the long-deferred **"Hunt
 policy payoffs"** arc (issue **#213**; the open question of "what are Market's trade goods and
 Eradicate's denial ultimately *for*"), and it is the general fix behind a specific predator wart the
@@ -153,6 +153,29 @@ stated so the picker derives correctly when one arrives.
   Consumes only free-form wire fields where possible.
   **Testable:** the wolf drawer + compose sheet read in pelts; a deer reads meat + hide; the Deplete
   label reads correctly everywhere; no readout claims food for a wolf.
+
+### As-built corrections to this spec
+
+Four things the implementation settled differently, recorded here so the doc does not
+contradict the tree:
+
+- **`FollowPolicy` lives in `core_sim/src/components.rs`, not `sim_runtime`**, and
+  `SourceYieldForecast` lives in `core_sim/src/fauna.rs`.
+- **The trade multiplier was retired, not moved.** `market.trade_goods_multiplier` (4×) is
+  gone rather than becoming a per-species default: a trade bonus on a single rung re-welds
+  product to policy, which is exactly what this arc removes. Deplete already out-earns
+  Surplus by taking 2.5× the biomass. The rate lever that *did* move is
+  `hunt.market_multiplier` → `hunt.deplete_multiplier`.
+- **Phase 1 reads generic "trade goods", not "pelts."** §Phase 1's line about the wolf
+  reading in pelts loses to the Deferred item below it: a named good per species is a flavor
+  layer, and inventing one in the UI would claim a model the sim does not have. The client
+  renders the scalar with a trade glyph.
+- **Quantisation is unit-free.** The shipped invariant that flooring in provisions-space and
+  biomass-space agree "because the conversion is a positive linear factor" is **false for an
+  inedible species** — `provisions_per_biomass == 0` makes it `0/0`. The quantiser runs on
+  the first component with a *positive* rate (provisions preferred, so every edible species
+  divides bit-identically to pre-arc) and carries the animal count into the other currency.
+  An animal count is a ratio; it is never assumed to be food.
 
 **Deferred / adjacent (noted, not built here):**
 - **What trade goods actually DO.** This arc gives every hunt a *trade* output, but trade goods are
