@@ -86,6 +86,48 @@ never density. Raise `max_total_game` if the intent is more game, not different 
    across the map rather than clustered at the player start. A species whose host biomes the map
    lacks (empty `suitable`) **falls back to the start-anchored spiral** (`build_route`), so it still
    spawns somewhere.
+
+> #### The migratory roster is a TWO-SLOT LOTTERY — no migratory species reaches 40% of maps (issue #290)
+>
+> Measured over **120 generated earthlike maps** at the shipped 80×52 grid
+> (`core_sim/tests/fauna_migratory_representation.rs`, a report-only harness — run it with
+> `--ignored --nocapture`; it asserts no bound, because the point is the number):
+>
+> | species | herds | maps carrying it | mean host tiles |
+> |---|---|---|---|
+> | Thunder Mammoths | 53 | **39%** | 775 (min 314) |
+> | Marsh Grazers | 52 | **37%** | 276 (min 124) |
+> | Wild Horses | 51 | **34%** | 412 (min 197) |
+> | Steppe Runners | 43 | **32%** | 286 (min 120) |
+> | Wild Reindeer | 40 | **31%** | 775 (min 314) |
+>
+> **The roster draw is not biased — the slot count is the whole cause.** `determine_herd_count` is
+> `(width·height)/3000` clamped to `[2, 6]`, so an 80×52 map (area 4160) computes **1** and gets
+> **clamp-floored to 2**: *every* shipped map holds exactly two migratory herds, drawn uniformly
+> **with replacement** from the five migratory rows. That predicts `1 − (4/5)² = 36%` presence per
+> species, and the sweep measures 31–39% — the model is exact, and χ² against a uniform draw is
+> **2.9 (df 4)**, nowhere near the 13.3 that a biased pick would need. A doubled draw (two herds of
+> the same species, ~20% of maps) is what spends the second slot.
+>
+> **So "mammoth & marsh-grazer are under-represented" is measured FALSE as stated** — they are the
+> *two best-represented* migratory species. The real finding is roster-wide: **~2 of every 3 maps
+> carry none of any given migratory species**, and the three levers that decide it are **bare
+> literals in a function**, not config.
+>
+> **Habitat is not the constraint** — mammoth/reindeer average 775 host tiles (never below 314) and
+> the marsh grazer 276 (never below 124), against 2 slots. Raising presence is a *slot* question, not
+> a `host_biomes` or abundance-table question, and the short-range `abundance.max_total_game` (120)
+> is a separate, already-saturated budget that these herds do not draw from.
+>
+> **Beware the small sweep here.** At 24 maps the same harness read Steppe Runners at **1 herd / 4%
+> of maps** — a 2σ small-sample artifact that reads exactly like a broken `host_biomes` key. A
+> 2-slot-per-map draw needs ~100 maps before per-species counts mean anything; the six-seed sweeps
+> the terrain guards use are sized for near-deterministic *tile* counts, not for this.
+>
+> **Secondary: a failed route silently eats a slot.** 1 map of the 120 (seed 104) spawned only **one**
+> migratory herd — `spawn_migratory_herds`' `else { continue }` on a `build_migratory_route` failure
+> consumes the `idx` without retrying, so that map lost a migratory herd outright rather than
+> re-drawing. Rare, but it is a lost entity, not a lost draw.
 2. **Short-range game** — iterate land tiles, classify each via
    `classify_food_module`, roll `abundance.per_biome[module]`; the map-wide winners
    are shuffled then greedily placed respecting `min_spacing` up to `max_total_game`
