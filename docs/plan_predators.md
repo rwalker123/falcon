@@ -470,6 +470,18 @@ basic.
   income/loss line showing yield forfeited to raids. Consumes only free-form snapshot fields.
   **Testable:** the player can *see* a predator, read the danger of a hunt, and watch warriors
   change the outcome — the loop is legible (the *ui_preview* harness verifies the HUD).
+  - **Sim half — LANDED.** Raids now **forfeit food**: a casualty-causing raid debits
+    `predators.raid_yield_forfeit_fraction` (default **0.25**) of the band's food income from the
+    larder (capped at what it holds), tracked on `LaborAllocation::last_raid_forfeit`
+    (`advance_predator_raids`, `systems/labor.rs`). Two new append-only `PopulationCohortState` wire
+    fields feed the client: **`raidRadius`** (echo of `predators.raid_radius`, so the client can flag a
+    visible aggressive predator that is in exact raid range) and **`raidForfeit`** (the negative
+    food-ledger line, the raid twin of `penFeedUpkeep`). The band food-ledger identity extends to
+    `larder_delta = foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`
+    (`integration_tests/tests/raid_food_ledger.rs`); `raidForfeit` is a past-turn debit and does **not**
+    drain the forward `turnsOfFood` runway. See `.claude/rules/core_sim/combat.md` → "Phase 3".
+  - **Client half — the companion `client-dev` slice** (not yet built): decode `raidRadius`/`raidForfeit`
+    into the cohort dict, style the forfeit in the feed, and render the band-panel income/loss line.
 
 **Deferred (own slices, noted so the interface is built to accept them):**
 - **Combat-modifiers layer.** A set of situational factors that tilt a `resolve_fight` toward one

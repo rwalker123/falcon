@@ -264,5 +264,46 @@ Phase 0, inert until now) is the trigger; `diet` gates it to carnivores.
   losses; no raid from a herbivore or an out-of-range carnivore; aggression scales lethality;
   determinism) + the two `fauna_config` rejection tests.
 
+#### Phase 3 — raids forfeit food + the raid legibility pair on the wire
+
+**A casualty-causing raid now also forfeits food** (`docs/plan_predators.md` § "Phase 3"). The band's
+people were defending or fleeing, not gathering, so a raid that costs lives (`total_killed > 0`) also
+costs a fraction of **that turn's food income** — a real larder debit, capped at what the larder holds.
+
+- **In `advance_predator_raids`** the band query is now `&mut LaborAllocation`. Each band's
+  `allocation.last_raid_forfeit` is **reset to `0.0` at the top of its iteration** (this system is its
+  only writer, so a non-raided band reads `0`). After the raid loop, if casualties occurred:
+  `income = Σ alloc.last_yields[i].actual` (this turn's income — `advance_labor_allocation` ran earlier
+  in the Population stage and already credited it), `forfeit = predators.raid_yield_forfeit_fraction ×
+  income`, debited via `cohort.stores.take(FOOD, forfeit)` (whose **return** — the actually-taken
+  amount — is recorded in `last_raid_forfeit`, so a thin larder forfeits only what it held and an idle
+  band with `income == 0` forfeits nothing). The forfeit is folded into the `PredatorRaid` feed line's
+  detail (` forfeit=<f>`); the feed lines are **deferred** so the band-level forfeit can be appended
+  before they are pushed.
+- **`predators.raid_yield_forfeit_fraction`** (`fauna_config.json` `predators` block, default **0.25**,
+  a playtest dial) — `#[serde(default)]` on `PredatorConfig`; `FaunaConfig::validate` rejects
+  not-finite or outside `[0, 1]` (`validate_rejects_an_out_of_range_raid_yield_forfeit_fraction`).
+- **`LaborAllocation.last_raid_forfeit: f32`** is a **derived, per-turn, NOT-persisted** field treated
+  exactly like `last_pen_feed_upkeep` (excluded from the manual `PartialEq`, absent from serde/rollback
+  state, defaults `0.0`).
+- **Two new `PopulationCohortState` wire fields** (append-only, after `fodderStore`), captured in
+  `snapshot/population.rs`:
+  - **`raidRadius:uint`** — echo of `fauna.predators.raid_radius`, surfaced per-cohort exactly like
+    `workRange` (a global lever the client needs per-band to check whether a visible aggressive predator
+    is within exact raid range).
+  - **`raidForfeit:float`** — `last_raid_forfeit`, a negative food-ledger line, the raid twin of
+    `penFeedUpkeep`.
+- **The ledger identity gains a term** (see `campaign.md`): the forfeit is a real larder debit in
+  neither `foodIncome` nor `foodConsumption`, so
+  `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`, pinned through a real
+  raid turn by `integration_tests/tests/raid_food_ledger.rs`. **`raidForfeit` is a PAST-turn stochastic
+  debit, NOT a recurring cost** — it is deliberately **absent** from the `turnsOfFood` forward-runway
+  drain (`larder_runway_turns`), which drains only by `consumption + penFeedUpkeep`.
+- Tests: `core_sim/tests/predator_raid.rs` gains the working-band-forfeits / idle-band-forfeits-nothing /
+  forfeit-capped-at-larder cases; the config rejection rides `fauna_config.rs`'s unit tests.
+- **Client half (a companion `client-dev` slice, NOT done here):** the native reader must decode
+  `raidRadius`/`raidForfeit` into the cohort dict; the feed styling for the forfeit; the band-panel
+  negative food-ledger readout; the fixtures.
+
 ---
 

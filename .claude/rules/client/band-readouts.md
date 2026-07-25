@@ -107,7 +107,7 @@ paths:
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
   `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
-  where **net = `DetailFormat.band_net_food` = income − food_consumption − pen_feed_upkeep**, tinted green (≥0) /
+  where **net = `DetailFormat.band_net_food` = income − food_consumption − pen_feed_upkeep − raid_forfeit**, tinted green (≥0) /
   red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
   as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
@@ -115,11 +115,17 @@ paths:
   breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
   with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
   this and then **retired as redundant** — a separately-computed total is a second source of truth that
-  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms, not two:**
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has FOUR terms, not two:**
   a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
   herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
   a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then
-  drained with no explanation.
+  drained with no explanation. **The fourth term is `raid_forfeit`** (Predators Phase 3,
+  `PopulationCohortState.raidForfeit`): food a predator raided off the larder THIS turn, the raid twin of
+  pen feed — same larder, a different decision (guard the camp vs feed the herd). Like pen feed the client
+  **must not** re-derive it; unlike pen feed raids are **EPISODIC**, so this term is present only the turn a
+  raid lands and the forward FOOD OUTLOOK chart deliberately does NOT project it (a past loss is not a
+  steady drain). The full identity `larder_delta == income − consumption − pen_feed − raid_forfeit` is
+  pinned by `integration_tests/tests/raid_food_ledger.rs`.
   `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
   keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
   yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
@@ -127,12 +133,15 @@ paths:
   The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-open disclosure** (a `▸/▾` caret) opening a
   **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
-  (people)` / `▼ −W  🐄 Pen feed (animals)` rows (Gathered/Hunted = Σ per-source `actual_yield`
-  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept —
-  **people and animals eat from the same larder but are DIFFERENT decisions**, so they are different
+  (people)` / `▼ −W  🐄 Pen feed (animals)` / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
+  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept;
+  **Lost to raids = `raid_forfeit`, shown only the turn a raid landed** (`DisclosureController.food_breakdown_lines` /
+  `DetailFormat.FOOD_LABEL_RAID_FORFEIT`, the crossed-swords glyph matching the `predator_raid` command-feed
+  alert) — **people, animals and raiders all draw the same larder but are DIFFERENT decisions**, so they are different
   rows), rendered through the **shared morale-breakdown path** in `DetailFormat.detail_bbcode` (income ▲
   green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
-  `band_pen_starving` (part-paid feed, net −0.53 red). No flow → the bare `Food N (N turns)` line,
+  `band_pen_starving` (part-paid feed, net −0.53 red) / `predator_band_raided` (raided band: the
+  `⚔ Lost to raids −1.20` row + the crimson Warrior "⚠ Predator nearby" alert). No flow → the bare `Food N (N turns)` line,
   no net/disclosure.
   **THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE — and that is a correctness rule, not a style
   one.** Expanding it in place grew the vitals `RichTextLabel` (`fit_content = true`) by several

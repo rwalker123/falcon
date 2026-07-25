@@ -371,6 +371,27 @@ pub struct PopulationCohortState {
     /// the Rust side.)
     #[serde(default)]
     pub fodder_store: f32,
+    /// Echo of `fauna.predators.raid_radius` — how close (odd-r hex distance) an aggressive carnivore
+    /// must be to raid this band's camp. A global lever surfaced per-cohort (same idiom as
+    /// [`Self::work_range`]) so the client can check whether a visible aggressive predator is within
+    /// **exact** raid range of the band. Appended (append-only).
+    #[serde(default)]
+    pub raid_radius: u32,
+    /// Food the band **forfeited** to predator raids this turn (Predators Phase 3) — a negative
+    /// food-ledger line, the raid twin of [`Self::pen_feed_upkeep`]. A casualty-causing raid costs the
+    /// band `predators.raid_yield_forfeit_fraction` of that turn's food income (its people were
+    /// defending or fleeing, not gathering), debited from the larder and capped at what it held. It
+    /// extends the ledger identity to
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// ```
+    ///
+    /// (pinned by `integration_tests/tests/raid_food_ledger.rs`). It is a **past-turn** stochastic
+    /// debit, NOT a recurring cost, so it is deliberately absent from the `turns_of_food` runway drain.
+    /// Derived per-turn, not persisted (a rehydrated cohort reads `0.0` until the next tick). Appended.
+    #[serde(default)]
+    pub raid_forfeit: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

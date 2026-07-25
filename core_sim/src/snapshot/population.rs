@@ -224,6 +224,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) wellbeing: &'a crate::wellbeing_config::WellbeingConfig,
     pub(crate) supply_membership: &'a SupplyNetworkMembership,
     pub(crate) work_range: u32,
+    /// Echo of `fauna.predators.raid_radius` — surfaced per-cohort exactly like `work_range` (a global
+    /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
+    pub(crate) raid_radius: u32,
     pub(crate) scout_vantage_distance: u32,
     pub(crate) expedition_levers: &'a ExpeditionLevers,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
@@ -248,6 +251,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         wellbeing,
         supply_membership,
         work_range,
+        raid_radius,
         scout_vantage_distance,
         expedition_levers,
         settlement_stage_config,
@@ -307,6 +311,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // the player watches the larder drain with no explanation. Derived, like `food_income`: `0.0` on a
     // rehydrated save until the next tick.
     let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
+    // The food this band forfeited to a predator raid this turn (the real `LocalStore::take` debit
+    // `advance_predator_raids` levied on a casualty-causing raid). Like `pen_feed_upkeep` it is in
+    // NEITHER food term — a negative ledger row the client draws separately — and, like it, is derived
+    // per-turn (`0.0` on a rehydrated save until the next tick).
+    let raid_forfeit = allocation.map(|a| a.last_raid_forfeit).unwrap_or(0.0);
     // The honest larder runway — turns until the larder empties, INCOME INCLUDED (the wire calls it
     // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
@@ -457,6 +466,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         food_income,
         food_consumption,
         pen_feed_upkeep,
+        raid_forfeit,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
@@ -481,6 +491,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
         // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
         fodder_store: cohort.stores.get(FODDER).to_f32(),
+        // Predators Phase 3 — the raid legibility pair. `raid_radius` echoes the global lever
+        // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
+        raid_radius,
     }
 }
 
@@ -647,6 +660,7 @@ mod tests {
             wellbeing: &crate::wellbeing_config::WellbeingConfig::builtin(),
             supply_membership: &SupplyNetworkMembership::default(),
             work_range: 0,
+            raid_radius: 0,
             scout_vantage_distance: 0,
             expedition_levers: &levers(),
             settlement_stage_config:

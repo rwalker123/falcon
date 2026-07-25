@@ -345,6 +345,9 @@ fn create_populations<'a>(
                     // omits it from the generated Args — nothing to set.)
                     // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
                     fodderStore: cohort.fodder_store,
+                    // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
+                    raidRadius: cohort.raid_radius,
+                    raidForfeit: cohort.raid_forfeit,
                 },
             )
         })

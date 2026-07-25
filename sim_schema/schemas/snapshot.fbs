@@ -676,6 +676,19 @@ table PopulationCohortState {
   // and it NEVER converts to provisions. Appended (append-only) after #165's expedition trio. Lets the
   // client show a band's hay reserve beside its food reserve.
   fodderStore:float = 0;
+  // Echo of `fauna.predators.raid_radius` — how close (odd-r hex distance) an aggressive carnivore
+  // must be to raid this band's camp. A global lever surfaced per-cohort (same idiom as workRange) so
+  // the client can check whether a visible aggressive predator is within EXACT raid range of the band.
+  // Append-only.
+  raidRadius:uint = 0;
+  // Food the band FORFEITED to predator raids this turn (Predators Phase 3) — a negative food-ledger
+  // line, the raid twin of penFeedUpkeep. A casualty-causing raid costs the band a fraction of that
+  // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
+  // capped at what it held. Extends the ledger identity to
+  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit  (pinned by a sim test)
+  // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
+  // drain. Append-only.
+  raidForfeit:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

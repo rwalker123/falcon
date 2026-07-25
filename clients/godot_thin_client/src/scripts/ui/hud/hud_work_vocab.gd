@@ -59,6 +59,13 @@ const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts
 
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 
+# Predators Phase 3 — the LIVE Warrior-card hint when a visible, camp-threatening predator sits within
+# raid range of the band (see `BandPanelController._band_predator_threat_present`). Replaces the static
+# hint above with a crimson alert; `%d` is the band's on-guard warrior count. The threat is derived
+# CLIENT-side from the herd telemetry (fog-filtered → only visible predators) + the sim's echoed
+# `raid_radius`; nothing new is asked of the wire beyond those two cohort fields.
+const WARRIOR_THREAT_ALERT_FORMAT := "⚠ Predator nearby — %d on guard"
+
 # Appended to a clickable Current-actions row's tooltip: the row's LABEL is an inline link that jumps
 # the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
 # are band-wide roles with no tile, so their rows stay plain labels and never carry this.
