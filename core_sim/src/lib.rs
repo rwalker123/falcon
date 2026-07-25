@@ -275,9 +275,9 @@ pub use resources::{
     apply_port_base, apply_port_base_override, port_base_override, CapabilityFlags,
     CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
     DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
-    FoodSiteRegistry, HydrologyOverrides, MapTopology, PendingCrisisSeeds, PendingCrisisSpawns,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
+    FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
+    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
