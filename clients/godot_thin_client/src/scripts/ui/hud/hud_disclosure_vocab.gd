@@ -27,7 +27,15 @@ const BREAKDOWN_KIND_FOOD := "food"
 
 const BREAKDOWN_KIND_MORALE := "morale"
 
+# The band's birth rate vs its normal rate, itemized into the three named fertility factors
+# (`docs/plan_population_growth_model.md`) — the birth path's parallel of the morale breakdown, and
+# the same click-to-open popover. Its rows are MULTIPLIERS, not signed deltas, because the factors
+# combine by product; see `DetailFormat.fertility_breakdown_row`.
+const BREAKDOWN_KIND_GROWTH := "growth"
+
 # The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
 const DETAIL_ROW_FOOD := "Food"
 
 const DETAIL_ROW_MORALE := "Morale"
+
+const DETAIL_ROW_GROWTH := "Growth"

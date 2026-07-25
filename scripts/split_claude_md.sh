@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Split an oversized subsystem CLAUDE.md into a slim hub + path-scoped rule files.
 #
-# Usage:  scripts/split_claude_md.sh [core_sim|client]     (no arg = both)
+# Usage:  scripts/split_claude_md.sh [core_sim|client]           (no arg = both)
+#         scripts/split_claude_md.sh --check [core_sim|client]   verify only, write nothing
 #
 # BOUNDARIES ARE ANCHORS, NOT LINE NUMBERS. Each cut is a literal line of the
 # source (a heading, a table row, or the lead of a top-level bullet where a
@@ -35,11 +36,26 @@
 # lands, edits go straight into the rule files; re-running then re-cuts from the
 # pinned original and would drop rule-file edits made since. Re-pin first.
 #
-# That includes the "THIS IS A HUB FILE" banner at the top of each hub: it sits
-# in the H1 region, which comes from the pinned blob, NOT from the hub blurb
-# appended after it. A re-run without re-pinning silently deletes the one guard
-# that keeps per-arc rationale out of the hub. Re-add it to the blob, or paste it
-# back into both hubs afterwards.
+# TWO PARTS OF A HUB ARE SCRIPT-OWNED, NOT BLOB-DERIVED, and are regenerated on
+# every run from their own source files:
+#
+#   scripts/hub_banner_*.md   the "⛔ THIS IS A HUB FILE" guard, injected right
+#                             after the H1 line
+#   scripts/hub_blurb_*.md    the "Where the rest of this document lives" routing
+#                             table, appended at the `hub^` region
+#
+# The banner used to live in the H1 region, i.e. in the pinned blob — so a re-run
+# without re-pinning silently deleted the one guard that keeps per-arc rationale
+# out of the hub. It is a source file now precisely so the re-run RESTORES it.
+#
+# The flip side: an edit made to the banner or the blurb *in the generated hub*
+# is reverted by the next re-run. `--check` asserts both source files still
+# appear verbatim in their hub and fails loudly with a diff if not; run it after
+# editing either region. (Not hypothetical: the `ports.md` routing rows were
+# added to both hubs and not to the blurb sources, and a re-run would have
+# deleted them.) Rule files are deliberately NOT checked — after the migration
+# edits go straight into them, so they are expected to diverge from the blob.
+# `--check` runs in CI as the `hub-docs-sync` job (.github/workflows/rust.yml).
 set -euo pipefail
 
 # Pre-split blobs (origin/main @ PR #329/#341/#342 merges).
@@ -117,12 +133,29 @@ emit_rule() {
   printf '  %-24s %5d lines %7d B\n' "$name" "$(count "$ranges")" "$(wc -c < "$f" | tr -d ' ')"
 }
 
+# Hub = blob regions + the two script-owned source files (see header): the banner
+# injected after the H1, the routing blurb appended at `hub^`.
 emit_hub() {
-  local blurb="$1" i
+  local blurb="$1" banner="$2" i first=1 h1
   : > "$TMP"
   for i in "${!REGION_DEST[@]}"; do
     [ "${REGION_DEST[$i]%^}" = hub ] || continue
-    sed -n "${REGION_START[$i]},${REGION_END[$i]}p" "$ORIG" >> "$TMP"
+    if [ $first -eq 1 ]; then
+      first=0
+      # The first hub region opens with the file's H1 (CUTS[0] anchors it), which
+      # is where the banner goes. Assert it rather than trust it: if a re-pin ever
+      # moves the H1, injecting after some other line would bury the guard.
+      h1="$(sed -n "${REGION_START[$i]}p" "$ORIG")"
+      case "$h1" in
+        '# '*) ;;
+        *) echo "  EXPECTED an H1 at blob line ${REGION_START[$i]}, got: $h1" >&2; exit 1 ;;
+      esac
+      printf '%s\n\n' "$h1" >> "$TMP"
+      cat "$banner" >> "$TMP"
+      sed -n "$((REGION_START[$i] + 1)),${REGION_END[$i]}p" "$ORIG" >> "$TMP"
+    else
+      sed -n "${REGION_START[$i]},${REGION_END[$i]}p" "$ORIG" >> "$TMP"
+    fi
     [ "${REGION_DEST[$i]}" = "hub^" ] && cat "$blurb" >> "$TMP"
   done
   cp "$TMP" "$SRC"
@@ -151,7 +184,7 @@ verify_and_account() {
   echo "  OK: every original line is in the hub or in exactly one rule file, byte-exact."
 }
 
-run() { # <blob> <src> <outdir> <blurb>
+run() { # <blob> <src> <outdir> <blurb> <banner>
   git cat-file blob "$1" > "$ORIG"
   SRC_BLOB="$1"; SRC="$2"; local outdir="$3"
   echo "== $SRC ($(wc -l < "$ORIG" | tr -d ' ') lines) =="
@@ -161,8 +194,58 @@ run() { # <blob> <src> <outdir> <blurb>
   for name in $(printf '%s\n' "${REGION_DEST[@]}" | sed 's/\^$//' | grep -v '^hub$' | sort -u); do
     emit_rule "$outdir" "$name"
   done
-  emit_hub "$4"
+  emit_hub "$4" "$5"
   echo "  -- verify --"; verify_and_account "$outdir"
+}
+
+# ------------------------------------------------------- hub source sync check
+# Echo the 1-based line where <block> appears verbatim in <hub>, or nothing.
+block_start() { # <hub> <block>
+  awk 'NR==FNR { b[FNR] = $0; n = FNR; next }
+       { h[FNR] = $0 }
+       END { for (i = 1; i + n - 1 <= FNR; i++) {
+               ok = 1
+               for (j = 1; j <= n; j++) if (h[i + j - 1] != b[j]) { ok = 0; break }
+               if (ok) { print i; exit }
+             } }' "$2" "$1"
+}
+
+# Best-effort diff for a drifted block: anchor on the first block line that occurs
+# exactly once in the hub, then diff the hub slice that should have matched.
+drift_diff() { # <hub> <block>
+  local hub="$1" f="$2" n i line hits at start
+  n=$(wc -l < "$f" | tr -d ' ')
+  for i in $(seq 1 "$n"); do
+    line="$(sed -n "${i}p" "$f")"; [ -n "$line" ] || continue
+    hits=$(grep -cxF -- "$line" "$hub" || true)
+    [ "$hits" -eq 1 ] || continue
+    at=$(grep -nxF -- "$line" "$hub" | cut -d: -f1)
+    start=$((at - i + 1)); [ "$start" -ge 1 ] || start=1
+    echo "  --- $f (left) vs $hub lines $start-$((start + n - 1)) (right) ---"
+    diff "$f" <(sed -n "${start},$((start + n - 1))p" "$hub") | head -30
+    return 0
+  done
+  echo "  (no line of $f occurs exactly once in $hub — compare by hand)"
+}
+
+check_hub() { # <hub> <blurb> <banner>
+  local hub="$1" fail=0 kind f start n
+  echo "== $hub =="
+  for kind in banner blurb; do
+    [ "$kind" = banner ] && f="$3" || f="$2"
+    [ -f "$f" ] || { printf '  MISSING %-6s %s\n' "$kind" "$f"; fail=1; continue; }
+    start="$(block_start "$hub" "$f")"
+    n=$(wc -l < "$f" | tr -d ' ')
+    if [ -n "$start" ]; then
+      printf '  OK    %-6s %-30s hub lines %s-%s\n' "$kind" "$f" "$start" "$((start + n - 1))"
+    else
+      printf '  DRIFT %-6s %s is no longer verbatim in the hub\n' "$kind" "$f"
+      printf '        the hub is regenerated FROM the source file — fix the source, not the hub\n'
+      drift_diff "$hub" "$f"
+      fail=1
+    fi
+  done
+  return $fail
 }
 
 # ============================================================ core_sim
@@ -290,7 +373,8 @@ EOF
 EOF
 ;;    esac
   }
-  run "$BLOB_CORE_SIM" "core_sim/CLAUDE.md" ".claude/rules/core_sim" "$HUB_BLURB_CORE_SIM"
+  run "$BLOB_CORE_SIM" "$HUB_SRC_CORE_SIM" ".claude/rules/core_sim" \
+      "$HUB_BLURB_CORE_SIM" "$HUB_BANNER_CORE_SIM"
 }
 
 # ============================================================== client
@@ -468,41 +552,73 @@ EOF
 EOF
 ;;    esac
   }
-  run "$BLOB_CLIENT" "clients/godot_thin_client/CLAUDE.md" ".claude/rules/client" "$HUB_BLURB_CLIENT"
+  run "$BLOB_CLIENT" "$HUB_SRC_CLIENT" ".claude/rules/client" \
+      "$HUB_BLURB_CLIENT" "$HUB_BANNER_CLIENT"
 }
 
+HUB_SRC_CORE_SIM="core_sim/CLAUDE.md"
+HUB_SRC_CLIENT="clients/godot_thin_client/CLAUDE.md"
 HUB_BLURB_CORE_SIM="${HUB_BLURB_CORE_SIM:-scripts/hub_blurb_core_sim.md}"
 HUB_BLURB_CLIENT="${HUB_BLURB_CLIENT:-scripts/hub_blurb_client.md}"
+HUB_BANNER_CORE_SIM="${HUB_BANNER_CORE_SIM:-scripts/hub_banner_core_sim.md}"
+HUB_BANNER_CLIENT="${HUB_BANNER_CLIENT:-scripts/hub_banner_client.md}"
 
-# -------------------------------------------------- post-split re-run guard
+CHECK=0
+[ "${1:-}" = "--check" ] && { CHECK=1; shift; }
+
+TARGET="${1:-both}"
+case "$TARGET" in core_sim|client|both) ;; *)
+  echo "usage: $0 [--check] [core_sim|client]" >&2; exit 2 ;;
+esac
+
+# --check writes nothing, so it runs BEFORE the write guard below and is never
+# blocked by it — the `hub-docs-sync` CI job depends on that.
+if [ $CHECK -eq 1 ]; then
+  fail=0
+  [ "$TARGET" = client ] || check_hub "$HUB_SRC_CORE_SIM" "$HUB_BLURB_CORE_SIM" "$HUB_BANNER_CORE_SIM" || fail=1
+  [ "$TARGET" = core_sim ] || check_hub "$HUB_SRC_CLIENT" "$HUB_BLURB_CLIENT" "$HUB_BANNER_CLIENT" || fail=1
+  [ $fail -eq 0 ] || { echo "DRIFT: a hub was edited where the script owns the text; see above." >&2; exit 1; }
+  echo "OK: every hub's banner and routing blurb still match their source files."
+  exit 0
+fi
+
+# ------------------------------------------ post-split re-run guard (WRITE path)
 # The split landed in PR #343. Since then, edits go straight into the hubs and
 # the rule files, while the BLOB_* pins above are still the PRE-split originals
-# — so a re-run does not "regenerate" anything, it REVERTS every edit made
+# — so a write run does not "regenerate" anything, it REVERTS every edit made
 # since. Known casualties, both correctness fixes (issue #344): the `TurnStage`
-# ordering line in the core_sim hub's H1 region, and the "Fourth in turn chain"
-# claim about power in .claude/rules/core_sim/ecs-systems.md. Both sit in the
-# pinned blob in their wrong form, so a re-run reinstates the bugs.
+# ordering line in the core_sim hub body, and the "Fourth in turn chain" claim
+# about power in .claude/rules/core_sim/ecs-systems.md. Both sit in the pinned
+# blob in their wrong form, so a re-run reinstates the bugs.
+#
+# This does NOT overlap the banner/blurb machinery above. Those two regions are
+# script-owned, so a re-run restores them and `--check` already guards drift in
+# them. Everything else — the hub BODY (blob-derived) and every rule file, which
+# the header notes is deliberately NOT checked — has no such protection. That
+# gap is what this guard covers.
 #
 # Re-pin BLOB_* to a blob carrying the post-split edits FIRST, then re-run with
-# the override. This guard is the loud stop the header only described in prose.
+# the override. This is the loud stop the header only described in prose.
 if [ "${SPLIT_CLAUDE_MD_ACK_REVERT:-}" != "1" ]; then
   cat >&2 <<'MSG'
 REFUSING TO RUN: this would revert post-split edits.
 
 The BLOB_* pins in this script are the PRE-split CLAUDE.md files. Re-running
-overwrites the hubs and every .claude/rules/**/*.md with the pre-split text,
-discarding all edits made since PR #343 — including the TurnStage ordering
-fixes from issue #344.
+overwrites each hub's body and every .claude/rules/**/*.md with the pre-split
+text, discarding all edits made since PR #343 — including the TurnStage
+ordering fixes from issue #344.
 
   1. Re-pin BLOB_CORE_SIM / BLOB_CLIENT to blobs carrying the current text.
   2. Re-run with:  SPLIT_CLAUDE_MD_ACK_REVERT=1 scripts/split_claude_md.sh
+
+To only VERIFY the hub banner/blurb (writes nothing, never blocked):
+  scripts/split_claude_md.sh --check
 MSG
   exit 3
 fi
 
-case "${1:-both}" in
+case "$TARGET" in
   core_sim) split_core_sim ;;
   client)   split_client ;;
   both)     split_core_sim; echo; split_client ;;
-  *) echo "usage: $0 [core_sim|client]" >&2; exit 2 ;;
 esac

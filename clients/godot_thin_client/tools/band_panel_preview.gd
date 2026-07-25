@@ -1638,6 +1638,11 @@ func _band_fixture() -> Dictionary:
 		"morale_settling": 0.012,
 		"morale_terrain": -0.010,
 		"morale_climate": -0.006,
+		# Thriving growth: fed (neutral hunger, row omitted), saturated larder, net-positive food →
+		# 1.0 × 1.5 × 1.25 = 188% of normal, neutral ink, collapsed ▸ disclosure.
+		"fertility_hunger": 1.0,
+		"fertility_reserve": 1.5,
+		"fertility_trend": 1.25,
 		"stores": {"provisions": 84.0},
 		"working_age": 16,
 		"idle_workers": 3,
@@ -1718,6 +1723,12 @@ func _starving_band_fixture() -> Dictionary:
 	band["morale_unrest"] = -0.015
 	band["output_multiplier"] = 0.62
 	band["last_emigrated"] = 4
+	# ...and its growth has collapsed with its larder: eating short off a draining store with income
+	# gone → 0.55 × 1.05 × 0.25 = 14% of normal, a red Growth row above a WARN caret. It is the extra
+	# row + disclosure this variant exists to push past the old fixed panel height.
+	band["fertility_hunger"] = 0.55
+	band["fertility_reserve"] = 1.05
+	band["fertility_trend"] = 0.25
 	return band
 
 ## A detached SCOUT expedition outfitted by band 904 (home_band_entity), outbound to (39,26).
