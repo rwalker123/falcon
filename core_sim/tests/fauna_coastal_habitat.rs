@@ -30,11 +30,35 @@ const GRID: UVec2 = UVec2::new(80, 52);
 /// The seal's snapshot species string (the roster's `display_name`).
 const SEAL_SPECIES: &str = "Grey Seals";
 
-/// Measured floor for seals spawned across [`SWEEP_SEEDS`]. The sweep measures **14** post-change
-/// (0–4 per map) against **2** pre-change (0–1 per map, the delta pinhole); the bound sits well
-/// under the measured value so an ordinary retune doesn't trip it, while the old regime still fails
-/// it loudly. Re-measure with `seal_habitat_report` before moving it.
-const MIN_SEALS_OVER_SWEEP: usize = 8;
+/// Floor on the **habitat** across [`SWEEP_SEEDS`] — water-adjacent `boreal_arctic` land, the ground
+/// the seal's `adjacent_water: salt` site rule admits. **This is the load-bearing half of the pair**:
+/// it is a raw terrain+adjacency count, so it is causal and near-deterministic rather than a
+/// probabilistic roll, and it is the quantity a climate or moisture change actually moves.
+///
+/// Measured **419** tiles over the six seeds (per-seed 46–85), stable seed to seed. 350 leaves ~16%
+/// headroom for an ordinary worldgen retune while a *collapse* of cold shores — the only thing a
+/// moisture change could plausibly do to seals — fails loudly.
+///
+/// It deliberately does **not** catch a roster or site-rule regression: cold coasts can be plentiful
+/// while nothing seats on them. That is [`MIN_SEALS_OVER_SWEEP`]'s job.
+const MIN_BOREAL_SHORE_TILES_OVER_SWEEP: usize = 350;
+
+/// Floor on seals actually **spawned** across [`SWEEP_SEEDS`] — the **weak, noisy** half of the pair,
+/// because placement is a probabilistic roll under a map-wide cap. It is kept because it is the only
+/// signal that catches a *roster/site-rule* regression, which
+/// [`MIN_BOREAL_SHORE_TILES_OVER_SWEEP`] cannot see.
+///
+/// The real history, since the stale version of this note caused a false alarm: it was set at **8**
+/// against a sweep that then measured **14**. Unrelated worldgen drift since took the sweep to
+/// exactly **8** — sitting on its own floor with zero headroom. The #332 crest-released rain shadow
+/// then left habitat **flat or up on all six seeds** (413 → 419 tiles, down on none) while the
+/// placement roll merely reshuffled (per-seed 3,1,1,0,2,1 → 0,0,2,0,1,4) for a total of **7**, which
+/// tripped a bound that had already eroded rather than reporting a real loss.
+///
+/// The delta-pinhole regime this guard exists to catch measures **2** (0–1 per map), so **4** still
+/// fails it loudly while tolerating roll variance. Re-measure with `seal_habitat_report` before
+/// moving either floor.
+const MIN_SEALS_OVER_SWEEP: usize = 4;
 
 /// The tiles a seal colony occupies on one generated map, paired with whether each is land and
 /// whether it borders **salt** water (the seal's `adjacent_water: salt` site rule).
@@ -225,18 +249,40 @@ fn a_seal_rookery_never_moves_off_its_haul_out() {
     }
 }
 
-/// **The pinhole is cleared.** Hosting only `coastal_littoral` put the whole sweep at 1 colony
-/// (~0 per map); cold coasts put it well above [`MIN_SEALS_OVER_SWEEP`]. Deliberately a sweep total,
-/// not a per-seed assertion — spawning is a probabilistic roll under a map-wide cap.
+/// **The pinhole is cleared — asserted on BOTH floors, because they catch different regressions.**
+///
+/// - **Habitat** ([`MIN_BOREAL_SHORE_TILES_OVER_SWEEP`]) — a raw terrain+adjacency count, so it is
+///   causal and near-deterministic. It catches a **worldgen** regression (cold coasts vanishing),
+///   which is the only thing a climate or moisture change could plausibly do to seals. It cannot see
+///   a roster regression: plentiful cold coasts with nothing seated on them pass it.
+/// - **Colonies** ([`MIN_SEALS_OVER_SWEEP`]) — catches the **roster / site-rule** regression the
+///   original pinhole fix was about, but placement is a probabilistic roll under a map-wide cap, so
+///   it is far too noisy to police worldgen drift. It is the weak half, kept for what only it sees.
+///
+/// One [`survey`] call per seed feeds both — surveying twice would double the generation cost.
+/// Deliberately sweep totals, not per-seed assertions.
 #[test]
 fn seals_clear_the_delta_pinhole() {
-    let total: usize = SWEEP_SEEDS
-        .iter()
-        .map(|&seed| seal_sites(seed, 0).len())
-        .sum();
+    let mut colonies = 0usize;
+    let mut shore_tiles = 0usize;
+    for seed in SWEEP_SEEDS {
+        let survey = survey(seed, 0);
+        colonies += survey.seals.len();
+        shore_tiles += survey.boreal_shore_tiles;
+    }
+
     assert!(
-        total >= MIN_SEALS_OVER_SWEEP,
-        "seals spawned {total} times over {} seeds — the delta-pinhole regime (~0–1 per map) is back",
+        shore_tiles >= MIN_BOREAL_SHORE_TILES_OVER_SWEEP,
+        "only {shore_tiles} water-adjacent boreal_arctic tiles over {} seeds (floor \
+         {MIN_BOREAL_SHORE_TILES_OVER_SWEEP}) — worldgen has stopped producing cold coasts, so the \
+         seal's habitat is gone whatever the roster says",
+        SWEEP_SEEDS.len()
+    );
+    assert!(
+        colonies >= MIN_SEALS_OVER_SWEEP,
+        "seals spawned {colonies} times over {} seeds (floor {MIN_SEALS_OVER_SWEEP}) against \
+         {shore_tiles} tiles of habitat — the cold coasts are there, so the site rule or the roster \
+         has stopped seating seals on them (the delta-pinhole regime, ~0–1 per map, is back)",
         SWEEP_SEEDS.len()
     );
 }
@@ -319,19 +365,29 @@ fn validate_accepts_a_migratory_species_without_a_shore_rule() {
 }
 
 /// Measurement probe (`--ignored --nocapture`): seals per seed and the count of water-adjacent
-/// `boreal_arctic` tiles the new host offers. Re-run it before retuning [`MIN_SEALS_OVER_SWEEP`].
+/// `boreal_arctic` tiles the host offers. **The re-measure probe for BOTH floors** — re-run it
+/// before moving either [`MIN_BOREAL_SHORE_TILES_OVER_SWEEP`] or [`MIN_SEALS_OVER_SWEEP`]. The
+/// per-seed pairing is what makes the two separable: habitat flat-or-up while colonies move is a
+/// placement roll reshuffling, habitat falling is a real worldgen regression.
 #[test]
 #[ignore]
 fn seal_habitat_report() {
     let mut total = 0;
+    let mut shore_tiles = 0;
     for seed in SWEEP_SEEDS {
         let survey = survey(seed, 0);
         total += survey.seals.len();
+        shore_tiles += survey.boreal_shore_tiles;
         println!(
             "seed {seed}: {} seal colonies, {} water-adjacent boreal_arctic tiles",
             survey.seals.len(),
             survey.boreal_shore_tiles
         );
     }
-    println!("total over {} seeds: {total}", SWEEP_SEEDS.len());
+    // Both totals, because both are floors: habitat is the causal one, colonies the noisy one.
+    println!(
+        "total over {} seeds: {total} colonies (floor {MIN_SEALS_OVER_SWEEP}), \
+         {shore_tiles} habitat tiles (floor {MIN_BOREAL_SHORE_TILES_OVER_SWEEP})",
+        SWEEP_SEEDS.len()
+    );
 }

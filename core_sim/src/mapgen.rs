@@ -2139,6 +2139,88 @@ fn prevailing_wind_for_row(y: usize, height: usize, cfg: &BiomeTransitionConfig,
     }
 }
 
+/// Split one downwind row of the mountain mask into **windward flanks and lee slopes**, and decide
+/// where each range releases its rain shadow.
+///
+/// **Why this exists: the belt used to shadow itself (issue #332).** The old pass added
+/// `rain_shadow_strength × relief` to the running shadow at *every* mountain cell, and subtracted it
+/// from everything downwind. A fold belt is ~9 tiles wide (`belt_width_tiles = 4`, dilated both
+/// ways), so the belt's own windward tiles shadowed the belt's interior — measured at **82.8% of
+/// alpine tiles receiving literally zero precipitation**, which is backwards: orographically, high
+/// ground is *wet* ground.
+///
+/// The orography this restores: air is **lifted** all the way up a range (lift → rain), and only
+/// dries once it has crested and is descending. So a maximal contiguous run of mountain cells along
+/// the wind path is **one range**, the whole run up to and including its crest is windward, and the
+/// shadow the range casts belongs to the ground **behind** it.
+///
+/// - `windward[step]` — true from a run's first cell through its crest inclusive. Only these cells
+///   take the `windward_moisture_bonus` lift and the `carry` boost; descending air is not lifted.
+/// - `release[step]` — the run's **entire** shadow, `Σ rain_shadow_strength × relief` over the run,
+///   deposited at the crest step and nowhere else. Released after the crest's own humidity is
+///   written, so a range never shadows itself.
+///
+/// The crest is the run's maximum `relief_scale`, tie-broken to the **last** such cell: a flat
+/// summit is still level ground rather than a descent, so the whole summit zone keeps its lift.
+///
+/// A run also **ends at water**, because the humidity walk resets `shadow` to zero on every water
+/// cell. Planning across water would let a crest release land on a cell the walk `continue`s past —
+/// silently discarding that whole range's shadow — and would fuse two ranges either side of a strait
+/// into one run with a single crest. The planner and the walk therefore agree about where a range
+/// stops by construction, rather than by an invariant about where the mountain mask is allowed to be.
+///
+/// Both buffers are indexed by *step along the wind order*, not by tile index, and are cleared here
+/// so callers can reuse one allocation across rows.
+fn plan_orographic_row(
+    order: &[usize],
+    land: &[bool],
+    mountains: &MountainMask,
+    cfg: &BiomeTransitionConfig,
+    windward: &mut [bool],
+    release: &mut [f32],
+) {
+    windward.fill(false);
+    release.fill(0.0);
+
+    // A range cell: a mountain the wind can actually climb. Both conditions, for the reason in the
+    // doc comment above — the walk skips water before it ever reaches the mountain block.
+    let is_range_cell = |step: usize| -> bool {
+        order.get(step).copied().is_some_and(|idx| {
+            land.get(idx).copied().unwrap_or(false) && mountains.get(idx).is_some()
+        })
+    };
+
+    let mut step = 0usize;
+    while step < order.len() {
+        if !is_range_cell(step) {
+            step += 1;
+            continue;
+        }
+        let start = step;
+        let mut total_shadow = 0.0f32;
+        let mut crest = start;
+        let mut crest_relief = f32::MIN;
+        while step < order.len() {
+            if !is_range_cell(step) {
+                break;
+            }
+            let idx = order[step];
+            let relief = mountains.relief_scale(idx).max(0.0);
+            total_shadow += cfg.rain_shadow_strength.max(0.0) * relief;
+            // `>=` so a plateau-topped run crests at its LAST highest cell.
+            if relief >= crest_relief {
+                crest_relief = relief;
+                crest = step;
+            }
+            step += 1;
+        }
+        for flank in windward.iter_mut().take(crest + 1).skip(start) {
+            *flank = true;
+        }
+        release[crest] = total_shadow;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compute_moisture_field(
     land: &[bool],
@@ -2156,6 +2238,10 @@ fn compute_moisture_field(
     if width == 0 || height == 0 {
         return values;
     }
+    // Reused across rows — the orographic plan is per-row scratch, not per-row allocation.
+    let mut order: Vec<usize> = Vec::with_capacity(width);
+    let mut windward = vec![false; width];
+    let mut release = vec![0.0f32; width];
     for y in 0..height {
         let direction = prevailing_wind_for_row(y, height, cfg, seed);
         let lat = if height <= 1 {
@@ -2167,15 +2253,18 @@ fn compute_moisture_field(
         let latitude_bonus = (1.0 - (dist_equator * cfg.latitude_dryness_falloff).min(1.0))
             * cfg.latitude_humidity_weight.clamp(0.0, 1.0);
 
-        let iter: Box<dyn Iterator<Item = usize>> = if direction >= 0 {
-            Box::new(0..width)
+        order.clear();
+        if direction >= 0 {
+            order.extend((0..width).map(|x| y * width + x));
         } else {
-            Box::new((0..width).rev())
-        };
+            order.extend((0..width).rev().map(|x| y * width + x));
+        }
+        plan_orographic_row(&order, land, mountains, cfg, &mut windward, &mut release);
+
         let mut shadow = 0.0f32;
         let mut carry = 0.0f32;
-        for x in iter {
-            let idx = y * width + x;
+        for (step, &idx) in order.iter().enumerate() {
+            let x = idx % width;
             if !land.get(idx).copied().unwrap_or(false) {
                 values[idx] = 1.0;
                 shadow = 0.0;
@@ -2201,13 +2290,23 @@ fn compute_moisture_field(
 
             if let Some(cell) = mountains.get(idx) {
                 let relief = mountains.relief_scale(idx).max(0.0);
-                humidity += cfg.windward_moisture_bonus * relief;
-                let added_shadow = cfg.rain_shadow_strength.max(0.0) * relief;
-                shadow = (shadow + added_shadow).clamp(0.0, 2.0);
-                if matches!(cell.ty, MountainType::Volcanic) {
-                    humidity -= added_shadow * VOLCANIC_HUMIDITY_SUPPRESSION;
+                // Lift is orographic: only air still *climbing* the range is being raised, so the
+                // windward flank and the crest get the bonus and the lee slope does not.
+                if windward[step] {
+                    humidity += cfg.windward_moisture_bonus * relief;
+                    carry = (carry + cfg.windward_moisture_bonus * 0.5).clamp(0.0, 1.2);
                 }
-                carry = (carry + cfg.windward_moisture_bonus * 0.5).clamp(0.0, 1.2);
+                // Volcanic suppression is a LOCAL plume effect, not part of the range's shadow, so
+                // it stays per-cell on windward and lee alike.
+                if matches!(cell.ty, MountainType::Volcanic) {
+                    humidity -= (cfg.rain_shadow_strength.max(0.0) * relief)
+                        * VOLCANIC_HUMIDITY_SUPPRESSION;
+                }
+                // The whole range's shadow lands here, at its crest, and only after this cell's own
+                // humidity has been taken from `shadow` above — see `plan_orographic_row`.
+                if release[step] > 0.0 {
+                    shadow = (shadow + release[step]).clamp(0.0, 2.0);
+                }
             }
 
             let interior_penalty = cfg.interior_aridity_strength
@@ -3175,6 +3274,207 @@ mod tests {
         assert!(moisture[mid_idx] + 0.01 >= moisture[upwind_idx]);
         assert!(moisture[downwind_idx] + 0.02 < moisture[mid_idx]);
         assert!(moisture[downwind_idx] + 0.02 < moisture[upwind_idx]);
+    }
+
+    /// **A range's rain shadow starts at its CREST, not at its first tile (issue #332).**
+    ///
+    /// The old pass added shadow at every mountain cell, so a multi-tile range shadowed its own
+    /// interior — the shipped belt is ~9 tiles wide and 82.8% of its alpine tiles ended up bone-dry.
+    /// This pins the mechanism directly rather than through the world census: one 5-tile range whose
+    /// relief peaks in the middle, on an otherwise featureless coastal row.
+    ///
+    /// Under the old per-cell behaviour the crest carried ~1.5 of accumulated shadow against ~0.2 of
+    /// lift and read **0.0**, so assertion (a) fails there; it can only pass if the run's shadow is
+    /// held back to the crest.
+    #[test]
+    fn range_shadow_is_released_at_the_crest_not_along_the_windward_flank() {
+        /// Float slack for "no drier than" — these are exact arithmetic, not statistics.
+        const NOT_DRIER_EPS: f32 = 1e-6;
+        /// How much drier the first lee tile must be than the crest for the shadow to have landed.
+        /// The released shadow saturates the 2.0 clamp here, so the true gap is far larger.
+        const MIN_LEE_DROP: f32 = 0.1;
+        /// Relief along the range in wind order. Peaked in the middle and symmetric, so the crest is
+        /// column `RUN_START + 2` whichever way the row's prevailing wind blows.
+        const RUN_RELIEF: [f32; 5] = [1.0, 1.4, 1.8, 1.4, 1.0];
+        const RUN_START: usize = 4;
+
+        // Water above and below a single land row: every land tile is then coastal at distance 1, so
+        // the coastal and interior-aridity terms are uniform and the only thing that varies along
+        // the row is the range.
+        let width = 13usize;
+        let height = 3usize;
+        let total = width * height;
+        let mut land = vec![false; total];
+        for x in 0..width {
+            land[width + x] = true;
+        }
+        let is_ocean = compute_ocean_mask(&land, width, height);
+        let land_distance = compute_land_distance(&land, width, height);
+        let coastal_land = compute_coastal_land(&land, &is_ocean, width, height);
+
+        let biome_cfg = crate::map_preset::BiomeTransitionConfig {
+            prevailing_wind_flip_chance: 0.0,
+            base_humidity_weight: 0.25,
+            latitude_humidity_weight: 0.10,
+            coastal_bonus_scale: 0.20,
+            // The shipped orographic levers — the point is that these numbers stop being a defect,
+            // not that the defect needs different numbers.
+            windward_moisture_bonus: 0.12,
+            rain_shadow_strength: 0.65,
+            rain_shadow_decay: 0.04,
+            interior_aridity_strength: 0.0,
+            humidity_scale: 0.5,
+            ..Default::default()
+        };
+        let seed = 0xC0FFEE;
+        let row = 1usize;
+        let wind_dir = prevailing_wind_for_row(row, height, &biome_cfg, seed);
+
+        let mut mask = MountainMask::new(width, height, 3);
+        for (offset, relief) in RUN_RELIEF.iter().enumerate() {
+            mask.set_for_tests(
+                row * width + RUN_START + offset,
+                MountainCell {
+                    ty: MountainType::Fold,
+                    strength: 9,
+                },
+                *relief,
+            );
+        }
+
+        // Flat elevation at the sample midpoint zeroes the elevation-humidity term.
+        let elevation = ElevationField::new(width as u32, height as u32, vec![0.5; total]);
+        let moisture = compute_moisture_field(
+            &land,
+            &coastal_land,
+            &land_distance,
+            &mask,
+            &elevation,
+            width,
+            height,
+            1.0,
+            &biome_cfg,
+            seed,
+        );
+
+        let at = |col: usize| moisture[row * width + col];
+        let crest_col = RUN_START + RUN_RELIEF.len() / 2;
+        let (upwind_col, lee_col, windward_cols) = if wind_dir >= 0 {
+            (
+                RUN_START - 1,
+                crest_col + 1,
+                (RUN_START..=crest_col).collect::<Vec<_>>(),
+            )
+        } else {
+            (
+                RUN_START + RUN_RELIEF.len(),
+                crest_col - 1,
+                (crest_col..RUN_START + RUN_RELIEF.len()).collect::<Vec<_>>(),
+            )
+        };
+
+        // (a) climbing the range never dries the air — the flank and the summit keep their lift.
+        for col in windward_cols {
+            assert!(
+                at(col) + NOT_DRIER_EPS >= at(upwind_col),
+                "windward/crest column {col} reads {:.4}, drier than the {:.4} just upwind of the \
+                 range — the range is shadowing itself",
+                at(col),
+                at(upwind_col),
+            );
+        }
+
+        // (b) the descent is where the shadow lands, and it lands hard.
+        assert!(
+            at(lee_col) + MIN_LEE_DROP < at(crest_col),
+            "first lee column {lee_col} reads {:.4} against a crest of {:.4} — the range cast no \
+             shadow behind it",
+            at(lee_col),
+            at(crest_col),
+        );
+        assert!(
+            at(lee_col) + MIN_LEE_DROP < at(upwind_col),
+            "first lee column {lee_col} reads {:.4} against {:.4} upwind of the range",
+            at(lee_col),
+            at(upwind_col),
+        );
+    }
+
+    /// **A range stops at WATER, because the humidity walk's `shadow` does** (issue #332).
+    ///
+    /// `compute_moisture_field` zeroes `shadow` on every water cell and `continue`s *before* the
+    /// mountain block, so a run planned straight across water would release its crest's shadow onto a
+    /// cell the walk never reads — **discarding that whole range's shadow** — and would fuse the two
+    /// ranges either side of a strait into one run with a single crest.
+    ///
+    /// Nothing in the shipped worldgen puts a mountain-mask cell on water, and this guard was
+    /// measured a **no-op across 6 seeds × 2 grids**. It is kept, and pinned here, because it makes
+    /// the planner and the walk agree about where a range ends **by construction** rather than by an
+    /// unproven invariant about where the mask is allowed to be — so the correctness of the crest
+    /// release does not rest on a property of a different subsystem. Do not "simplify" the land test
+    /// out of `plan_orographic_row` because no map trips it.
+    #[test]
+    fn a_range_interrupted_by_water_is_planned_as_two_ranges() {
+        /// Relief along the row. The highest cell (index 2) is the one placed on water, so a planner
+        /// that ignored land would crest the whole run there — exactly the shadow-losing case.
+        const RELIEF: [f32; 5] = [1.0, 1.4, 2.5, 1.8, 1.2];
+        const WATER_COL: usize = 2;
+        const SHADOW_STRENGTH: f32 = 0.5;
+
+        let width = 7usize;
+        // The planner consumes whatever wind order it is handed; left-to-right is enough here.
+        let order: Vec<usize> = (0..width).collect();
+        let mut land = vec![true; width];
+        land[WATER_COL] = false;
+
+        let mut mask = MountainMask::new(width, 1, 3);
+        for (idx, relief) in RELIEF.iter().enumerate() {
+            mask.set_for_tests(
+                idx,
+                MountainCell {
+                    ty: MountainType::Fold,
+                    strength: 9,
+                },
+                *relief,
+            );
+        }
+
+        let cfg = crate::map_preset::BiomeTransitionConfig {
+            rain_shadow_strength: SHADOW_STRENGTH,
+            ..Default::default()
+        };
+        let mut windward = vec![false; width];
+        let mut release = vec![0.0f32; width];
+        plan_orographic_row(&order, &land, &mask, &cfg, &mut windward, &mut release);
+
+        // Two ranges: [0, 1] cresting at 1 (relief 1.4), and [3, 4] cresting at 3 (relief 1.8).
+        assert_eq!(
+            windward,
+            vec![true, true, false, true, false, false, false],
+            "the water cell splits the run, so each side crests on its own highest LAND cell",
+        );
+
+        let released: Vec<usize> = (0..width).filter(|&s| release[s] > 0.0).collect();
+        assert_eq!(
+            released,
+            vec![1, 3],
+            "each range releases at its own crest; the water cell releases nothing",
+        );
+
+        // The water cell's own relief is counted by NEITHER range — the walk would never have added
+        // it either, so the totals are the shadow the walk actually applies, not a misplaced sum.
+        assert!(
+            (release[1] - SHADOW_STRENGTH * (RELIEF[0] + RELIEF[1])).abs() < 1e-6,
+            "windward range released {} for relief {:?}",
+            release[1],
+            &RELIEF[0..2],
+        );
+        assert!(
+            (release[3] - SHADOW_STRENGTH * (RELIEF[3] + RELIEF[4])).abs() < 1e-6,
+            "lee range released {} for relief {:?}",
+            release[3],
+            &RELIEF[3..5],
+        );
     }
 
     #[test]
