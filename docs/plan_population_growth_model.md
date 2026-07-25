@@ -97,7 +97,7 @@ surplus — a positive feedback loop for good play, not only a stick.
 
 ```text
 net_flow  = steady_income − demand − pen_feed_upkeep
-net_ratio = net_flow / demand                              // dimensionless; ≥ −1 by construction
+net_ratio = net_flow / demand                              // dimensionless; unbounded below — pen upkeep can pass −1
 
 trend = 1 + trend.surplus_gain     × min( net_ratio / trend.surplus_saturation, 1)   if net_ratio ≥ 0
       = 1 − trend.deficit_penalty  × min(−net_ratio / trend.deficit_saturation, 1)   if net_ratio < 0
@@ -187,7 +187,7 @@ into the `reserve` sub-block (the repo carries no shipped saves or clients to ke
 | `trend.surplus_gain` | 0.25 | Max fertility bonus from net-positive food. |
 | `trend.surplus_saturation` | 0.5 | Net surplus (× demand) earning the full bonus. |
 | `trend.deficit_penalty` | 0.75 | Max fertility penalty from net-negative food. **The damp-vs-stop lever: 1.0 = negative flow stops growth.** |
-| `trend.deficit_saturation` | 1.0 | Net deficit (× demand) reaching the full penalty; 1.0 = zero income. |
+| `trend.deficit_saturation` | 1.0 | Net deficit (× demand) reaching the full penalty; 1.0 = a full turn's demand in the red — zero income with no pens, sooner with them. |
 
 ### 3.1 What the defaults do to the shipped start
 

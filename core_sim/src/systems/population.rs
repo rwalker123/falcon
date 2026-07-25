@@ -117,8 +117,10 @@ fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend)
     if net_ratio >= scalar_zero() {
         scalar_one() + scalar_from_f32(cfg.surplus_gain) * ramp(net_ratio, cfg.surplus_saturation)
     } else {
-        // `net_ratio >= -1` by construction (income >= 0), so the ramp caps at the full penalty;
-        // the floor is belt-and-braces against a config with `deficit_penalty > 1`.
+        // `net_ratio` has NO lower bound — `pen_feed_upkeep` is subtracted too, so a band whose pens
+        // out-eat its income goes past -1. What caps the penalty is `ramp`'s own `min(.., 1)`, never a
+        // floor on income: do not remove that clamp. The `max(.., 0)` below is belt-and-braces against
+        // a config with `deficit_penalty > 1`.
         max(
             scalar_one()
                 - scalar_from_f32(cfg.deficit_penalty) * ramp(-net_ratio, cfg.deficit_saturation),

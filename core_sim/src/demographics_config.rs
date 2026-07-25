@@ -120,8 +120,9 @@ pub struct DemographicsTrend {
     /// consequence of a deficit), while **`1.0` lets negative flow stop growth outright**. See
     /// `docs/plan_population_growth_model.md` §2.4.
     pub deficit_penalty: f32,
-    /// Net deficit (as a multiple of demand) that reaches the full `deficit_penalty`; `1.0` means
-    /// the penalty maxes out at zero income.
+    /// Net deficit (as a multiple of demand) that reaches the full `deficit_penalty`. `1.0` means
+    /// the penalty maxes out when the net flow is a full turn's demand in the red — that is at zero
+    /// income for a band with no pens, and *sooner* for one whose pens also eat from the larder.
     pub deficit_saturation: f32,
 }
 
