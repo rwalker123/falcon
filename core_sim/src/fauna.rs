@@ -1064,17 +1064,17 @@ pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> 
 /// # "Managed" is `is_corralled() || owner.is_some()` — a herd you have STARTED to tame, not only a
 /// finished one
 ///
-/// **Herders maintain the meter at whatever level it sits; `Tame` is what pushes it up.** Scoping
-/// maintenance to `is_domesticated()` (progress *exactly* `1.0`) instead looks right and is a trap:
-/// the flag is a **threshold**, so the first under-herded turn drops the herd under it, after which it
-/// is no longer "managed", the proportional rule stops applying, and it decays at the **full**
-/// abandonment rate **no matter how many herders you assign**. The proportional regime would be
-/// measure-zero, and "understaffing degrades proportionally, floored, and **recoverable**" would be
-/// false — re-staffing could not stop the bleed, only re-`Tame`-ing could. Pinned by
-/// `fauna_husbandry::an_under_herded_tamed_herd_decays_proportionally_and_recovers`.
+/// **Herders set how large a tame flock you can HOLD; `Tame` is what earns the tameness.** Scoping the
+/// requirement to `is_domesticated()` (progress *exactly* `1.0`) instead looks right and is a trap:
+/// the flag is a **threshold**, so a herd still mid-taming (an `owner`, but progress `< 1.0`) would owe
+/// no keepers and never shed — yet it is just as much your herd to hold. A managed herd whose herders
+/// cannot hold all its animals **sheds the overage to the wild web** (`shed_uncontained_animals`); it
+/// does **not** bleed tameness — tameness is permanent, it leaves only *with the animals that leave*
+/// (neglect sheds animals, not the meter). Full abandonment sheds the whole flock and the empty herd
+/// despawns. Pinned by `fauna_husbandry::neglect_never_un_tames_a_herd` and
+/// `the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary`.
 ///
-/// `owner.is_some()` ⟺ `domestication_progress > 0` (the invariant `decay_domestication` reconciles),
-/// so this is exactly "somebody's herd". A **wild** herd — no owner, no pen — reads `0` and is
+/// `owner.is_some()` is exactly "somebody's herd" — a **wild** herd (no owner, no pen) reads `0` and is
 /// untouched. `corral_at` does **not** require domestication (it gates on `can_pen()` only), so the
 /// `is_corralled()` half keeps a penned-but-untamed fixture staffed.
 pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
