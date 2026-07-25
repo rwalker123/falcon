@@ -159,7 +159,7 @@ field today; a future tamed wolf→dog would keep its rung's `drift_to_owner`).
   graze-roam (a prey-starved pack keeps moving and re-acquires; a carnivore-free-of-prey map is
   byte-identical to today's roam). The species' own `dwell_turns` cadence still applies (**a wolf is not
   faster than prey** — pursue makes it *near*, not fast). **`pursuit_radius` (default 8) is deliberately
-  WIDER than the feeding `prey_sense_radius` (4)** — a pack tracks prey over a larger territory than the
+  WIDER than the feeding `prey_sense_radius` (shipped 4, code default 3)** — a pack tracks prey over a larger territory than the
   disk it feeds from, and the wider acquisition range is the real fix for the transient-zero-prey
   stranding that widening `prey_sense_radius` 3→4 only band-aided. See Also "Predation (Phase 1a)" /
   "Predator raids (Phase 1b)" in `combat.md`.

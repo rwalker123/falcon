@@ -582,7 +582,7 @@ pub struct PredatorConfig {
     /// **The pursue-acquisition radius** (Predators Phase 2, `docs/plan_predators.md`) — the odd-r hex
     /// radius within which a **wild carnivore** acquires and steps toward the nearest prey it can eat
     /// (`fauna::advance_herds`' `pursue` dispatch). Deliberately **wider** than the feeding
-    /// `prey_sense_radius` (4): a pack *tracks* prey over a larger territory than the disk it *feeds*
+    /// `prey_sense_radius` (shipped 4, code default 3): a pack *tracks* prey over a larger territory than the disk it *feeds*
     /// from, and a wider acquisition range is the real fix for the transient-zero-prey stranding that
     /// widening `prey_sense_radius` 3→4 only band-aided. Validated `>= 1` (a hard bound, so it stays a
     /// free dial); conceptually it should be `>= prey_sense_radius`, but that intent is left to the
