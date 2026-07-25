@@ -1,5 +1,10 @@
 # Godot Thin Client
 
+<!-- HUB BANNER — source of truth: scripts/hub_banner_client.md, emitted into
+     clients/godot_thin_client/CLAUDE.md right after the H1 by scripts/split_claude_md.sh.
+     Edit the source file; an edit made only in the hub is reverted by the next
+     re-run. Verify the two agree with: scripts/split_claude_md.sh --check -->
+
 > ## ⛔ THIS IS A HUB FILE — rationale does NOT go here
 >
 > Before adding a paragraph, section, callout, or per-script row **anywhere in this file**, ask:
@@ -98,6 +103,11 @@ below; this is the HUD's.
 | `MapSizes.gd` | Canonical 5-entry map-size list (`OPTIONS` + `DEFAULT_KEY`), shared by `MapPanel` and `MenuShell` (DRY) |
 | `GameLaunch.gd` (autoload) | Cross-scene handoff: `pending_new_game` dict set by LandingScreen, consumed + cleared by `Main._build_new_game_command` |
 | `ClientSettings.gd` (autoload) | The first general client-settings store — a `ConfigFile` wrapper over `user://client_settings.cfg` (`[map]` section) modelled on `BandCityPanel`'s `_load_prefs`/`_save_prefs`. Holds `pan_speed_multiplier` / `zoom_speed_multiplier` (defaults 1.0, each clamped to [0.25, 3.0]); the BASE unit speeds stay as consts in `MapView`, these SCALE them. Setters clamp → `_save` → emit `changed`; `restore_defaults` resets both; `config_path_override` (static) isolates the file for tests. **No `class_name`** (it would clash with the autoload name). Read LIVE by `MapView` (keyboard + trackpad pan, all zoom paths — wheel/pinch/Q·E/zoom-rail); written by the Options pane |
+
+<!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_client.md, appended into
+     clients/godot_thin_client/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
+     edit made only in the hub is reverted by the next re-run.
+     Verify the two agree with: scripts/split_claude_md.sh --check -->
 
 ## Where the rest of this document lives
 

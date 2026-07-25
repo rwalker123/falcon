@@ -218,6 +218,49 @@ paths:
     Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
     morale is concerning** (a healthy band that manually expands its breakdown is not told to
     "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
+  - **Growth row + itemized fertility breakdown** (`_band_growth_line` / `_fertility_breakdown_lines`;
+    snapshot `PopulationCohortState.fertilityHunger`/`fertilityReserve`/`fertilityTrend`, decoded in
+    `native/src/dict/population.rs cohort_scalars` as `fertility_hunger`/`fertility_reserve`/
+    `fertility_trend`, flowed onto the MapView unit marker + guarded by `marker_field_guard`). Growth
+    used to slow for reasons the player could not see itemized: they had the *inputs* (the larder, the
+    Food line) and the *effect* (the People bar), and nothing between them. This is the exact parallel
+    of the morale breakdown above — same click-to-open disclosure, same popover, same
+    `DisclosureController.register` path — for the birth path's three named factors
+    (`docs/plan_population_growth_model.md`).
+    - **`Growth: 188% of normal`** — the band's birth rate as a share of the base rate the sim would
+      otherwise apply, i.e. the PRODUCT `fertility_hunger × fertility_reserve × fertility_trend`
+      (`DetailFormat.band_fertility`). Tinted by `BandFoodStatus.hex_for_fertility` (config
+      `band_status_config.json` `fertility.{warn,critical}` = `0.75`/`0.40`), which grades ink → amber
+      → red like the **Output** row rather than the morale/food green palette: normal growth is normal,
+      not a "good", so the top bucket is neutral ink even at 188%. Unlike Output the row shows at
+      EVERY level, because it is what the disclosure hangs on and "why is growth slow?" has to be
+      findable in the good state too. **It can exceed 100%**, which is why the value spells its anchor
+      out rather than leaving a bare percentage to read as a cap.
+    - **The breakdown rows are MULTIPLIERS, not signed deltas** — `    ▼ ×0.60  short rations` /
+      `    ▲ ×1.05  larder reserve` / `    ▼ ×0.25  larder shrinking`. They reuse the morale
+      breakdown's indent + ▲/▼ sign glyph so `DetailFormat.detail_bbcode`'s shared indented-sub-line
+      branch tints them (no parallel styling path), but these factors combine by PRODUCT where the
+      morale contributions combine by SUM: three signed percentages that refuse to add up to the
+      headline would invite exactly the arithmetic they cannot support, whereas `0.60 × 1.05 × 0.25`
+      reads down to the `16%` above it. `hunger` is only ever ≤ 1 and `reserve` only ever ≥ 1, so each
+      of those labels states its one direction outright; `trend` is two-sided and forks on sign
+      (`larder growing` / `larder shrinking`) the way the morale row's culture/unrest does. Only
+      factors off the neutral 1.0 by more than `fertility.breakdown_epsilon` (`0.002`) list, so a
+      thriving band's disclosure names what is HELPING rather than showing no-op rows.
+    - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived, not
+      persisted, so a rehydrated cohort publishes all zeros; `BandFoodStatus.fertility_is_projected`
+      reads that off `fertility_reserve` (a computed reserve is `1 + bonus × ramp` ≥ 1 by
+      construction, while `hunger` and `trend` both legitimately reach 0) and the producer emits **no
+      Growth row and no disclosure at all** rather than a fabricated `0% of normal`. `MapView`
+      deliberately defaults the three marker keys to **`0.0`, not the neutral `1.0`**, for the same
+      reason — a neutral default would fabricate a "normal growth" reading for a band that published
+      none. The sim's own no-data rule (an unprojected `trend` scores neutral) then falls out on this
+      side for free: a neutral factor renders as nothing, never as a deficit.
+    - ui_preview: `band_growth_expanded` (188% neutral ink, disclosure naming the two helping factors,
+      `hunger` neutral so its row is omitted) / `band_growth_collapsed` (16% red under a WARN caret,
+      all three factors off neutral — the frame that proves the rows multiply out to the headline) /
+      `band_growth_unprojected` (a rehydrated band: NO Growth row). band_panel_preview:
+      `band_panel_morale_expanded_*` carries the collapsed Growth row in the dock host.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
     appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.

@@ -11,5 +11,10 @@
   "output": {
     "warn": 0.85,
     "critical": 0.60
+  },
+  "fertility": {
+    "warn": 0.75,
+    "critical": 0.40,
+    "breakdown_epsilon": 0.002
   }
 }

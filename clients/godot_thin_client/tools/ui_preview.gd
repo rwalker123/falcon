@@ -99,6 +99,9 @@ const PEN_KEEPER_BAND_ENTITY := 906
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for it.
 const BAND_DISCLOSURE_FOOD := "food:904"
 const BAND_DISCLOSURE_MORALE := "morale:904"
+const BAND_DISCLOSURE_GROWTH := "growth:904"
+# The collapsed-growth band is `_concerning_food_band_fixture`'s entity (905), not 904.
+const BAND_DISCLOSURE_GROWTH_COLLAPSED := "growth:905"
 # The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
 # feed the herd demands per turn, and the share of it a broke keeper managed to pay in the starving
 # state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
@@ -270,6 +273,36 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_morale_expanded")
 	_click_disclosure(BAND_DISCLOSURE_MORALE)
+
+	# State 1-growth-a — GOOD growth, breakdown OPEN. The band out-breeds its base rate (188% of
+	# normal), so the row reads neutral ink and its disclosure names what is HELPING: `▲ ×1.50 larder
+	# reserve` / `▲ ×1.25 larder growing`. `hunger` is neutral (the band ate) so its row is omitted
+	# rather than listed as a no-op — and the multipliers read down to the headline: 1.50 × 1.25.
+	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	_click_disclosure(BAND_DISCLOSURE_GROWTH)
+	await _settle()
+	await _save("band_growth_expanded")
+	_click_disclosure(BAND_DISCLOSURE_GROWTH)
+
+	# State 1-growth-b — COLLAPSED growth on the concerning band (23% of normal → red row, WARN
+	# caret), breakdown OPEN. All three factors are off neutral, so this is the frame that proves the
+	# rows multiply out to the headline: 0.60 × 1.50 × 0.25 = 0.23. It is the whole point of the
+	# export — the player already had the larder and the Food line, not the attribution.
+	_hud.show_unit_selection(_collapsed_growth_band_fixture())
+	await _settle()
+	_click_disclosure(BAND_DISCLOSURE_GROWTH_COLLAPSED)
+	await _settle()
+	await _save("band_growth_collapsed")
+	_click_disclosure(BAND_DISCLOSURE_GROWTH_COLLAPSED)
+
+	# State 1-growth-c — a REHYDRATED band: the sim publishes no fertility reading (the factors are
+	# derived, not persisted), so there is NO Growth row and no caret at all. The regression this
+	# guards is the tempting one — defaulting the factors to 0 and rendering "Growth: 0% of normal",
+	# i.e. reading missing data as a total collapse of births.
+	_hud.show_unit_selection(_unprojected_growth_band_fixture())
+	await _settle()
+	await _save("band_growth_unprojected")
 
 	# State 1-food-b — CONCERNING food (net negative + low runway): the Food line net reads red and
 	# its caret wears WARN rather than SIGNAL — the breakdown no longer opens itself (a popover that
@@ -3120,6 +3153,14 @@ func _band_fixture() -> Dictionary:
 		"morale_settling": 0.012,
 		"morale_terrain": -0.010,
 		"morale_climate": -0.006,
+		# Thriving growth (docs/plan_population_growth_model.md): fed (hunger 1.0, so that factor is
+		# neutral and its row is omitted), a saturated larder (reserve 1.5) and net-positive food
+		# (trend 1.25) → 1.0 × 1.5 × 1.25 = 188% of normal. Reads neutral ink — normal growth is
+		# normal, not a "good" — and its disclosure shows what is HELPING, which is the good-state
+		# case the row must still be openable in.
+		"fertility_hunger": 1.0,
+		"fertility_reserve": 1.5,
+		"fertility_trend": 1.25,
 		"stores": {"provisions": 84.0},
 		# Early-Game Labor (slice 3b): 16 working-age workers, 3 idle, split across a
 		# Forage tile, a Hunt herd, and the Scout + Warrior band-wide roles.
@@ -3223,6 +3264,33 @@ func _starving_pen_band_fixture() -> Dictionary:
 ## A CONCERNING food state: net-negative flow (income 0.30 < consumption 0.95 → net −0.65) and a
 ## low larder runway (4 days). Both trip `DetailFormat.food_is_concerning`, so the category breakdown auto-shows
 ## under a red net figure without any click.
+## The band the growth model exists for: its income has collapsed and it is now eating short off a
+## nearly-empty larder. All three factors are off neutral at once, which is what makes this the frame
+## that proves the breakdown MULTIPLIES out to its headline (0.60 × 1.05 × 0.25 = 0.16 → "16% of
+## normal", below `fertility.critical` → a RED row under a WARN caret).
+##
+## It is derived from the concerning-food band rather than being that band: a band four turns from
+## empty is still eating FULL today, so a `hunger` below 1.0 there would be an incoherent fixture.
+func _collapsed_growth_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["turns_of_food"] = 1.0
+	band["stores"] = {"provisions": 0.6}
+	band["fertility_hunger"] = 0.60    # ate 60% of what it wanted
+	band["fertility_reserve"] = 1.05   # almost nothing banked
+	band["fertility_trend"] = 0.25     # income gone — the shipped deficit floor
+	return band
+
+## A band whose fertility has NOT been projected — a rehydrated cohort, before the next tick. The
+## sim publishes the all-zero not-projected sentinel (a computed `reserve` is ≥ 1 by construction, so
+## a zero reserve cannot be a real reading), and the drawer must answer with NO Growth row rather
+## than a fabricated 0%.
+func _unprojected_growth_band_fixture() -> Dictionary:
+	var fixture := _band_fixture()
+	fixture["fertility_hunger"] = 0.0
+	fixture["fertility_reserve"] = 0.0
+	fixture["fertility_trend"] = 0.0
+	return fixture
+
 func _concerning_food_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 905
@@ -3319,6 +3387,13 @@ func _low_morale_band_fixture() -> Dictionary:
 	fixture["morale_terrain"] = -0.012   # −1.2%  harsh terrain
 	fixture["morale_climate"] = -0.008   # −0.8%  harsh climate
 	fixture["morale_unrest"] = 0.0       # below epsilon → row omitted
+	# Its GROWTH, by contrast, is fine — fed, well-stocked, income covering the drain (1.0 × 1.50 ×
+	# 1.0 = 150% of normal, so only the reserve row lists). That contrast is the point of having it
+	# here: births are morale-INDEPENDENT in this model, so a miserable band on harsh ground must not
+	# read as a band that has stopped breeding.
+	fixture["fertility_hunger"] = 1.0
+	fixture["fertility_reserve"] = 1.50
+	fixture["fertility_trend"] = 1.0
 	fixture["tile_info"] = {
 		"x": 44, "y": 61,
 		"terrain_label": "Karst Cavern Mouth",

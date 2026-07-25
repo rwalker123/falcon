@@ -96,13 +96,25 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
         return false
     var key := DetailFormat.breakdown_key(kind, band)
     _breakdown_payloads[key] = lines
-    var concerning := DetailFormat.food_is_concerning(band) if kind == HudDisclosureVocab.BREAKDOWN_KIND_FOOD \
-        else DetailFormat.morale_is_concerning(band)
+    var concerning := _is_concerning(kind, band)
     _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
     # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
     if _breakdown_popover_key == key:
         _refresh_popover_text()
     return true
+
+## Does this row have something worth reading right now? Each disclosure kind owns its own answer
+## (`DetailFormat.*_is_concerning`), and the verdict only ever tints the caret WARN — no popover ever
+## opens itself. A dispatch rather than a chain of ternaries because there are three kinds now and a
+## fourth would otherwise be a nested conditional nobody can read.
+func _is_concerning(kind: String, band: Dictionary) -> bool:
+    match kind:
+        HudDisclosureVocab.BREAKDOWN_KIND_FOOD:
+            return DetailFormat.food_is_concerning(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
+            return DetailFormat.growth_is_concerning(band)
+        _:
+            return DetailFormat.morale_is_concerning(band)
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
 ## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`

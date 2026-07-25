@@ -250,6 +250,23 @@ const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 const FLORA_COMPOSITION_GLYPH := FoodIcons.DEFAULT
 const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 
+# ---- The Growth row + its itemized fertility breakdown (the birth path's parallel of the morale
+# contributions). The headline states the band's birth rate as a share of NORMAL, which can exceed
+# 100% — a well-provisioned band out-breeds its base rate — so the value spells its anchor out rather
+# than leaving a bare "150%" to read as a cap. The sub-rows are MULTIPLIERS (`×0.60`), not signed
+# deltas: these factors combine by product, and three percentages that refuse to sum to the headline
+# would invite arithmetic they cannot support. See `fertility_breakdown_row`.
+const GROWTH_ROW_FORMAT := "Growth: %d%% of normal"
+const FERTILITY_BREAKDOWN_ROW_FORMAT := "%s%s ×%.2f  %s"
+# The three factor labels, in the display order of `docs/plan_population_growth_model.md` §2:
+# hunger (the gate) → reserve (stock) → trend (flow). `hunger` is only ever ≤ 1 and `reserve` only
+# ever ≥ 1, so each of those labels states its one direction outright; `trend` is two-sided, so it
+# forks on sign the way the morale breakdown's culture/unrest row does.
+const FERTILITY_LABEL_HUNGER := "short rations"
+const FERTILITY_LABEL_RESERVE := "larder reserve"
+const FERTILITY_LABEL_TREND_GROWING := "larder growing"
+const FERTILITY_LABEL_TREND_SHRINKING := "larder shrinking"
+
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16
 ## The separator a data line puts between its key and its value.
@@ -269,6 +286,10 @@ class Context extends RefCounted:
     var food_turns: float = NAN
     var morale: float = NAN
     var output: float = NAN
+    ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
+    ## NAN when there is no band, or when the sim published no reading yet (the not-projected
+    ## sentinel) — in which case no Growth row was emitted to tint.
+    var fertility: float = NAN
     var disclosures: Dictionary = {}
 
 
@@ -361,6 +382,12 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # The productivity row tints by the output buckets (ink → amber → red).
         if not is_nan(ctx.output):
             return BandFoodStatus.hex_for_output(ctx.output)
+    elif key == HudDisclosureVocab.DETAIL_ROW_GROWTH:
+        # The band's birth rate as a share of normal, tinted by the fertility buckets. Same
+        # ink → amber → red grading as Output and for the same reason: normal growth is normal,
+        # not a "good", so the top bucket is neutral ink even when the band out-breeds its base rate.
+        if not is_nan(ctx.fertility):
+            return BandFoodStatus.hex_for_fertility(ctx.fertility)
     elif key == "Forage":
         # The tile's gather module reads in the success/ETA amber.
         return HudStyle.WARN_HEX
@@ -826,6 +853,37 @@ static func food_is_concerning(band: Dictionary) -> bool:
 ## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 static func breakdown_key(kind: String, band: Dictionary) -> String:
     return "%s:%d" % [kind, int(band.get("entity", -1))]
+
+## True when the band's growth warrants surfacing the itemized breakdown: its birth rate has fallen
+## below the warn bucket. Mirrors `food_is_concerning` / `morale_is_concerning` — it EXPANDS nothing
+## (the popover never pops itself open), it only tints the row's caret WARN so a row worth reading
+## says so at a glance. A band with no reading yet is never "concerning": no data is not a famine.
+static func growth_is_concerning(band: Dictionary) -> bool:
+    if not BandFoodStatus.fertility_is_projected(band):
+        return false
+    return band_fertility(band) < BandFoodStatus.warn_fertility()
+
+## The band's fertility MULTIPLIER — the product of the three exported factors, i.e. its birth rate as
+## a share of the base `birth_rate` the sim would otherwise apply. The factors combine by PRODUCT, not
+## by sum (unlike the morale contributions), which is the whole reason the breakdown rows below are
+## spelled as `x0.60` multipliers rather than signed percentages: read down the disclosure and they
+## multiply out to this headline. Returns the neutral 1.0 when the sim published no reading.
+static func band_fertility(band: Dictionary) -> float:
+    if not BandFoodStatus.fertility_is_projected(band):
+        return BandFoodStatus.FERTILITY_NEUTRAL
+    return float(band.get("fertility_hunger", BandFoodStatus.FERTILITY_NEUTRAL)) \
+        * float(band.get("fertility_reserve", BandFoodStatus.FERTILITY_NEUTRAL)) \
+        * float(band.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL))
+
+## One `    ▼ ×0.60  short rations`-style fertility breakdown row. It reuses the morale breakdown's
+## indent + ▲/▼ sign glyph so `detail_bbcode`'s shared indented-sub-line branch tints it (▲ above
+## neutral = healthy green, ▼ below = amber) with no parallel styling path — but the VALUE is a
+## multiplier, not a signed delta, because these factors multiply. Three signed percentages that
+## refuse to add up to the headline would invite exactly the arithmetic they cannot support.
+static func fertility_breakdown_row(factor: float, label: String) -> String:
+    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if factor > BandFoodStatus.FERTILITY_NEUTRAL \
+        else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
+    return FERTILITY_BREAKDOWN_ROW_FORMAT % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, factor, label]
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:

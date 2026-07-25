@@ -2262,6 +2262,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: scalar_zero(),
             // Grievance is a multi-turn accumulator, so it IS persisted (like `age_turns`) — a
             // rollback must not silently wipe brewing unrest.

@@ -59,6 +59,9 @@ struct CohortScalars {
     age_children: f64,
     age_working: f64,
     age_elders: f64,
+    fertility_hunger: f64,
+    fertility_reserve: f64,
+    fertility_trend: f64,
 }
 
 fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
@@ -75,6 +78,9 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         age_children: fixed64_to_f64(cohort.children()),
         age_working: fixed64_to_f64(cohort.working()),
         age_elders: fixed64_to_f64(cohort.elders()),
+        fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
+        fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
+        fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
     }
 }
 
@@ -111,6 +117,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_terrain", scalars.morale_terrain);
     let _ = dict.insert("morale_climate", scalars.morale_climate);
     let _ = dict.insert("morale_unrest", scalars.morale_unrest);
+    // The birth path's parallel of the morale contributions: the three named fertility factors whose
+    // PRODUCT (not sum) is the birth_rate multiplier — hunger (did we eat) x reserve (is there a
+    // cushion) x trend (is the cushion growing or shrinking). NEUTRAL AT 1.0, not at 0, so the
+    // breakdown renders each as its deviation from 1.0. A rehydrated cohort reports all-zero, and
+    // ZERO RESERVE IS THE NOT-PROJECTED SENTINEL (a computed reserve is >= 1 by construction, while
+    // hunger and trend both legitimately reach 0) — the HUD must read that as "no reading", never as
+    // a famine.
+    let _ = dict.insert("fertility_hunger", scalars.fertility_hunger);
+    let _ = dict.insert("fertility_reserve", scalars.fertility_reserve);
+    let _ = dict.insert("fertility_trend", scalars.fertility_trend);
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
@@ -484,6 +500,12 @@ mod cohort_decode_tests {
                 moraleTerrain: -26_000,
                 moraleClimate: -6_000,
                 moraleUnrest: 11_000,
+                // The three fertility factors: a band eating short (0.6) off a fat larder (1.5)
+                // with its income collapsed (0.25) — the case the model exists for, and the one
+                // where all three sit off their neutral 1.0.
+                fertilityHunger: 600_000,
+                fertilityReserve: 1_500_000,
+                fertilityTrend: 250_000,
                 ..Default::default()
             },
         );
@@ -525,6 +547,19 @@ mod cohort_decode_tests {
             "contributions {contributions} != morale_delta {}",
             scalars.morale_delta
         );
+
+        // The fertility factors are NEUTRAL AT 1.0 and combine by PRODUCT, not by sum — a band
+        // eating short off a fat larder with collapsed income breeds at 0.6 x 1.5 x 0.25 = 22.5% of
+        // the base rate. Decoding one raw would read a 250000x fertility bonus.
+        assert!((scalars.fertility_hunger - 0.6).abs() < 1e-9);
+        assert!((scalars.fertility_reserve - 1.5).abs() < 1e-9);
+        assert!((scalars.fertility_trend - 0.25).abs() < 1e-9);
+        let multiplier =
+            scalars.fertility_hunger * scalars.fertility_reserve * scalars.fertility_trend;
+        assert!(
+            (multiplier - 0.225).abs() < 1e-9,
+            "fertility multiplier {multiplier} != 0.225"
+        );
     }
 
     /// A raw-`long` read would leave every one of these at 1e6 scale. This is the assertion that
@@ -543,6 +578,9 @@ mod cohort_decode_tests {
             ("output_multiplier", scalars.output_multiplier),
             ("discontent_fraction", scalars.discontent_fraction),
             ("grievance", scalars.grievance),
+            ("fertility_hunger", scalars.fertility_hunger),
+            ("fertility_reserve", scalars.fertility_reserve),
+            ("fertility_trend", scalars.fertility_trend),
         ] {
             assert!(
                 value.abs() < 1_000.0,

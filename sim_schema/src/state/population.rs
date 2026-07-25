@@ -371,6 +371,22 @@ pub struct PopulationCohortState {
     /// the Rust side.)
     #[serde(default)]
     pub fodder_store: f32,
+    /// The three named fertility factors behind this turn's births — the `birth_rate` multiplier
+    /// `fertility = birth_rate × hunger × reserve × trend`
+    /// (`docs/plan_population_growth_model.md`), the birth path's equivalent of the four
+    /// `morale_*` contributions above. Fixed-point raw (`Scalar::SCALE`), **neutral at 1.0, not at
+    /// 0** — these are multiplicative factors, not signed contributions.
+    ///
+    /// Derived per-turn, **not persisted** (like the morale contributions), so a rehydrated cohort
+    /// reads the all-zero default. **Zero `fertility_reserve` is the NOT-PROJECTED sentinel**: a
+    /// computed `reserve` is ≥ 1 by construction, while `hunger` and `trend` both legitimately
+    /// reach 0. Appended (append-only schema discipline).
+    #[serde(default)]
+    pub fertility_hunger: i64,
+    #[serde(default)]
+    pub fertility_reserve: i64,
+    #[serde(default)]
+    pub fertility_trend: i64,
     /// Echo of `fauna.predators.raid_radius` — how close (odd-r hex distance) an aggressive carnivore
     /// must be to raid this band's camp. A global lever surfaced per-cohort (same idiom as
     /// [`Self::work_range`]) so the client can check whether a visible aggressive predator is within
