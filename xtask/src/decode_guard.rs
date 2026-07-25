@@ -8,7 +8,10 @@
 //!    never be measuring a stale envelope against a current decoder.
 //! 2. **Build the native extension** (`godot-build`), because the guard calls the *real*
 //!    `SnapshotDecoder`, which lives in it. Skipped with `--no-build` when you have just built it.
-//! 3. **Run `tools/decode_guard.tscn` headless**, which decodes the fixture and diffs the resulting
+//! 3. **Import the project if it has never been imported** ([`ensure_project_imported`]) — building
+//!    the extension is not enough on a fresh checkout or worktree; Godot only *loads* it if the
+//!    import cache lists it.
+//! 4. **Run `tools/decode_guard.tscn` headless**, which decodes the fixture and diffs the resulting
 //!    dictionary against `tests/golden/snapshot_dict.json`. Its exit code is this command's.
 //!
 //! `--write-golden` re-records the golden instead of diffing. Read the diff before you reach for it.
@@ -42,6 +45,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     let client_dir = Path::new("clients").join("godot_thin_client");
+    ensure_project_imported(&client_dir)?;
+
     let mut command = Command::new("godot");
     command
         .arg("--headless")
@@ -83,6 +88,72 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
              the frame down. A malformed snapshot must DEGRADE, never panic."
         )
         .into());
+    }
+    Ok(())
+}
+
+/// Runs Godot's import pass **iff** the project has never been imported.
+///
+/// **Building the native extension is not enough to make it LOAD.** Godot loads GDExtensions from
+/// `.godot/extension_list.cfg`, which the import pass writes — and `.godot/` is a build artifact, so
+/// a fresh checkout or (much more often here) a fresh **worktree** has none. The guard then reports
+/// `SnapshotDecoder class is not registered — build the native extension first`, which is honest
+/// about the symptom and actively misleading about the cause: the extension was built, copied and
+/// signed moments earlier by step 2. That cost a real diagnosis loop the first time.
+///
+/// Keyed on `extension_list.cfg` rather than on `.godot/` itself, because that file is precisely the
+/// thing whose absence stops the extension loading — and it is re-created by an import even when the
+/// rest of the cache survives, so deleting just it is also the way to test this path.
+///
+/// The import is **skipped once the file exists**: it takes tens of seconds, this gate is run in a
+/// tight edit loop, and a stale-asset import is not this command's business (a changed `.gdextension`
+/// does not need re-importing — only the dylib it points at, which step 2 rebuilds).
+fn ensure_project_imported(client_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let extension_list = client_dir.join(".godot").join("extension_list.cfg");
+    if extension_list.exists() {
+        return Ok(());
+    }
+
+    println!(
+        "decode-guard: no {} — running Godot's import pass first, so the native extension loads \
+         (once per fresh checkout or worktree; this takes a while).",
+        extension_list.display()
+    );
+
+    // Output is INHERITED, unlike the guard run below: this is the slow one-off step, and its
+    // progress bar is the only sign the command has not wedged.
+    let status = Command::new("godot")
+        .arg("--headless")
+        .arg("--path")
+        .arg(client_dir)
+        .arg("--import")
+        .status()
+        .map_err(|err| format!("decode-guard: failed to launch `godot` ({err}). Is it on PATH?"))?;
+
+    // **The import is judged by its OUTCOME, not by its exit status, and that is not laziness.**
+    // Godot 4.7 headless `--import` CRASHES on shutdown in this project (signal 11, backtrace inside
+    // the engine's own teardown, reported as SIGABRT) *after* writing a complete and perfectly good
+    // cache — every subsequent run passes against it. Failing on the status would have made this fix
+    // useless on precisely the setup it exists for. So the marker file is the verdict, and the
+    // status only colours the message when the cache did not appear.
+    if !extension_list.exists() {
+        return Err(format!(
+            "decode-guard: Godot's import pass did not produce {} (godot exited with {status}), so \
+             the native extension will not load. Check that {} is present and parses.",
+            extension_list.display(),
+            client_dir
+                .join("native/shadow_scale_godot.gdextension")
+                .display()
+        )
+        .into());
+    }
+
+    if !status.success() {
+        println!(
+            "decode-guard: godot --import exited with {status}, but it wrote {} — continuing. \
+             (Godot 4.7 crashes on shutdown here; the cache it leaves behind is sound.)",
+            extension_list.display()
+        );
     }
     Ok(())
 }
