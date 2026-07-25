@@ -181,6 +181,18 @@ static var config_path_override: String = ""
 ## The four dock edges, in the prototype's 2×2 chooser order (row-major:
 ## left/top on the first row, bottom/right on the second).
 const DOCK_EDGES: Array[int] = [SIDE_LEFT, SIDE_TOP, SIDE_BOTTOM, SIDE_RIGHT]
+## The two SLOTS of the row's trailing chrome rail (issue #324), stacked top-to-bottom: the HUD parks
+## its nav cluster in the top one and its turn cluster in the bottom one. ONE column at the trailing
+## end, never a gutter at each end — two opposite gutters cost ~562px of row, pushed the band zone
+## inward AND stranded dead space around the orb; one column costs `max(nav, turn)` ≈ 302 instead.
+const RAIL_SLOT_TOP := 0
+const RAIL_SLOT_BOTTOM := 1
+## Slot order, top-to-bottom — also what `_apply_rail` and the HUD's restore iterate.
+const RAIL_SLOT_ORDER: Array[int] = [RAIL_SLOT_TOP, RAIL_SLOT_BOTTOM]
+## Gap between the two stacked clusters. Its own const rather than a borrowed `HEADER_SEPARATION` /
+## `BODY_SEPARATION`: those are the header's and the tab bar's gaps, and this is read by
+## `DockRowController._required_height` as part of the stack's measured height.
+const RAIL_SLOT_SEPARATION := 8
 
 signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
@@ -226,6 +238,23 @@ var _rail_expand_button: Button
 ## The card's whole content column (header + body). It is what CENTRES on an ultrawide — the card
 ## fill and the accent seam stay full-bleed, since the panel still reserves the entire edge.
 var _panel_column: VBoxContainer
+## The card's single row: the leading rail host, the content column, the trailing rail host. The card
+## itself stays full-bleed (`PRESET_FULL_RECT`) — a bottom dock reads as ONE continuous bar, and
+## insetting the card would break it into three visual islands. The chrome sits ON the card; only the
+## content column is inset by the rails.
+var _card_row: HBoxContainer
+## The row's TRAILING chrome rail (issue #324): one column at the row's right end holding the HUD's
+## bottom-bar chrome stacked vertically — nav cluster on top, turn cluster below — so it shares this
+## row instead of stacking against it. The panel owns the rail, its stack and the two slot HOSTS, and
+## NOTHING inside those hosts — contrast `set_zones`, which owns and frees the zone contents it is
+## handed. Never add to, read, or free a slot's children here.
+## `_rail` is a PLAIN `Control` and that is load-bearing: it blocks the stack's minimum size from
+## propagating out to the card, which is what lets everything INSIDE it be ordinary containers.
+var _rail: Control
+var _rail_stack: VBoxContainer
+var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control host
+## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
+var _rail_declared_width: float = 0.0
 var _body_host: VBoxContainer
 var _wide_shell: HBoxContainer
 var _wide_zone_hosts: Dictionary = {}   # zone:StringName -> Control (a plain, clipping zone host)
@@ -422,11 +451,28 @@ func _build() -> void:
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(_panel)
 
+	# The card's row: content column · trailing rail. The rail is empty until the HUD declares a width
+	# (`set_rail_width`), so on a vertical dock — and on a horizontal one before the HUD parks its
+	# chrome — this HBox is a transparent pass-through and the column fills the card exactly as before.
+	# The column is added FIRST and the rail LAST, which is what puts the rail at the TRAILING end.
+	_card_row = HBoxContainer.new()
+	_card_row.name = "CardRow"
+	_card_row.add_theme_constant_override("separation", 0)
+	_card_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_card_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_panel.add_child(_card_row)
+
 	var column := VBoxContainer.new()
 	column.name = "PanelColumn"
 	column.add_theme_constant_override("separation", COLUMN_SEPARATION)
-	_panel.add_child(column)
+	# Seeded to what `_apply_wide_content_cap`'s fill branch sets, so the column fills the row from the
+	# very first layout pass rather than sitting at its minimum width until that runs.
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_card_row.add_child(column)
 	_panel_column = column
+
+	_build_rail()
 
 	_header_full = _build_header_full()
 	column.add_child(_header_full)
@@ -642,6 +688,9 @@ func _build_header_rail() -> VBoxContainer:
 
 func _apply_dock_layout() -> void:
 	_apply_root_anchors()
+	# BEFORE `_relayout_body`: a dock change can retire the rail (a vertical strip has none), and the
+	# shell is chosen from the width the rail leaves.
+	_apply_rail()
 	_relayout_body()
 
 ## Re-anchor `_root` to the active edge at the current cross-axis size, and pin the seam. Split out of
@@ -720,8 +769,12 @@ func _apply_wide_content_cap() -> void:
 
 ## True when the panel is wide enough for the three zones side by side. A WIDTH test, never a
 ## dock-edge test — see `WIDE_SHELL_MIN_WIDTH`.
+## The panel must NEVER enter the wide shell with a work zone below `ZONE_WORK_MIN_WIDTH` — the exact
+## failure the hand-picked 900 threshold caused. `WIDE_SHELL_MIN_WIDTH` is zones + separators +
+## `PANEL_CHROME_H` and is tested against the OUTER width, so the chrome rail (which spends that same
+## outer width before the zones see any of it) must come off it first.
 func _shell_is_wide() -> bool:
-	return _panel_extent().x >= WIDE_SHELL_MIN_WIDTH
+	return _panel_extent().x - _rail_width() >= WIDE_SHELL_MIN_WIDTH
 
 ## The panel card's outer size for the current dock: fixed on the cross axis, the window on the other.
 func _panel_extent() -> Vector2:
@@ -736,11 +789,14 @@ func _wide_panel_height() -> float:
 	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
 ## The card's INTERIOR box — the outer extent less the border and the content margins the card draws
-## with (`_panel_stylebox`). Chrome only; never content.
+## with (`_panel_stylebox`), less whatever the chrome rail takes off the row. Chrome only; never content.
+## `work_zone_size()` and `_apply_wide_content_cap()` both read this, so both follow the rail with no
+## edit of their own — and the ultrawide `SHRINK_CENTER` path then centres the content column in the room
+## the rail leaves, which is the wanted behaviour (chrome pinned to the trailing edge, content centred).
 func _interior_size() -> Vector2:
 	var outer := _panel_extent()
 	var chrome_v := 2.0 * (PANEL_CONTENT_MARGIN_V + PANEL_BORDER_WIDTH)
-	return Vector2(maxf(outer.x - PANEL_CHROME_H, 0.0), maxf(outer.y - chrome_v, 0.0))
+	return Vector2(maxf(outer.x - PANEL_CHROME_H - _rail_width(), 0.0), maxf(outer.y - chrome_v, 0.0))
 
 ## Height of the header row — pure chrome (two text rows beside the icon controls), so measuring it
 ## keeps the interior maths content-independent. Falls back before the first layout pass.
@@ -826,6 +882,91 @@ func _make_zone_host(host_name: String, fixed_width: float) -> Control:
 	else:
 		host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return host
+
+# ---- the trailing chrome rail (the HUD's bottom-bar chrome shares the row) ----
+
+## Build the row's trailing rail: a plain clipping `Control` holding a centred vertical stack of the two
+## slot hosts. THREE deliberate choices, each load-bearing:
+## 1. `_rail` is a PLAIN `Control`, not a container, for the same reason `_make_zone_host` is one — a
+##    container reports its children's combined minimum size, so the HUD's chrome could push the card
+##    past its FIXED cross-axis size. Its width is DECLARED by the HUD (`set_rail_width`), never
+##    measured from the content, which is what keeps `work_zone_size()` content-independent.
+## 2. Because that wrapper blocks propagation, everything INSIDE it can be an ordinary container — which
+##    is why the slots are `MarginContainer`s rather than plain Controls. A slot must report the height
+##    of the cluster parked in it or the stack collapses to nothing, and a container reading its own
+##    child's minimum is exactly the mechanism for that. Nobody has to measure the chrome twice.
+## 3. The stack CENTRES via `ALIGNMENT_CENTER`, not by anchor arithmetic. Anchors were tried and are a
+##    trap here: `set_anchors_and_offsets_preset` derives its offsets from `get_minimum_size()` — the
+##    *virtual* one, which ignores `custom_minimum_size` — so it centres a `Container` and does NOT
+##    centre a plain `Control`. Measured on the bottom dock: `PRESET_HCENTER_WIDE` gave `NavBacking` (a
+##    `PanelContainer`) offsets `[0, -76, 0, +76]` = ±152/2, correctly centred, and gave `TurnCluster` (a
+##    plain `Control` whose 128px height is only `custom_minimum_size`) offsets `[0, 0, 0, 0]` — its TOP
+##    edge pinned to the mid-line, then grown DOWNWARD by `_size_changed`'s minimum clamp, rendering 64px
+##    low (rect y 900–1028 in a host spanning 730–1070). A container-driven stack has no such asymmetry.
+func _build_rail() -> void:
+	_rail = Control.new()
+	_rail.name = "ChromeRail"
+	_rail.clip_contents = true
+	_rail.size_flags_horizontal = Control.SIZE_FILL
+	_rail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_rail.visible = false
+	_card_row.add_child(_rail)
+
+	_rail_stack = VBoxContainer.new()
+	_rail_stack.name = "ChromeRailStack"
+	_rail_stack.alignment = BoxContainer.ALIGNMENT_CENTER
+	_rail_stack.add_theme_constant_override("separation", RAIL_SLOT_SEPARATION)
+	_rail_stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rail.add_child(_rail_stack)
+
+	for slot in RAIL_SLOT_ORDER:
+		var host := MarginContainer.new()
+		host.name = "ChromeRailSlot_%d" % slot
+		# SHRINK_CENTER so a cluster narrower than the rail (the rail is the WIDER of the two) sits
+		# centred in the column rather than ragged against its leading edge.
+		host.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		host.size_flags_vertical = Control.SIZE_FILL
+		_rail_slots[slot] = host
+		_rail_stack.add_child(host)
+
+## The slot the HUD parks one bottom-bar chrome cluster into on a horizontal dock: `RAIL_SLOT_TOP` (the
+## nav cluster) above `RAIL_SLOT_BOTTOM` (the turn cluster). The panel owns this host and NOTHING inside
+## it: the HUD adds and removes its own nodes. Always non-null for a valid slot (the hosts exist from
+## `_build`); the rail as a whole is hidden while it carries no declared width.
+func rail_slot_host(slot: int) -> Control:
+	return _rail_slots.get(slot)
+
+## Declare the rail column's width — the `max` over the parked clusters, computed by the HUD, which owns
+## them. NOT measured here. `width <= 0` retires the rail. Re-chooses the shell and re-reports
+## `work_zone_size()`; it can NEVER re-emit `reservation_changed`, because the reservation is the CROSS
+## axis (`_cross_axis_size`, which reads only the collapse flag, the dock edge and the viewport — never a
+## rail width) and the rail only spends the LONG one. That is what stops a feedback loop: the HUD pushes
+## a width -> the panel relayouts -> no reservation emit -> no `Main` fan-out -> no HUD reflow.
+func set_rail_width(width: float) -> void:
+	var declared: float = maxf(width, 0.0)
+	if is_equal_approx(declared, _rail_declared_width):
+		return
+	_rail_declared_width = declared
+	_apply_rail()
+	_relayout_body()
+	_notify_zones_resized()
+
+## Size + show the rail for the current dock. The rail exists only on a HORIZONTAL dock: a vertical strip
+## is `PANEL_WIDTH` (380) wide and has no room beside the zones for a ~300px chrome column.
+func _apply_rail() -> void:
+	if _rail == null:
+		return
+	var width := _rail_width()
+	_rail.custom_minimum_size.x = width
+	_rail.visible = width > 0.0
+
+## The rail's effective width: the declared value on a horizontal dock, 0 on a vertical one. Forcing 0 by
+## EDGE rather than trusting the declared value keeps the panel correct whatever order the dock change
+## and the HUD's push arrive in. The long-axis twin of `_wide_separator_span()`.
+func _rail_width() -> float:
+	if _is_vertical_edge(_dock_edge):
+		return 0.0
+	return maxf(_rail_declared_width, 0.0)
 
 ## The hairline rule between two adjacent zones in the wide shell.
 func _make_zone_separator() -> ColorRect:
