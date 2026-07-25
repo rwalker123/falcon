@@ -237,7 +237,6 @@ mod tests {
     }
 
     /// `export_herds` with the server-owned fog switch exposed, for the fog-disabled fixtures.
-    #[allow(clippy::too_many_arguments)]
     fn export_herds_with_fog(
         telemetry: &HerdTelemetry,
         registry: &HerdRegistry,
