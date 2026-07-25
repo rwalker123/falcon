@@ -52,7 +52,7 @@ SpeciesDef.hunt_yield = {
 ```
 
 - **`edible` and `tradeable` are DERIVED, never stored** — `edible ≡ provisions_per_biomass > 0`,
-  `tradeable ≡ trade_goods_per_biomass > 0`. This is the [[read-the-mechanism]] discipline: one source
+  `tradeable ≡ trade_goods_per_biomass > 0`. This is the read-the-mechanism discipline: one source
   of truth (the vector), the two flags are a comparison. (We discussed literal `edible`/`tradeable`
   bools; the vector is barely more work, richer — a wolf's pelt is worth more than a rabbit's, a
   mammoth carries ivory — and keeps the two food webs symmetric with flora.)
