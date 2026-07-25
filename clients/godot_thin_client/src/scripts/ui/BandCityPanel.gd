@@ -104,11 +104,17 @@ const ZONE_WORK_MAX_WIDTH := 1520.0
 const ZONE_SEPARATOR_THICKNESS := 1.0
 ## Gap either side of a zone separator, so the hairline is not flush against zone content.
 const ZONE_SEPARATION := 12
-## What the TWO separators + their gaps cost the wide shell's interior width. A `const` (not just
-## `_wide_separator_span()`) because `WIDE_SHELL_MIN_WIDTH` below is itself a const and cannot call a
-## function; the function returns this so the threshold, the content cap and `work_zone_size` can
-## never disagree about how much width the chrome eats.
-const WIDE_SEPARATOR_SPAN := 2.0 * (ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION))
+## What ONE separator + its gaps cost — the hairline plus a `ZONE_SEPARATION` gap either side. Named
+## because the trailing chrome rail is separated from the content column by exactly one of these
+## (`_rail_span()`), so the rail's gutter costs the same as any inter-zone gutter by construction
+## rather than by a matching pair of literals.
+const RAIL_SEPARATOR_SPAN := ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION)
+## What the TWO separators + their gaps cost the wide shell's interior width — written as two of the
+## above so the two can never disagree. A `const` (not just `_wide_separator_span()`) because
+## `WIDE_SHELL_MIN_WIDTH` below is itself a const and cannot call a function; the function returns this
+## so the threshold, the content cap and `work_zone_size` can never disagree about how much width the
+## chrome eats.
+const WIDE_SEPARATOR_SPAN := 2.0 * RAIL_SEPARATOR_SPAN
 ## What the card's own horizontal chrome costs — the border plus the content margins the card draws
 ## with, i.e. exactly what `_interior_size()` subtracts from `_panel_extent().x`. Named so the shell
 ## threshold (which is tested against the panel's OUTER width) can add it back.
@@ -251,6 +257,10 @@ var _card_row: HBoxContainer
 ## `_rail` is a PLAIN `Control` and that is load-bearing: it blocks the stack's minimum size from
 ## propagating out to the card, which is what lets everything INSIDE it be ordinary containers.
 var _rail: Control
+## The hairline + gaps between the content column and the rail, so the rail reads as its own region
+## exactly like the three zones do rather than butting up against the parties content. Shown/hidden
+## WITH the rail — a vertical dock must not grow a stray hairline (nor pay its 25px).
+var _rail_separator: ColorRect
 var _rail_stack: VBoxContainer
 var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control host
 ## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
@@ -457,7 +467,10 @@ func _build() -> void:
 	# The column is added FIRST and the rail LAST, which is what puts the rail at the TRAILING end.
 	_card_row = HBoxContainer.new()
 	_card_row.name = "CardRow"
-	_card_row.add_theme_constant_override("separation", 0)
+	# `ZONE_SEPARATION`, the SAME gutter the wide shell puts either side of a zone separator — with the
+	# hairline between them that is `RAIL_SEPARATOR_SPAN`, i.e. one inter-zone gutter exactly. A
+	# `BoxContainer` skips separation for hidden children, so a retired rail costs nothing here.
+	_card_row.add_theme_constant_override("separation", ZONE_SEPARATION)
 	_card_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_card_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_panel.add_child(_card_row)
@@ -772,9 +785,9 @@ func _apply_wide_content_cap() -> void:
 ## The panel must NEVER enter the wide shell with a work zone below `ZONE_WORK_MIN_WIDTH` — the exact
 ## failure the hand-picked 900 threshold caused. `WIDE_SHELL_MIN_WIDTH` is zones + separators +
 ## `PANEL_CHROME_H` and is tested against the OUTER width, so the chrome rail (which spends that same
-## outer width before the zones see any of it) must come off it first.
+## outer width before the zones see any of it — its column AND its separator gutter) must come off first.
 func _shell_is_wide() -> bool:
-	return _panel_extent().x - _rail_width() >= WIDE_SHELL_MIN_WIDTH
+	return _panel_extent().x - _rail_span() >= WIDE_SHELL_MIN_WIDTH
 
 ## The panel card's outer size for the current dock: fixed on the cross axis, the window on the other.
 func _panel_extent() -> Vector2:
@@ -789,14 +802,15 @@ func _wide_panel_height() -> float:
 	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
 ## The card's INTERIOR box — the outer extent less the border and the content margins the card draws
-## with (`_panel_stylebox`), less whatever the chrome rail takes off the row. Chrome only; never content.
+## with (`_panel_stylebox`), less whatever the chrome rail + its separator take off the row. Chrome only;
+## never content.
 ## `work_zone_size()` and `_apply_wide_content_cap()` both read this, so both follow the rail with no
 ## edit of their own — and the ultrawide `SHRINK_CENTER` path then centres the content column in the room
 ## the rail leaves, which is the wanted behaviour (chrome pinned to the trailing edge, content centred).
 func _interior_size() -> Vector2:
 	var outer := _panel_extent()
 	var chrome_v := 2.0 * (PANEL_CONTENT_MARGIN_V + PANEL_BORDER_WIDTH)
-	return Vector2(maxf(outer.x - PANEL_CHROME_H - _rail_width(), 0.0), maxf(outer.y - chrome_v, 0.0))
+	return Vector2(maxf(outer.x - PANEL_CHROME_H - _rail_span(), 0.0), maxf(outer.y - chrome_v, 0.0))
 
 ## Height of the header row — pure chrome (two text rows beside the icon controls), so measuring it
 ## keeps the interior maths content-independent. Falls back before the first layout pass.
@@ -904,6 +918,12 @@ func _make_zone_host(host_name: String, fixed_width: float) -> Control:
 ##    edge pinned to the mid-line, then grown DOWNWARD by `_size_changed`'s minimum clamp, rendering 64px
 ##    low (rect y 900–1028 in a host spanning 730–1070). A container-driven stack has no such asymmetry.
 func _build_rail() -> void:
+	# The gutter first, so the row reads column · hairline · rail.
+	_rail_separator = _make_zone_separator()
+	_rail_separator.name = "ChromeRailSeparator"
+	_rail_separator.visible = false
+	_card_row.add_child(_rail_separator)
+
 	_rail = Control.new()
 	_rail.name = "ChromeRail"
 	_rail.clip_contents = true
@@ -959,14 +979,29 @@ func _apply_rail() -> void:
 	var width := _rail_width()
 	_rail.custom_minimum_size.x = width
 	_rail.visible = width > 0.0
+	if _rail_separator != null:
+		# Hidden WITH the rail: a `BoxContainer` skips separation around a hidden child, so this is also
+		# what makes `_rail_span()`'s zero honest on a vertical dock.
+		_rail_separator.visible = _rail.visible
 
 ## The rail's effective width: the declared value on a horizontal dock, 0 on a vertical one. Forcing 0 by
 ## EDGE rather than trusting the declared value keeps the panel correct whatever order the dock change
-## and the HUD's push arrive in. The long-axis twin of `_wide_separator_span()`.
+## and the HUD's push arrive in.
 func _rail_width() -> float:
 	if _is_vertical_edge(_dock_edge):
 		return 0.0
 	return maxf(_rail_declared_width, 0.0)
+
+## What the rail takes off the row ALTOGETHER — its declared width PLUS the separator gutter beside it.
+## The long-axis twin of `_wide_separator_span()`, and the value the width maths must use: subtracting
+## `_rail_width()` alone would silently over-report the usable width by `RAIL_SEPARATOR_SPAN` (25px).
+## **A retired rail contributes ZERO on both terms** — no width and no separator — which is what keeps a
+## vertical dock bit-identical to before the rail existed.
+func _rail_span() -> float:
+	var width := _rail_width()
+	if width <= 0.0:
+		return 0.0
+	return width + RAIL_SEPARATOR_SPAN
 
 ## The hairline rule between two adjacent zones in the wide shell.
 func _make_zone_separator() -> ColorRect:

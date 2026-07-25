@@ -73,16 +73,23 @@ const KIND_ICON := {
 const KIND_ICON_FALLBACK := "●"
 
 # ---- geometry (named constants; no magic literals) -------------------------
-const CLUSTER_WIDTH := 260.0
-const CLUSTER_HEIGHT := 128.0
-const CAPTION_GAP := 12
 # The cluster is the last, right-flush BottomBar child, sitting on the window's
-# bottom-right corner. Inset the orb + caption from those edges so the full ring
+# bottom-right corner. Inset the orb from those edges so the full ring
 # and count badge stay on-screen with a comfortable margin.
 const EDGE_MARGIN_RIGHT := 16
 const EDGE_MARGIN_TOP := 14
 const EDGE_MARGIN_BOTTOM := 14
 const ORB_DIAMETER := 100.0
+## The cluster is the ORB plus its right inset now — the `Turn N` caption that used to sit to its left is
+## gone (the number lives IN the face), and the count badge is drawn INSIDE `_orb_area`
+## (`_orb_area.size.x - BADGE_RADIUS - BADGE_INSET`), so nothing overhangs the orb and no extra width is
+## needed for it. A 260px-wide cluster around a 100px orb made the orb read visibly off-centre in the
+## dock row's rail. `EDGE_MARGIN_RIGHT` is IN the width rather than dropped: the cluster is the
+## right-flush `BottomBar` child, so that inset is what keeps the ring off the window edge — and at a bare
+## `ORB_DIAMETER` the `_layout`'s own right offset would instead SQUEEZE the orb by 16px.
+## Declared AFTER the two it is built from — a `const` initializer is evaluated at class load.
+const CLUSTER_WIDTH := ORB_DIAMETER + float(EDGE_MARGIN_RIGHT)
+const CLUSTER_HEIGHT := 128.0
 const FACE_DIAMETER := 74.0
 const FACE_BORDER_WIDTH := 2
 const RING_RADIUS := 47.0
@@ -90,6 +97,16 @@ const RING_WIDTH := 2.0
 const RING_SEGMENTS := 64
 const GLYPH := "‣‣"
 const GLYPH_FONT_SIZE := 26
+# ---- the turn number ON the face -------------------------------------------
+## The turn number's type size is MEASURED, never tabled: step down from the max until the string fits
+## `FACE_DIAMETER * TURN_TEXT_WIDTH_FRACTION`, floored at the min. A 4-digit turn must stay legible
+## inside the 74px face and must never overflow the circle, and the fraction is what keeps the fit
+## derived from the face's own diameter rather than re-tuned per digit count.
+const TURN_FONT_SIZE_MAX := 30
+const TURN_FONT_SIZE_MIN := 13
+## How much of the face's diameter the number may span. Well under 1.0: the face is a CIRCLE, so a
+## chord at full diameter would touch the border, and the border is the severity tint.
+const TURN_TEXT_WIDTH_FRACTION := 0.72
 
 # Calm pulse (only while the registry is empty).
 const PULSE_PERIOD := 2.6            # seconds for a full breath
@@ -122,6 +139,10 @@ const ROW_ICON_SIZE := 30
 
 # The end-turn gate. When a `blocking` entry is present the footer button wears the reason in
 # place of `Advance ▸` — an unexplained dead button is worse than no button at all.
+## The face's tooltips — one per click semantic (see `_refresh_face_text`). The number on the face is
+## self-evident and needs no "Turn" word beside it; what is NOT self-evident is what a click does.
+const TOOLTIP_ADVANCE_FORMAT := "Advance to turn %d"
+const TOOLTIP_REVIEW_FORMAT := "%d item%s need your attention — click to review"
 const ADVANCE_LABEL := "Advance ▸"
 # Deliberately NOT the same string as the entry row's label (`Hud.ATTENTION_DECISION_LABEL`):
 # the row states what is waiting, the footer states why you cannot advance. Repeating the row
@@ -134,10 +155,12 @@ var _turn: int = 0
 var _pulse_time: float = 0.0
 
 var _layout: HBoxContainer
-var _caption: VBoxContainer
-var _turn_label: Label
 var _orb_area: Control
 var _face: Button
+## True while the pointer is over the face AND the face is showing the advance GLYPH instead of the
+## turn number. Tracked (rather than read off the Button) because the swap must be re-evaluated when the
+## attention registry changes, not only on enter/exit — see `_refresh_face_text`.
+var _face_hovered: bool = false
 
 var _popover: PanelContainer = null
 var _catcher: Control = null
@@ -156,20 +179,11 @@ func _ready() -> void:
 	_layout.offset_top = EDGE_MARGIN_TOP
 	_layout.offset_bottom = -EDGE_MARGIN_BOTTOM
 	_layout.offset_right = -EDGE_MARGIN_RIGHT
+	# One child (the orb) now that the caption is gone, so there is no separation to set; END keeps it
+	# flush to the inset right edge, which is where the bottom-bar corner wants it.
 	_layout.alignment = BoxContainer.ALIGNMENT_END
-	_layout.add_theme_constant_override("separation", CAPTION_GAP)
 	_layout.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_layout)
-
-	_caption = VBoxContainer.new()
-	_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_caption.add_theme_constant_override("separation", 2)
-	_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_turn_label = Label.new()
-	_turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_turn_label.add_theme_color_override("font_color", HudStyle.INK)
-	_caption.add_child(_turn_label)
-	_layout.add_child(_caption)
 
 	_orb_area = Control.new()
 	_orb_area.custom_minimum_size = Vector2(ORB_DIAMETER, ORB_DIAMETER)
@@ -180,14 +194,17 @@ func _ready() -> void:
 	_layout.add_child(_orb_area)
 
 	_face = Button.new()
-	_face.text = GLYPH
 	_face.focus_mode = Control.FOCUS_NONE
 	_face.custom_minimum_size = Vector2(FACE_DIAMETER, FACE_DIAMETER)
 	_face.size = Vector2(FACE_DIAMETER, FACE_DIAMETER)
-	_face.add_theme_font_size_override("font_size", GLYPH_FONT_SIZE)
 	_face.pressed.connect(_on_face_pressed)
+	# The hover swap follows the CLICK semantics (see `_refresh_face_text`), so it is re-evaluated on
+	# enter/exit AND whenever the registry changes.
+	_face.mouse_entered.connect(func() -> void: _set_face_hovered(true))
+	_face.mouse_exited.connect(func() -> void: _set_face_hovered(false))
 	_orb_area.add_child(_face)
 	_position_face()
+	_refresh_face_text()
 
 	set_turn(_turn)
 	_recompute()
@@ -222,8 +239,7 @@ func set_attention(entries: Array) -> void:
 
 func set_turn(turn: int) -> void:
 	_turn = turn
-	if _turn_label != null:
-		_turn_label.text = "Turn %d" % turn
+	_refresh_face_text()
 
 ## Open the popover programmatically (used by the ui_preview harness).
 func open_popover() -> void:
@@ -237,6 +253,52 @@ func open_popover() -> void:
 ##     list has nothing to review — and, unpositioned, rendered as a blank box that
 ##     pushed its own Advance affordance off-screen, trapping the player).
 ##   • non-empty → toggle the reasons popover so the player can triage first.
+## THE FACE'S TEXT AND TOOLTIP FOLLOW THE CLICK SEMANTICS, because `_on_face_pressed` BRANCHES on the
+## registry: empty → advance the turn directly; non-empty → toggle the reasons popover. So:
+##   * registry EMPTY — rest shows the turn NUMBER, hover swaps to `GLYPH` ("this advances"), tooltip
+##     names the turn it would advance TO. The number alone would remove the one affordance saying the
+##     orb is a button at all, so the hover swap is what carries it.
+##   * registry NON-EMPTY — rest shows the number, hover does **NOT** swap: a `‣‣` there would promise
+##     an advance a click will not perform (it opens the popover), so the tooltip names the count and
+##     says the click reviews.
+## Called from `set_turn`, `_recompute` (registry changed) and the hover handlers, so no path can strand
+## the glyph on the face.
+func _refresh_face_text() -> void:
+	if _face == null:
+		return
+	var advances := _entries.is_empty()
+	var show_glyph := advances and _face_hovered
+	var text := GLYPH if show_glyph else str(_turn)
+	_face.text = text
+	_face.add_theme_font_size_override(
+		"font_size", GLYPH_FONT_SIZE if show_glyph else _turn_font_size(text))
+	if advances:
+		_face.tooltip_text = TOOLTIP_ADVANCE_FORMAT % (_turn + 1)
+	else:
+		var n := _entries.size()
+		_face.tooltip_text = TOOLTIP_REVIEW_FORMAT % [n, "" if n == 1 else "s"]
+
+func _set_face_hovered(hovered: bool) -> void:
+	if hovered == _face_hovered:
+		return
+	_face_hovered = hovered
+	_refresh_face_text()
+
+## The largest size in `[TURN_FONT_SIZE_MIN, TURN_FONT_SIZE_MAX]` at which `text` fits the face's usable
+## chord. MEASURED against the button's own font — a per-digit-count table would drift the moment the
+## theme font changed, and a single fixed size either clips turn 1200 or wastes the face on turn 1.
+func _turn_font_size(text: String) -> int:
+	var font := _face.get_theme_font("font")
+	if font == null:
+		return TURN_FONT_SIZE_MIN
+	var budget := FACE_DIAMETER * TURN_TEXT_WIDTH_FRACTION
+	var size := TURN_FONT_SIZE_MAX
+	while size > TURN_FONT_SIZE_MIN:
+		if font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, size).x <= budget:
+			return size
+		size -= 1
+	return TURN_FONT_SIZE_MIN
+
 func _on_face_pressed() -> void:
 	if _entries.is_empty():
 		emit_signal("advance_requested")
@@ -285,6 +347,9 @@ func _recompute() -> void:
 	var ready := _entries.is_empty()
 	_accent_color = HudStyle.SIGNAL if ready else _highest_severity_color()
 	_style_face(_accent_color)
+	# The registry decides what a click DOES, so it also decides whether hovering may promise an advance.
+	# Re-evaluated here so entries arriving while the pointer rests on the face cannot strand the glyph.
+	_refresh_face_text()
 	# The pulse only breathes while all-clear; otherwise the badge tells the story.
 	set_process(ready)
 	if _orb_area != null:

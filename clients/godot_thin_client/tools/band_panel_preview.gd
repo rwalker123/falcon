@@ -604,9 +604,11 @@ func _ready() -> void:
 	# back on, or they would bracket a threshold the panel no longer applies to the raw window width. The
 	# width is canvas-independent (`max` of a fixed 260px turn cluster and a grid-aspect minimap), and the
 	# panel is already bottom-docked + reflowed from the ultrawide state above, so it can be read here.
-	var rail_span: float = _panel._rail_width()
+	# `_rail_span()`, not `_rail_width()`: the rail also costs a `RAIL_SEPARATOR_SPAN` gutter, and probing
+	# against the bare width would bracket the threshold 25px off.
+	var rail_span: float = _panel._rail_span()
 	var shell_threshold_width := int(ceil(BandCityPanel.WIDE_SHELL_MIN_WIDTH + rail_span))
-	print("band_panel_preview: shell threshold probes at %d / %d (threshold %.0f + rail width %.0f)" % [
+	print("band_panel_preview: shell threshold probes at %d / %d (threshold %.0f + rail span %.0f)" % [
 		shell_threshold_width - SHELL_THRESHOLD_UNDERSHOOT, shell_threshold_width,
 		BandCityPanel.WIDE_SHELL_MIN_WIDTH, rail_span])
 	# One pixel BELOW: the wide shell could not give the board a readable column, so the panel must
@@ -661,8 +663,8 @@ func _render_dock_row_states() -> void:
 	_assert_chrome_parked(true, "band_panel_dockrow_bottom")
 	_assert_parked_chrome_fits("band_panel_dockrow_bottom")
 	_assert_shell_is_wide(true, "band_panel_dockrow_bottom")
-	print("band_panel_preview: dockrow bottom — rail %.0fpx (nav %.0f, turn %.0f), stack needs %.0f of a %.0f strip, work zone %.0fpx" % [
-		_panel._rail_width(),
+	print("band_panel_preview: dockrow bottom — rail %.0fpx + %.0f gutter = %.0f span (nav %.0f, turn %.0f), stack needs %.0f of a %.0f strip, work zone %.0fpx" % [
+		_panel._rail_width(), BandCityPanel.RAIL_SEPARATOR_SPAN, _panel._rail_span(),
 		_hud.nav_backing.get_combined_minimum_size().x, _hud.turn_orb.get_combined_minimum_size().x,
 		_hud._dockrow._required_height(), _panel.current_reservation_size(),
 		_panel.work_zone_size().x])
@@ -828,14 +830,24 @@ func _rect_overflow(rect: Rect2, bounds: Rect2) -> Vector2:
 		maxf(rect.end.x - bounds.end.x, bounds.position.x - rect.position.x),
 		maxf(rect.end.y - bounds.end.y, bounds.position.y - rect.position.y))
 
-## GUARD: a VERTICAL dock must spend nothing on the rail, whatever width the HUD last declared — the
-## panel forces it to 0 by EDGE, so the whole strip is the zones'.
+## GUARD: a VERTICAL dock must spend NOTHING on the rail — neither its column nor its separator gutter —
+## whatever width the HUD last declared; the panel forces it to 0 by EDGE, so the whole strip is the
+## zones'. **Both halves are asserted**: `_rail_span()` covers the 25px gutter as well as the column, and
+## the separator's own `visible` is checked because a stray hairline down the middle of a left dock is
+## exactly the regression the shown-with-the-rail rule exists to prevent — and a `BoxContainer` only skips
+## separation around a HIDDEN child, so the visibility IS what makes the span's zero honest.
 func _assert_no_rail_width(state_name: String) -> void:
-	var span := _panel._rail_width()
+	var failures: Array[String] = []
+	var span := _panel._rail_span()
 	if not is_zero_approx(span):
-		push_error("band_panel_preview: %s vertical dock still spends %.0fpx on the chrome rail" % [state_name, span])
-	else:
-		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail" % state_name)
+		failures.append("still spends %.0fpx on the chrome rail" % span)
+	if _panel._rail_separator.visible:
+		failures.append("the rail separator hairline is still visible")
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail and draws no hairline" % state_name)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s vertical dock — %s" % [state_name, failure])
 
 ## GUARD: the clusters came home to the EXACT authored parent, child index, anchors and size flags the
 ## controller captured before the first reflow. A preset applied on park must not leak into the
