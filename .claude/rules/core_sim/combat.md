@@ -301,9 +301,15 @@ costs a fraction of **that turn's food income** — a real larder debit, capped 
   drain (`larder_runway_turns`), which drains only by `consumption + penFeedUpkeep`.
 - Tests: `core_sim/tests/predator_raid.rs` gains the working-band-forfeits / idle-band-forfeits-nothing /
   forfeit-capped-at-larder cases; the config rejection rides `fauna_config.rs`'s unit tests.
-- **Client half (a companion `client-dev` slice, NOT done here):** the native reader must decode
-  `raidRadius`/`raidForfeit` into the cohort dict; the feed styling for the forfeit; the band-panel
-  negative food-ledger readout; the fixtures.
+- **Client half — LANDED (this PR).** The native reader (`native/src/dict/population.rs`) decodes
+  `raidRadius`/`raidForfeit` into the cohort dict; `CommandFeedController`'s new extensible `KIND_STYLE`
+  table styles the threat/casualty feed events (`predator_raid` → ⚔ crimson, `hunt_danger` → ⚠ amber,
+  reusing the `HudStyle` palette so the accent matches the map-overlay hues); the Warrior card shows a
+  live **"⚠ Predator nearby — N on guard"** warning (a visible camp-threat predator within `raidRadius`
+  of the band); and the `raidForfeit` **"⚔ Lost to raids"** negative food-ledger line renders beside
+  `penFeedUpkeep`. ui_preview fixtures `predator_feed` / `predator_band_raided` pin both. **NOTE — Phase 4
+  (`docs/plan_predators.md`) replaces this client-side `raidRadius` proximity check with a
+  visibility-gated, server-computed per-band alert.**
 
 ---
 
