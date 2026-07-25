@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    env, fs,
+    fs,
     hash::{Hash, Hasher},
     io,
     path::{Path, PathBuf},
@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{Map as JsonMap, Number, Value};
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::hashing::FnvHasher;
 
 pub const BUILTIN_CRISIS_ARCHETYPES: &str = include_str!("data/crisis_archetypes.json");
@@ -123,6 +124,14 @@ pub enum CrisisArchetypeCatalogError {
     Duplicate { id: String },
 }
 
+impl ConfigLoadError for CrisisArchetypeCatalogError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct CrisisModifierCatalog {
@@ -226,6 +235,14 @@ pub enum CrisisModifierCatalogError {
     },
     #[error("duplicate crisis modifier id {id}")]
     Duplicate { id: String },
+}
+
+impl ConfigLoadError for CrisisModifierCatalogError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -817,6 +834,14 @@ pub enum CrisisTelemetryConfigError {
     },
 }
 
+impl ConfigLoadError for CrisisTelemetryConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct CrisisArchetypeCatalogHandle(pub Arc<CrisisArchetypeCatalog>);
 
@@ -958,6 +983,9 @@ pub fn load_crisis_telemetry_config_from_env(
     )
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `env_var` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 fn load_with_env_paths<T, E, M>(
     env_var: &str,
     label: &'static str,
@@ -966,41 +994,14 @@ fn load_with_env_paths<T, E, M>(
     metadata_ctor: fn(Option<PathBuf>) -> M,
 ) -> (Arc<T>, M)
 where
-    E: std::fmt::Display,
+    E: ConfigLoadError + std::fmt::Display,
 {
-    let override_path = env::var(env_var).ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("src/data/{label}.json"));
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match from_file(&path) {
-            Ok(cfg) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "{label}.loaded=file"
-                );
-                return (Arc::new(cfg), metadata_ctor(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "{label}.load_failed"
-                );
-            }
-        }
-    }
-
-    tracing::info!(
-        target: "shadow_scale::config",
-        "{label}.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        env_var,
+        label,
+        &format!("src/data/{label}.json"),
+        builtin,
+        from_file,
     );
-    (builtin(), metadata_ctor(None))
+    (config, metadata_ctor(source))
 }

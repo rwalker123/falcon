@@ -4,7 +4,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -12,6 +12,8 @@ use std::{
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_VISIBILITY_CONFIG: &str = include_str!("data/visibility_config.json");
 
@@ -245,6 +247,14 @@ pub enum VisibilityConfigError {
     },
 }
 
+impl ConfigLoadError for VisibilityConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the visibility configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct VisibilityConfigHandle(pub Arc<VisibilityConfig>);
@@ -283,44 +293,20 @@ impl VisibilityConfigMetadata {
     }
 }
 
-/// Load visibility configuration from environment or default path.
+/// Load visibility configuration from environment (`VISIBILITY_CONFIG_PATH`) or the default data
+/// path.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `VISIBILITY_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_visibility_config_from_env() -> (Arc<VisibilityConfig>, VisibilityConfigMetadata) {
-    let override_path = env::var("VISIBILITY_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/visibility_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match VisibilityConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "visibility_config.loaded=file"
-                );
-                return (Arc::new(config), VisibilityConfigMetadata::new(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "visibility_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = VisibilityConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "visibility_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "VISIBILITY_CONFIG_PATH",
+        "visibility_config",
+        "src/data/visibility_config.json",
+        VisibilityConfig::builtin,
+        VisibilityConfig::from_file,
     );
-    (config, VisibilityConfigMetadata::new(None))
+    (config, VisibilityConfigMetadata::new(source))
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ pub mod climate;
 pub mod combat;
 mod combat_config;
 mod components;
+mod config_load;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -97,6 +98,7 @@ pub use components::{
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
     Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD,
 };
+pub use config_load::ConfigLoadError;
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,

@@ -11,7 +11,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -27,6 +27,8 @@ use super::{
     signals::is_registered_signal,
     stance,
 };
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_BEAT_DEFINITIONS: &str = include_str!("../data/beat_definitions.json");
 
@@ -571,6 +573,14 @@ pub enum BeatCatalogError {
     Invalid(String),
 }
 
+impl ConfigLoadError for BeatCatalogError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 impl BeatCatalogError {
     fn invalid(message: impl Into<String>) -> Self {
         Self::Invalid(message.into())
@@ -617,45 +627,21 @@ impl BeatCatalogMetadata {
     }
 }
 
-/// Load the beat catalog from `BEAT_DEFINITIONS_PATH` or the default data path, falling back to
-/// the baked-in builtin. Invalid content is refused at **error** level — a catalog with a broken
-/// placeholder would otherwise render holes into player-facing copy.
+/// Load the beat catalog from `BEAT_DEFINITIONS_PATH` or the default data path. Invalid content is
+/// refused — a catalog with a broken placeholder would otherwise render holes into player-facing
+/// copy.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `BEAT_DEFINITIONS_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_beat_catalog_from_env(config: &BeatConfig) -> (Arc<BeatCatalog>, BeatCatalogMetadata) {
-    let override_path = env::var("BEAT_DEFINITIONS_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/beat_definitions.json");
-    let path = override_path.unwrap_or(default_path);
-
-    match BeatCatalog::from_file(&path, config) {
-        Ok(catalog) => {
-            tracing::info!(
-                target: "shadow_scale::config",
-                path = %path.display(),
-                beats = catalog.beats().len(),
-                "beat_catalog.loaded=file"
-            );
-            return (Arc::new(catalog), BeatCatalogMetadata::new(Some(path)));
-        }
-        Err(err @ BeatCatalogError::Invalid(_)) => {
-            tracing::error!(
-                target: "shadow_scale::config",
-                path = %path.display(),
-                error = %err,
-                "beat_catalog.invalid_rejected"
-            );
-        }
-        Err(err) => {
-            tracing::warn!(
-                target: "shadow_scale::config",
-                path = %path.display(),
-                error = %err,
-                "beat_catalog.load_failed"
-            );
-        }
-    }
-
-    tracing::info!(target: "shadow_scale::config", "beat_catalog.loaded=builtin");
-    (BeatCatalog::builtin(), BeatCatalogMetadata::new(None))
+    let (catalog, source) = load_config_from_env(
+        "BEAT_DEFINITIONS_PATH",
+        "beat_catalog",
+        "src/data/beat_definitions.json",
+        BeatCatalog::builtin,
+        |path| BeatCatalog::from_file(path, config),
+    );
+    (catalog, BeatCatalogMetadata::new(source))
 }
 
 #[cfg(test)]
