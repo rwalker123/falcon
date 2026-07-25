@@ -121,6 +121,14 @@ Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archety
 
 Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted per-row.
 
+**Boot config loading is strict, subsystem-wide.** An absent *default* path falls back to the
+compiled-in builtin — benign, because the builtin is `include_str!` of that exact file. A file that
+is **present but unreadable, unparseable, or invalid**, and any `*_CONFIG_PATH` naming a missing or
+broken file, is a **boot panic** naming the path, the error and the remedy: the sim never runs
+tuning nobody chose. `config_load.rs` is the single implementation (`resolve_config` /
+`load_config_from_env`); every `load_*_from_env` delegates to it. The `reload_config` hot-reload
+path is deliberately the opposite — it logs and keeps the live world.
+
 **Port allocation, the handshake file, and how the client discovers a bumped block** are one
 two-sided contract — see `.claude/rules/core_sim/ports.md`, which loads on `port_alloc.rs`,
 `server.rs`, `ServerPortsFile.gd` and `run_stack.sh`.

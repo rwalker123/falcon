@@ -10,7 +10,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -18,6 +18,8 @@ use std::{
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_SITES_CONFIG: &str = include_str!("data/sites_config.json");
 
@@ -129,6 +131,14 @@ pub enum SitesConfigError {
     Parse(#[from] serde_json::Error),
 }
 
+impl ConfigLoadError for SitesConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the sites configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct SitesConfigHandle(pub Arc<SitesConfig>);
@@ -173,44 +183,19 @@ impl SitesConfigMetadata {
     }
 }
 
-/// Load sites configuration from environment (`SITES_CONFIG_PATH`) or the default data path,
-/// falling back to the baked-in builtin.
+/// Load sites configuration from environment (`SITES_CONFIG_PATH`) or the default data path.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `SITES_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_sites_config_from_env() -> (Arc<SitesConfig>, SitesConfigMetadata) {
-    let override_path = env::var("SITES_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/sites_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match SitesConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "sites_config.loaded=file"
-                );
-                return (Arc::new(config), SitesConfigMetadata::new(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "sites_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = SitesConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "sites_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "SITES_CONFIG_PATH",
+        "sites_config",
+        "src/data/sites_config.json",
+        SitesConfig::builtin,
+        SitesConfig::from_file,
     );
-    (config, SitesConfigMetadata::new(None))
+    (config, SitesConfigMetadata::new(source))
 }
 
 #[cfg(test)]

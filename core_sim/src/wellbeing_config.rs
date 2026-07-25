@@ -14,7 +14,7 @@
 //! optional file/env override).
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,6 +22,8 @@ use std::{
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_WELLBEING_CONFIG: &str = include_str!("data/wellbeing_config.json");
 
@@ -150,6 +152,14 @@ pub enum WellbeingConfigError {
     Parse(#[from] serde_json::Error),
 }
 
+impl ConfigLoadError for WellbeingConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the wellbeing configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct WellbeingConfigHandle(pub Arc<WellbeingConfig>);
@@ -190,45 +200,19 @@ impl WellbeingConfigMetadata {
     }
 }
 
-/// Load wellbeing config from environment (`WELLBEING_CONFIG_PATH`) or the default data path,
-/// falling back to the baked-in builtin.
+/// Load wellbeing config from environment (`WELLBEING_CONFIG_PATH`) or the default data path.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `WELLBEING_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_wellbeing_config_from_env() -> (Arc<WellbeingConfig>, WellbeingConfigMetadata) {
-    let override_path = env::var("WELLBEING_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/wellbeing_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match WellbeingConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "wellbeing_config.loaded=file"
-                );
-                return (Arc::new(config), WellbeingConfigMetadata::new(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "wellbeing_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = WellbeingConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "wellbeing_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "WELLBEING_CONFIG_PATH",
+        "wellbeing_config",
+        "src/data/wellbeing_config.json",
+        WellbeingConfig::builtin,
+        WellbeingConfig::from_file,
     );
-    (config, WellbeingConfigMetadata::new(None))
+    (config, WellbeingConfigMetadata::new(source))
 }
 
 #[cfg(test)]

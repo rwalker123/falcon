@@ -20,7 +20,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -31,6 +31,7 @@ use serde::Deserialize;
 use sim_runtime::TerrainType;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::labor_config::{ForageLaborConfig, NO_FORAGE_CAPACITY};
 
 pub const BUILTIN_FLORA_CONFIG: &str = include_str!("data/flora_config.json");
@@ -801,6 +802,14 @@ pub enum FloraConfigError {
     InvalidRealizedSpeciesRange { min: usize, max: usize },
 }
 
+impl ConfigLoadError for FloraConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the flora configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct FloraConfigHandle(pub Arc<FloraConfig>);
@@ -845,75 +854,43 @@ impl FloraConfigMetadata {
     }
 }
 
-/// Load flora configuration from environment (`FLORA_CONFIG_PATH`) or the default data path, falling
-/// back to the baked-in builtin.
+/// Load flora configuration from environment (`FLORA_CONFIG_PATH`) or the default data path.
 ///
-/// Every candidate goes through [`FloraConfig::from_json_str`] **and**
+/// The loaded file goes through [`FloraConfig::from_json_str`] **and**
 /// [`FloraConfig::validate_against_forage`] against the caller's `forage.capacity_by_biome`, so a
-/// roster that would leave a food-bearing biome nameless — or claim barren ground — is rejected and
-/// logged at **error** level before it can reach the sim, and the known-good builtin is used instead.
-/// The forage table is taken as an argument rather than re-read here so it has exactly one copy.
+/// roster that would leave a food-bearing biome nameless — or claim barren ground — is a boot
+/// panic, not a silent swap to the builtin ([`crate::config_load::resolve_config`]). The forage
+/// table is taken as an argument rather than re-read here so it has exactly one copy.
 pub fn load_flora_config_from_env(
     forage_capacity_by_biome: &HashMap<TerrainType, f32>,
 ) -> (Arc<FloraConfig>, FloraConfigMetadata) {
-    let override_path = env::var("FLORA_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/flora_config.json");
+    let (config, source) = load_config_from_env(
+        "FLORA_CONFIG_PATH",
+        "flora_config",
+        "src/data/flora_config.json",
+        FloraConfig::builtin,
+        |path| -> Result<FloraConfig, FloraConfigError> {
+            let config = FloraConfig::from_file(path)?;
+            config.validate_against_forage(forage_capacity_by_biome)?;
+            Ok(config)
+        },
+    );
 
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match FloraConfig::from_file(&path).and_then(|config| {
-            config
-                .validate_against_forage(forage_capacity_by_biome)
-                .map(|()| config)
-        }) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "flora_config.loaded=file"
-                );
-                return (Arc::new(config), FloraConfigMetadata::new(Some(path)));
-            }
-            // A broken invariant is an operator error, not a missing file: the config that *was*
-            // found says something incoherent. Shout about it.
-            Err(err @ (FloraConfigError::Read { .. } | FloraConfigError::Parse(_))) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "flora_config.load_failed"
-                );
-            }
-            Err(err) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "flora_config.invalid_rejected"
-                );
-            }
+    if source.is_none() {
+        // The builtin is checked too: it is the fallback, so if the *forage* table drifted out from
+        // under the roster the coverage hole is here as well and must be loud rather than silent.
+        // Deliberately not fatal — unlike a file the operator edited, there is no alternative
+        // roster to point at, and `builtin_parses_and_validates` already pins the shipped pair.
+        if let Err(err) = config.validate_against_forage(forage_capacity_by_biome) {
+            tracing::error!(
+                target: "shadow_scale::config",
+                error = %err,
+                "flora_config.builtin_coverage_broken"
+            );
         }
     }
 
-    let config = FloraConfig::builtin();
-    // The builtin is checked too: it is the fallback, so if the *forage* table drifted out from
-    // under the roster the coverage hole is here as well and must be loud rather than silent.
-    if let Err(err) = config.validate_against_forage(forage_capacity_by_biome) {
-        tracing::error!(
-            target: "shadow_scale::config",
-            error = %err,
-            "flora_config.builtin_coverage_broken"
-        );
-    }
-    tracing::info!(
-        target: "shadow_scale::config",
-        "flora_config.loaded=builtin"
-    );
-    (config, FloraConfigMetadata::new(None))
+    (config, FloraConfigMetadata::new(source))
 }
 
 #[cfg(test)]

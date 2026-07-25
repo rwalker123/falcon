@@ -12,13 +12,13 @@
 //! and `DemographicsConfig::default()` parses [`BUILTIN_DEMOGRAPHICS_CONFIG`]. A missing or
 //! misspelled key is a loud parse error, not a silent fallback to a second set of numbers.
 //!
-//! The **loader** is strict to match (`resolve_demographics_config`): a present-but-broken file,
-//! or a `DEMOGRAPHICS_CONFIG_PATH` that is missing or broken, is fatal at boot. Only an *absent
-//! default path* falls back to the builtin — otherwise the strict schema would merely move the
-//! silent substitution from one key out to the whole file.
+//! The **loader** is strict to match, via the shared [`crate::config_load`] seam: a
+//! present-but-broken file, or a `DEMOGRAPHICS_CONFIG_PATH` that is missing or broken, is fatal at
+//! boot. Only an *absent default path* falls back to the builtin — otherwise the strict schema
+//! would merely move the silent substitution from one key out to the whole file.
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -26,6 +26,8 @@ use std::{
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_DEMOGRAPHICS_CONFIG: &str = include_str!("data/demographics_config.json");
 
@@ -204,10 +206,10 @@ pub enum DemographicsConfigError {
     Parse(#[from] serde_json::Error),
 }
 
-impl DemographicsConfigError {
+impl ConfigLoadError for DemographicsConfigError {
     /// The file simply **is not there**, as distinct from being unreadable (permissions, a
     /// directory in the way) or invalid. This is the one distinction the loader's fallback rule
-    /// turns on — see [`resolve_demographics_config`].
+    /// turns on — see [`crate::config_load::resolve_config`].
     fn is_not_found(&self) -> bool {
         match self {
             Self::Read { source, .. } => source.kind() == io::ErrorKind::NotFound,
@@ -256,81 +258,24 @@ impl DemographicsConfigMetadata {
     }
 }
 
-/// Appended to the boot panic so the message says what to do, not just what broke.
-const LOAD_FAILURE_REMEDY: &str = "every field is required and unknown keys are rejected, so the \
-     sim will NOT fall back to a different set of numbers — fix the file (or the \
-     DEMOGRAPHICS_CONFIG_PATH that names it)";
-
-/// Decide *which* demographics config the sim runs on, and *which* failures are fatal.
-///
-/// Split out of [`load_demographics_config_from_env`] so the decision is unit-testable without
-/// touching the process-global `DEMOGRAPHICS_CONFIG_PATH`.
-///
-/// **Exactly one case falls back to the builtin: the default path is absent.** That is benign
-/// because the builtin is `include_str!` of that very file, so the fallback substitutes nothing.
-/// Every other outcome is an error:
-/// - a **present but unreadable/unparseable** file — someone's edit is live-looking but broken, and
-///   quietly running the compiled-in tuning instead discards it;
-/// - an **explicit override that is missing or broken** — the operator named a file; ignoring it
-///   silently is the bug.
-///
-/// Without this, the strict schema (#350) would only move the silent substitution one layer out:
-/// a fat-fingered key would stop being a silent serde default and start being a silent whole-file
-/// fallback.
-fn resolve_demographics_config(
-    override_path: Option<&Path>,
-    default_path: &Path,
-) -> Result<(Arc<DemographicsConfig>, DemographicsConfigMetadata), DemographicsConfigError> {
-    let path = override_path.unwrap_or(default_path);
-    match DemographicsConfig::from_file(path) {
-        Ok(config) => Ok((
-            Arc::new(config),
-            DemographicsConfigMetadata::new(Some(path.to_path_buf())),
-        )),
-        Err(err) if override_path.is_none() && err.is_not_found() => Ok((
-            DemographicsConfig::builtin(),
-            DemographicsConfigMetadata::new(None),
-        )),
-        Err(err) => Err(err),
-    }
-}
-
 /// Load demographic config from environment (`DEMOGRAPHICS_CONFIG_PATH`) or the default data path.
 ///
 /// **Panics** when the named/default file exists but cannot be read or parsed, or when an explicit
 /// `DEMOGRAPHICS_CONFIG_PATH` names a file that is not there — see
-/// `resolve_demographics_config` for why only an absent *default* path is benign. This is
-/// one-time boot of a headless server with no world built yet: there is no recovery that isn't
-/// "run different numbers than the operator asked for", and `build_headless_app` hands back an
-/// `App`, not a `Result`.
+/// [`crate::config_load::resolve_config`] for why only an absent *default* path is benign. Without
+/// that, the strict schema (#350) would merely move the silent substitution one layer out: a
+/// fat-fingered key would stop being a silent serde default and start being a silent whole-file
+/// fallback.
 pub fn load_demographics_config_from_env() -> (Arc<DemographicsConfig>, DemographicsConfigMetadata)
 {
-    let override_path = env::var("DEMOGRAPHICS_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/demographics_config.json");
-
-    let (config, metadata) =
-        match resolve_demographics_config(override_path.as_deref(), &default_path) {
-            Ok(loaded) => loaded,
-            Err(err) => panic!(
-                "demographics config at {} could not be loaded: {err}; {LOAD_FAILURE_REMEDY}",
-                override_path.as_deref().unwrap_or(&default_path).display()
-            ),
-        };
-
-    match metadata.path() {
-        Some(path) => tracing::info!(
-            target: "shadow_scale::config",
-            path = %path.display(),
-            "demographics_config.loaded=file"
-        ),
-        None => tracing::info!(
-            target: "shadow_scale::config",
-            "demographics_config.loaded=builtin"
-        ),
-    }
-
-    (config, metadata)
+    let (config, source) = load_config_from_env(
+        "DEMOGRAPHICS_CONFIG_PATH",
+        "demographics_config",
+        "src/data/demographics_config.json",
+        DemographicsConfig::builtin,
+        DemographicsConfig::from_file,
+    );
+    (config, DemographicsConfigMetadata::new(source))
 }
 
 #[cfg(test)]
@@ -423,105 +368,6 @@ mod tests {
             DemographicsConfig::from_json_str(&value.to_string()).is_err(),
             "a config missing per_capita_draw must fail to parse"
         );
-    }
-
-    /// A scratch directory unique per test, so the loader cases can't collide with each other (or
-    /// with a concurrent `cargo test` run) over a shared file name.
-    fn scratch_dir(case: &str) -> PathBuf {
-        let dir = env::temp_dir().join(format!(
-            "shadow_scale_demographics_config_{}_{case}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&dir).expect("scratch dir");
-        dir
-    }
-
-    /// The **only** benign absence: nobody named a file, and the default one isn't there. The
-    /// builtin is `include_str!` of exactly that path, so falling back substitutes nothing.
-    #[test]
-    fn an_absent_default_path_falls_back_to_the_builtin() {
-        let missing = scratch_dir("absent_default").join("not_written.json");
-        let (config, metadata) =
-            resolve_demographics_config(None, &missing).expect("an absent default is benign");
-        assert_eq!(*config, *DemographicsConfig::builtin());
-        assert!(
-            metadata.path().is_none(),
-            "the builtin has no on-disk source to report"
-        );
-    }
-
-    /// A *present* default file that no longer parses is the regression this loader rule exists to
-    /// close: pre-#350 serde filled the gap, post-#350 it errors — and a `warn!` + builtin would
-    /// simply move the silent substitution from one key to the whole file.
-    #[test]
-    fn a_broken_default_file_is_fatal() {
-        let path = scratch_dir("broken_default").join("demographics_config.json");
-        let mut value = builtin_value();
-        value["consumption"]
-            .as_object_mut()
-            .expect("consumption is an object")
-            .insert("per_capita_drw".to_string(), serde_json::json!(0.16));
-        fs::write(&path, value.to_string()).expect("write the fat-fingered config");
-
-        let err = resolve_demographics_config(None, &path)
-            .expect_err("a present-but-broken default must not fall back");
-        assert!(
-            matches!(err, DemographicsConfigError::Parse(_)),
-            "the typo must surface as a parse error, got {err}"
-        );
-    }
-
-    /// The operator named a file. Not finding it and quietly running the shipped builtin is exactly
-    /// the ignored-override bug.
-    #[test]
-    fn a_missing_explicit_override_is_fatal() {
-        let dir = scratch_dir("missing_override");
-        let missing = dir.join("experiment.json");
-        let err = resolve_demographics_config(Some(&missing), &dir.join("default.json"))
-            .expect_err("a named-but-absent override must not fall back");
-        assert!(
-            err.is_not_found(),
-            "the failure must be the missing override itself, got {err}"
-        );
-    }
-
-    /// A partial override was legal before #350 and is not any more; it must fail loudly rather
-    /// than run the builtin the operator explicitly overrode.
-    #[test]
-    fn a_partial_explicit_override_is_fatal() {
-        let path = scratch_dir("partial_override").join("experiment.json");
-        let mut value = builtin_value();
-        value
-            .as_object_mut()
-            .expect("the config root is an object")
-            .remove("cold")
-            .expect("builtin should carry cold");
-        fs::write(&path, value.to_string()).expect("write the partial override");
-
-        let err = resolve_demographics_config(Some(&path), Path::new("unused_default.json"))
-            .expect_err("a partial override must not fall back");
-        assert!(
-            matches!(err, DemographicsConfigError::Parse(_)),
-            "a missing block must surface as a parse error, got {err}"
-        );
-    }
-
-    /// The happy override path still wins over the default, and reports its own path so the boot
-    /// log names the tuning that actually ran.
-    #[test]
-    fn a_valid_explicit_override_wins_and_reports_its_path() {
-        let path = scratch_dir("valid_override").join("experiment.json");
-        let mut value = builtin_value();
-        // A deliberately distinct value, so "the override loaded" can't be confused with "the
-        // builtin loaded" — the exact confusion the silent fallback used to create.
-        value["births"]["birth_rate"] = serde_json::json!(0.5);
-        fs::write(&path, value.to_string()).expect("write the override");
-
-        let (config, metadata) =
-            resolve_demographics_config(Some(&path), Path::new("unused_default.json"))
-                .expect("a valid override loads");
-        assert_eq!(config.births.birth_rate, 0.5);
-        assert_eq!(metadata.path(), Some(&path));
     }
 
     /// So is a key no Rust field reads — a retired lever left behind would otherwise look live.
