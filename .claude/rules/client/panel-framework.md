@@ -11,6 +11,21 @@ paths:
 
 # HUD panel framework — docked PanelCards
 
+**Never reimplement bespoke height/scroll logic.** There are two shared helpers and
+picking the wrong one *silently misbehaves* rather than failing, so choose by what the
+panel IS:
+
+- **Free-floating panel** (anchored against the viewport — the Inspector,
+  `NarrativeForkPanel`) → `ui/AutoSizingPanel.gd`: attach it and call `fit_to_content`.
+  It sizes against the *viewport* via `global_position` + anchors + `offset_bottom`.
+- **Dock card** (a child of a `PanelDock` `VBoxContainer` — command feed, subject drawer)
+  → `PanelCard` + `ui/hud/DockScrollFit.gd`. The container overwrites a dock child's size
+  every layout pass and the ceiling that matters is the *dock's* remaining height, not the
+  window's — `AutoSizingPanel` there just fights the container.
+
+Writing height math by hand means you picked the wrong helper, or found a third case worth
+extracting — extract it rather than open-coding it.
+
 ## Key scripts
 
 | Script | Purpose |

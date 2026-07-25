@@ -27,7 +27,8 @@ report which client-side changes remain — do not touch `clients/`.
 
 - `core_sim/CLAUDE.md` — authoritative for ECS system order, config files, and
   subsystem specs. Read the relevant section before editing.
-- Root `CLAUDE.md` — DRY/SOLID, document-update flow, cross-linking convention.
+- Root `CLAUDE.md` — document-update flow, cross-linking convention, and where
+  rationale goes (the rule file that owns the arc, not the hub).
 - The owning subsystem's config JSON in `core_sim/src/data/` when tuning behavior.
 
 ## Ground rules

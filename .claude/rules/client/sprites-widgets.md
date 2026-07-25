@@ -3,7 +3,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/{HudStyle,IconSprites,FoodIcons,FaunaSprites}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{SiteSprites,WonderSprites,StageSprites,MagnifierButton}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TileHabitability,TileClimate,RiverEdges,MinimapPanel}.gd"
-  - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandBridge}.gd"
+  - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandBridge,Typography}.gd"
 ---
 
 <!-- Extracted verbatim from lines 195-200;202-202;204-210 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -11,7 +11,28 @@ paths:
      clients/godot_thin_client/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
+<!-- HAND-EDITED SINCE EXTRACTION: the Typography autopsy below was moved down out of the
+     client hub (the hub keeps the 3-line actionable rule). A re-run of split_claude_md.sh
+     without re-pinning the blob would drop it. -->
+
 # Sprites, icons, styling and small widgets
+
+## There is no typography system — `Typography.gd` is a no-op shim
+
+The hub's rule is short (set sizes with `add_theme_font_size_override`; `HudStyle` owns the
+palette). This is why. An earlier version of the docs described a system that **does not
+exist**: there is **no `INSPECTOR_FONT_SIZE` constant** anywhere in the client, no shared
+`Theme` resource applied to the root `CanvasLayer`, and no `body`/`heading`/`caption`/`legend`/
+`control` typography map.
+
+`src/scripts/Typography.gd` is a **37-line shim** — `apply()`, `apply_theme()`, `theme()` and
+`size_for()` all return null or do nothing. Only `DEFAULT_FONT_SIZE := 18` and
+`base_font_size()` carry real values, consumed at a handful of `Inspector.gd` call sites (the
+file's only consumer; the live base size is `Inspector.get_resolved_font_size()`).
+
+**Building a panel that expects `Typography` to style it is the trap this note exists to
+prevent** — every method returns without error, so it fails silently and looks like a layout
+bug rather than a missing system.
 
 ## Key scripts
 
