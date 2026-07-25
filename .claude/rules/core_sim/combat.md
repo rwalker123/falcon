@@ -209,6 +209,18 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   task):** the native reader + the view-ring render. Guard:
   `snapshot::tests::herd_snapshot_reports_prey_sense_radius_for_carnivores_only`.
 
+### Prey pursuit (Phase 2) — a wild carnivore steps toward its dinner
+
+**A wild carnivore now `pursue`s the nearest clearable prey** (the Phase-2 movement primitive) instead
+of roaming toward grass, so a pack **tracks a moving herd** rather than idling on empty ground. This is
+the deeper fix for the transient-zero-prey stranding that widening `prey_sense_radius` 3→4 only
+band-aided, and it makes raids dynamic (a pursuing pack closes on camps). The movement lives on the
+fauna side — it is the trophic transpose of `drift_to_owner`, reusing the shared prey rule
+(`attack_clears_defense` over `prey_index`, **not** `HerdDensityMap`) so a wolf chases only prey it can
+actually eat, out to the wider `predators.pursuit_radius` (default **8**, vs the feeding disk's 4). See
+`fauna.md` → "Herd movement is a rung primitive" (the `pursue` bullet) for the mechanism, ordering,
+one-turn prey-position lag, and config.
+
 ### Predator raids (Phase 1b) — the raid trigger + the Warrior goes live
 
 **A carnivore with `aggression > 0` within `predators.raid_radius` of a resident band raids its camp**,

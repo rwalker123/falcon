@@ -579,6 +579,16 @@ pub struct PredatorConfig {
     /// zero prey most turns and snap `K→0`. A single clearly-named dial for the whole predator model
     /// (chosen as a global lever over a per-species `SpeciesDef` field). Validated `>= 1`.
     pub prey_sense_radius: u32,
+    /// **The pursue-acquisition radius** (Predators Phase 2, `docs/plan_predators.md`) — the odd-r hex
+    /// radius within which a **wild carnivore** acquires and steps toward the nearest prey it can eat
+    /// (`fauna::advance_herds`' `pursue` dispatch). Deliberately **wider** than the feeding
+    /// `prey_sense_radius` (4): a pack *tracks* prey over a larger territory than the disk it *feeds*
+    /// from, and a wider acquisition range is the real fix for the transient-zero-prey stranding that
+    /// widening `prey_sense_radius` 3→4 only band-aided. Validated `>= 1` (a hard bound, so it stays a
+    /// free dial); conceptually it should be `>= prey_sense_radius`, but that intent is left to the
+    /// playtest rather than enforced. A playtest dial.
+    #[serde(default = "default_pursuit_radius")]
+    pub pursuit_radius: u32,
     /// **The raid trigger reach** (Predators Phase 1b, `docs/plan_predators.md`) — how close (odd-r hex
     /// distance) a carnivore must be to a band to raid its camp (`systems::advance_predator_raids`). Its
     /// **own** lever: a raid is the pack reaching the camp, distinct from — and deliberately **tighter
@@ -601,6 +611,7 @@ impl Default for PredatorConfig {
             min_spacing: DEFAULT_PREDATOR_MIN_SPACING,
             predation_escapement_fraction: DEFAULT_PREDATION_ESCAPEMENT_FRACTION,
             prey_sense_radius: DEFAULT_PREY_SENSE_RADIUS,
+            pursuit_radius: default_pursuit_radius(),
             raid_radius: default_raid_radius(),
             raid_exposure: default_raid_exposure(),
         }
@@ -626,6 +637,11 @@ const DEFAULT_PREDATION_ESCAPEMENT_FRACTION: f32 = 0.15;
 /// Default prey-sensing disk radius (wider than a graze footprint). See
 /// [`PredatorConfig::prey_sense_radius`].
 const DEFAULT_PREY_SENSE_RADIUS: u32 = 3;
+/// Default pursue-acquisition radius (wider than the prey-sensing disk). See
+/// [`PredatorConfig::pursuit_radius`].
+fn default_pursuit_radius() -> u32 {
+    8
+}
 /// Default raid trigger reach (tighter than the prey-sensing disk). See
 /// [`PredatorConfig::raid_radius`].
 fn default_raid_radius() -> u32 {
@@ -1756,6 +1772,15 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.prey_sense_radius.to_string(),
         });
     }
+    if predators.pursuit_radius < 1 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.pursuit_radius",
+            constraint: "be at least 1 (a 0-radius acquisition disk senses no prey, so a wild \
+                         carnivore can never pursue and just roams)"
+                .to_string(),
+            value: predators.pursuit_radius.to_string(),
+        });
+    }
     if predators.raid_radius < 1 {
         return Err(FaunaConfigError::Invalid {
             field: "predators.raid_radius",
@@ -2499,6 +2524,14 @@ mod tests {
     fn validate_rejects_a_zero_raid_radius() {
         let err = reject(|json| json["predators"]["raid_radius"] = (0).into());
         assert_rejects_field(err, "predators.raid_radius");
+    }
+
+    /// A `pursuit_radius` of 0 means a wild carnivore acquires no prey, so `pursue` degrades to a
+    /// plain roam — the transient-zero-prey stranding this dial exists to fix.
+    #[test]
+    fn validate_rejects_a_zero_pursuit_radius() {
+        let err = reject(|json| json["predators"]["pursuit_radius"] = (0).into());
+        assert_rejects_field(err, "predators.pursuit_radius");
     }
 
     /// A non-positive `raid_exposure` leaves no defender-side populace, so a raid can kill nobody.
