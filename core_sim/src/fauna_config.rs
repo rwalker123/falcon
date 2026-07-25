@@ -408,6 +408,20 @@ pub struct SpeciesDef {
     /// `[0, 1]`.
     #[serde(default)]
     pub ferocity: f32,
+    /// **A carnivore's target population as a fraction of its prey base** (Predators Phase 1a,
+    /// `docs/plan_predators.md`) — *"wolves are 10% of their prey groups"*. The dedicated
+    /// [`fauna::spawn_predators`] pass derives its per-species pack count from this instead of a fixed
+    /// cap: `target = round(eligible_prey_herds × prey_ratio)`, where the prey herds are every
+    /// herbivore herd this predator's `attack` clears (the map-wide count, no sensing-disk filter). A
+    /// predator population is *defined by* its prey base, so the count is **derived, not an absolute** —
+    /// and it lives on the predator's own row because each predator has its own prey set and its own
+    /// ratio (a future big cat might be `0.05`).
+    ///
+    /// `#[serde(default)]` = `0.0` for every herbivore (inert — only [`fauna::spawn_predators`] reads
+    /// it, and only for carnivores). **A carnivore requires it finite `> 0`** ([`FaunaConfig::validate`]):
+    /// a `0` (or negative/non-finite) ratio would seat no packs at all, an incoherent predator.
+    #[serde(default)]
+    pub prey_ratio: f32,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -533,14 +547,16 @@ impl AbundanceConfig {
 /// are seeded by their **own** pass (`fauna::spawn_predators`), not from the herbivore short-range
 /// pool, so they stay rare and never consume the `abundance.max_total_game` budget; and their
 /// prey-limited ecology needs a couple of levers the grazer model has no analog for.
+///
+/// **There is no `max_packs` cap** — a predator population is *defined by* its prey base, so the pack
+/// count is **derived per carnivore species** as `round(eligible_prey_herds × SpeciesDef::prey_ratio)`
+/// (the pack count belongs to the predator's own row, not to a single map-wide absolute).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PredatorConfig {
     /// Per-tile probability of seeding a predator pack, keyed by the tile's food module — the
     /// carnivore twin of `abundance.per_biome`.
     pub per_biome: HashMap<String, f32>,
-    /// Cap on the number of predator packs seeded map-wide (predators are rare, so this is small).
-    pub max_packs: usize,
     /// Minimum Chebyshev spacing between two seeded packs.
     pub min_spacing: u32,
     /// **The functional-response taper** — predation may draw a prey herd down to this fraction of the
@@ -561,7 +577,6 @@ impl Default for PredatorConfig {
     fn default() -> Self {
         Self {
             per_biome: HashMap::new(),
-            max_packs: DEFAULT_PREDATOR_MAX_PACKS,
             min_spacing: DEFAULT_PREDATOR_MIN_SPACING,
             predation_escapement_fraction: DEFAULT_PREDATION_ESCAPEMENT_FRACTION,
             prey_sense_radius: DEFAULT_PREY_SENSE_RADIUS,
@@ -581,8 +596,6 @@ impl PredatorConfig {
     }
 }
 
-/// Default predator-pack cap (rare). See [`PredatorConfig::max_packs`].
-const DEFAULT_PREDATOR_MAX_PACKS: usize = 4;
 /// Default predator-pack Chebyshev spacing. See [`PredatorConfig::min_spacing`].
 const DEFAULT_PREDATOR_MIN_SPACING: u32 = 6;
 /// Default functional-response taper. See [`PredatorConfig::predation_escapement_fraction`].
@@ -1284,6 +1297,9 @@ impl FaunaConfig {
                     species_field("combat.attack (carnivore)"),
                     def.combat.attack,
                 )?;
+                // A carnivore's pack count is `round(eligible_prey_herds × prey_ratio)`, so a `0`
+                // (or negative/non-finite) ratio seats no packs at all — an incoherent predator.
+                require_positive_finite(species_field("prey_ratio"), def.prey_ratio)?;
             }
             // **The shore predicate is only applied on the short-range game path.** The migratory
             // placement path (`suitable_tiles_for` / `build_migratory_route`) picks its loiter
@@ -1507,6 +1523,19 @@ impl FaunaConfig {
         out.sort_by(|a, b| a.0.cmp(b.0));
         out
     }
+
+    /// `(key, def)` pairs for every non-migratory **carnivore** species (all biomes), in a stable key
+    /// order — the roster [`fauna::spawn_predators`] sizes its per-species prey-derived pack targets
+    /// over.
+    pub fn carnivore_species(&self) -> Vec<(&String, &SpeciesDef)> {
+        let mut out: Vec<_> = self
+            .species
+            .iter()
+            .filter(|(_, def)| !def.migratory && def.diet == Diet::Carnivore)
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(b.0));
+        out
+    }
 }
 
 /// The graze table's own invariants — the ones that decide whether the **land layer** is trustworthy.
@@ -1591,10 +1620,11 @@ fn validate_graze(graze: &GrazeConfig) -> Result<(), FaunaConfigError> {
 /// peak), named here so the escapement-floor bound reads against the concept, not a bare `0.5`.
 const GRAZE_MSY_BIOMASS_FRACTION: f32 = 0.5;
 
-/// The dedicated predator pass's invariants (Predators Phase 1a). `max_packs` is a `usize` (`>= 0` by
-/// type), so only the other four dials can break: a `0` spacing would stack packs on one tile; a `0`
-/// sensing disk would contain no prey (prey are sparse points) so `K` would always be `0`; the
-/// functional-response taper must sit above zero and below the prey's MSY point (the band
+/// The dedicated predator pass's invariants (Predators Phase 1a). The pack count is prey-derived
+/// (`round(eligible_prey_herds × prey_ratio)`, validated on the carnivore's own row), so there is no
+/// `max_packs` cap to check here; the four block dials that can break: a `0` spacing would stack packs
+/// on one tile; a `0` sensing disk would contain no prey (prey are sparse points) so `K` would always
+/// be `0`; the functional-response taper must sit above zero and below the prey's MSY point (the band
 /// `graze.overgraze_escapement_fraction` also lives in); and every per-biome probability is a `[0, 1]`
 /// chance.
 fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError> {

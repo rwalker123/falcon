@@ -375,9 +375,12 @@ basic.
     - **Prey = herbivore herds whose `defense ≤ predator.attack`.** The pure attack≥defense rule
       (idea 7 — wolves can't crack a mammoth's `defense 12`), restricted to herbivores so a single
       seeded carnivore can't cannibalise itself. No `is_prey` flag.
-    - **The prey-sensing disk is wider than a graze footprint** (a new carnivore radius, larger than
-      `graze_range_radius`), because prey are scattered points: a small footprint would contain zero
-      prey most turns and snap `K→0`. Read from a **prey index** snapshotted at the top of
+    - **The prey-sensing disk is wider than a graze footprint** (`predators.prey_sense_radius`, a new
+      carnivore radius **4**, larger than `graze_range_radius` 0–1), because prey are scattered points:
+      a small footprint would contain zero prey most turns and snap `K→0`. Widened **3 → 4** after
+      measuring ~45% of packs despawning within 10 turns when a pack roamed transiently out of prey
+      range (the 61-tile disk vs 37 cuts those transient-zero-prey despawns; the deeper fix is Phase-2
+      prey-pursuit). Read from a **prey index** snapshotted at the top of
       `advance_herds` (an immutable pass before the mutable herd loop — resolves the cross-herd
       borrow), so a carnivore's `K` reads start-of-turn prey biomass, the same one-turn lag a
       herbivore's `K` has with graze.
@@ -388,16 +391,23 @@ basic.
       pack takes less as prey thins and stops before zero). Index-based over the herd Vec
       (predator `i` mutates prey `j`, always distinct), **deterministic in `HerdRegistry` order** —
       the exact discipline `advance_herd_grazing` uses for shared graze.
-    - **A dedicated predator spawn pass** (`spawn_predators`, its own small cap + spacing) seeds a
-      few wolf packs on their `host_biomes` — so predators are **rare** and do **not** consume the
-      prey `max_total_game` budget. Carnivores are filtered **out** of the herbivore short-range pool
-      *and* out of `repopulate_fauna` immigration (they seed once; if prey collapse they die out and
-      do not respawn — idea 6).
+    - **A dedicated predator spawn pass** (`spawn_predators`, its own **prey-derived count** +
+      spacing) seeds wolf packs on their `host_biomes` — so predators are **rare** and do **not**
+      consume the prey `max_total_game` budget. **The count is NOT a fixed cap:** each carnivore
+      species' pack target is `round(eligible_prey_herds × SpeciesDef.prey_ratio)` — its own prey set
+      (every herbivore herd its `attack` clears, map-wide) × its own ratio, counted after both prey
+      passes so the full prey base is present. A predator population is *defined by* its prey base, so
+      two independent absolutes (`max_total_game` for prey, a `max_packs` for predators) with no
+      relationship was a magic-number smell; the derived target replaces it (`max_packs` deleted).
+      Placement (`min_spacing` + the per-biome roll) can still cap below the target on prey-rich maps.
+      Carnivores are filtered **out** of the herbivore short-range pool *and* out of `repopulate_fauna`
+      immigration (they seed once; if prey collapse they die out and do not respawn — idea 6).
     - **Seed the wolf pack** in `fauna_config.json`: `carnivore`, `attack 3 / defense 3`,
       `ferocity 0.8` (a cornered pack is a dangerous hunt), `aggression 0.6` (set now, inert until
-      1b's raid), `husbandry_ceiling wild` (wolf→dog domestication is deferred), a modest
-      `regrowth_rate` and a tuned `prey_per_biomass`. `attack 3` clears deer/boar/horse/elk but not
-      aurochs (6) or mammoth (12) — its prey set falls out of the roster for free.
+      1b's raid), `prey_ratio 0.10` (a pack per ~10 prey herds — the derived-count dial),
+      `husbandry_ceiling wild` (wolf→dog domestication is deferred), a modest `regrowth_rate` and a
+      tuned `prey_per_biomass`. `attack 3` clears deer/boar/horse/elk but not aurochs (6) or mammoth
+      (12) — its prey set falls out of the roster for free.
     - **Movement stays `roam`** (graze-aware, so a pack drifts toward grassy tiles where prey tend to
       be). **Idea 6 falls out of shared machinery:** a pack with no prey in its disk gets `K_pred→0`,
       `regrow_biomass`'s `clamp(0, cap)` drives its biomass down, and the existing extinction `retain`

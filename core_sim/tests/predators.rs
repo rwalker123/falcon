@@ -13,15 +13,15 @@ use bevy::MinimalPlugins;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_herds, advance_labor_allocation, advance_predation, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CombatConfig,
-    CommandEventLog, CreaturesConfig, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfig, FaunaConfigHandle, FogRevealLedger, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_labor_allocation, advance_predation, build_headless_app,
+    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
+    spawn_initial_world, CombatConfig, CommandEventLog, CreaturesConfig, CultureManager, Diet,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle,
 };
 
@@ -737,10 +737,27 @@ fn fauna_config_rejects_illegitimate_predator_dials() {
         "a predation_escapement_fraction ≥ the prey MSY point must be rejected"
     );
 
+    // A carnivore with a non-positive prey_ratio — a pack count of 0, an incoherent predator — is
+    // rejected (mirroring the prey_per_biomass / carnivore-attack bounds).
+    assert!(
+        FaunaConfig::from_json_str(
+            &builtin.replace(r#""prey_ratio": 0.10,"#, r#""prey_ratio": 0.0,"#)
+        )
+        .is_err(),
+        "a carnivore's prey_ratio of 0 (no packs seeded) must be rejected"
+    );
+    assert!(
+        FaunaConfig::from_json_str(
+            &builtin.replace(r#""prey_ratio": 0.10,"#, r#""prey_ratio": -0.1,"#)
+        )
+        .is_err(),
+        "a carnivore's negative prey_ratio must be rejected"
+    );
+
     // A prey_sense_radius of 0 (a disk that senses no prey) is rejected.
     assert!(
         FaunaConfig::from_json_str(
-            &builtin.replace(r#""prey_sense_radius": 3"#, r#""prey_sense_radius": 0"#)
+            &builtin.replace(r#""prey_sense_radius": 4"#, r#""prey_sense_radius": 0"#)
         )
         .is_err(),
         "a prey_sense_radius of 0 must be rejected"
@@ -764,4 +781,136 @@ fn fauna_config_rejects_illegitimate_predator_dials() {
         .is_err(),
         "a predators.per_biome probability above 1 must be rejected"
     );
+}
+
+// ---- The prey-derived spawn count (Predators Phase 1a) ---------------------------------------------
+
+/// The standard map for the predator-count sweep (mirrors `fauna_wet_biome_roster`'s `GRID`).
+const PRED_GRID: UVec2 = UVec2::new(80, 52);
+/// The predator-count sweep seeds (mirrors `fauna_wet_biome_roster`'s `SWEEP_SEEDS`).
+const PRED_SWEEP_SEEDS: [u64; 6] = [1, 2, 3, 4, 5, 119_304_647];
+/// The id prefix `fauna::spawn_predators` stamps on every seeded pack (mirrors the private
+/// `fauna::PREDATOR_ID_PREFIX`), so a test can count packs apart from prey.
+const PRED_ID_PREFIX: &str = "pred_";
+
+/// One seed's predator/prey census, read off the real Startup chain.
+struct PredCensus {
+    /// Herbivore herds the wolf's `attack` clears (its prey set), map-wide.
+    prey_herds: usize,
+    /// `pred_`-prefixed packs actually seeded.
+    packs: usize,
+    /// The prey-derived target `round(prey_herds × prey_ratio)`.
+    target: usize,
+}
+
+/// Generate `seed`'s standard earthlike map through the real Startup chain (worldgen → … →
+/// `spawn_initial_herds` → `spawn_predators`) and census its prey vs its seeded packs. Startup is
+/// driven **once, by hand** (the `fauna_wet_biome_roster::survey` idiom — `app.update()` would
+/// double-run worldgen).
+fn predator_census(seed: u64) -> PredCensus {
+    let mut app = build_headless_app();
+    let mut config = app.world.resource::<SimulationConfig>().clone();
+    config.map_preset_id = "earthlike".to_string();
+    config.map_seed = seed;
+    config.grid_size = PRED_GRID;
+    app.world.insert_resource(config);
+    app.world.run_schedule(bevy::app::Startup);
+
+    let fauna = FaunaConfig::builtin();
+    let wolf = fauna
+        .species_by_display(WOLF)
+        .expect("the wolf is in the shipped roster");
+
+    let registry = app.world.resource::<HerdRegistry>();
+    let mut prey_herds = 0usize;
+    let mut packs = 0usize;
+    for herd in &registry.herds {
+        if herd.id.starts_with(PRED_ID_PREFIX) {
+            packs += 1;
+            continue;
+        }
+        // Prey = a herbivore herd whose defense the wolf's attack clears (the same rule the K seam and
+        // advance_predation read). An unresolved species (never on a real map) defaults to herbivore
+        // with the default combat defense — the sim's own fallback.
+        let def = fauna.species_by_display(&herd.species);
+        let is_carnivore = def.map(|d| d.diet) == Some(Diet::Carnivore);
+        let defense = def.map_or_else(
+            || core_sim::CombatStats::default().defense,
+            |d| d.combat.defense,
+        );
+        if !is_carnivore && defense <= wolf.combat.attack {
+            prey_herds += 1;
+        }
+    }
+    let target = (prey_herds as f32 * wolf.prey_ratio).round() as usize;
+    PredCensus {
+        prey_herds,
+        packs,
+        target,
+    }
+}
+
+/// **The predator count SCALES WITH THE PREY BASE** (Predators Phase 1a) — the permanent guard that
+/// `spawn_predators` seats `round(eligible_prey_herds × prey_ratio)` packs, not a fixed absolute cap.
+/// Measured on [`PRED_SWEEP_SEEDS`] (earthlike 80×52, `prey_ratio 0.10`): prey herds 97–108 →
+/// **target 10–11**, packs **11 / 6 / 10 / 11 / 10 / 11** — five seeds hit the prey-derived target
+/// exactly, and seed 2 is **placement-starved** (the shipped `min_spacing 6` + low per-biome
+/// probabilities cannot seat 11 *well-spaced* packs on that particular winner distribution). So the
+/// invariants are:
+/// - **the derived target is a real ceiling** — `packs ≤ target + 1` on every seed (this *fails* under
+///   the retired fixed `max_packs 4` whenever `target > 5`, so it is exactly the "cap is prey-derived"
+///   claim); and
+/// - **the target genuinely sizes the population** — a **majority** of seeds reach it (`packs ≥
+///   target − 1`), so the count tracks the prey base rather than a placement floor; and
+/// - the sweep seats a non-zero total.
+///
+/// The number that varies with a retune is which seeds are placement-starved, so the majority bound is
+/// deliberately loose. **If more seeds starve, the lever is `min_spacing` / `predators.per_biome`, not
+/// this test** (raising the placement ceiling toward the prey-derived target).
+#[test]
+fn the_predator_count_scales_with_the_prey_base() {
+    let mut total_packs = 0usize;
+    let mut reached_target = 0usize;
+    for seed in PRED_SWEEP_SEEDS {
+        let census = predator_census(seed);
+        total_packs += census.packs;
+        assert!(
+            census.packs <= census.target + 1,
+            "seed {seed}: {} packs seeded exceeds the prey-derived target {} (from {} prey herds) — \
+             the count must be prey-CAPPED, not a fixed absolute",
+            census.packs,
+            census.target,
+            census.prey_herds,
+        );
+        if census.packs + 1 >= census.target {
+            reached_target += 1;
+        }
+    }
+    assert!(
+        total_packs > 0,
+        "the sweep must seat at least one predator pack across {} seeds",
+        PRED_SWEEP_SEEDS.len(),
+    );
+    assert!(
+        reached_target * 2 >= PRED_SWEEP_SEEDS.len(),
+        "a majority of seeds must REACH the prey-derived target (only {reached_target}/{} did) — \
+         else the count is placement-floored, not prey-sized",
+        PRED_SWEEP_SEEDS.len(),
+    );
+}
+
+/// The per-seed prey/wolf numbers, for eyeballing the new prey-derived dynamic. Run with
+/// `cargo test -p core_sim --test predators -- --ignored --nocapture predator_count_report`.
+#[test]
+#[ignore = "measurement report, run explicitly with --nocapture"]
+fn predator_count_report() {
+    println!("prey-derived predator count — earthlike 80×52, prey_ratio 0.10");
+    println!("seed            prey_herds  target  packs");
+    for seed in PRED_SWEEP_SEEDS {
+        let c = predator_census(seed);
+        println!(
+            "{seed:<14}  {:>10}  {:>6}  {:>5}",
+            c.prey_herds, c.target, c.packs
+        );
+    }
 }

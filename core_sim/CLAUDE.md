@@ -3056,11 +3056,17 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   (`#[serde(default)]` 0.0, inert for herbivores) is the carnivore analog of `fodder_per_biomass`;
   `validate` requires a carnivore's `prey_per_biomass > 0` **and** `combat.attack > 0` (a predator that
   clears no defense is incoherent).
-- **Prey = herbivore herds in range whose `defense ≤ predator.attack`** — the pure `attack ≥ defense`
-  rule (idea 7: a wolf's `attack 3` never counts a mammoth's `defense 12` or an aurochs' `6`), no
-  `is_prey` flag. The **prey-sensing disk** (`predators.prey_sense_radius`, default **3**) is
-  deliberately **wider** than a graze footprint (0–1) because prey are sparse points; a graze-sized disk
-  would contain zero prey most turns and snap `K→0`.
+- **Prey = herbivore herds whose `defense ≤ predator.attack`** — the pure `attack ≥ defense` rule
+  (idea 7: a wolf's `attack 3` never counts a mammoth's `defense 12` or an aurochs' `6`), no `is_prey`
+  flag. This is **one definition, three readers**: the clearance comparison lives in the single
+  `attack_clears_defense` helper, and "which herds are prey candidates" (herbivore, with cached
+  `defense`) lives in `build_prey_index`/`PreyDatum` — so the carnivore `K`, `advance_predation`, and
+  the prey-derived spawn count never carry a second, divergent predicate. The **prey-sensing disk**
+  (`predators.prey_sense_radius`, default **4**) is deliberately **wider** than a graze footprint (0–1)
+  because prey are sparse points; a graze-sized disk would contain zero prey most turns and snap `K→0`.
+  It was **widened 3 → 4** because a pack roaming transiently out of prey range got `K→0` and was
+  clamped away — measured ~45% of packs despawning within 10 turns at radius 3; the 61-tile disk (vs 37)
+  cuts those transient-zero-prey despawns (the deeper fix is Phase-2 prey-pursuit).
 - **The cross-herd borrow.** `ecological_carrying_capacity` runs inside `advance_herds`' `iter_mut`
   loop, so it cannot read the other live herds. `advance_herds` snapshots a **prey index**
   (`Vec<PreyDatum>`, one per herbivore herd) in an immutable pass *before* the loop — start-of-turn prey
@@ -3076,19 +3082,33 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
 - **Idea 6 falls out of shared machinery:** a pack with no prey in its disk gets `K_pred → 0`,
   `regrow_biomass`'s `clamp(0, cap)` drives its biomass to 0, and the existing extinction `retain`
   despawns it — no game, they leave/die.
-- **The dedicated predator pass** (`spawn_predators`, called from `spawn_initial_herds` after
-  `spawn_short_range_game`): draws **only carnivore** species, capped at `predators.max_packs` (4) and
-  spaced by `predators.min_spacing` (6), so predators are rare and do **not** consume the
-  `abundance.max_total_game` prey budget. Predator ids carry the `pred_` prefix. Carnivores are filtered
-  **out** of the herbivore short-range pool *and* `repopulate_fauna` immigration
-  (`game_species_for_biome` is now herbivore-only; `carnivore_species_for_biome` is its twin), so a
-  predator seeds **once** and does not respawn.
+- **The dedicated predator pass** (`spawn_predators`, called from `spawn_initial_herds` **after both
+  prey passes**): same winner-collection → shuffle → greedy-`min_spacing`-spaced placement as
+  `spawn_short_range_game`, drawing **only carnivore** species, so predators are rare and do **not**
+  consume the `abundance.max_total_game` prey budget. Predator ids carry the `pred_` prefix. Carnivores
+  are filtered **out** of the herbivore short-range pool *and* `repopulate_fauna` immigration
+  (`game_species_for_biome` is herbivore-only; `carnivore_species_for_biome` is its twin), so a predator
+  seeds **once** and does not respawn.
+- **The count is PREY-DERIVED, not a fixed cap** — `max_packs` is **gone**. Each carnivore species
+  carries a **target** = `round(eligible_prey_herds × SpeciesDef.prey_ratio)` — its own prey set (every
+  herbivore herd its `attack` clears, map-wide, counted once both prey passes have run) × its own ratio,
+  because a predator population is *defined by* its prey base. A winning tile seats one of the carnivore
+  species hosting its biome **whose per-species target is not yet met** (uniform among them, as before),
+  and the loop ends when every species' target is met or the winners are exhausted. For the single
+  shipped carnivore this is "place up to `target` packs", but it generalizes to N predators (a future
+  big cat with its own `prey_ratio`/prey set). **Placement can cap below the target on prey-rich maps**:
+  measured on the 6-seed standard sweep the wolf target is 10–11 (prey herds 97–108, `prey_ratio 0.10`)
+  and packs come in `11 / 6 / 10 / 11 / 10 / 11` — five hit the target, seed 2 is placement-starved (the
+  shipped `min_spacing 6` + low per-biome probabilities cannot seat 11 well-spaced packs there). The
+  lever to close that gap, if wanted, is `min_spacing`/`predators.per_biome`, not the target.
+  (Guard: `predators::the_predator_count_scales_with_the_prey_base`.)
 - **The wolf row** (`fauna_config.json`, playtest anchors): `Grey Wolf Pack`, `diet carnivore`,
-  `combat { attack 3, defense 3 }`, `prey_per_biomass 0.3`, `regrowth_rate 0.15`, `ferocity 0.8`,
-  `aggression 0.6` (set now, **inert until 1b**), `husbandry_ceiling wild`, hosting savanna /
-  temperate-forest / boreal / highland. `attack 3` fixes its prey set for free. Plus a **`predators`
-  config block** (`per_biome` / `max_packs` / `min_spacing` / `predation_escapement_fraction` /
-  `prey_sense_radius`, all validated).
+  `combat { attack 3, defense 3 }`, `prey_per_biomass 0.3`, **`prey_ratio 0.10`** (a pack per ~10 prey
+  herds), `regrowth_rate 0.15`, `ferocity 0.8`, `aggression 0.6` (set now, **inert until 1b**),
+  `husbandry_ceiling wild`, hosting savanna / temperate-forest / boreal / highland. `attack 3` fixes its
+  prey set for free. `FaunaConfig::validate` requires a carnivore's `prey_ratio` finite `> 0` (a `0`
+  seats no packs). Plus a **`predators` config block** (`per_biome` / `min_spacing` /
+  `predation_escapement_fraction` / `prey_sense_radius`, all validated — no `max_packs`).
 
 ---
 

@@ -1656,12 +1656,20 @@ fn spawn_game_group_at(
     Some(herd)
 }
 
-/// **The dedicated predator spawn pass** (Predators Phase 1a, `docs/plan_predators.md`) — same shape as
-/// [`spawn_short_range_game`] but drawing **only carnivore** species and capped at
-/// `predators.max_packs` with `predators.min_spacing`, so predators are rare and do not consume the
-/// `abundance.max_total_game` prey budget. Called from [`spawn_initial_herds`] after
-/// `spawn_short_range_game`; it seeds predators **once** (a collapsed prey base dies out and does not
-/// respawn — there is no predator immigration path, by design).
+/// **The dedicated predator spawn pass** (Predators Phase 1a, `docs/plan_predators.md`) — same
+/// winner-collection → shuffle → greedy-spaced placement as [`spawn_short_range_game`], drawing **only
+/// carnivore** species, so predators are rare and do not consume the `abundance.max_total_game` prey
+/// budget. Called from [`spawn_initial_herds`] **after** both prey passes (migratory + short-range), so
+/// the full prey base is present when the target is counted; it seeds predators **once** (a collapsed
+/// prey base dies out and does not respawn — there is no predator immigration path, by design).
+///
+/// **The cap is prey-derived, not an absolute.** Instead of a single `predators.max_packs`, each
+/// carnivore species carries a **target** = `round(eligible_prey_herds × prey_ratio)` (its own prey set
+/// × its own ratio — a predator population is *defined by* its prey base). A winning tile seats one of
+/// the carnivore species hosting its biome **whose per-species target is not yet met** (uniformly among
+/// them, as before), and the loop ends when every species' target is met or the winners are exhausted.
+/// For the single shipped carnivore this is exactly "place up to `target` packs", but it generalizes to
+/// N predators.
 // Predators carry no shore/site rule, so — unlike `spawn_short_range_game` — this pass needs no `wrap`
 // (there is no wrap-aware neighbour scan to run); `spawn_predator_group_at` places on the tile directly.
 #[allow(clippy::too_many_arguments)] // mirrors `spawn_short_range_game`'s Bevy-resource plumbing
@@ -1675,9 +1683,19 @@ fn spawn_predators(
     herds: &mut Vec<Herd>,
 ) {
     let predators = &fauna.predators;
-    if predators.max_packs == 0 {
+    // **Count the prey base now** (both prey passes have run) and derive each carnivore species' pack
+    // target. Keyed by display name (the value a `Herd` stores in `species`), so the placement loop can
+    // read a built herd's target back without a second lookup.
+    let prey_index = build_prey_index(herds, fauna);
+    let targets: BTreeMap<String, usize> = fauna
+        .carnivore_species()
+        .into_iter()
+        .map(|(_, def)| (def.display_name.clone(), predator_target(def, &prey_index)))
+        .collect();
+    if targets.values().all(|&t| t == 0) {
         return;
     }
+
     // Every tile where the predator abundance roll succeeds (map-wide).
     let mut winners: Vec<(UVec2, &'static str)> = Vec::new();
     for y in 0..height {
@@ -1696,13 +1714,19 @@ fn spawn_predators(
             }
         }
     }
-    // Shuffle so the cap + spacing thin the pool uniformly, not top-to-bottom (the game-pass idiom).
+    // Shuffle so the targets + spacing thin the pool uniformly, not top-to-bottom (the game-pass idiom).
     winners.shuffle(rng);
 
     let mut placed: Vec<UVec2> = Vec::new();
+    let mut placed_by_species: BTreeMap<String, usize> = BTreeMap::new();
     let mut pack_idx = 0u32;
+    let all_targets_met = |placed_by_species: &BTreeMap<String, usize>| {
+        targets.iter().all(|(species, target)| {
+            placed_by_species.get(species).copied().unwrap_or(0) >= *target
+        })
+    };
     for (pos, module_key) in winners {
-        if placed.len() >= predators.max_packs {
+        if all_targets_met(&placed_by_species) {
             break;
         }
         if placed
@@ -1720,22 +1744,25 @@ fn spawn_predators(
             height,
             tile_registry,
             tiles,
+            &targets,
+            &placed_by_species,
             rng,
         ) else {
             continue;
         };
         pack_idx += 1;
+        *placed_by_species.entry(herd.species.clone()).or_default() += 1;
         log_herd_spawn(&herd);
         placed.push(pos);
         herds.push(herd);
     }
 }
 
-/// Build a single predator pack at `pos`: pick a **carnivore** species hosting `module_key`, roll its
-/// route/biomass, and stamp its initial `ecology_phase` — the carnivore twin of
-/// [`spawn_game_group_at`], with a distinct [`PREDATOR_ID_PREFIX`]. Returns `None` if no carnivore
-/// hosts the biome or the origin is not land. Predators carry no shore rule, so there is no site
-/// filter here.
+/// Build a single predator pack at `pos`: pick a **carnivore** species hosting `module_key` **whose
+/// per-species target is not yet met**, roll its route/biomass, and stamp its initial `ecology_phase` —
+/// the carnivore twin of [`spawn_game_group_at`], with a distinct [`PREDATOR_ID_PREFIX`]. Returns
+/// `None` if no such species hosts the biome (all hosting species are at target, or none host it) or
+/// the origin is not land. Predators carry no shore rule, so there is no site filter here.
 #[allow(clippy::too_many_arguments)] // mirrors `spawn_game_group_at`'s Bevy-resource plumbing
 fn spawn_predator_group_at(
     pos: UVec2,
@@ -1746,9 +1773,24 @@ fn spawn_predator_group_at(
     height: u32,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    // The per-species prey-derived targets + the running placed counts (both keyed by display name), so
+    // a winning tile only seats a species that still has room under its target.
+    targets: &BTreeMap<String, usize>,
+    placed_by_species: &BTreeMap<String, usize>,
     rng: &mut SmallRng,
 ) -> Option<Herd> {
-    let candidates = fauna.carnivore_species_for_biome(module_key);
+    let candidates: Vec<(&String, &SpeciesDef)> = fauna
+        .carnivore_species_for_biome(module_key)
+        .into_iter()
+        .filter(|(_, def)| {
+            let target = targets.get(&def.display_name).copied().unwrap_or(0);
+            let placed = placed_by_species
+                .get(&def.display_name)
+                .copied()
+                .unwrap_or(0);
+            placed < target
+        })
+        .collect();
     if candidates.is_empty() {
         return None;
     }
@@ -2012,6 +2054,38 @@ fn build_prey_index(herds: &[Herd], fauna: &FaunaConfig) -> Vec<PreyDatum> {
         .collect()
 }
 
+/// **The clearance half of the prey rule** (Predators Phase 1a, idea 7): a predator counts a herbivore
+/// herd as prey only if its `attack` reaches the herd's `defense`. This is the single spelling of that
+/// comparison — shared by the carnivore `K` ([`carnivore_carrying_capacity`]), the predation draw
+/// ([`advance_predation`]) and the prey-derived spawn count ([`eligible_prey_herds`]) — so "prey" has
+/// one definition (herbivore, via [`build_prey_index`]/[`PreyDatum`], + this clearance) and never a
+/// second, divergent predicate.
+#[inline]
+fn attack_clears_defense(attack: f32, defense: f32) -> bool {
+    defense <= attack
+}
+
+/// **The map-wide count of a predator's prey** (Predators Phase 1a) — every herbivore herd this
+/// predator's `attack` clears, across the whole map (no sensing-disk filter: the disk sizes a *live*
+/// pack's `K`, this sizes the *population*). Counting the full prey set including small game is
+/// intended — a wolf's `attack 3` clears rabbit/fowl at the default `defense 1`, consistent with the
+/// model's `attack ≥ defense` rule. Reads the same [`PreyDatum`] index the carnivore `K` does, so the
+/// "prey" definition is not duplicated.
+fn eligible_prey_herds(predator_attack: f32, prey: &[PreyDatum]) -> usize {
+    prey.iter()
+        .filter(|p| attack_clears_defense(predator_attack, p.defense))
+        .count()
+}
+
+/// **A carnivore species' prey-derived pack target** (Predators Phase 1a) —
+/// `round(eligible_prey_herds × species.prey_ratio)`. A predator population is *defined by* its prey
+/// base, so the pack count is derived from the prey the species can take, not a fixed cap. `prey_ratio`
+/// is guaranteed finite `> 0` for a carnivore by [`FaunaConfig::validate`].
+fn predator_target(species: &SpeciesDef, prey: &[PreyDatum]) -> usize {
+    let eligible = eligible_prey_herds(species.combat.attack, prey);
+    (eligible as f32 * species.prey_ratio).round() as usize
+}
+
 /// **The ecological carrying capacity** (Grazing Phase 2b-ii, `docs/plan_grazing_2b.md` §2/§3): the
 /// number of animals the sustainable graze flow on a herd's range can feed. Sum the graze flow
 /// ([`graze_sustainable_flow`], at each tile's **current — drawn-down —** biomass) over the herd's
@@ -2112,7 +2186,7 @@ fn carnivore_carrying_capacity(
     let flow: f32 = prey
         .iter()
         .filter(|p| {
-            p.defense <= attack
+            attack_clears_defense(attack, p.defense)
                 && hex_distance_wrapped(herd.current_pos, p.pos, width, wrap) <= radius
         })
         .map(|p| prey_sustainable_flow(p.biomass, p.carrying_capacity, p.regrowth_rate))
@@ -2286,7 +2360,7 @@ pub fn advance_predation(
                 continue;
             }
             let defense = pdef.map_or(default_defense, |d| d.combat.defense);
-            if defense > attack {
+            if !attack_clears_defense(attack, defense) {
                 continue;
             }
             if hex_distance_wrapped(pred_pos, prey.current_pos, width, wrap) > radius {
