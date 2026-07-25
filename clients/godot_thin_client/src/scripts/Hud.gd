@@ -284,7 +284,7 @@ var _drawer: SubjectDrawerController = null
 # jumps); it emits its own `alert_focus_requested`, which HudLayer relays.
 var _attention: AttentionController = null
 # The BOTTOM-BAR CHROME PLACEMENT cluster (issue #324): on a HORIZONTAL Band/City dock it parks the
-# nav cluster + turn orb into that panel's edge rails and drops `BottomBar` out of layout, so
+# nav cluster + turn orb into that panel's single trailing rail and drops `BottomBar` out of layout, so
 # `ContentRow` reclaims the ~164px the stacked bar used to cost on top of the panel's own height. A
 # vertical dock is untouched. Constructed in `_ready` after `_connect_zoom_rail()`, since it MEASURES
 # the nav backing and that call is what applies the stylebox whose padding is part of the measurement.
@@ -985,8 +985,8 @@ func _hide_drawer_blocks() -> void:
 # probe fails SILENTLY, so they must keep resolving on the HUD node itself.
 
 ## Injected by Main: the dockable Band/City panel a player band's detail renders into. It goes to the
-## dock-row controller too — that one parks the bottom-bar chrome into the panel's edge rails on a
-## horizontal dock (issue #324).
+## dock-row controller too — that one parks the bottom-bar chrome into the panel's single trailing rail
+## on a horizontal dock (issue #324).
 func set_band_city_panel(panel: BandCityPanel) -> void:
     _bandpanel.set_panel(panel)
     if _dockrow != null:

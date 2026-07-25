@@ -190,7 +190,8 @@ const DOCK_EDGES: Array[int] = [SIDE_LEFT, SIDE_TOP, SIDE_BOTTOM, SIDE_RIGHT]
 ## The two SLOTS of the row's trailing chrome rail (issue #324), stacked top-to-bottom: the HUD parks
 ## its nav cluster in the top one and its turn cluster in the bottom one. ONE column at the trailing
 ## end, never a gutter at each end — two opposite gutters cost ~562px of row, pushed the band zone
-## inward AND stranded dead space around the orb; one column costs `max(nav, turn)` ≈ 302 instead.
+## inward AND stranded dead space around the orb; one column costs `max(nav, turn)` ≈ 296–302 depending
+## on map aspect (296 Standard, 302 Large) instead.
 const RAIL_SLOT_TOP := 0
 const RAIL_SLOT_BOTTOM := 1
 ## Slot order, top-to-bottom — also what `_apply_rail` and the HUD's restore iterate.
@@ -244,10 +245,10 @@ var _rail_expand_button: Button
 ## The card's whole content column (header + body). It is what CENTRES on an ultrawide — the card
 ## fill and the accent seam stay full-bleed, since the panel still reserves the entire edge.
 var _panel_column: VBoxContainer
-## The card's single row: the leading rail host, the content column, the trailing rail host. The card
-## itself stays full-bleed (`PRESET_FULL_RECT`) — a bottom dock reads as ONE continuous bar, and
-## insetting the card would break it into three visual islands. The chrome sits ON the card; only the
-## content column is inset by the rails.
+## The card's single row: the content column, then the trailing rail host — there is no leading rail. The
+## card itself stays full-bleed (`PRESET_FULL_RECT`) — a bottom dock reads as ONE continuous bar, and
+## insetting the card would break it into visual islands. The chrome sits ON the card; only the content
+## column is inset by the rail.
 var _card_row: HBoxContainer
 ## The row's TRAILING chrome rail (issue #324): one column at the row's right end holding the HUD's
 ## bottom-bar chrome stacked vertically — nav cluster on top, turn cluster below — so it shares this

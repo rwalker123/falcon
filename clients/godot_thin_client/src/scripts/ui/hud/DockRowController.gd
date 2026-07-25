@@ -14,10 +14,12 @@ extends RefCounted
 ## below — and the row's leading end gets no rail at all. A gutter at each end was built first and
 ## rejected on sight with a real minimap in it: the left rail is ~300px, so two opposite gutters pushed
 ## the band zone inward AND stranded dead space around the orb, costing ~562px of row. One column costs
-## `max(nav, turn)` ~= 302, which hands the zones ~260px back and drops the wide->narrow flip from
-## ~1618px of window width to ~1358px. Minimap-on-top for BOTH `SIDE_TOP` and `SIDE_BOTTOM` so the
-## stack reads the same either way — and on a bottom dock that also leaves the orb where it already
-## lives, bottom-right.
+## `max(nav, turn)` ≈ 296–302 depending on map aspect (296 Standard, 302 Large), plus one
+## `BandCityPanel.RAIL_SEPARATOR_SPAN` gutter. That hands the zones ~240px back and drops the
+## wide->narrow flip from ~1605px of window width to ~1377px (both figures on Standard; the gutter is
+## in them, so do not quote the pre-gutter 1358). Minimap-on-top for BOTH `SIDE_TOP` and
+## `SIDE_BOTTOM` so the stack reads the same either way — and on a bottom dock that also leaves the
+## orb where it already lives, bottom-right.
 ##
 ## OWNERSHIP: the HUD owns the chrome NODES and this controller does all the reparenting; the panel
 ## owns only the empty rail SLOTS it parks them into. That is the exact opposite of `set_zones`, which
