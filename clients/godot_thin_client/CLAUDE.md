@@ -4045,7 +4045,7 @@ code. Each script runs on its own OS thread with its own `Runtime`/`Context`,
 talking to the host over mpsc channels, ticked from Godot's `_process`.
 
 **Much of the model below is designed but unbuilt.** Status is marked per item;
-see TASKS.md § Script Sandbox Hardening for the open work. Treat anything marked
+see issue #235, Script Sandbox Hardening, for the open work. Treat anything marked
 _planned_ as a design note, not a description of current behaviour.
 
 ### Capability Families

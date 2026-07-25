@@ -344,14 +344,14 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
   provisions fall below `party_workers × provision_upkeep_per_worker × replenish.low_turns` **and** a
   huntable herd is within `replenish.reach_tiles`, it tops up. One code path — one system, two verbs.
 - **Lives off its own kills** (no separate provisions); v1 stays deterministic (no starvation/risk).
-- **Catching migratory herds depends on the fauna-movement redesign** (next slice — see TASKS.md):
+- **Catching migratory herds depends on the fauna-movement redesign** (next slice — tracked in the backlog):
   herds today step 1 tile every turn, so an equal-speed party can't close on a long one-directional
   route. Once wild game grazes a tile (~1 turn dwell) before stepping and migratory herds loiter for
   many turns before a directed migration, the party catches them naturally during the dwell/loiter.
 - **The expedition take is food-only (known gap).** A resident band's Hunt arm credits food **plus**
   trade goods (Market) **plus** husbandry/domestication accrual (Sustain on a Thriving herd) from the
   same take; the expedition credits **food only** — so a Sustain *expedition* builds no domestication and
-  a Market *expedition* yields no trade goods. Tracked as the **"Hunt policy payoffs"** arc in `TASKS.md`
+  a Market *expedition* yields no trade goods. Tracked as the **"Hunt policy payoffs"** arc, issue #213
   (see also `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions); v1 ships the asymmetry deliberately.
   New tunables live in `hunt`/`replenish` blocks of `expedition_config.json`.
 

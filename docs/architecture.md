@@ -117,4 +117,6 @@ See `core_sim/CLAUDE.md` for full world generation pipeline details.
 | `sim_schema/README.md` | FlatBuffers schema contracts |
 | `sim_runtime/README.md` | Shared runtime utilities |
 | `docs/godot_inspector_plan.md` | Inspector migration progress |
-| `TASKS.md` | Engineering backlog |
+
+The engineering **backlog** is not a file — it lives in GitHub Issues + the Falcon Backlog
+project (https://github.com/users/rwalker123/projects/2). See root `CLAUDE.md` → Task Tracking.

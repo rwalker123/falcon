@@ -246,11 +246,11 @@ continents do not, and 5% of 400 is 20 against a discharge threshold of 25.
 **So this is not a regression.** The arc removed a bug that was masking a pre-existing
 drainage deficiency. Zero navigable rivers on a small landmass is honest emergent
 behaviour. The real defect — the surface being 95% fragmented into micro-basins that drain
-straight to the coast — predates this work and is tracked in `TASKS.md` → "Capture: the
+straight to the coast — predates this work and is tracked as issue #261 → "Capture: the
 divides, not the valleys."
 
 **A trap this arc walked into, recorded so the next one doesn't:** `continental_weight` /
-`continental_radius` apply a *radial* falloff — a dome. `TASKS.md` had already identified
+`continental_radius` apply a *radial* falloff — a dome. Issue #261 had already identified
 noise-dome continents as the thing that sheds radially and prevents trunk rivers. The bias
 term makes `continents` a real lever (it does, measurably) but is dome-shaped by
 construction and so cannot produce trunk rivers. Replacing it with tilted / warped relief

@@ -525,7 +525,7 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   > **Do not "fix" a dry map by lowering `river_class_navigable_min_discharge`** or any hydrology
   > threshold. Rivers are emergent; forcing a fixed river share onto whatever terrain exists is the
   > repaint-to-hit-a-quota pattern `elevation-authority` deleted. The input to change is basin
-  > coherence or landmass size — `TASKS.md` → "Capture: the divides, not the valleys".
+  > coherence or landmass size — issue #261, "Capture: move the divides, not the valleys".
 
 ### Fluvial erosion — the heightfield the drainage runs on
 The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
@@ -631,7 +631,7 @@ navigable counts belong to the pre-arc landmass and are ~0 at this size today; s
 > 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
 > single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
 > has; it does not move its divides.** The divides come from the continent-scale fbm, so the next
-> lever is the *noise*, not the erosion — see `TASKS.md` → "Capture: the divides, not the valleys".
+> lever is the *noise*, not the erosion — see issue #261, "Capture: move the divides, not the valleys".
 >
 > **`elevation-authority` added `continental_weight` / `continental_radius`, and they do NOT fix
 > capture.** They make `continents` a real lever for the first time (the old BFS grew a single
@@ -1459,7 +1459,7 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
   the knowledge its **current rung** teaches — **Herding** while it is wild, **Penning** once it is
   pastoral (slice 4, §4). See "The knowledge pattern".
 - `HerdRegistry::domesticated_count(faction)` is the seam the future `SedentarizationScore`
-  (`TASKS.md`) reads for its "domestication progress" input.
+  reads for its "domestication progress" input.
 
 ### The husbandry yield ladder — every rung pays MSY
 
@@ -3981,7 +3981,7 @@ mission:
   from the same take; the expedition credits food and nothing else, so a Sustain *expedition* builds no
   domestication and a Market *expedition* yields no trade goods. Whether a detached party *should* earn
   those side-effects — and what Market's goods and Eradicate's denial are ultimately *for* — is the
-  **"Hunt policy payoffs"** arc in `TASKS.md` (design: `docs/plan_exploration_and_sites.md` §2b).
+  **"Hunt policy payoffs"** arc, issue #213 (design: `docs/plan_exploration_and_sites.md` §2b).
   Catching a *migratory* herd depends on the deferred fauna-movement redesign (herds step 1 tile/turn
   today, so an equal-speed party can't close a long one-directional route).
 

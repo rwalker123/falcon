@@ -1171,7 +1171,7 @@ impl HerdRegistry {
     }
 
     /// Number of domesticated groups owned by `faction`. The seam the future
-    /// `SedentarizationScore` reads for its "domestication progress" input (`TASKS.md`).
+    /// `SedentarizationScore` reads for its "domestication progress" input.
     pub fn domesticated_count(&self, faction: FactionId) -> usize {
         self.herds
             .iter()

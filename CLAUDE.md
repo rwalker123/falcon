@@ -16,8 +16,29 @@ This repository uses a layered documentation structure:
 - `sim_schema/README.md` — FlatBuffers schema contracts
 - `sim_runtime/README.md` — Shared runtime utilities
 
-### Task Tracking
-- `TASKS.md` — Engineering backlog extracted from architecture and manual
+### Task Tracking — GitHub Issues, not a file in the repo
+The backlog lives in **GitHub Issues + the Falcon Backlog project**:
+→ https://github.com/users/rwalker123/projects/2
+
+- **Arcs** are `type:arc` parent issues; their phases/slices are sub-issues of that parent.
+- Every issue carries exactly one `type:*` and at least one `sys:*` label; the Project
+  carries Status / Priority / Subsystem fields.
+- **Design specs stay in `docs/plan_*.md`** — issues *link* to them, never copy them.
+- Use the skills rather than hand-written `gh` commands — they know the field and option
+  ids (`.claude/skills/`, ids in `.claude/skills/falcon-tracker-reference.md`):
+
+  | Skill | Use it to |
+  |---|---|
+  | `/task-add` | file a new item, labelled and on the board |
+  | `/task-start` | take an item In Progress → worktree → PR |
+  | `/task-status` | move Status/Priority/Subsystem, toggle `blocked` / `good-next` |
+  | `/task-report` | read the board — in progress, blocked, ready to pick up |
+
+> There is **no `TASKS.md`**. It was the backlog until 2026-07-23, when the open items were
+> migrated to Issues; the file was retained as a historical record for a day and then deleted,
+> because a frozen backlog beside a live one only invites edits to the wrong place. Its
+> engineering reasoning was already duplicated in the subsystem `CLAUDE.md` files, which is
+> where as-built notes belong. `git log -- TASKS.md` still has it if you need the history.
 
 ---
 
@@ -25,7 +46,7 @@ This repository uses a layered documentation structure:
 - Add new concepts first to the **manual** if they affect gameplay communication.
 - Add implementation details to the **subsystem CLAUDE.md** files for the relevant directory.
 - Keep `docs/architecture.md` focused on cross-system concerns and overview.
-- Extract concrete tasks into `TASKS.md`.
+- Extract concrete tasks into **GitHub Issues** via `/task-add` — never into a file.
 - Cross-link between documents when gameplay description references technical constraints and vice versa.
 
 ### Cross-linking Convention

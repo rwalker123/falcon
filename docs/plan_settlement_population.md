@@ -4,7 +4,7 @@ Status: **Design approved, not yet implemented.** This is the authoritative spec
 game's core early/mid economy: a demographic population model, labor allocation, and a
 knowledge-gated improvement catalog — the system from which settlements *emerge*. It
 supersedes the discrete `found_settlement` / Founders-unit model and the `Camp`-entity
-backlog (`TASKS.md` §Nomadic Start Prototype), and it is the destination of the
+backlog (the Nomadic Start Prototype work, issue #172), and it is the destination of the
 `SedentarizationScore` seam built by the Wildlife & Hunting Overlay.
 
 ## Motivation
@@ -135,7 +135,7 @@ improvements, rather than an input gate.
 Each phase is independently shippable — its own PR (or small PR-group), landed sequentially and
 held until the prior merges (small, focused PRs, matching the Wildlife & Hunting Overlay cadence).
 
-- **Phase 0 — Design doc (this document).** Capture the model; cross-link; seed `TASKS.md`.
+- **Phase 0 — Design doc (this document).** Capture the model; cross-link; file the slices as issues.
 - **Phase 1 — Demographic population.** ✅ **Shipped.** `PopulationCohort` (bands = the first
   "locations") gained the 3-bracket age structure (children/working/elders, fixed-point) +
   births/aging/deaths modulated by food/morale/environment (`advance_demographics`), replacing the
@@ -181,7 +181,7 @@ and its population is **who lives within them**; a 4M city vs a 400k town is how
 live inside the respective borders. Borders are **fluid** and adjust over time with population
 and influence reach. Territory + who administers it leads to **government / governance**
 (settlement → town → city → nation), the natural continuation of this arc. This link is recorded
-here and seeded in `TASKS.md`; the heavy lifting (border-claiming, territory mechanics,
+here and filed as issues; the heavy lifting (border-claiming, territory mechanics,
 government) is a **later arc**, out of scope for the phases above.
 
 ## Open items / defaults

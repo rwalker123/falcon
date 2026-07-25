@@ -8,7 +8,7 @@ design rationale plus the **as-built deltas** recorded at the bottom. The shader
 rather than reading `inflow != 0`.
 
 **The next arc is fluvial erosion in the heightfield** — see the closing section here, the "known
-limitation" note in `core_sim/CLAUDE.md` → Rivers, and `TASKS.md`.
+limitation" note in `core_sim/CLAUDE.md` → Rivers, and issue #261.
 
 ## The problem, measured
 
