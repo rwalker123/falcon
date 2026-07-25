@@ -430,6 +430,7 @@
           "share": 4.84,
           "sow_fodder_payoff": 70.239998,
           "sow_payoff": 15.1,
+          "sow_trade_payoff": 75.809998,
           "sow_yield_ratio": 69.620003,
           "species": "forage_patches[0].composition[0].species"
         },
@@ -442,6 +443,7 @@
           "share": 84.0,
           "sow_fodder_payoff": 56.23,
           "sow_payoff": 63.709999,
+          "sow_trade_payoff": 84.169998,
           "sow_yield_ratio": 44.119999,
           "species": "forage_patches[0].composition[1].species"
         }
@@ -481,6 +483,7 @@
           "share": 72.419998,
           "sow_fodder_payoff": 94.639999,
           "sow_payoff": 43.549999,
+          "sow_trade_payoff": 26.370001,
           "sow_yield_ratio": 97.620003,
           "species": "forage_patches[1].composition[0].species"
         },
@@ -493,6 +496,7 @@
           "share": 38.57,
           "sow_fodder_payoff": 23.5,
           "sow_payoff": 37.689999,
+          "sow_trade_payoff": 63.009998,
           "sow_yield_ratio": 27.1,
           "species": "forage_patches[1].composition[1].species"
         }
@@ -665,6 +669,7 @@
       "graze_range_radius": 200,
       "herded_fraction": 57.66,
       "herders_needed": 45,
+      "herders_needed_if_managed": 61,
       "hunt_policy_ceilings": {
         "herds[0].hunt_policy_ceilings[0].policy": 13.71,
         "herds[0].hunt_policy_ceilings[1].policy": 37.509998
@@ -701,6 +706,7 @@
       "pen_radius": 8,
       "pen_upkeep": 13.16,
       "per_worker_yield": 30.27,
+      "prey_sense_radius": 108,
       "route_length": 176,
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
@@ -725,6 +731,7 @@
       "graze_range_radius": 93,
       "herded_fraction": 76.389999,
       "herders_needed": 64,
+      "herders_needed_if_managed": 186,
       "hunt_policy_ceilings": {
         "herds[1].hunt_policy_ceilings[0].policy": 108.389999,
         "herds[1].hunt_policy_ceilings[1].policy": 96.169998
@@ -761,6 +768,7 @@
       "pen_radius": 109,
       "pen_upkeep": 26.040001,
       "per_worker_yield": 37.77,
+      "prey_sense_radius": 23,
       "route_length": 161,
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",

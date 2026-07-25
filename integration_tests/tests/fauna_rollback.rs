@@ -75,3 +75,69 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     assert_eq!(herd.domestication_progress, progress0);
     assert_eq!(herd.owner, owner0);
 }
+
+/// Slice 2 (`docs/plan_fauna_neglect_escape.md` §4 item 1): the **under-herded edge-gate** is
+/// snapshot-persisted, so a rollback rewinds it and the notice does not spuriously re-fire after a
+/// restore (unlike the transient `pen_starving`, which re-announces). A mutate-then-restore must bring
+/// `Herd::under_herded` back to its captured value.
+#[test]
+fn under_herded_edge_state_rewinds_on_rollback() {
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+
+    // Turn 1: worldgen seeds herds.
+    app.update();
+
+    // Make a herd genuinely under-contained (owned, over-stocked, zero herders) so the next turn's
+    // `advance_husbandry` latches `under_herded = true`.
+    let herd_id = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().next().expect("a herd spawned");
+        herd.owner = Some(FactionId(0));
+        herd.domestication_progress = 1.0;
+        herd.herded_fraction = 0.0; // no herders → it will shed
+        herd.under_herded = false;
+        herd.id.clone()
+    };
+
+    // Turn 2: it sheds → the edge latches → captured in this turn's snapshot.
+    app.update();
+    let snapshot = {
+        let history = app.world.resource::<SnapshotHistory>();
+        history
+            .latest_entry()
+            .expect("snapshot captured")
+            .snapshot
+            .clone()
+    };
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd still present")
+            .under_herded,
+        "an under-contained managed herd latches the under-herded edge"
+    );
+
+    // Mutate the flag off the captured value.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == herd_id)
+            .expect("mutable herd")
+            .under_herded = false;
+    }
+
+    // Roll back: the persisted edge-gate rewinds to true.
+    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd present after rollback restore")
+            .under_herded,
+        "the under-herded edge-gate must rewind on rollback (persisted, not transient)"
+    );
+}

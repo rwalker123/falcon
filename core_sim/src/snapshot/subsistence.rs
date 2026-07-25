@@ -29,6 +29,7 @@ pub(crate) fn herd_state(herd: &Herd) -> HerdState {
         hunt_credit: herd.hunt_credit,
         husbandry_ceiling: herd.husbandry_ceiling.as_str().to_string(),
         herders_needed: herd.herders_needed,
+        under_herded: herd.under_herded,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -403,6 +404,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 prey_sense_radius: species_def
                     .filter(|def| def.diet == crate::fauna_config::Diet::Carnivore)
                     .map(|_| fauna.predators.prey_sense_radius)
+                    .unwrap_or(0),
+                // **The crew this herd WOULD owe if managed** (taming-startup-lag fix), computed
+                // ownership-INDEPENDENTLY from biomass so the client can floor the Tame-compose worker
+                // cap at it up front — before ownership is set in the Population stage, which is what
+                // leaves the ownership-gated `herders_needed` above reading 0 on the turn taming starts.
+                // A `wild`-ceiling species (mammoth/deer) never tames, so `would_be_herders_needed`
+                // returns 0; the same helper the labor arm reads for an investment policy — one seam.
+                herders_needed_if_managed: herd
+                    .map(|herd| would_be_herders_needed(herd, fauna))
                     .unwrap_or(0),
             }
         })

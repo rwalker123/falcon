@@ -294,6 +294,14 @@ pub struct HerdTelemetryState {
     /// Appended last (append-only).
     #[serde(default)]
     pub prey_sense_radius: u32,
+    /// **The crew this herd WOULD owe if it were managed** (fauna neglect-escape, taming-startup-lag
+    /// fix) — `fauna::herders_needed(biomass, body_mass, animals_per_herder)` for a tameable species,
+    /// else `0` (a `wild`-ceiling mammoth/deer never tames). Ownership-**independent**, unlike
+    /// [`Self::herders_needed`] (0 for a wild herd), so the client can floor the Tame-compose worker cap
+    /// at it the turn taming starts — before ownership is set in the Population stage — killing the
+    /// one-turn lag. Equals `herders_needed` for a herd already managed. Appended last (append-only).
+    #[serde(default)]
+    pub herders_needed_if_managed: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -340,6 +348,7 @@ impl Default for HerdTelemetryState {
             ferocity: 0.0,
             aggression: 0.0,
             prey_sense_radius: 0,
+            herders_needed_if_managed: 0,
         }
     }
 }
@@ -676,6 +685,14 @@ pub struct HerdState {
     /// `animals_per_herder` head-count boundary.
     #[serde(default)]
     pub herders_needed: u32,
+    /// **Edge-gate for the under-herded feed line** (`Herd::under_herded`, neglect-escape slice 2) —
+    /// `true` while the herd is *already known* to be under-contained (too few herders to hold all its
+    /// animals, so it is shedding), so `advance_husbandry` announces it **once** on the transition
+    /// turn rather than every turn it continues, and re-announces after a recovery + relapse.
+    /// **Persisted** (sim-side rollback only) — unlike the transient `pen_starving`, this rewinds with
+    /// rollback so the edge does not spuriously re-fire after a restore.
+    #[serde(default)]
+    pub under_herded: bool,
     #[serde(default)]
     pub ecology: EcologyState,
 }

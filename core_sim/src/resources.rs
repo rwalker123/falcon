@@ -1197,6 +1197,12 @@ pub enum CommandEventKind {
     /// it to its defer choice). The chosen line joins the story record rather than the decision
     /// being a silent state change.
     NarrativeFork,
+    /// A managed herd **became under-contained** (neglect-escape slice 2,
+    /// `docs/plan_fauna_neglect_escape.md` §4): too few herders to hold all its animals, so it is
+    /// shedding whole animals into the wild web. Edge-gated (fires once on the transition, not every
+    /// turn), distinct from the pen-*lost* (`Corral`) and pen-*starving* (`Corral`) edges — this is the
+    /// herder-shortfall edge, and it applies to pastoral herds too.
+    HerdUnderHerded,
 }
 
 impl CommandEventKind {
@@ -1225,6 +1231,7 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionReturned => "expedition_returned",
             CommandEventKind::NarrativeBeat => "narrative_beat",
             CommandEventKind::NarrativeFork => "narrative_fork",
+            CommandEventKind::HerdUnderHerded => "herd_under_herded",
         }
     }
 }
