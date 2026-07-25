@@ -309,7 +309,8 @@ pub struct PopulationCohortState {
     /// [`HuntTripEstimateState`](crate::state::subsistence::HuntTripEstimateState) table
     /// (policy × `party_workers` → `turns_to_fill`) and flags NOT VIABLE when `turns_to_fill >
     /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
-    /// party has `delivers_food == false`: render "no food delivered (denial)", never an ETA.
+    /// party has `delivers_food == false` (an INEDIBLE quarry since #337, not a denial policy):
+    /// render "no food delivered", never an ETA.
     ///
     /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
     /// fauna_config.hunt.provisions_per_biomass`). With a herd's **band** ceiling this drives the

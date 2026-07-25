@@ -35,10 +35,10 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     expedition_config::ExpeditionConfig,
     fauna::{
-        self, herd_capacity, herd_ecology, hunt_provisions, pen_upkeep, sustainable_yield,
+        self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield,
         EcologyPhase, Herd, HerdDensityMap, HerdRegistry, FODDERING_DISCOVERY_ID,
     },
-    fauna_config::{Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle},
+    fauna_config::{Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, HuntYield},
     flora_config::FloraConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{

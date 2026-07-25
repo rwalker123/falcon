@@ -1,4 +1,5 @@
 use super::*;
+use crate::fauna_config::HuntYield;
 
 /// Capture a live `Herd` into its authoritative snapshot mirror for rollback (the inverse is
 /// `fauna::HerdRegistry::update_from_states`). Movement/identity fields are mirrored directly; the
@@ -114,9 +115,12 @@ pub(crate) fn snapshot_sedentarization(
 /// the list rows and the scalar `ceiling*` fields below are literally the same numbers, so they cannot
 /// drift.
 ///
-/// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus the two investment rungs
-/// `Tame` and `Corral`** (legitimate Hunt policies whose dipped yield is exactly what a player must see
-/// *before* committing to taming the herd or building the pen).
+/// Walks [`crate::fauna::hunt_policies_for`] — normally [`FollowPolicy::HUNT_POLICIES`], the four extractive
+/// rungs **plus the two investment rungs `Tame` and `Corral`** (legitimate Hunt policies whose dipped
+/// yield is exactly what a player must see *before* committing to taming the herd or building the
+/// pen). That helper is the **one seam** this export and the `assign_labor` validator share, so the
+/// picker the client draws and the picker the sim accepts cannot become two lists; today it prunes
+/// only the degenerate `yields_nothing` species (Eradicate alone).
 /// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
 /// forecast, `Corral` is automatically **phase-correct**: the `animal:pen` rung's
 /// `yield_fraction_while_building × MSY` dip
@@ -127,8 +131,9 @@ pub(crate) fn snapshot_sedentarization(
 /// `hunt_trip_forecast`), so the sim exports the *answer* instead — `hunt_trip_estimate_entries`.
 pub(crate) fn hunt_policy_ceiling_entries(
     forecast: &SourceYieldForecast,
+    hunt_yield: HuntYield,
 ) -> Vec<HuntPolicyCeilingState> {
-    FollowPolicy::HUNT_POLICIES
+    crate::fauna::hunt_policies_for(hunt_yield)
         .iter()
         .map(|&policy| HuntPolicyCeilingState {
             policy: policy.as_str().to_string(),
@@ -160,7 +165,13 @@ pub(crate) fn hunt_trip_estimate_entries(
     // The four **extractive** rungs only. The investment policies (Cultivate/Corral) are place-bound
     // work a resident band does — `send_hunt_expedition` rejects them — so a trip estimate for one
     // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
-    for &policy in FollowPolicy::EXTRACTIVE.iter() {
+    // Intersected with the species' offered ladder (`crate::fauna::hunt_policies_for`, the shared picker
+    // seam), so a `yields_nothing` quarry estimates its one legal rung and no more.
+    let offered = crate::fauna::hunt_policies_for(fauna.hunt_yield_for(&herd.species));
+    for &policy in FollowPolicy::EXTRACTIVE
+        .iter()
+        .filter(|p| offered.contains(p))
+    {
         for party_workers in 1..=expedition.max_party_size {
             let forecast =
                 hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
@@ -170,6 +181,7 @@ pub(crate) fn hunt_trip_estimate_entries(
                 // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
                 delivers_food: forecast.delivers_food,
+                delivers_trade: forecast.delivers_trade,
                 animals_taken: forecast.animals_taken,
                 delivered_food: forecast.delivered_food,
                 wasted_food: forecast.wasted_food,
@@ -311,7 +323,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(PEN_FULLY_FED),
                 // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
                 hunt_policy_ceilings: herd
-                    .map(|_| hunt_policy_ceiling_entries(&forecast))
+                    .map(|herd| {
+                        hunt_policy_ceiling_entries(&forecast, fauna.hunt_yield_for(&herd.species))
+                    })
                     .unwrap_or_default(),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd

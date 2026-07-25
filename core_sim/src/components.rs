@@ -1288,20 +1288,23 @@ impl FollowPolicy {
         }
     }
 
-    /// Does a take under this policy put food in the taker's larder? **Eradicate is denial** — it
-    /// depletes the herd and carries nothing home — so every provisions-side path (the expedition's
-    /// payout, its launch forecast, and the exported per-policy ceiling) reads `0` for it. THE single
-    /// source of that rule, so a "turns to fill" number can never be quoted for a mission that
-    /// delivers nothing.
-    ///
-    /// The four **investment** rungs DO deliver food: while the improvement is prepared the source
-    /// is still worked, at a reduced but sustainable `yield_fraction_while_building × its MSY
-    /// ceiling` (the yield dip that buys the tended patch / the field / the tamed herd / the pen).
-    /// Only denial withholds food. (A `Sow` on **bare** ground has no standing crop to dip, so that
-    /// fraction of nothing is honestly ~0 — a pure investment, not a withheld one.)
-    pub fn delivers_food(self) -> bool {
-        !matches!(self, FollowPolicy::Eradicate)
-    }
+    // **RETIRED: `delivers_food()`** — *"does a take under this policy put food in the larder?"*,
+    // which answered `false` for `Eradicate` on the premise that denial carries nothing home.
+    //
+    // That premise is exactly what the hunt-yield model reverses (`docs/plan_hunt_yield_model.md`
+    // §6, issue #337): **denial is the END STATE** — the species is gone, for you and for everyone
+    // else — not a promise that the party threw the carcasses away. An Eradicate hunt now pays the
+    // same `HuntYield::apply` on its whole-stock take as every other rung; the windfall is the
+    // point.
+    //
+    // It is **retired, not adjusted**, because every reader was really asking a question about the
+    // **species**, not the policy: "does this trip bring home food?" is `HuntYield::edible`, and
+    // "does the pack ever fill?" is that same fact. A policy-shaped predicate could only ever
+    // re-weld product to policy. Its readers now resolve the herd's `HuntYield` instead
+    // (`FaunaConfig::hunt_yield_for`); the two remaining *intensity* facts it was smuggling —
+    // Eradicate ignores the carry cap, and Eradicate has no escapement floor to spend — are stated
+    // as `matches!(policy, FollowPolicy::Eradicate)` at their two sites in `systems::expeditions`,
+    // where they read as what they are.
 
     /// Does an expedition under this policy **relaunch** for repeated trips after each delivery,
     /// rather than folding home after one? Only `Deplete` relaunches — see the `relaunch` arm of

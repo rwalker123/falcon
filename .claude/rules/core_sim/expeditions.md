@@ -129,7 +129,7 @@ mission:
   take **and the trip-completion decision both live inside the `hunt.reach_tiles` guard** — a party
   still walking to its herd never concludes the trip. Once in reach, take a **productive** hunt's
   worth of biomass — `workers × per_worker_biomass_capacity`, capped per policy (below) — from the
-  herd and convert to provisions (`fauna::hunt_provisions`) up to the carry cap (`party ×
+  herd and convert through the species' `HuntYield::apply` up to the carry cap (`party ×
   hunt.per_worker_carry`). Deliver only with a worthwhile load: a full pack **or** `herd_near_band &&
   carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
@@ -156,7 +156,7 @@ mission:
 >   remainder** — exactly the resident band's `max(1, carryable)` rule (`fauna::quantise_animal_take`): a
 >   1-hunter party on an 800-biomass mammoth (16 food) whose pack holds only `per_worker_carry` = 4 food
 >   (200 biomass) kills it, delivers ~200 (≈ 25%), wastes ~600. So **`animals_taken` is now a KILL
->   count**, and the delivered payload is `delivered_food` (`Σ hunt_provisions(carried)`), not
+>   count**, and the delivered payload is `delivered_food` (`Σ HuntYield::apply(carried)`), not
 >   `animals_taken × foodPerAnimal`. **"Too lean to raid" means `delivered_food == 0` (no surplus at any
 >   party size)**, NOT "party too small to carry a whole animal". This reconciles the expedition with the
 >   band's waste model; the earlier no-waste rule (`killed == carried`, `wasted == 0`) is retired.
@@ -188,13 +188,13 @@ mission:
     the surplus, a successful short trip). `None` = never completed within the horizon.
   - **`animals_taken`** — whole animals the raid **kills** (carried whole or partially wasted). `0` = the
     herd is at/below the policy's floor with **no surplus to raid** (the honest non-viable case).
-  - **`delivered_food`** — food actually landed in the larder (`Σ hunt_provisions(carried)`), the primary
-    readout. **`wasted_food`** — food killed but not hauled (`Σ hunt_provisions(wasted)`); the waste
+  - **`delivered_food`** — food actually landed in the larder (`Σ HuntYield::apply(carried)`), the primary
+    readout. **`wasted_food`** — food killed but not hauled (`Σ HuntYield::apply(wasted)`); the waste
     fraction is `wasted_food / (delivered_food + wasted_food)`. A small party on a big animal now
     delivers a partial with waste, so **"too lean to raid" is `delivered_food == 0`**, not "party too
     small to seat a whole animal".
   - **Travel is not counted**; the herd is assumed stationary and in reach. **Eradicate** delivers no
-    food (`delivers_food == false`) → no ETA.
+    food (`delivers_food == false` — since #337 that means an **INEDIBLE species**, not a denial policy; Eradicate now banks its windfall) → no ETA. Its sibling `deliversTrade` (appended last) is the other component.
   - *(The old O(1) "cannot fill" short-circuit + its `hunt_trip_bound_tests` sweep were **retired** with
     the raid: their premise "won't fill the pack ⇒ doomed trip" is inverted by a raid, where "won't fill
     the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
@@ -240,7 +240,7 @@ mission:
   Deplete `mult × MSY`, Eradicate the whole stock, Tame/Corral the dip × Sustain's rate, Cultivate/Sow
   `0`), and **`hunt_credit_ceiling(policy, biomass, credit, rate)`** turns it into this turn's affordable
   whole-animal take against the herd's banked `hunt_credit` — see "The hunt policy axis" for the model.
-  **`hunt_provisions(take, fauna, output_multiplier)`** is the single biomass→provisions conversion (an
+  **`HuntYield::apply(take, output_multiplier)`** (via `FaunaConfig::hunt_yield_for`, which retired the global `hunt_provisions`) is the single per-species biomass→(food, trade) conversion (an
   `f32`; the take path quantizes it onto the larder's `Scalar` grid). The rate is the *building*-phase
   ceiling: a
   **completed** corral is never hunt-drawn at all — the Hunt arm takes the tend branch (paid
@@ -334,8 +334,8 @@ lookup**:
   surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
   (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
   the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
-  hunt_provisions(carried)`, appended strictly after `animalsTaken`), NOT `animalsTaken × foodPerAnimal`.
-  **`wastedFood`** (`Σ hunt_provisions(wasted)`, appended) gives the waste fraction `wastedFood /
+  HuntYield::apply(carried)`, appended strictly after `animalsTaken`), NOT `animalsTaken × foodPerAnimal`.
+  **`wastedFood`** (`Σ HuntYield::apply(wasted)`, appended) gives the waste fraction `wastedFood /
   (deliveredFood + wastedFood)`. **"Too lean to raid" is `deliveredFood == 0`** (no surplus at any party
   size); a herd at/below its floor reads `0` on all three. Because the take is bounded by the standing
   surplus, `deliveredFood`/`animalsTaken` **plateau** with `partyWorkers` once the surplus binds — that

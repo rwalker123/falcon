@@ -1947,6 +1947,30 @@ fn validate_labor_policy(
                     policy.as_str()
                 ));
             }
+            // **The species' offered ladder** (`fauna::hunt_policies_for`) — the ONE seam this
+            // validator shares with the snapshot's exported `huntPolicyCeilings`, so the picker the
+            // client draws and the picker the sim accepts cannot drift into two lists. It prunes
+            // only the degenerate `yields_nothing` quarry (worth neither meat nor pelt), which
+            // offers `Eradicate` alone: every other rung would be a rate at which to collect
+            // nothing. A wolf keeps the full ladder and is paid in pelts.
+            {
+                let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                let species = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(fauna_id)
+                    .map(|herd| herd.species.clone());
+                if let Some(species) = species {
+                    let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
+                    if !offered.contains(policy) {
+                        return Err(format!(
+                            "The {} yields neither food nor trade goods — the only thing to do with \
+                             it is eradicate it.",
+                            species
+                        ));
+                    }
+                }
+            }
             if matches!(policy, FollowPolicy::Tame) {
                 return validate_tame(app, faction, fauna_id);
             }
@@ -2745,11 +2769,22 @@ fn handle_send_hunt_expedition(
     // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
     // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
     let (viability_note, viability_detail) = match &forecast {
-        // A denial mission (Eradicate) brings nothing home — say what it does, no ETA.
+        // An INEDIBLE quarry brings no food home — say what it *does* bring, no food ETA. This arm
+        // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
+        // and the species decides the product, so an Eradicate raid on a deer reports its windfall
+        // like any other rung, and only a wolf lands here.
         Some(f) if !f.delivers_food => (
-            " — denial mission: the party delivers NO food; it hunts the herd toward extinction"
-                .to_string(),
-            " eta_turns=none viability=denial".to_string(),
+            if f.delivers_trade {
+                " — no food from this quarry: the party brings back trade goods, not meat"
+                    .to_string()
+            } else {
+                " — this quarry yields nothing: the party delivers neither food nor trade goods"
+                    .to_string()
+            },
+            format!(
+                " eta_turns=none viability=inedible delivers_trade={}",
+                f.delivers_trade
+            ),
         ),
         // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
         // now means the raid lands NO food at all (a small party on a big animal still delivers a

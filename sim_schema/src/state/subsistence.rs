@@ -70,9 +70,16 @@ pub struct HuntTripEstimateState {
     /// to fill the pack": a big party on a full herd strips the surplus and leaves with a *partial*
     /// pack, a successful short trip. **`0` = never completed** within `forecast_horizon_turns`.
     pub turns_to_fill: u32,
-    /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
-    /// delivered", never an ETA.
+    /// **Does this trip bring home FOOD?** REDEFINED (issue #337): a fact about the **species**, not
+    /// the policy — `false` means the quarry is *inedible* (a wolf), so render "no food delivered"
+    /// and never an ETA. It used to read `false` for `eradicate` on the premise that denial carries
+    /// nothing home; an Eradicate raid now banks the whole-stock windfall like every other rung.
     pub delivers_food: bool,
+    /// **Does this trip bring home TRADE GOODS?** (appended) The sibling of `delivers_food` — the
+    /// other component of the species' hunt-yield vector, so a wolf trip reads
+    /// `delivers_food = false, delivers_trade = true` ("pelts, no meat") instead of being mistaken
+    /// for a denial mission.
+    pub delivers_trade: bool,
     /// **Whole animals the raid KILLS** (append-only) — the kill count. A party too small to seat a
     /// whole animal now kills one and wastes the rest (mirroring the resident band), so this is a kill
     /// count, not a delivered count. Bounded by the standing surplus, so it plateaus with `party_workers`

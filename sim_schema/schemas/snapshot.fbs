@@ -1248,7 +1248,10 @@ table HuntTripEstimate {
   // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
   // is a successful short trip. 0 = never completed within forecast_horizon_turns.
   turnsToFill:uint = 0;
-  // false for eradicate (denial) — render "no food delivered", never an ETA.
+  // Does this trip bring home FOOD? REDEFINED (issue #337): a fact about the SPECIES, not the policy
+  // — false means the quarry is INEDIBLE (a wolf), so render "no food delivered" and never an ETA. It
+  // used to read false for `eradicate` on the premise that denial carries nothing home; an Eradicate
+  // raid now banks the whole-stock windfall like every other rung. See deliversTrade (appended last).
   deliversFood:bool = false;
   // Whole animals the raid KILLS over M turns (append-only) — a kill count, the client headlines "≈N
   // animals over M turns"; the delivered food total is `deliveredFood`, NOT `animalsTaken × foodPerAnimal`
@@ -1266,6 +1269,12 @@ table HuntTripEstimate {
   // Food killed but not hauled home over the raid (append-only). `wastedFood / (deliveredFood +
   // wastedFood)` is the waste fraction the client shows beside the delivered total.
   wastedFood:float = 0;
+  // Does this trip bring home TRADE GOODS? (appended last — field slots are positional, so a new
+  // field goes strictly after every shipped one.) The sibling of deliversFood: the other component of
+  // the species' hunt-yield vector (issue #337), so a wolf trip reads deliversFood=false,
+  // deliversTrade=true ("pelts, no meat") instead of being mistaken for a denial mission. The trade
+  // AMOUNT a raid delivers (`deliveredTrade`) is a later slice of the same arc.
+  deliversTrade:bool = false;
 }
 
 table HerdTelemetryState {

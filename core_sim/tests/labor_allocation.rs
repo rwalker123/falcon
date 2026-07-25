@@ -903,7 +903,9 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     let total: f32 = schedule.iter().sum();
     let smooth = realized * horizon as f32;
     // One whole animal's provisions: the most that can still be sitting in the bank, undelivered.
-    let one_animal = core_sim::hunt_provisions(herd.body_mass, &fauna, 1.0);
+    let one_animal = core_sim::herd_hunt_yield(herd, &fauna)
+        .apply(herd.body_mass, 1.0)
+        .provisions;
     assert!(
         (total - smooth).abs() <= one_animal,
         "the schedule's total ({total}) must match the smooth average over the horizon ({smooth}) \

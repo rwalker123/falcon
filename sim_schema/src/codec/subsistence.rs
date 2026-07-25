@@ -133,6 +133,7 @@ fn create_herds<'a>(
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
+                            deliversTrade: estimate.delivers_trade,
                             animalsTaken: estimate.animals_taken,
                             deliveredFood: estimate.delivered_food,
                             wastedFood: estimate.wasted_food,

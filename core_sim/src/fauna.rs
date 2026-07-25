@@ -14,7 +14,8 @@ use crate::{
     components::{FollowPolicy, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
-        HusbandryCeiling, SizeClass, SpeciesDef, DEFAULT_HUSBANDRY_DENSITY, NO_GRAZE_CAPACITY,
+        HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldPair, DEFAULT_HUSBANDRY_DENSITY,
+        NO_GRAZE_CAPACITY,
     },
     food::{classify_food_module, FoodModule},
     graze::GrazeRegistry,
@@ -914,7 +915,7 @@ pub fn herd_density_gain(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// pins the band" its teeth.
 ///
 /// **Answered for EVERY herd, penned or not** — a *projection* for an unpenned one, the *live* demand
-/// for a penned one — on the **same biomass basis** [`corral_provisions`] (`hunt_forecast`'s
+/// for a penned one — on the **same biomass basis** [`corral_yield`] (`hunt_forecast`'s
 /// `managed_yield`) already uses to answer "what would this pay once penned?". The two are a **matched
 /// pair the client subtracts**: quoting the payoff while hiding the running cost, at the one moment the
 /// running cost should drive the decision (the pre-commit `Corral` row, on a herd that is by definition
@@ -3640,7 +3641,7 @@ fn starve_underfed_pen(
 /// Each `ceiling_*` is the policy ceiling **already clamped to the source's remaining biomass**, so
 /// that `min` IS the take the sim pays. **Forecast == actual is an invariant**: the forecast and
 /// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
-/// (`hunt_policy_ceiling`/`hunt_provisions`, `forage_policy_ceiling`/`forage_provisions`) — never
+/// (`hunt_policy_ceiling` × the species' `HuntYield`, `forage_policy_ceiling`/`forage_provisions`) — never
 /// duplicate the formulas, or the UI will lie.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SourceYieldForecast {
@@ -3690,7 +3691,7 @@ pub struct SourceYieldForecast {
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`), or, for an **un-penned** herd, the pen's **sustained MSY** projected on
     /// the pen ecology (`sustainable_yield` at the pen `r`, the long-run rate that shows the ladder).
-    /// A **penned** herd instead reads its actual constant-escapement corral take (`corral_provisions`,
+    /// A **penned** herd instead reads its actual constant-escapement corral take (`corral_yield`,
     /// via the `is_corralled()` early-return in `hunt_forecast`), so forecast == actual there. Lets
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
     /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
@@ -3832,7 +3833,7 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// `actual` already reports. A Sustain herd converges to ~MSY and reads flat; a Surplus/Deplete herd
 /// declines within the horizon and the average honestly reflects it; a corralled herd projects its
 /// managed pen yield (already smooth). Reuses the shared model helpers ([`regrow_biomass`],
-/// [`hunt_policy_rate`], [`pen_yield_biomass`], [`hunt_provisions`], [`herd_ecology`]/[`herd_capacity`])
+/// [`hunt_policy_rate`], [`pen_yield_biomass`], [`HuntYield::apply`], [`herd_ecology`]/[`herd_capacity`])
 /// — no second copy of the ecology or take math.
 // The projection needs the full take context (source, both configs, throughput, multiplier, crew,
 // policy, horizon) — the same shape `hunt_source_yield_preview` already carries.
@@ -3856,6 +3857,8 @@ pub fn project_realized_hunt(
     let mut quarry = herd.clone();
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
+    // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
+    let hunt_yield = herd_hunt_yield(&quarry, fauna);
     let corralled = quarry.is_corralled();
     let collection = workers as f32 * per_worker_biomass_capacity;
     let mut total = 0.0_f32;
@@ -3890,7 +3893,7 @@ pub fn project_realized_hunt(
             break; // the source is spent — stop before diluting the average with empty turns.
         }
         quarry.biomass -= take;
-        total += hunt_provisions(take, fauna, output_multiplier);
+        total += hunt_yield.apply(take, output_multiplier).provisions;
         turns += 1;
     }
     if turns > 0 {
@@ -3925,7 +3928,7 @@ pub fn project_realized_hunt(
 ///
 /// Simulated on a private clone (the caller's herd is never touched) through the same shared helpers
 /// the take path uses ([`regrow_biomass`], [`hunt_policy_rate`], [`hunt_credit_ceiling`],
-/// [`quantise_animal_take`], [`pen_yield_biomass`], [`hunt_provisions`],
+/// [`quantise_animal_take`], [`pen_yield_biomass`], [`HuntYield::apply`],
 /// [`herd_ecology`]/[`herd_capacity`]) — **no second copy of the take math**, so the schedule is what
 /// the sim will really pay.
 // Same shape as its `realized` sibling — the projection needs the full take context.
@@ -3949,6 +3952,8 @@ pub fn project_arrivals_hunt(
     let mut quarry = herd.clone();
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
+    // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
+    let hunt_yield = herd_hunt_yield(&quarry, fauna);
     let corralled = quarry.is_corralled();
     let collection = workers as f32 * per_worker_biomass_capacity;
     for slot in schedule.iter_mut() {
@@ -3992,7 +3997,7 @@ pub fn project_arrivals_hunt(
             }
             take.carried
         };
-        *slot = hunt_provisions(carried, fauna, output_multiplier);
+        *slot = hunt_yield.apply(carried, output_multiplier).provisions;
     }
     schedule
 }
@@ -4122,15 +4127,16 @@ pub fn hunt_source_yield_preview(
         per_worker_biomass_capacity,
         output_multiplier,
     );
-    let sustainable = hunt_provisions(
-        sustainable_yield(
-            herd.biomass,
-            herd_capacity(herd, fauna),
-            &herd_ecology(herd, fauna),
-        ),
-        fauna,
-        output_multiplier,
-    );
+    let sustainable = herd_hunt_yield(herd, fauna)
+        .apply(
+            sustainable_yield(
+                herd.biomass,
+                herd_capacity(herd, fauna),
+                &herd_ecology(herd, fauna),
+            ),
+            output_multiplier,
+        )
+        .provisions;
     // The steady headline is the forward projection from THIS herd state — the same computation the
     // resolved Hunt arm runs, so seed == first resolved value exactly.
     let realized = project_realized_hunt(
@@ -4344,16 +4350,22 @@ impl AnimalTake {
 /// `body_mass <= 0` is impossible (`FaunaConfig::validate` requires it finite & positive on every
 /// species) and would mean a herd of infinitely many animals; it takes **nothing** and screams in a
 /// debug build, rather than letting `floor(x / 0) = inf` strip the whole stock in one turn.
-/// **Relative slop when counting whole animals out of a biomass ratio.** Load-bearing, not paranoia —
-/// it is what keeps the *preview* and the *take* counting the same animals.
+/// **QUANTISATION STAYS IN BIOMASS SPACE — never derive an animal count from a food number.**
 ///
-/// The take quantises in **biomass** (`2400 / 800`), while the client-facing forecast quantises the
-/// same take in **provisions** (`hunt_provisions` has already scaled both sides by the `f32` constant
-/// `provisions_per_biomass`). Those are the same ratio in exact arithmetic — a positive linear factor
-/// cancels — but **not in `f32`**: `0.02` is stored as `0.019999999552965164`, so 60 hunters on a
-/// mammoth read `2400 / 800 = 3.0` exactly in biomass and `47.999999 / 15.999999 = 2.9999998` in
-/// provisions. `floor` then says **3 animals** one way and **2** the other, and the preview
-/// under-quotes the take by a whole mammoth (caught by `exported_snapshot_fields_reproduce_band_hunt_take`).
+/// This *used* to be a precision note, on the premise that flooring in provisions-space and in
+/// biomass-space give the same animal count "because the conversion is a positive linear factor and a
+/// positive linear factor cancels". Since the per-species yield vector
+/// ([`crate::fauna_config::HuntYield`], `docs/plan_hunt_yield_model.md`) that premise is **false**:
+/// an **inedible** species has `provisions_per_biomass == 0`, which is not a *positive* factor, so
+/// `floor(food_ceiling / food_per_animal)` is `0/0` — `NaN`, not 3 wolves. Counting animals off food
+/// is therefore not a rounding hazard but a **category error**, and every quantiser
+/// ([`quantise_animal_take`], [`whole_animals`], [`hunt_haul_workers`]) takes biomass.
+///
+/// The epsilon survives because the *precision* problem it solved is still real wherever a biomass
+/// ratio is compared against a separately-computed one: `0.02` is stored as `0.019999999552965164`,
+/// so 60 hunters on a mammoth read `2400 / 800 = 3.0` exactly one way and `2.9999998` the other.
+/// `floor` then says **3 animals** vs **2**, and the preview under-quotes the take by a whole mammoth
+/// (caught by `exported_snapshot_fields_reproduce_band_hunt_take`).
 ///
 /// `f32` carries ~1.2e-7 relative precision and each side takes a couple of roundings, so `1e-6`
 /// clears the error by an order of magnitude while staying far below any *real* gap: a take genuinely
@@ -4443,23 +4455,65 @@ pub fn hunt_haul_workers(rate: f32, body: f32, per_worker: f32) -> u32 {
     (peak_biomass / per_worker).ceil() as u32
 }
 
-/// The single biomass→provisions conversion for a hunt take: `take × hunt.provisions_per_biomass ×
-/// output_multiplier` (the caller's productivity). Shared by `systems::hunt_take` (which quantizes the
-/// result onto the larder's `Scalar` grid) and the pre-commit forecast, so the two can't drift. FOOD
-/// income is fully fractional — a few hunters may yield < 1 provision per turn.
-pub fn hunt_provisions(biomass_take: f32, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
-    biomass_take * fauna.hunt.provisions_per_biomass * output_multiplier
+/// **RETIRED: `hunt_provisions(biomass, &FaunaConfig, mult)`** — the single global biomass→provisions
+/// conversion, `take × hunt.provisions_per_biomass × output_multiplier`.
+///
+/// It routed *one* product off a *global* rate, so it could not express a species whose take is not
+/// food (a wolf) nor pay a second product at all. Replaced by
+/// [`FaunaConfig::hunt_yield_for`]`(&herd.species)`[`.apply(take, mult)`](HuntYield::apply), which
+/// yields **both** components in one call — you cannot convert the meat and forget the pelt.
+///
+/// It stays a doc gravestone rather than a deprecated shim because the species is *always* in scope
+/// at every former call site: keeping a global-rate escape hatch is exactly how a wolf would start
+/// paying venison on the one path that missed the sweep.
+///
+/// The properties it carried are unchanged and now live on [`HuntYield::apply`]: shared by
+/// `systems::hunt_take` (which quantises the result onto the larder's `Scalar` grid) and the
+/// pre-commit forecast so the two can't drift, and FOOD income stays fully fractional — a few hunters
+/// may yield `< 1` provision per turn.
+///
+/// The single **per-species** conversion for a hunt take. Sugar over
+/// `fauna.hunt_yield_for(&herd.species).apply(..)` for the many sites that hold a `&Herd`.
+pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
+    fauna.hunt_yield_for(&herd.species)
 }
 
-/// The **gross** managed yield a **penned** herd hands its keeper each turn, in provisions: the pen's
-/// MSY ([`pen_yield_biomass`]) through the shared biomass→provisions conversion. Gross, deliberately —
-/// the pen's feed ([`pen_upkeep`]) is a *separate* debit on the keeper's larder, so the player can see
-/// both halves of the trade instead of one netted number.
+/// The **gross** managed yield a **penned** herd hands its keeper each turn: the pen's MSY
+/// ([`pen_yield_biomass`]) through the herd's **own species vector** — a corralled wolf pays pelts,
+/// exactly as a wild one does, because the pen changes the *intensity* (a managed rate on a herd you
+/// own), never the *product*. Gross, deliberately — the pen's feed ([`pen_upkeep`]) is a *separate*
+/// debit on the keeper's larder, so the player can see both halves of the trade instead of one netted
+/// number.
 ///
 /// Shared by the corral-tend branch of `advance_labor_allocation` (the payout) and [`hunt_forecast`]
 /// (the forecast + the "what will this herd pay once penned?" projection), so forecast == actual.
-pub(crate) fn corral_provisions(herd: &Herd, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
-    hunt_provisions(pen_yield_biomass(herd, fauna), fauna, output_multiplier)
+pub(crate) fn corral_yield(herd: &Herd, fauna: &FaunaConfig, output_multiplier: f32) -> YieldPair {
+    herd_hunt_yield(herd, fauna).apply(pen_yield_biomass(herd, fauna), output_multiplier)
+}
+
+/// **The hunt policies a herd of THIS SPECIES offers** — the ONE seam the order validator
+/// (`assign_labor` / the `tame`/`corral` command paths) and the snapshot's exported per-policy
+/// ceiling list both read, so the picker the client draws and the picker the sim accepts cannot
+/// drift into two lists.
+///
+/// **The flags gate the yield COMPONENTS, not the buttons.** A wolf (`edible == false`,
+/// `tradeable == true`) shows the **full** ladder and is paid in pelts, because each rung is a
+/// meaningful *rate* at which to collect pelts — that is the whole product/intensity split
+/// (`docs/plan_hunt_yield_model.md`). So `EXTRACTIVE` / [`FollowPolicy::HUNT_POLICIES`] are
+/// unchanged, and this is not a general per-species filter.
+///
+/// **The only pruning rule:** a [`HuntYield::yields_nothing`] species — a pure pest, worth neither
+/// meat nor pelt — offers **`Eradicate` alone**. Every other rung would be a rate at which to collect
+/// nothing; the one coherent verb left is *make it stop*. No shipped species hits this branch today
+/// (the wolf trades), so it is pinned by a synthetic-config unit test rather than a roster test.
+pub fn hunt_policies_for(hunt_yield: HuntYield) -> &'static [FollowPolicy] {
+    /// The degenerate roster's whole axis: denial, and nothing else.
+    const DENIAL_ONLY: [FollowPolicy; 1] = [FollowPolicy::Eradicate];
+    if hunt_yield.yields_nothing() {
+        &DENIAL_ONLY
+    } else {
+        &FollowPolicy::HUNT_POLICIES
+    }
 }
 
 /// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
@@ -4482,18 +4536,25 @@ pub(crate) fn hunt_forecast(
     // still has to carry the meat home, so `managed` gets the same real per-hunter throughput a wild
     // hunt is capped by, and the pen's take is `min(pen MSY, hunters × throughput)` (slice 7 — the
     // Field's twin, and the same fix: the old `::tended` claimed one keeper collected the whole pen).
+    //
+    // **The species' yield vector, resolved ONCE for the whole forecast** — the product half of
+    // `yield = product × intensity` (`docs/plan_hunt_yield_model.md`). Every ceiling below is a
+    // biomass rate put through it, so a wolf's food ceilings are honestly `0` on every rung. (The
+    // forecast still carries only the FOOD component this commit; vectorising the struct into
+    // `YieldPair`s is #337's B2 pass.)
+    let hunt_yield = herd_hunt_yield(herd, fauna);
     if herd.is_corralled() {
         return SourceYieldForecast::managed(
-            corral_provisions(herd, fauna, output_multiplier),
-            hunt_provisions(
-                per_worker_biomass_capacity.max(0.0),
-                fauna,
-                output_multiplier,
-            ),
+            corral_yield(herd, fauna, output_multiplier).provisions,
+            hunt_yield
+                .apply(per_worker_biomass_capacity.max(0.0), output_multiplier)
+                .provisions,
             // A pen is butchered in whole animals like everything else (slice 8) — it just breeds fast
             // enough (`pen_gain` ×3) that its MSY clears a body every turn, so it reads steady without
             // being exempt. See `managed_yield_biomass`.
-            hunt_provisions(herd.body_mass, fauna, output_multiplier),
+            hunt_yield
+                .apply(herd.body_mass, output_multiplier)
+                .provisions,
         );
     }
     let ecology = herd_ecology(herd, fauna);
@@ -4521,20 +4582,21 @@ pub(crate) fn hunt_forecast(
             fauna,
             ladder,
         );
-        hunt_provisions(
-            hunt_credit_ceiling(policy, herd.biomass, 0.0, rate),
-            fauna,
-            output_multiplier,
-        )
+        hunt_yield
+            .apply(
+                hunt_credit_ceiling(policy, herd.biomass, 0.0, rate),
+                output_multiplier,
+            )
+            .provisions
     };
     SourceYieldForecast {
-        per_worker_yield: hunt_provisions(
-            per_worker_biomass_capacity.max(0.0),
-            fauna,
-            output_multiplier,
-        ),
+        per_worker_yield: hunt_yield
+            .apply(per_worker_biomass_capacity.max(0.0), output_multiplier)
+            .provisions,
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
-        body_mass_yield: hunt_provisions(herd.body_mass, fauna, output_multiplier),
+        body_mass_yield: hunt_yield
+            .apply(herd.body_mass, output_multiplier)
+            .provisions,
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
@@ -4554,31 +4616,33 @@ pub(crate) fn hunt_forecast(
         // Sustain < Tame < Corral ladder, NOT the one-turn constant-escapement take. Same
         // `biomass_before_regrowth` basis and `carrying_capacity` the wild `ceiling` closure uses, so
         // the ONLY difference from Sustain is the pen ecology's boosted `r`. The **actual** pen take
-        // stays constant-escapement (`corral_provisions`) — see the `is_corralled()` early-return.
-        managed_yield: hunt_provisions(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pen_ecology_for(herd, fauna),
-            ),
-            fauna,
-            output_multiplier,
-        ),
+        // stays constant-escapement (`corral_yield`) — see the `is_corralled()` early-return.
+        managed_yield: hunt_yield
+            .apply(
+                sustainable_yield(
+                    herd.biomass_before_regrowth,
+                    herd.carrying_capacity,
+                    &pen_ecology_for(herd, fauna),
+                ),
+                output_multiplier,
+            )
+            .provisions,
         // The Tame rung's PAYOFF (the pastoral analog of `managed_yield` above): the pastoral
         // **sustained MSY** — what a Sustain hunt pays once this herd is tamed — projected for a
         // still-wild herd on the same basis as Sustain, so the only difference is the pastoral `r`.
         // `ceiling_tame` is the during-building dip; this is the `→ +Y` the client renders. A wild
         // herd whose species never tames (`wild` ceiling) reads its wild MSY here, which is fine — the
         // client only surfaces it on the Tame affordance, hidden on a non-tameable herd.
-        pastoral_yield: hunt_provisions(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pastoral_ecology_for(herd, fauna),
-            ),
-            fauna,
-            output_multiplier,
-        ),
+        pastoral_yield: hunt_yield
+            .apply(
+                sustainable_yield(
+                    herd.biomass_before_regrowth,
+                    herd.carrying_capacity,
+                    &pastoral_ecology_for(herd, fauna),
+                ),
+                output_multiplier,
+            )
+            .provisions,
     }
 }
 

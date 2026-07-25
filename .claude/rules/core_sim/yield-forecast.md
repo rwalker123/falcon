@@ -69,7 +69,7 @@ client can render Tame's `→ +Y` instead of quoting only its during-building di
 reads *below* wild Sustain and hides that taming out-yields wild hunting). `0` on a source that never
 offers Tame (a forage patch, or a herd already penned/forage-tended). **Both `pastoralYield` and the
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
-`hunt_provisions(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
+`HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
 escapement (`max(0, B − K/2)`) is `r`-independent, the sustained form is what makes the ladder visible
 at a single turn: **`ceiling_sustain < pastoral_yield < managed_yield`** (wild `r·K/4` < pastoral
@@ -103,7 +103,8 @@ projection* is the sustained MSY. Pinned by
   (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
   `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
   `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
-- fauna (`fauna.rs`): `hunt_policy_ceiling` (the 4 extractive rungs **+ Corral**) · `hunt_provisions` ·
+- fauna (`fauna.rs`): `hunt_policy_ceiling` (the 4 extractive rungs **+ Corral**) · the species'
+  `HuntYield::apply` (which retired the global `hunt_provisions`) ·
   **`managed_yield_biomass`** (the husbandry harvest, via `pen_yield_biomass`) · **`herd_ecology` /
   `herd_capacity`** (which ecology/capacity a herd lives under — *no call site may re-derive either*) —
   called by both `systems::hunt_take` / the corral arm of `advance_labor_allocation` **and**

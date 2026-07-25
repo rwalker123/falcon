@@ -17,7 +17,7 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, available_workers,
-    build_headless_app, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
+    build_headless_app, herd_hunt_yield, hunt_credit_ceiling, hunt_policy_rate,
     hunt_source_yield_preview, hunt_take, hunt_trip_forecast, recapture_snapshot_in_place,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
     spawn_initial_world, BandTravel, CommandEventLog, CultureManager, DiscoveryProgressLedger,
@@ -813,14 +813,18 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
             // A ceiling row must never promise more than the herd is standing there holding.
             // **Inherent since slice 8** rather than a clamp someone has to remember: every ceiling is
             // `biomass − floor` with `floor >= 0`.
-            let live_biomass = app
-                .world
-                .resource::<HerdRegistry>()
-                .find(id)
-                .expect("herd present")
-                .biomass;
+            let (live_biomass, live_yield) = {
+                let herd = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(id)
+                    .expect("herd present")
+                    .clone();
+                let hy = herd_hunt_yield(&herd, &fauna);
+                (herd.biomass, hy)
+            };
             assert!(
-                ceiling <= hunt_provisions(live_biomass, &fauna, 1.0) + TAKE_ABS_EPSILON,
+                ceiling <= live_yield.apply(live_biomass, 1.0).provisions + TAKE_ABS_EPSILON,
                 "{case}: {id} {policy:?}: exported ceiling {ceiling} exceeds the herd's own biomass"
             );
 
@@ -861,7 +865,9 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &LadderConfig::builtin(),
                     f32::INFINITY,
                 );
-                let sim_rate = hunt_provisions(take.carried, &fauna, output_multiplier);
+                let sim_rate = herd_hunt_yield(&herd, &fauna)
+                    .apply(take.carried, output_multiplier)
+                    .provisions;
 
                 assert_provisions_eq(
                     preview,
