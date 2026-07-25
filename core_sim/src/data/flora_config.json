@@ -365,6 +365,303 @@
         "trade_goods_per_biomass": 0.16
       },
       "regrowth_rate": 0.25
+    },
+    "kelp": {
+      "_comment": "Kelp beds & sea forests on the open shelf (Flora Roster F5, docs/plan_flora_roster.md §8). A wild-ceiling coastal gather at the baseline rate — you harvest a kelp bed, you do not farm it — so it thickens the shelf/coral baskets rather than adding a crop. Starting affinity/playtest dial.",
+      "display_name": "Kelp Beds",
+      "plural": "kelp",
+      "adjective": "kelp",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "ContinentalShelf": 0.35,
+        "CoralShelf": 0.4,
+        "InlandSea": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.045,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "sea_kale": {
+      "_comment": "Sea kale & samphire — the salt-marsh greens of the tidal fringe (Flora Roster F5). Wild-ceiling: a shore gather at the baseline rate, breadth for the tidal/mangrove/shelf baskets. Starting affinity/playtest dial.",
+      "display_name": "Sea Kale & Samphire",
+      "plural": "sea kale",
+      "adjective": "samphire",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "TidalFlat": 0.3,
+        "MangroveSwamp": 0.25,
+        "ContinentalShelf": 0.2,
+        "CoralShelf": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.045,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_rice": {
+      "_comment": "Wild rice standing in the marsh & delta shallows (Flora Roster F5). A field-ceiling grain — the archetypal sown wetland crop, strongest on the freshwater marsh where it can dominate a small basket. Starting affinity/playtest dial.",
+      "display_name": "Wild Rice",
+      "plural": "wild rice",
+      "adjective": "rice",
+      "role": "staple",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "FreshwaterMarsh": 0.4,
+        "RiverDelta": 0.25,
+        "Floodplain": 0.2,
+        "InlandSea": 0.15,
+        "AlluvialPlain": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.07,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "cattail": {
+      "_comment": "Cattail & bulrush rhizomes of the reedbeds and peat pools (Flora Roster F5). Tended-ceiling: a managed marsh stand. Rate lifted from the table's starting 0.055 to 0.069 to clear the per-realization commit bar: reed/berry/shellfish dominate all four of cattail's crowded wetland baskets, so its best realized share caps at ~0.5 and (share x tended_gain 1.5) x rate must still beat the wild 0.05 — needs rate > 0.0667. Starting affinity/playtest dial.",
+      "display_name": "Cattail & Bulrush",
+      "plural": "cattail",
+      "adjective": "cattail",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "FreshwaterMarsh": 0.35,
+        "RiverDelta": 0.2,
+        "TidalFlat": 0.25,
+        "PeatHeath": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.069,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "chestnut": {
+      "_comment": "Sweet chestnut groves of the temperate woods and karst uplands (Flora Roster F5). Tended-ceiling mast crop — the woodland flagship's companion to hazel. Starting affinity/playtest dial.",
+      "display_name": "Sweet Chestnut",
+      "plural": "chestnut",
+      "adjective": "chestnut",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "MixedWoodland": 0.3,
+        "RollingHills": 0.2,
+        "KarstHighland": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.065,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_orchard": {
+      "_comment": "Wild orchard fruit — crab-apple, plum, pear thickets of the woodland edge and hills (Flora Roster F5). Tended-ceiling. Rate lifted 0.060 -> 0.069 to clear the commit bar: both its baskets (MixedWoodland, RollingHills) are crowded, so its best realized share caps ~0.5. Starting affinity/playtest dial.",
+      "display_name": "Wild Orchard",
+      "plural": "orchard fruit",
+      "adjective": "orchard",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "MixedWoodland": 0.25,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.069,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "sunflower": {
+      "_comment": "Sunflower & seedheads of the steppe and scrub (Flora Roster F5). Tended-ceiling oilseed gather. Starting affinity/playtest dial.",
+      "display_name": "Sunflower & Seedheads",
+      "plural": "sunflower",
+      "adjective": "sunflower",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "PrairieSteppe": 0.3,
+        "SemiAridScrub": 0.25,
+        "RollingHills": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.06,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_pulses": {
+      "_comment": "Wild pulses — vetch, lentil, chickpea ancestors of the grassland and silt (Flora Roster F5). Field-ceiling legume, the companion sown crop to wild emmer. Starting affinity/playtest dial.",
+      "display_name": "Wild Pulses",
+      "plural": "wild pulses",
+      "adjective": "pulse",
+      "role": "staple",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "PrairieSteppe": 0.25,
+        "AlluvialPlain": 0.2,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.07,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "mesquite": {
+      "_comment": "Mesquite & acacia pods of the desert and badlands (Flora Roster F5). Wild-ceiling desert gather at the baseline rate — the arid biomes' own basket breadth. Starting affinity/playtest dial.",
+      "display_name": "Mesquite & Acacia",
+      "plural": "mesquite",
+      "adjective": "mesquite",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "HotDesertErg": 0.3,
+        "RockyReg": 0.35,
+        "CanyonBadlands": 0.35,
+        "SemiAridScrub": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.045,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "wild_fig": {
+      "_comment": "Wild fig of the oasis and desert seeps (Flora Roster F5). Tended-ceiling. Rate lifted 0.060 -> 0.064 to clear the commit bar (best realized share ~0.55 against date_palm's dominance of the oasis). Starting affinity/playtest dial.",
+      "display_name": "Wild Fig",
+      "plural": "figs",
+      "adjective": "fig",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "OasisBasin": 0.3,
+        "HotDesertErg": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.064,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "cloudberry": {
+      "_comment": "Cloudberry & crowberry of the peat, tundra and taiga (Flora Roster F5). Wild-ceiling cold gather at the baseline rate — northern basket breadth. Starting affinity/playtest dial.",
+      "display_name": "Cloudberry & Crowberry",
+      "plural": "cloudberry",
+      "adjective": "cloudberry",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "PeatHeath": 0.3,
+        "Tundra": 0.3,
+        "BorealTaiga": 0.3,
+        "SeasonalSnowfield": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.045,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "rock_tripe": {
+      "_comment": "Rock tripe & lichen scraped from cold and stony ground (Flora Roster F5). Wild-ceiling famine gather at the LOWEST rate — the sparse cover of tundra, alpine, badlands and crater fields, what you eat when nothing else grows. Starting affinity/playtest dial.",
+      "display_name": "Rock Tripe & Lichen",
+      "plural": "rock tripe",
+      "adjective": "lichen",
+      "role": "staple",
+      "cultivation_ceiling": "wild",
+      "host_biomes": {
+        "Tundra": 0.25,
+        "AlpineMountain": 0.3,
+        "SeasonalSnowfield": 0.25,
+        "PeriglacialSteppe": 0.3,
+        "KarstHighland": 0.2,
+        "RockyReg": 0.25,
+        "CanyonBadlands": 0.2,
+        "ImpactCraterField": 0.3
+      },
+      "yield": {
+        "provisions_per_biomass": 0.04,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "alpine_herbs": {
+      "_comment": "Alpine herbs & roseroot of the high meadows and plateaus (Flora Roster F5). Tended-ceiling highland gather. Rate lifted 0.055 -> 0.069 to clear the commit bar: pine_nut/seed_grasses dominate its highland baskets, so its best realized share caps ~0.5. Starting affinity/playtest dial.",
+      "display_name": "Alpine Herbs & Roseroot",
+      "plural": "alpine herbs",
+      "adjective": "alpine",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "AlpineMountain": 0.25,
+        "HighPlateau": 0.3,
+        "KarstHighland": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.069,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "cave_fungi": {
+      "_comment": "Cave fungi cultivated in the cavern mouths and sinkhole shade (Flora Roster F5). Tended-ceiling — the subterranean anomaly biomes' own tended crop. Starting affinity/playtest dial.",
+      "display_name": "Cave Fungi",
+      "plural": "cave fungi",
+      "adjective": "fungal",
+      "role": "staple",
+      "cultivation_ceiling": "tended",
+      "host_biomes": {
+        "KarstCavernMouth": 0.35,
+        "AquiferCeiling": 0.3,
+        "SinkholeField": 0.35,
+        "ImpactCraterField": 0.25
+      },
+      "yield": {
+        "provisions_per_biomass": 0.06,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.005
+      },
+      "regrowth_rate": 0.25
+    },
+    "grapevine": {
+      "_comment": "Wild grapevine of the river valleys, oasis and hills (Flora Roster F5) — a CASH crop, the exact twin of cotton/flax: trade-dominant, provisions 0.0 (worthless as food, patch_species_quality divides by the WILD rate so no divide-by-zero), 0 fodder. Field-ceiling; contests grain on sowable valley ground. Starting affinity/playtest dial.",
+      "display_name": "Wild Grapevine",
+      "plural": "wild grapes",
+      "adjective": "grape",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "AlluvialPlain": 0.1,
+        "Floodplain": 0.15,
+        "RiverDelta": 0.15,
+        "OasisBasin": 0.25,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.16
+      },
+      "regrowth_rate": 0.25
     }
   }
 }

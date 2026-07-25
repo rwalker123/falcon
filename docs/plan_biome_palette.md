@@ -7,7 +7,7 @@ the palette is how maps generate, not an opt-in mode.** Delivered as **one PR** 
 types + selection/enforcement + solver reconciliation + the 3 biome revivals + tests).
 
 See also: `core_sim/CLAUDE.md` → "World Generation Pipeline" (the prose pipeline reference),
-`docs/architecture.md`, `TASKS.md`.
+`docs/architecture.md`.
 
 ---
 

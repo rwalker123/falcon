@@ -278,7 +278,7 @@ though the loose bound would have allowed it.
 
 `FaunaConfig::validate()` (new in this arc, running inside `from_json_str` so *every* load path is
 covered) enforces it, along with ladder monotonicity (`pen.r > pastoral.r > wild.r`) and the bounds on
-every other lever. It also closes the [tracked validation gap](../TASKS.md) for `FaunaConfig`, which
+every other lever. It also closes the tracked validation gap for `FaunaConfig`, which
 previously asserted its invariants only over the builtin, in unit tests — so a `FAUNA_CONFIG_PATH`
 override could break any of them in silence.
 
@@ -451,5 +451,5 @@ rebalance we just measured. Flagged for follow-up, not silently absorbed.
   tuning dials*.
 - `docs/plan_settlement_population.md` → the improvement catalog and decay-as-sunk-cost this plugs
   into.
-- **`TASKS.md`** → *Corral as a managed population* (this arc), *Give `FaunaConfig` and `LaborConfig`
+- **Issue #187** → *Corral as a managed population* (this arc); *Give `FaunaConfig` and `LaborConfig`
   a real `validate()`* (folded into Phase 1).

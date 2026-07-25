@@ -89,9 +89,23 @@ const ULTRAWIDE_HEIGHT := 900
 # `_panel_extent().x`, the value `_shell_is_wide` tests — one pixel below the derived threshold (must
 # pick the NARROW tabbed shell) and exactly at it (the narrowest legitimate WIDE shell). Derived from
 # the panel's own const so they can never drift from the threshold they bracket.
-const SHELL_THRESHOLD_WIDTH := int(BandCityPanel.WIDE_SHELL_MIN_WIDTH)
 const SHELL_THRESHOLD_UNDERSHOOT := 1
 const SHELL_THRESHOLD_HEIGHT := 900
+## The canvas the DOCK-ROW states render at (issue #324). 1080p with a bottom dock is the case the
+## issue is about, and the canvas — not just the window — has to be pinned: `project.godot` stretches
+## `canvas_items`, so a bare window pin renders at the 1920 base width whatever the window says.
+const DOCKROW_CANVAS := Vector2i(1920, 1080)
+## The map the dock-row states seed their minimap from — the DEFAULT size, resolved through the same
+## registry the New Game pane and the inspector's Map tab use. The rail width the reflow declares is a
+## function of the minimap's grid ASPECT (`MinimapPanel.resize_to_aspect`: `embedded_height × aspect`,
+## clamped into the config's `[min_width, max_width]`), so it has to come from here and never from a
+## literal — otherwise the frames render a nav cluster the game never has.
+const DOCKROW_MAP := MapSizes.DEFAULT_KEY
+## Flat fill for that stand-in minimap raster. `MinimapController._rebuild_image` paints one pixel per
+## HEX from live terrain + fog, which needs a whole MapView snapshot; this harness only needs the
+## thumbnail's SIZE to be honest, so it substitutes a flat 1px-per-hex image at the real grid
+## dimensions. The aspect — the only thing that drives the rail width — is therefore the real one.
+const DOCKROW_MINIMAP_FILL := Color(0.16, 0.24, 0.20, 1.0)
 # The window every state but the ultrawide one renders at.
 const PREVIEW_SIZE := Vector2i(1500, 900)
 # How many frames to keep re-asserting the window before giving up and warning.
@@ -156,6 +170,13 @@ func _ready() -> void:
 	# must read 1/1 (expeditions excluded), and the panel's "Active expeditions" section must list
 	# both. Order interleaves an expedition first to prove the split (not just "first cohort = band").
 	_hud.set_band_city_panel(_panel)
+	# THE DOCK-ROW REFLOW WIRING (issue #324), exactly as `Main._connect_band_city_panel` does it: a
+	# SECOND listener on `reservation_changed` plus a one-shot seed. This harness does not instance
+	# `Main`, so without it the reflow would only ever be exercised by poking the controller — and the
+	# `band_panel_dockrow_*` states below are meant to drive the real path.
+	if _hud.has_method("reflow_dock_row"):
+		_panel.reservation_changed.connect(Callable(_hud, "reflow_dock_row"))
+		_hud.reflow_dock_row(_panel.get_dock(), _panel.current_reservation_size())
 	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row names the herd
 	# from here and, on click, jumps to its LIVE tile — the herd has MIGRATED away from the
 	# assignment's launch target (70, 17) to (68, 15), which is exactly what the row must resolve.
@@ -601,9 +622,21 @@ func _ready() -> void:
 	# (both flanks + one readable work column + the separators + the card chrome), and nothing else in
 	# this harness renders anywhere near it — 1500 and 3440 are both comfortably past it, so a
 	# too-low threshold was invisible here. These two frames are the before/after of the flip.
+	# The bottom-bar chrome now SHARES a horizontal dock's row (issue #324), and the shell test reads
+	# the panel's width MINUS the trailing chrome rail — so the probe widths must add the live rail width
+	# back on, or they would bracket a threshold the panel no longer applies to the raw window width. The
+	# width is canvas-independent (`max` of a fixed 260px turn cluster and a grid-aspect minimap), and the
+	# panel is already bottom-docked + reflowed from the ultrawide state above, so it can be read here.
+	# `_rail_span()`, not `_rail_width()`: the rail also costs a `RAIL_SEPARATOR_SPAN` gutter, and probing
+	# against the bare width would bracket the threshold 25px off.
+	var rail_span: float = _panel._rail_span()
+	var shell_threshold_width := int(ceil(BandCityPanel.WIDE_SHELL_MIN_WIDTH + rail_span))
+	print("band_panel_preview: shell threshold probes at %d / %d (threshold %.0f + rail span %.0f)" % [
+		shell_threshold_width - SHELL_THRESHOLD_UNDERSHOOT, shell_threshold_width,
+		BandCityPanel.WIDE_SHELL_MIN_WIDTH, rail_span])
 	# One pixel BELOW: the wide shell could not give the board a readable column, so the panel must
 	# choose the NARROW tabbed shell — which hands the board the panel's WHOLE interior.
-	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
+	await _pin_canvas(Vector2i(shell_threshold_width - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
 	_panel.set_dock(SIDE_BOTTOM)
 	_panel.set_active_tab(&"work")
 	await _settle()
@@ -615,7 +648,7 @@ func _ready() -> void:
 
 	# Exactly AT it: the narrowest legitimate wide shell — three columns, the work zone at exactly
 	# `ZONE_WORK_MIN_WIDTH`, its rows still legible with un-clipped labels.
-	await _pin_canvas(Vector2i(SHELL_THRESHOLD_WIDTH, SHELL_THRESHOLD_HEIGHT))
+	await _pin_canvas(Vector2i(shell_threshold_width, SHELL_THRESHOLD_HEIGHT))
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
 	await _save("band_panel_shell_at_threshold")
@@ -624,7 +657,250 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_shell_is_wide(true, "band_panel_shell_at_threshold")
 
+	await _render_dock_row_states()
+
 	get_tree().quit()
+
+# ---- THE DOCK-ROW REFLOW (issue #324) ---------------------------------------------------------
+#
+# On a HORIZONTAL dock the HUD's bottom-bar chrome shares the panel's reserved row — nav cluster at
+# the leading end, turn orb at the trailing one — and `BottomBar` drops out of layout so `ContentRow`
+# reclaims its height. A VERTICAL dock must be bit-identical to before. Rendered at 1080p, which is
+# the window the issue is about, and driven through the REAL `reservation_changed → reflow_dock_row`
+# path wired at the top of `_ready` (never by poking the controller).
+func _render_dock_row_states() -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_seed_embedded_minimap()
+	_hud.update_band_alerts([_many_sources_band_fixture()])
+
+	# BOTTOM: the chrome in ONE column at the row's TRAILING end — minimap + zoom rail directly above the
+	# turn orb — nothing in the row's leading gutter (the band zone is flush to the left edge), and
+	# `BottomBar` gone.
+	_panel.set_collapsed(false)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_dockrow_bottom")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(true, "band_panel_dockrow_bottom")
+	_assert_parked_chrome_fits("band_panel_dockrow_bottom")
+	_assert_shell_is_wide(true, "band_panel_dockrow_bottom")
+	print("band_panel_preview: dockrow bottom — rail %.0fpx + %.0f gutter = %.0f span (nav %.0f, turn %.0f), stack needs %.0f of a %.0f strip, work zone %.0fpx" % [
+		_panel._rail_width(), BandCityPanel.RAIL_SEPARATOR_SPAN, _panel._rail_span(),
+		_hud.nav_backing.get_combined_minimum_size().x, _hud.turn_orb.get_combined_minimum_size().x,
+		_hud._dockrow._required_height(), _panel.current_reservation_size(),
+		_panel.work_zone_size().x])
+
+	# TOP: the same column at the other horizontal edge, minimap still on top so the stack reads the same
+	# either way. The nav cluster relocating from bottom-left to the TOP row is INTENDED — the chrome
+	# follows the dock.
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _save("band_panel_dockrow_top")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(true, "band_panel_dockrow_top")
+	_assert_parked_chrome_fits("band_panel_dockrow_top")
+	_assert_shell_is_wide(true, "band_panel_dockrow_top")
+
+	# LEFT — THE CONTROL. A vertical dock keeps today's behaviour exactly: the chrome is back in
+	# `BottomBar` and the rails contribute nothing. The work-zone baseline captured here is what the
+	# round-trip state below compares against.
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_dockrow_left")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(false, "band_panel_dockrow_left")
+	_assert_no_rail_width("band_panel_dockrow_left")
+	var vertical_work_zone := _panel.work_zone_size()
+
+	# COLLAPSED BOTTOM — the frame that proves collapse does not slice the minimap. The reserved strip
+	# is `COLLAPSED_SIZE` (46px), far under the taller cluster's minimum, so the fit gate must DECLINE
+	# and the chrome must stay in `BottomBar`.
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_collapsed(true)
+	await _settle()
+	await _save("band_panel_dockrow_collapsed_bottom")
+	_assert_chrome_parked(false, "band_panel_dockrow_collapsed_bottom")
+	_panel.set_collapsed(false)
+
+	# THE ROUND TRIP. Reparenting round-trips are where this class of change rots, so walk
+	# bottom → left → bottom → left and assert the clusters came home EXACTLY: authored parent AND
+	# child index, the anchors/size flags captured at construction, `BottomBar`'s authored minimum
+	# height, and a work zone identical to the never-reflowed baseline above.
+	for edge in [SIDE_BOTTOM, SIDE_LEFT, SIDE_BOTTOM, SIDE_LEFT]:
+		_panel.set_dock(edge)
+		await _settle()
+	await _save("band_panel_dockrow_reflow_round_trip")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(false, "band_panel_dockrow_reflow_round_trip")
+	_assert_no_rail_width("band_panel_dockrow_reflow_round_trip")
+	_assert_chrome_home_exact("band_panel_dockrow_reflow_round_trip")
+	var round_trip_work_zone := _panel.work_zone_size()
+	if not round_trip_work_zone.is_equal_approx(vertical_work_zone):
+		push_error("band_panel_preview: round trip left the work zone at %s, baseline was %s" % [
+			round_trip_work_zone, vertical_work_zone])
+	else:
+		print("band_panel_preview: assert OK — round trip restored work_zone_size() to %s" % round_trip_work_zone)
+
+## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
+## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the
+## zoom rail's ~80px instead of the ~290px the game actually has, so both the measured rail span and the
+## frames would be honest about nothing. Driven exactly as `MinimapController._setup` drives it
+## (`setup_embedded` into `Hud.get_minimap_container()`, then `set_grid_size`, which calls
+## `resize_to_aspect`), with the grid resolved from `MapSizes` and the raster a documented flat stand-in
+## for `_rebuild_image`'s per-hex paint — see `DOCKROW_MINIMAP_FILL`.
+func _seed_embedded_minimap() -> void:
+	var container: Control = _hud.get_minimap_container()
+	if container == null:
+		push_warning("band_panel_preview: no MinimapContainer — dock-row rail widths will be unrealistic")
+		return
+	var option: Dictionary = MapSizes.option_for(DOCKROW_MAP)
+	var grid := Vector2i(int(option["width"]), int(option["height"]))
+	var minimap := MinimapPanel.new()
+	add_child(minimap)
+	minimap.setup_embedded(container)
+	var image := Image.create(grid.x, grid.y, false, Image.FORMAT_RGBA8)
+	image.fill(DOCKROW_MINIMAP_FILL)
+	minimap.set_texture(ImageTexture.create_from_image(image))
+	minimap.set_grid_size(grid.x, grid.y)
+	print("band_panel_preview: dockrow minimap — %s map %dx%d (aspect %.3f) → panel min %s" % [
+		option["label"], grid.x, grid.y, float(grid.x) / float(grid.y),
+		minimap.panel.custom_minimum_size])
+
+## GUARD: is the bottom-bar chrome parked in the panel's rail slots, or home in `BottomBar`? Asserts
+## BOTH halves of the swap — `BottomBar`'s visibility and each cluster's PARENT — because either one
+## alone can be right while the other is wrong (a hidden bar with the chrome still inside it erases
+## the chrome; a parked chrome under a visible bar double-books the row's height).
+func _assert_chrome_parked(parked: bool, state_name: String) -> void:
+	var failures: Array[String] = []
+	if _hud.bottom_bar.visible == parked:
+		failures.append("bottom_bar.visible is %s but the chrome should be %s" % [
+			_hud.bottom_bar.visible, "parked" if parked else "home"])
+	for pair in _parked_chrome_pairs():
+		var cluster: Control = pair[0]
+		var want: Node = pair[1] if parked else _hud.bottom_bar
+		if cluster.get_parent() != want:
+			failures.append("%s sits under %s, expected %s" % [
+				cluster.name, cluster.get_parent().name, want.name])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s chrome %s" % [state_name, "parked in the row" if parked else "home in BottomBar"])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## The two parked-chrome clusters paired with the rail slot each belongs in — nav on TOP, turn cluster
+## BELOW. One definition, so the parent assertion and the containment assertion cannot disagree about
+## which cluster goes where.
+func _parked_chrome_pairs() -> Array:
+	return [
+		[_hud.nav_backing, _panel.rail_slot_host(BandCityPanel.RAIL_SLOT_TOP)],
+		[_hud.turn_orb, _panel.rail_slot_host(BandCityPanel.RAIL_SLOT_BOTTOM)],
+	]
+
+## GUARD: the parked chrome must FIT the rail and the rail must fit the strip, and the STACK must sit
+## CENTRED in the column.
+## **Fit** is the same claim `_assert_zone_content_fits` makes for the zones, and for the same reason:
+## the rail CLIPS, so a cluster too wide or too tall for it is silently sliced rather than visibly
+## broken. It is what catches a rail whose declared width lags the minimap's (the width is DECLARED,
+## never measured from the content, so nothing else would notice) — and it is why these states seed a
+## REAL minimap; against an empty `MinimapContainer` the rail collapses to the zoom rail's ~80px and the
+## check is vacuous. Both levels are checked: each cluster inside the rail, and the rail inside the card's
+## interior strip.
+## **Centred** is the other half, and fitting does not imply it: a stack pinned to the rail's mid-line and
+## grown DOWNWARD still sits entirely inside a 340px column while rendering ~64px low. That is exactly
+## what `set_anchors_and_offsets_preset` does to a plain `Control` (see `BandCityPanel._build_rail`'s note
+## 3), so the centre-vs-centre test is the guard on that trap.
+func _assert_parked_chrome_fits(state_name: String) -> void:
+	var failures: Array[String] = []
+	var rail: Control = _panel._rail
+	var rail_rect := rail.get_global_rect()
+	var stack_top := INF
+	var stack_bottom := -INF
+	for pair in _parked_chrome_pairs():
+		var cluster: Control = pair[0]
+		var rect := cluster.get_global_rect()
+		stack_top = minf(stack_top, rect.position.y)
+		stack_bottom = maxf(stack_bottom, rect.end.y)
+		var over := _rect_overflow(rect, rail_rect)
+		if over.x > ZONE_BOUNDS_TOLERANCE or over.y > ZONE_BOUNDS_TOLERANCE:
+			failures.append("%s %s spills the rail %s by (%.1f, %.1f)" % [
+				cluster.name, rect, rail_rect, maxf(over.x, 0.0), maxf(over.y, 0.0)])
+	# The rail itself must stay inside the card's interior — the strip the panel actually reserved.
+	var strip := _panel._panel.get_global_rect()
+	var rail_over := _rect_overflow(rail_rect, strip)
+	if rail_over.x > ZONE_BOUNDS_TOLERANCE or rail_over.y > ZONE_BOUNDS_TOLERANCE:
+		failures.append("the chrome rail %s spills the card %s by (%.1f, %.1f)" % [
+			rail_rect, strip, maxf(rail_over.x, 0.0), maxf(rail_over.y, 0.0)])
+	var drift: float = absf(0.5 * (stack_top + stack_bottom) - rail_rect.get_center().y)
+	if drift > ZONE_BOUNDS_TOLERANCE:
+		failures.append("the chrome stack sits %.0fpx off the rail's vertical centre (stack %.0f, rail %.0f)" % [
+			drift, 0.5 * (stack_top + stack_bottom), rail_rect.get_center().y])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the chrome stack fits its rail, the rail fits the strip, and the stack is centred" % state_name)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## How far `rect` pokes outside `bounds` on each axis (negative = comfortably inside).
+func _rect_overflow(rect: Rect2, bounds: Rect2) -> Vector2:
+	return Vector2(
+		maxf(rect.end.x - bounds.end.x, bounds.position.x - rect.position.x),
+		maxf(rect.end.y - bounds.end.y, bounds.position.y - rect.position.y))
+
+## GUARD: a VERTICAL dock must spend NOTHING on the rail — neither its column nor its separator gutter —
+## whatever width the HUD last declared; the panel forces it to 0 by EDGE, so the whole strip is the
+## zones'. **Both halves are asserted**: `_rail_span()` covers the 25px gutter as well as the column, and
+## the separator's own `visible` is checked because a stray hairline down the middle of a left dock is
+## exactly the regression the shown-with-the-rail rule exists to prevent — and a `BoxContainer` only skips
+## separation around a HIDDEN child, so the visibility IS what makes the span's zero honest.
+func _assert_no_rail_width(state_name: String) -> void:
+	var failures: Array[String] = []
+	var span := _panel._rail_span()
+	if not is_zero_approx(span):
+		failures.append("still spends %.0fpx on the chrome rail" % span)
+	if _panel._rail_separator.visible:
+		failures.append("the rail separator hairline is still visible")
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail and draws no hairline" % state_name)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s vertical dock — %s" % [state_name, failure])
+
+## GUARD: the clusters came home to the EXACT authored parent, child index, anchors and size flags the
+## controller captured before the first reflow. A preset applied on park must not leak into the
+## un-reflowed layout, and an off-by-one index would silently swap the chrome with the bar's spacer.
+func _assert_chrome_home_exact(state_name: String) -> void:
+	var failures: Array[String] = []
+	for entry_variant in _hud._dockrow._home:
+		var entry: Dictionary = entry_variant
+		var cluster: Control = entry["node"]
+		if cluster.get_parent() != entry["parent"]:
+			failures.append("%s parent is %s, authored %s" % [
+				cluster.name, cluster.get_parent().name, entry["parent"].name])
+		if cluster.get_index() != int(entry["index"]):
+			failures.append("%s child index is %d, authored %d" % [
+				cluster.name, cluster.get_index(), int(entry["index"])])
+		var anchors: Array = [cluster.anchor_left, cluster.anchor_top, cluster.anchor_right, cluster.anchor_bottom]
+		if anchors != entry["anchors"]:
+			failures.append("%s anchors are %s, authored %s" % [cluster.name, anchors, entry["anchors"]])
+		var flags: Array = [cluster.size_flags_horizontal, cluster.size_flags_vertical]
+		if flags != entry["flags"]:
+			failures.append("%s size flags are %s, authored %s" % [cluster.name, flags, entry["flags"]])
+	var authored_min: float = _hud._dockrow._bottom_bar_min_height
+	if not is_equal_approx(_hud.bottom_bar.custom_minimum_size.y, authored_min):
+		failures.append("BottomBar minimum height is %.0f, authored %.0f" % [
+			_hud.bottom_bar.custom_minimum_size.y, authored_min])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s chrome restored exactly (parent/index/anchors/flags/bar minimum)" % state_name)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
 
 ## GUARD (FIX 4): the Next-delivery line must reach the DETAIL PANEL through the MARKER, not only the
 ## raw `_player_expeditions` dict. Push a hunt party through a REAL MapView (display_snapshot →

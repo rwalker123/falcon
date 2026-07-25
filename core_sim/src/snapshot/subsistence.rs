@@ -397,6 +397,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
+                // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore
+                // (`docs/plan_predators.md`): `> 0` is the client's "this is a predator" signal + its
+                // view-ring radius (a carnivore's graze ring is meaningless — it hunts other herds). A
+                // herbivore reads `0` and the client keeps drawing its graze-range ring.
+                prey_sense_radius: species_def
+                    .filter(|def| def.diet == crate::fauna_config::Diet::Carnivore)
+                    .map(|_| fauna.predators.prey_sense_radius)
+                    .unwrap_or(0),
                 // **The crew this herd WOULD owe if managed** (taming-startup-lag fix), computed
                 // ownership-INDEPENDENTLY from biomass so the client can floor the Tame-compose worker
                 // cap at it up front — before ownership is set in the Population stage, which is what

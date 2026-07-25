@@ -123,13 +123,15 @@ const CULTIVATION_PREPARING_LABEL := "Preparing"
 # and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
 const FIELD_ROW := "Field"
 
-# Tile card "What grows here" row (flora roster F1) — the named plants this tile's forage capacity is
-# MADE OF. Naming DECOMPOSES, it never adds: the shares sum to 1, so this says what the Forage number
-# already on the card consists of. Derived from the biome, so it is descriptive, not a state.
+# Tile card "What grows here" SECTION HEADER (flora roster F1/F5) — the quiet label above the per-plant
+# 🌿 rows `DetailFormat.flora_composition_lines` renders. Colon-less on purpose: `detail_bbcode` prints
+# it as a dim section header (the `_split_kv` sentence path), the plants themselves following as their
+# own indented rows below. Names the plants this tile's forage capacity is MADE OF — naming DECOMPOSES,
+# it never adds (the shares sum to 1) — and derived from the biome, so it is descriptive, not a state.
 const FLORA_COMPOSITION_ROW := "What grows here"
 
-# (The row's own ` · ` separator is `DetailFormat.FLORA_SHARE_SEPARATOR` — only the composition
-# formatter uses it. This FORMAT stays: the crop picker prints its rows with it too.)
+# One plant's row within that section — `Wild Grain 45%`. Shared with the crop picker, which prints its
+# own rows with it too (beside the `· N.N×` payoff term the picker adds).
 const FLORA_SHARE_FORMAT := "%s %d%%"
 
 # Tile card "Crop" row (flora roster S1) — the row FLORA_COMPOSITION_ROW becomes once a band commits

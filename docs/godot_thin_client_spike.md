@@ -32,4 +32,4 @@ simulation snapshots. Focus on map overlays, unit visualisation, and rapid desig
 
 - Flesh out FlatBuffers decoding so overlays, units, and orders expose real simulation data
 - Integrate shared scripting capability layer once defined
-- Capture findings + metrics in the frontend evaluation memo (see `TASKS.md`)
+- Capture findings + metrics in the frontend evaluation memo

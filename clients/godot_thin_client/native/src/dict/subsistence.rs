@@ -166,6 +166,13 @@ pub(crate) fn herds_to_array(
         // (`biomass > carrying_capacity`), and MapView draws the EXACT ring the sim grazes over.
         let _ = dict.insert("carrying_capacity", herd.carryingCapacity());
         let _ = dict.insert("graze_range_radius", herd.grazeRangeRadius() as i64);
+        // Predators Phase 1a — the carnivore's PREY-SENSE radius (hex radius it reaches to find/feed on
+        // prey). Appended strictly after `aggression`; `predators.prey_sense_radius` (4) for a carnivore,
+        // 0 for a herbivore — so `prey_sense_radius > 0` is BOTH the "this herd is a predator" signal AND
+        // the ring radius the map draws in place of the (meaningless) graze ring. Same uint convention as
+        // `grazeRangeRadius`; this decoder has a history of silently dropping appended fields, so decode it
+        // beside the graze radius it replaces.
+        let _ = dict.insert("prey_sense_radius", herd.preySenseRadius() as i64);
         // The pen as a piece of fenced LAND (docs/plan_grazing_2d.md §7). A penned herd grazes its own
         // fenced footprint and the grass it eats offsets the larder bill:
         //   `pen_radius`           = the footprint hex radius (0 = the single corralled tile).

@@ -8,8 +8,8 @@ prey-seeking movement primitive that scouting expeditions later adopt.
 
 It supersedes and unifies two stub tasks that both pointed here:
 - **M1-threats — minimal predators** (`docs/plan_early_game_labor.md` → *Minimal predator
-  threat*; `TASKS.md` → Early-Game Labor). "Abstract pressure so Warrior is live."
-- **(Optional) Predators / threat fauna** (`TASKS.md` → Fauna Roster). "Wolves/big cats need the
+  threat*; issue #179 → Early-Game Labor). "Abstract pressure so Warrior is live."
+- **(Optional) Predators / threat fauna** (the Fauna Roster arc, shipped). "Wolves/big cats need the
   predator-pressure model, not a `SpeciesDef` alone."
 
 We do **not** build the throwaway abstract-pressure version. The herd/ecology/movement/snapshot
@@ -358,18 +358,89 @@ basic.
   **Testable:** hunt a mammoth (attack 8) → a `hunt_danger` feed line + working-age population drops;
   hunt a deer (attack 0) → nobody dies. `resolve_fight` gets its first caller.
 
-- **Phase 1 — Carnivore herds (diet + prey-limited K + predation draw-down) + the raid trigger.**
-  Add the `Diet` enum; make `ecological_carrying_capacity` sum prey flow for carnivores; add
-  `advance_predation` (abstracted biomass draw from prey herds the predator's `attack` clears).
-  Seed one predator species (wolf pack) in `fauna_config.json`. Movement can stay on the existing
-  `roam` primitive for this phase (predators wander like any herd) — dynamic pursuit is Phase 2.
-  **This is where Warrior goes live:** a carnivore with `aggression` > 0 in range of a band raids
-  it (band as **Defender**), and the band-side contingent is its **Warriors** — the second
-  `resolve_fight` trigger, and the Warrior role's first real consumer.
-  **Testable:** spawn wolves near deer; watch deer biomass drawn down, wolf biomass track prey
-  (grow when fed, decline and despawn when the deer are gone); a wolf pack near an under-guarded
-  band costs it people, and staffing Warriors cuts the losses. Predator–prey oscillation visible in
-  telemetry.
+- **Phase 1 — Carnivore herds + the raid trigger. Split into two independently-testable PRs.**
+
+  The one structural subtlety that shapes the implementation: **a carnivore's food layer is other
+  *herds*, which are sparse points, not the dense per-tile `GrazeRegistry` a herbivore eats.** The
+  trophic transpose is exact in shape but the spatial model differs — so a predator senses prey over
+  a **wider disk** than a herbivore grazes, and it is seeded by its **own** pass, not the prey pool.
+
+  - **Phase 1a — Carnivore ecology (diet + prey-limited K + predation draw-down).** *(This PR.)*
+    - **`Diet` consumed at the one K seam.** `ecological_carrying_capacity` branches on `def.diet`:
+      a **carnivore**'s `K_pred = Σ_prey prey_sustainable_flow(prey) / prey_per_biomass` over the
+      prey herds inside its **prey-sensing disk**, exactly transposing the herbivore's
+      `Σ_range graze_sustainable_flow / fodder_per_biomass`. `prey_sustainable_flow` is the prey
+      herd's own MSY-clamped logistic flow (its meat output/turn) — the herd analog of
+      `graze_sustainable_flow`. A herbivore is byte-identical (keeps the graze path).
+    - **Prey = herbivore herds whose `defense ≤ predator.attack`.** The pure attack≥defense rule
+      (idea 7 — wolves can't crack a mammoth's `defense 12`), restricted to herbivores so a single
+      seeded carnivore can't cannibalise itself. No `is_prey` flag.
+    - **The prey-sensing disk is wider than a graze footprint** (`predators.prey_sense_radius`, a new
+      carnivore radius **4**, larger than `graze_range_radius` 0–1), because prey are scattered points:
+      a small footprint would contain zero prey most turns and snap `K→0`. Widened **3 → 4** after
+      measuring ~45% of packs despawning within 10 turns when a pack roamed transiently out of prey
+      range (the 61-tile disk vs 37 cuts those transient-zero-prey despawns; the deeper fix is Phase-2
+      prey-pursuit). Read from a **prey index** snapshotted at the top of
+      `advance_herds` (an immutable pass before the mutable herd loop — resolves the cross-herd
+      borrow), so a carnivore's `K` reads start-of-turn prey biomass, the same one-turn lag a
+      herbivore's `K` has with graze.
+    - **`advance_predation`** (new system, registered beside `advance_herd_grazing`, after
+      `advance_herds`): each carnivore demands `prey_per_biomass × biomass` prey biomass/turn and
+      draws it **proportional to available prey biomass**, floored at
+      `predation_escapement_fraction × prey.carrying_capacity` (the functional-response taper — the
+      pack takes less as prey thins and stops before zero). Index-based over the herd Vec
+      (predator `i` mutates prey `j`, always distinct), **deterministic in `HerdRegistry` order** —
+      the exact discipline `advance_herd_grazing` uses for shared graze.
+    - **A dedicated predator spawn pass** (`spawn_predators`, its own **prey-derived count** +
+      spacing) seeds wolf packs on their `host_biomes` — so predators are **rare** and do **not**
+      consume the prey `max_total_game` budget. **The count is NOT a fixed cap:** each carnivore
+      species' pack target is `round(eligible_prey_herds × SpeciesDef.prey_ratio)` — its own prey set
+      (every herbivore herd its `attack` clears, map-wide) × its own ratio, counted after both prey
+      passes so the full prey base is present. A predator population is *defined by* its prey base, so
+      two independent absolutes (`max_total_game` for prey, a `max_packs` for predators) with no
+      relationship was a magic-number smell; the derived target replaces it (`max_packs` deleted).
+      Placement (`min_spacing` + the per-biome roll) can still cap below the target on prey-rich maps.
+      Carnivores are filtered **out** of the herbivore short-range pool *and* out of `repopulate_fauna`
+      immigration (they seed once; if prey collapse they die out and do not respawn — idea 6).
+    - **Spawn is PREY-GATED (idea 6 at spawn).** A winning tile only seats a carnivore species whose
+      prey-derived `K` at that tile reaches its **minimum spawn biomass** (the low end of its `biomass`
+      range) — measured with the *same* `carnivore_k_at` formula the live per-turn `K` reads, so the
+      spawn gate and the running `K` can never diverge (DRY). Without it a pack could drop onto an
+      isolated tundra tile with no game in reach, get `K ≈ 0`, and despawn almost immediately (observed
+      live). On a prey-sparse map this can place **fewer** than the derived target — correct: a viable
+      pack near game beats a stranded one. On the standard earthlike map prey is dense enough that the
+      gate is a measured **no-op** on the sweep counts (still 11 / 6 / 10 / 11 / 10 / 11); it only bites
+      where prey is genuinely sparse.
+    - **Seed the wolf pack** in `fauna_config.json`: `carnivore`, `attack 3 / defense 3`,
+      `ferocity 0.8` (a cornered pack is a dangerous hunt), `aggression 0.6` (set now, inert until
+      1b's raid), `prey_ratio 0.10` (a pack per ~10 prey herds — the derived-count dial),
+      `husbandry_ceiling wild` (wolf→dog domestication is deferred), a modest `regrowth_rate` and a
+      tuned `prey_per_biomass`. `attack 3` clears deer/boar/horse/elk but not aurochs (6) or mammoth
+      (12) — its prey set falls out of the roster for free.
+    - **Movement stays `roam`** (graze-aware, so a pack drifts toward grassy tiles where prey tend to
+      be). **Idea 6 falls out of shared machinery:** a pack with no prey in its disk gets `K_pred→0`,
+      `regrow_biomass`'s `clamp(0, cap)` drives its biomass down, and the existing extinction `retain`
+      despawns it — *no game, they leave/die*. The abruptness of a **transient** zero-prey turn is
+      mitigated by the wide disk and is precisely what **Phase 2's active prey-pursuit** exists to
+      solve; a `K` smoothing lever is the fallback if playtest demands it.
+    - **The prey-sense ring is on the wire.** `HerdTelemetryState.preySenseRadius:uint` (append-only,
+      strictly after `aggression`) = `fauna.predators.prey_sense_radius` when the herd's species is a
+      **carnivore**, else `0`. So `> 0` is BOTH the client's "this is a predator" signal AND its
+      view-ring radius: a carnivore's graze-range ring is meaningless (it eats other herds), so the
+      client draws a prey-sense "view" ring of this radius instead; a herbivore reads `0` and keeps its
+      graze ring. **Client half (separate task):** the native reader + the view-ring render.
+    - **Testable:** spawn wolves near deer → deer biomass draws down; wolf biomass tracks prey (grows
+      when fed, declines and despawns when the deer are gone); predator–prey oscillation visible in
+      herd telemetry. A pack never spawns on a tile whose prey-derived `K` is below its minimum spawn
+      biomass (`every_spawned_predator_lands_where_the_prey_can_feed_it`).
+
+  - **Phase 1b — The raid trigger + Warrior goes live.** *(Held until 1a merges.)*
+    A carnivore with `aggression > 0` in range of a band raids it — band as **Defender**, band-side
+    contingent = its **Warriors** — the second `resolve_fight` trigger and the Warrior role's first
+    real consumer. Reuses the Phase-0 combat seam wholesale; only the encounter *detection* + outcome
+    application are new.
+    **Testable:** a wolf pack near an under-guarded band costs it people, and staffing Warriors cuts
+    the losses.
 
 - **Phase 2 — Shared prey-seeking movement.**
   Extract `relocate_toward_resource` (+ a `pursue` `RungMovement` primitive) scoring candidate

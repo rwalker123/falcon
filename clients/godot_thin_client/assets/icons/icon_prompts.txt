@@ -113,7 +113,9 @@
 # ============================================================================
 #
 # The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
-# alias onto one file (see the notes). Coverage is complete: 12 files, 12 prompts.
+# alias onto one file (see the notes). Coverage is complete: 13 files, 13 prompts
+# (wolf.png landed with Predators Phase 1a — the first predator sprite; "Grey Wolf
+# Pack" resolves via the `wolf` key, no longer the 🐺 emoji fallback).
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
@@ -199,6 +201,20 @@ rabbit: Flat vector game icon of a wild brown rabbit with long upright ears, a c
 seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a small dark face and dark slender legs, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette using a soft cream and warm grey fleece that is clearly darker than pure white, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the sheep floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# wolf.png — Grey Wolf Pack (Predators Phase 1a — the first PREDATOR, a carnivore herd)
+# The art is ONE wolf in profile (like every fauna row), not a pack — the species is "Grey Wolf
+# Pack" but the marker is a single animal, the convention the whole set follows.
+# GROUND-CONTRAST HAZARD (the catfish lesson, and it bites harder here): the wolf's host_biomes are
+# savanna_grassland / temperate_forest / boreal_arctic / montane_highland — so it sits on PALE SNOW
+# (boreal_arctic) and GREY ROCK (montane_highland). A pure grey wolf would camouflage on BOTH. The
+# prompt therefore forces a strong two-tone split — a DARK grizzled grey-brown back over a PALE CREAM
+# underside — so the thick charcoal outline plus the light belly carry the silhouette regardless of
+# the ground beneath it. Judge it at 24px over a DARK biome (rocky highland) AND a PALE one (tundra),
+# not on the magenta plate: this is exactly where the catfish's "contrast against the ground, not the
+# outline" rule decides the icon. It must ALSO read as a PREDATOR at a glance — leaner and rangier
+# than the grazers, erect ears, low bushy tail — so a player never mistakes the wolf marker for game.
+wolf: Flat vector game icon of a grey wolf standing alert in a calm neutral pose, a lean rangy wild canine with tall erect pointed ears, a narrow tapering muzzle, a deep chest and a long bushy tail held low, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in grizzled dark grey-brown and slate along the back that stays clearly lighter than the outline, over a distinctly PALE cream and light grey underside on the chest, belly, throat and lower muzzle, strong two-tone contrast between the dark back and the pale underside so the shape reads over both dark rocky ground and pale snowy ground, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the wolf floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # ============================================================================
 # SITES  ->  assets/icons/sites/  (ui/SiteSprites.gd)

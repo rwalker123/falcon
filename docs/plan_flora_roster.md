@@ -1,6 +1,6 @@
 # Flora Roster & Ecology — Named Plants, and the Yield Vector They Carry
 
-**Status:** design. Opens the flora content arc (`TASKS.md` → *Flora Roster & Ecology*), the plant
+**Status:** design. Opens the flora content arc (issue #202, *Flora Roster & Ecology*), the plant
 twin of the shipped fauna roster.
 
 **Rests on:** `docs/plan_grazing_foundation.md` (the two food webs, and the two per-biome capacity
@@ -498,8 +498,21 @@ block carries its weight, then mass-fill.**
   AlluvialPlain/Floodplain/RiverDelta (cotton/tobacco/flax) and the uplands (tea), and the commit bar
   reframed around the tile's local realized share. Client shows the varying basket for free (needs a
   two-tile ui_preview fixture).
-- **F5 — Mass-fill + client.** The full roster across all non-zero biomes, icons, labels, tile-card
-  composition readout.
+- **F5 (mass-fill half) — LANDED.** 15 new species added to `flora_config.json` (kelp, sea_kale,
+  wild_rice, cattail, chestnut, wild_orchard, sunflower, wild_pulses, mesquite, wild_fig, cloudberry,
+  rock_tripe, alpine_herbs, cave_fungi, grapevine — grapevine a 5th cash crop), taking the roster
+  18 → **33** so every non-zero biome now carries a **3–5 species basket** and per-tile realization
+  (§10) has the breadth to vary tile-to-tile. Yields tuned to hold the per-realization commit bar:
+  the wild-ceiling gathers sit at/below the 0.045 baseline (rock_tripe the 0.040 famine floor), and
+  the crowded tended crops (cattail, wild_orchard, alpine_herbs 0.069; wild_fig 0.064) were lifted
+  above their table starting rates because their best realized share caps ~0.5 against the dominant
+  incumbents (reed/berry/shellfish/date_palm/pine_nut). grapevine's AlluvialPlain weight is 0.10 (not
+  the spec's 0.15) so it is a *unique* minimum-weight there — a tie with wild_rice broke the
+  realization aggregate-ordering guard. **The tile-card "what grows here" composition readout ships
+  in this PR too** (one row per realized species + its share), so realization is visible on plain tile
+  inspection. **The one client follow-up that remains is per-species flora icons** (there is no
+  per-species flora icon lookup yet — display names ship as plain text and every basket row wears one
+  generic plant glyph), tracked separately (#339); labels and the readout are done.
 
 Each slice is independently shippable and independently measurable. F1 and F5 are content; F2–F4 are
 the ones that need a playtest.
@@ -645,4 +658,4 @@ ui_preview that two tiles of the same biome show different baskets.
 - `docs/plan_grazing_2d.md` — the pen economy (`K_pen`, footprint, larder) fodder extends.
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §2a — the player-facing ladder
   vocabulary this roster speaks.
-- `TASKS.md` → *Fauna Roster* — the roster pattern this parallels.
+- The **Fauna Roster** arc (shipped) — the roster pattern this parallels.

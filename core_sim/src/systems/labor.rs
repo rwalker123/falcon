@@ -3359,6 +3359,12 @@ mod labor_yield_tests {
 
         // Cultivate on a fresh patch: the take is the dip, and progress accrues.
         let (mut world, tile) = world_with_source(CAP);
+        // Seat this world on a map seed where the source tile's per-tile realization (§10) concentrates
+        // its dominant staple — with F5's fuller PrairieSteppe basket, tile (0,0) realizes a diluted
+        // slice under the default seed 0 (seed_grasses at share ~0.40, not worth tending), which is
+        // *correct* realization behaviour but not the "worth-tending tile" this yield test needs. Seed
+        // 3 realizes seed_grasses at share ~0.77 → concentration caps and the tended payoff clears wild.
+        world.resource_mut::<SimulationConfig>().map_seed = 3;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
         let band = spawn_band(
             &mut world,

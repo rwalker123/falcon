@@ -775,8 +775,19 @@ func _connect_band_city_panel() -> void:
         band_city_panel.connect("cycle_requested", Callable(hud, "cycle_panel_band"))
     if band_city_panel.has_signal("subject_activated") and hud != null and hud.has_method("focus_panel_band") and not band_city_panel.is_connected("subject_activated", Callable(hud, "focus_panel_band")):
         band_city_panel.connect("subject_activated", Callable(hud, "focus_panel_band"))
+    # SECOND listener on the same reservation (issue #324): on a horizontal dock the HUD parks its
+    # bottom-bar chrome into the panel's row. Order against `_on_band_panel_reservation_changed` does
+    # not matter — the reflow reads only `(edge, size)`.
+    if band_city_panel.has_signal("reservation_changed") and hud != null and hud.has_method("reflow_dock_row") and not band_city_panel.is_connected("reservation_changed", Callable(hud, "reflow_dock_row")):
+        band_city_panel.connect("reservation_changed", Callable(hud, "reflow_dock_row"))
     if band_city_panel.has_method("get_dock") and band_city_panel.has_method("current_reservation_size"):
-        _apply_reservation(&"band_panel", int(band_city_panel.call("get_dock")), float(band_city_panel.call("current_reservation_size")))
+        var dock_edge := int(band_city_panel.call("get_dock"))
+        var dock_size := float(band_city_panel.call("current_reservation_size"))
+        _apply_reservation(&"band_panel", dock_edge, dock_size)
+        # Seed the reflow too, so a session that boots already docked bottom reflows immediately
+        # rather than waiting for the first dock change.
+        if hud != null and hud.has_method("reflow_dock_row"):
+            hud.call("reflow_dock_row", dock_edge, dock_size)
 
 func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
     _apply_reservation(&"band_panel", edge, size)

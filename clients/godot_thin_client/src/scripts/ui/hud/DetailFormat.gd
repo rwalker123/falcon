@@ -179,6 +179,10 @@ const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
 # intentional, not a bug. Colon-free, so `detail_bbcode` renders them as dim informational sentences
 # (the `kv.is_empty()` path).
 const HUSBANDRY_WILD_HINT := "Wild game — hunt only"
+# A predator is a hunter, not quarry — "game" is a category error for a wolf pack. "hunt only" stays
+# correct (you CAN hunt/eradicate a predator); only the "game" noun is wrong. Branched on
+# `is_predator` (`prey_sense_radius > 0`) in `herd_summary_lines`.
+const HUSBANDRY_WILD_PREDATOR_HINT := "Wild predator — hunt only"
 const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 
 # ---- The under-herded CONSEQUENCE line (fauna neglect-escape arc). Neglect no longer decays a
@@ -195,6 +199,9 @@ const HERD_RANGE_ROW := "Range"
 # row's meta slot now states the herd's STAFFING, so the size class moved to the drawer.
 const HERD_SIZE_ROW := "Size"
 const HERD_SIZE_CLASS_FORMAT := "%s game"
+# A predator's size class reads "Big predator", not "Big game" — a carnivore is a hunter, not quarry.
+# Branched on `is_predator` (`prey_sense_radius > 0`) in `herd_summary_lines`.
+const HERD_SIZE_CLASS_PREDATOR_FORMAT := "%s predator"
 
 # ---- Overgrazing: a TRIVIAL honest comparison of two sim-provided numbers (the ecology model is the
 # sim's). The epsilon keeps a herd sitting exactly at K from flickering the warning; the warning SENTENCE
@@ -223,9 +230,17 @@ const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost �
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 
-## Separator between the named plants on the tile card's "What grows here" row. (Its partner
-## `FLORA_SHARE_FORMAT` lives in `HudFloraVocab` — the crop picker prints it too.)
-const FLORA_SHARE_SEPARATOR := " · "
+# ---- Tile card "What grows here" species rows (flora roster F1/F5). Each realized plant reads on its
+# OWN indented row — a section under the `Forage:` line, not one comma-joined value — so the per-tile
+# basket scans like the compose sheet's crop picker does. Each row is the shared 🌿 sprig
+# (`FoodIcons.DEFAULT`: there are no per-species flora icons yet, so the whole basket wears one generic
+# plant glyph — see the report's roster follow-up), the plant's display name, and its share as a
+# percentage (`HudFloraVocab.FLORA_SHARE_FORMAT`). Rows reuse the food/morale breakdown's 4-space
+# `MORALE_BREAKDOWN_INDENT`, but are tinted NEUTRAL ink, not the ▲green/▼amber two-tone — a share is
+# descriptive, not a good/bad signal — so `detail_bbcode` keys a dedicated branch off the sprig glyph
+# (which is why that branch must be tested BEFORE the morale-indent one: they share the indent).
+const FLORA_COMPOSITION_GLYPH := FoodIcons.DEFAULT
+const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16
@@ -270,6 +285,17 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 out += "[/table]"
                 table_open = false
             out += "\n"
+            continue
+        # The tile card's "What grows here" species rows (flora roster F1/F5): the SAME 4-space indent
+        # the morale/food breakdown uses, but tinted NEUTRAL ink — a plant's share is descriptive, not
+        # a positive/negative signal, so it must never borrow the ▲green/▼amber two-tone below. Keyed
+        # off the shared 🌿 sprig, and tested FIRST precisely because the morale branch matches the
+        # same indent (it would otherwise claim these rows and mis-tint them amber).
+        if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT) and line.contains(DetailFormat.FLORA_COMPOSITION_GLYPH):
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_HEX, line]
             continue
         # Itemized morale / food breakdown sub-lines render full-width, tinted by their sign
         # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
@@ -571,23 +597,29 @@ static func field_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
-## The tile's plant composition as one compact line — `Hazel 45% · Oak Mast 30% · Berry Scrub 25%`.
+## The tile card's "What grows here" SECTION — a quiet header row naming the section, then one
+## indented 🌿 row per realized plant (`Wild Grain 45%` / `Ground Nut 30%` / …), so the per-tile basket
+## reads down the card the way the compose sheet's crop picker reads, not as one comma-joined value.
 ##
 ## The wire list is ALREADY sorted (share descending, then species key ascending) and its shares sum
-## to 1, so this only formats: the order is the sim's and is never re-derived here.
+## to 1, so this only formats: the order is the sim's and is rendered VERBATIM, never re-derived here.
 ##
-## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. Rounding each share independently can total 99 or 101
-## — a decomposition that visibly fails to decompose — so the remainder is folded into the LARGEST
-## share, i.e. the first entry, where a ±1 is proportionally smallest. Returns "" for a tile with no
-## composition (a biome that carries no forage), so no empty row renders.
-static func flora_composition_text(composition: Variant) -> String:
+## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. `SourceForecast.flora_basket_entries` folds the
+## rounding remainder into the LARGEST share (the first entry), so a basket that naively rounds to
+## 99/101 still decomposes to 100. Returns [] for a tile with no composition (a biome that carries no
+## forage), so neither the header nor any row renders.
+static func flora_composition_lines(composition: Variant) -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
+    var lines: Array[String] = []
     if entries.is_empty():
-        return ""
-    var parts: Array[String] = []
+        return lines
+    lines.append(HudFloraVocab.FLORA_COMPOSITION_ROW)
     for entry in entries:
-        parts.append(HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
-    return FLORA_SHARE_SEPARATOR.join(parts)
+        lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [
+            MORALE_BREAKDOWN_INDENT, FLORA_COMPOSITION_GLYPH,
+            HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])],
+        ])
+    return lines
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
 ## `cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
@@ -809,9 +841,13 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## `herded_fraction`, which lags a turn.
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assigned_herders: int = -1) -> Array[String]:
     var lines: Array[String] = []
+    # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
+    # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
+    var is_predator := int(herd_data.get("prey_sense_radius", 0)) > 0
     var size_class := String(herd_data.get("size_class", "")).strip_edges()
     if size_class != "":
-        lines.append("%s: %s" % [HERD_SIZE_ROW, HERD_SIZE_CLASS_FORMAT % size_class.capitalize()])
+        var size_format := HERD_SIZE_CLASS_PREDATOR_FORMAT if is_predator else HERD_SIZE_CLASS_FORMAT
+        lines.append("%s: %s" % [HERD_SIZE_ROW, size_format % size_class.capitalize()])
     # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
     # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
     # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
@@ -854,7 +890,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     # (or empty/absent) shows the full ladder, exactly as before.
     var ceiling := SourceForecast.husbandry_ceiling(herd_data)
     if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
-        lines.append(HUSBANDRY_WILD_HINT)
+        lines.append(HUSBANDRY_WILD_PREDATOR_HINT if is_predator else HUSBANDRY_WILD_HINT)
     else:
         var domestication := float(herd_data.get("domestication", 0.0))
         if domestication > 0.0:
