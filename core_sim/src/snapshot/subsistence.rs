@@ -247,9 +247,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
     telemetry
         .entries
         .iter()
-        .filter(|entry| inputs.herd_is_visible(registry.find(&entry.id), entry.position))
-        .map(|entry| {
+        .filter_map(|entry| {
+            // ONE registry resolution per herd, shared by the fog gate and the export below —
+            // `HerdRegistry::find` is a linear scan, so resolving it twice doubled the work.
             let herd = registry.find(&entry.id);
+            inputs
+                .herd_is_visible(herd, entry.position)
+                .then_some((entry, herd))
+        })
+        .map(|(entry, herd)| {
             // The species row backing this herd — resolved once for the raw combat components below.
             let species_def = fauna.species_by_display(&entry.species);
             let forecast = herd
