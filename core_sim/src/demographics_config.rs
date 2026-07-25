@@ -80,22 +80,89 @@ impl Default for DemographicsStartup {
     }
 }
 
-/// Birth tuning. `births = birth_rate × working × fed_ratio ×
-/// (1 + surplus_bonus × surplus_ratio)`, added to children. Births are **morale-independent**
-/// (Civilization Wellbeing model, `docs/plan_civ_wellbeing.md`): contentment doesn't change
-/// procreation — low morale relocates people or drags output, never suppresses births.
+/// The **stock** fertility factor: how deep is the larder. `reserve = 1 + bonus ×
+/// min(reserve_turns / saturation_turns, 1)`, where `reserve_turns` is the post-meal larder
+/// measured in turns of demand. `saturation_turns = 1.0` reproduces the retired hardcoded
+/// behaviour (a two-turn buffer read as maximum surplus); the shipped 10.0 means a band must bank
+/// roughly a season to earn the full bonus. See `docs/plan_population_growth_model.md`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DemographicsReserve {
+    /// Maximum fertility bonus from a full larder (the retired `births.surplus_bonus`).
+    pub bonus: f32,
+    /// Turns of banked demand that earn the full `bonus`.
+    pub saturation_turns: f32,
+}
+
+impl Default for DemographicsReserve {
+    fn default() -> Self {
+        Self {
+            bonus: 0.5,
+            saturation_turns: 10.0,
+        }
+    }
+}
+
+/// The **flow** fertility factor: is the larder growing or shrinking. Two-sided and centred at 1.0
+/// — net-positive food raises fertility, net-negative lowers it — driven by
+/// `net_ratio = (steady_income − demand − pen_feed_upkeep) / demand`, the negation of the same net
+/// drain the player-facing `turnsOfFood` runway divides by. See
+/// `docs/plan_population_growth_model.md`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DemographicsTrend {
+    /// Maximum fertility bonus from net-positive food.
+    pub surplus_gain: f32,
+    /// Net surplus (as a multiple of demand) that earns the full `surplus_gain`.
+    pub surplus_saturation: f32,
+    /// Maximum fertility penalty from net-negative food, and **the damp-vs-stop lever**: `0.75`
+    /// leaves a fully-collapsed band breeding at 25% of base (starvation mortality stays the real
+    /// consequence of a deficit), while **`1.0` lets negative flow stop growth outright**. See
+    /// `docs/plan_population_growth_model.md` §2.4.
+    pub deficit_penalty: f32,
+    /// Net deficit (as a multiple of demand) that reaches the full `deficit_penalty`. `1.0` means
+    /// the penalty maxes out when the net flow is a full turn's demand in the red — that is at zero
+    /// income for a band with no pens, and *sooner* for one whose pens also eat from the larder.
+    pub deficit_saturation: f32,
+}
+
+impl Default for DemographicsTrend {
+    fn default() -> Self {
+        Self {
+            surplus_gain: 0.25,
+            surplus_saturation: 0.5,
+            deficit_penalty: 0.75,
+            deficit_saturation: 1.0,
+        }
+    }
+}
+
+/// Birth tuning. `births = birth_rate × working × hunger × reserve × trend`, added to children — a
+/// **product of named factors** mirroring `output_multiplier`'s modifier stack, so adding a future
+/// fertility driver is one entry rather than a rewrite of the birth path.
+///
+/// `hunger` (the food the band actually ate over what it wanted) is a **gate**: it alone reaches 0,
+/// so an empty larder yields zero births. `reserve` ∈ `[1, 1+bonus]` and `trend` ∈
+/// `[1−deficit_penalty, 1+surplus_gain]` are **modifiers** around 1.0 — neither can zero the
+/// product on its own, which is why the stack needs no separate floor lever.
+///
+/// Births are **morale-independent** (Civilization Wellbeing model, `docs/plan_civ_wellbeing.md`):
+/// contentment doesn't change procreation — low morale relocates people or drags output, never
+/// suppresses births.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DemographicsBirths {
     pub birth_rate: f32,
-    pub surplus_bonus: f32,
+    pub reserve: DemographicsReserve,
+    pub trend: DemographicsTrend,
 }
 
 impl Default for DemographicsBirths {
     fn default() -> Self {
         Self {
             birth_rate: 0.03,
-            surplus_bonus: 0.5,
+            reserve: DemographicsReserve::default(),
+            trend: DemographicsTrend::default(),
         }
     }
 }
@@ -330,5 +397,25 @@ mod tests {
         assert!(config.scarcity.starvation_mortality >= 0.0);
         // Bands must open the game with a positive food reserve.
         assert!(config.startup.food_reserve_days > 0.0);
+
+        // Fertility factors (`docs/plan_population_growth_model.md`). Both saturations divide, so a
+        // zero would be a degenerate curve; `deficit_penalty > 1` would drive `trend` negative were
+        // it not clamped, and is never what a tuner means.
+        let births = &config.births;
+        assert!(
+            births.reserve.saturation_turns > 0.0,
+            "reserve saturation must be a positive number of turns"
+        );
+        assert!(births.reserve.bonus >= 0.0);
+        assert!(
+            births.trend.surplus_saturation > 0.0 && births.trend.deficit_saturation > 0.0,
+            "trend saturations must be positive — they are divisors"
+        );
+        assert!(
+            (0.0..=1.0).contains(&births.trend.deficit_penalty),
+            "deficit_penalty is a fraction of base fertility (1.0 = flow stops growth), got {}",
+            births.trend.deficit_penalty
+        );
+        assert!(births.trend.surplus_gain >= 0.0);
     }
 }

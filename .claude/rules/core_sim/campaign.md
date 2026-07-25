@@ -20,7 +20,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
@@ -55,14 +55,60 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    own larder; shortfall is the food **deficit**.
 2. **Deaths** — starvation scales with the deficit (dependents more vulnerable via `scarcity`
    weights); cold kills across brackets past `cold.temp_tolerance`.
-3. **Births → children** — `birth_rate × working × fed_ratio × (1 + surplus_bonus × surplus_ratio)`.
-   Births are **morale-independent** (Civilization Wellbeing — see below): contentment doesn't
-   change procreation, and morale **never** causes faction population loss. `advance_demographics`
-   no longer takes morale; the retired `births.morale_floor` lever is gone.
+3. **Births → children** — `birth_rate × working × hunger × reserve × trend` (see "Fertility is
+   stock **and** flow" below). Births are **morale-independent** (Civilization Wellbeing — see
+   below): contentment doesn't change procreation, and morale **never** causes faction population
+   loss. `advance_demographics` no longer takes morale; the retired `births.morale_floor` lever is
+   gone.
 4. **Maturation** children→working, **aging** working→elders, **elder mortality**. All flows use
    the turn's *opening* values and apply together (a newborn doesn't mature the same turn); the
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
+
+> #### Fertility is stock **and** flow — three named factors, not two larder ratios
+>
+> **`fertility = birth_rate × hunger × reserve × trend`** (`fertility_factors`, design:
+> `docs/plan_population_growth_model.md`). The retired model read the **larder only** — both its
+> terms divided `food_store` by one turn's demand — so **negative net food did not stop growth and
+> barely slowed it**: `surplus_ratio` saturated at a **two-turn** buffer, and the shipped 30-person
+> band with income at zero spent ~**18 of its 20 turns** of runway at *peak* fertility before the
+> brake engaged, accelerating into the cliff its own growth was causing. The unfiled mirror was just
+> as wrong: a band whose income exactly covered consumption read as poor purely for not hoarding.
+>
+> - **`hunger`** = `consumed / demand` — the retired `fed_ratio`, and the **gate**: the only factor
+>   that reaches 0, so an empty larder bears nobody however the other two are tuned. `reserve` ∈
+>   `[1, 1.5]` and `trend` ∈ `[0.25, 1.25]` both bracket 1.0 and cannot zero the product, which is
+>   why the stack needs **no floor lever** (an early draft had one; it was inert and was dropped).
+> - **`reserve`** (stock) = `1 + bonus × min(reserve_turns / saturation_turns, 1)`. Same shape as the
+>   retired `surplus_ratio` term with the saturation point promoted to config —
+>   **`saturation_turns = 1.0` reproduces the old curve exactly** (pinned by
+>   `reserve_saturation_turns_reproduces_the_old_curve_at_one`); the shipped **10.0** makes a band
+>   bank roughly a season to earn the full bonus.
+> - **`trend`** (flow, new) — two-sided around 1.0 off
+>   `net_ratio = (steady_income − demand − pen_feed_upkeep) / demand`, so surplus *raises* fertility
+>   as well as deficit lowering it. **`steady_income` is Σ per-source `SourceYield.realized`, never
+>   Σ `actual`** — `actual` is lumpy by design (a big-game hunt pays 0 for six turns then spikes) and
+>   fertility must not sawtooth with whole-animal timing. **Subtracting `pen_feed_upkeep` is what
+>   makes `net_flow` the negation of the same net drain `turnsOfFood` divides by**, so a band whose
+>   panel shows a shrinking runway is exactly a band whose `trend` is below 1 — the two readouts
+>   cannot disagree about direction.
+>
+> **Damp, not stop.** `trend.deficit_penalty` (0.75) is the single damp-vs-stop lever: a collapsed
+> band still breeds at 25% of base, leaving starvation mortality as the real consequence of a deficit
+> rather than punishing one bad stretch twice. **`1.0` stops growth outright** — a config change, not
+> a code change (pinned by `deficit_penalty_of_one_stops_growth_outright`).
+>
+> **`None` flow is NO DATA, never a famine.** `last_yields`/`last_pen_feed_upkeep` are derived, not
+> persisted, so `band_food_flow` must distinguish *unprojected* from *genuinely zero* — the same trap
+> already documented for the arrivals schedule in `larder_runway_turns`. **Staffed assignments with
+> empty `last_yields`** = a rehydrated cohort → `None` → neutral trend (otherwise every rollback
+> would suppress births); **empty `assignments`** = a really idle band → `Some` with zero income. The
+> disambiguation is `assignments.is_empty()` and it is pinned by `food_flow_tests`.
+>
+> Because `simulate_population` runs *before* `advance_labor_allocation`, the flow reading is one
+> turn stale by construction — correct, since fertility should track the trend a band has been
+> living rather than a single turn's haul. **No wire change**: the factors are not exported yet, so
+> nothing on the client reads them (follow-up).
 
 **Morale attribution (why morale/population falls).** Morale is now computed as the signed sum of a
 **named contributor set** (`MoraleContributions` on the cohort — the Layer-1 spine of Civilization
