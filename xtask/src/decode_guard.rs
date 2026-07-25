@@ -1,6 +1,6 @@
 //! `cargo xtask decode-guard` — the one command that runs the client decode gate end to end.
 //!
-//! Three steps, in this order for a reason:
+//! Four steps, in this order for a reason:
 //!
 //! 1. **Regenerate the fixtures** ([`crate::decode_fixture`]) — the saturated one the golden is
 //!    diffed against, and the headerless one the malformed-snapshot assertion decodes. Both `.bin`s
@@ -58,8 +58,11 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     // Captured rather than inherited so the run can be searched for a Rust panic — see
-    // PANIC_MARKER below. Everything is forwarded verbatim afterwards, so the terminal output is
-    // the same; a headless decode run is short enough that losing live streaming costs nothing.
+    // PANIC_MARKERS below. Everything is still forwarded, but in two BLOCKS (all of stdout, then all
+    // of stderr) rather than interleaved, and that is worth knowing while reading a FAILURE: the
+    // guard's own `print` lines go to stdout while the engine's `ERROR:` / panic-report lines go to
+    // stderr, so a panic report can appear BELOW a `PASS` line it actually preceded. A headless
+    // decode run is short enough that losing live streaming costs nothing.
     let output = command
         .output()
         .map_err(|err| format!("decode-guard: failed to launch `godot` ({err}). Is it on PATH?"))?;
