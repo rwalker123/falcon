@@ -107,8 +107,23 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 >
 > Because `simulate_population` runs *before* `advance_labor_allocation`, the flow reading is one
 > turn stale by construction — correct, since fertility should track the trend a band has been
-> living rather than a single turn's haul. **No wire change**: the factors are not exported yet, so
-> nothing on the client reads them (follow-up).
+> living rather than a single turn's haul.
+>
+> **The factors are EXPORTED, and the wire's not-projected sentinel is a ZERO RESERVE.** The set
+> `simulate_population` resolved is parked on the cohort as `last_fertility_factors` — derived, not
+> persisted, exactly like `last_morale_contributions` — and published as
+> `PopulationCohortState.fertilityHunger/Reserve/Trend` (fixed-point, **neutral at 1e6, not at 0**:
+> these multiply, they do not sum). `advance_demographics` returns them alongside the new bracket
+> state (`DemographicOutcome`) rather than the capture re-deriving them, because they are resolved on
+> the turn's *opening* brackets and *pre-meal* larder — a recomputation at capture would publish
+> numbers that never drove a birth (`the_capture_publishes_the_factors_that_actually_drove_the_births`).
+> A rehydrated cohort publishes the all-zero default, and **`reserve == 0` is what makes that
+> unambiguous**: a computed `reserve` is `1 + bonus × ramp` with both terms ≥ 0, so it is ≥ 1 by
+> construction, while `hunger` and `trend` both legitimately reach 0. The client keys "no reading" off
+> it and must never render a missing set as a famine — the same no-data rule the `trend` factor itself
+> obeys, one level up. `the_returned_factors_multiply_out_to_the_births_they_explain` pins the
+> attribution against the observed births, because a breakdown that adds up to the wrong answer is
+> worse than no breakdown. Client half: the band panel's **Growth** row + its itemized disclosure.
 
 **Morale attribution (why morale/population falls).** Morale is now computed as the signed sum of a
 **named contributor set** (`MoraleContributions` on the cohort — the Layer-1 spine of Civilization
@@ -438,7 +453,9 @@ Extension seams are present and empty — future factors/consequences slot in wi
 - **Snapshot.** `PopulationCohortState` gains `outputMultiplier`, `discontentFraction`, `grievance`,
   `lastEmigrated`/`lastImmigrated`, and the four itemized contributions
   `moraleSettling/Terrain/Climate/Unrest` (surfaced so the client can render the breakdown). All
-  fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted).
+  fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted). The
+  birth path's parallel trio `fertilityHunger/Reserve/Trend` rides beside them — see "Fertility is
+  stock **and** flow" for why its neutral point is 1.0 and its sentinel is a zero reserve.
 
 ### Capability Flags
 `CapabilityFlags` bitflags: `AlwaysOn`, `Construction`, `IndustryT1/T2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. Systems are inert until corresponding flag is set.

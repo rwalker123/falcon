@@ -211,12 +211,30 @@ while doing so, so it arrives at the cliff with materially fewer mouths.
 
 ## 4. Scope
 
-**In:** the sim model, the config, and tests. No schema change, no wire change, no client change.
+**Slice 1 (#347, closes #286) — in:** the sim model, the config, and tests. No schema change, no wire
+change, no client change.
 
-**Out, deliberately:** exporting the three factors for an itemized client breakdown. The player
-already sees both *inputs* on the band panel (larder, Food /turn) and the *effect* (population), and
-`#286` is a model question. The breakdown is the natural parallel to `MoraleContributions` and should
-ship, but as its own slice — filed as a follow-up rather than widening this PR.
+**Slice 2 (#351) — the export, shipped as its own slice.** Held back from #347 deliberately: `#286`
+is a model question, and the breakdown is a UI one. The player already saw both *inputs* on the band
+panel (larder, Food /turn) and the *effect* (population), but not the attribution between them.
+
+- **Sim.** `advance_demographics` returns the resolved set alongside the new bracket state
+  (`DemographicOutcome`), and `simulate_population` parks it on the cohort as
+  `last_fertility_factors` — derived, not persisted, exactly like `last_morale_contributions`. The
+  capture publishes it verbatim rather than re-deriving: the factors are resolved on the turn's
+  *opening* brackets and *pre-meal* larder, so a recomputation would report numbers that never drove
+  a birth.
+- **Wire.** `PopulationCohortState.fertilityHunger/Reserve/Trend`, fixed-point and appended.
+  **Neutral at 1e6, not at 0** — unlike the morale contributions these multiply, they do not sum.
+- **The not-projected sentinel is a ZERO RESERVE.** A rehydrated cohort publishes all zeros, and
+  `reserve` is what disambiguates: it is `1 + bonus × ramp` with both terms ≥ 0, hence ≥ 1 for any
+  real reading, where `hunger` and `trend` both legitimately reach 0. This is §2.5's rule one level
+  up — the client renders a missing set as *nothing*, never as a famine, and a neutral `trend`
+  likewise renders as nothing rather than as a deficit.
+- **Client.** A `Growth: N% of normal` row on the band panel with the same click-to-open disclosure
+  the Food and Morale rows use, itemizing the factors as **multipliers** (`▼ ×0.60 short rations`)
+  rather than signed percentages — they combine by product, and three percentages that refuse to add
+  up to the headline would invite arithmetic they cannot support.
 
 **Unrelated hazard found while writing the tests, left alone:**
 `DemographicsConsumption::default()` carries `per_capita_draw: 0.03` while the shipped

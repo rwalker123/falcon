@@ -39,6 +39,22 @@ const DEFAULT_WARN_OUTPUT := 0.85
 const DEFAULT_CRITICAL_OUTPUT := 0.60
 # Per-turn morale-contribution magnitude below which a breakdown row is trivial and hidden.
 const DEFAULT_MORALE_BREAKDOWN_EPSILON := 0.002
+# Fertility-multiplier tint buckets for the Growth readout — the band's birth rate as a share of
+# its NORMAL rate (`fertility_hunger x fertility_reserve x fertility_trend`, neutral at 1.0). Unlike
+# output it can exceed 1.0 (a well-provisioned band out-breeds its base rate), so `warn` sits BELOW
+# neutral: at/above it the row reads neutral ink, below it amber, below `critical` red. `critical`
+# brackets the shipped floor a fully-collapsed band damps to (0.75 deficit penalty x a saturated
+# 1.5 reserve = 0.375), so "my growth has stalled" reads red rather than merely amber.
+const DEFAULT_WARN_FERTILITY := 0.75
+const DEFAULT_CRITICAL_FERTILITY := 0.40
+# Deviation from the neutral 1.0 below which a fertility factor is trivial and hidden.
+const DEFAULT_FERTILITY_BREAKDOWN_EPSILON := 0.002
+# A computed `reserve` is >= 1 by construction (`1 + bonus x ramp`), so a ZERO reserve is the sim's
+# NOT-PROJECTED sentinel — a rehydrated cohort that has not ticked yet. `hunger` and `trend` both
+# legitimately reach 0, which is why neither can serve. Read it as "no reading", NEVER as a famine.
+const FERTILITY_NOT_PROJECTED_RESERVE := 0.0
+# The neutral point of every fertility factor: 1.0 leaves the base birth rate untouched.
+const FERTILITY_NEUTRAL := 1.0
 
 static var _loaded := false
 static var _warn_turns := DEFAULT_WARN_TURNS
@@ -48,6 +64,9 @@ static var _critical_morale := DEFAULT_CRITICAL_MORALE
 static var _warn_output := DEFAULT_WARN_OUTPUT
 static var _critical_output := DEFAULT_CRITICAL_OUTPUT
 static var _morale_breakdown_epsilon := DEFAULT_MORALE_BREAKDOWN_EPSILON
+static var _warn_fertility := DEFAULT_WARN_FERTILITY
+static var _critical_fertility := DEFAULT_CRITICAL_FERTILITY
+static var _fertility_breakdown_epsilon := DEFAULT_FERTILITY_BREAKDOWN_EPSILON
 
 static func _ensure_loaded() -> void:
 	if _loaded:
@@ -79,6 +98,12 @@ static func _ensure_loaded() -> void:
 		var output: Dictionary = output_variant
 		_warn_output = float(output.get("warn", DEFAULT_WARN_OUTPUT))
 		_critical_output = float(output.get("critical", DEFAULT_CRITICAL_OUTPUT))
+	var fertility_variant: Variant = (data as Dictionary).get("fertility", {})
+	if fertility_variant is Dictionary:
+		var fertility: Dictionary = fertility_variant
+		_warn_fertility = float(fertility.get("warn", DEFAULT_WARN_FERTILITY))
+		_critical_fertility = float(fertility.get("critical", DEFAULT_CRITICAL_FERTILITY))
+		_fertility_breakdown_epsilon = float(fertility.get("breakdown_epsilon", DEFAULT_FERTILITY_BREAKDOWN_EPSILON))
 
 static func warn_turns() -> float:
 	_ensure_loaded()
@@ -159,3 +184,31 @@ static func hex_for_output(o: float) -> String:
 static func morale_breakdown_epsilon() -> float:
 	_ensure_loaded()
 	return _morale_breakdown_epsilon
+
+## Fertility-multiplier tint for the Growth readout. Mirrors `hex_for_output`'s ink -> amber -> red
+## grading rather than the morale/food green palette: a band at or above its normal birth rate is
+## simply normal, not a "good", so neutral ink is the top bucket even at 150%.
+static func hex_for_fertility(f: float) -> String:
+	_ensure_loaded()
+	if f < _critical_fertility:
+		return HudStyle.DANGER_HEX
+	if f < _warn_fertility:
+		return HudStyle.WARN_HEX
+	return HudStyle.INK_HEX
+
+## The fertility multiplier at/above which growth reads normal (neutral ink) — also the gate on the
+## Growth row's "concerning" caret tint.
+static func warn_fertility() -> float:
+	_ensure_loaded()
+	return _warn_fertility
+
+## Minimum |factor - 1.0| worth listing as a fertility breakdown row.
+static func fertility_breakdown_epsilon() -> float:
+	_ensure_loaded()
+	return _fertility_breakdown_epsilon
+
+## Whether the sim published a fertility reading for this band at all. A rehydrated cohort has not
+## ticked yet and carries the all-zero default; rendering that as a total collapse of growth would
+## be the same "no data read as famine" bug the sim guards on its own side.
+static func fertility_is_projected(band: Dictionary) -> bool:
+	return float(band.get("fertility_reserve", FERTILITY_NOT_PROJECTED_RESERVE)) > FERTILITY_NOT_PROJECTED_RESERVE

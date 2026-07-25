@@ -345,6 +345,11 @@ fn create_populations<'a>(
                     // omits it from the generated Args — nothing to set.)
                     // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
                     fodderStore: cohort.fodder_store,
+                    // The birth path's itemized breakdown, the parallel of the morale contributions
+                    // above (append-only wire discipline — these follow every earlier field).
+                    fertilityHunger: cohort.fertility_hunger,
+                    fertilityReserve: cohort.fertility_reserve,
+                    fertilityTrend: cohort.fertility_trend,
                 },
             )
         })

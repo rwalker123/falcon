@@ -1,4 +1,5 @@
 use super::*;
+use crate::components::FertilityFactors;
 use crate::demographics_config::{DemographicsBirths, DemographicsTrend};
 
 #[derive(Event, Debug, Clone)]
@@ -67,29 +68,13 @@ pub(crate) struct FoodFlow {
     pub pen_feed_upkeep: Scalar,
 }
 
-/// The three named fertility factors. Mirrors `output_multiplier`'s modifier stack and
-/// `MoraleContributions`' named contributor set: a future fertility driver is one more field here,
-/// not a rewrite of the birth path. See `docs/plan_population_growth_model.md`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FertilityFactors {
-    /// **Gate** — did the band eat this turn (`consumed / demand`).
-    pub hunger: Scalar,
-    /// **Stock** — how deep is the larder.
-    pub reserve: Scalar,
-    /// **Flow** — is the larder growing or shrinking.
-    pub trend: Scalar,
-}
-
-impl FertilityFactors {
-    /// The `birth_rate` multiplier: the product of the three factors.
-    ///
-    /// Only `hunger` can reach 0 — it is the gate that makes an empty larder yield zero births.
-    /// `reserve` and `trend` are modifiers bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped
-    /// defaults), so neither can zero the product alone and the stack needs no floor lever; how far
-    /// a collapsed income may damp growth is `trend.deficit_penalty`'s job.
-    fn multiplier(&self) -> Scalar {
-        self.hunger * self.reserve * self.trend
-    }
+/// One turn of [`advance_demographics`]: the resolved bracket/larder state **plus the fertility
+/// factors that produced its births**. The factors are returned rather than recomputed at capture
+/// deliberately — they are resolved from the turn's *opening* brackets and *pre-meal* larder, so a
+/// re-derivation on the post-turn state would report numbers that never drove a birth.
+struct DemographicOutcome {
+    pub state: DemographicState,
+    pub fertility: FertilityFactors,
 }
 
 /// The **flow** fertility factor. `None` flow means *not projected* — a rehydrated cohort (whose
@@ -192,7 +177,7 @@ fn advance_demographics(
     temp_diff: Scalar,
     max_cap: Scalar,
     demo: &DemographicsConfig,
-) -> DemographicState {
+) -> DemographicOutcome {
     let DemographicState {
         children: children0,
         working: working0,
@@ -288,11 +273,14 @@ fn advance_demographics(
         elders *= scale;
     }
 
-    DemographicState {
-        children,
-        working,
-        elders,
-        food_store: remaining_food,
+    DemographicOutcome {
+        state: DemographicState {
+            children,
+            working,
+            elders,
+            food_store: remaining_food,
+        },
+        fertility: factors,
     }
 }
 
@@ -486,15 +474,19 @@ pub fn simulate_population(
             max_cap_scalar,
             &demo,
         );
-        cohort.children = outcome.children;
-        cohort.working = outcome.working;
-        cohort.elders = outcome.elders;
-        cohort.stores.set(FOOD, outcome.food_store);
+        cohort.children = outcome.state.children;
+        cohort.working = outcome.state.working;
+        cohort.elders = outcome.state.elders;
+        cohort.stores.set(FOOD, outcome.state.food_store);
+        // The three factors behind this turn's births, parked for the snapshot exactly as
+        // `last_morale_contributions` is: the player sees the inputs (larder, Food /turn) and the
+        // effect (population), and this is the attribution between them.
+        cohort.last_fertility_factors = outcome.fertility;
         // The food the people ACTUALLY ate this turn = the larder drop across `advance_demographics`
         // (consumption is its only `food_store` debit). This is the ledger's consumption term — it
         // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
         // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
-        cohort.last_food_consumption = (food_before - outcome.food_store).to_f32();
+        cohort.last_food_consumption = (food_before - outcome.state.food_store).to_f32();
         cohort.sync_size();
 
         // A band's population only emigrates once it has settled for a while — this gates the
@@ -682,6 +674,7 @@ mod demographics_tests {
             scalar_from_u32(NO_CAP),
             &DemographicsConfig::default(),
         )
+        .state
     }
 
     /// A **childless** working cohort (the 30-person opening band's adults: W 16.5 / E 4.5). With no
@@ -805,7 +798,8 @@ mod demographics_tests {
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(50),
             &DemographicsConfig::default(),
-        );
+        )
+        .state;
         assert!(
             (total(&out) - 50.0).abs() < 1.0,
             "total should clamp to the cap of 50: {}",
@@ -887,7 +881,8 @@ mod demographics_tests {
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
             &cfg,
-        );
+        )
+        .state;
         assert!(
             out.children.to_f32().abs() < 1e-6,
             "deficit_penalty=1.0 should zero births on a collapsed income: {}",
@@ -903,6 +898,47 @@ mod demographics_tests {
         assert!(
             born.abs() < 1e-6,
             "no food eaten → no births regardless of the modifiers: {born}"
+        );
+    }
+
+    /// **The attribution must be honest.** The three factors are exported so the client can explain
+    /// slow growth, which is only worth anything if they *are* the explanation: their product times
+    /// `birth_rate` times the working bracket must reproduce the births the same call actually made.
+    /// A drifting breakdown that adds up to the wrong answer is worse than no breakdown, so this
+    /// pins the returned set against the observed outcome rather than against a re-derivation.
+    ///
+    /// Run on a **collapsed-income** band — the case the whole model exists for, and the one where
+    /// all three factors are simultaneously off their neutral values.
+    #[test]
+    fn the_returned_factors_multiply_out_to_the_births_they_explain() {
+        let cfg = DemographicsConfig::default();
+        let start = breeders(20.0);
+        let outcome = advance_demographics(
+            start,
+            Some(FoodFlow {
+                steady_income: scalar_zero(),
+                pen_feed_upkeep: scalar_zero(),
+            }),
+            scalar_from_f32(MILD_TEMP),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        );
+        // `breeders` is childless, so this turn's `children` IS the births (no maturation out, and a
+        // fed band takes no child deaths).
+        let births = outcome.state.children.to_f32();
+        let explained = (start.working
+            * scalar_from_f32(cfg.births.birth_rate)
+            * outcome.fertility.multiplier())
+        .to_f32();
+        assert!(
+            (births - explained).abs() < 1e-6,
+            "the exported factors must explain the births they came with: {births} vs {explained}"
+        );
+        // ...and it is a real three-factor product, not a coincidence of neutral values.
+        assert!(
+            outcome.fertility.trend < scalar_one() && outcome.fertility.reserve > scalar_one(),
+            "a collapsed-income band with a fat larder should read trend < 1 < reserve: {:?}",
+            outcome.fertility
         );
     }
 
@@ -986,6 +1022,7 @@ mod demographics_tests {
             scalar_from_u32(NO_CAP),
             &cfg,
         )
+        .state
         .children
         .to_f32();
         let fat = run(breeders(20.0), MILD_TEMP).children.to_f32();
@@ -1193,6 +1230,7 @@ mod wellbeing_tests {
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: discontent_fraction(m, &cfg().discontent),
             grievance: scalar_zero(),
             last_emigrated: 0,
