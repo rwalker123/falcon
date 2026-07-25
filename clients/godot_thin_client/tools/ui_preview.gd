@@ -2054,6 +2054,25 @@ func _ready() -> void:
 	await _settle()
 	await _save("turn_orb_clear")
 
+	# State 6a-fit — THE TURN NUMBER IS ON THE FACE, and its type size is MEASURED, not tabled
+	# (`TurnOrb._turn_font_size`: step down from `TURN_FONT_SIZE_MAX` until the string fits
+	# `FACE_DIAMETER * TURN_TEXT_WIDTH_FRACTION`, floored at `TURN_FONT_SIZE_MIN`). Walk 1 → 47 → 999 →
+	# 1200 and assert, for each, that the rendered string is the number, that the chosen size is inside
+	# the declared band, and — the point of the fit — that it actually FITS the usable chord. A 4-digit
+	# turn is the case that would otherwise overflow the circle; `turn_orb_turn_4digit` is its frame.
+	for probe_turn in [1, 47, 999, TURN_ORB_FOUR_DIGIT_TURN]:
+		_hud.update_overlay(probe_turn, {})
+		await _settle()
+		_assert_turn_face_fits(probe_turn)
+	# The curved `TURN` word above the number rides the same face. Its geometry is number-independent, so
+	# one arithmetic check covers every probe; the 4-digit frame saved above is where the CLEARANCE between
+	# the word and the widest number is judged by eye, at true size.
+	_assert_turn_word_clears()
+	await _save("turn_orb_turn_4digit")
+	# Back to the state the following orb states describe.
+	_hud.update_overlay(42, {})
+	await _settle()
+
 	# State 6b — turn orb, EMPTY registry, orb-face CLICK: advancing must always be possible
 	# from the orb, so with nothing to triage the click ADVANCES the turn directly and opens NO
 	# popover (the old bug opened a tall blank box whose Advance affordance was pushed off-screen,
@@ -2813,6 +2832,49 @@ func _assert_hud(label: String, ok: bool) -> void:
 		print("ui_preview: PASS hud — ", label)
 	else:
 		push_error("ui_preview: FAIL hud — %s" % label)
+
+## A 4-digit turn — the widest the face has to hold, and the case a fixed font size would clip.
+const TURN_ORB_FOUR_DIGIT_TURN := 1200
+
+## GUARD: the turn number on the orb face must BE the turn, be sized inside the declared band, and fit
+## the face's usable chord. Measured against the button's own font, exactly as `_turn_font_size` does —
+## the alternative (eyeballing turn 1200) is how a clipped number ships.
+func _assert_turn_face_fits(expected_turn: int) -> void:
+	var orb := _hud.turn_orb
+	var face: Button = orb._face
+	var text := face.text
+	var size := face.get_theme_font_size("font_size")
+	var font := face.get_theme_font("font")
+	var budget: float = TurnOrb.FACE_DIAMETER * TurnOrb.TURN_TEXT_WIDTH_FRACTION
+	var width: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, size).x
+	var ok := text == str(expected_turn) \
+		and size >= TurnOrb.TURN_FONT_SIZE_MIN and size <= TurnOrb.TURN_FONT_SIZE_MAX \
+		and width <= budget + 1.0
+	_assert_turn_orb("turn %d on the face reads '%s' at %dpx, %.0f of %.0f wide" % [
+		expected_turn, text, size, width, budget], ok)
+
+## GUARD: the curved `TURN` word inside the face must not wrap around the circle, must not cross the
+## face's edge, and must vanish when the face swaps the number out for the advance glyph. Drawn pixels
+## cannot be asserted, so assert the ARITHMETIC — via the SAME `turn_word_metrics()` the draw reads, so
+## this cannot pass while the renderer computes something else.
+func _assert_turn_word_clears() -> void:
+	var orb := _hud.turn_orb
+	var metrics: Dictionary = orb.turn_word_metrics()
+	var arc_angle: float = metrics["arc_angle"]
+	var outer_reach: float = float(metrics["radius"]) + float(metrics["glyph_height"])
+	var face_radius: float = TurnOrb.FACE_DIAMETER * 0.5
+	_assert_turn_orb("curved '%s' spans %.0f° (ceiling %.0f°)" % [
+			TurnOrb.TURN_WORD, rad_to_deg(arc_angle), rad_to_deg(TurnOrb.TURN_WORD_MAX_ARC_ANGLE)],
+		arc_angle > 0.0 and arc_angle < TurnOrb.TURN_WORD_MAX_ARC_ANGLE)
+	_assert_turn_orb("curved '%s' reaches %.1f of the face's %.1f radius" % [
+			TurnOrb.TURN_WORD, outer_reach, face_radius], outer_reach <= face_radius)
+	# The hover rule: with an EMPTY registry the face swaps to `GLYPH`, and the word must go with it.
+	var was_hovered: bool = orb._face_hovered
+	orb._set_face_hovered(true)
+	var hidden_on_glyph := not orb._show_turn_word()
+	orb._set_face_hovered(was_hovered)
+	_assert_turn_orb("curved '%s' hides while the face shows the advance glyph" % TurnOrb.TURN_WORD,
+		hidden_on_glyph)
 
 func _assert_turn_orb(label: String, ok: bool) -> void:
 	if ok:

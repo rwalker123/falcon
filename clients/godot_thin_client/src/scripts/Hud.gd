@@ -78,6 +78,7 @@ var _server_build: String = "?"
 @onready var discoveries_label: Label = %DiscoveriesLabel
 @onready var discoveries_strip: HBoxContainer = %DiscoveriesStrip
 @onready var intensification_label: Label = %IntensificationLabel
+@onready var bottom_bar: HBoxContainer = $LayoutRoot/RootColumn/BottomBar
 @onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
 @onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
 @onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomInButton
@@ -282,6 +283,12 @@ var _drawer: SubjectDrawerController = null
 # their "Jump →" (`on_turn_orb_focus`). Constructed AFTER `_bandpanel` (it holds it for the pen/awaiting
 # jumps); it emits its own `alert_focus_requested`, which HudLayer relays.
 var _attention: AttentionController = null
+# The BOTTOM-BAR CHROME PLACEMENT cluster (issue #324): on a HORIZONTAL Band/City dock it parks the
+# nav cluster + turn orb into that panel's single trailing rail and drops `BottomBar` out of layout, so
+# `ContentRow` reclaims the ~164px the stacked bar used to cost on top of the panel's own height. A
+# vertical dock is untouched. Constructed in `_ready` after `_connect_zoom_rail()`, since it MEASURES
+# the nav backing and that call is what applies the stylebox whose padding is part of the measurement.
+var _dockrow: DockRowController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -398,6 +405,10 @@ func _ready() -> void:
         subject_body, subject_scroll, left_dock_scroll, _targeting)
     _load_ui_balance_config()
     _connect_zoom_rail()
+    # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,
+    # hence its minimum size — and this controller's fit gate + declared rail widths are measurements
+    # of exactly that. It captures `BottomBar`'s authored minimum height here too.
+    _dockrow = DockRowController.new(bottom_bar, nav_backing, turn_orb)
     _setup_tooltip()
     _legend.refresh_rows()
     _refresh_campaign_label()
@@ -973,9 +984,19 @@ func _hide_drawer_blocks() -> void:
 # `BandCityPanel`'s `cycle_requested` / `subject_activated` signals as `Callable(hud, "…")`. A failed
 # probe fails SILENTLY, so they must keep resolving on the HUD node itself.
 
-## Injected by Main: the dockable Band/City panel a player band's detail renders into.
+## Injected by Main: the dockable Band/City panel a player band's detail renders into. It goes to the
+## dock-row controller too — that one parks the bottom-bar chrome into the panel's single trailing rail
+## on a horizontal dock (issue #324).
 func set_band_city_panel(panel: BandCityPanel) -> void:
     _bandpanel.set_panel(panel)
+    if _dockrow != null:
+        _dockrow.set_panel(panel)
+
+## Reflow the bottom-bar chrome into the Band/City panel's row on a horizontal dock (issue #324).
+## `Main` probes this BY NAME, so it stays a thin delegator on `HudLayer`.
+func reflow_dock_row(edge: int, size: float) -> void:
+    if _dockrow != null:
+        _dockrow.apply(edge, size)
 
 ## Walk to the next/prev player band (the panel cycler's ◀/▶).
 func cycle_panel_band(delta: int) -> void:
