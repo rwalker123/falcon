@@ -480,8 +480,71 @@ basic.
     `larder_delta = foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`
     (`integration_tests/tests/raid_food_ledger.rs`); `raidForfeit` is a past-turn debit and does **not**
     drain the forward `turnsOfFood` runway. See `.claude/rules/core_sim/combat.md` → "Phase 3".
-  - **Client half — the companion `client-dev` slice** (not yet built): decode `raidRadius`/`raidForfeit`
-    into the cohort dict, style the forfeit in the feed, and render the band-panel income/loss line.
+  - **Client half — LANDED (this PR).** The native reader decodes `raidRadius`/`raidForfeit` into the
+    cohort dict; `CommandFeedController`'s new extensible `KIND_STYLE` table styles the threat/casualty
+    feed events (`predator_raid` → ⚔ crimson, `hunt_danger` → ⚠ amber, reusing the `HudStyle` palette so
+    the feed accent matches the map-overlay hues); the Warrior card shows a live **"⚠ Predator nearby —
+    N on guard"** warning (a visible camp-threat predator within `raidRadius` of the band); and the
+    `raidForfeit` **"⚔ Lost to raids"** negative food-ledger line renders beside `penFeedUpkeep`.
+    ui_preview fixtures `predator_feed` / `predator_band_raided` pin both.
+  - **Already shipped in Phase 0/1a (not re-done here):** the prey-sense view ring, the herd-drawer
+    `Danger: Hunt · Threat` line + combat-component bars, and **both** map overlays (`hunt_danger` +
+    `threat`, native-projected with selector + legend). Phase 3 covered only the genuinely-missing surface.
+  - **Deliberately deferred:** a per-hunt "this hunt may cost N lives" line — a faithful version needs the
+    hunt forecast to model casualties, which it does not yet.
+
+- **Phase 4 — Emergent raids (hunger × proximity) + visibility-gated awareness.**
+  *(Design — supersedes the Phase-1b flat `aggression > 0` within `raid_radius` trigger. Not yet
+  implemented.)*
+
+  Playtest of 1b/3 exposed the real gap: the flat trigger is **invisible and incidental** — `raid_radius`
+  (2) is right on top of the camp, the warning is gated to that exact radius, and since Phase 2 a wolf
+  pursues *prey*, not camps, so it only threatens you by luck. Phase 4 makes the threat **emergent,
+  legible, and earned** by splitting the two questions the flat model conflated: **awareness** ("can I
+  see it?") from **threat** ("will it attack?").
+
+  - **Awareness — the alert is VISIBILITY-gated, not a radius.** A band warns of a camp-threatening
+    predator (`attack × aggression > 0`) exactly when the band **actively sees it** — its own base sight
+    plus the tiles its **scouts** and **worked hunts** make `Active` (`calculate_visibility`). So scouting
+    literally buys predator early-warning, and the "magic awareness radius" is gone (the band's *real*
+    vision is the range). Computed **server-side, per band** (the sim owns visibility; a far-off band's
+    scout must not light up an unrelated camp) and shipped as a per-cohort signal the client renders on
+    the Warrior card — **replacing the Phase-3 client-side `raidRadius` proximity check**. Decoupled from
+    the raid: you can *see* a well-fed wolf that never bothers you.
+
+  - **Threat — the raid is a seeded PROBABILITY, driven by hunger AND proximity.** Each turn, per
+    (predator, band) pair, a rollback-stable seeded roll fires a raid with probability
+    `P = clamp(w_p·proximity + w_d·desperation + w_x·(proximity·desperation), 0, 1)`
+    (`predators.raid_proximity_weight` / `raid_desperation_weight` / `raid_interaction_weight`, default
+    **0.35 / 0.35 / 0.30**, summing to 1 so both-maxed = 100%). **No axis can drown the others** — the two
+    linear terms give each a standalone chance (a wolf right next door, or a starving one out near its
+    range edge, each warrants a real chance alone), and the interaction term makes *both*-high the
+    scariest; both-low → 0.
+    - **proximity** = `clamp((awareness − dist)/(awareness − 1), 0, 1)` — **1.0 adjacent**, ramping to 0
+      at the edge of the predator's **awareness range** (`predators.pursuit_radius`, 8), **0 outside it**
+      (does nothing).
+    - **desperation** = `clamp(1 − reachable_prey / prey_demand, 0, 1)` — **0 well-fed** (game meets its
+      needs) → **1 starving** (no game left), reusing the prey-shortfall `advance_predation` already
+      computes. *The wolf comes for your camp because the game ran out* — so raids **emerge from the
+      ecology**, and overhunting the valley feeds you **and** draws the wolves to your door (the
+      you-vs-wolves competition loop finally bites).
+    - On a fired roll the **standard `resolve_fight` resolves** — Warriors cut the losses, and the
+      casualty + `raidForfeit` outcomes are unchanged (1b/3). Hunger/proximity set the *odds*; a starving
+      wolf is more likely to come, not a better fighter.
+
+  - **Steer-when-starving movement.** A **desperate** predator whose `pursue` finds no reachable prey
+    **steers toward the nearest band** (camp as food-of-last-resort) over the *same*
+    `relocate_toward_resource` primitive (attractor = the band tile instead of prey). This is what walks
+    the threat into your sight; without it a hungry wolf is near you only by luck. A fed predator keeps
+    pursuing game and ignores you.
+
+  - **Retires** the Phase-1b flat trigger and the `predators.raid_radius` lever (the awareness range is
+    now `pursuit_radius`; the alert is sight-gated).
+
+  **Testable:** a well-fed wolf near a band never raids (desperation 0) and reads only as an on-map
+  presence; overhunt the band's game until the wolf starves → it turns toward the camp, enters the band's
+  sight (the ⚠ Warrior-card alert fires), and raids at a rising probability as it closes; staffing
+  Warriors cuts the losses; deterministic under rollback.
 
 **Deferred (own slices, noted so the interface is built to accept them):**
 - **Combat-modifiers layer.** A set of situational factors that tilt a `resolve_fight` toward one
