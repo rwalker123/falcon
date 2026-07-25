@@ -2145,7 +2145,8 @@ fn validate_species_selection(
     };
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let flora = app.world.resource::<FloraConfigHandle>().get();
-    let composition = tile_flora_composition(&flora, &labor.forage, ground);
+    let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
     let verb = match rung {
         RungKey::PlantField => "sown",
         _ => "tended",

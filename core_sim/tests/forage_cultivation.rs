@@ -112,13 +112,14 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
         // standard map this lands on rich river-lowland (AlluvialPlain ~1.35×).
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
         let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
         let registry = app.world.resource::<ForageRegistry>();
         query
             .iter(&app.world)
             .filter(|(tile, _)| registry.patch(tile.position).is_some())
             .find(|(tile, _)| {
-                let composition = tile_flora_composition(&flora, &labor.forage, tile);
+                let composition = tile_flora_composition(&flora, &labor.forage, tile, map_seed);
                 let Some(species) =
                     default_species_for_rung(&composition, &flora, RungKey::PlantTended)
                 else {

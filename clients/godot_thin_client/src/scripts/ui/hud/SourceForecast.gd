@@ -588,6 +588,9 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # Fodder crops pay hay, not provisions — carried through so the picker row can show the
             # hay value in place of the 0× provisions ratio a fodder crop would otherwise read.
             "sow_fodder_payoff": float(entry.get("sow_fodder_payoff", 0.0)),
+            # Cash crops pay trade, not provisions or fodder — carried through so the picker row can
+            # show the trade value in place of the 0× provisions ratio a cash crop would otherwise read.
+            "sow_trade_payoff": float(entry.get("sow_trade_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries

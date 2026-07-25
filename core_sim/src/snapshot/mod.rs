@@ -61,10 +61,10 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle},
     food::FoodModuleTag,
     forage::{
-        commit_fodder_payoff, commit_payoff, commit_yield_ratio, field_provisions, forage_forecast,
-        rung_site_refusal, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
-        wild_payoff, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-        SEED_SELECTION_DISCOVERY_ID,
+        commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
+        field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
+        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
+        CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -205,6 +205,47 @@ mod tests {
         GreatDiscoveryTelemetryState, KnowledgeField, KnownTechFragment, TerrainTags, TerrainType,
         TradeLinkKnowledge,
     };
+
+    /// The viewer every herd-export fixture below captures for.
+    const VIEWER: FactionId = FactionId(0);
+
+    /// A ledger in which [`VIEWER`] can see the whole `size × size` map — the neutral fixture for the
+    /// tests that are about *what a herd exports*, not about *whether it exports*. The fog filter
+    /// itself is exercised by `herd_snapshot_entries` fog tests below, which build partial ledgers.
+    fn all_seeing_ledger(size: u32) -> crate::visibility::VisibilityLedger {
+        let mut ledger = crate::visibility::VisibilityLedger::default();
+        let map = ledger.ensure_faction(VIEWER, size, size);
+        for y in 0..size {
+            for x in 0..size {
+                map.mark_active(x, y, 0);
+            }
+        }
+        ledger
+    }
+
+    /// The four wire-shape fixtures below differ only in their herd registry, so the plumbing is
+    /// stated once. Grid is 64×64 (the fixtures' own `UVec2::new(64, 64)`), fully visible.
+    fn export_herds(
+        telemetry: &HerdTelemetry,
+        registry: &HerdRegistry,
+        fauna: &FaunaConfig,
+        labor: &LaborConfig,
+        expedition: &ExpeditionConfig,
+        visibility: &crate::visibility::VisibilityLedger,
+    ) -> Vec<HerdTelemetryState> {
+        herd_snapshot_entries(HerdSnapshotInputs {
+            telemetry,
+            registry,
+            fauna,
+            ladder: &LadderConfig::builtin(),
+            labor,
+            expedition,
+            grid_size: UVec2::new(64, 64),
+            wrap_horizontal: false,
+            visibility,
+            viewer: VIEWER,
+        })
+    }
 
     #[test]
     fn herd_state_roundtrip_is_identity() {
@@ -1511,20 +1552,161 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(
+        let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
-            &LadderConfig::builtin(),
             &labor,
             &expedition,
-            bevy::math::UVec2::new(64, 64),
-            false,
+            &all_seeing_ledger(64),
         );
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// A ledger in which [`VIEWER`] sees exactly `visible` and nothing else — the fog fixtures below.
+    fn ledger_seeing(size: u32, visible: &[UVec2]) -> crate::visibility::VisibilityLedger {
+        let mut ledger = crate::visibility::VisibilityLedger::default();
+        let map = ledger.ensure_faction(VIEWER, size, size);
+        for pos in visible {
+            map.mark_active(pos.x, pos.y, 0);
+        }
+        ledger
+    }
+
+    /// One stationary wild herd standing at `pos`.
+    fn herd_at(id: &str, pos: UVec2) -> Herd {
+        use crate::fauna_config::SizeClass;
+        Herd::new(
+            id.to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![pos],
+            50.0,
+            100.0,
+            0.0,
+            0.05,
+            SNAPSHOT_BODY_MASS,
+        )
+    }
+
+    fn export_with(
+        registry: &HerdRegistry,
+        ledger: &crate::visibility::VisibilityLedger,
+    ) -> Vec<HerdTelemetryState> {
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        export_herds(
+            &telemetry,
+            registry,
+            &FaunaConfig::builtin(),
+            &LaborConfig::builtin(),
+            &ExpeditionConfig::builtin(),
+            ledger,
+        )
+    }
+
+    /// **The fog leak (#264).** Herd telemetry used to be exported unfiltered, so the wire handed the
+    /// client every herd on the map and fog was decorative for fauna. A herd is now exported only if
+    /// the viewer can see the tile it is standing on *this turn*.
+    #[test]
+    fn a_herd_on_unseen_ground_never_reaches_the_client() {
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd_at("herd_seen", UVec2::new(4, 4)));
+        registry
+            .herds
+            .push(herd_at("herd_hidden", UVec2::new(40, 40)));
+
+        let states = export_with(&registry, &ledger_seeing(64, &[UVec2::new(4, 4)]));
+
+        assert_eq!(
+            states.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(),
+            vec!["herd_seen"],
+            "only the herd on visible ground crosses the wire"
+        );
+        assert_eq!(
+            registry.herds.len(),
+            2,
+            "the authoritative registry is untouched — only the DISPLAY list is filtered"
+        );
+    }
+
+    /// **Ownership is not a leak.** Your own tamed/penned animals are yours to track; hiding them
+    /// would take a starving pen's warning off the panel because the herd drifted a hex out of sight.
+    #[test]
+    fn a_herd_the_viewer_owns_is_exported_even_in_the_dark() {
+        let mut registry = HerdRegistry::default();
+        let mut mine = herd_at("herd_mine", UVec2::new(40, 40));
+        // The real accrual path, so the fixture cannot fabricate an ownership the sim would refuse.
+        mine.accrue_domestication(VIEWER, RUNG_COMPLETE);
+        assert_eq!(
+            mine.owner,
+            Some(VIEWER),
+            "the fixture species must be tameable"
+        );
+        registry.herds.push(mine);
+        registry
+            .herds
+            .push(herd_at("herd_theirs", UVec2::new(41, 41)));
+
+        // The viewer sees NOTHING — both herds stand in the dark.
+        let states = export_with(&registry, &ledger_seeing(64, &[]));
+
+        assert_eq!(
+            states.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(),
+            vec!["herd_mine"],
+            "the viewer's own herd is exported; an unowned herd in the dark is not"
+        );
+    }
+
+    /// **Fails closed.** Before the first `calculate_visibility` — and on the turn after a rollback
+    /// clears the ledger — the viewer has no faction map at all. `visibility_raster_from_ledger`
+    /// answers that state with an all-unexplored (black) raster, so the herd list must answer it the
+    /// same way rather than dumping the map onto a client that is rendering darkness.
+    #[test]
+    fn a_ledger_with_no_map_for_the_viewer_exports_no_herds() {
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd_at("herd_a", UVec2::new(4, 4)));
+        registry.herds.push(herd_at("herd_b", UVec2::new(9, 9)));
+
+        let states = export_with(&registry, &crate::visibility::VisibilityLedger::default());
+
+        assert!(
+            states.is_empty(),
+            "an empty ledger hides every herd, matching the all-unexplored raster"
+        );
+    }
+
+    /// The heading arrow names a **second** tile, so it carries its own leak: a herd visible at the
+    /// edge of your sight would otherwise tell you where it is walking in the dark.
+    #[test]
+    fn the_heading_arrow_is_withheld_when_the_next_hex_is_unseen() {
+        let seen = UVec2::new(4, 4);
+        let next = UVec2::new(5, 4);
+
+        let mut registry = HerdRegistry::default();
+        let mut herd = herd_at("herd_walker", seen);
+        herd.next_pos = Some(next);
+        registry.herds.push(herd);
+
+        let hidden_next = export_with(&registry, &ledger_seeing(64, &[seen]));
+        let state = &hidden_next[0];
+        assert_eq!(
+            (state.next_x, state.next_y),
+            (-1, -1),
+            "the herd is visible but its destination is not, so no arrow is published"
+        );
+
+        let both_visible = export_with(&registry, &ledger_seeing(64, &[seen, next]));
+        let state = &both_visible[0];
+        assert_eq!(
+            (state.next_x, state.next_y),
+            (next.x as i32, next.y as i32),
+            "with both hexes visible the heading crosses unchanged"
+        );
     }
 
     /// **Grazing 2b-iii — the ecological readout on the wire.** A herd exports its live derived
@@ -1580,15 +1762,13 @@ mod tests {
         let telemetry = HerdTelemetry {
             entries: registry.snapshot_entries(),
         };
-        let states = herd_snapshot_entries(
+        let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
-            &LadderConfig::builtin(),
             &labor,
             &expedition,
-            bevy::math::UVec2::new(64, 64),
-            false,
+            &all_seeing_ledger(64),
         );
 
         for herd in &registry.herds {
@@ -1674,15 +1854,13 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(
+        let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
-            &LadderConfig::builtin(),
             &labor,
             &expedition,
-            bevy::math::UVec2::new(64, 64),
-            false,
+            &all_seeing_ledger(64),
         );
 
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
@@ -1760,15 +1938,13 @@ mod tests {
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
         let expedition = ExpeditionConfig::builtin();
-        let states = herd_snapshot_entries(
+        let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
-            &LadderConfig::builtin(),
             &labor,
             &expedition,
-            bevy::math::UVec2::new(64, 64),
-            false,
+            &all_seeing_ledger(64),
         );
 
         let expected = fauna.husbandry.pen.upkeep_per_biomass * BIOMASS;

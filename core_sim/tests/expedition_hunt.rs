@@ -35,6 +35,30 @@ use core_sim::{
 /// Party size used by every trip test: 4 hunters (the design's reference party).
 const PARTY_WORKERS: u32 = 4;
 
+/// Mark the named herds' tiles visible to the viewer faction.
+///
+/// Herd display telemetry is **fog-filtered** (issue #264) — a herd on ground the viewer cannot see
+/// is not published at all. The tests below pick herds off the registry by index rather than by
+/// where the starting band happens to stand, so most of them are in the dark; they are about *what a
+/// visible herd's exported readout says*, not about whether it is visible. Revealing the herd is the
+/// in-game precondition for reading that panel at all (a band works or scouts within sight of it),
+/// so the fixture states it explicitly rather than blanketing the map.
+fn reveal_herds(app: &mut App, ids: &[String]) {
+    let positions: Vec<UVec2> = {
+        let registry = app.world.resource::<HerdRegistry>();
+        ids.iter()
+            .filter_map(|id| registry.find(id).map(|herd| herd.position()))
+            .collect()
+    };
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    let viewer = app.world.resource::<core_sim::ViewerFaction>().0;
+    let mut ledger = app.world.resource_mut::<VisibilityLedger>();
+    let map = ledger.ensure_faction(viewer, grid.x, grid.y);
+    for pos in positions {
+        map.mark_active(pos.x, pos.y, 0);
+    }
+}
+
 fn spawn_world() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -741,6 +765,7 @@ fn set_fauna_regrowth_rate(app: &mut App, regrowth_rate: f32) {
 /// checked to exist and to exclude the forage-only verbs — they remain the honest "what will this herd
 /// give up at all" readout, they are simply no longer a *staffing* formula's input.
 fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], case: &str) {
+    reveal_herds(app, herd_ids);
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
         .world
@@ -1306,6 +1331,9 @@ fn a_far_just_launched_party_projects_the_estimate_delivery() {
     assert_eq!(phase(&app, party), ExpeditionPhase::Hunting);
 
     // Capture the shipped snapshot WITHOUT advancing (the live capture is right after launch).
+    // The target herd is far from home, so the fog filter would otherwise withhold it (see
+    // `reveal_herds`) and the estimate the party's forecast is compared against would not ship.
+    reveal_herds(&mut app, std::slice::from_ref(&id));
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
         .world
@@ -1388,6 +1416,7 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
     let workers = available_workers(app.world.get::<PopulationCohort>(party).unwrap().working);
     assert_eq!(workers, 1, "the party carries a real worker count");
 
+    reveal_herds(&mut app, std::slice::from_ref(&healthy));
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
         .world

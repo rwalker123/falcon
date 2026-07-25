@@ -112,6 +112,12 @@ const SIZE_DIM_SIZE := 11
 const SUMMARY_KEY_SIZE := 11
 const SUMMARY_VAL_SIZE := 12
 const NOTE_SIZE := 11
+const SPEED_ROW_SEPARATION := 4
+const SPEED_ROW_TITLE_SIZE := 13
+const SPEED_READOUT_FORMAT := "%.2f×"
+## Meta key on each speed slider carrying its default, so "Restore defaults" resets it.
+const SPEED_DEFAULT_META := "speed_default"
+const SPEED_READOUT_META := "speed_readout"
 
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
@@ -139,6 +145,9 @@ var _selected_size := MapSizes.DEFAULT_KEY
 var _seed_edit: LineEdit
 var _summary_box: HBoxContainer
 var _nav_rows := {}   # id -> {row, item, hover}
+## The Options-pane speed sliders (rebuilt each time the pane is opened), so
+## "Restore defaults" can reset them to their per-slider `SPEED_DEFAULT_META` value.
+var _speed_sliders: Array = []
 
 
 func set_mode(value: String) -> void:
@@ -512,19 +521,79 @@ func _build_saves_pane(title: String, eyebrow: String, is_save: bool) -> void:
 
 func _build_options_pane() -> void:
 	_add_pane_header("Options", "Client settings")
-	_add_paragraph("Client settings are not wired yet — this pane is a placeholder for interface scale, terrain rendering, and the sim endpoint.")
+	_speed_sliders.clear()
+	_pane_body.add_child(_make_speed_slider_row(
+		"Map pan speed",
+		ClientSettings.pan_speed_multiplier,
+		ClientSettings.PAN_SPEED_DEFAULT,
+		ClientSettings.PAN_SPEED_MIN,
+		ClientSettings.PAN_SPEED_MAX,
+		ClientSettings.set_pan_speed_multiplier))
+	_pane_body.add_child(_make_speed_slider_row(
+		"Zoom speed",
+		ClientSettings.zoom_speed_multiplier,
+		ClientSettings.ZOOM_SPEED_DEFAULT,
+		ClientSettings.ZOOM_SPEED_MIN,
+		ClientSettings.ZOOM_SPEED_MAX,
+		ClientSettings.set_zoom_speed_multiplier))
 	var actions := _make_actions_row()
-	var apply := Button.new()
-	apply.text = "Apply"
-	HudStyle.apply_button(apply, "primary")
-	apply.disabled = true
-	actions.add_child(apply)
 	var restore := Button.new()
 	restore.text = "Restore defaults"
 	HudStyle.apply_button(restore, "ghost")
-	restore.disabled = true
+	restore.pressed.connect(_on_restore_defaults_pressed)
 	actions.add_child(restore)
 	_pane_body.add_child(actions)
+
+
+## One "title / slider + value readout" row for a speed multiplier. Applies live +
+## persists via `on_changed` (a `ClientSettings.set_*` Callable); the slider is kept in
+## `_speed_sliders` (with its default in meta) so "Restore defaults" can reset it.
+func _make_speed_slider_row(title: String, value: float, default_value: float, min_v: float, max_v: float, on_changed: Callable) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var title_label := Label.new()
+	title_label.text = title
+	title_label.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	title_label.add_theme_color_override("font_color", HudStyle.INK)
+	col.add_child(title_label)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	col.add_child(row)
+
+	var slider := HSlider.new()
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.min_value = min_v
+	slider.max_value = max_v
+	slider.step = ClientSettings.SPEED_STEP
+	slider.value = value
+	slider.set_meta(SPEED_DEFAULT_META, default_value)
+	row.add_child(slider)
+
+	var readout := Label.new()
+	readout.text = SPEED_READOUT_FORMAT % value
+	readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
+	row.add_child(readout)
+	slider.set_meta(SPEED_READOUT_META, readout)
+
+	slider.value_changed.connect(func(v: float) -> void:
+		on_changed.call(v)
+		readout.text = SPEED_READOUT_FORMAT % v)
+
+	_speed_sliders.append(slider)
+	return col
+
+
+func _on_restore_defaults_pressed() -> void:
+	ClientSettings.restore_defaults()
+	for slider in _speed_sliders:
+		var default_value: float = slider.get_meta(SPEED_DEFAULT_META)
+		slider.set_value_no_signal(default_value)
+		var readout: Label = slider.get_meta(SPEED_READOUT_META)
+		readout.text = SPEED_READOUT_FORMAT % default_value
 
 
 func _build_abandon_pane() -> void:

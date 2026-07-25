@@ -12,12 +12,18 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
 
+mod decode_fixture;
+mod decode_guard;
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("command") => command_subcommand(args.collect()),
         Some("prepare-client") => prepare_client(),
         Some("godot-build") => godot_build(),
+        Some("decode-fixture") => decode_fixture::write_fixture()
+            .and_then(|()| decode_fixture::write_headerless_fixture()),
+        Some("decode-guard") => decode_guard::run(args.collect()),
         Some("manifest-schema") => generate_manifest_schema(),
         Some("validate-manifests") => validate_manifests(),
         Some("help") | None => {
@@ -35,6 +41,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn print_usage() {
     eprintln!("Usage: cargo xtask prepare-client");
     eprintln!("       cargo xtask godot-build");
+    eprintln!("       cargo xtask decode-fixture");
+    eprintln!("       cargo xtask decode-guard [--write-golden] [--no-build]");
     eprintln!("       cargo xtask manifest-schema");
     eprintln!("       cargo xtask validate-manifests");
     eprintln!("       cargo xtask command [OPTIONS] <verb> [args...]");

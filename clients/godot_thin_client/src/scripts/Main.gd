@@ -54,7 +54,6 @@ const DEV_DEFAULT_NEW_GAME := {
 }
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
-const CAMERA_PAN_SPEED = 220.0
 # Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
 # map/HUD until the new world reveals.
 const LOADING_OVERLAY_LAYER = 150

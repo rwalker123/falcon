@@ -33,6 +33,17 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 discipline). Nothing else should need to change. If a codec helper gains a second
 section as a consumer, hoist it to `codec/mod.rs` rather than duplicating it.
 
+**Then run `cargo xtask decode-guard`** — "nothing else should need to change" is
+true of *this* crate, but a field the client never decodes is invisible from here,
+and the Godot decoder has silently dropped an appended field six times (see
+`clients/godot_thin_client/CLAUDE.md` → Native Extension). The guard decodes a
+synthetic snapshot in which every section is populated and diffs the resulting
+dictionary against a golden; your new field should show up as a new line whose
+value is its own wire path. Two things will stop you first if you skip it: a new
+**repeated** field fails the fixture build until it is seeded, and a field added to
+one of the state structs without a `Default` fails to compile
+(`xtask/src/decode_fixture.rs` holds exhaustive literals for those on purpose).
+
 ## Terrain Overlay Channel
 - `WorldSnapshot` now carries a `terrainOverlay` table (width, height, packed
   samples of `TerrainType` + `TerrainTags`).

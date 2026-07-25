@@ -13,6 +13,10 @@
 
   "_comment_river_fish": "THE CHANNEL ITSELF, NOT THE VALLEY IT WAS CUT THROUGH. A navigable hex's forage capacity is TWO terms, not one (ForageLaborConfig::navigable_forage_capacity): capacity_for(underlying biome) + navigable_river_forage_bonus (80). The NavigableRiver row in forage.capacity_by_biome is vestigial and bypassed, so decomposing that row would name nothing that is actually there — and decomposing only the underlying biome would leave the whole 80-unit fishery UNNAMED, which is exactly the nameless food the coverage validator exists to forbid, leaking in through a path that validator cannot see. So this species is ALONE on NavigableRiver and means precisely the bonus term: a giant river is always a fishery. FloraConfig::navigable_composition blends the two baskets in the same two-term shape as navigable_forage_capacity (each weighted by ITS OWN term, then renormalized), and forage::tile_flora_composition is THE single seam every caller reads, so the capacity and the composition cannot drift.",
 
+  "_comment_realized_species": "PER-TILE REALIZATION (docs/plan_flora_roster.md §10). The host_biomes weights above are AFFINITY — what CAN grow on a biome. What IS growing on a given TILE is a seeded subset: forage::tile_flora_composition draws realized_species_min..realized_species_max species (clamped to how many the biome hosts) by weighted sampling without replacement, keyed on (map_seed, tile), then renormalizes. So some alluvial tiles are wheat, others tobacco, instead of every tile carrying a diluted slice of all of them — and the rung-2 commit bar reads the tile's LOCAL realized share, which is what lets cash crops sit on AlluvialPlain without eroding wheat. PLAYTEST DIALS; validated 1 <= min <= max.",
+  "realized_species_min": 2,
+  "realized_species_max": 4,
+
   "species": {
     "shellfish_beds": {
       "display_name": "Shellfish Beds",
@@ -281,6 +285,84 @@
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.2,
         "trade_goods_per_biomass": 0.0
+      },
+      "regrowth_rate": 0.25
+    },
+    "cotton": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6). A trade-DOMINANT species: its yield vector pays into the trade-goods account, NOT provisions (cotton is worthless as food — provisions_per_biomass is a SAFE, intended 0.0: patch_species_quality divides by the WILD provisions rate, never the species rate, so a cash Field yields exactly 0 food with no divide-by-zero, and the vector's trade component keeps YieldVector::pays_something() true) and NOT fodder. `role: cash` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a cotton Field's harvest credits the faction trade_goods stockpile, a grain Field's the FOOD store, a hay Field's the FODDER store, through the SAME commodity-generic code — F4 is the exact twin of F3's fodder work). `cultivation_ceiling: field` because you SOW it — an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts warm river-valley farmland (AlluvialPlain/Floodplain/RiverDelta) plus SemiAridScrub — HOSTED HONESTLY now that PER-TILE REALIZATION (§10) dissolved the F4 dilution bind: adding cotton to AlluvialPlain no longer erodes wheat on every alluvial tile, because the rung-2 commit bar reads each tile's LOCAL realized share, and some alluvial tiles realize as cotton while others realize as wheat. It COMPETES WITH GRAIN AND HAY for the scarce sowable tiles: calories OR herd-ceiling OR cash from one river-valley tile, the sharp 'pays no calories' land-use tension. `trade_goods_per_biomass` (0.20) is a PLAYTEST DIAL: raise it to make cash cropping more tempting against food, lower it if cash crowds out staples.",
+      "display_name": "Cotton Fields",
+      "plural": "cotton",
+      "adjective": "cotton",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "AlluvialPlain": 0.3,
+        "Floodplain": 0.25,
+        "RiverDelta": 0.2,
+        "SemiAridScrub": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.2
+      },
+      "regrowth_rate": 0.25
+    },
+    "flax": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — the cool-temperate-loam twin of cotton. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — see the cotton comment) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay for the scarce sowable tiles: cash OR calories OR herd-ceiling from one river-valley tile. Hosts AlluvialPlain/Floodplain (sowable) + RollingHills — honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.15) is a PLAYTEST DIAL — deliberately below cotton's 0.20 so cotton is the richer cash crop and flax the marginal one.",
+      "display_name": "Flax Fields",
+      "plural": "flax",
+      "adjective": "flax",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "AlluvialPlain": 0.2,
+        "Floodplain": 0.25,
+        "RollingHills": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.15
+      },
+      "regrowth_rate": 0.25
+    },
+    "tobacco": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — temperate, fertile, well-drained. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — patch_species_quality divides by the WILD provisions rate, never the species rate) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable river-deposit ground, so the land-use tension lands) plus RollingHills/MixedWoodland — honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.18) is a PLAYTEST DIAL.",
+      "display_name": "Tobacco Fields",
+      "plural": "tobacco",
+      "adjective": "tobacco",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "AlluvialPlain": 0.25,
+        "RollingHills": 0.25,
+        "Floodplain": 0.2,
+        "MixedWoodland": 0.15
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.18
+      },
+      "regrowth_rate": 0.25
+    },
+    "tea": {
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — a HILL/HIGHLAND crop, NOT lowland. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field. Hosts RollingHills/MixedWoodland/HighPlateau — the upland/woodland baskets cotton and the grains do not reach, so tea is the cash crop of ground that grows little else. It is deliberately kept off the river valleys (no AlluvialPlain/Floodplain) so it is a genuinely different siting decision. Honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.16) is a PLAYTEST DIAL.",
+      "display_name": "Tea Gardens",
+      "plural": "tea",
+      "adjective": "tea",
+      "role": "cash",
+      "cultivation_ceiling": "field",
+      "host_biomes": {
+        "RollingHills": 0.3,
+        "MixedWoodland": 0.25,
+        "HighPlateau": 0.2
+      },
+      "yield": {
+        "provisions_per_biomass": 0.0,
+        "fodder_per_biomass": 0.0,
+        "trade_goods_per_biomass": 0.16
       },
       "regrowth_rate": 0.25
     }

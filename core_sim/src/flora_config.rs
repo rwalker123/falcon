@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
 };
 
+use bevy::math::UVec2;
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use sim_runtime::TerrainType;
@@ -213,13 +214,46 @@ pub struct FloraShare {
 /// The composition table is built by [`FloraConfig::from_species`], which every construction path —
 /// including `Deserialize` — routes through, so **a `FloraConfig` whose share table is stale is
 /// unrepresentable**. That matters because the table feeds the wire: it must be identical run to run.
-#[derive(Debug, Clone, Default, Resource)]
+#[derive(Debug, Clone, Resource)]
 pub struct FloraConfig {
     pub species: HashMap<String, FloraDef>,
     /// Biome → its composition, each list sorted **weight DESC, then species key ASC**. Private and
-    /// derived; read through [`FloraConfig::composition`].
+    /// derived; read through [`FloraConfig::composition`]. This is the **affinity** table — *what CAN
+    /// grow here* — not what any one tile actually grows (that is per-tile realization, §10).
     composition_by_biome: HashMap<TerrainType, Vec<FloraShare>>,
+    /// The per-tile realization draws `k ∈ [min, max]` species from a biome's affinity roster
+    /// (clamped to how many it hosts), so some alluvial tiles are wheat and others tobacco rather than
+    /// every tile carrying a diluted slice of all of them (§10). Playtest dials; validated
+    /// `1 <= min <= max`.
+    pub realized_species_min: usize,
+    pub realized_species_max: usize,
 }
+
+impl Default for FloraConfig {
+    fn default() -> Self {
+        Self {
+            species: HashMap::new(),
+            composition_by_biome: HashMap::new(),
+            realized_species_min: DEFAULT_REALIZED_SPECIES_MIN,
+            realized_species_max: DEFAULT_REALIZED_SPECIES_MAX,
+        }
+    }
+}
+
+/// Default lower/upper bound on the per-tile realized species count (§10 dials).
+const DEFAULT_REALIZED_SPECIES_MIN: usize = 2;
+const DEFAULT_REALIZED_SPECIES_MAX: usize = 4;
+fn default_realized_species_min() -> usize {
+    DEFAULT_REALIZED_SPECIES_MIN
+}
+fn default_realized_species_max() -> usize {
+    DEFAULT_REALIZED_SPECIES_MAX
+}
+
+/// A fixed salt so a tile's realization draw is decorrelated from every other per-tile hash keyed on
+/// the same `(map_seed, tile)` (e.g. hydrology's flat-tie jitter). Any non-zero constant works; this
+/// one is arbitrary.
+const FLORA_REALIZATION_SALT: u64 = 0xF10A_4EA1_5EED_0010;
 
 /// The literal JSON shape. `FloraConfig`'s own `Deserialize` goes through this and then builds the
 /// derived share table, which is what makes a stale table unrepresentable — a bare
@@ -229,6 +263,10 @@ pub struct FloraConfig {
 #[serde(default)]
 struct FloraConfigRaw {
     species: HashMap<String, FloraDef>,
+    #[serde(default = "default_realized_species_min")]
+    realized_species_min: usize,
+    #[serde(default = "default_realized_species_max")]
+    realized_species_max: usize,
 }
 
 impl<'de> Deserialize<'de> for FloraConfig {
@@ -237,7 +275,10 @@ impl<'de> Deserialize<'de> for FloraConfig {
         D: serde::Deserializer<'de>,
     {
         let raw = FloraConfigRaw::deserialize(deserializer)?;
-        Ok(FloraConfig::from_species(raw.species))
+        let mut config = FloraConfig::from_species(raw.species);
+        config.realized_species_min = raw.realized_species_min;
+        config.realized_species_max = raw.realized_species_max;
+        Ok(config)
     }
 }
 
@@ -270,6 +311,8 @@ impl FloraConfig {
         Self {
             species,
             composition_by_biome,
+            realized_species_min: DEFAULT_REALIZED_SPECIES_MIN,
+            realized_species_max: DEFAULT_REALIZED_SPECIES_MAX,
         }
     }
 
@@ -316,15 +359,28 @@ impl FloraConfig {
         underlying: TerrainType,
         forage: &ForageLaborConfig,
     ) -> Vec<FloraShare> {
+        self.blend_navigable(
+            self.composition(underlying),
+            forage.capacity_for(underlying),
+            forage.navigable_river_forage_bonus,
+        )
+    }
+
+    /// **The two-term navigable blend**, factored out so the affinity path
+    /// ([`Self::navigable_composition`]) and the per-tile realized path
+    /// ([`Self::realized_navigable_composition`]) share one implementation and cannot drift. The
+    /// `underlying_shares` are whatever basket the caller wants blended in — the affinity roster, or a
+    /// tile's realized subset of it — while the **channel term is always the un-realized
+    /// `NavigableRiver` basket** (§10: realize the underlying valley, leave the fishery as-is).
+    fn blend_navigable(
+        &self,
+        underlying_shares: &[FloraShare],
+        underlying_capacity: f32,
+        channel_bonus: f32,
+    ) -> Vec<FloraShare> {
         let terms = [
-            (
-                self.composition(underlying),
-                forage.capacity_for(underlying),
-            ),
-            (
-                self.composition(TerrainType::NavigableRiver),
-                forage.navigable_river_forage_bonus,
-            ),
+            (underlying_shares, underlying_capacity),
+            (self.composition(TerrainType::NavigableRiver), channel_bonus),
         ];
 
         // Species key → its absolute biomass across both terms. Merged, so a species hosting the
@@ -364,6 +420,108 @@ impl FloraConfig {
                 .then_with(|| a.species.cmp(&b.species))
         });
         blended
+    }
+
+    /// **What is *actually growing* on this tile** — the per-tile REALIZATION of an ordinary biome's
+    /// affinity roster (§10). A deterministic, seeded, weighted subset of [`Self::composition`]: for
+    /// tile `(x, y)` under `map_seed` it draws `k ∈ [realized_species_min, realized_species_max]`
+    /// species (clamped to how many the biome hosts) by weighted sampling without replacement
+    /// (probability ∝ affinity share), then renormalizes the picked shares to sum to `1`. So two
+    /// alluvial tiles carry *different* baskets — one wheat, one tobacco — instead of every tile
+    /// carrying a diluted slice of all of them.
+    ///
+    /// Pure function of `(map_seed, tile, terrain, affinities)`: no stored state, so it is
+    /// deterministic under rollback for free and adds nothing to the snapshot/wire (realization is
+    /// *derived*). Read through [`crate::forage::tile_flora_composition`], the single seam.
+    pub fn realized_composition(
+        &self,
+        terrain: TerrainType,
+        tile: UVec2,
+        map_seed: u64,
+    ) -> Vec<FloraShare> {
+        self.realize_shares(self.composition(terrain), tile, map_seed)
+    }
+
+    /// The navigable-hex twin of [`Self::realized_composition`]: realize the **underlying** valley's
+    /// basket per tile, then blend the un-realized channel term (`river_fish`) back in — the fishery a
+    /// giant river *always* is (§10). Same two-term blend the affinity path uses, so capacity and
+    /// composition still cannot drift.
+    pub fn realized_navigable_composition(
+        &self,
+        underlying: TerrainType,
+        forage: &ForageLaborConfig,
+        tile: UVec2,
+        map_seed: u64,
+    ) -> Vec<FloraShare> {
+        let realized_underlying = self.realize_shares(self.composition(underlying), tile, map_seed);
+        self.blend_navigable(
+            &realized_underlying,
+            forage.capacity_for(underlying),
+            forage.navigable_river_forage_bonus,
+        )
+    }
+
+    /// The seeded weighted-subset draw shared by both realized paths.
+    ///
+    /// **Efraimidis–Spirakis** weighted sampling without replacement: for each hosted species draw
+    /// `u ∈ (0, 1]` from a hash of `(tile_hash, species_key)`, key it `u^(1/weight)`, and take the `k`
+    /// species with the **largest** keys — ~unbiased, so the map-wide mix tracks the affinity table.
+    /// Determinism discipline (the codebase's share-table rule): the input is already a total-ordered
+    /// list, ties break by species key ascending, and nothing reads `HashMap` iteration order.
+    fn realize_shares(
+        &self,
+        affinity: &[FloraShare],
+        tile: UVec2,
+        map_seed: u64,
+    ) -> Vec<FloraShare> {
+        let hosted = affinity.len();
+        // Nothing to subset: a one-species (or empty) biome realizes to itself, byte-identical.
+        if hosted <= 1 {
+            return affinity.to_vec();
+        }
+        // Per-tile entropy — a pure splitmix hash, salted so it cannot correlate with another per-tile
+        // hash keyed on the same `(map_seed, tile)`.
+        let tile_hash = splitmix64(map_seed ^ FLORA_REALIZATION_SALT ^ fnv_tile(tile.x, tile.y));
+
+        // Draw k ∈ [min, max], clamped to what the biome actually hosts. Uses a distinct mix of the
+        // tile hash so the count draw does not correlate with the per-species keys below.
+        let lo = self.realized_species_min.max(1);
+        let hi = self.realized_species_max.max(lo);
+        let span = (hi - lo + 1) as u64;
+        let k = (lo + (splitmix64(tile_hash) % span) as usize).min(hosted);
+
+        // Key every hosted species; take the k largest. `weight` is the affinity share (> 0 for every
+        // hosted row, so the exponent is finite).
+        let mut keyed: Vec<(f64, &FloraShare)> = affinity
+            .iter()
+            .map(|share| {
+                let u = hash_unit_f64(tile_hash, &share.species);
+                let key = u.powf(1.0 / share.share.max(f32::MIN_POSITIVE) as f64);
+                (key, share)
+            })
+            .collect();
+        keyed.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.species.cmp(&b.1.species))
+        });
+
+        // Renormalize the picked shares to sum to 1 (per-tile neutrality: the tile still yields its
+        // full biome capacity gathered wild, just composed of different species).
+        let total: f32 = keyed[..k].iter().map(|(_, s)| s.share).sum();
+        let mut realized: Vec<FloraShare> = keyed[..k]
+            .iter()
+            .map(|(_, s)| FloraShare {
+                species: s.species.clone(),
+                share: s.share / total,
+            })
+            .collect();
+        // Publish in the wire order every basket uses: share DESC, then species key ASC.
+        realized.sort_by(|a, b| {
+            b.share
+                .total_cmp(&a.share)
+                .then_with(|| a.species.cmp(&b.species))
+        });
+        realized
     }
 
     /// The invariants a species row must satisfy **on its own** — the ones that would otherwise make
@@ -429,6 +587,16 @@ impl FloraConfig {
                     regrowth_rate: def.regrowth_rate,
                 });
             }
+        }
+
+        // The per-tile realization draws `k ∈ [min, max]` (§10). `min < 1` would let a tile realize
+        // *no* species (an empty basket — nameless food, silently); `max < min` is an empty range the
+        // draw's modulo would panic on. `1 <= min <= max` is the only coherent shape.
+        if self.realized_species_min < 1 || self.realized_species_min > self.realized_species_max {
+            return Err(FloraConfigError::InvalidRealizedSpeciesRange {
+                min: self.realized_species_min,
+                max: self.realized_species_max,
+            });
         }
 
         Ok(())
@@ -498,6 +666,48 @@ impl FloraConfig {
 /// The sort (**weight DESC, then species key ASC**) is a *total* order, deliberately: `HashMap`
 /// iteration order is unstable, and this table is published on the wire, so ties broken by anything
 /// incidental would make the snapshot vary run to run.
+/// splitmix64 — a pure, deterministic 64-bit mixer (the same recipe `hydrology.rs` uses for its
+/// flat-tie jitter). No state, no RNG: the same input always produces the same output.
+#[inline]
+fn splitmix64(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// FNV-1a over a tile's `(x, y)` — a deterministic, order-sensitive hash of the coordinate, so two
+/// tiles get uncorrelated realization draws.
+#[inline]
+fn fnv_tile(x: u32, y: u32) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for byte in x.to_le_bytes().into_iter().chain(y.to_le_bytes()) {
+        h ^= byte as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// FNV-1a over a species key.
+#[inline]
+fn fnv_str(s: &str) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for byte in s.bytes() {
+        h ^= byte as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// A deterministic hash of `(tile_hash, species_key)` into `(0, 1]` — the Efraimidis–Spirakis
+/// `u_i`. Never `0`, so the `u^(1/weight)` key is always finite.
+#[inline]
+fn hash_unit_f64(tile_hash: u64, species: &str) -> f64 {
+    let bits = splitmix64(tile_hash ^ fnv_str(species));
+    // 53-bit mantissa in [1, 2^53] → (0, 1]. The `+ 1` keeps it strictly positive.
+    ((bits >> 11) as f64 + 1.0) / ((1u64 << 53) as f64)
+}
+
 fn build_composition(species: &HashMap<String, FloraDef>) -> HashMap<TerrainType, Vec<FloraShare>> {
     let mut weights: HashMap<TerrainType, Vec<(String, f32)>> = HashMap::new();
     for (key, def) in species {
@@ -584,6 +794,11 @@ pub enum FloraConfigError {
          tile's food has no name; every non-zero forage biome must be covered"
     )]
     NamelessBiome { biome: TerrainType, capacity: f32 },
+    #[error(
+        "invalid flora config: per-tile realization range is incoherent (min {min}, max {max}); it \
+         must satisfy 1 <= min <= max"
+    )]
+    InvalidRealizedSpeciesRange { min: usize, max: usize },
 }
 
 /// Handle for accessing the flora configuration.
@@ -719,6 +934,38 @@ mod tests {
         format!("{{ \"species\": {{ \"probe\": {body} }} }}")
     }
 
+    /// The same, with an explicit per-tile realization range (§10).
+    fn one_species_json_with_range(min: i64, max: i64) -> String {
+        format!(
+            "{{ \"species\": {{ \"probe\": {VALID_BODY} }}, \
+             \"realized_species_min\": {min}, \"realized_species_max\": {max} }}"
+        )
+    }
+
+    #[test]
+    fn realized_species_range_defaults_to_two_through_four() {
+        let config = FloraConfig::from_json_str(&one_species_json(VALID_BODY))
+            .expect("a config with no realization dials should default them");
+        assert_eq!(config.realized_species_min, 2);
+        assert_eq!(config.realized_species_max, 4);
+    }
+
+    #[test]
+    fn validate_rejects_an_inverted_realized_species_range() {
+        assert!(matches!(
+            FloraConfig::from_json_str(&one_species_json_with_range(5, 2)),
+            Err(FloraConfigError::InvalidRealizedSpeciesRange { min: 5, max: 2 })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_a_realized_species_min_below_one() {
+        assert!(matches!(
+            FloraConfig::from_json_str(&one_species_json_with_range(0, 4)),
+            Err(FloraConfigError::InvalidRealizedSpeciesRange { min: 0, max: 4 })
+        ));
+    }
+
     const VALID_BODY: &str = r#"{
         "display_name": "Probe",
         "plural": "probes",
@@ -735,9 +982,9 @@ mod tests {
         let config = FloraConfig::builtin();
         assert_eq!(
             config.species.len(),
-            14,
+            18,
             "13 broad staple families (12 keyed on biome + river_fish, the channel itself) + the F3 \
-             fodder crop hay_grass"
+             fodder crop hay_grass + the four F4 cash crops (cotton/flax/tobacco/tea)"
         );
         // The channel is named separately from the valley it cut — see `navigable_composition`.
         assert_eq!(
