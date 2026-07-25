@@ -1,5 +1,22 @@
 # core_sim - Simulation Engine
 
+> ## ⛔ THIS IS A HUB FILE — rationale does NOT go here
+>
+> Before adding a paragraph, section, callout, or config row **anywhere in this file**, ask:
+> **is this true of *all* `core_sim` work?**
+>
+> - **No** — it explains one arc's system, one config's keys, one bug's mechanism, one as-built
+>   note → it belongs in the **rule file that owns the arc** (`.claude/rules/core_sim/*.md`, routing
+>   table below). That is also what keeps two concurrent worktrees off the same file.
+> - **Yes** — a build command, an environment override, a boot-config row, a genuinely
+>   subsystem-wide invariant, or a **new row in the routing table** → here.
+>
+> This file loads into **every session in this repo**; a rule file loads only when you touch the
+> code it describes, so a hub paragraph is paid for by every session forever. **If the owning
+> rule's `paths:` already cover the code you changed, a hub copy is pure duplication** — the reader
+> who could break the invariant loads the rule anyway. Root `CLAUDE.md` → "The hub files are not
+> where rationale goes" has the long form.
+
 Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in order: materials → logistics → population → power → tick increment → snapshot capture.
 
 ## Quick Reference
@@ -56,9 +73,9 @@ names a *section heading*, not a file. Resolve it with
 `grep -rn '^#* The knowledge pattern' .claude/rules/core_sim/`. Directional words
 ("below"/"above") are only reliable *within* one file.
 
-**Adding to these docs.** Put per-arc rationale in the rule file that owns the
-arc — that is what keeps two concurrent worktrees off the same file. Only add
-here if it is true of all `core_sim` work.
+**Adding to these docs.** Per-arc rationale goes in the rule file that owns the
+arc; a new arc gets a **row above**, not a section here. See the hub banner at
+the top of this file for the test.
 
 ## Configuration Files
 

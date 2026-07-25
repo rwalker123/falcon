@@ -34,6 +34,12 @@
 # merging upstream changes into the unsplit file. NOTE: after this migration
 # lands, edits go straight into the rule files; re-running then re-cuts from the
 # pinned original and would drop rule-file edits made since. Re-pin first.
+#
+# That includes the "THIS IS A HUB FILE" banner at the top of each hub: it sits
+# in the H1 region, which comes from the pinned blob, NOT from the hub blurb
+# appended after it. A re-run without re-pinning silently deletes the one guard
+# that keeps per-arc rationale out of the hub. Re-add it to the blob, or paste it
+# back into both hubs afterwards.
 set -euo pipefail
 
 # Pre-split blobs (origin/main @ PR #329/#341/#342 merges).

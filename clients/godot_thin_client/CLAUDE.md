@@ -1,5 +1,23 @@
 # Godot Thin Client
 
+> ## ⛔ THIS IS A HUB FILE — rationale does NOT go here
+>
+> Before adding a paragraph, section, callout, or per-script row **anywhere in this file**, ask:
+> **is this true of *all* Godot-client work?**
+>
+> - **No** — it explains one panel, one overlay, one shader, one HUD module, one script's job →
+>   it belongs in the **rule file that owns the arc** (`.claude/rules/client/*.md`, routing table
+>   below), and a new script's row goes in that rule's `## Key scripts` table. That is also what
+>   keeps two concurrent worktrees off the same file.
+> - **Yes** — a build/verify command, a socket/endpoint contract, a genuinely client-wide
+>   invariant, or a **new row in the routing table** → here.
+>
+> This file loads into **every session in this repo**; a rule file loads only when you touch the
+> code it describes, so a hub paragraph is paid for by every session forever. **If the owning
+> rule's `paths:` already cover the code you changed, a hub copy is pure duplication** — the reader
+> who could break the invariant loads the rule anyway. Root `CLAUDE.md` → "The hub files are not
+> where rationale goes" has the long form.
+
 Inspector and visualization client for the Shadow-Scale simulation. Renders the map, streams snapshots, and exposes the tabbed inspector.
 
 ## Quick Reference
@@ -185,10 +203,10 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 `grep -rn '^#* Map markers' .claude/rules/client/`. Directional words
 ("below"/"above") are only reliable *within* one file.
 
-**Adding to these docs.** Put per-arc rationale in the rule file that owns the
-arc — that is what keeps two concurrent worktrees off the same file. A new
-script's row goes in that rule's `## Key scripts` table, not here. Only add here
-if it is true of all client work.
+**Adding to these docs.** Per-arc rationale goes in the rule file that owns the
+arc, and a new script's row in that rule's `## Key scripts` table; a new arc gets
+a **row above**, not a section here. See the hub banner at the top of this file
+for the test.
 
 ## Architecture
 

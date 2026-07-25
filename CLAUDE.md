@@ -55,15 +55,40 @@ The backlog lives in **GitHub Issues + the Falcon Backlog project**:
 
 ## When Updating Documents
 - Add new concepts first to the **manual** if they affect gameplay communication.
-- Add implementation details to the **subsystem CLAUDE.md** files for the relevant directory.
+- Add implementation details to the **rule file that owns the arc** (`.claude/rules/core_sim/*.md`,
+  `.claude/rules/client/*.md`) — **not** to the subsystem `CLAUDE.md`, which is a hub. See "The hub
+  files are not where rationale goes" below; it is the single easiest mistake to make in this repo.
 - Keep `docs/architecture.md` focused on cross-system concerns and overview.
 - Extract concrete tasks into **GitHub Issues** via `/task-add` — never into a file.
 - Cross-link between documents when gameplay description references technical constraints and vice versa.
 
+### The hub files are not where rationale goes
+
+`core_sim/CLAUDE.md` and `clients/godot_thin_client/CLAUDE.md` are **hubs**: a short landing page
+per subsystem holding what is true of *all* work in it — build commands, the global/boot config
+list, the shared vocabulary, and a routing table to the rules. Every subsystem `CLAUDE.md` is loaded
+into context **on every session in this repo**; a rule file loads only when you touch the code it
+describes. So prose added to a hub is paid for by every session forever, whether or not it is
+relevant — which is why the hubs were split in the first place.
+
+**The test for a new paragraph** — ask *"is this true of all work in this subsystem?"*
+- Yes (a build command, an environment override, a cross-cutting invariant, a new rule's routing
+  row) → the hub.
+- No (why one arc's system works, a config file's key table, a per-script row, an as-built note, a
+  bug's mechanism and its guard) → the rule file that owns the arc, in its `## Config files` or
+  `## Key scripts` table where one exists.
+
+If the rule file's `paths:` frontmatter already covers the code you changed, the hub copy is pure
+duplication: anyone who can break the invariant loads the rule anyway. Adding a new arc means
+adding a **row to the routing table**, not a section to the hub. If the rationale genuinely has no
+owning rule file, create one with `paths:` frontmatter rather than parking it in the hub.
+
 ### Cross-linking Convention
-- Define authoritative specs in the owning subsystem's CLAUDE.md
+- Define authoritative specs in the **rule file** that owns the arc (or the hub, for genuinely
+  subsystem-wide facts) — exactly one home per fact
 - Add "See Also" cross-references in dependent documentation
-- Avoid duplicating implementation details across files
+- Avoid duplicating implementation details across files — a pointer from the hub to a rule is
+  still duplication if the rule's `paths:` already load it for the reader who needs it
 
 ---
 

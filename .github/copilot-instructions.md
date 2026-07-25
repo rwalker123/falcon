@@ -21,7 +21,22 @@ The repository is a Cargo workspace: a Bevy-based headless ECS simulation (`core
 ## 2. Comments & Documentation
 
 - **Do not add comments that restate what the code does** or reference the PR/task ("// fix for review", "// added minimap"). Prefer self-documenting names. Comments are for non-obvious invariants, units, coordinate-system conventions, or safety justifications.
-- Follow the **document hierarchy** (see root `CLAUDE.md`): gameplay-facing concepts go in the manual (`shadow_scale_strategy_game_concept_technical_plan_v_0.md`) first; implementation details go in the owning subsystem's `CLAUDE.md` (`core_sim/CLAUDE.md`, `clients/godot_thin_client/CLAUDE.md`); cross-system concerns go in `docs/architecture.md`; concrete work goes in **GitHub Issues** (the Falcon Backlog project), never a file. Flag PRs that add a new subsystem/system/config without the corresponding doc update, and avoid duplicating implementation details across files (define once in the owning doc, cross-link with "See Also").
+- Follow the **document hierarchy** (see root `CLAUDE.md`): gameplay-facing concepts go in the manual (`shadow_scale_strategy_game_concept_technical_plan_v_0.md`) first; implementation details and per-arc rationale go in the **path-scoped rule file that owns the arc** (`.claude/rules/core_sim/*.md`, `.claude/rules/client/*.md`) — see §2.1; cross-system concerns go in `docs/architecture.md`; concrete work goes in **GitHub Issues** (the Falcon Backlog project), never a file. Flag PRs that add a new subsystem/system/config without the corresponding doc update, and avoid duplicating implementation details across files (define once in the owning doc, cross-link with "See Also").
+
+### 2.1 Hub `CLAUDE.md` files — flag prose added to them
+
+`core_sim/CLAUDE.md` and `clients/godot_thin_client/CLAUDE.md` are **hubs**, not the place rationale lives. They hold only what is true of *all* work in that subsystem (build commands, the global/boot config list, shared vocabulary, socket contracts, and a routing table to the rules). Per-arc engineering rationale belongs in `.claude/rules/{core_sim,client}/*.md`, each gated by `paths:` frontmatter so it loads only when someone touches the code it describes. A subsystem `CLAUDE.md` loads into **every** session in the repo, so a paragraph added there is paid for by every session forever — that is why the hubs were split.
+
+**Flag any diff that adds a section, callout, paragraph, config row, or per-script row to a hub `CLAUDE.md`**, and ask the author to justify it against this test:
+
+- **Keep in the hub** only if the content is true of all work in the subsystem: a build/verify command, an environment override, a boot-config row (`simulation_config.json`, `turn_pipeline_config.json`, `start_profiles.json`), a socket/endpoint contract, a subsystem-wide invariant, or a **new row in the routing table**.
+- **Move to a rule file** otherwise: why one arc's system works, one config file's key table (it goes in that arc's rule `## Config files` table), a new script's row (the rule's `## Key scripts` table), a bug's mechanism and the test that guards it, or any as-built note.
+
+Two specific smells worth a comment even when the prose itself is good:
+- **Duplication of a rule file.** If the same explanation exists in `.claude/rules/**` and the rule's `paths:` already cover the code the PR changed, the hub copy is redundant — the reader who could break the invariant loads the rule anyway. Flag it and point at the rule.
+- **A new arc handled by growing the hub** instead of adding a rule file plus one routing-table row. If the rationale has no owning rule, the fix is a new rule file with `paths:` frontmatter, not a hub section.
+
+Root `CLAUDE.md` is exempt from the size pressure above (it is the repo-wide collaboration guide) but is still subject to "define once": flag content there that duplicates a subsystem hub or a rule file.
 
 ## 3. FlatBuffers Schema & Generated Bindings
 
@@ -82,5 +97,6 @@ The schema in `sim_schema/schemas/snapshot.fbs` is the authoritative contract be
 8. Are behavior changes covered by tests / updated fixtures, and are benchmarked paths not silently regressed (§7)?
 9. Are socket decoders and the script sandbox robust against malformed input and capability escalation (§8)?
 10. Were the right docs updated per the hierarchy in root `CLAUDE.md` (§2)?
+11. Does the diff add prose, a section, a config row, or a per-script row to a **hub** `CLAUDE.md` (`core_sim/CLAUDE.md`, `clients/godot_thin_client/CLAUDE.md`)? If so, is it genuinely true of all work in that subsystem — or does it belong in the arc's `.claude/rules/**` file (§2.1)? Flag it either way so the author states which.
 
 When in doubt, flag for human review rather than approve. Schema/contract changes, turn-loop ordering changes, and anything affecting determinism or rollback always warrant explicit maintainer sign-off.
