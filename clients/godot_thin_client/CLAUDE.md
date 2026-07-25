@@ -1671,7 +1671,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   the same `<count> <glyph>` form the land row uses (`🦌 Red Deer   1 🏹`, twin of `◈ Savanna   2 🌾`),
   with the unworked-but-huntable form `0 🏹` and *no* meta at all on a non-huntable herd. The
   **size class** moved into the herd drawer's first row (`Size: Big game`) because the row's one
-  meta slot now belongs to the count. **A detail row never restates what its
+  meta slot now belongs to the count — but a **predator reads `Size: Big predator`, not `Big game`**
+  (a carnivore is a hunter, not quarry; `DetailFormat` branches the `"%s game"`/`"%s predator"` format
+  AND the wild-ceiling hint `Wild game`/`Wild predator — hunt only` on `is_predator`, the same
+  `prey_sense_radius > 0` signal the prey-sense ring keys on — Predators Phase 1a). **A detail row never restates what its
   roster row already shows** (the same rule the Band/City panel header follows). The roster
   row IS the identity line — name + size/staffing — so every drawer dropped
   the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species`
