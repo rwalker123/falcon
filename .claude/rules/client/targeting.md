@@ -145,7 +145,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   points structurally cannot quote different numbers. The line reads cyan
   `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
   over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
-  delivering), amber denial `<Herd> — denial mission … delivers no food` (Eradicate), and DANGER-red
+  delivering), amber denial `<Herd> — denial mission … brings nothing home` (an INEDIBLE quarry that pays
+  neither product — **never** the Eradicate rung, which delivers its whole-stock windfall like every
+  other rung, #337), and DANGER-red
   `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
   policy floor — a small party on big game delivers a partial with waste and is NOT too lean). The click
   still commits (information, not a gate — except the no-surplus case, which the herd panel's button
@@ -163,7 +165,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
     the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
     appended fields 6× now, always audit it first**). `SourceForecast.hunt_trip_forecast` just looks it up:
-    `delivers_food == false` → **denial** (Eradicate — "delivers no food", the SIM decides this, the client
+    `delivers_food == false` **and** `delivers_trade == false` → **denial** (the quarry pays NEITHER product;
+    `delivers_food` alone was redefined by #337 to mean "the quarry is edible", so a wolf reads
+    `delivers_food false, delivers_trade true` and is a real delivery — the SIM decides this, the client
     never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
     case — the raid returns empty at every party size; NOT `animals_taken == 0`, which is now ≥ 1 whenever
     there's any surplus since a small party still kills one animal and wastes the uncarried meat); else the
@@ -193,7 +197,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   ui_preview banner states `hunt_forecast_viable` / `hunt_forecast_slow` / `hunt_forecast_no_surplus`
   + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
   partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
-  `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (denial, enabled),
+  `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (a real delivery —
+  `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid`, amber "Send Anyway
+  (long raid)"),
   the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
   (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker caps correctly lower) /
   `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).

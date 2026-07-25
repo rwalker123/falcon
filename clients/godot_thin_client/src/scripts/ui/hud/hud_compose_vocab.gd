@@ -83,9 +83,13 @@ const PEN_FENCING_LABEL := "Fencing %d%%"
 # Sedentarization's `domestication` input), the single most under-communicated payoff in the system.
 #
 # These are the BAND's payoffs and must not be reused for an expedition: the Hunting expedition arm
-# credits FOOD ONLY — no husbandry accrual, no trade goods — so `SEND_HUNT_POLICY_HINTS` below
-# deliberately promises neither. Do not merge the two sets; the asymmetry is real (a known v1 gap,
-# tracked server-side), and a hint that claims a payoff the sim never pays is a lie to the player.
+# accrues NO HUSBANDRY — a Sustain *expedition* teaches its faction nothing, where a resident band's
+# Sustain hunt builds domestication off the same take — so `SEND_HUNT_POLICY_HINTS` below deliberately
+# promises no craft. It DOES pay trade goods (#337): both halves of a kill's `HuntYield` come home, the
+# trade half riding `Expedition::carried_trade` into the faction stockpile at each drop-off/fold-back,
+# so an expedition hint may name a trade payoff. Do not merge the two sets; the husbandry asymmetry is
+# real (a known v1 gap, tracked server-side), and a hint that claims a payoff the sim never pays is a
+# lie to the player.
 #
 # Corral (the herd-side INVESTMENT rung) lives HERE and only here — it is a LOCAL-hunt policy: a
 # detached party follows the herd and builds no pen, so the expedition set has no Corral entry (and
@@ -105,7 +109,13 @@ const LOCAL_HUNT_POLICY_HINTS := {
     # "Market" named a property all four share. Its line must stay clearly short of Eradicate's:
     # this is a herd drawn down hard and left standing, not a herd hunted out.
     "deplete": "Deplete — draw the herd down hard: much more food now, and a fast decline. The herd survives it, but it will not recover while you keep this up.",
-    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no craft learned, no trade — denial only.",
+    # Eradicate is PAID like every other rung (#337): the hunt yield is `take × the species' vector`
+    # regardless of policy, and the whole standing stock comes home in one haul — the biggest immediate
+    # payoff on the ladder. Denial is the END STATE (the species is gone, for everyone), never a promise
+    # that the carcasses were thrown away, so the old "No food … no trade" line was false twice over.
+    # The payoff is stated in whatever the SPECIES pays, not in food: a wolf is inedible and settles up
+    # in trade goods alone. "No craft is learned" stays TRUE — husbandry accrues on Sustain only.
+    "eradicate": "Eradicate — the last hunt: one final haul takes the herd's whole standing stock, the biggest payoff of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. No craft is learned, and the herd is gone for good, for you and for everyone else.",
     # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
     # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
     # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
@@ -355,10 +365,12 @@ const CANCEL_SCOPE_ROLES := "roles"
 # The launch policy (Sustain/Surplus/Deplete/Eradicate) chosen for a hunting EXPEDITION, with a
 # one-line behaviour hint so the choice is legible. Reuses `SourceForecast.LABOR_HUNT_POLICIES` for the option set.
 #
-# An expedition's Hunting arm credits **FOOD ONLY** — no husbandry accrual, no trade goods (a known v1
-# gap, tracked server-side). So these hints promise NEITHER, even though the resident-band versions of
-# Sustain and Deplete do exactly those things (see `LOCAL_HUNT_POLICY_HINTS`). The asymmetry is real;
-# blurring it would have the UI promise the player a payoff the sim never pays.
+# An expedition's Hunting arm banks **BOTH products** (#337 — one `HuntYield::apply` per kill: the
+# provisions into the party's larder, the trade goods onto `Expedition::carried_trade` and out to the
+# faction stockpile at the next drop-off/fold-back), but accrues **NO HUSBANDRY**: a known v1 gap,
+# tracked server-side. So these hints may state a trade payoff and must never promise a craft, even
+# though the resident-band Sustain does teach one (see `LOCAL_HUNT_POLICY_HINTS`). That remaining
+# asymmetry is real; blurring it would have the UI promise the player a payoff the sim never pays.
 const SEND_HUNT_POLICY_HINTS := {
 	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
 	# hunt takes, so the herd stays healthy indefinitely. The trade-off is speed: MSY is a small flow,
@@ -371,27 +383,35 @@ const SEND_HUNT_POLICY_HINTS := {
 	# the pressure is applied by RELAUNCHING (`FollowPolicy::expedition_recurring`), which is what the
 	# party's ↻ recurring marker means, so the hint says so rather than quoting a per-turn rate.
 	"deplete": "Deplete — draws the herd down hard, relaunching for trip after trip; the party keeps hauling home food while the herd declines fast.",
-	"eradicate": "Eradicate — denial mission: hunts the herd toward extinction and delivers no food.",
+	# The expedition twin of the local Eradicate hint, and it stopped being a denial mission for the same
+	# reason (#337): the raid is paid its species' yield vector like every other rung, so it hauls the
+	# herd's whole standing stock home in one trip. Denial is what the herd is AFTERWARDS. The payoff is
+	# stated in whatever the SPECIES pays, exactly as the local twin states it — BOTH halves reach the
+	# faction now (the pelts settle out of `carried_trade` on arrival), so an inedible quarry is a trade
+	# haul rather than a blank. Never a food number: the species decides the currency, not the policy.
+	"eradicate": "Eradicate — the last raid: the party hauls home the herd's whole standing stock in one trip, the biggest payload of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. The herd is gone for good, for you and for everyone else.",
 }
 
 # A resident BAND and a detached EXPEDITION are told apart by the sim, and the client reads a DIFFERENT
 # herd field for each — never one for the other:
 #   `hunt_policy_ceilings`  {policy → provisions/turn} — the BAND's renewable FLOW ceiling. With the
 #       cohort's levers this makes the LOCAL hunt preview pure arithmetic (see `_hunt_take_rate`).
-#   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food}} — the sim's
+#   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food, delivers_trade}} — the sim's
 #       PRE-LAUNCH TRIP ESTIMATE, forward-simulated server-side. An expedition's trip length is NOT a
 #       rate division: on Surplus/Deplete the ceiling is a *stock*, so the party strips the headroom in
 #       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
 #       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren under Surplus only a LONE
 #       hunter fills at all (23 turns); a party of 4 never fills within the sim's horizon. So the
 #       client does ZERO arithmetic here — it looks the answer up. Never re-derive it.
-# (The denial case — an Eradicate party hunts the herd toward extinction and carries NOTHING home —
-# is NOT inferred from the policy string: the estimate itself carries `delivers_food = false`, so the
-# sim, not the client, decides which policies are denial missions.)
+# (`delivers_food` WAS REDEFINED by #337 and no longer marks a denial mission: it now says the QUARRY
+# IS EDIBLE, with `delivers_trade` as its sibling, so a wolf reads `delivers_food = false,
+# delivers_trade = true` — pelts, no meat — and an Eradicate raid on a deer delivers like every other
+# rung. A DENIAL raid is one that lands nothing in EITHER currency, which is a property of the SPECIES,
+# never of the policy string; `SourceForecast.hunt_trip_forecast` owns that test.)
 # Pre-launch hunt-trip forecast (shown in the targeting banner while a hunt expedition is armed and
 # the player hovers a herd, and live above the herd panel's Send button). It is a PURE TABLE LOOKUP
 # into the sim-exported per-(policy, party-size) `hunt_trip_estimates` carried on the herd — each cell
-# {policy, party_workers, turns_to_fill, delivers_food}, where `turns_to_fill == 0` means the party
+# {policy, party_workers, turns_to_fill, delivers_food, delivers_trade}, where `turns_to_fill == 0` means the party
 # does NOT fill within the sim's `forecast_horizon_turns`. The client reads the cell and stops (see
 # `SourceForecast.hunt_trip_forecast`); the only thing it computes is the display verdict:
 #     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)

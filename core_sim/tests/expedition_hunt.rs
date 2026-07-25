@@ -244,6 +244,7 @@ fn spawn_hunt_party_of(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                carried_trade: 0.0,
             },
         ))
         .id()

@@ -543,6 +543,19 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
+	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
+	# line must describe the whole-stock haul, the currency the SPECIES pays (meat, ⇄ trade goods, or
+	# both — the raid banks its trade half too now) and the permanent end state, never "delivers no food".
+	_hud._bandpanel._send_hunt_policy = "eradicate"
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_hunt_eradicate")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_hud._bandpanel._send_hunt_policy = SourceForecast.DEFAULT_HUNT_POLICY
+
 	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
 	# below it, since policy/party/forecast are all unanswerable without a herd.
 	_hud._compose.clear_party_quarry()

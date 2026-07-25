@@ -23,7 +23,7 @@ use crate::{
         Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
         LaborAllocation, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
         MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
-        StartingUnit, Tile, TradeLink, FODDER, FOOD,
+        StartingUnit, Tile, TradeLink, FODDER, FOOD, TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{

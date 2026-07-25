@@ -239,10 +239,15 @@ paths:
     **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (the band's real payoffs:
     Sustain → the herd stays healthy AND, on a thriving herd, **builds husbandry toward livestock**;
     Surplus → more food now, pushes settling; Deplete → draws the herd down hard, much more
-    food now and a fast decline it will not recover from while it lasts — deliberately not oversold; Eradicate → denial, no food/husbandry/trade). **These are
-    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm credits **food
-    only** — no husbandry accrual, no trade goods (a known v1 gap, tracked server-side) — so the
-    expedition set promises neither, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
+    food now and a fast decline it will not recover from while it lasts — deliberately not oversold;
+    Eradicate → **the last hunt**: the whole standing stock in one haul, the biggest payoff of any rung,
+    in whatever the species pays (meat, ⇄ trade goods, or both), no craft learned, and the herd gone for
+    good — denial is the END STATE, not a promise that the carcasses were thrown away (#337)). **These are
+    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
+    products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
+    goods onto `Expedition::carried_trade` and into the faction stockpile at the drop-off/fold-back), but
+    accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
+    trade payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
     halves of that bargain: the ~25-turn half-yield build, the ladder's best payoff, and the fact that
     **penned animals can't graze, so you feed them from your larder every turn and an underfed herd
@@ -287,8 +292,9 @@ paths:
     see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
     alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
-    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
-    false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
+    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a quarry that pays NEITHER
+    product (`delivers_food == false` **and** `delivers_trade == false`; never the Eradicate rung, which
+    delivers) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
     (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
     would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
     (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
@@ -355,18 +361,23 @@ paths:
     warn line → amber "⚠ … — a slow raid" + "Send Anyway (≈54 turns)") / `herd_hunt_forecast_surplus`
     (the SAME Red Deer on Surplus: a deeper floor → more animals, brisk turns) /
     `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
-    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (denial → amber "Send (delivers no
-    food)", enabled), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
+    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (a REAL delivery, not a denial —
+    `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid` + amber "Send
+    Anyway (long raid)"), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
     1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
     buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
     the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
     `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
     round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
     `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
-    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → denial, still enabled), and
+    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → the whole-stock windfall in both products, ordinary
+    Send), and
     `herd_hunt_local_sustain` /
     `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
-    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`), and the carry-aware set
+    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`) /
+    **`herd_hunt_local_eradicate`** (the frame the LOCAL Eradicate hint is judged on: the rung's picker face
+    reads the ladder's top take `💀 +2.40 ⇄ +0.36`, and the hint below describes the one-haul windfall +
+    the permanent end state — never "no food, no trade"), and the carry-aware set
     `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
     `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
@@ -402,8 +413,9 @@ paths:
     is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
-    Surplus < Deplete. **Eradicate is denial** (`deliversFood == false`, never qualifies) → no rate, falls back
-    to its name + skull glyph. **Picking a policy AUTO-FILLS the
+    Surplus < Deplete. **Eradicate DELIVERS like every other rung** (#337) and carries its own rate; a rung
+    falls back to its name + skull glyph only when its cells land nothing at all (an inedible quarry, or a
+    `trip_turns` of 0). **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a

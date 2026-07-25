@@ -15,17 +15,18 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_labor_allocation, build_headless_app, hunt_source_yield_preview,
-    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_herds, spawn_initial_world, CombatConfigHandle, CommandEventLog,
-    CreaturesConfigHandle, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfig, FaunaConfigHandle, FloraConfigHandle, FogRevealLedger, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HuntYield, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
+    build_headless_app, hunt_source_yield_preview, recapture_snapshot_in_place, scalar_from_f32,
+    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world,
+    CombatConfigHandle, CommandEventLog, CreaturesConfigHandle, CultureManager, Diet,
+    DiscoveryProgressLedger, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
+    FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, FogRevealLedger,
+    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HuntYield, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle, FOOD,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 /// The four **extractive** rungs — the intensity ladder. Every one of them must pay the species'
@@ -792,5 +793,338 @@ fn the_eradicate_ceiling_carries_the_windfall_for_an_edible_species() {
         "the trade ceilings ride the same intensity ladder: eradicate {} vs deplete {}",
         eradicate.1,
         deplete.1
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// B3 — the EXPEDITION arm: a raid PAYS both products it forecast
+// ---------------------------------------------------------------------------------------------------
+
+/// The reference raiding party (`≤ expedition_config.max_party_size`, so the pre-launch estimate
+/// table carries a row for it).
+const RAID_PARTY: u32 = 4;
+
+/// How far the home band camps from the quarry, on the herd's own row. It must sit **outside** both
+/// `hunt.drop_off_within_tiles` (3 — else a near-band early delivery would end the raid on a
+/// different turn than the forecast, which does not model that gate) and `comm_range_tiles` (2 —
+/// else the party would be "home" while still hunting). Same row so the party's Chebyshev
+/// `step_toward` walk covers exactly the hex distance the phase machine measures.
+const HOME_BAND_DISTANCE_TILES: u32 = 6;
+
+/// Turn budget for one raid + the walk home: `hunt.forecast_horizon_turns` (60) plus the return leg
+/// at `band_move_tiles_per_turn`. A raid that has not resolved by then is a hung test, not a slow one.
+const MAX_RAID_TURNS: u32 = 90;
+
+/// The forecast sums each turn's landed food as a raw `f32` while the party's pack accumulates on
+/// the fixed-point `Scalar` grid, so a multi-turn raid can end a few quanta apart. Sized as the
+/// sibling `expedition_hunt` guards are — a handful of `Scalar` quanta, not a free pass.
+const RAID_FOOD_EPSILON: f32 = 8.0 / core_sim::Scalar::SCALE as f32;
+
+/// Whole trade goods, the granularity the faction stockpile (an `i64` account) works in — the
+/// rounding `settle_carried_trade` applies to a party's carried pelts when it delivers.
+fn whole_trade_goods(carried: f32) -> i64 {
+    carried.round() as i64
+}
+
+/// A detached party / camp cohort of `workers` standing on `tile`, content (morale 1 ⇒ output
+/// multiplier 1.0, the multiplier the expedition path asserts it does *not* apply).
+fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
+    PopulationCohort {
+        home: tile,
+        current_tile: tile,
+        size: workers,
+        children: scalar_zero(),
+        working: scalar_from_f32(workers as f32),
+        elders: scalar_zero(),
+        stores: LocalStore::new(),
+        morale: scalar_one(),
+        last_food_consumption: 0.0,
+        last_morale_delta: scalar_zero(),
+        last_morale_cause: MoraleCause::None,
+        last_morale_contributions: Default::default(),
+        discontent_fraction: scalar_zero(),
+        grievance: scalar_zero(),
+        last_emigrated: 0,
+        last_immigrated: 0,
+        age_turns: 0,
+        generation: 0 as GenerationId,
+        faction: FactionId(0),
+        knowledge: Vec::new(),
+        migration: None,
+    }
+}
+
+/// **Hold everything about the quarry steady EXCEPT its yield vector** — install a fauna config in
+/// which `display_name` neither fights back nor has a moving carrying capacity.
+///
+/// The sibling pin `expedition_hunt::the_raid_forecast_matches_a_real_party_run` gets both for free
+/// by retagging its herd to a harmless grazer. This file **cannot** retag: the species *is* what is
+/// under test (a wolf's whole point is that it is inedible), so it neutralises the two confounds on
+/// the row instead. Neither touches [`core_sim::HuntYield`], the take, or the policy ladder.
+///
+/// - **`combat.attack = 0`** — `hunt_trip_forecast` deliberately does not model the hunt's
+///   casualties (Predators Phase 0 left that to a later slice), so a quarry that fights back thins
+///   the party mid-raid and the real run diverges from the forecast for a reason that has nothing to
+///   do with the yield vector.
+/// - **`diet = Herbivore`** — the *only* reason is to freeze `K`. `headless_with_species` already
+///   freezes the range-derived capacity with `fodder_per_biomass = 0.0`, but that lever is on the
+///   **graze** branch; a carnivore's `K` is recomputed every turn from the live prey base, which
+///   both drifts under the forecast's fixed-`K` clone and (at `TEST_CAPACITY`) puts the herd under
+///   the extinction floor of its own prey-derived `K`, despawning the quarry on turn one.
+fn steady_quarry(app: &mut App, display_name: &str) {
+    let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+    let key = config
+        .species
+        .iter()
+        .find(|(_, def)| def.display_name == display_name)
+        .map(|(key, _)| key.clone())
+        .expect("the species is in the shipped roster");
+    let def = config.species.get_mut(&key).expect("just resolved");
+    def.combat.attack = 0.0;
+    def.diet = Diet::Herbivore;
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+}
+
+/// The wild-game reference growth rate the raid harness pins its quarry to — the same `r` the
+/// sibling `expedition_hunt` raid tests use for their worked boar example.
+const WILD_REGROWTH_RATE: f32 = 0.10;
+
+/// Pin the two things about a quarry that decide **when a raid ends**, so the pin measures the yield
+/// vector rather than whichever herd the map handed the fixture.
+///
+/// - **Route** → the tile it stands on, so the party stays in reach for the whole raid (the map
+///   seeds roaming game, and `hunt_trip_forecast` assumes a stationary quarry — the
+///   `expedition_hunt::pinned_game_herd` pattern).
+/// - **`regrowth_rate`** → [`WILD_REGROWTH_RATE`]. `headless_with_species` re-speciates *whichever*
+///   `game_` herd the registry lists first, and that herd's own `r` rides along; a raid ends when
+///   the standing surplus is spent, so a faster-regrowing quarry keeps handing the party another
+///   animal and never lets it come home. Stating `r` makes the trip length reproducible.
+fn pin_quarry(app: &mut App, id: &str) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .expect("the herd is on the map");
+    herd.route = vec![herd.current_pos];
+    herd.step_index = 0;
+    herd.regrowth_rate = WILD_REGROWTH_RATE;
+}
+
+/// A resident home band `HOME_BAND_DISTANCE_TILES` along the herd's row — the larder a hunting
+/// party's provisions fold into, and the tile it walks back to.
+fn spawn_raid_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
+    let width = app.world.resource::<TileRegistry>().width;
+    let camp = UVec2::new((herd_pos.x + HOME_BAND_DISTANCE_TILES) % width, herd_pos.y);
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(camp.x, camp.y)
+        .expect("the camp tile resolves");
+    app.world
+        .spawn((party_cohort(tile, RAID_PARTY), ResidentBand))
+        .id()
+}
+
+/// A `RAID_PARTY`-strong hunting party already in the `Hunting` phase on the herd's tile — as
+/// `send_hunt_expedition` spawns it, minus the walk out.
+fn spawn_raid_party(
+    app: &mut App,
+    home_band: bevy::prelude::Entity,
+    pos: UVec2,
+    fauna_id: &str,
+    policy: FollowPolicy,
+) -> bevy::prelude::Entity {
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("the herd's tile resolves");
+    app.world
+        .spawn((
+            party_cohort(tile, RAID_PARTY),
+            LaborAllocation::default(),
+            StartingUnit::new("expedition".to_string(), Vec::new()),
+            Expedition {
+                home_band,
+                mission: ExpeditionMission::Hunt {
+                    fauna_id: fauna_id.to_string(),
+                    policy,
+                },
+                phase: ExpeditionPhase::Hunting,
+                announced: false,
+                pending_reveal: Vec::new(),
+                carried_trade: 0.0,
+            },
+        ))
+        .id()
+}
+
+/// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
+/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
+/// `(turns_to_fill, delivered_food, delivered_trade)`.
+fn exported_raid_promise(app: &App, id: &str, policy: FollowPolicy) -> (u32, f32, f32) {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is in the snapshot");
+    let row = herd
+        .hunt_trip_estimates
+        .iter()
+        .find(|row| row.policy == policy.as_str() && row.party_workers == RAID_PARTY)
+        .unwrap_or_else(|| {
+            panic!(
+                "the herd exports a {} × {RAID_PARTY}-worker trip estimate",
+                policy.as_str()
+            )
+        });
+    (row.turns_to_fill, row.delivered_food, row.delivered_trade)
+}
+
+/// Run one raid to its first delivery and report `(food_landed_in_the_band_larder,
+/// trade_goods_banked_by_the_faction)`.
+///
+/// Drives the **real** systems in the real order (`advance_herds` → `advance_band_movement` →
+/// `advance_expeditions`) and stops on the party's first completed trip: either it folded back
+/// (despawned) or — the `Deplete` relaunch — it dropped its load off and returned to `Hunting`.
+fn run_one_raid(
+    app: &mut App,
+    party: bevy::prelude::Entity,
+    home: bevy::prelude::Entity,
+) -> (f32, i64) {
+    let mut left_hunting = false;
+    for _ in 0..MAX_RAID_TURNS {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_band_movement);
+        app.world.run_system_once(advance_expeditions);
+        let Some(expedition) = app.world.get::<Expedition>(party) else {
+            break; // folded back into the band and despawned — the trip is over
+        };
+        if expedition.phase == ExpeditionPhase::Hunting {
+            if left_hunting {
+                break; // dropped its load off and relaunched — one trip's worth is banked
+            }
+        } else {
+            left_hunting = true;
+        }
+    }
+    (larder(app, home), trade_goods(app))
+}
+
+/// **10. A hunting EXPEDITION delivers BOTH products it promised — wolf and deer.**
+///
+/// The raid arm used to credit `FOOD ONLY` while its forecast already advertised `deliveredTrade`,
+/// so the outfit UI promised pelts the sim never paid and a **wolf raid came home with literally
+/// nothing** (`provisions_per_biomass == 0`). That is `forecast == actual` — Decision 8, the one
+/// invariant this arc rests on — broken on the expedition path, and this is its guard.
+///
+/// Asserted against the **exported** `huntTripEstimates` row (the client's own pre-launch readout),
+/// not an in-process forecast, and against the two accounts the sim really credits: the home band's
+/// larder for provisions and the faction stockpile for trade goods.
+#[test]
+fn a_hunting_expedition_delivers_both_products_it_forecast() {
+    for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
+        let mut raids_compared = 0;
+        for policy in [
+            FollowPolicy::Sustain,
+            FollowPolicy::Surplus,
+            FollowPolicy::Deplete,
+        ] {
+            let (mut app, id, pos) = headless_with_species(species);
+            steady_quarry(&mut app, species);
+            pin_quarry(&mut app, &id);
+            reveal_herd(&mut app, &id);
+            recapture_snapshot_in_place(&mut app.world);
+            let (turns, promised_food, promised_trade) = exported_raid_promise(&app, &id, policy);
+            let context = format!("{species} {policy:?} raid");
+            // **`turnsToFill == 0` = "the raid never completes within `hunt.forecast_horizon_turns`"**
+            // — a herd whose regrowth keeps handing the party another whole animal forever. Its
+            // `deliveredFood`/`deliveredTrade` are then *"what the horizon saw"*, not *"what comes
+            // home"*, because the party never comes home; the client shows such a row without an
+            // ETA. `forecast == actual` is a statement about a trip that ENDS, so those rows are
+            // out of this pin's scope (the coverage assertion below keeps that from hollowing it).
+            if turns == 0 {
+                continue;
+            }
+            raids_compared += 1;
+
+            let home = spawn_raid_home_band(&mut app, pos);
+            let party = spawn_raid_party(&mut app, home, pos, &id, policy);
+            let (landed_food, banked_trade) = run_one_raid(&mut app, party, home);
+
+            assert!(
+                (landed_food - promised_food).abs() <= RAID_FOOD_EPSILON,
+                "{context}: the band larder must receive the {promised_food} food the exported \
+                 estimate promised, got {landed_food}"
+            );
+            assert_eq!(
+                banked_trade,
+                whole_trade_goods(promised_trade),
+                "{context}: the faction must bank the {promised_trade} trade goods the exported \
+                 estimate promised (rounded to whole goods)"
+            );
+            // …and the test must not be vacuously comparing zeros: a completing raid really pays.
+            assert!(
+                banked_trade > 0,
+                "{context}: the harness must actually earn trade goods (promised {promised_trade})"
+            );
+        }
+        assert!(
+            raids_compared > 0,
+            "{species}: at least one rung must produce a raid that comes home, or this test \
+             asserts nothing at all"
+        );
+    }
+}
+
+/// **11. An INEDIBLE raid comes home with pelts and exactly zero food.**
+///
+/// The wolf case stated on its own, because it is the one the bug made visible: before the fix this
+/// party returned with nothing at all, and the feed line called a full pack of pelts "EMPTY".
+#[test]
+fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
+    let (mut app, id, pos) = headless_with_species(INEDIBLE_SPECIES);
+    steady_quarry(&mut app, INEDIBLE_SPECIES);
+    pin_quarry(&mut app, &id);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+    let (turns, promised_food, promised_trade) =
+        exported_raid_promise(&app, &id, FollowPolicy::Sustain);
+    assert_eq!(
+        promised_food, 0.0,
+        "a wolf is not food — the exported raid promise must be 0 provisions"
+    );
+    assert!(
+        turns > 0,
+        "…but it is still a real trip that COMES HOME: the raid must report an ETA, not the \
+         zeroed projection an inedible quarry used to short-circuit to"
+    );
+
+    let home = spawn_raid_home_band(&mut app, pos);
+    let party = spawn_raid_party(&mut app, home, pos, &id, FollowPolicy::Sustain);
+    let (landed_food, banked_trade) = run_one_raid(&mut app, party, home);
+
+    assert_eq!(
+        landed_food, 0.0,
+        "a wolf hunt adds nothing to the larder — the larder ledger must stay food-only"
+    );
+    assert!(
+        banked_trade > 0,
+        "…but the pelts DO come home: the raid promised {promised_trade} trade goods and banked \
+         {banked_trade}"
+    );
+    assert_eq!(
+        banked_trade,
+        whole_trade_goods(promised_trade),
+        "and it banks exactly what the outfit UI promised"
     );
 }

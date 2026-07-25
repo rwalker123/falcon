@@ -911,7 +911,7 @@ fn apply_trade_goods_bonus(
 ) {
     const TRADE_GOODS_TO_OPENNESS: f32 = 1.0 / 5000.0;
     const OPENNESS_CAP: f32 = 0.12;
-    let trade_goods = inventory.take_stockpile(PLAYER_FACTION, "trade_goods", i64::MAX);
+    let trade_goods = inventory.take_stockpile(PLAYER_FACTION, TRADE_GOODS, i64::MAX);
     if trade_goods <= 0 {
         return;
     }
@@ -3493,7 +3493,7 @@ mod inventory_effect_tests {
                 quantity: provisions,
             },
             InventoryEntry {
-                item: "trade_goods".to_string(),
+                item: TRADE_GOODS.to_string(),
                 quantity: trade_goods,
             },
         ];

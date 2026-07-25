@@ -631,9 +631,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _compose.arm_hunt_autofill()
         _build_herd_assign_controls(herd, target), _compose.hunt_policy(), hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
-    # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
-    # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
-    # promise the expedition player a payoff the sim never pays.
+    # earn DIFFERENT payoffs from the same policy word (both trade the take since #337, but only the
+    # band's Sustain builds husbandry — an expedition accrues none), so one shared hint line under the
+    # picker would promise the expedition player a payoff the sim never pays.
     if forecast_active:
         target.add_child(
             _forecast_yield_row(forecast, _compose.hunt_count(), band, crew_label))

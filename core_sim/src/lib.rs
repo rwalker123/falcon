@@ -95,7 +95,7 @@ pub use components::{
     available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
     FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD, TRADE_GOODS,
 };
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,

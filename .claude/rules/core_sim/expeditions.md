@@ -173,8 +173,9 @@ mission:
   **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
   surplus spent**, then fold home. **Deplete** — repeated FULL-cap trips (`Delivering`→deposit→
   **auto-relaunch**) *while the herd still has surplus*; once stripped to `0.15·K` (surplus spent) it
-  comes home for good rather than trickle-churning at the floor. **Eradicate** — no floor, **delivers
-  no food** (denial): grinds the herd to extinction (→ lost-herd `Returning`).
+  comes home for good rather than trickle-churning at the floor. **Eradicate** — no floor: grinds the
+  herd to extinction (→ lost-herd `Returning`), **banking the windfall it can carry** on the way (#337 —
+  denial is the end state, not an empty pack).
 - **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
   surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
   raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**.
@@ -193,8 +194,15 @@ mission:
     fraction is `wasted_food / (delivered_food + wasted_food)`. A small party on a big animal now
     delivers a partial with waste, so **"too lean to raid" is `delivered_food == 0`**, not "party too
     small to seat a whole animal".
-  - **Travel is not counted**; the herd is assumed stationary and in reach. **Eradicate** delivers no
-    food (`delivers_food == false` — since #337 that means an **INEDIBLE species**, not a denial policy; Eradicate now banks its windfall) → no ETA. Its sibling `deliversTrade` (appended last) is the other component.
+  - **`delivered_trade`** — the trade half of the same carried biomass, the whole payload of an
+    **inedible** raid. **The forecast simulates an inedible quarry like any other** (#337): it used to
+    short-circuit to an all-zero projection on the premise "a wolf trip is not a food trip", which also
+    zeroed `animals_taken` and `delivered_trade` — the client quoted `⇄ ~0` on a wolf while the sim
+    banked real pelts. Only an **empty party** (`cap <= 0`) short-circuits now; a wolf raid gets a real
+    ETA (it ends when the standing surplus is spent) and its food fields fall out at `0` on their own.
+  - **Travel is not counted**; the herd is assumed stationary and in reach. `delivers_food == false`
+    means an **INEDIBLE species** — never a denial *policy*: Eradicate banks its windfall like every
+    other rung. Its sibling `deliversTrade` (appended last) is the other component.
   - *(The old O(1) "cannot fill" short-circuit + its `hunt_trip_bound_tests` sweep were **retired** with
     the raid: their premise "won't fill the pack ⇒ doomed trip" is inverted by a raid, where "won't fill
     the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
@@ -251,14 +259,32 @@ mission:
   provision_upkeep_per_worker × replenish.low_turns` and a herd is within `replenish.reach_tiles`) and
   the hunt expedition both call them, so no formula has a second copy. The expedition applies **no**
   output multiplier (`EXPEDITION_OUTPUT_MULTIPLIER` — a detached party carries no band morale
-  modifier). **The expedition take is FOOD-ONLY — a known, tracked gap.** The band's Hunt arm credits
-  food **+ trade goods** (Deplete) **+ husbandry/domestication accrual** (Sustain on a Thriving herd)
-  from the same take; the expedition credits food and nothing else, so a Sustain *expedition* builds no
-  domestication and a Deplete *expedition* yields no trade goods. Whether a detached party *should* earn
-  those side-effects — and what Deplete's goods and Eradicate's denial are ultimately *for* — is the
-  **"Hunt policy payoffs"** arc, issue #213 (design: `docs/plan_exploration_and_sites.md` §2b).
-  Catching a *migratory* herd depends on the deferred fauna-movement redesign (herds step 1 tile/turn
-  today, so an equal-speed party can't close a long one-directional route).
+  modifier). **The expedition take pays BOTH components of the species' `HuntYield`** (#337,
+  `docs/plan_hunt_yield_model.md`) — the food-only expedition, and the "known v1 gap" that excused it,
+  are **retired**. It was never a gap the client could live with: since #337 the raid *forecast*
+  advertises `deliveredTrade`, so a food-only take promised pelts the sim never paid — and an
+  **inedible** quarry (a wolf) made a hunting expedition return with literally *nothing*.
+  - **Where each product lands.** Provisions go into the party's pack (`stores[FOOD]`, carry-capped)
+    and fold into the home band's larder. Trade goods accrue **fractionally** on
+    `Expedition::carried_trade` and settle into the faction stockpile at the next arrival — a
+    `Delivering` drop-off or a `Returning` fold-back (`systems::expeditions::settle_carried_trade`).
+    Both scale off the biomass the party **carried**, never what it killed.
+  - **Why banked rather than paid per kill** (unlike the resident band, which rounds per turn): a
+    raid's promised `HuntTripForecast::delivered_trade` is a sum over the **whole trip**, so rounding
+    each turn's fraction at the kill would floor a wolf raid's ~0.4/turn to **zero every turn**. One
+    rounding, at the delivery the forecast is scoped to, is what keeps `forecast == actual` for the
+    trade component. The remainder under a whole good is dropped, so each trip settles against its own
+    forecast. `carried_trade` is snapshot-persisted (`PopulationCohortState.expedition_carried_trade`,
+    persistence-only, not on the FlatBuffers wire) so a rollback does not silently drop the pelts while
+    restoring the meat.
+  - **The scout's opportunistic replenish banks its hides too** — a roadside kill is skinned as well
+    as butchered — so it is no longer a pure waste of animals on an inedible herd.
+  - **Still expedition-side gaps:** no **husbandry/domestication accrual** (a Sustain *expedition*
+    builds no domestication — that is place-bound work a resident band does), and what trade goods
+    ultimately *do* stays economically thin (the deferred half of issue #213 /
+    `docs/plan_hunt_yield_model.md` "Deferred"). Catching a *migratory* herd depends on the deferred
+    fauna-movement redesign (herds step 1 tile/turn today, so an equal-speed party can't close a long
+    one-directional route).
 
 **Commands** (full proto/runtime/text/server plumbing, mirroring `move_band`):
 - `send_expedition <faction> <band> <party_workers> <x> <y>` — validates land target + `1 ≤
@@ -340,8 +366,9 @@ lookup**:
   size); a herd at/below its floor reads `0` on all three. Because the take is bounded by the standing
   surplus, `deliveredFood`/`animalsTaken` **plateau** with `partyWorkers` once the surplus binds — that
   plateau is the max-useful party size (`ceil(surplus_food / per_worker_carry)`) the stepper caps at.
-  `deliversFood == false` (Eradicate) → "no food delivered (denial)", never an ETA. **Travel is
-  excluded** — the number means "turns spent hunting once you arrive".
+  `deliversFood == false` means the **species** is inedible (a wolf), not that the policy denies — such
+  a row still carries a real `turnsToFill` and a `deliveredTrade` payload. **Travel is excluded** — the
+  number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
   — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::HUNT_POLICIES`: the four
   extractive rungs **plus `Corral`** (a legitimate *band* Hunt policy — its deliberately dipped yield

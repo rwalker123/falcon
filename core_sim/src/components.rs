@@ -273,6 +273,13 @@ pub const FOOD: &str = "provisions";
 /// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
 pub const FODDER: &str = "fodder";
 
+/// Commodity key for a faction's **trade goods** account — pelts, hides, ivory, the tradeable half of
+/// every yield vector. Unlike [`FOOD`]/[`FODDER`] this is **not** a band-local `LocalStore` key: trade
+/// goods are faction-global and integer-valued, so they live in `FactionInventory`'s stockpile map.
+/// Named for the same reason the other two are: every producer (band hunt, pen, gather, expedition)
+/// and every consumer must agree on one string.
+pub const TRADE_GOODS: &str = "trade_goods";
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
@@ -582,7 +589,9 @@ pub enum ExpeditionMission {
     /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`. The
     /// `policy` ([`FollowPolicy`], chosen at launch) governs the take floor + trip behaviour: Sustain
     /// = one conservative harvest to the sustain floor + done; Surplus = one full-cap haul + done;
-    /// Deplete = repeated full-cap trips (grind down); Eradicate = hunt to extinction, delivers no food.
+    /// Deplete = repeated full-cap trips (grind down); Eradicate = hunt to extinction, banking the
+    /// whole-stock windfall on the way (denial is the end state, not an empty pack — see the
+    /// `delivers_food()` retirement note on [`FollowPolicy`]).
     Hunt {
         fauna_id: String,
         policy: FollowPolicy,
@@ -686,6 +695,18 @@ pub struct Expedition {
     /// Observed-but-unreported tile coordinates (deduped). Flushed to the faction map as
     /// `Discovered` when the party is within comm range of its home band, then cleared.
     pub pending_reveal: Vec<UVec2>,
+    /// **Trade goods the party is carrying home** — the pelts/hides/ivory half of every kill's
+    /// [`crate::HuntYield`], accrued off the biomass it actually *hauled* (never what it left on the
+    /// range) and settled into the faction stockpile on arrival (a `Delivering` drop-off or a
+    /// `Returning` fold-back). It is the trade twin of the provisions in `stores[FOOD]`.
+    ///
+    /// **Fractional, and banked rather than paid per kill, deliberately** (`docs/plan_hunt_yield_model.md`,
+    /// issue #337): a raid's promised `HuntTripForecast::delivered_trade` is the *sum over the whole
+    /// trip*, so rounding each turn's fraction to a whole good at the kill would floor a wolf raid's
+    /// ~0.4/turn to **zero every turn** and pay nothing at all — the forecast promising a product the
+    /// sim never delivers. One rounding, at the delivery the forecast is scoped to, keeps
+    /// `forecast == actual`. (A resident band rounds per turn because its forecast is a per-turn rate.)
+    pub carried_trade: f32,
 }
 
 /// Permanent settlement seeded by a founding action.

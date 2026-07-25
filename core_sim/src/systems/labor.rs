@@ -399,7 +399,7 @@ pub fn advance_labor_allocation(
                             * managed_per_worker_trade(patch, &labor.forage, &flora, mult_f);
                         let trade_goods = (trade_production.min(trade_collection)).round() as i64;
                         if trade_goods > 0 {
-                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                         }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
@@ -547,7 +547,7 @@ pub fn advance_labor_allocation(
                     {
                         let trade_goods = forage_trade.round() as i64;
                         if trade_goods > 0 {
-                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                         }
                     }
                     // Sustainable = one turn's MSY of the patch at its **pre-take** biomass, in
@@ -882,7 +882,7 @@ pub fn advance_labor_allocation(
                         // food beside it.
                         let pen_trade = paid.trade_goods.round() as i64;
                         if pen_trade > 0 {
-                            inventory.add_stockpile(faction, "trade_goods", pen_trade);
+                            inventory.add_stockpile(faction, TRADE_GOODS, pen_trade);
                         }
                         let tended = provisions.to_f32();
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
@@ -1090,7 +1090,7 @@ pub fn advance_labor_allocation(
                         cohort.stores.add(FOOD, provisions);
                     }
                     if trade_goods > 0 {
-                        inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                        inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                     }
                     // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
                     // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×

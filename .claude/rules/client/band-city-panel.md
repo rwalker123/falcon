@@ -381,6 +381,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
   open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`
   (quarry → policy → party → forecast, with the real per-policy metrics and max-useful cap) ·
+  **`band_panel_compose_hunt_eradicate`** (the ONE surface that renders `SEND_HUNT_POLICY_HINTS`
+  verbatim, so it is the frame the EXPEDITION Eradicate hint is judged on: the rung's face reads the
+  ladder's top `💀 +6.50 ⇄ +0.81`, the hint describes the one-trip haul, the currency the SPECIES pays
+  (meat, ⇄ trade goods, or both — the raid banks the trade half too since #337) + the permanent end state, and
+  the raid line below it delivers `~52 food · ⇄ ~7 trade goods` under an ordinary primary Send — no
+  denial anywhere, #337) ·
   `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
   below) · `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
   BEHAVIOURAL assertion rides beside them: `_assert_quarry_eligibility` drives the real

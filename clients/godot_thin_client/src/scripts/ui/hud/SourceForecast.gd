@@ -869,7 +869,8 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: Strin
 static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
     if not bool(forecast.get("available", false)):
         return ""
-    # A denial mission (Eradicate) brings nothing home BY DESIGN — say what it does, amber, no payload.
+    # A denial mission brings nothing home BY DESIGN — say what it does, amber, no payload. It is the
+    # QUARRY that decides this (pays neither product), never the Eradicate rung, which delivers.
     if bool(forecast.get("denial", false)):
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
@@ -1060,7 +1061,7 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
 ## them is the point:
 ##   DELIVERING (viable / slow / long / denial) — the raid lands something (animals, or the denial it
 ##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
-##     turns)` / `Send Anyway (long raid)`) or a denial (`Send (delivers no food)`) — ENABLED either
+##     turns)` / `Send Anyway (long raid)`) or a denial (`SEND_HUNT_DENIAL_BUTTON`) — ENABLED either
 ##     way: the player is told, then trusted.
 ##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
 ##     with the reason and the way out (party size can't fix it, so the reason names no alternative).

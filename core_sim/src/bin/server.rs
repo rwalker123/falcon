@@ -2593,6 +2593,9 @@ fn handle_send_expedition(
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                // An outfitted party leaves with an empty trade pack — it earns its pelts in the
+                // field (`advance_expeditions`).
+                carried_trade: 0.0,
             },
             BandTravel { target },
         ))
@@ -2873,6 +2876,7 @@ fn handle_send_hunt_expedition(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                carried_trade: 0.0,
             },
             BandTravel { target: herd_pos },
         ))

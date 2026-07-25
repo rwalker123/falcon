@@ -238,6 +238,14 @@ pub struct PopulationCohortState {
     pub pending_reveal_x: Vec<u32>,
     #[serde(default)]
     pub pending_reveal_y: Vec<u32>,
+    /// Persistence-only: the fractional **trade goods the party is carrying home** — the pelt/hide
+    /// half of every kill's hunt yield, banked until the next drop-off/fold-back settles it into the
+    /// faction stockpile (`docs/plan_hunt_yield_model.md`, issue #337). Not on the FlatBuffers wire:
+    /// the client already reads the raid's *promised* trade off `HuntTripEstimate.deliveredTrade`,
+    /// and this is server state a rollback must not silently zero (the provisions half round-trips
+    /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
+    #[serde(default)]
+    pub expedition_carried_trade: f32,
     /// Server-side hard cap on an expedition party (`expedition_config.json` `max_party_size`). A
     /// global config lever echoed per-cohort (same idiom as `work_range`) so the client outfit
     /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
