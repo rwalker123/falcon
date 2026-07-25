@@ -218,14 +218,14 @@ already sees both *inputs* on the band panel (larder, Food /turn) and the *effec
 `#286` is a model question. The breakdown is the natural parallel to `MoraleContributions` and should
 ship, but as its own slice — filed as a follow-up rather than widening this PR.
 
-**Unrelated hazard found while writing the tests, left alone:**
-`DemographicsConsumption::default()` carries `per_capita_draw: 0.03` while the shipped
-`demographics_config.json` says **0.16** — a 5.3× divergence. At runtime the JSON wins (it sets every
-field), so only `DemographicsConfig::default()` callers see `0.03`, and those are the unit tests. The
-worked numbers in §3.1 above are the *shipped* 0.16; the unit tests derive their demand from the
-config in hand via the shared `food_demand` helper rather than hardcoding either, so they are correct
-either way. Reconciling the two is its own change — a `Default` that disagrees with the data file is
-a trap for the next person who assumes a test exercises shipped tuning.
+**Unrelated hazard found while writing the tests, since FIXED (issue #350):**
+`DemographicsConsumption::default()` used to carry `per_capita_draw: 0.03` while the shipped
+`demographics_config.json` said **0.16** — a 5.3× divergence that only `DemographicsConfig::default()`
+callers (i.e. the unit tests) ever saw. The hand-written `Default` impls are gone: the JSON is now the
+**sole** source of demographics tuning, `DemographicsConfig::default()` parses
+`BUILTIN_DEMOGRAPHICS_CONFIG`, and every field is required with `deny_unknown_fields`, so a missing or
+unknown key is a hard parse error instead of a silent second set of numbers. The worked numbers in
+§3.1 above were already the shipped 0.16 and stand unchanged.
 
 **Known gap:** `steady_income` covers labor-assignment income only. Managed herds and pens *are*
 labor assignments (herding is standing labor), so they are counted; any future income path that
