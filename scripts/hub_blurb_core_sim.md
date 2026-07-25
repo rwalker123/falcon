@@ -1,3 +1,8 @@
+<!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_core_sim.md, appended into
+     core_sim/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
+     edit made only in the hub is reverted by the next re-run.
+     Verify the two agree with: scripts/split_claude_md.sh --check -->
+
 ## Where the rest of this document lives
 
 This file is the **hub**: build commands, global config layout, the shared
@@ -30,6 +35,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
+| `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
 names a *section heading*, not a file. Resolve it with

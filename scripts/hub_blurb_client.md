@@ -1,4 +1,9 @@
 
+<!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_client.md, appended into
+     clients/godot_thin_client/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
+     edit made only in the hub is reverted by the next re-run.
+     Verify the two agree with: scripts/split_claude_md.sh --check -->
+
 ## Where the rest of this document lives
 
 This file is the **hub**: build/verify commands, the `Hud.gd` decomposition
@@ -35,6 +40,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard` | `tools/**` |
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
+| `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
 
 **Cross-reference convention.** A quoted phrase like `see "Map markers"` names a
 *section heading*, not a file. Resolve it with

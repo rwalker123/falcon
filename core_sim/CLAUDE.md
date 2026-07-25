@@ -1,5 +1,10 @@
 # core_sim - Simulation Engine
 
+<!-- HUB BANNER — source of truth: scripts/hub_banner_core_sim.md, emitted into
+     core_sim/CLAUDE.md right after the H1 by scripts/split_claude_md.sh.
+     Edit the source file; an edit made only in the hub is reverted by the next
+     re-run. Verify the two agree with: scripts/split_claude_md.sh --check -->
+
 > ## ⛔ THIS IS A HUB FILE — rationale does NOT go here
 >
 > Before adding a paragraph, section, callout, or config row **anywhere in this file**, ask:
@@ -34,6 +39,11 @@ cargo bench -p core_sim --bench turn_bench
 # Run server
 cargo run -p core_sim --bin server
 ```
+
+<!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_core_sim.md, appended into
+     core_sim/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
+     edit made only in the hub is reverted by the next re-run.
+     Verify the two agree with: scripts/split_claude_md.sh --check -->
 
 ## Where the rest of this document lives
 
